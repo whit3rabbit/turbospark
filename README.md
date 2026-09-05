@@ -263,7 +263,7 @@ For full binary layouts, header byte specifications, and streaming mechanics, se
 
 ### Supported Models
 
-Seven architecture families run end to end, each with a real decode flow rather than a config entry. Every checkpoint named below has been installed from its published bytes and generated text through `turbospark-check` on this machine. None is a projection from a config file. **Verified** or **unverified** marks whether that specific artifact also has a frozen quality-gate or memory-oracle row backing it, explained below the table.
+Eight architecture families run end to end, each with a real decode flow rather than a config entry. Every checkpoint named below has been installed from its published bytes and generated text through `turbospark-check` on this machine. None is a projection from a config file. **Verified** or **unverified** marks whether that specific artifact also has a frozen quality-gate or memory-oracle row backing it, explained below the table.
 
 | Family | Checkpoints that run today | Shape |
 | --- | --- | --- |
@@ -271,11 +271,12 @@ Seven architecture families run end to end, each with a real decode flow rather 
 | **Qwen 3.6** (`qwen36`) | `Qwen3.6-35B-A3B` at MLX INT4 (verified) and Q4_K_M GGUF (unverified), `Ornith-1.5-35B-A3B` at MLX INT4 (verified) | Gated-DeltaNet linear attention + 256 streamed experts |
 | **Qwen 3.5/3.8 dense** (`qwen35`) | `Qwen/Qwen3.8-27B` (4-bit, verified), `prism-ml/Ternary-Bonsai-27B-mlx-2bit` (2-bit, verified), `prism-ml/Bonsai-27B-mlx-1bit` (1-bit, unverified), `Ornith-1.5-9B` (Q8_0 GGUF, verified) | Same hybrid attention, dense FFN. **Four checkpoints, one architecture** |
 | **Qwen3-MoE** (`qwen3moe`) | `Qwen3-30B-A3B` at Q4_K_M GGUF (verified) | Plain GQA + 128 streamed experts |
+| **Qwen3.8-Flash-Next** (`qwen4exp`) | `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit` at MLX INT4 (unverified) | Hyper-connections, GDN + QSA-as-dense attention, fine-grained MoE (288 experts, sigmoid-gated); **safetensors only, no GGUF path**; `--max-context` capped at 2048 (no QSA indexer yet) |
 | **Llama** (`llama`) | Mixtral 8x7B (unverified), Mistral 7B (unverified), TinyLlama 1.1B (unverified) | Plain GQA, one architecture string covering a MoE half and a dense half, both running |
 | **gpt-oss** (`gptOss`) | `gpt-oss-20b` MXFP4 (verified) | GQA with attention sinks, YaRN rope, Harmony reasoning channels |
 | **Muse Glimmer** (`museGlimmer`) | `Muse-Glimmer-30B` at MLX INT4 (verified) | Dense GQA, 3-sliding/1-full window, **NoPE on the full layers**, separate attention output gate, reasons before answering |
 
-**Verified** means the catalog carries a frozen quality-gate and/or memory-oracle row for that exact artifact in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md): a specific perplexity, output digest, or peak-footprint ceiling that a future change can redden. **Unverified** checkpoints installed and generated coherent text on this machine too, but nothing pins a number to them yet, for different reasons per row. Gemma 4's Q8_0 GGUF and Qwen 3.6's Q4_K_M GGUF simply have no gates written yet. Bonsai-27B (1-bit) has none either, and likely can't get one cheaply: upstream `mlx` refuses `bits=1` outright (see below), so there's no independent reference to check its perplexity against. Mistral 7B and TinyLlama 1.1B were brought up to prove the `llama` family's dense/MoE split rather than to freeze a number.
+**Verified** means the catalog carries a frozen quality-gate and/or memory-oracle row for that exact artifact in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md): a specific perplexity, output digest, or peak-footprint ceiling that a future change can redden. **Unverified** checkpoints installed and generated coherent text on this machine too, but nothing pins a number to them yet, for different reasons per row. Gemma 4's Q8_0 GGUF and Qwen 3.6's Q4_K_M GGUF simply have no gates written yet. Bonsai-27B (1-bit) has none either, and likely can't get one cheaply: upstream `mlx` refuses `bits=1` outright (see below), so there's no independent reference to check its perplexity against. Mistral 7B and TinyLlama 1.1B were brought up to prove the `llama` family's dense/MoE split rather than to freeze a number. Qwen3.8-Flash-Next just reached its first successful real-hardware decode (2026-09-04, [`docs/QWEN4_EXP.md`](docs/QWEN4_EXP.md)): no memory oracle or quality gate exists for it yet.
 
 Mixtral 8x7B is the deepest "unverified": it installs and decodes correctly but cannot stream its experts usefully at all (see the memory tables further down), so a quality gate for it would be measuring a configuration nobody would actually run. Treat an unverified row as "runs, unmeasured," not as "broken."
 
@@ -632,6 +633,7 @@ list of what is deliberately not supported are in
 - [`docs/SPECULATIVE_DECODING.md`](docs/SPECULATIVE_DECODING.md): DFlash and batched verify, measured marginal (~1.1x, small blocks only), and why it is not shipped.
 - [`docs/OBLITERATION.md`](docs/OBLITERATION.md): Live directional steering (runtime abliteration) -- the CLI flags, the four edit modes, family coverage, measured cost, and what is still open.
 - [`docs/EXPERT_ROUTING.md`](docs/EXPERT_ROUTING.md): Domain-restricted expert sets, measured negative.
+- [`docs/QWEN4_EXP.md`](docs/QWEN4_EXP.md): Qwen3.8-Flash-Next (`qwen4_exp`) bring-up lessons learned -- intake, decode wiring, memory policy, the router/shared-expert-gate dtype bug and fix, first real-hardware decode.
 - [`docs/FORGE_GUARDRAILS.md`](docs/FORGE_GUARDRAILS.md): Tool-call rescue, argument validation and the one-retry loop: how a verdict is reached, why a tool request is buffered, and why none of it leaves the process.
 - [`docs/KERNELS.md`](docs/KERNELS.md): Complete technical catalog of all 98 Metal compute kernels, 12 supported quantization formats, and kernel optimizations.
 - [`docs/SWIFT_BINDINGS.md`](docs/SWIFT_BINDINGS.md): Driving the engine from a native app: the Swift API, the C ABI, threading, and what is not supported.
