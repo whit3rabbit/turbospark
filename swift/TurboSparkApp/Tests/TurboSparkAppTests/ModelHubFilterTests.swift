@@ -9,6 +9,7 @@ import TurboSpark
 /// init is internal to the binding and unreachable from here, and the wire
 /// shape is the thing worth exercising (`swift/CLAUDE.md` Gotcha 5).
 final class ModelHubFilterTests: XCTestCase {
+    /// Decodes a fixture catalog entry from JSON with specified fields.
     private func entry(
         alias: String,
         name: String,
@@ -34,6 +35,7 @@ final class ModelHubFilterTests: XCTestCase {
         return try JSONDecoder().decode(CatalogEntry.self, from: Data(json.utf8))
     }
 
+    /// Decodes a fixture model recommendation from JSON with alias and verdict.
     private func recommendation(
         alias: String,
         verdict: String
@@ -58,6 +60,7 @@ final class ModelHubFilterTests: XCTestCase {
         return try JSONDecoder().decode(ModelRecommendation.self, from: Data(json.utf8))
     }
 
+    /// Returns fixture catalog entries covering multiple families and formats.
     private func catalog() throws -> [CatalogEntry] {
         [
             try entry(alias: "gemma4", name: "Gemma 4 26B-A4B (MLX INT4, group 64)", family: "gemma4", downloadBytes: 13_000),
@@ -68,6 +71,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     // MARK: - Options come from the data
 
+    /// Tests that format filter options are dynamically derived from catalog rows.
     func testFormatOptionsAreDerivedFromTheCatalogRatherThanHardcoded() throws {
         let options = ModelHubFilter.formatOptions(for: try catalog())
         XCTAssertTrue(options.contains("MLX INT4"), "expected an MLX row, got \(options)")
@@ -75,6 +79,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(options, options.sorted(), "options should be display-ordered")
     }
 
+    /// Tests that capability options contain no duplicate entries.
     func testCapabilityOptionsAreDeduplicatedAcrossRows() throws {
         let options = ModelHubFilter.capabilityOptions(for: try catalog())
         XCTAssertEqual(Set(options).count, options.count, "duplicates leaked: \(options)")
@@ -95,12 +100,14 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertFalse(options.contains("Too large"))
     }
 
+    /// Tests that fit filter options are empty before recommendations are loaded.
     func testFitOptionsAreEmptyBeforeRecommendationsLoad() throws {
         XCTAssertEqual(ModelHubFilter.fitOptions(for: try catalog(), recommendations: [:]), [])
     }
 
     // MARK: - Application
 
+    /// Tests that an unconstrained filter preserves all catalog rows.
     func testUnfilteredListKeepsEveryRow() throws {
         var filter = ModelHubFilter()
         filter.sort = .name
@@ -108,6 +115,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["gemma4", "gemma4-gguf", "mistral7b"])
     }
 
+    /// Tests that the On-Device tab limits visible models to installed aliases.
     func testOnDeviceTabKeepsOnlyInstalledRows() throws {
         var filter = ModelHubFilter()
         filter.tab = .onDevice
@@ -118,6 +126,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["mistral7b"])
     }
 
+    /// Tests that search queries match against alias, name, family, and notes.
     func testSearchMatchesAliasNameFamilyAndNotes() throws {
         let rows = [try entry(alias: "a1", name: "Alpha", family: "gemma4", notes: "streams experts")]
         for query in ["a1", "alpha", "GEMMA4", "experts"] {
@@ -130,6 +139,7 @@ final class ModelHubFilterTests: XCTestCase {
         }
     }
 
+    /// Tests that search queries containing only whitespace do not filter rows.
     func testSearchIgnoresSurroundingWhitespace() throws {
         var filter = ModelHubFilter()
         filter.searchText = "   "
@@ -159,6 +169,7 @@ final class ModelHubFilterTests: XCTestCase {
         }
     }
 
+    /// Tests that format filters keep only entries matching the specified format.
     func testFormatFilterKeepsOnlyThatFormat() throws {
         var filter = ModelHubFilter()
         filter.format = "MLX INT4"
@@ -166,6 +177,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["gemma4"])
     }
 
+    /// Tests that fit filtering drops rows that lack recommendation entries.
     func testFitFilterDropsRowsWithNoRecommendation() throws {
         var filter = ModelHubFilter()
         filter.fit = "Streams"
@@ -176,6 +188,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["gemma4"])
     }
 
+    /// Tests that format and search filters compose conjunctively.
     func testFiltersCompose() throws {
         var filter = ModelHubFilter()
         filter.format = "MLX INT4"
@@ -186,6 +199,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     // MARK: - Sorting
 
+    /// Tests that sorting by size orders rows ascending by download size.
     func testSizeSortIsAscendingByDownloadBytes() throws {
         var filter = ModelHubFilter()
         filter.sort = .size
@@ -193,6 +207,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["mistral7b", "gemma4", "gemma4-gguf"])
     }
 
+    /// Tests that best-fit sorting orders resident before streams before refused.
     func testBestFitSortPutsResidentBeforeStreamsBeforeRefused() throws {
         var filter = ModelHubFilter()
         filter.sort = .recommended
@@ -207,6 +222,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["mistral7b", "gemma4-gguf", "gemma4"])
     }
 
+    /// Tests that best-fit sorting breaks verdict ties by sorting on alias.
     func testBestFitSortIsStableOnAliasWhenVerdictsTie() throws {
         var filter = ModelHubFilter()
         filter.sort = .recommended
@@ -214,6 +230,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["gemma4", "gemma4-gguf", "mistral7b"])
     }
 
+    /// Tests that unprobed models rank ahead of refused models in recommendations.
     func testUnknownRanksAheadOfRefusedSoAnUnprobedRowIsNotBuriedLast() {
         XCTAssertLessThan(
             ModelHubFilter.verdictRank(nil),
@@ -261,11 +278,13 @@ final class ModelHubFilterTests: XCTestCase {
             ModelFamilyVisuals.formatLabel(alias: "mistral7b", name: name))
     }
 
+    /// Tests fallback format labels when model names lack parenthesized formats.
     func testFormatLabelFallsBackToCoarseSignalWithoutParentheses() {
         XCTAssertEqual(ModelFamilyVisuals.formatLabel(alias: "x-gguf", name: "Some Model"), "GGUF")
         XCTAssertEqual(ModelFamilyVisuals.formatLabel(alias: "x", name: "Some Model"), "MLX")
     }
 
+    /// Tests that non-format parenthesized groups like previews are ignored.
     func testFormatLabelIgnoresParenthesesThatAreNotAFormat() {
         // The LAST parenthesised group is the format by catalog convention.
         XCTAssertEqual(
@@ -276,6 +295,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     // MARK: - Narrowing state
 
+    /// Tests that active tab and sorting mode do not mark the filter as narrowed.
     func testIsNarrowedIgnoresTabAndSort() throws {
         var filter = ModelHubFilter()
         filter.tab = .onDevice
@@ -286,6 +306,7 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertTrue(filter.isNarrowed)
     }
 
+    /// Tests that clearing narrowing resets filters while preserving tab and sort.
     func testClearNarrowingLeavesTabAndSortAlone() {
         var filter = ModelHubFilter()
         filter.tab = .onDevice

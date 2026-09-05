@@ -10,18 +10,21 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - Matcher aliasing and dispatch order
 
+    /// Tests that Claude Code tool names like "Bash" match the app's canonical tool names like "run_command".
     func testClaudeCodeToolNameMatchesAppToolName() {
         let engine = AppHookExecutionEngine.shared
         let hook = AppHookCommand(name: "h", event: .preToolUse, type: .command, command: "true", matcher: "Bash")
         XCTAssertTrue(engine.matchesCondition(hook: hook, toolName: "run_command", toolArguments: nil))
     }
 
+    /// Tests that app tool names like "run_command" match hooks configured with Claude Code matcher names like "Bash".
     func testAppToolNameMatchesClaudeCodeStyleMatcher() {
         let engine = AppHookExecutionEngine.shared
         let hook = AppHookCommand(name: "h", event: .preToolUse, type: .command, command: "true", matcher: "run_command")
         XCTAssertTrue(engine.matchesCondition(hook: hook, toolName: "Bash", toolArguments: nil))
     }
 
+    /// Tests that regex matchers like "mcp__.*" only match MCP tools and ignore non-matching built-in tools.
     func testRegexMatcherFiresOnMcpToolNamesOnly() {
         let engine = AppHookExecutionEngine.shared
         let hook = AppHookCommand(name: "h", event: .preToolUse, type: .command, command: "true", matcher: "mcp__.*")
@@ -29,6 +32,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertFalse(engine.matchesCondition(hook: hook, toolName: "run_command", toolArguments: nil))
     }
 
+    /// Tests that comma- and pipe-separated matcher lists match any of the specified tool names.
     func testCommaAndPipeSeparatedMatcherLists() {
         let engine = AppHookExecutionEngine.shared
         let hook = AppHookCommand(name: "h", event: .preToolUse, type: .command, command: "true", matcher: "Edit, Write")
@@ -37,6 +41,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertFalse(engine.matchesCondition(hook: hook, toolName: "read_file", toolArguments: nil))
     }
 
+    /// Tests that wildcard matchers like "*" match any tool name unconditionally.
     func testWildcardMatcherFiresOnEverything() {
         let engine = AppHookExecutionEngine.shared
         let hook = AppHookCommand(name: "h", event: .preToolUse, type: .command, command: "true", matcher: "*")
@@ -45,6 +50,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - Exit-code-2 table (event-dependent)
 
+    /// Tests that an exit code of 2 blocks execution for PreToolUse, UserPromptSubmit, and Stop events.
     func testExitTwoBlocksPreToolUseUserPromptSubmitAndStop() {
         for event in [AppHookEvent.preToolUse, .userPromptSubmit, .stop] {
             let outcome = AppHookResponseParser.parseHookOutput(stdout: "", stderr: "nope", exitCode: 2, event: event)
@@ -55,6 +61,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         }
     }
 
+    /// Tests that an exit code of 2 produces non-blocking feedback for PostToolUse and PermissionRequest events.
     func testExitTwoDoesNotBlockPostToolUseOrPermissionRequest() {
         for event in [AppHookEvent.postToolUse, .postToolUseFailure, .permissionRequest] {
             let outcome = AppHookResponseParser.parseHookOutput(stdout: "", stderr: "feedback", exitCode: 2, event: event)
@@ -65,6 +72,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         }
     }
 
+    /// Tests that exit code 0 with valid JSON stdout is parsed into structured hook responses.
     func testExitZeroWithJsonParsesStructuredOutput() {
         let outcome = AppHookResponseParser.parseHookOutput(
             stdout: #"{"continue":true,"additionalContext":"extra","hookSpecificOutput":{"permissionDecision":"allow"}}"#,
@@ -77,6 +85,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertEqual(response.hookSpecificOutput?.permissionDecision, "allow")
     }
 
+    /// Tests that exit code 0 with non-JSON plain text is treated as advisory output.
     func testExitZeroWithPlainTextIsAdvisoryOnly() {
         let outcome = AppHookResponseParser.parseHookOutput(stdout: "just some text", stderr: "", exitCode: 0, event: .postToolUse)
         guard case .plainText(let text) = outcome else { return XCTFail("expected plain text outcome") }
@@ -85,10 +94,12 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - Decision aggregation across several hooks
 
+    /// Helper to construct mock hook execution results for decision aggregation tests.
     private func resultWith(_ outcome: AppHookOutcome, event: AppHookEvent = .preToolUse) -> AppHookExecutionResult {
         AppHookExecutionResult(hookID: UUID(), hookName: "h", event: event, exitCode: 0, stdout: "", stderr: "", durationSeconds: 0, outcome: outcome)
     }
 
+    /// Tests that decision aggregation strictly prioritizes deny over ask, and ask over allow.
     func testAggregatorDenyBeatsAskBeatsAllow() {
         let results = [
             resultWith(.structured(AppHookResponse(hookSpecificOutput: AppHookSpecificOutput(permissionDecision: "allow")))),
@@ -100,6 +111,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertEqual(verdict.permissionReason, "no")
     }
 
+    /// Tests that the first blocking outcome takes precedence for Stop events.
     func testAggregatorFirstBlockWinsForStop() {
         let results = [
             resultWith(.blocked(reason: "first"), event: .stop),
@@ -110,6 +122,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertEqual(verdict.blockReason, "first")
     }
 
+    /// Tests that additional context strings from multiple hooks are joined with double newlines.
     func testAggregatorConcatenatesAdditionalContextAcrossHooks() {
         let results = [
             resultWith(.structured(AppHookResponse(additionalContext: "one")), event: .userPromptSubmit),
@@ -119,6 +132,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertEqual(verdict.additionalContext, "one\n\ntwo")
     }
 
+    /// Tests that later hooks override updated input fields when multiple hooks modify tool inputs.
     func testAggregatorUpdatedInputLastWriteWins() {
         let results = [
             resultWith(.structured(AppHookResponse(updatedInput: ["command": "first"]))),
@@ -128,6 +142,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertEqual(verdict.updatedInput?["command"], "second")
     }
 
+    /// Tests that errors in PostToolUse hooks surface as feedback messages rather than execution blocks.
     func testAggregatorPostToolUseFeedbackIsNeverABlock() {
         let results = [resultWith(.nonBlockingError("stderr text"), event: .postToolUse)]
         let verdict = AppHookDecisionAggregator.aggregate(results, event: .postToolUse)
@@ -137,6 +152,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - Stdin payload shape
 
+    /// Tests that the stdin payload for PreToolUse events contains tool name and input dictionary.
     func testStdinPayloadCarriesToolFieldsForPreToolUse() {
         let payload = AppHookStdinPayload.build(
             event: .preToolUse,
@@ -152,6 +168,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertNil(payload["prompt"])
     }
 
+    /// Tests that the stdin payload for UserPromptSubmit events includes the user prompt.
     func testStdinPayloadCarriesPromptForUserPromptSubmit() {
         let payload = AppHookStdinPayload.build(
             event: .userPromptSubmit, sessionID: "s1", transcriptPath: "/tmp/t.json", cwd: "/tmp", prompt: "hello"
@@ -160,6 +177,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertNil(payload["tool_name"])
     }
 
+    /// Tests that the stdin payload for Stop events sets the stop_hook_active boolean flag.
     func testStdinPayloadCarriesStopHookActiveForStop() {
         let payload = AppHookStdinPayload.build(
             event: .stop, sessionID: "s1", transcriptPath: "/tmp/t.json", cwd: "/tmp", stopHookActive: true
@@ -169,6 +187,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - AppModel wiring: UserPromptSubmit
 
+    /// Tests that a blocking UserPromptSubmit hook correctly surfaces its block reason in the UI.
     @MainActor
     func testUserPromptSubmitHookBlockSurfacesReason() async {
         let store = await AppHookStore.shared
@@ -191,6 +210,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - AppModel wiring: PreToolUse updatedInput / additionalContext
 
+    /// Tests that PreToolUse hooks can update input arguments and attach additional context.
     func testPreToolUseUpdatedInputAndAdditionalContextRoundTrip() async {
         let store = await AppHookStore.shared
         let hook = AppHookCommand(
@@ -214,6 +234,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - AppModel wiring: PostToolUse feedback
 
+    /// Tests that exit code 2 from a PostToolUse hook generates advisory feedback without blocking.
     @MainActor
     func testPostToolUseExitTwoSurfacesAsFeedbackNotABlock() async {
         let store = await AppHookStore.shared
@@ -243,6 +264,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - AppModel wiring: Stop block-and-continue cap
 
+    /// Tests that Stop hook blocking re-enters the agent loop at most 8 times before stopping.
     @MainActor
     func testStopHookBlockReentersUpToEightTimesThenStops() async {
         let store = await AppHookStore.shared
@@ -275,6 +297,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - Discovery: settings.local.json, missing `type`, diagnostics
 
+    /// Tests hook discovery defaults missing type fields to command and diagnoses invalid entries.
     @MainActor
     func testDiscoveryDefaultsMissingTypeToCommandAndFlagsUnparseableEntries() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -321,6 +344,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     // MARK: - Source group ordering
 
+    /// Tests that source groups are ordered with local config preceding custom hooks.
     @MainActor
     func testSourceGroupOrderingPlacesLocalConfigBeforeCustom() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

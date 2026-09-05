@@ -3,11 +3,16 @@ import SwiftUI
 
 /// User-defined organization metadata for an installed model.
 public struct ModelCustomMetadata: Codable, Equatable, Sendable {
+    /// Custom display nickname for the model.
     public var nickname: String?
+    /// User notes and comments regarding the model.
     public var notes: String
+    /// Tags assigned to the model for filtering and categorization.
     public var tags: [String]
+    /// Whether the model is pinned or marked as a favorite.
     public var isFavorite: Bool
 
+    /// Initializes custom metadata with optional nickname, notes, tags, and favorite status.
     public init(
         nickname: String? = nil,
         notes: String = "",
@@ -39,9 +44,11 @@ public struct ModelCustomMetadata: Codable, Equatable, Sendable {
 /// Observable store for managing persistent user notes, tags, and favorites for models.
 @MainActor
 public final class ModelOrganizationStore: ObservableObject {
+    /// Shared singleton instance of the store.
     public static let shared = ModelOrganizationStore()
     private static let storageKey = "TurboSpark.modelOrganizationMetadata"
 
+    /// User metadata indexed by composite model key or alias.
     @Published public private(set) var metadataByModelKey: [String: ModelCustomMetadata] = [:]
 
     /// Scanned paths the user has removed from TurboSpark (state#88).
@@ -58,6 +65,7 @@ public final class ModelOrganizationStore: ObservableObject {
     /// entry.
     @Published public private(set) var excludedScanPaths: Set<String> = []
 
+    /// Initializes the store and loads stored metadata and exclusions.
     public init() {
         load()
         loadExclusions()
@@ -76,6 +84,7 @@ public final class ModelOrganizationStore: ObservableObject {
 
     // MARK: - Querying
 
+    /// Returns custom metadata for a model, falling back to alias alone or a default instance.
     public func metadata(for alias: String, path: String? = nil) -> ModelCustomMetadata {
         let fullKey = key(for: alias, path: path)
         if let exact = metadataByModelKey[fullKey] {
@@ -88,34 +97,42 @@ public final class ModelOrganizationStore: ObservableObject {
         return ModelCustomMetadata()
     }
 
+    /// Returns whether the specified model is marked as a favorite.
     public func isFavorite(for alias: String, path: String? = nil) -> Bool {
         metadata(for: alias, path: path).isFavorite
     }
 
+    /// Convenience overload returning whether the specified model is marked as a favorite.
     public func isFavorite(alias: String, path: String? = nil) -> Bool {
         isFavorite(for: alias, path: path)
     }
 
+    /// Returns user notes recorded for the specified model.
     public func notes(for alias: String, path: String? = nil) -> String {
         metadata(for: alias, path: path).notes
     }
 
+    /// Convenience overload returning user notes recorded for the specified model.
     public func notes(alias: String, path: String? = nil) -> String {
         notes(for: alias, path: path)
     }
 
+    /// Returns user-defined tags assigned to the specified model.
     public func tags(for alias: String, path: String? = nil) -> [String] {
         metadata(for: alias, path: path).tags
     }
 
+    /// Convenience overload returning user-defined tags assigned to the specified model.
     public func tags(alias: String, path: String? = nil) -> [String] {
         tags(for: alias, path: path)
     }
 
+    /// Returns the custom nickname assigned to the specified model, if any.
     public func nickname(for alias: String, path: String? = nil) -> String? {
         metadata(for: alias, path: path).nickname
     }
 
+    /// Convenience overload returning the custom nickname for the specified model.
     public func nickname(alias: String, path: String? = nil) -> String? {
         nickname(for: alias, path: path)
     }
@@ -133,6 +150,7 @@ public final class ModelOrganizationStore: ObservableObject {
 
     // MARK: - Mutations
 
+    /// Toggles the favorite status for the specified model and persists changes.
     public func toggleFavorite(alias: String, path: String? = nil) {
         let k = key(for: alias, path: path)
         var meta = metadata(for: alias, path: path)
@@ -141,6 +159,7 @@ public final class ModelOrganizationStore: ObservableObject {
         save()
     }
 
+    /// Sets the favorite status for the specified model and persists changes.
     public func setFavorite(_ favorite: Bool, for alias: String, path: String? = nil) {
         let k = key(for: alias, path: path)
         var meta = metadata(for: alias, path: path)
@@ -149,6 +168,7 @@ public final class ModelOrganizationStore: ObservableObject {
         save()
     }
 
+    /// Sets user notes for the specified model and persists changes.
     public func setNotes(_ notes: String, for alias: String, path: String? = nil) {
         let k = key(for: alias, path: path)
         var meta = metadata(for: alias, path: path)
@@ -157,6 +177,7 @@ public final class ModelOrganizationStore: ObservableObject {
         save()
     }
 
+    /// Updates or clears the nickname for the specified model and persists changes.
     public func setNickname(_ nickname: String?, for alias: String, path: String? = nil) {
         let k = key(for: alias, path: path)
         var meta = metadata(for: alias, path: path)
@@ -166,6 +187,7 @@ public final class ModelOrganizationStore: ObservableObject {
         save()
     }
 
+    /// Adds a unique trimmed tag to the specified model and persists changes.
     public func addTag(_ tag: String, for alias: String, path: String? = nil) {
         let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -178,6 +200,7 @@ public final class ModelOrganizationStore: ObservableObject {
         }
     }
 
+    /// Removes a tag from the specified model and persists changes.
     public func removeTag(_ tag: String, for alias: String, path: String? = nil) {
         let k = key(for: alias, path: path)
         var meta = metadata(for: alias, path: path)
@@ -207,15 +230,18 @@ public final class ModelOrganizationStore: ObservableObject {
 
     // MARK: - Scan exclusions
 
+    /// Returns whether a standardized filesystem path is excluded from model scanning.
     public func isExcludedFromScan(path: String) -> Bool {
         excludedScanPaths.contains(Self.standardized(path))
     }
 
+    /// Excludes a filesystem path from subsequent model scans.
     public func excludeFromScan(path: String) {
         excludedScanPaths.insert(Self.standardized(path))
         saveExclusions()
     }
 
+    /// Restores a previously excluded filesystem path to model scans.
     public func restoreToScan(path: String) {
         excludedScanPaths.remove(Self.standardized(path))
         saveExclusions()
