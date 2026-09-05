@@ -91,6 +91,7 @@ struct ModelManagerView: View {
                     Image(systemName: "internaldrive.fill")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color.teal)
+                        .accessibilityHidden(true)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -127,6 +128,7 @@ struct ModelManagerView: View {
             .buttonStyle(.plain)
             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: Capsule())
             .help("Rescan storage directories for models")
+            .accessibilityLabel("Rescan storage")
 
             Button {
                 ModelLocationPicker.choose(for: model)
@@ -139,6 +141,7 @@ struct ModelManagerView: View {
             .buttonStyle(.plain)
             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: Capsule())
             .help("Add an external folder containing .gturbo bundles or .gguf files")
+            .accessibilityLabel("Add folder")
 
             Button {
                 model.activeSection = .modelHub
@@ -146,6 +149,7 @@ struct ModelManagerView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "shippingbox.fill")
                         .font(.system(size: 10))
+                        .accessibilityHidden(true)
                     Text("Discover Hub →")
                         .font(.system(size: 11, weight: .medium))
                 }
@@ -156,6 +160,7 @@ struct ModelManagerView: View {
             .background(TurboSparkTheme.accentColor.opacity(0.14), in: Capsule())
             .foregroundStyle(TurboSparkTheme.accentColor)
             .help("Browse the curated catalog and download models")
+            .accessibilityLabel("Discover models in hub")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -196,6 +201,9 @@ struct ModelManagerView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Show Favorites Only")
+                .accessibilityLabel("Filter favorites")
+                .accessibilityValue(showFavoritesOnly ? "Favorites only" : "All models")
+                .accessibilityAddTraits(showFavoritesOnly ? [.isButton, .isSelected] : .isButton)
 
                 Menu {
                     Picker("Architecture", selection: $architectureFilter) {
@@ -209,6 +217,7 @@ struct ModelManagerView: View {
                             .font(.system(size: 11))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8))
+                            .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 22)
@@ -216,6 +225,9 @@ struct ModelManagerView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .help("Filter by architecture")
+                .accessibilityLabel("Filter by architecture")
+                .accessibilityValue(architectureFilter.rawValue)
 
                 Menu {
                     Picker("Drafter", selection: $drafterFilter) {
@@ -229,6 +241,7 @@ struct ModelManagerView: View {
                             .font(.system(size: 11))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8))
+                            .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 22)
@@ -236,6 +249,9 @@ struct ModelManagerView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .help("Filter by drafter")
+                .accessibilityLabel("Filter by drafter")
+                .accessibilityValue(drafterFilter.rawValue)
 
                 Menu {
                     Picker("Source", selection: $sourceFilter) {
@@ -249,6 +265,7 @@ struct ModelManagerView: View {
                             .font(.system(size: 11))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8))
+                            .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 22)
@@ -256,6 +273,9 @@ struct ModelManagerView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .help("Filter by source")
+                .accessibilityLabel("Filter by source")
+                .accessibilityValue(sourceFilter.rawValue)
 
                 Spacer(minLength: 4)
 
@@ -278,6 +298,7 @@ struct ModelManagerView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.arrow.down")
                             .font(.system(size: 10))
+                            .accessibilityHidden(true)
                         Text(sortOption.rawValue)
                             .font(.system(size: 11))
                     }
@@ -287,6 +308,9 @@ struct ModelManagerView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .help("Sort and group models")
+                .accessibilityLabel("Sort and group models")
+                .accessibilityValue("\(sortOption.rawValue), \(groupOption.rawValue)")
             }
 
             // Tag filter bar if tags exist
@@ -340,10 +364,12 @@ struct ModelManagerView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
             TextField("Filter installed models...", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 11))
                 .frame(minWidth: 120, idealWidth: 160)
+                .accessibilityLabel("Filter installed models")
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
@@ -353,6 +379,8 @@ struct ModelManagerView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
+                .help("Clear search")
+                .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 8)

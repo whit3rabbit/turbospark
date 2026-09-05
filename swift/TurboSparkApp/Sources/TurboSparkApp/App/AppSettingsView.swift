@@ -96,9 +96,11 @@ public struct AppSettingsView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                     .font(.caption)
+                    .accessibilityHidden(true)
                 TextField("Search settings...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.caption)
+                    .accessibilityLabel("Search settings")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -134,6 +136,7 @@ public struct AppSettingsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
+                    .accessibilityAddTraits(.isHeader)
 
                 ForEach(filtered) { tab in
                     let isSelected = selectedTab == tab
@@ -145,6 +148,7 @@ public struct AppSettingsView: View {
                                 .font(.system(size: 13, weight: .medium))
                                 .frame(width: 18)
                                 .foregroundStyle(isSelected ? appearanceManager.activeAccentColor(isDark: false) : .secondary)
+                                .accessibilityHidden(true)
 
                             Text(tab.title)
                                 .font(.subheadline)
@@ -160,6 +164,10 @@ public struct AppSettingsView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .help(tab.title)
+                    .accessibilityLabel(tab.title)
+                    .accessibilityHint("Switches settings view to \(tab.title)")
+                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
                     .appPointerCursor()
                 }
             }

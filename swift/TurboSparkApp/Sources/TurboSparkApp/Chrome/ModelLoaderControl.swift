@@ -72,6 +72,7 @@ struct ModelLoaderControl: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.ui(points: 7, weight: .bold))
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 8)
             .frame(maxHeight: .infinity)
@@ -140,6 +141,7 @@ struct ModelLoaderControl: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.ui(points: 8, weight: .bold))
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
             .padding(.leading, 10)
             .padding(.trailing, 9)

@@ -112,6 +112,7 @@ struct InstalledModelDetailPaneView: View {
                         Image(systemName: visuals.iconSystemName)
                             .font(.caption2)
                             .foregroundStyle(visuals.accentColor)
+                            .accessibilityHidden(true)
                         Text(visuals.family)
                     }
                     .font(.subheadline)
@@ -119,6 +120,7 @@ struct InstalledModelDetailPaneView: View {
 
                     Text("\u{2022}")
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
 
                     Text(MetricFormat.storage(installedModel.installBytes))
                         .font(.subheadline.monospacedDigit())
@@ -126,6 +128,7 @@ struct InstalledModelDetailPaneView: View {
 
                     Text("\u{2022}")
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
 
                     Text(descriptor.storageSource.shortLabel)
                         .font(.caption.weight(.medium))
@@ -499,6 +502,8 @@ struct InstalledModelDetailPaneView: View {
                                     .font(.system(size: 8, weight: .bold))
                             }
                             .buttonStyle(.plain)
+                            .help("Remove tag \(tag)")
+                            .accessibilityLabel("Remove tag \(tag)")
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)

@@ -79,6 +79,7 @@ struct ModelCardView: View {
                         HStack(spacing: 3) {
                             Image(systemName: visuals.iconSystemName)
                                 .font(.system(size: 8, weight: .semibold))
+                                .accessibilityHidden(true)
                             Text(visuals.parameterTag)
                         }
                         .font(.caption2.weight(.medium))
@@ -203,6 +204,7 @@ struct ModelCardView: View {
             HStack(spacing: 2) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 7, weight: .bold))
+                    .accessibilityHidden(true)
                 Text("Resident")
             }
             .font(.caption2.weight(.semibold))
@@ -217,6 +219,7 @@ struct ModelCardView: View {
             HStack(spacing: 2) {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 7, weight: .bold))
+                    .accessibilityHidden(true)
                 Text("Streams")
             }
             .font(.caption2.weight(.semibold))

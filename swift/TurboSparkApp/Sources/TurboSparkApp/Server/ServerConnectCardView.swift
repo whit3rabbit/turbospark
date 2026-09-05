@@ -65,6 +65,9 @@ struct ServerConnectCardView: View {
                         }
                         .buttonStyle(.borderless)
                         .padding(8)
+                        .help("Copy code snippet to clipboard")
+                        .accessibilityLabel("Copy code snippet")
+                        .accessibilityValue(copiedID == snippet.id ? "Copied" : "")
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)

@@ -6,17 +6,23 @@ import XCTest
 @MainActor
 final class LocalizationAndAccessibilityTests: XCTestCase {
     func testAppLanguageEnumProperties() {
-        XCTAssertEqual(AppLanguage.allCases.count, 14) // system + 13 languages
+        XCTAssertEqual(AppLanguage.allCases.count, 22) // system + 21 languages
         XCTAssertTrue(AppLanguage.arabic.isRTL)
         XCTAssertEqual(AppLanguage.arabic.layoutDirection, .rightToLeft)
+        XCTAssertTrue(AppLanguage.hebrew.isRTL)
+        XCTAssertEqual(AppLanguage.hebrew.layoutDirection, .rightToLeft)
         XCTAssertFalse(AppLanguage.english.isRTL)
         XCTAssertEqual(AppLanguage.english.layoutDirection, .leftToRight)
         XCTAssertFalse(AppLanguage.spanish.isRTL)
         XCTAssertFalse(AppLanguage.japanese.isRTL)
         XCTAssertFalse(AppLanguage.simplifiedChinese.isRTL)
+        XCTAssertFalse(AppLanguage.dutch.isRTL)
 
         XCTAssertEqual(AppLanguage.resolve("es"), .spanish)
         XCTAssertEqual(AppLanguage.resolve("fr"), .french)
+        XCTAssertEqual(AppLanguage.resolve("nl"), .dutch)
+        XCTAssertEqual(AppLanguage.resolve("pl"), .polish)
+        XCTAssertEqual(AppLanguage.resolve("he"), .hebrew)
         XCTAssertEqual(AppLanguage.resolve("unknown"), .system)
     }
 
@@ -44,7 +50,8 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
         XCTAssertGreaterThan(strings.count, 50, "Expected comprehensive localization dictionary with > 50 strings")
 
         let expectedLanguages = [
-            "en", "es", "fr", "de", "it", "pt-BR", "ru", "ja", "ko", "zh-Hans", "zh-Hant", "ar", "hi"
+            "en", "es", "fr", "de", "it", "pt-BR", "ru", "ja", "ko", "zh-Hans", "zh-Hant", "ar", "hi",
+            "nl", "pl", "tr", "uk", "sv", "vi", "id", "he"
         ]
 
         for (key, entry) in strings {
@@ -101,8 +108,57 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
 
     func testLanguageDetector() {
         XCTAssertEqual(LanguageDetector.detectTextLanguage("This is a simple english sentence."), .english)
-        XCTAssertEqual(LanguageDetector.detectTextLanguage("Esta es una frase en español."), .spanish)
+        XCTAssertEqual(LanguageDetector.detectTextLanguage("Esta es una frase en espa\u{00F1}ol."), .spanish)
         XCTAssertTrue(LanguageDetector.isRTL(languageCode: "ar"))
         XCTAssertFalse(LanguageDetector.isRTL(languageCode: "en"))
     }
+
+    func testAccessibilityAndTooltipCatalogKeysCoverage() throws {
+        let bundle = Bundle.module
+        let xcstringsURL = bundle.url(forResource: "Localizable", withExtension: "xcstrings")
+            ?? URL(fileURLWithPath: "Sources/TurboSparkApp/Resources/Localizable.xcstrings")
+
+        guard FileManager.default.fileExists(atPath: xcstringsURL.path) else {
+            XCTFail("Localizable.xcstrings not found at path: \(xcstringsURL.path)")
+            return
+        }
+
+        let data = try Data(contentsOf: xcstringsURL)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let strings = json["strings"] as? [String: [String: Any]] else {
+            XCTFail("Failed to parse strings in Localizable.xcstrings")
+            return
+        }
+
+        let requiredKeys = [
+            "Personal", "Engine & Coding", "Installed Models", "Discover Models",
+            "Model Settings", "Installed", "Rescan", "Add Folder\u{2026}", "Discover Hub \u{2192}",
+            "Show Favorites Only", "Filter favorites", "Clear search",
+            "Filter installed models...", "Filter by architecture", "Filter by drafter",
+            "Filter by source", "Sort and group models", "Sort By", "Group By",
+            "Architecture", "Drafter", "Source", "Rescan storage", "Add folder",
+            "Discover models in hub", "Active model", "Manage installed models\u{2026}",
+            "Discover new models\u{2026}", "Open model folder\u{2026}", "Reload model",
+            "No models installed yet", "No model installed", "Select a model to load",
+            "Not loaded", "Load", "Load model", "Eject model", "Reasoning Effort",
+            "Fits Memory", "Streams Fast", "Resident", "Streams", "MoE Streaming",
+            "Custom Tags", "Organization & Notes", "Tag name", "Add Tag",
+            "Remove tag %@", "Copy model path", "Attach %@ to server",
+            "Copy code snippet", "Copy code snippet to clipboard", "Start Server",
+            "Stop Server", "Restart Server", "Server Running", "Server Stopped",
+            "Running", "Stopped", "Local Endpoint", "API Keys", "Filter",
+            "Preview %@", "Remove %@", "Install %@", "Switch to %@",
+            "Chat actions for %@", "Project actions for %@", "More prompt examples",
+            "Clear filters", "Dismiss error", "Dismiss notification", "Close preview",
+            "Attach files", "Send", "Stop", "Generating response", "Thinking",
+            "Thought process", "Approve", "Deny", "Always Allow", "Run", "View",
+            "Settings", "Share message", "Read message out loud", "Stop reading out loud",
+            "Copy message text", "Copy message"
+        ]
+
+        for key in requiredKeys {
+            XCTAssertNotNil(strings[key], "Required accessibility/tooltip key '\(key)' is missing from Localizable.xcstrings")
+        }
+    }
 }
+

@@ -31,6 +31,7 @@ struct ModelRecommendationRow: View {
                         HStack(spacing: 3) {
                             Image(systemName: "bolt.fill")
                                 .font(.caption2)
+                                .accessibilityHidden(true)
                             Text("MoE Streaming")
                         }
                         .font(.caption2.weight(.bold))
@@ -143,6 +144,7 @@ struct RecommendationVerdictBadge: View {
             HStack(spacing: 3) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 8, weight: .bold))
+                    .accessibilityHidden(true)
                 Text("Fits Memory")
             }
             .font(.caption2.weight(.semibold))
@@ -155,6 +157,7 @@ struct RecommendationVerdictBadge: View {
             HStack(spacing: 3) {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 8, weight: .bold))
+                    .accessibilityHidden(true)
                 Text("Streams Fast")
             }
             .font(.caption2.weight(.semibold))

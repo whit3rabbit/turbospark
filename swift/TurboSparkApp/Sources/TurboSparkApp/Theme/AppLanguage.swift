@@ -17,6 +17,14 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     case traditionalChinese = "zh-Hant"
     case arabic = "ar"
     case hindi = "hi"
+    case dutch = "nl"
+    case polish = "pl"
+    case turkish = "tr"
+    case ukrainian = "uk"
+    case swedish = "sv"
+    case vietnamese = "vi"
+    case indonesian = "id"
+    case hebrew = "he"
 
     /// UserDefaults key where language preference is persisted.
     public static let storageKey = "TurboSpark.language"
@@ -40,6 +48,14 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
         case .traditionalChinese: return "繁體中文"
         case .arabic: return "العربية (Arabic)"
         case .hindi: return "हिन्दी (Hindi)"
+        case .dutch: return "Nederlands"
+        case .polish: return "Polski"
+        case .turkish: return "Türkçe"
+        case .ukrainian: return "Українська"
+        case .swedish: return "Svenska"
+        case .vietnamese: return "Tiếng Việt"
+        case .indonesian: return "Bahasa Indonesia"
+        case .hebrew: return "עברית (Hebrew)"
         }
     }
 
@@ -56,7 +72,7 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     /// Whether the language uses right-to-left layout.
     public var isRTL: Bool {
         switch self {
-        case .arabic:
+        case .arabic, .hebrew:
             return true
         case .system:
             if #available(macOS 13.0, *) {
