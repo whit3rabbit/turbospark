@@ -672,6 +672,48 @@
         }
       ],
       "notes": "The seventh family and the sixth decode flow: dense 52-layer GQA with a three-sliding/one-full 2048 window, NoPE on the full layers, a separate attention output gate, CENTERED per-layer norms against a PLAIN final one, and a logit softcap behind an output multiplier. It REASONS BEFORE ANSWERING (a to=self message precedes its to=user one), so its protocol runs at 8,192 context and a 2,048 budget rather than the shared 4,096/1,024. A vision-language checkpoint whose text tower alone is ingested; its 815 vision tensors are excluded at repack."
+    },
+    {
+      "alias": "qwen4-reap288",
+      "name": "Qwen3.8-Flash-Next REAP-288 (MLX INT4)",
+      "family": "qwen4exp",
+      "source": {
+        "kind": "mlx",
+        "repo": "sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit",
+        "revision": "668f31bcc56bf9400e64c9463445eee47597c2d9",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json",
+          "merges.txt",
+          "vocab.json"
+        ]
+      },
+      "download_bytes": 73515816388,
+      "install_bytes": 74000000000,
+      "status": "verified",
+      "gates": [
+        "qwen4exp_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 2048,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 2509,
+          "decode_tok_s_min": 6.87,
+          "decode_tok_s_max": 7.53,
+          "measured_on": "2026-09-04",
+          "source": "this port, two readings, AC"
+        }
+      ],
+      "notes": "qwen4_exp (Qwen3.8-Flash-Next), REAP-288 is a pruned-expert variant (288 of the original expert count) at top-10 routing. Window is capped at 2048: the checkpoint's own compressed_attention.index_budget, not a chosen number (docs/QWEN4_EXP.md, docs/QWEN4_PHASE0.md), so long-synthesis (2940 tokens under this vocab) cannot run and this row is not comparable to any other family's. Router and shared-expert-gate ship raw BF16 on this checkpoint rather than pre-packed U32 like every other MoE family here; both are force-quantized to INT8 at repack time (docs/QWEN4_EXP.md's dtype-bug fix). No quality-gate row yet: same-process repeated greedy generation at 2048 context does not reproduce (fresh-process greedy runs agree byte for byte; within-process reruns after a discarded warmup diverge), a real finding rather than a test-authoring gap, still open as of this row. No speculative drafter exists for this checkpoint (288 experts, no MTP-ingestible head in any published MLX conversion)."
     }
   ]
 }

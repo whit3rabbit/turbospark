@@ -389,8 +389,10 @@ fn every_row_with_a_memory_oracle_gate_records_what_that_oracle_measured() {
             .measured_for("Apple M4 Max")
             .unwrap_or_else(|| panic!("{}: names a memory oracle gate but records no measured row for the machine those gates were run on", entry.alias));
         assert!(
-            m.context == 4096 || m.context == 8192,
-            "{}: measured at {} context, which is neither protocol window",
+            m.context == 4096 || m.context == 8192 || m.context == 2048,
+            "{}: measured at {} context, which is not one of this repo's per-family \
+             protocol windows (4096 shared, 8192 for dense llama/gpt-oss/muse_glimmer, \
+             2048 for qwen4_exp's own compressed_attention.index_budget)",
             entry.alias,
             m.context
         );
