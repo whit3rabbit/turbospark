@@ -1260,3 +1260,43 @@ cargo test -p turbospark-runtime
     generalize both to one predicate over "families with recurrent state
     and no rollback snapshot") before wiring prefix reuse to this family for
     any reason.
+
+34. **`qwen4_exp`'S QSA LAYER COMMITS MID-LAYER ABOVE THE INDEXER BUDGET,
+    AND THE BUDGET BOUNDARY IS UNOBSERVABLE IN OUTPUT.** Since 2026-09-05
+    `families/qwen4/attn.rs::encode_full_attention_block` takes `pass: &mut
+    PassEncoder` (every other family's block takes `&PassEncoder`): above
+    `index_top_k` complete blocks it scores the pooled blocks on the GPU,
+    `mem::replace`s the caller's encoder with a fresh one, commits and waits
+    on the old one for the score readback, runs `compute::select_blocks` on
+    the host, uploads the position list and dispatches
+    `attention_decode_indexed_partial`. That is the MoE router's own
+    readback shape one sublayer earlier, and it means a QSA layer above
+    budget costs two command buffers where every other layer costs one; the
+    GPU time lands in the same `cb1` bucket so `TURBOSPARK_PHASES=1` reads
+    the same, and the extra wait is in `gpu_wait`. Below budget the block is
+    the dense kernel byte for byte: the indexer's own GEMV, key copy and
+    block pooling run every token from position 0 but write only to the
+    indexer's buffers, which the frozen quality-gate row (perplexity 8.7224,
+    both digests) and `the_synthetic_flows_arithmetic_is_frozen` are the
+    proof of.
+    **A MUTATION THAT MOVES THE BOUNDARY ONE BLOCK EARLY SURVIVES EVERY
+    TEST, AND THAT IS AN INVARIANT, NOT A GAP.** `complete_blocks >
+    idx_block_topk` mutated to `>=` reddened nothing in
+    `real_forward_qwen4.rs`: at exactly `top_k` complete blocks
+    `select_blocks` keeps every block, the position list is the identity,
+    and the indexed kernel is bit-identical to the dense one on that list
+    (`crates/gpu/tests/attention_indexed_parity.rs` pins it). The only
+    observable of that mutation is the extra commit, so no output-level test
+    can or should see it; a throughput test could. The two mutations that
+    DO matter -- never selecting, and uploading the identity list instead of
+    the mask -- redden exactly `sparse_and_forced_dense_agree_below_budget_and_diverge_above`
+    and `the_indexer_projection_moves_the_output_only_above_budget` (plus
+    the capacity assert on the position buffer for the second), which is
+    what those two tests are for.
+    **`TURBOSPARK_QSA_FORCE_DENSE=1` / `set_qsa_force_dense` is a
+    DIAGNOSTIC ARM, not a mode.** It attends densely above budget as if
+    every block were selected. No reference engine for this 125B checkpoint
+    fits this machine, so the KL between the two arms past 2,051 tokens is
+    the one quantitative instrument the sparse path has on a real install
+    (`crates/bench/tests/qwen4exp_qsa_probe.rs`): garbage on a broken
+    kernel, small on a working one, and never zero.

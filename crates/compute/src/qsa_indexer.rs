@@ -1,7 +1,8 @@
 //! CPU reference for `qwen4_exp`'s QSA (query-sparse attention) block
-//! indexer (`docs/QWEN4_PHASE0.md` section 5). PORT-LOCAL: no decode flow
-//! reads `self_attn.indexer.*` yet (`families/qwen4/mod.rs`'s own module
-//! doc), and this is groundwork for that, not a wired kernel.
+//! indexer (`docs/QWEN4_PHASE0.md` section 5). PORT-LOCAL. The GPU twins
+//! of `pool_blocks_mean` and `score_blocks` (`crates/gpu`'s `qsa_indexer.metal`)
+//! and `select_blocks` ITSELF, on the host, run in `families/qwen4/attn.rs`
+//! since 2026-09-05.
 //!
 //! **SCOPE, READ BEFORE EXTENDING.** Section 5's pseudocode is:
 //!

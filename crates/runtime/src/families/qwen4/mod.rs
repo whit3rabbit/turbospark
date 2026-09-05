@@ -107,19 +107,27 @@
 //! argument against touching a verified shared flow for what looks like a
 //! parameter change.
 //!
-//! ## QSA-as-dense-attention (`attn.rs`, mask-1 layers, 12 of 48)
+//! ## QSA (`attn.rs`, mask-1 layers, 12 of 48)
 //!
-//! **NO INDEXER CODE IN THIS PORT.** `docs/QWEN4_PHASE0.md` section 5
-//! proves from source (two independent references, same conclusion) that
-//! below `indexer_budget` (2,048 tokens) QSA's block selection is a no-op
-//! and the layer is bit-for-bit dense causal attention. This flow REFUSES
-//! any context above that budget at open, which is what licenses never
-//! reading `self_attn.indexer.*` at all -- not an approximation of QSA,
-//! the exact function it computes under the budget. What runs is
-//! `families/qwen/attn.rs::encode_full_attention_block`'s exact shape
-//! (packed `[query; gate]` in `q_proj`, per-head `q_norm`/`k_norm`,
+//! Query-sparse attention, `docs/QWEN4_PHASE0.md` section 5. Attention
+//! proper is `families/qwen/attn.rs::encode_full_attention_block`'s exact
+//! shape (packed `[query; gate]` in `q_proj`, per-head `q_norm`/`k_norm`,
 //! `rope_neox_subdim` at `rotary_dim = 64`), CENTERED norms, 24 q heads
-//! over 2 kv, `head_dim` 256, `theta` 1e7.
+//! over 2 kv, `head_dim` 256, `theta` 1e7. In front of it sits the
+//! INDEXER: every token `index_qk_proj` projects 4 query heads and one raw
+//! key head of 128; the key goes into `gpu::QsaIndexerCacheManager`'s
+//! per-layer history and each newly completed block of 4 keys is pooled,
+//! centered-normed and roped at its first token's position
+//! (`gpu::encode_qsa_advance_blocks`). Below `index_top_k` complete blocks
+//! (`visible <= 2051`) selection is a no-op by construction and the dense
+//! kernel runs unchanged, so this flow's below-budget output is
+//! byte-identical to what it was before the indexer was wired. Above it the
+//! query is normed and roped, `qsa_score_blocks_fp16` scores every block,
+//! the pass is committed and waited on for the score readback,
+//! `compute::select_blocks` keeps the top `index_top_k` blocks plus the
+//! ragged tail, and `attention_decode_indexed_partial` attends over that
+//! position list. `TURBOSPARK_QSA_FORCE_DENSE=1` keeps the dense kernel
+//! above budget, as a diagnostic arm.
 //!
 //! ## MoE (`moe.rs`, every layer)
 //!
@@ -137,10 +145,10 @@
 //!
 //! ## Deliberately unsupported in this cut, refused by name at open
 //!
-//! Context above `indexer_budget` (QSA math above), an image prompt (this
-//! checkpoint is a VLM and only the text tower is ingested, as `qwen3_5`
-//! already does), chunked prefill, and speculative decoding. Sequential
-//! decode only.
+//! An image prompt (this checkpoint is a VLM and only the text tower is
+//! ingested, as `qwen3_5` already does), chunked prefill, and speculative
+//! decoding. Sequential decode only; a prompt longer than the indexer
+//! budget runs one `produce` per token through the QSA path above.
 
 pub(crate) mod attn;
 pub(crate) mod hc;

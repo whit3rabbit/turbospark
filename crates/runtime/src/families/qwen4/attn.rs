@@ -6,12 +6,14 @@
 //! see `mod.rs`'s "## GDN" / "## QSA-as-dense-attention" sections for what
 //! differs and why neither is shared code with that file.
 
+use std::time::Instant;
+
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::qwen4::state::RealQwen4State;
 use crate::families::qwen4::{layer_tensor, RMS_EPS};
 use crate::real_forward_dispatch::encode_gemv_any;
-use crate::real_forward_types::{DecodeScratch, RealForwardError};
+use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
 use crate::real_forward_utils::{entry, norm_view, resident_matrix};
 
 /// Mask-2 layer: gated DeltaNet. Identical dataflow to
@@ -155,26 +157,42 @@ pub(crate) fn encode_linear_block(
     )
 }
 
-/// Mask-1 layer: QSA below `indexer_budget`, exactly dense causal
-/// attention (`mod.rs`'s "## QSA-as-dense-attention" -- no indexer tensor
-/// is read anywhere in this function). Packed `[query; gate]` in
-/// `q_proj`, per-head `q_norm`/`k_norm` CENTERED (unconditionally --
-/// unlike `families/qwen/attn.rs`, this family has no plain-norm sibling
-/// tensor sharing this call, so there is no `QkNormConvention` parameter),
-/// `rope_neox_subdim` at `rotary_dim = 64`, text-only (`RopePosition` is
-/// always sequential; no mRoPE, since vision is out of scope for this
-/// cut).
+/// Mask-1 layer: QSA (query-sparse attention), `docs/QWEN4_PHASE0.md`
+/// section 5. Packed `[query; gate]` in `q_proj`, per-head `q_norm`/`k_norm`
+/// CENTERED (unconditionally -- unlike `families/qwen/attn.rs`, this family
+/// has no plain-norm sibling tensor sharing this call, so there is no
+/// `QkNormConvention` parameter), `rope_neox_subdim` at `rotary_dim = 64`,
+/// text-only (`RopePosition` is always sequential; no mRoPE, since vision
+/// is out of scope for this cut).
+///
+/// **THE INDEXER RUNS EVERY TOKEN; SELECTION RUNS ONLY ABOVE BUDGET.**
+/// Every token projects `index_qk_proj`, stores its raw key in the
+/// indexer cache and pools/norms/ropes whichever blocks just completed, so
+/// the pooled-block cache is current the moment the budget is crossed. At
+/// or below `index_top_k` complete blocks (`visible <= 2051` on the real
+/// checkpoint) nothing is scored and the trunk's dispatch stream is what it
+/// was before the indexer existed: dense causal attention, byte for byte,
+/// which is what keeps every frozen digest where it is. Above it: the
+/// indexer query is normed and roped, `qsa_score_blocks_fp16` scores every
+/// complete block, the pass is COMMITTED AND WAITED ON mid-layer for the
+/// score readback (the MoE router's own precedent, one layer down), the
+/// host runs `select_blocks`, and `attention_decode_indexed_partial`
+/// attends over the selected positions in place of the dense kernel.
+///
+/// `pass` is `&mut` for that mid-layer commit: the caller's encoder is
+/// swapped for a fresh one and keeps encoding into it afterwards.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_full_attention_block(
     context: &mut gpu::MetalContext,
-    pass: &gpu::PassEncoder,
+    pass: &mut gpu::PassEncoder,
     weights: &gpu::ResidentGpuWeights,
     index: &ResidentIndex,
     arch: &ArchConfig,
-    qwen4: &RealQwen4State,
+    qwen4: &mut RealQwen4State,
     mixed: (&gpu::MetalBuffer, u64),
     scratch: &DecodeScratch,
     kv: &gpu::KvCacheManager,
+    phases: &mut PhaseCounters,
     layer: usize,
     position: usize,
 ) -> Result<(), RealForwardError> {
@@ -185,8 +203,70 @@ pub(crate) fn encode_full_attention_block(
     let head_dim = arch.full_head_dim as u32;
     let q_dim = (num_heads * head_dim) as usize;
     let kv_dim = (num_kv * head_dim) as usize;
+    let theta = arch.full_rope_theta as f32;
     let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
 
+    // --- The indexer, every token: raw key into the cache, new blocks pooled.
+    let idx_heads = qwen4.idx_heads;
+    let idx_dim = qwen4.idx_head_dim;
+    let compress = qwen4.idx_compress;
+    let visible = position + 1;
+    let complete_blocks = visible / compress as usize;
+    encode_gemv_any(
+        context,
+        pass,
+        weights,
+        index,
+        &name("indexer.index_qk_proj.weight"),
+        ((idx_heads + 1) * idx_dim) as usize,
+        hidden,
+        mixed,
+        (&qwen4.idx_qk, 0),
+    )?;
+    // The raw (un-normed, un-roped) key is the projection's LAST head. A
+    // plain strided row copy; the kernel's name says what first needed it.
+    let (raw_buf, raw_off) = qwen4.qsa.raw_key_slot(layer, position);
+    gpu::encode_dflash_copy_rows(
+        context,
+        pass,
+        (&qwen4.idx_qk, (idx_heads * idx_dim) as u64 * 2),
+        (raw_buf, raw_off as u64),
+        1,
+        idx_dim,
+        idx_dim,
+    )
+    .map_err(gpu_err)?;
+    let pooled_count = qwen4.qsa.pooled_block_count(layer);
+    if complete_blocks > pooled_count {
+        let k_norm = norm_view(
+            weights,
+            index,
+            &name("indexer.k_layernorm.weight"),
+            idx_dim as usize,
+        )?;
+        gpu::encode_qsa_advance_blocks(
+            context,
+            pass,
+            (qwen4.qsa.raw_keys_view(layer), 0),
+            (qwen4.qsa.pooled_blocks_buffer(layer), 0),
+            k_norm,
+            compress,
+            idx_dim,
+            qwen4.rotary_dim,
+            theta,
+            RMS_EPS,
+            pooled_count as u32,
+            (complete_blocks - pooled_count) as u32,
+            0,
+        )
+        .map_err(gpu_err)?;
+        // Recorded at encode time: the dispatch precedes every reader of
+        // these rows in this pass, and a `?` that drops the pass uncommitted
+        // fails the whole token, after which `reset()` rewinds this cursor.
+        qwen4.qsa.advance_pooled_blocks(layer, complete_blocks);
+    }
+
+    // --- Attention proper: projections, norms, RoPE, KV write.
     let (k_buf, k_off) = kv.k_slot(layer, position);
     let (v_buf, v_off) = kv.v_slot(layer, position);
     encode_gemv_any(
@@ -238,7 +318,6 @@ pub(crate) fn encode_full_attention_block(
         .map_err(gpu_err)?;
     }
 
-    let theta = arch.full_rope_theta as f32;
     for (data, heads) in [
         ((&scratch.q, 0u64), num_heads),
         ((k_buf, k_off as u64), num_kv),
@@ -256,24 +335,133 @@ pub(crate) fn encode_full_attention_block(
         .map_err(gpu_err)?;
     }
 
-    gpu::encode_attention_decode(
-        context,
-        pass,
-        (&scratch.q, 0),
-        k_buf,
-        v_buf,
-        &scratch.attn,
-        (&scratch.attn_out, 0),
-        head_dim,
-        num_heads,
-        num_kv,
-        (position + 1) as u32,
-        0,
-        0,
-        arch.attention_scale as f32,
-        None,
-    )
-    .map_err(gpu_err)?;
+    // --- Block selection, above budget only.
+    let sparse = complete_blocks > qwen4.idx_block_topk && !qwen4.qsa_force_dense;
+    if sparse {
+        // The indexer query: per-head centered norm, then the trunk's own
+        // RoPE at the current position (one shared object in the reference,
+        // `crates/compute/src/qsa_indexer.rs`'s module doc).
+        let q_norm = norm_view(
+            weights,
+            index,
+            &name("indexer.q_layernorm.weight"),
+            idx_dim as usize,
+        )?;
+        gpu::encode_rms_norm_bf16w_perhead_centered(
+            context,
+            pass,
+            (&qwen4.idx_qk, 0),
+            q_norm,
+            (&qwen4.idx_qk, 0),
+            idx_heads,
+            idx_dim,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_rope_neox_subdim(
+            context,
+            pass,
+            (&qwen4.idx_qk, 0),
+            position as u32,
+            idx_heads,
+            idx_dim,
+            qwen4.rotary_dim,
+            theta,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_qsa_score_blocks(
+            context,
+            pass,
+            (&qwen4.idx_qk, 0),
+            (qwen4.qsa.pooled_blocks_buffer(layer), 0),
+            (&qwen4.qsa_scores, 0),
+            idx_heads,
+            idx_dim,
+            complete_blocks as u32,
+        )
+        .map_err(gpu_err)?;
+
+        // Top-k is a host round trip, as it is for the MoE router: commit
+        // what has been encoded so far and wait for the scores. The fresh
+        // encoder keeps the caller's label so the phase report reads the
+        // same; its GPU time lands in the same `cb1` bucket.
+        let done = std::mem::replace(pass, context.begin_pass_labeled("cb1 (attn+router)"));
+        let t_wait = Instant::now();
+        phases.cb1_gpu_nanos += (done.commit().wait_with_gpu_time() * 1e9) as u64;
+        phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+
+        let scores = gpu::read_f32_buffer(&qwen4.qsa_scores, complete_blocks);
+        // AGENTS.md Gotcha 59: a NaN score would read as a top-ranked block
+        // in any sort; refuse it by name before `select_blocks` sees it.
+        if let Some(bad) = scores.iter().position(|s| !s.is_finite()) {
+            return Err(RealForwardError::Unsupported(format!(
+                "layer {layer} position {position}: QSA indexer score for block {bad} is not \
+                 finite ({}); the sparse path cannot select over it",
+                scores[bad]
+            )));
+        }
+        let mask =
+            compute::select_blocks(&scores, visible, compress as usize, qwen4.idx_block_topk);
+        let positions: Vec<u32> = mask
+            .iter()
+            .enumerate()
+            .filter(|(_, &selected)| selected)
+            .map(|(p, _)| p as u32)
+            .collect();
+        debug_assert!(positions.iter().all(|&p| (p as usize) < visible));
+        let capacity = (qwen4.qsa_positions.length() / 4) as usize;
+        assert!(
+            !positions.is_empty() && positions.len() <= capacity,
+            "QSA selected {} positions against a {capacity}-entry buffer",
+            positions.len()
+        );
+        // ONE position buffer for all QSA layers, written from the host
+        // while the previous layer's indexed attention may still be
+        // encoded: safe only because `produce.rs` commits and WAITS on
+        // every layer's pass at its router readback before the next layer
+        // encodes anything, so the dispatch that read the old list has
+        // completed by the time this overwrites it. A driver that stops
+        // waiting per layer (chunked prefill, a pipelined router) needs a
+        // buffer per QSA layer instead.
+        let bytes: Vec<u8> = positions.iter().flat_map(|p| p.to_le_bytes()).collect();
+        gpu::write_buffer_bytes(&qwen4.qsa_positions, 0, &bytes);
+
+        gpu::encode_attention_decode_indexed(
+            context,
+            pass,
+            (&scratch.q, 0),
+            k_buf,
+            v_buf,
+            (&qwen4.qsa_positions, 0),
+            positions.len() as u32,
+            &scratch.attn,
+            (&scratch.attn_out, 0),
+            head_dim,
+            num_heads,
+            num_kv,
+            arch.attention_scale as f32,
+        )
+        .map_err(gpu_err)?;
+    } else {
+        gpu::encode_attention_decode(
+            context,
+            pass,
+            (&scratch.q, 0),
+            k_buf,
+            v_buf,
+            &scratch.attn,
+            (&scratch.attn_out, 0),
+            head_dim,
+            num_heads,
+            num_kv,
+            visible as u32,
+            0,
+            0,
+            arch.attention_scale as f32,
+            None,
+        )
+        .map_err(gpu_err)?;
+    }
     gpu::encode_sigmoid_gate_mul(
         context,
         pass,

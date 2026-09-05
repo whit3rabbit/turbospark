@@ -143,7 +143,9 @@ Sampled output (CLI defaults, `--seed 20260721`), also coherent:
 has no QSA indexer implemented, so context above `compressed_attention.index_budget`
 (2048 on this checkpoint) is refused by name rather than silently degrading
 (`docs/QWEN4_PHASE0.md` section 5). This is unrelated to the dtype bug and
-was already known before this session.
+was already known before this session. **(Superseded 2026-09-05: the indexer
+is wired and the refusal is gone; see "QSA wired end to end" at the end of
+this document. The paragraph stays as the record of what this session saw.)**
 
 **No memory oracle, quality gate, or throughput number exists for this
 family yet.** The two runs above are a coherence smoke test on one real
@@ -902,3 +904,152 @@ sampled smoke at `--max-context 4096` with a prompt past 2,051 tokens; a
 force-dense diagnostic seam comparing logits with and without selection is
 the only quantitative instrument available above budget, since no 4-bit
 copy of this 125B checkpoint fits this machine for a cross-engine KL.
+
+## QSA wired end to end (2026-09-05, Phase B)
+
+The two halves met and were wired the same day: `families/qwen4/attn.rs`
+now runs the indexer and, above the budget, sparse attention. `RealForwardRunner::open`
+no longer refuses `--max-context` above `index_budget`; it requires the
+three `self_attn.indexer.*` tensors per QSA layer instead (INT4 projection,
+two BF16 norms, all already in the real install).
+
+### What runs, per QSA layer, per token
+
+1. `index_qk_proj` (640 rows: 4 query heads and one key head of 128) from
+   the hyper-connection's `mixed`; the raw key head is copied into
+   `QsaIndexerCacheManager`'s history at this position
+   (`copy_strided_rows_fp16`, one row).
+2. If `(position + 1) / 4` exceeds the layer's pooled-block cursor,
+   `encode_qsa_advance_blocks` pools, centered-norms and ropes the newly
+   completed blocks (one RoPE dispatch per block, at the block's first
+   position) and the cursor advances.
+3. The trunk's q/k/v projections, norms, RoPE and KV write, unchanged.
+4. At or below 512 complete blocks (`visible <= 2051`): the dense kernel,
+   unchanged. Above: the indexer query is normed and roped,
+   `qsa_score_blocks_fp16` scores every complete block, the pass is
+   COMMITTED AND WAITED ON (the encoder is swapped for a fresh one through
+   `&mut PassEncoder`, the MoE router's own readback shape), the host runs
+   `compute::select_blocks`, writes the sorted position list (at most
+   2,051 entries) and dispatches `attention_decode_indexed_partial`.
+5. Output gate and `o_proj`, unchanged.
+
+`TURBOSPARK_QSA_FORCE_DENSE=1` (or `RealForwardRunner::set_qsa_force_dense`)
+keeps the dense kernel above budget as a diagnostic arm.
+
+### Verified on the synthetic fixture
+
+The fixture now carries the three indexer tensors (3 query heads plus one
+key head of 16, compress 4) and takes an `index_budget` parameter, so a
+test crosses the budget at position 19 instead of 2,051
+(`build_synthetic_qwen4_exp_decode_install_with_indexer_budget`).
+`crates/runtime/tests/real_forward_qwen4.rs`, 17 tests green:
+
+- `the_synthetic_flows_arithmetic_is_frozen` reproduced its frozen hash
+  UNCHANGED with the indexer running every token below budget: the
+  below-budget exactness claim, on the fixture.
+- `sparse_and_forced_dense_agree_below_budget_and_diverge_above`: one
+  fixed token sequence through both arms; bitwise equal at positions 0 to
+  18, different at every position 19 to 27.
+- `the_indexer_projection_moves_the_output_only_above_budget`: patching
+  `index_qk_proj` moves the tiny-budget decode and leaves the default-budget
+  decode bit-identical.
+- `a_tiny_indexer_budget_decodes_sparsely_past_it`: greedy through every
+  `visible % 4` tail phase, finite throughout.
+
+Three mutations: "never sparse" reddens exactly the two tests built to see
+it; "identity list instead of the mask" reddens those two plus the
+position-buffer capacity assert; "`>=` instead of `>`" (select one block
+early) SURVIVES, and legitimately so: at exactly `top_k` complete blocks
+`select_blocks` keeps every block, the list is the identity, and the
+indexed kernel is bit-identical to the dense one on it. The boundary is
+unobservable in output and costs only the extra commit
+(`crates/runtime/CLAUDE.md` Gotcha 34).
+
+### Verified on the real install
+
+Greedy smoke, `long-synthesis` prompt (2,940 tokens, 889 of them past the
+budget), `--max-context 4096 --max-new 256`: coherent and on topic
+throughout, an accurate summary of the prompt's own document, stopped at
+`MaxTokens` as a summary of that length should. Footer:
+
+```
+[stop=MaxTokens prefill=2940tok/506.58s new=256tok decode=39.88s tok/s=6.419]
+```
+
+Read the prefill number as the price of NO chunked prefill on this family,
+not as a QSA cost: 2,940 sequential `produce` calls at 5.8 tok/s, each a
+full decode step with expert streaming (48 slots, `auto`), and above the
+budget each QSA layer adds one commit and wait. Chunked prefill for this
+family is the item that would move it.
+
+Sampled smoke, same prompt, CLI defaults (T 0.2, top-k 64, top-p 0.95, seed
+20260721): coherent throughout, the same summary in different words, stopped
+at `MaxTokens`. Footer:
+
+```
+[stop=MaxTokens prefill=2940tok/361.01s new=256tok decode=31.54s tok/s=8.117]
+```
+
+(The faster prefill is the expert cache being warm from the greedy run
+that preceded it, Gotcha 20's shape; neither number is a benchmark.)
+
+`qwen4exp_quality_gate`, at its frozen 2,048-token window: reference-answer
+perplexity 8.7224, greedy digest `9f9ed49203dda1aad1b379eb503a3dd8b565d53ccc38ff417fb35e43ed9e0795`,
+sampled digest `4cf6da5560936e306df09fa09bca7bd19950429e910cee2b66c93c8ed0335772`,
+all three the frozen values to the last character -- with the indexer's
+projection, key copy and block pooling now running on every one of those
+tokens. That is the below-budget exactness claim on the real model.
+
+`qwen4exp_memory_oracle`, same window and 16 slots: session peak 2521 MiB
+against the 3000 MiB ceiling, decode 9.4 and 9.8 tok/s on the two cases
+(floor 5), steady-state replay +0.02 MiB. The two readings frozen on
+2026-09-04 were 2503 and 2509 MiB; the indexer's raw-key and pooled-block
+caches at 2,048 context are about 7.5 MiB (12 layers x 2,048 x 256 B plus
+12 x 512 x 256 B) plus their scratch, which accounts for the move.
+
+### The force-dense probe: the one quantitative instrument above budget
+
+No reference engine for this checkpoint fits this machine (a 4-bit MLX copy
+is ~65 GB), so there is no cross-engine KL row for the sparse path. The
+substitute is `crates/bench/tests/qwen4exp_qsa_probe.rs`: the same
+`long-synthesis` prompt teacher-forced twice through one runner, once under
+`set_qsa_force_dense(true)` and once sparse, `KL(sparse || dense)` in nats
+and argmax agreement at 23 sampled positions (two below the budget, the
+first eight above it, then every 64th). 943 s for both passes. Measured
+2026-09-05:
+
+```
+position  2039: below budget, bitwise identical
+position  2050: below budget, bitwise identical
+position  2051: KL 0.00010 nats   ... 2058: 0.00002   (first eight sparse positions)
+position  2499: KL 0.00882        2691: 0.09299 (max)   2755: 0.01440
+21 positions above budget: KL mean 0.00577, median 0.00002, max 0.09299 nats;
+argmax agreement 21/21
+```
+
+How to read it: the two below-budget positions being BITWISE identical is
+the exactness claim on the real install, one layer deeper than the quality
+gate (which only reaches 574 tokens). Above the budget the arms differ
+(asserted), by a little: dropping the lowest-scoring blocks of a 2,500-token
+prefix moves the next-token distribution by hundredths of a nat at most and
+never changes the argmax in this sample, which is what a selector the
+checkpoint was trained under should do. A broken kernel reads as nats, not
+milli-nats. The probe asserts finiteness, below-budget identity and
+above-budget difference, and REPORTS the KL rather than thresholding it
+(Gotcha 38); a future reading far from these numbers is the thing to
+investigate, not a test to loosen.
+
+### What remains
+
+- Chunked prefill for this family: a 2,940-token prompt is 2,940 sequential
+  decode steps (8 minutes cold here). Every other MoE family has a driver;
+  this one would need the indexer's per-token key write and block pooling
+  expressed per micro-batch, and a position list per QSA layer (the single
+  shared buffer relies on the per-layer wait, `attn.rs`'s comment at the
+  write).
+- The bench window: `QWEN4_EXP_MAX_CONTEXT` stays 2,048 so the frozen
+  memory-oracle and quality-gate rows keep meaning what they say. Moving it
+  to `PROTOCOL_MAX_CONTEXT` lets `long-synthesis` into the protocol and
+  re-freezes every row of this family, a decision of its own.
+- A GPU top-k would remove the mid-layer commit (12 per token above budget);
+  not built, no evidence yet that it is the bottleneck.

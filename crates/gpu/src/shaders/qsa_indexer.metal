@@ -5,10 +5,9 @@ using namespace metal;
 // qsa_indexer -- `qwen4_exp`'s QSA (query-sparse attention) block indexer:
 // pooling and scoring (`docs/QWEN4_PHASE0.md` section 5,
 // `crates/compute/src/qsa_indexer.rs`'s CPU reference). PORT-LOCAL: the
-// Swift engine has no architecture with this mechanism, and this port has
-// no decode flow reading `self_attn.indexer.*` yet -- these two kernels are
-// groundwork, matched to the CPU reference, not yet dispatched from any
-// family's attention path. Block SELECTION (top-k over `scores`) stays
+// Swift engine has no architecture with this mechanism. Matched to the CPU
+// reference and dispatched from `families/qwen4/attn.rs` since 2026-09-05
+// (pooling as blocks complete, scoring above the budget). Block SELECTION (top-k over `scores`) stays
 // host-side, matching this port's existing MoE router precedent (top-k is
 // already a host round trip there); no kernel for it exists here either.
 //
@@ -18,7 +17,7 @@ using namespace metal;
 // exist as separate kernels/dispatches in this crate
 // (`rmsnorm_bf16w_centered`, `rope_neox_subdim`) and are called once per
 // head (query) or once per block (pooled key, since blocks do not share a
-// position) by whatever wires this indexer into a real forward pass.
+// position) by `families/qwen4/attn.rs` through `encode_qsa_advance_blocks`.
 // ============================================================================
 
 // pooled[b*D+d] = mean over t in [0, compress_ratio) of keys[(b*compress_ratio+t)*D+d]

@@ -220,15 +220,15 @@ pub fn run_quality_gate_with_assistant_prefix(
 
 /// [`run_quality_gate_with_assistant_prefix`] at a family-specific KV window.
 ///
-/// `qwen4_exp` needs this: `RealForwardRunner::open` refuses a context above
-/// the checkpoint's own `compressed_attention.index_budget` (2,048 on this
-/// family) rather than degrading quietly, so opening at the shared
-/// `PROTOCOL_MAX_CONTEXT` (4,096) fails before a single token runs -- this is
-/// not a KV-sizing convenience, the runner cannot open at all above the
-/// budget. The gate's own corpus (this family's `short-explanation` prompt
-/// plus the reference answer) is 62 + 512 = 574 tokens, comfortably inside
-/// 2,048, so the window only needs to be legal at open, not larger than the
-/// shared one.
+/// `qwen4_exp` is why this exists: until 2026-09-05 `RealForwardRunner::open`
+/// refused a context above the checkpoint's own
+/// `compressed_attention.index_budget` (2,048 on this family), so opening at
+/// the shared `PROTOCOL_MAX_CONTEXT` (4,096) failed before a single token
+/// ran. The QSA indexer is wired now and the family opens at any window, but
+/// its frozen rows were measured at 2,048 and stay pinned there
+/// (`real_model_params.rs`) until they are re-frozen. The gate's own corpus
+/// (this family's `short-explanation` prompt plus the reference answer) is
+/// 62 + 512 = 574 tokens, comfortably inside 2,048 either way.
 ///
 /// **THE SAME WINDOW MUST REACH `generation_digest` TOO.** The digest's
 /// `run_raw_completion` call enforces its own limit independently of the KV

@@ -57,6 +57,17 @@ when this file gets updated relative to the version bump and the tag.
   turn is running.
 
 ### Added
+- `qwen4_exp` (Qwen3.8-Flash-Next) runs its QSA (query-sparse attention)
+  indexer above `indexer_budget` instead of refusing context past 2,048
+  tokens: every token projects and caches the indexer key and pools newly
+  completed 4-token blocks, and above 512 complete blocks the pooled blocks
+  are scored, the top 512 plus the ragged tail selected on the host, and a
+  new indexed decode-attention kernel (`attention_decode_indexed_partial`,
+  the dense kernel walking a position list) attends over them. At or below
+  the budget the dispatch stream is byte-identical to before, which the
+  frozen quality-gate row reproducing proves. `TURBOSPARK_QSA_FORCE_DENSE=1`
+  keeps dense attention above budget as a diagnostic arm. See
+  `docs/QWEN4_EXP.md`'s QSA sections.
 - Server-side `presence_penalty`, `frequency_penalty`, and `min_p` on
   `POST /v1/chat/completions`, honored end to end by `turbospark-selection`.
   The two penalties follow llama.cpp's convention (the GENERATED suffix of

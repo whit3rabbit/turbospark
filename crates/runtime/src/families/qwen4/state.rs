@@ -57,6 +57,34 @@ pub(crate) struct RealQwen4State {
     /// `[2 * num_heads * full_head_dim]`: QSA's packed query/gate rows.
     pub(crate) q_packed: gpu::MetalBuffer,
     pub(crate) attn_gate: gpu::MetalBuffer,
+
+    /// The QSA indexer's persistent state per QSA layer: the raw key
+    /// history and the incrementally pooled/normed/roped block cache
+    /// (`docs/QWEN4_PHASE0.md` section 5). Positions are the KV cache's,
+    /// never its own (its module doc says why).
+    pub(crate) qsa: gpu::QsaIndexerCacheManager,
+    /// `compressed_attention.index_n_heads` / `index_head_dim` /
+    /// `csa_compress_rate`, and `index_top_k` in BLOCKS.
+    pub(crate) idx_heads: u32,
+    pub(crate) idx_head_dim: u32,
+    pub(crate) idx_compress: u32,
+    pub(crate) idx_block_topk: usize,
+    /// `index_qk_proj`'s output, `[(idx_heads + 1) * idx_head_dim]`: the
+    /// query heads first, the one raw key head last.
+    pub(crate) idx_qk: gpu::MetalBuffer,
+    /// One FP32 score per complete block, `[max_context / idx_compress]`.
+    pub(crate) qsa_scores: gpu::MetalBuffer,
+    /// The selected positions, `[idx_block_topk * idx_compress + idx_compress]`
+    /// `u32`s: the most block selection ever keeps (every chosen block plus
+    /// the ragged tail).
+    pub(crate) qsa_positions: gpu::MetalBuffer,
+    /// DIAGNOSTIC: attend densely above budget as if the indexer selected
+    /// everything. `TURBOSPARK_QSA_FORCE_DENSE=1` at open, or
+    /// `RealForwardRunner::set_qsa_force_dense`. The only quantitative
+    /// instrument for the sparse path on a real install (no reference
+    /// engine for this checkpoint fits this machine): the KL between the
+    /// two arms past 2,051 tokens.
+    pub(crate) qsa_force_dense: bool,
     pub(crate) gdn_qkv_raw: gpu::MetalBuffer,
     pub(crate) gdn_conv_out: gpu::MetalBuffer,
     pub(crate) gdn_z: gpu::MetalBuffer,
@@ -144,30 +172,42 @@ impl RealQwen4State {
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
 
-        // **NO INDEXER CODE EXISTS IN THIS PORT** (`mod.rs`'s "##
-        // QSA-as-dense-attention"): below `indexer_budget`,
-        // `docs/QWEN4_PHASE0.md` section 5 proves from source that QSA's
-        // block selection is a no-op and every full-attention layer is
-        // exactly dense causal attention. Refusing above that budget is
-        // what licenses reading no `self_attn.indexer.*` tensor anywhere
-        // in this flow -- not an approximation of QSA, the exact function
-        // it computes under the budget. Three tokens of margin exist in
-        // the reference's own proof (`visible <= 2051`); this refuses at
-        // the round number the checkpoint itself declares instead of
-        // trying to claim those three.
-        let budget = arch.compressed_attention.index_budget;
-        if budget <= 0 {
-            return unsupported(
-                "qwen4_exp declares no positive indexer_budget; this flow needs one to refuse \
-                 context above it"
-                    .to_string(),
-            );
-        }
-        if max_context > budget as usize {
+        // The QSA indexer's shape (`docs/QWEN4_PHASE0.md` section 5). Below
+        // `index_budget` block selection is a no-op and every QSA layer is
+        // exactly dense causal attention; above it `attn.rs` scores the
+        // pooled blocks and attends over the selected ones. The refusal
+        // that used to sit here ("--max-context must not exceed the
+        // budget") is gone with the wiring; what replaces it is a check
+        // that the indexer is one this flow can run.
+        let ca = &arch.compressed_attention;
+        if ca.index_budget <= 0
+            || ca.index_n_heads <= 0
+            || ca.index_head_dim <= 0
+            || ca.csa_compress_rate <= 0
+            || ca.index_top_k <= 0
+        {
             return unsupported(format!(
-                "qwen4_exp needs the QSA indexer above {budget} tokens of context, which this \
-                 port does not implement; --max-context must not exceed {budget} \
-                 (docs/QWEN4_PHASE0.md section 5)"
+                "qwen4_exp's QSA indexer needs positive index_budget ({}), index_n_heads ({}), \
+                 index_head_dim ({}), csa_compress_rate ({}) and index_top_k ({})",
+                ca.index_budget,
+                ca.index_n_heads,
+                ca.index_head_dim,
+                ca.csa_compress_rate,
+                ca.index_top_k
+            ));
+        }
+        if ca.index_kv_heads != 1 {
+            return unsupported(format!(
+                "qwen4_exp's QSA indexer shares ONE pooled key head across its query heads; \
+                 index_kv_heads {} is not a shape this flow scores",
+                ca.index_kv_heads
+            ));
+        }
+        if ca.index_top_k * ca.csa_compress_rate != ca.index_budget {
+            return unsupported(format!(
+                "qwen4_exp's index_top_k ({}) x csa_compress_rate ({}) must equal index_budget \
+                 ({}): top_k counts BLOCKS on this architecture",
+                ca.index_top_k, ca.csa_compress_rate, ca.index_budget
             ));
         }
 
@@ -318,6 +358,17 @@ impl RealQwen4State {
                 arch.partial_rotary_factor
             ));
         }
+        // The indexer rotates with the TRUNK attention's own RoPE object
+        // (`crates/compute/src/qsa_indexer.rs`'s module doc: identical
+        // Python object in the reference), so the trunk's `rotary_dim` has
+        // to fit inside the indexer's head.
+        if rotary_dim > ca.index_head_dim {
+            return unsupported(format!(
+                "rotary_dim {rotary_dim} exceeds the QSA indexer's head dim {}; the indexer \
+                 shares the trunk attention's RoPE and cannot rotate more than it holds",
+                ca.index_head_dim
+            ));
+        }
 
         // Fail at open, not at token 1: the top-level tensors, plus one
         // representative layer of each kind (attn_hyper_connection /
@@ -360,7 +411,13 @@ impl RealQwen4State {
                     entry(index, &layer_tensor(layer, suffix))?;
                 }
             } else {
-                for suffix in ["self_attn.q_proj.weight", "self_attn.q_norm.weight"] {
+                for suffix in [
+                    "self_attn.q_proj.weight",
+                    "self_attn.q_norm.weight",
+                    "self_attn.indexer.index_qk_proj.weight",
+                    "self_attn.indexer.q_layernorm.weight",
+                    "self_attn.indexer.k_layernorm.weight",
+                ] {
                     entry(index, &layer_tensor(layer, suffix))?;
                 }
             }
@@ -424,6 +481,16 @@ impl RealQwen4State {
         let v_heads = shape.num_v_heads as usize;
 
         let ngram_context_len = (arch.ple.ngram_size - 1).max(0) as usize;
+        let idx_heads = ca.index_n_heads as usize;
+        let idx_head_dim = ca.index_head_dim as usize;
+        let idx_compress = ca.csa_compress_rate as usize;
+        let idx_block_topk = ca.index_top_k as usize;
+        let qsa = gpu::QsaIndexerCacheManager::new(context.device(), arch, max_context);
+        let qsa_scores =
+            context.new_output_buffer(((max_context / idx_compress).max(1) * 4) as u64);
+        let qsa_positions =
+            context.new_output_buffer(((idx_block_topk + 1) * idx_compress * 4) as u64);
+        let qsa_force_dense = std::env::var("TURBOSPARK_QSA_FORCE_DENSE").as_deref() == Ok("1");
         let ple_conv_tail = halfs(PLE_CONV_HISTORY * wide_dim);
         gpu::write_buffer_bytes(
             &ple_conv_tail,
@@ -447,6 +514,15 @@ impl RealQwen4State {
 
             q_packed: halfs(2 * q_dim),
             attn_gate: halfs(q_dim),
+            qsa,
+            idx_heads: idx_heads as u32,
+            idx_head_dim: idx_head_dim as u32,
+            idx_compress: idx_compress as u32,
+            idx_block_topk,
+            idx_qk: halfs((idx_heads + 1) * idx_head_dim),
+            qsa_scores,
+            qsa_positions,
+            qsa_force_dense,
             gdn_qkv_raw: halfs(qkv_dim),
             gdn_conv_out: halfs(qkv_dim),
             gdn_z: halfs(value_dim),
@@ -498,6 +574,10 @@ impl RealQwen4State {
     /// generation reproduced exactly throughout that investigation.
     pub(crate) fn reset(&mut self) {
         self.gdn.reset();
+        // The indexer's raw keys and pooled blocks are addressed by absolute
+        // position and cut by the KV cache's own cursor, so this releases
+        // pages and rewinds the pooled-block cursor rather than erasing.
+        self.qsa.reset();
         self.ngram_context = NgramContext::new(self.ngram_context_len, self.eos_token_id);
         let tail_len = self.ple_conv_tail.length() as usize;
         gpu::write_buffer_bytes(&self.ple_conv_tail, 0, &vec![0u8; tail_len]);

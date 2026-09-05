@@ -41,6 +41,23 @@ const LA_VALUE_DIM: usize = 32;
 const LA_CONV_K: usize = 4;
 
 pub const NUM_EXPERTS: usize = 4;
+/// The QSA indexer's shape: `IDX_HEADS` query heads over ONE shared key
+/// head (`index_kv_heads == 1`, as on the real checkpoint), each
+/// `IDX_HEAD_DIM` wide, pooling `IDX_COMPRESS` tokens per block.
+/// `(IDX_HEADS + IDX_KV_HEADS) * IDX_HEAD_DIM` is 64 rows, the same row
+/// count as this fixture's `k_proj`, so the INT4 packing path is one it
+/// already exercises. `IDX_HEAD_DIM` must be at least `rotary_dim`
+/// (`HEAD_DIM / 4 == 8`), which `validate_architecture` asserts.
+pub const IDX_HEADS: usize = 3;
+pub const IDX_KV_HEADS: usize = 1;
+pub const IDX_HEAD_DIM: usize = 16;
+pub const IDX_COMPRESS: usize = 4;
+/// The default fixture keeps the REAL checkpoint's budget, so every test
+/// written against it stays below budget and byte-identical to before the
+/// indexer was wired (`the_synthetic_flows_arithmetic_is_frozen`);
+/// [`build_synthetic_qwen4_exp_decode_install_with_indexer_budget`] is how
+/// a test crosses it in a handful of tokens.
+pub const IDX_BUDGET: i64 = 2048;
 pub const TOP_K: usize = 2;
 const MOE_INTER: usize = 64;
 /// The shared expert's width (`ArchConfig::intermediate_size` on this
@@ -88,8 +105,23 @@ fn linear_attention() -> LinearAttentionConfig {
     }
 }
 
-/// A tiny but fully decode-shaped `qwen4_exp` architecture.
+/// A tiny but fully decode-shaped `qwen4_exp` architecture, at the real
+/// checkpoint's indexer budget.
 pub fn tiny_qwen4_exp_decode_arch(vocab_size: i64) -> ArchConfig {
+    tiny_qwen4_exp_decode_arch_with_indexer_budget(vocab_size, IDX_BUDGET)
+}
+
+/// [`tiny_qwen4_exp_decode_arch`] with the QSA `index_budget` chosen by the
+/// caller (a whole number of `IDX_COMPRESS`-token blocks; `index_top_k` is
+/// derived as `budget / IDX_COMPRESS`, the reference's own definition).
+pub fn tiny_qwen4_exp_decode_arch_with_indexer_budget(
+    vocab_size: i64,
+    indexer_budget: i64,
+) -> ArchConfig {
+    assert!(
+        indexer_budget > 0 && indexer_budget % IDX_COMPRESS as i64 == 0,
+        "indexer_budget must be a positive whole number of blocks"
+    );
     let num_layers = NUM_LAYERS as i64;
     ArchConfig {
         hidden_size: HIDDEN as i64,
@@ -129,17 +161,18 @@ pub fn tiny_qwen4_exp_decode_arch(vocab_size: i64) -> ArchConfig {
         shared_expert_gated: true,
         rope_neox_subdim: true,
         linear_attention: linear_attention(),
-        // Real baseline's own values (`model_io::qwen4_exp_125b_a6b()`):
-        // this flow reads only `index_budget` today (the QSA-indexer
-        // refusal), so the rest are carried for a config that is otherwise
-        // self-consistent rather than because anything dispatches on them.
+        // The real checkpoint's indexer SHAPE, scaled down (`IDX_*`), and
+        // the caller's budget. Every one of these is dispatched on since
+        // the indexer was wired (`families/qwen4/attn.rs`): heads and dim
+        // size `index_qk_proj` and the per-head norms, compress and top_k
+        // decide when block selection starts dropping blocks.
         compressed_attention: CompressedAttentionConfig {
-            index_n_heads: 4,
-            index_kv_heads: 1,
-            index_head_dim: 128,
-            index_top_k: 512,
-            index_budget: 2048,
-            csa_compress_rate: 4,
+            index_n_heads: IDX_HEADS as i64,
+            index_kv_heads: IDX_KV_HEADS as i64,
+            index_head_dim: IDX_HEAD_DIM as i64,
+            index_top_k: indexer_budget / IDX_COMPRESS as i64,
+            index_budget: indexer_budget,
+            csa_compress_rate: IDX_COMPRESS as i64,
             q_lora_rank: 0,
             o_lora_rank: 0,
             o_groups: 0,
@@ -329,6 +362,25 @@ fn attention_layer_tensors(p: &str, seed: u64) -> Vec<Tensor> {
             HEAD_DIM,
             0.0,
             seed + 20 + i as u64,
+        ));
+    }
+    // The QSA indexer (`docs/QWEN4_PHASE0.md` section 5): one packed
+    // `[query heads; key head]` projection plus two per-head CENTERED norms,
+    // the same three tensors the real install carries per QSA layer (INT4
+    // projection, BF16 norms). Rows `[IDX_HEADS * IDX_HEAD_DIM ..)` are the
+    // shared raw key the indexer cache stores.
+    ts.extend(int4_triple(
+        &format!("{p}.self_attn.indexer.index_qk_proj.weight"),
+        (IDX_HEADS + IDX_KV_HEADS) * IDX_HEAD_DIM,
+        HIDDEN,
+        seed + 30,
+    ));
+    for (i, norm) in ["q_layernorm", "k_layernorm"].iter().enumerate() {
+        ts.push(bf16_vector(
+            &format!("{p}.self_attn.indexer.{norm}.weight"),
+            IDX_HEAD_DIM,
+            0.0,
+            seed + 31 + i as u64,
         ));
     }
     ts
@@ -637,7 +689,20 @@ pub fn build_synthetic_qwen4_exp_decode_install(
     vocab_size: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    build_synthetic_qwen4_exp_decode_install_inner(dir, vocab_size, model_id, false)
+    build_synthetic_qwen4_exp_decode_install_inner(dir, vocab_size, model_id, false, IDX_BUDGET)
+}
+
+/// [`build_synthetic_qwen4_exp_decode_install`] at a caller-chosen QSA
+/// `index_budget`, so a test can cross it (and start dropping blocks) after
+/// a handful of tokens instead of 2,049 of them. `index_top_k` follows as
+/// `budget / IDX_COMPRESS`.
+pub fn build_synthetic_qwen4_exp_decode_install_with_indexer_budget(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    model_id: &str,
+    indexer_budget: i64,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen4_exp_decode_install_inner(dir, vocab_size, model_id, false, indexer_budget)
 }
 
 /// [`build_synthetic_qwen4_exp_decode_install`], with the router shipped raw
@@ -653,7 +718,7 @@ pub fn build_synthetic_qwen4_exp_decode_install_raw_router(
     vocab_size: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    build_synthetic_qwen4_exp_decode_install_inner(dir, vocab_size, model_id, true)
+    build_synthetic_qwen4_exp_decode_install_inner(dir, vocab_size, model_id, true, IDX_BUDGET)
 }
 
 fn build_synthetic_qwen4_exp_decode_install_inner(
@@ -661,8 +726,9 @@ fn build_synthetic_qwen4_exp_decode_install_inner(
     vocab_size: i64,
     model_id: &str,
     router_raw: bool,
+    indexer_budget: i64,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    let arch = tiny_qwen4_exp_decode_arch(vocab_size);
+    let arch = tiny_qwen4_exp_decode_arch_with_indexer_budget(vocab_size, indexer_budget);
     let (ts, bits_overrides) = build_tensors(vocab_size, router_raw);
     let blob = assemble_safetensors(&ts);
     let source = MemoryRangeSource::new(&blob);

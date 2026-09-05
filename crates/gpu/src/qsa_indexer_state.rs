@@ -1,9 +1,9 @@
 //! Persistent per-layer state for `qwen4_exp`'s QSA (query-sparse
 //! attention) indexer (`docs/QWEN4_PHASE0.md` section 5): the RAW
 //! (un-normed, un-roped) key history every QSA layer's indexer reads, and
-//! the incrementally-pooled block cache built from it. Groundwork -- no
-//! decode flow constructs or reads this yet (`families/qwen4/mod.rs`'s own
-//! "NO INDEXER CODE IN THIS PORT AT ALL").
+//! the incrementally-pooled block cache built from it. Owned by
+//! `RealQwen4State::qsa` and driven from `families/qwen4/attn.rs` since
+//! 2026-09-05 (raw key written every token, blocks advanced as they complete).
 //!
 //! **NOT `Dsv4StateManager`.** That is DeepSeek-V4-Flash's CSA/HCA state, a
 //! different mechanism (LoRA ranks, a two-rate compress split, no

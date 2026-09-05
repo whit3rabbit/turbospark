@@ -138,8 +138,9 @@ TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
 
 # Run memory oracle for qwen4_exp (Qwen3.8-Flash-Next, REAP-288). ~8-9
 # minutes on a 68 GiB install; covers short-explanation and medium-review
-# only (long-synthesis does not fit this family's 2,048-token window --
-# docs/QWEN4_EXP.md). ~2,509 MiB peak, well below every other MoE family's
+# only (long-synthesis does not fit the 2,048-token window this row is
+# still pinned at, see real_model_params.rs; the QSA indexer that used to
+# force the pin is wired since 2026-09-05 -- docs/QWEN4_EXP.md). ~2,509 MiB peak, well below every other MoE family's
 # tok/s because 288 experts at top-10 against a 16-slot cache misses often.
 TURBOSPARK_QWEN4EXP_INSTALL_DIR=~/.turbospark/models/qwen4-reap288.gturbo \
   cargo test -p turbospark-bench --test qwen4exp_memory_oracle --release -- --ignored --nocapture

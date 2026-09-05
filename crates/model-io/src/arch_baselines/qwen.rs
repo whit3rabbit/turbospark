@@ -277,13 +277,13 @@ pub fn qwen3_30b_a3b() -> ArchConfig {
 /// `ple` is active, which no other family here has at all. It is 30.8% of the
 /// checkpoint's bytes and streams from its own table.
 ///
-/// **The indexer fields are RECORDED and not implemented.** This port has no
-/// query-sparse selector, so `index_budget: 2048` is what a context refusal
-/// quotes: the reference's indexer returns early at `kv_len <= budget`, so at
-/// or below it attention is exactly plain causal and running there is exact
-/// rather than approximate. `index_top_k` is `index_budget /
-/// csa_compress_rate` and counts BLOCKS, which is this architecture's unit;
-/// DeepSeek's counts tokens.
+/// **The indexer fields are all dispatched on** (`families/qwen4/attn.rs`,
+/// since 2026-09-05): heads and dim size `index_qk_proj` and the per-head
+/// norms, `csa_compress_rate` is the pooling block, and `index_top_k` is the
+/// number of BLOCKS kept (this architecture's unit; DeepSeek's counts
+/// tokens). The reference's indexer returns early at `kv_len <= budget`, so
+/// at or below `index_budget` selection keeps every block and attention is
+/// exactly plain causal -- `select_blocks` reproduces that by construction.
 ///
 /// `ple.seed` is the one value NOT in the file. `config.json` carries no
 /// `seed` key and the reference defaults it to 1234, which is what the hash
