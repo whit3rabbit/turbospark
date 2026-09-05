@@ -548,6 +548,8 @@ cargo clippy --workspace --tests
 
 The binaries land in `target/release/`, and `cargo run -p turbospark-cli --bin turbospark-check -- ...` works in place of an installed `turbospark-check` throughout the walkthrough above.
 
+Setting the tree up for the first time, or building the macOS app alongside the engine, is [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md): prerequisites, the order the two halves build in, the test and run loop, and what CI does not cover.
+
 The workspace suite runs on any platform and covers the structural contracts. The heavier proof is env-gated and opt-in, because it needs a real model install: per-family quality gates freeze teacher-forced perplexity plus greedy and sampled output digests, memory oracles assert peak footprint against a per-chip ceiling and re-run a warm case to catch growth, and a determinism probe runs one greedy generation six times and requires exactly one distinct output.
 
 The quality gate is calibrated rather than decorative. Shifting one quantization level in 0.0122% of Gemma 4's expert bytes moves its perplexity +10.5%, so the gate sees damage far below what reads as coherent by eye. Gating conventions and test-writing rules are in [`docs/TESTING.md`](docs/TESTING.md).

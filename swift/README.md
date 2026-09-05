@@ -35,6 +35,10 @@ swift/
 
 ---
 
+The repository-wide setup, the order the Rust and Swift halves build in, and
+the day-to-day loop are [`docs/DEVELOPMENT.md`](../docs/DEVELOPMENT.md). This
+page is the Swift packages in detail.
+
 ## Prerequisites
 
 - **macOS**: 13.0 (Ventura) or newer on Apple Silicon (M1/M2/M3/M4).

@@ -16,6 +16,7 @@ read the page before proposing the thing it refutes.
 
 | Page | Covers | Read it before |
 |---|---|---|
+| `docs/DEVELOPMENT.md` | prerequisites, the build order, the test and run loop, what CI does NOT cover | setting the tree up, or a build that fails before your change |
 | `docs/TESTING.md` | what the suite proves, how tests are gated | adding or gating a test |
 | `docs/BENCHMARKING.md` | the three `turbospark-bench` modes, peak-memory measurement, the memory oracle | quoting a throughput or footprint number |
 | `docs/BENCHMARKS.md` | the frozen rows: quality, throughput, memory, cross-engine KL | re-freezing anything |
@@ -1962,7 +1963,7 @@ Workspace directory structure and crate layout:
 |   +-- skill_state_probe.py # SKILL.state valid-patch rate vs append-only (docs/SKILL_STATE.md)
 |   \-- swift-lib.sh   # staticlib + turbospark.h build helper for SwiftPM
 \-- docs
-    \-- (25 pages; see the doc index at the top of this file)
+    \-- (see the doc index at the top of this file; a count here rots)
 ```
 
 ## References and measurement scripts
