@@ -20,6 +20,8 @@ CLAUDE.local.md
 !.claude/docs/
 .synrepo/
 .zcode/
+.codex/
+.agents/
 
 # scripts/kld_llamacpp.py imports scripts/kld.py, so running it byte-compiles
 # a sibling module here.
@@ -41,3 +43,7 @@ compile_flags.txt
 .security-audit/
 # security-audit output (vulnerability inventory — do not commit)
 .security-audit/
+
+# mf: pages are committed, the index is derived (managed by mf setup)
+mf.sqlite3
+mf.sqlite3-*

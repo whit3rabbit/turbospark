@@ -128,6 +128,10 @@ extension AppModel {
                 return
             }
 
+            if self.handleSkillSlashCommand(fullUserContent, chatID: submissionChatID) {
+                return
+            }
+
             let chatIndex: Int
             if let existing = self.chats.firstIndex(where: { $0.id == submissionChatID }) {
                 chatIndex = existing

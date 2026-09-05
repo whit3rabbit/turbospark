@@ -45,6 +45,7 @@ read the page before proposing the thing it refutes.
 | `docs/SKILL_STATE.md` | the SKILL.state bounded-state agent runtime, a measured POSITIVE with its scale caveat | proposing agent context compaction, structured output, or constrained decoding |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `docs/SWIFT_TOOLS.md` | Swift native tool implementation: execution, containment, adding new tools | implementing or changing tools in TurboSparkApp |
+| `docs/SWIFT_SKILLS.md` | Swift skills: architecture, scopes, file layout, and marketplace integration | changing skills, discovery, or marketplace |
 | `docs/PERMISSION_GATE.md` | the local command classifier, its corpora, and a measured negative | touching `.auto`, or quoting a hazard score |
 | `docs/RELEASE.md` | release checklist, versioning, tags, rot guards | cutting a release |
 
@@ -2007,4 +2008,7 @@ headers to `/opt/homebrew/include` and its sources are one
 `raw.githubusercontent.com` fetch away, so this class of question costs no
 download at all.
 
-
+<!-- BEGIN AGENT-CONFIG:mf -->
+Before exploring this codebase, run `mf search "<question>" --field notes`.
+Before finishing, write what you learned as a page with `mf write <draft> --field notes`, or stage it with `mf raw add --field notes`.
+<!-- END AGENT-CONFIG:mf -->

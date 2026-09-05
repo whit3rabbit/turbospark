@@ -178,7 +178,7 @@ public enum ReportFindingsExecutor {
 // MARK: - ProposeSkills Executor
 
 public enum ProposeSkillsExecutor {
-    public static func execute(arguments: [String: String], projectRootURL: URL) throws -> String {
+    public static func execute(arguments: [String: String], projectRootURL: URL?) throws -> String {
         var proposals: [SkillProposalItem] = []
         if let jsonRaw = arguments["proposals"], let data = jsonRaw.data(using: .utf8) {
             let decoder = JSONDecoder()
@@ -200,19 +200,38 @@ public enum ProposeSkillsExecutor {
             )
         }
 
-        let skillsDir = projectRootURL.appendingPathComponent(".turbospark/skills", isDirectory: true)
+        let isUserScope = (arguments["scope"]?.lowercased() == "user") || (projectRootURL == nil) || (projectRootURL?.path == "/")
+        let skillsDir: URL
+        let scopeLabel: String
+        if isUserScope {
+            skillsDir = SkillManager.shared.defaultUserSkillsDirectory
+            scopeLabel = "user scope (~/.turbospark/skills/)"
+        } else {
+            guard let root = projectRootURL else {
+                throw NSError(domain: "TurboSparkTool", code: 32, userInfo: [NSLocalizedDescriptionKey: "Project root required for project-scoped skill."])
+            }
+            skillsDir = root.appendingPathComponent(".turbospark/skills", isDirectory: true)
+            scopeLabel = "project scope (.turbospark/skills/)"
+        }
+
         try FileManager.default.createDirectory(at: skillsDir, withIntermediateDirectories: true)
 
         var savedCount = 0
         for p in proposals {
-            let skillFolder = skillsDir.appendingPathComponent(p.name, isDirectory: true)
+            let sanitizedName = p.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: "\\", with: "-")
+                .lowercased()
+            guard !sanitizedName.isEmpty, sanitizedName != ".", sanitizedName != ".." else { continue }
+            let skillFolder = skillsDir.appendingPathComponent(sanitizedName, isDirectory: true)
             try FileManager.default.createDirectory(at: skillFolder, withIntermediateDirectories: true)
             let mdFile = skillFolder.appendingPathComponent("SKILL.md")
             try p.skillMd.write(to: mdFile, atomically: true, encoding: .utf8)
             savedCount += 1
         }
 
-        return "Successfully saved \(savedCount) proposed skill(s) to `.turbospark/skills/`."
+        SkillManager.shared.invalidateResolutionCache()
+        return "Successfully saved \(savedCount) proposed skill(s) to \(scopeLabel)."
     }
 }
 

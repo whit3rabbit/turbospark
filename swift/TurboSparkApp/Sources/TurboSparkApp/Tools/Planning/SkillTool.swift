@@ -50,5 +50,28 @@ public enum SkillToolDefinitions {
         )
     )
 
+    /// Dynamic tool definition advertising available skills within the 1% context window character budget.
+    public static func skillTool(projectURL: URL? = nil, contextTokens: Int? = nil) -> OpenAITool {
+        let skills = SkillManager.shared.resolveEffectiveSkills(projectURL: projectURL)
+        let formatted = SkillManager.shared.formatSkillsWithinBudget(skills, contextWindowTokens: contextTokens)
+        let desc: String
+        if formatted.isEmpty {
+            desc = "Load a specialized skill and inject its workflow instructions, rules, and reference scripts into the conversation."
+        } else {
+            desc = "Load a specialized skill and inject its workflow instructions into the conversation.\n\nAvailable skills:\n\(formatted)"
+        }
+        return OpenAITool.function(
+            name: "skill",
+            description: desc,
+            parameters: .object(
+                properties: [
+                    "name": .string(description: "The name of the skill to load from project or user skills."),
+                    "arguments": .object(properties: [:], description: "Optional dictionary of named argument values to substitute in the skill.")
+                ],
+                required: ["name"]
+            )
+        )
+    }
+
     public static let all: [OpenAITool] = [skill]
 }

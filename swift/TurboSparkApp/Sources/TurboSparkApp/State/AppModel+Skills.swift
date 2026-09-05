@@ -165,4 +165,75 @@ extension AppModel {
         }
         return output
     }
+
+    /// Handles user-typed slash commands for skills (e.g. `/my-skill [args]` or `/skill <name> [args]`).
+    /// Returns true if recognized and handled.
+    public func handleSkillSlashCommand(_ input: String, chatID: UUID) -> Bool {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/") else { return false }
+
+        let parts = trimmed.dropFirst().components(separatedBy: " ")
+        guard let command = parts.first?.lowercased(), !command.isEmpty else { return false }
+        let rest = parts.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var targetSkillName: String?
+        var rawArgs: String = ""
+
+        if command == "skill" {
+            let subParts = rest.components(separatedBy: " ")
+            if let first = subParts.first, !first.isEmpty {
+                targetSkillName = first
+                rawArgs = subParts.dropFirst().joined(separator: " ")
+            }
+        } else if let skill = findSkill(named: command) {
+            targetSkillName = skill.name
+            rawArgs = rest
+        } else {
+            let all = allManagedSkills
+            if let disabled = all.first(where: { $0.name.lowercased() == command }) {
+                showToast("Skill '\(disabled.name)' is currently disabled. Enable it in Settings > Skills to use it.", style: .warning)
+                return true
+            }
+        }
+
+        guard let skillName = targetSkillName, let skill = findSkill(named: skillName) else {
+            return false
+        }
+
+        guard skill.isEnabled else {
+            showToast("Skill '\(skill.name)' is disabled.", style: .warning)
+            return true
+        }
+
+        guard skill.manifest.userInvocable else {
+            showToast("Skill '\(skill.name)' is not user-invocable.", style: .warning)
+            return true
+        }
+
+        var argsDict: [String: String] = [:]
+        if !rawArgs.isEmpty {
+            if let firstArg = skill.manifest.arguments.first?.name {
+                argsDict[firstArg] = rawArgs
+            }
+            argsDict["arguments"] = rawArgs
+            argsDict["args"] = rawArgs
+        }
+
+        if skill.manifest.context == .fork {
+            let prompt = "Execute skill [\(skill.name)] with arguments: \(rawArgs.isEmpty ? "(none)" : rawArgs)"
+            if let agent = findAgent(named: "general-purpose") ?? AgentManager.shared.builtInAgents.first {
+                runAgentTaskDirectly(agent: agent, prompt: prompt)
+            }
+            return true
+        } else {
+            guard let payload = executeSkill(named: skill.name, arguments: argsDict) else {
+                return false
+            }
+            promptText = rawArgs.isEmpty
+                ? "Execute the following skill instructions:\n\n\(payload)"
+                : "Execute the following skill instructions with arguments: \(rawArgs)\n\n\(payload)"
+            run()
+            return true
+        }
+    }
 }

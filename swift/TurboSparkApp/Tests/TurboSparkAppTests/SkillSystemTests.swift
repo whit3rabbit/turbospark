@@ -384,4 +384,129 @@ final class SkillSystemTests: XCTestCase {
         XCTAssertFalse(result.isError)
         XCTAssertTrue(result.output.contains("Skill 'non-existent-skill' was not found."))
     }
+
+    // MARK: - Marketplace & Budgeting Tests
+
+    func testMarketplaceSourceEncodingAndDecoding() throws {
+        let sources: [SkillMarketplaceSource] = [
+            .url(url: "https://example.com/marketplace.json", headers: ["Authorization": "Bearer token"]),
+            .github(repo: "whit3rabbit/agent-skills", ref: "main", path: "skills/test", sparsePaths: ["skills"]),
+            .git(url: "git@github.com:whit3rabbit/repo.git", ref: "v1.0", path: nil, sparsePaths: nil),
+            .directory(path: "/local/path/to/skills")
+        ]
+
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        for src in sources {
+            let data = try encoder.encode(src)
+            let decoded = try decoder.decode(SkillMarketplaceSource.self, from: data)
+            XCTAssertEqual(src, decoded)
+        }
+    }
+
+    func testSkillPromptBudgetingUnderAndOverLimit() {
+        let manager = SkillManager.shared
+        let normalSkills = [
+            AppSkill(
+                manifest: SkillManifest(name: "alpha", description: "Alpha description"),
+                content: "content",
+                sourceURL: tempDirURL.appendingPathComponent("alpha.md"),
+                scope: .userGlobal
+            ),
+            AppSkill(
+                manifest: SkillManifest(name: "beta", description: "Beta description"),
+                content: "content",
+                sourceURL: tempDirURL.appendingPathComponent("beta.md"),
+                scope: .bundled
+            )
+        ]
+
+        // Under limit (default 8000 chars)
+        let formattedUnder = manager.formatSkillsWithinBudget(normalSkills, contextWindowTokens: 200_000)
+        XCTAssertTrue(formattedUnder.contains("- alpha: Alpha description"))
+        XCTAssertTrue(formattedUnder.contains("- beta: Beta description"))
+
+        // Extremely squeezed budget (tokens: 25 -> 25 * 4 * 0.01 = 1 character budget)
+        let formattedSqueezed = manager.formatSkillsWithinBudget(normalSkills, contextWindowTokens: 25)
+        // Bundled skill preserves description, non-bundled is reduced to name only
+        XCTAssertTrue(formattedSqueezed.contains("- beta: Beta description"))
+        XCTAssertTrue(formattedSqueezed.contains("- alpha"))
+    }
+
+    func testConditionalSkillActivation() {
+        let manager = SkillManager.shared
+        manager.clearActivatedConditionalSkills()
+
+        let conditionalSkill = AppSkill(
+            manifest: SkillManifest(name: "swift-optimizer", description: "Optimize swift", paths: ["**/*.swift"]),
+            content: "Optimize swift code.",
+            sourceURL: tempDirURL.appendingPathComponent("swift-optimizer.md"),
+            scope: .userGlobal
+        )
+
+        // Before touch
+        XCTAssertFalse(manager.isSkillEligible(conditionalSkill, activatedSkillNames: manager.activatedConditionalSkillNames))
+
+        // Touched a non-matching file
+        let activated1 = manager.evaluateConditionalSkills(
+            filePaths: ["docs/readme.md"],
+            projectURL: tempDirURL,
+            currentlyActivated: manager.activatedConditionalSkillNames
+        )
+        XCTAssertTrue(activated1.isEmpty)
+
+        // Matches pattern directly
+        XCTAssertTrue(manager.matchesPath(skill: conditionalSkill, filePath: "Sources/Core/Engine.swift"))
+        XCTAssertFalse(manager.matchesPath(skill: conditionalSkill, filePath: "docs/readme.md"))
+    }
+
+    func testMarketplaceDirectoryInstallation() async throws {
+        // Create a mock source directory with a valid SKILL.md
+        let mockSourceDir = tempDirURL.appendingPathComponent("mock_source_skill", isDirectory: true)
+        try FileManager.default.createDirectory(at: mockSourceDir, withIntermediateDirectories: true)
+        let skillMd = """
+        ---
+        name: imported-mock-skill
+        description: A mock skill installed via directory source.
+        ---
+        # Mock Skill Instructions
+        Execute mock routine.
+        """
+        try skillMd.write(to: mockSourceDir.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+
+        let entry = MarketplaceSkillEntry(
+            name: "imported-mock-skill",
+            description: "A mock skill installed via directory source.",
+            source: .directory(path: mockSourceDir.path),
+            category: "utilities"
+        )
+
+        let projectDir = tempDirURL.appendingPathComponent("dest_project", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        let installed = try await SkillMarketplaceManager.shared.installSkill(
+            entry: entry,
+            targetScope: .projectLocal(projectPath: projectDir.path),
+            projectRootURL: projectDir
+        )
+
+        XCTAssertEqual(installed.name, "imported-mock-skill")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: projectDir.appendingPathComponent(".turbospark/skills/imported-mock-skill/SKILL.md").path))
+    }
+
+    func testProposeSkillsToProjectScope() throws {
+        let result = try ProposeSkillsExecutor.execute(
+            arguments: [
+                "name": "auto-gen-skill",
+                "description": "An auto-generated test skill",
+                "skillMd": "---\nname: auto-gen-skill\ndescription: Test\n---\n# Test\nSteps here."
+            ],
+            projectRootURL: tempDirURL
+        )
+
+        XCTAssertTrue(result.contains("Successfully saved"))
+        let expectedFile = tempDirURL.appendingPathComponent(".turbospark/skills/auto-gen-skill/SKILL.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expectedFile.path))
+    }
 }

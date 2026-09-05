@@ -92,6 +92,9 @@ public enum AppToolCatalog {
 
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).map { $0.openAITool }
         list.append(contentsOf: custom)
+        if let idx = list.firstIndex(where: { $0.function.name == "skill" }) {
+            list[idx] = SkillToolDefinitions.skillTool(projectURL: projectURL)
+        }
         return list.filter { AppToolRegistry.isImplemented($0.function.name, projectURL: projectURL) }
     }
 

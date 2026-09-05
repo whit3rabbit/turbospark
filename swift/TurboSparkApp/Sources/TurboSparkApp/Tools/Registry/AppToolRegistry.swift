@@ -81,12 +81,14 @@ public enum AppToolRegistry {
             switch call.name.lowercased() {
             case "list_directory", "list_dir", "ls", "glob":
                 let relPath = call.arguments["path"] ?? call.arguments["pattern"] ?? "."
+                SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
                 output = try listDirectory(relPath: relPath, rootURL: rootURL)
 
             case "read_file", "view_file", "cat", "fileread", "read":
                 guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] ?? call.arguments["resource"] else {
                     throw NSError(domain: "TurboSparkTool", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' or 'file_path' argument."])
                 }
+                SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
                 let startLine = Int(call.arguments["start_line"] ?? call.arguments["offset"] ?? "")
                 // Read from their OWN keys: `end_line` is an absolute bound
                 // (what the schema advertises) and `limit` is a count (what
@@ -102,6 +104,7 @@ public enum AppToolRegistry {
                 guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' or 'file_path' argument."])
                 }
+                SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
                 let content = call.arguments["content"] ?? ""
                 output = try await writeFile(relPath: relPath, content: content, rootURL: rootURL)
 
@@ -109,6 +112,7 @@ public enum AppToolRegistry {
                 guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'file_path' argument."])
                 }
+                SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
                 guard let oldStr = call.arguments["old_string"] ?? call.arguments["target"] ?? call.arguments["oldStr"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'old_string' argument."])
                 }
@@ -255,7 +259,7 @@ public enum AppToolRegistry {
                 output = try ReportFindingsExecutor.execute(arguments: call.arguments)
 
             case "proposeskills", "propose_skills":
-                output = try ProposeSkillsExecutor.execute(arguments: call.arguments, projectRootURL: rootURL)
+                output = try ProposeSkillsExecutor.execute(arguments: call.arguments, projectRootURL: resolvedRoot)
 
             case "proposegoal", "propose_goal":
                 output = try ProposeGoalExecutor.execute(arguments: call.arguments)
