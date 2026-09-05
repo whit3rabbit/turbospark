@@ -37,7 +37,11 @@ crates/server/
 |   |   \-- tests.rs            # Unit tests for the two above
 |   +-- messages.rs             # Anthropic /v1/messages + /v1/messages/count_tokens: translate in, generate (or just plan), translate out
 |   +-- completions.rs          # OpenAI legacy /v1/completions: raw prompt, no chat template
-|   +-- responses.rs            # OpenAI /v1/responses: item-shaped request/response, typed SSE event sequence
+|   +-- responses/              # OpenAI /v1/responses: item-shaped request/response, typed SSE event sequence
+|   |   +-- mod.rs              # The Axum handler and streaming coordinators
+|   |   +-- map.rs              # Request folding, tool translation, and warning checks
+|   |   +-- sse.rs              # Response building and typed SSE event sequence
+|   |   \-- tests.rs            # Unit tests for mapping and serialization
 |   +-- guardrails.rs           # Tool-call rescue, argument validation, the retry loop
 |   |   \-- tests.rs            # Unit tests for the verdict (pure, no model)
 |   +-- registry.rs             # ModelRegistry: which backend serves a request (Gotcha 28)
@@ -72,7 +76,7 @@ crates/server/
 - `handler/`: the `/v1/chat/completions`, `/v1/models`, and `/health` handlers, plus the generation core both generation endpoints share -- `plan.rs` (chat template, encode, shaping config, and `openai_request_warnings`/`merge_degradation` for the OpenAI-side half of `x-anyllm-degradation`, Gotcha 22) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
 - `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`, plus `count_tokens`, which runs `translate_request` + `plan` and stops there -- no generation, so no `ChatModel` call past that point.
 - `completions.rs`: the legacy OpenAI `/v1/completions` handler -- a hand-rolled request type (`anyllm_translate` has none for this endpoint), `tokenizer.encode(_, add_bos: true)` with no chat template, and its own minimal `run_full`/`stream_response` with no decoder (Gotcha 23).
-- `responses.rs`: the OpenAI `/v1/responses` handler -- `responses_to_chat_request` folds `anyllm_translate::openai::responses::ResponsesRequest` (which the vendored crate ships but never maps onto Chat Completions itself) down onto the same `ChatCompletionRequest` `handler::plan` renders, and the streaming path emits a hand-built typed `ResponsesStreamEvent` sequence (Gotcha 24).
+- `responses/`: the OpenAI `/v1/responses` handler (`mod.rs`, `map.rs`, `sse.rs`, `tests.rs`) -- `map::responses_to_chat_request` folds `anyllm_translate::openai::responses::ResponsesRequest` (which the vendored crate ships but never maps onto Chat Completions itself) down onto the same `ChatCompletionRequest` `handler::plan` renders, and `sse.rs` emits a hand-built typed `ResponsesStreamEvent` sequence (Gotcha 24).
 - `guardrails.rs`: tool-call rescue parsing, argument validation against the request's own schema, and the one-retry loop, over `forge-guardrails` (see Gotcha 18). `inspect` is the pure verdict; `run_guarded` is the loop that acts on it.
 - `registry.rs`: `ModelRegistry` and the resolution policy -- exact id, else the single attached model whatever the name, else a 404 naming what is there (Gotcha 28). `SingleModel` is what every pre-registry caller gets; `StaticRegistry` is a fixed set; the FFI implements its own over locked storage so a running server can gain and lose models.
 - `observe.rs`: `ServerEvent`, `ServerObserver`, and `ReportingModel` -- a `ChatModel` decorator that reports each generation from `run_completion`, the one choke point every path already goes through (Gotcha 29).
@@ -502,7 +506,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     Responses<->Chat-Completions mapping anywhere in it, because nothing
     upstream needed one. This server generates through Chat Completions
     shape only (`handler::plan` renders and shapes THAT type, for all three
-    endpoints), so `responses.rs` hand-writes both directions itself, reusing
+    endpoints), so `responses/` hand-writes both directions itself, reusing
     only the wire TYPES.
 
     **THE ANTHROPIC-FACING MAPPING WAS STILL WORTH READING FIRST** (crate

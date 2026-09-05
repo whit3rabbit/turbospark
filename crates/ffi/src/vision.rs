@@ -29,7 +29,7 @@
 //!
 //! `RealForwardRunner` is macOS-only, so this module is too. A caller sending
 //! an image to a SCRIPTED session, or to an install with no tower, is refused
-//! by name in `generate.rs` -- which is the portable half and the only place
+//! by name in `generate` -- which is the portable half and the only place
 //! that can answer on either platform.
 
 use std::path::Path;

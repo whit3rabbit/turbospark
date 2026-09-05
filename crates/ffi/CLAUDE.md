@@ -26,8 +26,12 @@ crates/ffi/
 |   +-- wire.rs             # the JSON shapes (camelCase)
 |   +-- session.rs          # the opaque handle (Session over shared SessionCore); the cancel flag
 |   +-- open.rs             # opening an install (macOS)
-|   +-- open_tests.rs       # Unit tests for open options and mapping
-|   +-- generate.rs         # one turn: render, decode, stream, report
+|   +-- generate/           # one turn: render, decode, stream, report
+|   |   +-- mod.rs          # turn execution driver, budget clamp, speculation block
+|   |   +-- channel.rs      # channel split: separating reasoning and content
+|   |   +-- prompt.rs       # message decoding, prompt template rendering, tokenization
+|   |   +-- vision.rs       # image attachment and injection lifecycle
+|   |   \-- tests.rs        # unit tests: speculation, wire compatibility, image parts
 |   +-- models.rs           # catalog, probe, install (portable)
 |   +-- server.rs           # the in-process HTTP server: background thread, tokio runtime, lifecycle
 |   +-- server_model.rs     # ChatModel adapter over SessionCore, for server.rs
@@ -286,7 +290,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
 
     **`FfiChatModel` IS A SECOND COPY OF `RealChatModel::run_completion`'S
     DISPATCH, NOT A REUSE OF IT.** It replicates speculation and chunked
-    prefill (both already live on this crate's own `generate.rs` for the SAME
+    prefill (both already live on this crate's own `generate/` for the SAME
     session, so skipping either here would make the in-process server slower
     than a direct `ts_generate` call for no reason a caller could see), and
     since 2026-08-30 it replicates `RealChatModel`'s image-under-one-lock
@@ -324,7 +328,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
 
     Guardrails are NOT overridden and take whatever `ChatModel::guardrails()`
     trait default is (on), matching `ScriptedChatModel`'s own choice to leave
-    it alone rather than reason about a feature this session's `generate.rs`
+    it alone rather than reason about a feature this session's `generate/`
     never exercises either.
 
     **`ServerInfo` REPORTS THE BOUND HOST AS WELL AS THE BOUND PORT, AND THE
@@ -424,7 +428,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     which is the invariant doing the work rather than an over-broad test.
 
 16. **`open.rs`'S `open()` OPTS INTO PREFIX KV REUSE, THE ONE PLACE IT
-    DIVERGES FROM `open_session`, AND `generate.rs` OPTS INTO CHUNKED
+    DIVERGES FROM `open_session`, AND `generate/` OPTS INTO CHUNKED
     PREFILL TOO -- NEITHER TAKES A FLAG.** Added 2026-09-01. Gotcha 5 already
     said `open.rs` mirrors `crates/cli/src/generate.rs::open_session` step
     for step; that function backs the CLI's single-shot `--prompt` path, not
@@ -440,7 +444,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     (`crates/runtime/CLAUDE.md` Gotcha 30), so the floor is "no worse than
     before", never a new failure mode.
 
-    `generate.rs` separately routes `(Engine::Real(runner), None)` through
+    `generate/` separately routes `(Engine::Real(runner), None)` through
     `run_raw_completion_chunked_cancellable` at `foundation::DEFAULT_CHUNK_SIZE`
     whenever `runner.supports_chunked_prefill()` -- the SAME predicate
     `crates/server/CLAUDE.md` Gotcha 19 documents for `RealChatModel`, added

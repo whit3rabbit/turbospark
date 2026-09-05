@@ -71,7 +71,7 @@ pub fn session_for_testing_named(
             dialect: format!("{:?}", tokenizer.dialect),
             // ASKED rather than asserted, and that is a fix rather than
             // tidying. This read `"none"` unconditionally while
-            // `generate.rs` gates a requested level on
+            // `generate` gates a requested level on
             // `tokenizer.reasoning_support()` directly -- so a scripted
             // session over a fixture that DOES ship a template reported a
             // capability it had, as absent, to the one field a GUI reads.

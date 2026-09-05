@@ -21,7 +21,7 @@
 //! is (on); nothing here overrides it, matching `ScriptedChatModel`.
 //!
 //! Speculation and chunked prefill ARE replicated, because both are already
-//! live on this crate's own `generate.rs` dispatch (`Engine::Real` there) and
+//! live on this crate's own `generate` dispatch (`Engine::Real` there) and
 //! skipping either here would make the in-process server slower than the
 //! same session's direct `ts_generate` calls for no reason a caller could
 //! see.
@@ -51,7 +51,7 @@ impl FfiChatModel {
 
     /// The MODEL's padded head width, never the tokenizer dialect's
     /// constant (AGENTS.md Gotcha 37): two checkpoints can share a dialect
-    /// and pad differently. Matches `generate.rs`'s own read of this.
+    /// and pad differently. Matches `generate`'s own read of this.
     fn vocab_size(&self) -> usize {
         let engine = self
             .core
@@ -207,7 +207,7 @@ impl ChatModel for FfiChatModel {
 
     /// The speculative loop when this session resolved a block AND the
     /// request is deterministic (acceptance is exact only at temperature 0,
-    /// same per-turn gate as `generate.rs::turn_block`); chunked prefill
+    /// same per-turn gate as `generate::turn_block`); chunked prefill
     /// when the install's family supports it and neither of the above
     /// applies; the sequential loop otherwise.
     fn run_completion(
