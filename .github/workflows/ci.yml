@@ -82,7 +82,19 @@ jobs:
   package-macos:
     name: Package app bundle and DMG
     if: github.event_name == 'push'
-    runs-on: macos-14
+    # **`macos-15`, NOT `macos-14`, AND NOT `macos-latest`.** The `-14` image
+    # is Xcode 15 / the macOS 14 SDK, and this is the only job in the
+    # repository that compiles Swift at all -- so the app half sat broken on
+    # main while every local build was green (`swift/CLAUDE.md` Gotcha 45:
+    # a `#available`-guarded macOS 15 symbol still has to RESOLVE, only
+    # `body` is main-actor-isolated there, and the type checker's budget is
+    # smaller). Building on a newer SDK does not lower the app's floor: the
+    # DEPLOYMENT target is `.macOS(.v14)` in Package.swift and 14.0 in the
+    # Info.plist, which release.yml's own `check-version` job asserts agree.
+    # Pinned rather than `latest` because this builds a RELEASE artifact and
+    # the SDK it was built against should change in a commit, not on a
+    # GitHub image rollout.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 

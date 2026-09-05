@@ -1117,15 +1117,26 @@ so going through `make` recompiles the whole app every single time. Use
     every write -- three new cases failed on that before resolving by name
     (`findAgent(name: "general-purpose")`) instead of by index.
 
-45. **CI BUILDS THE APP BUNDLE ON `macos-14` AND YOU DO NOT, SO THE SWIFT
-    HALF CAN BE BROKEN ON MAIN WHILE EVERY LOCAL BUILD IS GREEN.** The
-    `verify` job runs `macos-latest` and compiles no Swift at all; the
-    `package-macos` job (and `release.yml`'s) pins `macos-14`, which is
-    Xcode 15 and the macOS 14 SDK. Nothing in the local verification policy
-    reaches that toolchain. Found 2026-09-04 with main already red, from
-    theme work written months earlier on a modern Xcode.
+45. **ONE JOB IN THIS REPOSITORY COMPILES SWIFT, IT IS NOT THE ONE PRs RUN,
+    AND ITS SDK IS NOT YOURS.** `verify` runs `macos-latest` and builds Rust;
+    `package-macos` (and `release.yml`'s `build-macos`) is push-only and is
+    the only thing that compiles the app. It pinned `macos-14` -- Xcode 15,
+    the macOS 14 SDK -- which nothing in the local verification policy
+    reaches, so the Swift half sat broken on main while every local build was
+    green. Found 2026-09-04, from theme work written months earlier on a
+    modern Xcode.
 
-    Three failure modes, and only the first is what anyone expects:
+    **Both halves of that were fixed and the pairing is deliberate.** The
+    runner is `macos-15` now, and the SOURCE was made to compile on 14
+    anyway. Either alone would have turned CI green; together, the app still
+    builds at its own declared floor and the packaging job is no longer three
+    Xcode releases behind the people writing the code. Bumping the runner
+    does not lower that floor -- the deployment target is `.macOS(.v14)` in
+    `Package.swift` and `14.0` in the Info.plist, and `release.yml`'s
+    `check-version` job asserts the two agree.
+
+    Three failure modes, all of them things an older SDK rejects and a newer
+    one accepts, and only the first is what anyone expects:
 
     **A GUARDED CALL TO A NEWER API STILL HAS TO COMPILE.**
     `Color.mix(with:by:)` behind `if #available(macOS 15.0, *)` is correct
@@ -1149,10 +1160,12 @@ so going through `make` recompiles the whole app every single time. Use
     ("unable to type-check this expression in reasonable time") while
     compiling fine locally. One property per section.
 
-    The standing consequence: `swift build` passing here says nothing about
-    the job that ships the DMG. Anything touching Theme, a view helper, or a
-    large SwiftUI container is worth reading with this in mind, because the
-    feedback arrives on a push to main rather than on the PR.
+    The standing consequence survives the runner bump, because the gap only
+    narrowed: `swift build` passing here still says nothing about the job
+    that ships the DMG, and the feedback arrives on a push to MAIN rather
+    than on the PR. Whenever the local Xcode moves ahead of `macos-15` the
+    same class returns, so anything touching Theme, a view helper, or a large
+    SwiftUI container is worth reading with this in mind.
 
 ## The `state#N` ledger
 
