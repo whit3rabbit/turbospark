@@ -585,15 +585,129 @@ Widening to `rotary_dim = 4` (two pairs) made the two conventions
 genuinely diverge, and the same mutation now reddens exactly that one test.
 
 No new kernel-shaped function was needed for norm or RoPE -- both already
-exist and are simply called correctly now. What remains before any of this
-reaches a Metal kernel or a real tensor: the actual GPU dispatch (the CPU
-reference's per-block RoPE loop is a real cost model to carry forward,
-since pooled keys do not share one position the way every other RoPE call
-site in this port's kernels currently assumes), and reading
-`self_attn.indexer.*` at `open()` for the first time.
+exist and are simply called correctly now.
 
 The `qwen4-reap288` catalog row's notes now also states this in miniature
 so a reader does not have to re-derive it from the module doc.
+
+## QSA indexer: the pooling and scoring Metal kernels (2026-09-04, later)
+
+Two new port-local kernels, matched to `crates/compute/src/qsa_indexer.rs`'s
+CPU reference: `qsa_pool_blocks_mean_fp16` (mean-pools consecutive raw key
+rows into one pooled row per complete block, FP32 accumulation) and
+`qsa_score_blocks_fp16` (`relu(sum over heads of q . pooled) / sqrt(D)`,
+one threadgroup per block, the same two-stage SIMD-group reduction shape
+`ple_gate_fp16` already uses). `crates/gpu/src/shaders/qsa_indexer.metal`
+and `crates/gpu/src/qsa_indexer.rs`; parity tests in
+`crates/gpu/tests/qsa_indexer_parity.rs`. Both kernels match the CPU
+reference exactly (well under FP16 tolerance) and three targeted mutations
+(dropping pooling's division, dropping scoring's relu clamp, and reading
+the pooled key at a fixed block-0 offset regardless of which block is being
+scored) each redden exactly the cases they should and nothing else.
+
+**Block SELECTION stays host-side and gets no kernel**, matching this
+port's own MoE router precedent (top-k is already a host round trip
+there): `turbospark_compute::qsa_indexer::select_blocks` is the whole of
+it, unchanged from the prior session.
+
+**What this is not**: these two kernels do not touch attention itself.
+Section 5's pseudocode ends with "the result is a boolean mask ANDed onto
+the causal mask" -- applying that mask to real Q/K/V is a THIRD, and by far
+the largest and riskiest, piece of this feature, structurally unlike
+anything this port's existing `attention.metal`/`attention_decode.rs` do
+today (dense causal or a contiguous sliding-window ring; a selected block
+set is neither contiguous nor known until the indexer has run). Two shapes
+were considered and neither is built: mirror mlx-vlm's own fused kernel
+(`qsa_kernel.py`, read during this session's RoPE research -- one
+threadgroup per query row, online softmax across SIMD-group-interleaved
+selected blocks plus the ragged tail, sorted block indices, a GQA factor),
+or gather the selected KV rows into a compact contiguous buffer first and
+reuse this port's ALREADY-VERIFIED dense attention kernel over that shorter
+sequence (lower-risk, reuses proven math, costs a new but much simpler
+gather kernel and a host-side index-list construction from the boolean
+mask). Deciding between them is real design work belonging to whoever picks
+this up next, not a default to assume.
+
+**The user split the remaining work here explicitly**: the sparse-attention
+application (the gather-vs-fused-kernel design question above) went to a
+separate worktree; this session continued on the indexer's OWN state and
+computation, which the rest of this section covers. The two are decoupled
+by design -- nothing below touches attention, `families/qwen4/attn.rs`, or
+the `index_budget` refusal at `open()`.
+
+## QSA indexer: persistent state and the composed incremental update (2026-09-05)
+
+`crates/gpu/src/qsa_indexer_state.rs`'s `QsaIndexerCacheManager` -- the
+indexer's own KV-cache-shaped state, filling in the `QsaCacheManager` plan
+`docs/QWEN4_PHASE0.md` section 5 named and left unbuilt. Two buffers per
+QSA layer (allocated only where `mask == 1` AND
+`compressed_attention.index_budget > 0`, since `mask == 1` alone covers
+every OTHER family's ordinary dense-attention layers too): the RAW
+(un-normed, un-roped) key history, and the pooled-block cache built from it
+incrementally.
+
+**The raw key buffer shares its position with the main `KvCacheManager` by
+DESIGN, not by convention**: it owns no cursor of its own, and every write
+takes a caller-supplied `position` (`write_raw_key`, mirroring
+`KvCacheManager::write_k`'s exact shape) -- section 5's own words, "must
+share a position counter with the KV cache," read literally rather than as
+a suggestion. Two independently-advancing cursors over one token stream is
+the "upstream restore-misalignment bug" that sentence exists to warn
+against, and the fix is structural: there is only ever one cursor,
+`KvCacheManager`'s own, and this struct is driven by it rather than
+tracking a second.
+
+**The pooled-block cache is the opposite: it owns a real cursor**
+(`pooled_block_count`, `advance_pooled_blocks`), mlx-vlm's own
+"first_new_block" design -- a pooled, normed, roped block is never
+recomputed, so the cursor is genuinely this struct's own state and nothing
+else in the engine tracks it. The cursor refuses to move backward or past
+the layer's block capacity, both guards mutation-checked individually.
+
+`crates/gpu/src/qsa_indexer.rs` gained `encode_qsa_advance_blocks`,
+composing the pooling and scoring kernels above with the ALREADY-EXISTING
+`encode_rms_norm_bf16w_perhead_centered` and `encode_rope_neox_subdim` into
+ONE call: pool the newly-completed blocks (batched, one dispatch), norm
+them (also batched -- that kernel's own indexing already means "N
+independent reductions sharing one weight," whatever it calls the axis),
+then RoPE each one individually (NOT batchable: `encode_rope_neox_subdim`
+takes one scalar position for the whole call, and each new block's own
+first-token absolute position differs -- a real, permanent per-block
+dispatch cost rather than an oversight). Verified against the SAME
+composed chain `crates/compute`'s own `the_full_indexer_chain_composes`
+test builds by hand from its CPU primitives, at the identical parameters.
+
+**Two real, mutation-caught gaps came out of testing this, both worth
+carrying past this feature.** First: the composed-chain test's first draft
+used `key_start_position = 0` throughout, matching every other fixture in
+the file, and a mutation dropping that argument from the RoPE call
+survived completely silently -- the two formulas coincide at
+`key_start_position == 0` by construction. AGENTS.md Gotcha 23's
+self-relative-fixture shape landing on this exact argument, one session
+after the CPU reference hit the identical trap over `rotary_dim`. Fixed
+with a dedicated test starting at position 100. Second: the incremental
+design's whole point -- that advancing block 1 alone must never touch
+block 0's already-computed row -- has no way to be seen by a single
+one-shot test covering every block at once; it needs two separate encoded
+passes checked against each other, which
+`advance_blocks_leaves_earlier_blocks_untouched_on_a_later_incremental_call`
+does. Both gaps are closed now, in `crates/gpu/tests/qsa_indexer_parity.rs`
+and `crates/gpu/tests/qsa_indexer_state.rs`, 15 tests total across both
+files, `cargo test -p turbospark-gpu` green throughout including the
+full pre-existing suite (51 test binaries, re-run twice this session to
+confirm nothing else moved).
+
+**What is still genuinely unbuilt, and deliberately not attempted here**:
+whatever the attention worktree decides (gather vs. fused kernel) is the
+piece that actually CONSUMES this state -- reading `raw_keys_view`,
+calling `encode_qsa_advance_blocks` each time a block completes, then
+using `select_blocks` and the pooled/scored result to drive real Q/K/V
+attention. None of that exists yet, on purpose: it is a different session's
+work by the user's own split. Also still open: lifting
+`RealForwardRunner::open`'s refusal above `index_budget`, and the real
+long-context hardware verification that only becomes possible once context
+can actually exceed 2,048 tokens on this family -- neither is reachable
+until the attention piece lands.
 
 ## What's next
 
@@ -649,8 +763,30 @@ so a reader does not have to re-derive it from the module doc.
    `rms_norm_centered` plus `rope_neox_subdim` at `rotary_dim=64`,
    `theta=1e7` -- both already-existing functions in this crate, no new
    kernel-shaped CPU reference needed) and composed end to end in a new
-   test. Still open: the actual Metal kernel (the per-block RoPE loop is a
-   real dispatch-shape cost to carry forward, since pooled keys do not
-   share one position), then reading `self_attn.indexer.*` at open and
-   wiring it into `families/qwen4/attn.rs`'s QSA-as-dense-attention path so
-   it becomes real block-sparse attention above the 2,048-token budget.
+   test. **The pooling and scoring Metal kernels now exist too** (same day,
+   later session) -- `qsa_pool_blocks_mean_fp16` and `qsa_score_blocks_fp16`
+   (`crates/gpu/src/shaders/qsa_indexer.metal`), matching the CPU reference
+   exactly and mutation-checked. **The indexer's own persistent state and a
+   composed incremental-update dispatch now exist too** (2026-09-05):
+   `QsaIndexerCacheManager` (`crates/gpu/src/qsa_indexer_state.rs` -- the raw
+   key history sharing the main KV cache's position counter, plus an
+   incremental pooled-block cursor) and `encode_qsa_advance_blocks`
+   (`crates/gpu/src/qsa_indexer.rs` -- pool, norm and RoPE the newly-completed
+   blocks in one composed call). 15 tests across both new files, two of them
+   catching real mutation-only-visible gaps (a `key_start_position` argument
+   whose drop was invisible at the position-0 fixtures every other test
+   used, and the incremental design's own "an earlier block must survive a
+   later call" property, provable only across two separate encoded passes).
+   **This work was explicitly split from the remaining piece**: the user
+   took the sparse-attention APPLICATION (gathering or fusing the
+   selected-block mask into real Q/K/V attention -- structurally unlike
+   this port's existing dense/windowed attention kernels, and an open
+   design question between a gather-then-reuse-dense-attention approach and
+   a from-scratch fused sparse kernel mirroring mlx-vlm's own) to a separate
+   worktree. Still open, unblocked by anything above but not started here on
+   purpose: lifting the `index_budget` refusal at `open()`, wiring
+   `families/qwen4/attn.rs`'s QSA-as-dense-attention path to become real
+   block-sparse attention above the 2,048-token budget, and the real
+   long-context hardware verification that needs both the attention piece
+   and the budget lift to exist first. See `docs/QWEN4_EXP.md`'s own QSA
+   sections for the fuller account.

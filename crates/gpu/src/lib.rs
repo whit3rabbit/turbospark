@@ -97,6 +97,10 @@ mod power_state;
 #[cfg(target_os = "macos")]
 mod prefill_scratch;
 #[cfg(target_os = "macos")]
+mod qsa_indexer;
+#[cfg(target_os = "macos")]
+mod qsa_indexer_state;
+#[cfg(target_os = "macos")]
 mod resident_metal;
 #[cfg(target_os = "macos")]
 mod rms_norm;
@@ -230,6 +234,12 @@ pub use power_state::{
 };
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
+#[cfg(target_os = "macos")]
+pub use qsa_indexer::{
+    encode_qsa_advance_blocks, encode_qsa_pool_blocks_mean, encode_qsa_score_blocks,
+};
+#[cfg(target_os = "macos")]
+pub use qsa_indexer_state::QsaIndexerCacheManager;
 #[cfg(target_os = "macos")]
 pub use resident_metal::{wrap_page_aligned_no_copy, ResidentGpuWeights};
 #[cfg(target_os = "macos")]
