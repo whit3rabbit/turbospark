@@ -43,10 +43,9 @@ public enum AppToolRegistry {
         // Refusing by name is the honest answer: it costs a user one click
         // (pick a project) and it is the only version of this that does not
         // silently grant the model the whole account. Only the tools that
-        // actually resolve a path or spawn a process are refused -- `skill`,
-        // the task tools and `askuserquestion` need no root and still work in
-        // a projectless chat, which is the case the old fallback was really
-        // reaching for.
+        // actually resolve a path or spawn a process are refused -- `skill`
+        // and `todowrite` need no root and still work in a projectless chat,
+        // which is the case the old fallback was really reaching for.
         //
         // **`workspaceRootedToolNames` IS STATIC AND A CUSTOM TOOL IS NOT IN
         // IT** (state#70). A user-defined tool resolves at the `default` arm
@@ -110,10 +109,10 @@ public enum AppToolRegistry {
                 guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'file_path' argument."])
                 }
-                guard let oldStr = call.arguments["old_string"] else {
+                guard let oldStr = call.arguments["old_string"] ?? call.arguments["target"] ?? call.arguments["oldStr"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'old_string' argument."])
                 }
-                let newStr = call.arguments["new_string"] ?? ""
+                let newStr = call.arguments["new_string"] ?? call.arguments["replacement"] ?? call.arguments["newStr"] ?? ""
                 let replaceAll = (call.arguments["replace_all"]?.lowercased() == "true")
                 output = try await editFile(relPath: relPath, oldString: oldStr, newString: newStr, replaceAll: replaceAll, rootURL: rootURL)
 
@@ -221,16 +220,6 @@ public enum AppToolRegistry {
                 let res = try TodoWriteExecutor.execute(arguments: call.arguments, chatID: chatID)
                 output = res.output
 
-            case "taskcreate", "task_create":
-                let subject = call.arguments["subject"] ?? "Untitled task"
-                output = "Task created: \(subject) (ID: task_\(UUID().uuidString.prefix(8)))"
-
-            case "tasklist", "task_list":
-                output = "Task list: No active blocking tasks."
-
-            case "askuserquestion", "ask_user_question", "question":
-                output = "Question submitted to user."
-
             case "agent", "subagent", "task":
                 guard let prompt = call.arguments["prompt"] ?? call.arguments["task"] ?? call.arguments["instructions"] else {
                     throw NSError(domain: "TurboSparkTool", code: 20, userInfo: [NSLocalizedDescriptionKey: "Missing 'prompt' argument for Agent tool call."])
@@ -252,6 +241,78 @@ public enum AppToolRegistry {
                     throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [NSLocalizedDescriptionKey: result.finalResponse])
                 }
                 output = "Subagent [\(agentDef.displayName)] completed in \(result.totalTurns) turn(s) (\(result.totalToolCalls) tool call(s), \(String(format: "%.2f", result.durationSeconds))s):\n\n\(result.finalResponse)"
+
+            case "askuserquestion", "ask_user_question", "ask_question", "question":
+                output = try AskUserQuestionExecutor.execute(arguments: call.arguments, chatID: chatID)
+
+            case "enterplanmode", "enter_plan_mode", "plan_mode", "plan":
+                output = PlanModeExecutor.enter(arguments: call.arguments, chatID: chatID)
+
+            case "exitplanmode", "exit_plan_mode":
+                output = PlanModeExecutor.exit(arguments: call.arguments, chatID: chatID)
+
+            case "reportfindings", "report_findings", "findings":
+                output = try ReportFindingsExecutor.execute(arguments: call.arguments)
+
+            case "proposeskills", "propose_skills":
+                output = try ProposeSkillsExecutor.execute(arguments: call.arguments, projectRootURL: rootURL)
+
+            case "proposegoal", "propose_goal":
+                output = try ProposeGoalExecutor.execute(arguments: call.arguments)
+
+            case "sendfeedback", "send_feedback":
+                output = try SendFeedbackExecutor.execute(arguments: call.arguments)
+
+            case "notebookedit", "notebook_edit":
+                output = try await NotebookEditExecutor.execute(arguments: call.arguments, rootURL: rootURL)
+
+            case "snip", "extract_snippet":
+                output = try SnipExecutor.execute(arguments: call.arguments, rootURL: rootURL)
+
+            case "senduserfile", "send_user_file":
+                output = try SendUserFileExecutor.execute(arguments: call.arguments, rootURL: rootURL, chatID: chatID)
+
+            case "taskcreate", "task_create", "task_add":
+                output = try TaskManager.executeCreate(arguments: call.arguments, chatID: chatID)
+
+            case "taskget", "task_get":
+                output = try TaskManager.executeGet(arguments: call.arguments)
+
+            case "tasklist", "task_list":
+                output = TaskManager.executeList(arguments: call.arguments, chatID: chatID)
+
+            case "taskupdate", "task_update":
+                output = try TaskManager.executeUpdate(arguments: call.arguments, chatID: chatID)
+
+            case "taskstop", "task_stop", "task_cancel":
+                output = try TaskManager.executeStop(arguments: call.arguments, chatID: chatID)
+
+            case "taskoutput", "task_output":
+                output = try TaskManager.executeOutput(arguments: call.arguments)
+
+            case "sleep", "delay":
+                output = try await SleepExecutor.execute(arguments: call.arguments)
+
+            case "pushnotification", "push_notification", "notify":
+                output = try PushNotificationExecutor.execute(arguments: call.arguments)
+
+            case "config", "config_tool":
+                output = try ConfigToolExecutor.execute(arguments: call.arguments, project: project)
+
+            case "ctxinspect", "ctx_inspect":
+                output = CtxInspectExecutor.execute(arguments: call.arguments, chatID: chatID, project: project)
+
+            case "enterworktree", "enter_worktree":
+                output = try await WorktreeExecutor.enter(arguments: call.arguments, rootURL: rootURL)
+
+            case "exitworktree", "exit_worktree":
+                output = try await WorktreeExecutor.exit(arguments: call.arguments, rootURL: rootURL)
+
+            case "listmcpresources", "list_mcp_resources", "list_resources":
+                output = try await McpResourceExecutor.listResources(arguments: call.arguments, project: project, rootURL: rootURL)
+
+            case "readmcpresource", "read_mcp_resource", "read_resource":
+                output = try await McpResourceExecutor.readResource(arguments: call.arguments, project: project, rootURL: rootURL)
 
             case "call_mcp_tool", "callmcptool", "mcp_tool":
                 guard let serverName = call.arguments["server"] ?? call.arguments["server_name"] else {

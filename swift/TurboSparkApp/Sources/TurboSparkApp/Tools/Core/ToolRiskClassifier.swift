@@ -157,9 +157,14 @@ public enum ToolRiskClassifier {
         // 1. Always Safe Builtin Tools
         switch lowerName {
         case "list_directory", "list_dir", "ls", "glob", "read_file", "view_file", "cat", "fileread", "read",
-             "search_code", "grep", "search", "skill", "todowrite", "todo_write", "tasklist", "task_list",
-             "askuserquestion", "ask_user_question", "question", "taskcreate", "task_create":
-            // Check if read_file is accessing a sensitive credential path
+             "search_code", "grep", "search", "skill", "todowrite", "todo_write", "snip", "extract_snippet",
+             "ctxinspect", "ctx_inspect", "listmcpresources", "list_mcp_resources", "list_resources",
+             "readmcpresource", "read_mcp_resource", "read_resource", "tasklist", "task_list", "taskget",
+             "task_get", "taskoutput", "task_output", "sleep", "delay", "askuserquestion", "ask_user_question",
+             "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
+             "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings",
+             "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "senduserfile", "send_user_file":
+            // Check if read_file or snip is accessing a sensitive credential path
             if let path = arguments["path"] ?? arguments["file_path"] {
                 if isSensitivePath(path) {
                     return ToolRiskAssessment(

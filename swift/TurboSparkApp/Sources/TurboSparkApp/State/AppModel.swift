@@ -372,6 +372,26 @@ public final class AppModel: ObservableObject {
                 self.updateTodos(for: chatID, todos: newTodos)
             }
         }
+        TaskManager.shared.onTasksUpdated = { [weak self] targetChatID, tasks in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                // Trigger view update
+                self.objectWillChange.send()
+            }
+        }
+        SendUserFileExecutor.onFileSent = { [weak self] targetChatID, fileURL, note in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+                self.activeToast = AppToast(message: "Presented file: \(fileURL.lastPathComponent)", style: .info)
+            }
+        }
+        PushNotificationExecutor.onNotificationPushed = { [weak self] title, message in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                self.activeToast = AppToast(message: "\(title): \(message)", style: .info)
+            }
+        }
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
         // A quarantined settings, chat or project file is the one thing the
         // user must be told about at launch: the app comes up looking EMPTY,

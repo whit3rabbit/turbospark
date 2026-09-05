@@ -342,7 +342,32 @@ public enum FileReadWriteToolDefinitions {
         )
     )
 
+    public static let snip = OpenAITool.function(
+        name: "Snip",
+        description: "Extract a specific range of lines from a file with line numbers and context.",
+        parameters: .object(
+            properties: [
+                "path": .string(description: "The path of the file to extract from."),
+                "start_line": .integer(description: "Starting line number (1-indexed)."),
+                "end_line": .integer(description: "Ending line number (1-indexed).")
+            ],
+            required: ["path", "start_line", "end_line"]
+        )
+    )
+
+    public static let sendUserFile = OpenAITool.function(
+        name: "SendUserFile",
+        description: "Present, reveal, or send a local workspace file to the user with an optional message.",
+        parameters: .object(
+            properties: [
+                "path": .string(description: "The path of the file to send/present."),
+                "message": .string(description: "Optional description or note accompanying the file.")
+            ],
+            required: ["path"]
+        )
+    )
+
     public static let all: [OpenAITool] = [
-        fileRead, fileWrite, fileEdit
+        fileRead, fileWrite, fileEdit, snip, sendUserFile
     ]
 }

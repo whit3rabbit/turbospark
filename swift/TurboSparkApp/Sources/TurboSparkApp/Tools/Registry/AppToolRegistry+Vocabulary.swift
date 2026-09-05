@@ -82,19 +82,40 @@ extension AppToolRegistry {
         "webfetch", "web_fetch", "fetch_url", "read_url_content",
         "skill",
         "todowrite", "todo_write",
-        "taskcreate", "task_create",
-        "tasklist", "task_list",
-        "askuserquestion", "ask_user_question", "question",
         "agent", "subagent", "task",
-        "call_mcp_tool", "callmcptool", "mcp_tool"
+        "askuserquestion", "ask_user_question", "ask_question", "question",
+        "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
+        "exitplanmode", "exit_plan_mode",
+        "reportfindings", "report_findings", "findings",
+        "proposeskills", "propose_skills",
+        "proposegoal", "propose_goal",
+        "sendfeedback", "send_feedback",
+        "notebookedit", "notebook_edit",
+        "snip", "extract_snippet",
+        "senduserfile", "send_user_file",
+        "taskcreate", "task_create", "task_add",
+        "taskget", "task_get",
+        "tasklist", "task_list",
+        "taskupdate", "task_update",
+        "taskstop", "task_stop", "task_cancel",
+        "taskoutput", "task_output",
+        "sleep", "delay",
+        "pushnotification", "push_notification", "notify",
+        "config", "config_tool",
+        "ctxinspect", "ctx_inspect",
+        "enterworktree", "enter_worktree",
+        "exitworktree", "exit_worktree",
+        "call_mcp_tool", "callmcptool", "mcp_tool",
+        "listmcpresources", "list_mcp_resources", "list_resources",
+        "readmcpresource", "read_mcp_resource", "read_resource"
     ]
 
     /// Tool names whose handler resolves a filesystem path or spawns a
     /// process, and therefore cannot run without a project root.
     ///
     /// The complement of this set inside `supportedToolNames` is the group
-    /// that works in a projectless chat (`skill`, the task tools,
-    /// `askuserquestion`). Every `mcp__server__tool` call is treated as
+    /// that works in a projectless chat (`skill`, `todowrite`, `agent`).
+    /// Every `mcp__server__tool` call is treated as
     /// rooted too: `executeMcpCall` passes the root as the server's working
     /// directory, so there is no correct value to pass without one.
     static let workspaceRootedToolNames: Set<String> = [
@@ -105,7 +126,15 @@ extension AppToolRegistry {
         "apply_patch", "applypatch",
         "search_code", "grep", "search",
         "run_command", "bash", "shell", "exec", "terminal",
-        "call_mcp_tool", "callmcptool", "mcp_tool"
+        "notebookedit", "notebook_edit",
+        "snip", "extract_snippet",
+        "senduserfile", "send_user_file",
+        "proposeskills", "propose_skills",
+        "enterworktree", "enter_worktree",
+        "exitworktree", "exit_worktree",
+        "call_mcp_tool", "callmcptool", "mcp_tool",
+        "listmcpresources", "list_mcp_resources", "list_resources",
+        "readmcpresource", "read_mcp_resource", "read_resource"
     ]
 
     /// Whether `execute(call:in:)` has a real handler for `toolName`.

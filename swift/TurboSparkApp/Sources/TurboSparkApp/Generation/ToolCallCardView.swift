@@ -60,6 +60,22 @@ struct ToolCallCardView: View {
         try? TodoWriteExecutor.parseTodos(from: call.arguments)
     }
 
+    private var isQuestionCall: Bool {
+        call.name.lowercased().contains("question")
+    }
+
+    private var parsedQuestions: [UserQuestionItem]? {
+        try? AskUserQuestionExecutor.parseQuestions(from: call.arguments)
+    }
+
+    private var isFindingsCall: Bool {
+        call.name.lowercased().contains("findings")
+    }
+
+    private var parsedFindings: [CodeFindingItem]? {
+        (try? ReportFindingsExecutor.parseFindings(from: call.arguments))?.findings
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             summaryHeaderButton
@@ -68,6 +84,10 @@ struct ToolCallCardView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if isTodoCall, let _ = parsedTodos {
                         todoChecklistPreview
+                    } else if isQuestionCall, let _ = parsedQuestions {
+                        questionPreview
+                    } else if isFindingsCall, let _ = parsedFindings {
+                        findingsPreview
                     } else {
                         argumentsPreview
                     }
@@ -288,6 +308,104 @@ struct ToolCallCardView: View {
                             }
                         }
                         .padding(.vertical, 2)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+
+    private var questionPreview: some View {
+        Group {
+            if let questions = parsedQuestions, !questions.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(questions.enumerated()), id: \.offset) { idx, q in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text(q.header)
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(TurboSparkTheme.accentColor.opacity(0.15), in: Capsule())
+                                    .foregroundStyle(TurboSparkTheme.accentColor)
+
+                                Text(q.question)
+                                    .font(.callout.weight(.medium))
+                                    .foregroundStyle(.primary)
+                            }
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(Array(q.options.enumerated()), id: \.offset) { optIdx, opt in
+                                    HStack(alignment: .top, spacing: 6) {
+                                        Image(systemName: "circle")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.top, 2)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(opt.label)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                            Text(opt.description)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .padding(.vertical, 1)
+                                }
+                            }
+                            .padding(.leading, 8)
+                        }
+                        if idx < questions.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+
+    private var findingsPreview: some View {
+        Group {
+            if let findings = parsedFindings, !findings.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(findings.enumerated()), id: \.offset) { idx, f in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+
+                                Text(f.file + (f.line.map { ":\($0)" } ?? ""))
+                                    .font(theme.code(.small, weight: .bold))
+                                    .foregroundStyle(.primary)
+
+                                if let cat = f.category {
+                                    Text(cat)
+                                        .font(.caption2)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            Text(f.summary)
+                                .font(.callout)
+                                .foregroundStyle(.primary)
+
+                            Text("Scenario: " + f.failureScenario)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 2)
+                        if idx < findings.count - 1 {
+                            Divider()
+                        }
                     }
                 }
                 .padding(10)

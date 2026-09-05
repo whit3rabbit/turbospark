@@ -228,7 +228,37 @@ public enum MonitoringNotificationDefinitions {
         )
     )
 
+    public static let sleep = OpenAITool.function(
+        name: "Sleep",
+        description: "Pause asynchronous execution for a specified duration in seconds.",
+        parameters: .object(
+            properties: [
+                "seconds": .number(description: "Number of seconds to sleep (0.1 to 300).")
+            ],
+            required: ["seconds"]
+        )
+    )
+
+    public static let config = OpenAITool.function(
+        name: "Config",
+        description: "Query, inspect, or adjust local TurboSpark application and project configuration.",
+        parameters: .object(
+            properties: [
+                "action": .string(description: "Action: 'get', 'set', 'list'."),
+                "key": .string(description: "Configuration key name."),
+                "value": .string(description: "Value to set if action is 'set'.")
+            ],
+            required: ["action"]
+        )
+    )
+
+    public static let ctxInspect = OpenAITool.function(
+        name: "CtxInspect",
+        description: "Inspect context statistics, active tools, system prompt details, and memory limits.",
+        parameters: .emptyObject()
+    )
+
     public static let all: [OpenAITool] = [
-        monitor, pushNotification
+        monitor, pushNotification, sleep, config, ctxInspect
     ]
 }

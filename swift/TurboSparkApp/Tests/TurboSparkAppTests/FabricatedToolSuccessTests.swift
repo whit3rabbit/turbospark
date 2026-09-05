@@ -14,6 +14,25 @@ final class FabricatedToolSuccessTests: XCTestCase {
         XCTAssertFalse(result.output.lowercased().contains("successfully"))
     }
 
+    /// The three arms that returned a canned string with no side effect
+    /// ("Task created: ...", "Task list: No active blocking tasks.",
+    /// "Question submitted to user.") were the same T5 class as the old
+    /// `default` arm, one level up: nothing in the UI read the call, so the
+    /// model was told a task existed or a user had been asked when neither
+    /// happened. Every spelling now falls to the honest not-implemented
+    /// error, and is filtered out of the advertised list by `isImplemented`.
+    func testCannedNoOpToolArmsAreGoneFromExecute() async {
+        for name in ["repl", "workflow", "croncreate", "schedulewakeup"] {
+            let call = AppToolCall(name: name, arguments: ["subject": "x"], category: .automation)
+            let result = await AppToolRegistry.execute(call: call, in: nil)
+            XCTAssertTrue(result.isError, "'\(name)' had no effect and must not report success: \(result.output)")
+            XCTAssertTrue(
+                result.output.contains("not implemented by this client"),
+                "'\(name)' must fall to the honest error, got: \(result.output)")
+            XCTAssertFalse(AppToolRegistry.isImplemented(name), "'\(name)' must not be advertised as implemented")
+        }
+    }
+
     func testMalformedMcpToolNameReturnsAnErrorRatherThanFabricatedSuccess() async {
         // "mcp__" prefix with too few "__"-separated parts to name a server + tool.
         let call = AppToolCall(name: "mcp__onlyserver", arguments: [:], category: .mcp)
@@ -38,7 +57,7 @@ final class FabricatedToolSuccessTests: XCTestCase {
 
     func testUnimplementedToolNamesAreExcludedFromAllTools() {
         let advertisedNames = Set(AppToolCatalog.allTools.map { $0.function.name.lowercased() })
-        for unimplemented in ["repl", "notebookedit", "croncreate", "schedulewakeup", "taskstop", "listmcpresources"] {
+        for unimplemented in ["repl", "workflow", "croncreate", "crondelete", "cronlist", "schedulewakeup"] {
             XCTAssertFalse(
                 advertisedNames.contains(unimplemented),
                 "'\(unimplemented)' has no executor and must not be advertised to the model."
@@ -48,9 +67,17 @@ final class FabricatedToolSuccessTests: XCTestCase {
 
     func testImplementedToolNamesAreStillAdvertised() {
         let advertisedNames = Set(AppToolCatalog.allTools.map { $0.function.name.lowercased() })
-        for implemented in ["bash", "fileread", "filewrite", "fileedit", "grep", "glob", "apply_patch", "skill", "agent", "taskcreate", "tasklist", "askuserquestion", "webfetch", "websearch"] {
+        for implemented in [
+            "bash", "fileread", "filewrite", "fileedit", "grep", "glob", "apply_patch",
+            "skill", "agent", "todowrite", "webfetch", "websearch",
+            "askuserquestion", "enterplanmode", "exitplanmode", "reportfindings",
+            "proposeskills", "proposegoal", "sendfeedback", "notebookedit",
+            "snip", "senduserfile", "taskcreate", "taskget", "tasklist",
+            "taskupdate", "taskstop", "taskoutput", "sleep", "pushnotification",
+            "config", "ctxinspect", "enterworktree", "exitworktree", "listmcpresources", "readmcpresource"
+        ] {
             XCTAssertTrue(
-                advertisedNames.contains(implemented),
+                advertisedNames.contains(implemented.lowercased()),
                 "'\(implemented)' has a real executor and should remain advertised."
             )
         }

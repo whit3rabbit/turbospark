@@ -52,7 +52,80 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 2. File Edits: replace_file_content, edit_file, etc.
+        // 2. Structured Task System
+        if lowerName.hasPrefix("task") {
+            let subj = arguments["subject"] ?? arguments["taskId"] ?? arguments["task_id"] ?? "task"
+            return ToolCallSummaryInfo(
+                action: "Task",
+                target: subj
+            )
+        }
+
+        // 3. User Questions & Interactive Planning
+        if lowerName.contains("question") {
+            let header = arguments["header"] ?? "Question"
+            return ToolCallSummaryInfo(
+                action: "Asked",
+                target: header
+            )
+        }
+
+        if lowerName.contains("plan") {
+            let act = lowerName.contains("enter") ? "Entered" : (lowerName.contains("exit") ? "Finalized" : "Plan")
+            return ToolCallSummaryInfo(
+                action: act,
+                target: "plan mode"
+            )
+        }
+
+        if lowerName.contains("findings") {
+            return ToolCallSummaryInfo(
+                action: "Reported",
+                target: "code findings"
+            )
+        }
+
+        // 4. Notebooks
+        if lowerName.contains("notebook") {
+            let targetPath = arguments["notebook_path"] ?? arguments["notebookPath"] ?? arguments["path"] ?? "notebook.ipynb"
+            let fileName = (targetPath as NSString).lastPathComponent
+            return ToolCallSummaryInfo(
+                action: "Notebook",
+                target: fileName.isEmpty ? "notebook.ipynb" : fileName
+            )
+        }
+
+        // 5. Snippet extraction
+        if lowerName == "snip" || lowerName == "extract_snippet" {
+            let targetPath = arguments["path"] ?? arguments["file_path"] ?? "file"
+            let fileName = (targetPath as NSString).lastPathComponent
+            let start = arguments["start_line"] ?? arguments["start"]
+            let end = arguments["end_line"] ?? arguments["end"]
+            let range = (start != nil && end != nil) ? "(\(start!)-\(end!))" : nil
+            return ToolCallSummaryInfo(
+                action: "Snippet",
+                target: fileName.isEmpty ? "file" : fileName,
+                lineRange: range
+            )
+        }
+
+        // 6. Sleep / Notifications
+        if lowerName == "sleep" || lowerName == "delay" {
+            let sec = arguments["seconds"] ?? arguments["duration"] ?? "1"
+            return ToolCallSummaryInfo(
+                action: "Pause",
+                target: "\(sec)s"
+            )
+        }
+
+        if lowerName.contains("notification") || lowerName == "notify" {
+            return ToolCallSummaryInfo(
+                action: "Notified",
+                target: "user"
+            )
+        }
+
+        // 7. File Edits: replace_file_content, edit_file, etc.
         if lowerName.contains("replace") || lowerName.contains("edit") {
             let targetPath = arguments["TargetFile"] ?? arguments["path"] ?? arguments["file"] ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
@@ -93,7 +166,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 3. File Writes: write_to_file, write_file, create_file
+        // 8. File Writes: write_to_file, write_file, create_file
         if lowerName.contains("write") || lowerName.contains("create") {
             let targetPath = arguments["TargetFile"] ?? arguments["path"] ?? arguments["file"] ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
@@ -110,7 +183,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 4. File Reads: view_file, read_file
+        // 9. File Reads: view_file, read_file
         if lowerName.contains("view") || lowerName.contains("read") {
             let targetPath = arguments["AbsolutePath"] ?? arguments["path"] ?? arguments["file"] ?? arguments["TargetFile"] ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
@@ -127,9 +200,9 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 5. Commands: run_command, bash, terminal
-        if lowerName.contains("command") || lowerName.contains("bash") || lowerName.contains("exec") {
-            let cmd = arguments["CommandLine"] ?? arguments["command"] ?? arguments["cmd"] ?? ""
+        // 10. Commands: run_command, bash, terminal
+        if lowerName.contains("command") || lowerName.contains("bash") || lowerName.contains("exec") || lowerName.contains("worktree") {
+            let cmd = arguments["CommandLine"] ?? arguments["command"] ?? arguments["cmd"] ?? arguments["name"] ?? ""
             let trimmed = cmd.trimmingCharacters(in: .whitespacesAndNewlines)
             let shortCmd = simplifyCommand(trimmed)
 
@@ -139,7 +212,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 6. Grep / Search
+        // 11. Grep / Search
         if lowerName.contains("grep") || lowerName.contains("search") {
             let query = arguments["Query"] ?? arguments["query"] ?? arguments["pattern"] ?? ""
             return ToolCallSummaryInfo(
@@ -148,7 +221,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 7. Generic fallback
+        // 12. Generic fallback
         return ToolCallSummaryInfo(
             action: "Invoked",
             target: callName

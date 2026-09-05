@@ -100,7 +100,7 @@ final class WorkspaceAndNetworkGateTests: XCTestCase {
     /// fallback was really reaching for. Refusing these too would have made a
     /// projectless chat useless.
     func testRootlessToolsStillWorkWithoutAProject() async {
-        for name in ["todowrite", "tasklist", "askuserquestion"] {
+        for name in ["todowrite"] {
             let call = AppToolCall(
                 name: name, arguments: [:],
                 category: AppToolRegistry.category(for: name))
