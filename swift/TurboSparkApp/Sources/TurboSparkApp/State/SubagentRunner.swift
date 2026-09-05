@@ -34,8 +34,30 @@ public enum SubagentRunner {
     public static let maxSubagentDepth = 2
 
     /// Builds the isolated system prompt for a subagent run.
-    public static func buildSystemPrompt(for agent: AppAgentDefinition, project: AppProject?) -> String {
+    ///
+    /// **THIS IS THE SECOND ASSEMBLER** and it shares no code with
+    /// `AppModel.buildSystemPrompt`. Anything added to one and not the other
+    /// silently applies to half this app's runs, which is already true of the
+    /// skills listing. `userPrompt` is threaded in rather than read because
+    /// this type is an `enum` with no `AppModel` to ask.
+    ///
+    /// A subagent inherits the app-wide DEFAULT only, never a per-chat
+    /// override: a subagent runs in a fresh isolated context with zero parent
+    /// history, so a prompt scoped to one conversation is not its scope.
+    public static func buildSystemPrompt(
+        for agent: AppAgentDefinition,
+        project: AppProject?,
+        userPrompt: String = ""
+    ) -> String {
         var sections: [String] = []
+
+        // 0. The user's own deployment-wide instructions, ahead of the agent
+        //    role for the same reason they lead the main assembler: the role
+        //    is a refinement of them, not a competitor.
+        let trimmedUserPrompt = userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedUserPrompt.isEmpty {
+            sections.append(trimmedUserPrompt)
+        }
 
         // 1. Agent's specialized role & instructions
         sections.append("## Subagent Role: \(agent.displayName)\n\(agent.systemPrompt)")
@@ -99,7 +121,8 @@ public enum SubagentRunner {
         project: AppProject?,
         chatID: UUID? = nil,
         depth: Int = 0,
-        maxTurnsOverride: Int? = nil
+        maxTurnsOverride: Int? = nil,
+        userSystemPrompt: String = ""
     ) async -> SubagentRunResult {
         let startTime = Date()
         let maxTurns = maxTurnsOverride ?? agent.maxTurns
@@ -131,7 +154,8 @@ public enum SubagentRunner {
 
         // Fresh, isolated history: zero parent message context
         var history: [ChatMessage] = []
-        let sysPrompt = buildSystemPrompt(for: agent, project: project)
+        let sysPrompt = buildSystemPrompt(
+            for: agent, project: project, userPrompt: userSystemPrompt)
         history.append(ChatMessage(role: .system, content: sysPrompt))
         history.append(ChatMessage(role: .user, content: taskPrompt))
 

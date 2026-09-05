@@ -583,11 +583,23 @@ struct InstalledModelDetailPaneView: View {
 
             cliSnippet(
                 title: "Serve OpenAI & Anthropic API",
-                command: "turbospark-server --model \(installedModel.alias)"
+                command: serveCommand
             )
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// The server launch line, carrying the app's own default system prompt so
+    /// a server the user starts from here behaves like the app does.
+    ///
+    /// `--system` is a STARTUP flag on that binary: there is no control route,
+    /// so a prompt changed here reaches a server only on its next launch.
+    private var serveCommand: String {
+        let base = "turbospark-server --model \(installedModel.alias)"
+        let prompt = model.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return base }
+        return "\(base) --system \(ShellQuote.single(prompt))"
     }
 
     private func cliSnippet(title: String, command: String) -> some View {

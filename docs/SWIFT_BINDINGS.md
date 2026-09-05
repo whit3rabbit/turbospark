@@ -411,6 +411,19 @@ instructions, reasoning triggers, and role markers (e.g. `<|im_start|>`, `[INST]
 `<|start|>user<|message|>`). Use this in a chat app to preview formatted prompts, debug
 system prompts, and inspect dialect framing.
 
+**A SYSTEM PROMPT IS A MESSAGE AND NOTHING ELSE AT THIS BOUNDARY.** There is
+no `system_prompt` parameter anywhere in the ABI: it is `ChatMessage.system`
+at index 0 of the conversation, and only at index 0 -- three of the five
+fallback renderers refuse a system message at any other position, and
+`fitWindow` protects only a LEADING system or developer turn. So exactly one,
+first, is the shape every caller has to produce.
+
+Where a prompt comes from is therefore the HOST's question, not this
+binding's. `TurboSparkApp` resolves one from its own settings and per-chat
+state and prepends it; `turbospark-server` resolves one from `--system` and
+injects it when a request carries none. Neither is visible here, and a third
+host would make its own arrangement.
+
 ### Tokenization & detokenization
 
 ```swift

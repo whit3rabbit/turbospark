@@ -67,7 +67,15 @@ final class InteractionModeSettingsTests: XCTestCase {
     @MainActor
     func testProjectlessChatBuildsEmptySystemPrompt() {
         let model = AppModel()
-        // In Chat mode with no project, system prompt must be empty to avoid 7k token injection
+        // In Chat mode with no project and NO user prompt, the system message
+        // is empty: what the 7k of token injection this guards against really
+        // is, is the project-derived sections (agent role, workspace root,
+        // tool vocabulary, skills), and all of them stay behind the guard.
+        //
+        // A user's OWN default system prompt is the one section that survives
+        // a nil project, so this is no longer the whole invariant; the rest of
+        // it, including that a projectless chat is still offered no tools,
+        // lives in `SystemPromptTests`.
         XCTAssertEqual(model.buildSystemPrompt(for: nil), "")
 
         // When a project is provided, it must still produce the project environment and instructions

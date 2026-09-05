@@ -209,7 +209,10 @@ extension AppModel {
                 taskPrompt: prompt,
                 session: self.session,
                 project: project,
-                chatID: turnChatID
+                chatID: turnChatID,
+                // The app-wide DEFAULT, never a per-chat override: a subagent
+                // runs in a fresh isolated context with zero parent history.
+                userSystemPrompt: self.defaultSystemPrompt
             )
 
             let assistantContent = """

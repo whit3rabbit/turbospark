@@ -266,6 +266,14 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     public var todos: [TodoItem]
     /// Optional context summary or metadata.
     public var contextSummary: String?
+    /// System prompt for THIS conversation, overriding the app-wide default.
+    ///
+    /// `nil` means "use the default" and an empty string means the same, so a
+    /// user who clears the editor gets the default back rather than a silently
+    /// promptless chat. OPTIONAL so the synthesized `Codable` decodes a
+    /// `chats.json` written before this field existed; the store has no
+    /// migration step and relies on that.
+    public var systemPrompt: String?
     /// Bounded execution state, when the project runs in SKILL.state mode.
     /// Per chat rather than per project: it describes one agent run.
     public var skillState: AppSkillState?
@@ -284,6 +292,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         messages: [AppChatMessage] = [],
         todos: [TodoItem] = [],
         contextSummary: String? = nil,
+        systemPrompt: String? = nil,
         skillState: AppSkillState? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -296,6 +305,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.messages = messages
         self.todos = todos
         self.contextSummary = contextSummary
+        self.systemPrompt = systemPrompt
         self.skillState = skillState
         self.createdAt = createdAt
         self.updatedAt = updatedAt

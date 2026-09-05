@@ -61,6 +61,15 @@ extension AppToolRegistry {
     /// Active session provider for running subagent tasks.
     public static var activeSessionProvider: (@Sendable @MainActor () -> TurboSparkSession?)?
 
+    /// The app-wide default system prompt, for a subagent spawned by the
+    /// `agent` TOOL rather than from `AppModel+Agents`.
+    ///
+    /// A provider for `activeSessionProvider`'s reason: this type is not the
+    /// model and cannot reach it. Without it the two ways to start a subagent
+    /// would disagree about whether the user's prompt applies, which is the
+    /// divergence `SubagentRunner.buildSystemPrompt`'s own comment warns about.
+    public static var userSystemPromptProvider: (@Sendable @MainActor () -> String)?
+
     /// Tool names `execute(call:in:)` actually has a real handler for,
     /// independent of which `OpenAITool` DEFINITIONS `AppToolCatalog`
     /// advertises to the model. A name outside this set (and not a dynamic

@@ -305,6 +305,7 @@ public struct AppSettingsView: View {
     /// eventually.
     private var engineSettingsTab: some View {
         Form {
+            systemPromptSection
             generationDefaultsSection
             reasoningEffortSection
             guardrailsSection
@@ -316,6 +317,32 @@ public struct AppSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsTab)) { notification in
             if let tab = notification.object as? SettingsTab {
                 selectedTab = tab
+            }
+        }
+    }
+
+    /// A SEPARATE computed property, like every sibling section, for the
+    /// type-checker reason spelled out above `engineSettingsTab`.
+    private var systemPromptSection: some View {
+        Section("Default System Prompt") {
+            VStack(alignment: .leading, spacing: 6) {
+                TextEditor(text: $model.defaultSystemPrompt)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 100)
+                    .onChange(of: model.defaultSystemPrompt) { _, _ in
+                        model.persistSettingsDebounced()
+                    }
+                Text(
+                    "Sent as the first system message of every conversation, ahead of any "
+                    + "project rules. A chat with its own system prompt uses that instead. "
+                    + "Leave empty for none."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Text("\(model.defaultSystemPrompt.count) characters")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
         }
     }

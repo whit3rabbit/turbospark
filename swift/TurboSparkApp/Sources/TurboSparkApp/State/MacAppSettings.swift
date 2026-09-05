@@ -125,6 +125,15 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var modelReasoningDefaults: [String: String]
     /// Last-used primary interaction mode ("chat" or "projects").
     public var interactionMode: String
+    /// User-authored system prompt applied to every turn that has no per-chat
+    /// prompt of its own.
+    ///
+    /// It is the FIRST section of the assembled system message, ahead of every
+    /// project-derived one, so a project's own rules read as refinements of it
+    /// rather than as a competing set of instructions. Empty means no default,
+    /// which is what every install written before this field existed decodes
+    /// to and therefore leaves their behaviour unchanged.
+    public var defaultSystemPrompt: String
 
     public init(
         contextTokens: Int = 0,
@@ -162,7 +171,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         commandAdvisoryVeto: Bool = false,
         guardrailsMode: String = "select",
         modelReasoningDefaults: [String: String] = [:],
-        interactionMode: String = "chat"
+        interactionMode: String = "chat",
+        defaultSystemPrompt: String = ""
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -200,6 +210,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = minAutoContextTokens
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
+        self.defaultSystemPrompt = defaultSystemPrompt
     }
 
     /// Tolerant of a wrong TYPE as well as an absent key (state#59).
@@ -248,6 +259,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = c.decodeLenient(UInt32.self, forKey: .minAutoContextTokens, fallback: 0)
         self.modelReasoningDefaults = c.decodeLenient([String: String].self, forKey: .modelReasoningDefaults, fallback: [:])
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
+        self.defaultSystemPrompt = c.decodeLenient(
+            String.self, forKey: .defaultSystemPrompt, fallback: "")
     }
 }
 

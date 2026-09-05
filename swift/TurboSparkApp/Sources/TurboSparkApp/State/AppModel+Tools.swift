@@ -10,13 +10,58 @@ extension AppModel {
     // `swift/CLAUDE.md` Gotcha 11 still names it as "the barrier", which was
     // true of an earlier design; the barrier is the engine.
 
-    /// Constructs comprehensive system prompt including agent instructions, project rules, and tool definitions.
-    /// Returns an empty string when no project is provided (e.g. conversational Chat mode).
-    public func buildSystemPrompt(for project: AppProject?) -> String {
-        guard let project else {
-            return ""
+    /// Resolves the USER-AUTHORED half of a turn's system prompt: this chat's
+    /// own prompt when it has one, the app-wide default otherwise.
+    ///
+    /// An empty per-chat prompt falls back to the default rather than
+    /// suppressing it. A user who clears the editor is removing an override,
+    /// not asking for a promptless chat, and the second reading gives them no
+    /// way back to the default from inside that chat.
+    public func resolvedUserSystemPrompt(chat: AppChat) -> String {
+        let trimmedPerChat = (chat.systemPrompt ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedPerChat.isEmpty {
+            return trimmedPerChat
         }
+        return defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// By index, for the two history builders, which address a turn that way.
+    ///
+    /// An out-of-range index resolves the DEFAULT rather than trapping: the
+    /// transient draft chat is not in `chats` at all, so this is a normal
+    /// state on a first turn and not a caller error.
+    public func resolvedUserSystemPrompt(chatIndex: Int) -> String {
+        guard chats.indices.contains(chatIndex) else {
+            return defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return resolvedUserSystemPrompt(chat: chats[chatIndex])
+    }
+
+    /// Constructs the comprehensive system prompt: the user's own prompt, then
+    /// agent instructions, project rules, tool definitions and skills.
+    ///
+    /// **`userPrompt` IS THE ONLY SECTION THAT SURVIVES A NIL PROJECT**, and
+    /// that split is the whole point of the guard below rather than an
+    /// accident of ordering. Everything after it is project-derived, and one
+    /// of those sections is the TOOL VOCABULARY: emitting it without a project
+    /// would advertise tools to a conversation that has no root to run them
+    /// against. Chat mode gets prose and no tools.
+    ///
+    /// `extractToolCalls` carries its own independent
+    /// `interactionMode == .projects, project != nil` gate, so this is the
+    /// second of two locks rather than the only one.
+    public func buildSystemPrompt(for project: AppProject?, userPrompt: String = "") -> String {
         var sections: [String] = []
+
+        let trimmedUserPrompt = userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedUserPrompt.isEmpty {
+            sections.append(trimmedUserPrompt)
+        }
+
+        guard let project else {
+            return sections.joined(separator: "\n\n")
+        }
 
         let agentType = project.agentType
         sections.append(agentType.defaultSystemPrompt)

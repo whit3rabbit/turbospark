@@ -64,7 +64,9 @@ swift/
     |   +-- Components/              # AppearanceSettingsPaneView (+ ThemeConfigCard,
     |   |                            # AppearancePreferencesCard), McpSettingsPaneView,
     |   |                            # ModelsSettingsPaneView (+ CustomModelFoldersSection),
-    |   |                            # McpServerEditorSheet, PermissionsSettingsPaneView,
+    |   |                            # McpServerEditorSheet (+ McpTransportFieldsView),
+    |   |                            # McpImportSheet (+ McpCatalogSourceFormView),
+    |   |                            # PermissionsSettingsPaneView,
     |   |                            # ToastOverlayView, ErrorBanner
     |   +-- Theme/                   # AppearanceSettings, AppearanceTypes, AppDockIconRenderer,
     |   |                            # TurboSparkTheme, AppChromePresentation,
@@ -115,6 +117,24 @@ is the concrete reason state#68, #74 and #75 were three separate
 discoveries: a fix to how the main loop reads or answers a call had no way
 of reaching the isolated one. Each caller keeps its own GUARD, which
 genuinely differs, and neither keeps its own parser.
+
+**THE TWO MARKETPLACES SHARE THEIR SOURCE TYPE AND THEIR GIT, for the same
+reason.** `MarketplaceSource` (`State/MarketplaceSource.swift`) models
+`github` / `git` / `url` / `directory` for skills and MCP alike, and
+`MarketplaceGit` (`State/MarketplaceGit.swift`) is the one implementation of
+clone, pull and sparse checkout. It was four raw `Process()` spawns private to
+`SkillMarketplaceManager` until the MCP marketplace needed the same behaviour,
+and duplicating them would have duplicated three defects with it: no timeout
+and no output cap, only the clone's exit status checked, and a cache directory
+hardcoded outside `AppStorageRoot`. `MarketplaceGit` routes through
+`ProcessExecutor`, checks every step, and takes its directory as a parameter.
+
+**AND THE ANSWER TO "CAN THIS COMMAND BE LAUNCHED" HAS ONE SPELLING.**
+`McpClientEngine.resolveExecutablePath` is static and is called both by the
+spawn and by `McpMarketplaceManager` before it will install a catalog entry.
+A second lookup would drift, and the one that drifted would accept a server
+the spawn then refuses -- reported at the first tool call rather than at
+install time.
 
 ## Build, test, dev commands
 
@@ -824,10 +844,19 @@ so going through `make` recompiles the whole app every single time. Use
     `AppToolRegistry.execute`'s default case was fixed for (T5), one layer
     over. Both arms throw and name the transport now.
 
+    **THE REFUSAL IS NOW DISCLOSED AT CONFIGURATION TIME TOO.** Throwing is
+    the right behaviour and still left a user to discover it at the first tool
+    call, so `McpRemoteTransportFields.unavailableNotice` says so in the editor
+    sheet. Note what was deliberately NOT done: the picker's arm was not
+    relabelled "Streamable HTTP" to match another client's UI, because a better
+    name on a throwing stub is a capability claim (Gotcha 22's shape).
+
     Two smaller things in the same file. MCP stdio children were seeded from
     `ProcessInfo.processInfo.environment`, handing a third-party server binary
     every credential the app was launched with; they get `PATH`, `HOME`,
-    `LANG`, `TMPDIR` plus the config's own `env` now. And
+    `LANG`, `TMPDIR`, any host variable the config NAMES in `envPassthrough`,
+    plus the config's own `env` now -- an allowlist of names, never a
+    wildcard, pinned by `testAVariableThatWasNotNamedIsNotForwarded`. And
     `resolveExecutablePath` returned `/usr/bin/env` for anything it could not
     find, moving the lookup to spawn time where nothing could observe or
     report it -- it searches `PATH` itself and returns nil, so an unresolvable
@@ -1179,6 +1208,46 @@ so going through `make` recompiles the whole app every single time. Use
     than on the PR. Whenever the local Xcode moves ahead of `macos-15` the
     same class returns, so anything touching Theme, a view helper, or a large
     SwiftUI container is worth reading with this in mind.
+
+46. **THE SYSTEM PROMPT HAS THREE SOURCES AND TWO ASSEMBLERS, AND THE
+    ASSEMBLERS SHARE NO CODE.** Added 2026-09-05. What a turn sends is the
+    user's own prompt (this chat's `AppChat.systemPrompt`, else
+    `MacAppSettings.defaultSystemPrompt`) followed by the project-derived
+    sections, and `AppModel.resolvedUserSystemPrompt(chatIndex:)` is the only
+    place that precedence is decided.
+
+    **`AppModel.buildSystemPrompt`'s nil-project guard is a TOOL boundary, not
+    a prompt one.** The user's prompt is the one section above it; agent role,
+    workspace root, project rules, tool vocabulary and skills are all below.
+    That is what lets a projectless Chat-mode turn carry a persona while still
+    being offered no tools -- moving the user prompt below that guard, or a
+    project section above it, breaks a different thing in each direction.
+    `extractToolCalls` keeps its own independent gate, so this is the second
+    of two locks (state#82).
+
+    **`SubagentRunner.buildSystemPrompt` is the second assembler** and already
+    diverges (it lists no skills). It is an `enum` with no `AppModel` to ask,
+    so the prompt is threaded in: `AppModel+Agents` passes it directly and the
+    `agent` TOOL reaches it through `AppToolRegistry.userSystemPromptProvider`,
+    a provider for `activeSessionProvider`'s reason. Miss either call site and
+    the user's prompt applies to some subagent runs and not others. A subagent
+    inherits the app-wide DEFAULT only, never a per-chat override: it runs in
+    a fresh isolated context with zero parent history.
+
+    **EXACTLY ONE SYSTEM MESSAGE, AT INDEX 0.** Both history builders already
+    guaranteed this and it is a correctness requirement rather than a style:
+    three of the five fallback renderers refuse a system message anywhere else
+    and `fit_window` prices a failing render at `u64::MAX`, so the run loses
+    its own history rather than reporting anything (state#32, state#74). An
+    empty per-chat prompt falls back to the default rather than suppressing
+    it, or a user who clears the editor has no route back to the default from
+    inside that chat.
+
+    The server has the same setting under `--system` / `--system-file` and the
+    same caller-wins rule, and the model detail pane folds it into the
+    copyable launch command through `ShellQuote.single` -- that flag is
+    STARTUP-only, so a prompt changed here reaches a running server only on
+    its next launch.
 
 ## The `state#N` ledger
 

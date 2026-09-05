@@ -9,6 +9,7 @@ struct ChatSidebarChatRowView: View {
     @Binding var chatBeingRenamed: AppChat?
     @Binding var renameText: String
     @Binding var chatPendingDeletion: AppChat?
+    @Binding var chatForSystemPrompt: AppChat?
     @State private var hoveredChatID: UUID?
 
     @ScaledMetric private var actionButtonSize: CGFloat = 26
@@ -94,6 +95,10 @@ struct ChatSidebarChatRowView: View {
             Button("Rename") {
                 renameText = chat.title
                 chatBeingRenamed = chat
+            }
+            .disabled(model.isRunning)
+            Button(chat.systemPrompt == nil ? "Set System Prompt" : "Edit System Prompt") {
+                chatForSystemPrompt = chat
             }
             .disabled(model.isRunning)
             Button("Delete", role: .destructive) {
