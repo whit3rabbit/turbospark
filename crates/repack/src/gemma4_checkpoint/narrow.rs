@@ -128,16 +128,24 @@ fn decode_raw_to_f32(tensor: &str, dtype: &str, bytes: &[u8]) -> Result<Vec<f32>
         .collect())
 }
 
-/// Force-quantizes `qwen4_exp`'s MoE router to INT8-affine at repack time,
-/// for a checkpoint that ships it raw rather than pre-packed as `U32` --
-/// mirroring the GGUF walk's `transcode_f32` router target
-/// (`gguf_checkpoint/transcode.rs`, `crates/repack` CLAUDE.md Gotcha 6). The
-/// runtime's router GEMV (`gpu::encode_router_gemv_gemma4`) is INT8-affine by
-/// construction with no BF16 sibling, and every other MoE family's router
-/// already reaches it this way (via `pass_through_packed`, because their
-/// upstream conversion pre-packs it); this is the one safetensors checkpoint
-/// here whose upstream conversion left the router unpacked.
-pub fn quantize_router_int8(
+/// Force-quantizes one of `qwen4_exp`'s small GATING matrices (the MoE
+/// router `mlp.gate.weight`, or the shared expert's sigmoid gate
+/// `mlp.shared_expert_gate.weight`) to INT8-affine at repack time, for a
+/// checkpoint that ships it raw rather than pre-packed as `U32` -- mirroring
+/// the GGUF walk's `transcode_f32` router target
+/// (`gguf_checkpoint/transcode.rs`, `crates/repack` CLAUDE.md Gotcha 6),
+/// whose `int8_transcode_targets` names the SAME two tensors for
+/// `QwenGdnMoe`. Both are `[rows, hidden]` matrices with a small row count
+/// (`num_experts` for the router, 1 for the shared-expert gate) that MLX's
+/// default quantizer skips; `crates/runtime`'s `encode_gemv_any` has no
+/// unquantized-BF16 GEMV kernel, so either one reaching the resident index
+/// as raw BF16 fails at the first dispatch with "no dispatched GEMV kernel"
+/// (`mlp.shared_expert_gate.weight`) or the family's own dtype-5 check
+/// (`mlp.gate.weight`, `families/qwen4/moe.rs`). Every other MoE family's
+/// versions of these tensors already reach INT8 via `pass_through_packed`,
+/// because their upstream conversion pre-packs them; this is the one
+/// safetensors checkpoint here whose upstream conversion left them unpacked.
+pub fn quantize_gating_matrix_int8(
     shards: &Gemma4Shards<'_>,
     name: &str,
     dtype: &str,
@@ -146,7 +154,7 @@ pub fn quantize_router_int8(
     if w.shape.len() != 2 {
         return Err(Gemma4Error::ShapeMismatch {
             tensor: name.to_string(),
-            detail: format!("expected rank-2 router weight, got {:?}", w.shape),
+            detail: format!("expected rank-2 gating weight, got {:?}", w.shape),
         });
     }
     let rows = w.shape[0] as usize;

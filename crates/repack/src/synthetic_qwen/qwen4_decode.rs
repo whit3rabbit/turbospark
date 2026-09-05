@@ -353,14 +353,20 @@ fn bf16_matrix(name: &str, rows: usize, cols: usize, seed: u64) -> Tensor {
     }
 }
 
-/// `router_raw` ships the router as [`bf16_matrix`] instead of pre-packed
-/// [`int8_triple`], matching the real REAP-288 checkpoint
+/// `router_raw` ships BOTH of this family's small gating matrices -- the
+/// router `mlp.gate.weight` and the shared expert's sigmoid gate
+/// `mlp.shared_expert_gate.weight` -- as [`bf16_matrix`] instead of
+/// pre-packed [`int8_triple`], matching the real REAP-288 checkpoint
 /// (`crates/repack/CLAUDE.md` Gotcha 6's router-transcode pattern applied on
-/// the safetensors side, `orchestrate.rs`'s `quantize_router_int8`) rather
-/// than every OTHER safetensors MoE checkpoint this walk has seen, which
-/// ships it already `U32`-packed. No `bits_overrides` entry is inserted for
-/// it either, matching the real checkpoint's `config.json`, which declares
-/// none.
+/// the safetensors side, `orchestrate.rs`'s `quantize_gating_matrix_int8`)
+/// rather than every OTHER safetensors MoE checkpoint this walk has seen,
+/// which ships them already `U32`-packed. **Both, not just the router**: an
+/// earlier version of this fixture shipped only the router raw and kept the
+/// shared-expert gate pre-packed, which passed every test here while the
+/// real checkpoint still failed at a DIFFERENT dispatch site ("no dispatched
+/// GEMV kernel" on `mlp.shared_expert_gate.weight`) after the router fix
+/// alone. No `bits_overrides` entry is inserted for either, matching the
+/// real checkpoint's `config.json`, which declares none for either.
 fn moe_tensors(
     p: &str,
     seed: u64,
@@ -375,6 +381,12 @@ fn moe_tensors(
             HIDDEN,
             seed + 50,
         ));
+        ts.push(bf16_matrix(
+            &format!("{p}.mlp.shared_expert_gate.weight"),
+            1,
+            HIDDEN,
+            seed + 51,
+        ));
     } else {
         ts.extend(int8_triple(
             &format!("{p}.mlp.gate.weight"),
@@ -383,14 +395,14 @@ fn moe_tensors(
             seed + 50,
         ));
         overrides.insert(format!("{p}.mlp.gate"), 8);
+        ts.extend(int8_triple(
+            &format!("{p}.mlp.shared_expert_gate.weight"),
+            1,
+            HIDDEN,
+            seed + 51,
+        ));
+        overrides.insert(format!("{p}.mlp.shared_expert_gate"), 8);
     }
-    ts.extend(int8_triple(
-        &format!("{p}.mlp.shared_expert_gate.weight"),
-        1,
-        HIDDEN,
-        seed + 51,
-    ));
-    overrides.insert(format!("{p}.mlp.shared_expert_gate"), 8);
     for (i, role) in ["gate_proj", "up_proj", "down_proj"].iter().enumerate() {
         let (rows, cols) = if *role == "down_proj" {
             (HIDDEN, SHARED_INTER)

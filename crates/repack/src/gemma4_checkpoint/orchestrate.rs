@@ -311,6 +311,22 @@ pub struct ResidentRead {
     pub lossy_narrowing: Vec<(String, usize)>,
 }
 
+/// Safetensors sibling of `gguf_checkpoint/transcode.rs`'s
+/// `int8_transcode_targets`: canonical name suffixes this family's real
+/// checkpoint ships raw rather than pre-packed, and which
+/// `quantize_gating_matrix_int8` must force to INT8-affine regardless.
+/// Verified against the real `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`
+/// checkpoint, which fails at a DIFFERENT dispatch site for each of the two
+/// ("no dispatched GEMV kernel" for the shared-expert gate, the family's own
+/// dtype-5 refusal for the router) -- confirming both, not just the router
+/// the bug was first found on, need this arm.
+fn int8_force_targets(family: ModelFamily) -> &'static [&'static str] {
+    match family {
+        ModelFamily::Qwen4Exp => &[".mlp.gate.weight", ".mlp.shared_expert_gate.weight"],
+        _ => &[],
+    }
+}
+
 /// Reads resident weight and norm entries for the classified base names.
 pub fn read_resident_entries(
     shards: &Gemma4Shards<'_>,
@@ -324,14 +340,19 @@ pub fn read_resident_entries(
         let t = shards.info(name)?;
         if t.dtype == "U32" && name.ends_with(".weight") {
             entries.push(super::narrow::pass_through_packed(shards, name, quant)?);
-        } else if family == ModelFamily::Qwen4Exp && name.ends_with(".mlp.gate.weight") {
-            // The real checkpoint ships this family's router raw (not
+        } else if int8_force_targets(family)
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+        {
+            // The real checkpoint ships these small gating matrices raw (not
             // U32-prepacked, unlike every other safetensors MoE family this
-            // walk has seen), so it is force-quantized here to match the
-            // INT8-affine layout `crates/runtime`'s router GEMV requires --
+            // walk has seen), so they are force-quantized here to match the
+            // INT8-affine layout `crates/runtime`'s GEMV kernels require --
             // mirroring the GGUF walk's `transcode_f32` router target
             // (`crates/repack` CLAUDE.md Gotcha 6).
-            entries.push(super::narrow::quantize_router_int8(shards, name, &t.dtype)?);
+            entries.push(super::narrow::quantize_gating_matrix_int8(
+                shards, name, &t.dtype,
+            )?);
         } else {
             // NARROWED, not tagged. The deleted `raw_dtype_tag` recorded F16
             // or F32 and nothing downstream reads either tag: every consumer
