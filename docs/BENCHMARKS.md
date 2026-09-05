@@ -191,6 +191,7 @@ the reading, so allocator jitter cannot flake it).
 | Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
+| Qwen3.8-Flash-Next REAP-288, MLX INT4 (`qwen4_exp`) | 68 GB | **2,048** | 2,503 - 2,509 MiB | 3,000 | 6.870 - 7.530 | yes, 288 experts (top-10) |
 
 **Read the `Streams?` column before comparing any two rows**, because the
 two groups are measuring different things and only one of them is a result
@@ -229,6 +230,60 @@ LOW end of the tok/s range is the FIRST round rather than the largest page:
 it is a cold-GPU forward pass (AGENTS.md Gotcha 20), and the repeated
 large-page round later in the same run reads faster (15.997) than either
 smaller page.
+
+**The `qwen4_exp` row is not comparable to any other row in this table, and
+the bolded context column is the reason why.** Every other row here shares
+either the protocol's 4,096 window or the 8,192 one three families need
+(Gotcha 11); `qwen4_exp` runs at 2,048, the checkpoint's own
+`compressed_attention.index_budget` rather than a chosen number
+(`docs/QWEN4_EXP.md`, `docs/QWEN4_PHASE0.md`). Above it this port would
+compute dense attention where the checkpoint was trained with a
+query-sparse indexer this port has not implemented, so `RealForwardRunner::open`
+refuses outright rather than degrading quietly. The consequence reaches the
+protocol itself: `long-synthesis` tokenizes to 2,940 under this family's
+vocabulary, over the window before a single generated token exists, so this
+row covers only `short-explanation` and `medium-review`
+(`oracle_common::run_oracle_over_cases`, the first oracle in this crate over
+a partial case list). Its 6.870-7.530 tok/s is also this repo's slowest MoE
+reading by a wide margin -- 288 experts at top-10 against a 16-slot cache
+means most tokens miss and stream 2.6 GiB of resident core plus 36 GiB of
+packed experts, and nothing has tuned `ALLOWED_CACHE_SLOTS` for this
+routing profile yet.
+
+**The frozen-protocol binary (`turbospark-bench --model`) confirms the
+oracle's reading and widens the known range.** Two interleaved runs
+(2026-09-04, after the determinism fix below) read `short-explanation` at
+7.182 and 9.035 tok/s and `medium-review` at 11.204 and 8.689, peak
+footprint 2503.6-2509.7 MiB -- the same install, the same resolved
+2,048/1,024 window (Gotcha 16), and `long-synthesis` refusing at warmup
+exactly as this section predicts. The case-to-case and run-to-run spread
+(25-60%) is far wider than any other family in this table, and it is the
+same mechanism as the low absolute number: with a 16-slot cache well under
+what 288 experts at top-10 could fill, which experts are already resident
+when a case starts (left over from whatever ran before it) swings that
+case's own hit rate more than it does for a family whose experts mostly
+fit the cache regardless of history. Treat any single tok/s reading for
+this family as a sample from a wide distribution rather than a
+reproducible number, until `ALLOWED_CACHE_SLOTS` is tuned for this routing
+profile.
+
+**This family's quality-gate row is fixed and frozen (2026-09-04).** It used
+to have none: two back-to-back warm greedy generations of the identical
+prompt on the same open runner produced different SHA-256 digests, while
+three independent fresh processes agreed byte for byte. Root cause was
+`RealQwen4State::reset` never zeroing `ple_conv_tail`, the PLE sublayer's
+own dilated-conv recurrent tail -- a fresh process always starts that
+buffer at the zeros written once at open, so cross-process runs agreed,
+while a second within-process generation after `reset()` started PLE's
+conv from the first generation's leftover history instead, diverging the
+wide residual from the first PLE-layer token onward. See
+`docs/QWEN4_EXP.md`'s "The quality gate's determinism bug: root-caused and
+fixed" section for the full investigation. Reference-answer perplexity is
+**8.7224**, verified reproducing on three independent fresh processes
+alongside both digests, and `crates/bench/tests/qwen4exp_quality_gate.rs`
+now carries a frozen `ChipQuality` row like every other family's gate (no
+constrained-working-set arm, for the reason the memory section above
+gives: this family's routed width has no legal cache size below 16).
 
 ### External reference points for the Qwen3.8-27B row
 

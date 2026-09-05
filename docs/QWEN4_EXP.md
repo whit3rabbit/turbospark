@@ -214,14 +214,144 @@ separate multi-session bring-up, not a shortcut around anything in this
 page, and should not be started opportunistically while extending the
 decode flow.
 
+## The memory oracle: this family's first frozen row (2026-09-04)
+
+`crates/bench/tests/qwen4exp_memory_oracle.rs`, against the real
+`qwen4-reap288` install. Covers `short-explanation` and `medium-review`
+only -- `long-synthesis` tokenizes to 2,940 under this family's vocab, over
+the 2,048-token window before a single generated token is added, so there is
+no context at which it can run on this family today (`real_model_params`'s
+own comment on `Qwen4Exp`). `oracle_common::run_oracle_over_cases` is the new
+entry point that makes an oracle over a partial case list possible; every
+other family's oracle still runs all three by construction.
+
+One reading: `short-explanation` 62 prompt / 380 new tokens at 7.150 tok/s,
+`medium-review` 426 prompt / 605 new at 7.530 tok/s, both `endOfTurn`, steady
+state +0.00 MiB, peak 2,503 MiB. The peak is consistent with the arithmetic
+AGENTS.md Gotcha 36 sets up for this family (288 experts, 48 layers, ~2.7648
+MiB per expert blob): 16 slots is ~2,025.6 MiB of slot capacity alone,
+leaving ~477 MiB for KV at 2,048 context plus the resident core and process
+baseline. The tok/s is far below every other MoE family measured in this
+repo (15-40 tok/s elsewhere); that is this checkpoint's shape, not a
+regression to chase -- 288 experts at top-10 against a 16-slot cache means
+most tokens miss and stream from disk, and nothing here has tuned
+`ALLOWED_CACHE_SLOTS` for this routing profile yet (see "What's next" below).
+Frozen in `crates/catalog/src/models.json` under alias `qwen4-reap288`.
+
+## The quality gate's determinism bug: root-caused and fixed (2026-09-04)
+
+`crates/bench/tests/qwen4exp_quality_gate.rs` used to fail at arm 3 -- the
+determinism check every other family's gate treats as a formality -- after
+passing its first two arms (reference-answer perplexity: 8.7224; the two
+digests). Two BACK-TO-BACK warm greedy generations of the identical prompt,
+on the same open runner, with `reset()` called before each (this crate's
+`open_model_runner*` never enables prefix reuse, so `reset()` always runs),
+produced DIFFERENT SHA-256 digests.
+
+**Root cause: `RealQwen4State::reset` never zeroed `ple_conv_tail`.**
+`families/qwen4/state.rs` rewinds the GDN chain's delta rule and conv tail
+plus the PLE n-gram context, but the PLE sublayer's OWN dilated conv keeps a
+separate recurrent tail (`ple_conv_tail`, `PLE_CONV_HISTORY` = 9 rows) that
+`reset()` left untouched. The module's own doc comment had flagged this as
+"a gap rather than a decision" and reasoned it was inert because "today
+nothing [resets mid-process]" -- that reasoning was already wrong the day it
+was written: `crates/bench`'s quality gate flow calls `producer.reset()`
+between the perplexity pass and each digest generation, on the SAME open
+runner, which is exactly a mid-process reset. A fresh process always starts
+`ple_conv_tail` at the zeros `RealQwen4State::build` writes once at open, so
+cross-process generation reproduced exactly throughout the investigation
+below; a second within-process generation after `reset()` instead started
+PLE's dilated conv from the first generation's leftover history, diverging
+the wide residual stream from the very first PLE-layer token onward and
+cascading into a completely different greedy digest by the time 256 tokens
+had been sampled.
+
+**Fix**: `reset()` now zeroes `ple_conv_tail` (to the buffer's own byte
+length, via `gpu::write_buffer_bytes`) alongside `self.gdn.reset()` and the
+n-gram context rebuild. Verified on THREE independent fresh processes: all
+three agree on perplexity (8.7224) and on both digests to the last hex
+character, and the gate's own within-process two-generations check (arm 3)
+now passes on every run. `crates/bench/tests/qwen4exp_quality_gate.rs` now
+carries a frozen `ChipQuality` row for the M4 Max.
+
+While in this code, the SEPARATE `try_reuse_prefix` gap noted below (its
+rewind guard checking `self.real_qwen.is_some()` with no matching
+`self.real_qwen4.is_some()` arm) was also closed, even though it was never
+the cause of this bug -- prefix reuse is disabled throughout this
+investigation and in every caller today.
+
+**What is confirmed, and what is ruled out**, from this session's
+investigation:
+
+- **Cross-process greedy generation reproduces exactly.** Three independent
+  `turbospark-check` processes, same prompt, same seed, same settings,
+  produced byte-identical output every time (checked to 40 generated
+  tokens). So the bug is specific to repeated generation WITHIN one open
+  runner, not to the forward pass itself.
+- **The MoE dispatch order is NOT the cause.** `families/qwen4/moe.rs`'s
+  `encode_moe_layer` was checked line-by-line against `families/qwen/moe.rs`
+  (the working, frozen-gated sibling it was adapted from) for AGENTS.md
+  Gotcha 27's hazard (slots dispatched by cache state rather than by router
+  rank). The two are structurally identical: `ordered` is built from
+  `(0..selected.len())` in both, i.e. router-rank order, never reordered by
+  physical slot number.
+- **Prefix-KV reuse is NOT engaged.** `RealForwardRunner::prefix_reuse_enabled`
+  defaults `false` at open and nothing in `crates/bench` calls
+  `set_prefix_reuse`, so `try_reuse_prefix` returns 0 unconditionally and
+  `producer.reset()` runs before every generation in the gate's flow. (This
+  also means the `real_qwen4` recurrent-state gap in `try_reuse_prefix` --
+  its rewind guard checks `self.real_qwen.is_some()` but has no matching
+  `self.real_qwen4.is_some()` arm, unlike every other family with recurrent
+  state -- is a SEPARATE, real gap worth closing before this family's
+  `--chat` REPL or any session-pooling caller ever enables prefix reuse for
+  it, but it is not what this gate's failure is measuring.)
+- **`NgramContext` is not the cause.** Plain `Vec<i64>` shift register, no
+  hashing, no randomized iteration order.
+- **`wide_x` (the wide residual stream) is not stale state.** It is fully
+  re-written from the embedding table on every `produce()` call, at every
+  one of the `hc_count` copies, unconditionally -- confirmed by reading
+  `produce_real_qwen4_inner`'s first loop, not assumed.
+
+`hc.rs` was checked and cleared: `encode_hyper_connection` reads `wide` and
+writes only its own scratch buffers (`hc_normed`, `hc_low`, `hc_up`,
+`hc_inject`) plus the caller-supplied `mixed_out`, none of which persist
+across a `reset()`. `ple.rs` was where the state lived, but not in the
+dataflow the function itself encodes -- `RealQwen4State::ple_conv_tail`, a
+field `reset()` never touched (see the fix above). No GPU-side race was
+needed to explain the symptom once that field was found; the encode order
+in `produce.rs` was never the problem.
+
+**Consequence for this handoff's own next item, now resolved**: a
+throughput row can be written once someone wants one -- see "What's next"
+below.
+
 ## What's next
 
-1. A memory oracle (peak `phys_footprint` ceiling) and a quality gate
-   (frozen teacher-forced perplexity plus greedy/sampled output digests),
-   neither of which exists for this family yet -- the standing pattern
-   every other family in `docs/BENCHMARKS.md` already follows.
-2. A throughput row once the above exist, so a future kernel or dispatch
-   change to this family has something to compare against.
-3. Whether this checkpoint's 288-expert, top-10 routing profile needs its
-   own `ALLOWED_CACHE_SLOTS` tuning pass beyond Phase 4's widening, once a
-   memory oracle exists to measure against.
+1. ~~A memory oracle~~ -- **DONE** (2026-09-04, above).
+2. ~~Root-cause the within-process nondeterminism~~ -- **DONE** (2026-09-04,
+   above): `ple_conv_tail` was never cleared by `reset()`. Fixed, and the
+   `try_reuse_prefix` `real_qwen4.is_some()` gap was closed in the same
+   change.
+3. ~~A throughput row~~ -- **DONE** (2026-09-04). `turbospark-bench --model`
+   against the same install, two interleaved runs, both at 16 expert-cache
+   slots: `short-explanation` read 7.182 and 9.035 tok/s, `medium-review`
+   read 11.204 and 8.689 tok/s, peak footprint 2503.6-2509.7 MiB across both
+   (agreeing with the memory oracle's own 2503-2509 MiB). `long-synthesis`
+   refuses at warmup exactly as expected (2,940-token prompt over the
+   2,048-token window). **The spread is wider than every other family in
+   this repo's protocol table** -- roughly 25-60% case to case against the
+   few-percent spreads Gotcha 15 in `crates/bench/CLAUDE.md` records
+   elsewhere -- which is this family's routing profile rather than
+   measurement noise: 288 experts at top-10 against a 16-slot cache means
+   which experts are already resident when a case starts (left over from
+   whichever case ran before it, or from nothing on a cold cache) has an
+   outsized effect on that case's own hit rate, unlike a family whose
+   experts mostly fit the cache regardless of history. Report a RANGE for
+   this family rather than a single number, and expect a future measurement
+   to land somewhere in it rather than reproducing either run exactly.
+4. Whether this checkpoint's 288-expert, top-10 routing profile needs its
+   own `ALLOWED_CACHE_SLOTS` tuning pass beyond Phase 4's widening -- now
+   there are both a memory oracle and a protocol throughput reading to
+   measure against, and the tok/s spread item 3 records is itself an
+   argument for asking: a wider cache should narrow that spread as well as
+   raise the floor.

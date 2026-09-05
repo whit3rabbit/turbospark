@@ -91,7 +91,7 @@ use turbospark_bench::protocol::{
     PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT, PROTOCOL_TEMPERATURE,
     PROTOCOL_TOP_K, PROTOCOL_TOP_P,
 };
-use turbospark_bench::real_model::open_model_runner;
+use turbospark_bench::real_model::{open_model_runner, open_model_runner_with_context};
 
 /// The reference answer, teacher-forced into the assistant slot. Original
 /// prose written for this repo, so it is not in any training set verbatim
@@ -187,7 +187,13 @@ pub fn measure_perplexity(dir: &Path) -> f64 {
     // No prefix: the only caller is `quality_sensitivity.rs`, which measures
     // a damaged Gemma clone against an undamaged one, and Gemma opens an
     // assistant turn with words.
-    reference_perplexity(&mut runner, &tokenizer, &prompt_ids, "")
+    reference_perplexity(
+        &mut runner,
+        &tokenizer,
+        &prompt_ids,
+        "",
+        PROTOCOL_MAX_CONTEXT,
+    )
 }
 
 /// Run Phase Q's in-repo half against `dir` and assert what `rows` records
@@ -203,6 +209,71 @@ pub fn run_quality_gate_with_assistant_prefix(
     dir: &Path,
     rows: &[ChipQuality],
     assistant_prefix: &str,
+) {
+    run_quality_gate_with_assistant_prefix_and_context(
+        dir,
+        rows,
+        assistant_prefix,
+        PROTOCOL_MAX_CONTEXT,
+    )
+}
+
+/// [`run_quality_gate_with_assistant_prefix`] at a family-specific KV window.
+///
+/// `qwen4_exp` needs this: `RealForwardRunner::open` refuses a context above
+/// the checkpoint's own `compressed_attention.index_budget` (2,048 on this
+/// family) rather than degrading quietly, so opening at the shared
+/// `PROTOCOL_MAX_CONTEXT` (4,096) fails before a single token runs -- this is
+/// not a KV-sizing convenience, the runner cannot open at all above the
+/// budget. The gate's own corpus (this family's `short-explanation` prompt
+/// plus the reference answer) is 62 + 512 = 574 tokens, comfortably inside
+/// 2,048, so the window only needs to be legal at open, not larger than the
+/// shared one.
+///
+/// **THE SAME WINDOW MUST REACH `generation_digest` TOO.** The digest's
+/// `run_raw_completion` call enforces its own limit independently of the KV
+/// allocation the runner opened with (the same divergence
+/// `real_model::run_protocol_case_with_context`'s doc warns about), so this
+/// function threads `max_context` to every call rather than leaving the
+/// digest arm on the old default.
+#[allow(dead_code)]
+pub fn run_quality_gate_with_assistant_prefix_and_context(
+    dir: &Path,
+    rows: &[ChipQuality],
+    assistant_prefix: &str,
+    max_context: u32,
+) {
+    run_quality_gate_full(
+        dir,
+        rows,
+        assistant_prefix,
+        max_context,
+        Some(PRESSURE_EXPERT_CACHE_SLOTS),
+    )
+}
+
+/// [`run_quality_gate_with_assistant_prefix_and_context`] with the
+/// constrained-working-set arm (Phase Q's fourth deliverable) made OPTIONAL.
+///
+/// `qwen4_exp` is why: that arm halves `PROTOCOL_EXPERT_CACHE_SLOTS` (16) to
+/// `PRESSURE_EXPERT_CACHE_SLOTS` (8), and every family measured here so far
+/// has `top_k <= 8`, so 8 slots can just barely hold one token's routed
+/// experts. This family routes top-10 of 288, and a cache smaller than
+/// `top_k` cannot hold even ONE token's active experts regardless of any
+/// pipelining policy -- `ExpertCache::plan` aborts with "one token routes 10
+/// experts against 8 slots" rather than degrading throughput. The next
+/// legal value in `ALLOWED_CACHE_SLOTS` above 8 is 16, which is the SAME as
+/// the unconstrained baseline, so there is no smaller legal cache size that
+/// demonstrates anything for this family at today's granularity. `None`
+/// skips the arm rather than fabricating a "constrained" run that is
+/// actually identical to the baseline.
+#[allow(dead_code)]
+pub fn run_quality_gate_full(
+    dir: &Path,
+    rows: &[ChipQuality],
+    assistant_prefix: &str,
+    max_context: u32,
+    pressure_slots: Option<usize>,
 ) {
     let brand = chip_brand_string();
     let row = brand
@@ -220,11 +291,18 @@ pub fn run_quality_gate_with_assistant_prefix(
     }
 
     let (mut runner, tokenizer) =
-        open_model_runner(dir, PROTOCOL_EXPERT_CACHE_SLOTS).expect("real install should open");
+        open_model_runner_with_context(dir, PROTOCOL_EXPERT_CACHE_SLOTS, max_context)
+            .expect("real install should open");
     let prompt_ids = user_turn_ids(&tokenizer);
 
     // 1. Perplexity of the reference answer in the assistant slot.
-    let perplexity = reference_perplexity(&mut runner, &tokenizer, &prompt_ids, assistant_prefix);
+    let perplexity = reference_perplexity(
+        &mut runner,
+        &tokenizer,
+        &prompt_ids,
+        assistant_prefix,
+        max_context,
+    );
     eprintln!("quality_gate: reference-answer perplexity {perplexity:.4}");
 
     // 2. The two digests. Exactly 0.0 is the argmax fast path; 0.0001 is
@@ -242,12 +320,14 @@ pub fn run_quality_gate_with_assistant_prefix(
 
     // Warmup, discarded: a cold expert cache generates different bytes
     // (see the module doc).
-    generation_digest(&mut runner, &tokenizer, &prompt_ids, &greedy);
+    generation_digest(&mut runner, &tokenizer, &prompt_ids, &greedy, max_context);
     let (greedy_digest, baseline_tok_s) =
-        generation_digest(&mut runner, &tokenizer, &prompt_ids, &greedy);
-    let (greedy_again, _) = generation_digest(&mut runner, &tokenizer, &prompt_ids, &greedy);
-    generation_digest(&mut runner, &tokenizer, &prompt_ids, &sampled);
-    let (sampled_digest, _) = generation_digest(&mut runner, &tokenizer, &prompt_ids, &sampled);
+        generation_digest(&mut runner, &tokenizer, &prompt_ids, &greedy, max_context);
+    let (greedy_again, _) =
+        generation_digest(&mut runner, &tokenizer, &prompt_ids, &greedy, max_context);
+    generation_digest(&mut runner, &tokenizer, &prompt_ids, &sampled, max_context);
+    let (sampled_digest, _) =
+        generation_digest(&mut runner, &tokenizer, &prompt_ids, &sampled, max_context);
     eprintln!("quality_gate: greedy  digest {greedy_digest}");
     eprintln!("quality_gate: sampled digest {sampled_digest}");
 
@@ -262,50 +342,78 @@ pub fn run_quality_gate_with_assistant_prefix(
          deterministic, so no golden digest can hold"
     );
 
-    // 4. The constrained working set. The 16-slot runner is dropped first
-    //    so its slot capacity and its resident mapping are released before
-    //    the second one is opened: two live runners would double the
+    // 4. The constrained working set (optional; see `run_quality_gate_full`'s
+    //    header for why `qwen4_exp` has none). The 16-slot runner is dropped
+    //    first so its slot capacity and its resident mapping are released
+    //    before the second one is opened: two live runners would double the
     //    footprint of a test whose whole point is a real install.
-    drop(runner);
-    let (mut constrained, _) = open_model_runner(dir, PRESSURE_EXPERT_CACHE_SLOTS)
-        .expect("real install should reopen with a smaller expert cache");
-    generation_digest(&mut constrained, &tokenizer, &prompt_ids, &greedy);
-    let (constrained_digest, constrained_tok_s) =
-        generation_digest(&mut constrained, &tokenizer, &prompt_ids, &greedy);
-    let (constrained_again, _) =
-        generation_digest(&mut constrained, &tokenizer, &prompt_ids, &greedy);
-    let throughput_ratio = constrained_tok_s / baseline_tok_s;
-    eprintln!(
-        "quality_gate: constrained ({PRESSURE_EXPERT_CACHE_SLOTS} slots) digest \
-         {constrained_digest}, {constrained_tok_s:.3} tok/s against \
-         {baseline_tok_s:.3} at {PROTOCOL_EXPERT_CACHE_SLOTS} ({:.2}x)",
-        throughput_ratio
-    );
-    assert_eq!(
-        constrained_digest, constrained_again,
-        "two warm greedy runs at {PRESSURE_EXPERT_CACHE_SLOTS} expert-cache \
-         slots produced different output in one session: a constrained \
-         working set is not deterministic, which is a stronger failure than \
-         any digest drift"
-    );
-    // The slot order is the router's ranking, which the cache cannot reach,
-    // so halving the working set must not move a single byte. This is the
-    // assertion that fails if misses-first ordering ever comes back.
-    assert_eq!(
-        constrained_digest, greedy_digest,
-        "greedy output at {PRESSURE_EXPERT_CACHE_SLOTS} expert-cache slots \
-         differs from the same generation at {PROTOCOL_EXPERT_CACHE_SLOTS}: \
-         the routed-slot dispatch order has become a function of cache state \
-         again, so output depends on how many experts happened to be resident"
-    );
-    assert!(
-        throughput_ratio >= PRESSURE_THROUGHPUT_FLOOR_RATIO,
-        "halving the expert cache to {PRESSURE_EXPERT_CACHE_SLOTS} slots cut \
-         decode to {constrained_tok_s:.3} tok/s from {baseline_tok_s:.3} \
-         ({:.2}x, floor {PRESSURE_THROUGHPUT_FLOOR_RATIO:.2}x): throughput \
-         collapses under a constrained working set rather than degrading",
-        throughput_ratio
-    );
+    match pressure_slots {
+        Some(pressure_slots) => {
+            drop(runner);
+            let (mut constrained, _) =
+                open_model_runner_with_context(dir, pressure_slots, max_context)
+                    .expect("real install should reopen with a smaller expert cache");
+            generation_digest(
+                &mut constrained,
+                &tokenizer,
+                &prompt_ids,
+                &greedy,
+                max_context,
+            );
+            let (constrained_digest, constrained_tok_s) = generation_digest(
+                &mut constrained,
+                &tokenizer,
+                &prompt_ids,
+                &greedy,
+                max_context,
+            );
+            let (constrained_again, _) = generation_digest(
+                &mut constrained,
+                &tokenizer,
+                &prompt_ids,
+                &greedy,
+                max_context,
+            );
+            let throughput_ratio = constrained_tok_s / baseline_tok_s;
+            eprintln!(
+                "quality_gate: constrained ({pressure_slots} slots) digest \
+                 {constrained_digest}, {constrained_tok_s:.3} tok/s against \
+                 {baseline_tok_s:.3} at {PROTOCOL_EXPERT_CACHE_SLOTS} ({:.2}x)",
+                throughput_ratio
+            );
+            assert_eq!(
+                constrained_digest, constrained_again,
+                "two warm greedy runs at {pressure_slots} expert-cache \
+                 slots produced different output in one session: a constrained \
+                 working set is not deterministic, which is a stronger failure than \
+                 any digest drift"
+            );
+            // The slot order is the router's ranking, which the cache cannot
+            // reach, so halving the working set must not move a single byte.
+            // This is the assertion that fails if misses-first ordering ever
+            // comes back.
+            assert_eq!(
+                constrained_digest, greedy_digest,
+                "greedy output at {pressure_slots} expert-cache slots \
+                 differs from the same generation at {PROTOCOL_EXPERT_CACHE_SLOTS}: \
+                 the routed-slot dispatch order has become a function of cache state \
+                 again, so output depends on how many experts happened to be resident"
+            );
+            assert!(
+                throughput_ratio >= PRESSURE_THROUGHPUT_FLOOR_RATIO,
+                "halving the expert cache to {pressure_slots} slots cut \
+                 decode to {constrained_tok_s:.3} tok/s from {baseline_tok_s:.3} \
+                 ({:.2}x, floor {PRESSURE_THROUGHPUT_FLOOR_RATIO:.2}x): throughput \
+                 collapses under a constrained working set rather than degrading",
+                throughput_ratio
+            );
+        }
+        None => eprintln!(
+            "quality_gate: skipping the constrained-working-set arm (no legal \
+             expert-cache size below {PROTOCOL_EXPERT_CACHE_SLOTS} holds this \
+             family's routed width; see run_quality_gate_full's header)"
+        ),
+    }
 
     // 5. The recorded row, when this chip has one.
     let Some(row) = row else {
@@ -391,6 +499,7 @@ fn reference_perplexity(
     tokenizer: &MfTokenizer,
     prompt_ids: &[i32],
     assistant_prefix: &str,
+    max_context: u32,
 ) -> f64 {
     let answer_ids = tokenizer.encode(REFERENCE_ANSWER, false);
     assert!(!answer_ids.is_empty(), "the reference answer must tokenize");
@@ -406,9 +515,9 @@ fn reference_perplexity(
     let prompt_ids = ids.clone();
     ids.extend(&answer_ids);
     assert!(
-        ids.len() <= PROTOCOL_MAX_CONTEXT as usize,
+        ids.len() <= max_context as usize,
         "prompt plus reference answer is {} tokens, over the \
-         {PROTOCOL_MAX_CONTEXT}-token KV the runner was opened with",
+         {max_context}-token KV the runner was opened with",
         ids.len()
     );
 
@@ -514,6 +623,7 @@ fn generation_digest(
     tokenizer: &MfTokenizer,
     prompt_ids: &[i32],
     shaping: &ShapingConfig,
+    max_context: u32,
 ) -> (String, f64) {
     let config = GenerationConfig {
         shaping: *shaping,
@@ -532,7 +642,7 @@ fn generation_digest(
         tokenizer,
         prompt_ids,
         &config,
-        PROTOCOL_MAX_CONTEXT,
+        max_context,
         vocab_size,
         |event| match event {
             RawDecodeProgress::Token { delta, .. } => text.push_str(&delta),

@@ -50,6 +50,8 @@ crates/bench/
 |   +-- qwen38_quality_gate.rs  # Quality gate for Qwen3.8-27B; no assistant prefix, and see its header for why
 |   +-- qwen3moe_memory_oracle.rs # Memory oracle for Qwen3-30B-A3B (`qwen3moe`)
 |   +-- qwen3moe_quality_gate.rs  # Quality gate for Qwen3-30B-A3B
+|   +-- qwen4exp_memory_oracle.rs # Memory oracle for qwen4_exp (Qwen3.8-Flash-Next), 2 of 3 cases, 2048 context
+|   +-- qwen4exp_quality_gate.rs  # Quality gate for qwen4_exp; frozen row, see docs/QWEN4_EXP.md
 |   +-- rollback_probe.rs   # RollbackPoint state restoration probe
 |   +-- steering_probe.rs   # Live steering: inert at alpha 0, and a real edit above the floor
 |   +-- steering_sweep.rs   # Which alpha is usable: steered output scored under the UNSTEERED model
@@ -134,6 +136,14 @@ TURBOSPARK_MISTRAL_INSTALL_DIR=~/models/mistral7b-dense.gturbo \
 TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
   cargo test -p turbospark-bench --test qwen3moe_memory_oracle --release -- --ignored --nocapture
 
+# Run memory oracle for qwen4_exp (Qwen3.8-Flash-Next, REAP-288). ~8-9
+# minutes on a 68 GiB install; covers short-explanation and medium-review
+# only (long-synthesis does not fit this family's 2,048-token window --
+# docs/QWEN4_EXP.md). ~2,509 MiB peak, well below every other MoE family's
+# tok/s because 288 experts at top-10 against a 16-slot cache misses often.
+TURBOSPARK_QWEN4EXP_INSTALL_DIR=~/.turbospark/models/qwen4-reap288.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_memory_oracle --release -- --ignored --nocapture
+
 # Quality gate: reference-answer perplexity + frozen output digests
 # (ROADMAP Phase Q). One target per family, ~1 min each.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
@@ -142,6 +152,15 @@ TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
   cargo test -p turbospark-bench --test qwen3moe_quality_gate --release -- --ignored --nocapture
+
+# qwen4_exp's determinism bug (two back-to-back warm greedy generations on
+# the same open runner producing different digests) is FIXED (2026-09-04):
+# RealQwen4State::reset never zeroed ple_conv_tail, the PLE dilated conv's
+# own recurrent tail. See docs/QWEN4_EXP.md's "The quality gate's
+# determinism bug: root-caused and fixed" section. Now carries a frozen
+# ChipQuality row like every other family's gate.
+TURBOSPARK_QWEN4EXP_INSTALL_DIR=~/.turbospark/models/qwen4-reap288.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_quality_gate --release -- --ignored --nocapture
 
 # Cross-engine KLD against mlx-lm (Phase Q's last item). Step 1 dumps this
 # port's full-vocab logits plus the token ids; step 2 replays those IDS

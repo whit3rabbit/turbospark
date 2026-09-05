@@ -19,7 +19,7 @@ use std::path::Path;
 use runtime::StopReason;
 use turbospark_bench::memory::{chip_brand_string, AppMemorySampler};
 use turbospark_bench::protocol::{
-    swift_footer, PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT,
+    swift_footer, ProtocolCase, PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT,
     PROTOCOL_MAX_NEW,
 };
 use turbospark_bench::real_model::{open_model_runner_with_context, run_protocol_case_with_budget};
@@ -97,6 +97,49 @@ pub fn run_oracle_with_budget(
     max_context: u32,
     max_new: u32,
 ) {
+    run_oracle_over_cases(
+        dir,
+        baselines,
+        unknown_ceiling_mib,
+        max_context,
+        max_new,
+        &PROTOCOL_CASES,
+    )
+}
+
+/// [`run_oracle_with_budget`] over a CHOSEN subset of the protocol cases,
+/// rather than always all three.
+///
+/// `qwen4_exp` is why this exists: its window is capped at 2,048
+/// (`real_model_params::QWEN4_EXP_MAX_CONTEXT`, the checkpoint's own
+/// `compressed_attention.index_budget`, not a chosen number), and
+/// `long-synthesis` alone tokenizes to 2,940 under this family's vocab --
+/// over the window before a single generated token is added. There is no
+/// context at which that case can run on this family today, so an oracle
+/// that iterates `PROTOCOL_CASES` unconditionally cannot be written for it;
+/// this is the same body with the CASE LIST also a parameter. Every other
+/// family's oracle is unaffected: `run_oracle_with_budget` still runs all
+/// three by construction, not by a caller remembering to pass them.
+///
+/// `cases` must be non-empty and its first entry becomes the steady-state
+/// replay case, exactly as `PROTOCOL_CASES[0]` (`short-explanation`) always
+/// has been.
+///
+/// `allow(dead_code)` for the reason `run_oracle` has it: not every oracle
+/// target's own compiled copy of this module calls every entry point.
+#[allow(dead_code)]
+pub fn run_oracle_over_cases(
+    dir: &Path,
+    baselines: &[ChipBaseline],
+    unknown_ceiling_mib: u64,
+    max_context: u32,
+    max_new: u32,
+    cases: &[ProtocolCase],
+) {
+    assert!(
+        !cases.is_empty(),
+        "an oracle over zero cases has nothing to measure"
+    );
     let brand = chip_brand_string();
     let baseline = brand
         .as_deref()
@@ -120,7 +163,7 @@ pub fn run_oracle_with_budget(
     let mut sampler = AppMemorySampler::new();
 
     let mut measured = Vec::new();
-    for case in &PROTOCOL_CASES {
+    for case in cases {
         // Frozen protocol: one discarded warmup, then the measured run.
         run_protocol_case_with_budget(
             &mut runner,
@@ -180,7 +223,7 @@ pub fn run_oracle_with_budget(
     // warming is real growth, but it decelerates and stops. A leak does not.
     const STEADY_STATE_ROUNDS: usize = 4;
 
-    let warm_case = &PROTOCOL_CASES[0];
+    let warm_case = &cases[0];
     let mut previous = sampler.sample().expect("footprint sampling worked");
     let mut growth = u64::MAX;
     let mut round = 0usize;
