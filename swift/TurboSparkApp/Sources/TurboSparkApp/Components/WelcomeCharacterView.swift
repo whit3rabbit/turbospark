@@ -61,21 +61,53 @@ public struct WelcomeHeroView: View {
         .animation(.smooth(duration: 0.22), value: model.promptText.isEmpty)
     }
 
+    @AppStorage(AppLanguage.storageKey) private var languageRawValue = AppLanguage.system.rawValue
+    @State private var currentGreeting: Greeting?
+
+    private var activeLanguage: AppLanguage {
+        AppLanguage.resolve(languageRawValue)
+    }
+
     private var greetingHeader: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 10) {
-                welcomeCharacter
+            Button(action: cycleGreeting) {
+                HStack(spacing: 10) {
+                    welcomeCharacter
 
-                Text(timeBasedGreeting)
-                    .font(theme.ui(points: 28, weight: .medium, systemDesign: .serif))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(displayGreeting)
+                        .font(theme.ui(points: 28, weight: .medium, systemDesign: .serif))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .buttonStyle(.plain)
+            .help(LocalizedStringKey("Click to change greeting phrase"))
 
-            Text("How can I help you today?")
+            Text(LocalizedStringKey("How can I help you today?"))
                 .font(theme.ui(points: 15))
                 .foregroundStyle(.secondary)
         }
+        .onAppear {
+            if currentGreeting == nil {
+                currentGreeting = GreetingProvider.shared.availableGreetings().randomElement()
+            }
+        }
+    }
+
+    /// The active greeting string translated into the currently selected language.
+    private var displayGreeting: String {
+        if let greeting = currentGreeting {
+            return greeting.text(for: activeLanguage)
+        }
+        let initial = GreetingProvider.shared.availableGreetings().randomElement()
+        return initial?.text(for: activeLanguage) ?? "Welcome!"
+    }
+
+    /// Cycles to another greeting from the currently valid time-of-day candidates.
+    private func cycleGreeting() {
+        let pool = GreetingProvider.shared.availableGreetings()
+        let alternatives = pool.filter { $0.id != currentGreeting?.id }
+        currentGreeting = alternatives.randomElement() ?? pool.randomElement()
     }
 
     /// The bundled waving spark, with the SF symbol only as a fallback for a
@@ -95,22 +127,6 @@ public struct WelcomeHeroView: View {
                 .font(theme.ui(points: 22))
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .accessibilityHidden(true)
-        }
-    }
-
-    /// Time-of-day greeting only. Deliberately does NOT read a name off
-    /// `NSFullUserName()`: that pulls the macOS account's name with no
-    /// consent surface and no way to turn it off. A personalized greeting
-    /// belongs behind an explicit user profile the app itself owns, not the
-    /// OS account it happens to be running under.
-    private var timeBasedGreeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        if hour < 12 {
-            return "Good morning"
-        } else if hour < 17 {
-            return "Good afternoon"
-        } else {
-            return "Good evening"
         }
     }
 

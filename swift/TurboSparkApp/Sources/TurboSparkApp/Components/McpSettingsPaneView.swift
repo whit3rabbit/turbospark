@@ -9,6 +9,7 @@ public struct McpSettingsPaneView: View {
 
     @State private var searchText = ""
     @State private var showingEditorSheet = false
+    @State private var showingImportSheet = false
     @State private var editingServer: McpServerConfig?
     @State private var expandedServerIDs: Set<UUID> = []
     @State private var testingServerID: UUID?
@@ -66,6 +67,9 @@ public struct McpSettingsPaneView: View {
             McpServerEditorSheet(
                 existingConfig: editingServer,
                 workingDirectory: nil,
+                existingNames: model.globalMcpServers
+                    .filter { $0.id != editingServer?.id }
+                    .map(\.name),
                 onSave: { updatedConfig in
                     if editingServer != nil {
                         model.updateGlobalMcpServer(updatedConfig)
@@ -80,6 +84,9 @@ public struct McpSettingsPaneView: View {
                     editingServer = nil
                 }
             )
+        }
+        .sheet(isPresented: $showingImportSheet) {
+            McpImportSheet(model: model) { showingImportSheet = false }
         }
     }
 
@@ -103,6 +110,17 @@ public struct McpSettingsPaneView: View {
                 }
             }
             Spacer()
+            Button {
+                showingImportSheet = true
+            } label: {
+                Label("Browse Marketplace", systemImage: "square.grid.2x2")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .help("Install a server from a published catalog")
+            .accessibilityLabel("Browse MCP Marketplace")
+            .accessibilityHint("Opens a sheet to fetch a server catalog and install from it")
+
             Button {
                 editingServer = nil
                 showingEditorSheet = true

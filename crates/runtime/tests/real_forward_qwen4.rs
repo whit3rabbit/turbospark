@@ -216,31 +216,167 @@ fn a_qwen4_exp_install_with_a_raw_bf16_router_opens_and_decodes() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Context above `compressed_attention.index_budget` is refused, because
-/// this cut has no QSA indexer (`docs/QWEN4_PHASE0.md` section 5).
+/// A QSA `index_budget` small enough to cross in a handful of tokens:
+/// 16 tokens is 4 blocks of `IDX_COMPRESS = 4`, so `index_top_k` is 4 and
+/// block selection starts DROPPING blocks at the fifth complete one --
+/// `visible >= 20`, i.e. position 19 onward.
+const TINY_INDEXER_BUDGET: i64 = 16;
+/// The first position at which [`TINY_INDEXER_BUDGET`] selection is not a
+/// no-op: `(position + 1) / 4 > 4`.
+const FIRST_SPARSE_POSITION: usize = 19;
+/// Enough positions past [`FIRST_SPARSE_POSITION`] for the dropped block to
+/// change more than one step, and for selection to have run at every
+/// `visible % 4` phase (tail of 0, 1, 2 and 3 tokens).
+const SPARSE_STEPS: usize = 28;
+
+fn qwen4_install_tiny_budget() -> (std::path::PathBuf, model_io::ArchConfig) {
+    let dir = tempdir();
+    let arch = turbospark_repack::build_synthetic_qwen4_exp_decode_install_with_indexer_budget(
+        &dir,
+        VOCAB,
+        "qwen4-p3-tiny-budget",
+        TINY_INDEXER_BUDGET,
+    )
+    .expect("write install");
+    (dir, arch)
+}
+
+/// Feeds a FIXED token sequence (not greedy, so both arms of a comparison
+/// see identical inputs whatever their outputs) and returns every step's
+/// logits, asserting each is finite. `force_dense` is the QSA diagnostic
+/// arm (`RealForwardRunner::set_qsa_force_dense`).
+fn decode_fixed_sequence(
+    dir: &std::path::Path,
+    arch: &model_io::ArchConfig,
+    steps: usize,
+    force_dense: bool,
+) -> Vec<Vec<f32>> {
+    let vocab = arch.vocab_size as usize;
+    let mut runner = RealForwardRunner::open_with_max_context(dir, arch.clone(), TEST_MAX_CONTEXT)
+        .expect("a qwen4_exp install opens above its indexer budget");
+    runner.reset();
+    runner.set_qsa_force_dense(force_dense);
+    let mut all = Vec::with_capacity(steps);
+    for position in 0..steps {
+        let token = ((position * 37 + 11) % vocab) as i32;
+        let mut logits = vec![f16::from_f32(0.0); vocab];
+        runner
+            .produce(token, position, &mut logits)
+            .unwrap_or_else(|e| panic!("produce failed at position {position}: {e}"));
+        assert!(
+            logits.iter().all(|v| v.to_f32().is_finite()),
+            "non-finite logit at position {position} (force_dense {force_dense})"
+        );
+        all.push(logits.iter().map(|v| v.to_f32()).collect());
+    }
+    all
+}
+
+/// Context above `compressed_attention.index_budget` OPENS now that the
+/// indexer is wired: the refusal this test used to pin is gone, and the
+/// three indexer tensors are what `open` requires instead.
 #[test]
-fn context_above_the_indexer_budget_is_refused() {
+fn context_above_the_default_indexer_budget_opens() {
     let (dir, arch) = qwen4_install();
     let budget = arch.compressed_attention.index_budget as usize;
-    let err = RealForwardRunner::open_with_max_context(&dir, arch, budget + 1)
-        .err()
-        .expect("must refuse context above the indexer budget");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("indexer") || msg.contains("QSA"),
-        "refusal message should name the indexer budget, got: {msg}"
-    );
+    RealForwardRunner::open_with_max_context(&dir, arch, budget + 1)
+        .expect("context above the indexer budget must open now that QSA is wired");
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Context AT the budget is accepted -- the refusal is `>`, not `>=`.
+/// The sparse path RUNS: a tiny budget is crossed at position 19 and every
+/// later step scores blocks, reads them back, selects, and attends over the
+/// selected positions -- through every `visible % 4` tail phase -- with
+/// finite logits at every step. Greedy, so the sparse output feeds back
+/// into later inputs the way a real generation's would.
 #[test]
-fn context_at_the_indexer_budget_is_accepted() {
-    let (dir, arch) = qwen4_install();
-    let budget = arch.compressed_attention.index_budget as usize;
-    RealForwardRunner::open_with_max_context(&dir, arch, budget)
-        .expect("context exactly at the budget must open");
+fn a_tiny_indexer_budget_decodes_sparsely_past_it() {
+    let (dir, arch) = qwen4_install_tiny_budget();
+    assert_eq!(
+        arch.compressed_attention.index_top_k,
+        TINY_INDEXER_BUDGET / 4
+    );
+    let logits = decode(&dir, &arch, SPARSE_STEPS);
+    assert_eq!(logits.len(), VOCAB as usize);
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// THE BELOW-BUDGET EXACTNESS GUARD, and the proof that selection does
+/// something above it. Two runners over one fixed token sequence, one with
+/// the force-dense diagnostic arm on: their logits must be BITWISE equal at
+/// every position where `select_blocks` keeps every block (positions 0
+/// through 18 at this budget -- the indexer runs there too, and must not
+/// touch the trunk), and must differ somewhere past position 19, where a
+/// block is dropped from attention. A sparse path that silently attended
+/// densely would pass the first half and fail the second; one that leaked
+/// into the below-budget stream would fail the first.
+#[test]
+fn sparse_and_forced_dense_agree_below_budget_and_diverge_above() {
+    let (dir, arch) = qwen4_install_tiny_budget();
+    let sparse = decode_fixed_sequence(&dir, &arch, SPARSE_STEPS, false);
+    let dense = decode_fixed_sequence(&dir, &arch, SPARSE_STEPS, true);
+    std::fs::remove_dir_all(&dir).ok();
+
+    for position in 0..FIRST_SPARSE_POSITION {
+        let same = sparse[position]
+            .iter()
+            .zip(&dense[position])
+            .all(|(a, b)| a.to_bits() == b.to_bits());
+        assert!(
+            same,
+            "position {position} is at or below the budget, yet the sparse and forced-dense \
+             arms differ: the indexer leaked into the trunk"
+        );
+    }
+    let diverged: Vec<usize> = (FIRST_SPARSE_POSITION..SPARSE_STEPS)
+        .filter(|&p| sparse[p].iter().zip(&dense[p]).any(|(a, b)| a != b))
+        .collect();
+    assert!(
+        !diverged.is_empty(),
+        "no position past {FIRST_SPARSE_POSITION} differs between the sparse and forced-dense \
+         arms: block selection dropped nothing, or the dense kernel ran regardless"
+    );
+    println!("sparse arm diverges from forced-dense at positions {diverged:?}");
+}
+
+/// The indexer's projection reaches the output ONLY above budget: patched
+/// to garbage, the tiny-budget install's greedy decode moves (scores, hence
+/// selection, hence attention), while the default-budget install's 8-step
+/// decode -- which runs the same projection and the same block pooling
+/// every token -- is bit-identical, because nothing below budget consumes
+/// what the indexer computes.
+#[test]
+fn the_indexer_projection_moves_the_output_only_above_budget() {
+    let (dir, arch) = qwen4_install_tiny_budget();
+    let clean = decode(&dir, &arch, SPARSE_STEPS);
+    patch(
+        &dir,
+        "language_model.model.layers.2.self_attn.indexer.index_qk_proj.weight",
+        0x3F80,
+    );
+    let patched = decode(&dir, &arch, SPARSE_STEPS);
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+        clean.iter().zip(&patched).any(|(a, b)| a != b),
+        "patching the indexer projection above budget must move the logits"
+    );
+
+    let (dir, arch) = qwen4_install();
+    let clean = decode(&dir, &arch, 8);
+    patch(
+        &dir,
+        "language_model.model.layers.2.self_attn.indexer.index_qk_proj.weight",
+        0x3F80,
+    );
+    let patched = decode(&dir, &arch, 8);
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+        clean
+            .iter()
+            .zip(&patched)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "below budget the indexer must not reach the trunk, yet patching it moved the logits"
+    );
 }
 
 /// A cache too small to hold one token's top-k routing is refused at open,

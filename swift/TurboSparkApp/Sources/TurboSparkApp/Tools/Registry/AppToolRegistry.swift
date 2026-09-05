@@ -238,9 +238,11 @@ public enum AppToolRegistry {
                     ])
                 }
                 let activeSession = await activeSessionProvider?()
+                let userSystemPrompt = await userSystemPromptProvider?() ?? ""
                 let result = await SubagentRunner.run(
                     agent: agentDef, taskPrompt: prompt, session: activeSession, project: project,
-                    chatID: chatID, depth: subagentDepth + 1)
+                    chatID: chatID, depth: subagentDepth + 1,
+                    userSystemPrompt: userSystemPrompt)
                 if result.status == "error" || result.status == "failed" {
                     throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [NSLocalizedDescriptionKey: result.finalResponse])
                 }

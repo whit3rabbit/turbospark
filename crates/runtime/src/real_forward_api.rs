@@ -311,6 +311,19 @@ impl RealForwardRunner {
         self.routed_pipeline = on;
     }
 
+    /// DIAGNOSTIC for `qwen4_exp`'s QSA: attend densely above the indexer
+    /// budget as if every block were selected (`TURBOSPARK_QSA_FORCE_DENSE=1`
+    /// at open sets the same flag). The KL between this arm and the sparse
+    /// one past 2,051 tokens is the only quantitative instrument the sparse
+    /// path has on a real install, since no reference engine for this
+    /// checkpoint fits this machine. No-op on every other family.
+    #[doc(hidden)]
+    pub fn set_qsa_force_dense(&mut self, on: bool) {
+        if let Some(qwen4) = self.real_qwen4.as_mut() {
+            qwen4.qsa_force_dense = on;
+        }
+    }
+
     /// Sibling of [`Self::set_shared_cb_overlap`] for
     /// `TURBOSPARK_ROUTED_BATCH` (the chunked-prefill driver's batched
     /// routed half).

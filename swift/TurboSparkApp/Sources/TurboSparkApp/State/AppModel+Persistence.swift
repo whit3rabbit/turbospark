@@ -48,6 +48,7 @@ extension AppModel {
         self.seedEnabled = settings.seedEnabled
         self.seed = settings.seed
         self.stopSequences = settings.stopSequences
+        self.defaultSystemPrompt = settings.defaultSystemPrompt
         self.runtimeOptions.powerProfile = AppPowerProfileOption(rawValue: settings.powerProfile) ?? .auto
         self.runtimeOptions.loadGuard = AppLoadGuardOption(rawValue: settings.loadGuard) ?? .relaxed
         self.runtimeOptions.loadGuardCustomBytes = settings.loadGuardCustomBytes
@@ -141,7 +142,8 @@ extension AppModel {
             commandAdvisoryVeto: CommandGate.vetoEnabled,
             guardrailsMode: guardrailsMode.rawValue,
             modelReasoningDefaults: modelReasoningDefaults,
-            interactionMode: interactionMode.rawValue
+            interactionMode: interactionMode.rawValue,
+            defaultSystemPrompt: defaultSystemPrompt
         )
         MacAppSettingsFileStore.save(settings)
     }

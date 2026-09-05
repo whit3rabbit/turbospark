@@ -105,24 +105,24 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             max_context: DENSE_LLAMA_MAX_CONTEXT,
             max_new: PROTOCOL_MAX_NEW,
         },
-        // **THIS ROW IS A CONSTRAINT, NOT A MEASUREMENT, AND IT CANNOT RUN
-        // THE WHOLE PROTOCOL.** Every other row here answers "what window
-        // does this checkpoint's tokenizer need"; this one answers "what
-        // window may this family be opened at at all". `qwen4_exp`'s full
-        // layers carry a query-sparse indexer this port has not implemented,
-        // and the reference's selector returns early at
-        // `kv_len <= indexer_budget` -- so at or below 2,048 attention is
-        // exactly plain causal and running there is EXACT, while above it
-        // this engine would compute dense attention where the checkpoint was
-        // trained sparse. `RealForwardRunner::open` refuses above the budget
-        // rather than being quietly wrong.
+        // **THIS ROW PINS THE WINDOW ITS FROZEN ROWS WERE MEASURED AT, and
+        // the constraint that chose it no longer exists.** Until 2026-09-05
+        // `RealForwardRunner::open` refused this family above
+        // `indexer_budget` (the reference's selector returns early at
+        // `kv_len <= indexer_budget`, so at or below 2,048 attention is
+        // exactly plain causal and running there was EXACT while above it
+        // would have been dense where the checkpoint was trained sparse).
+        // The QSA indexer is wired now (`families/qwen4/attn.rs`) and the
+        // family opens at any window, but the memory oracle's and quality
+        // gate's frozen rows were measured HERE, so moving this to
+        // `PROTOCOL_MAX_CONTEXT` is a re-freeze of every one of them
+        // (`docs/BENCHMARKS.md`), taken as its own decision.
         //
-        // The consequence is that `long-synthesis` (~2.8k tokens under this
-        // family's 248,320-entry ChatML vocab, Qwen 3.6's exactly) DOES NOT
-        // FIT. A protocol run here covers the two short cases and stops, so
-        // its rows are NOT comparable to any other family's until the indexer
-        // lands and this row can move to `PROTOCOL_MAX_CONTEXT`. Do not paste
-        // a number measured under this row beside one measured under that.
+        // While it stays, `long-synthesis` (~2.8k tokens under this family's
+        // 248,320-entry ChatML vocab, Qwen 3.6's exactly) DOES NOT FIT: a
+        // protocol run covers the two short cases and stops, so its rows are
+        // NOT comparable to any other family's. Do not paste a number
+        // measured under this row beside one measured under that.
         ModelFamily::Qwen4Exp => ProtocolParameters {
             family,
             max_context: QWEN4_EXP_MAX_CONTEXT,

@@ -247,6 +247,12 @@ impl crate::ChatModel for ReportingModel {
     fn default_reasoning(&self) -> tokenizer::ReasoningEffort {
         self.inner.default_reasoning()
     }
+    // DELEGATED, not defaulted. This is a decorator, so a trait-default body
+    // here would answer `None` over a backend that has a prompt configured
+    // and silently un-set the deployment's `--system` (server Gotcha 29).
+    fn default_system(&self) -> Option<&str> {
+        self.inner.default_system()
+    }
     fn with_producer(
         &self,
         f: &mut dyn FnMut(

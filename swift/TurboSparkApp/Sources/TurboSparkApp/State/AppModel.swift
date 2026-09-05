@@ -258,6 +258,10 @@ public final class AppModel: ObservableObject {
     @Published public var seed: UInt64 = 0
     /// Comma-separated list of custom stop sequences.
     @Published public var stopSequences: String = ""
+    /// User-authored system prompt applied to every turn that has no per-chat
+    /// prompt of its own. Empty means none, which is what this app did before
+    /// the field existed.
+    @Published public var defaultSystemPrompt: String = ""
     /// Path to activation steering vectors file.
     @Published public var steeringPath: String? = nil
     /// Named steering directions the operator registered. Empty until one is
@@ -381,6 +385,9 @@ public final class AppModel: ObservableObject {
         refreshModels()
         AppToolRegistry.activeSessionProvider = { [weak self] in
             self?.session
+        }
+        AppToolRegistry.userSystemPromptProvider = { [weak self] in
+            self?.defaultSystemPrompt ?? ""
         }
         TodoWriteExecutor.onTodosUpdated = { [weak self] targetChatID, newTodos in
             Task { @MainActor [weak self] in

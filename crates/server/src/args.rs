@@ -1,5 +1,5 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--reasoning off|low|medium|high|xhigh] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
+pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
                        relaxed (default), balanced, strict, or a byte ceiling on
                        what the engine ALLOCATES. relaxed is what shipped before
                        this flag and what every published memory figure was
@@ -7,7 +7,7 @@ pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [-
   --min-auto-context   refuse to open when --max-context auto resolves below this
                        many tokens (default 0, no floor). Says nothing about an
                        explicit --max-context
-  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default on). A request continues from the\n                       previous request's KV cache wherever the prompts agree,\n                       instead of re-prefilling the whole transcript. Helps\n                       only when consecutive requests are the same\n                       conversation -- unrelated interleaved requests each\n                       discard the other's reusable prefix -- and raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on\n                       (the default), since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --api-key            require this key on every request except GET /health,
+  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default on). A request continues from the\n                       previous request's KV cache wherever the prompts agree,\n                       instead of re-prefilling the whole transcript. Helps\n                       only when consecutive requests are the same\n                       conversation -- unrelated interleaved requests each\n                       discard the other's reusable prefix -- and raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on\n                       (the default), since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --system             default system prompt for requests that carry no system\n                       or developer message of their own. Repeatable; repeats\n                       join with a newline. A request that sends its own system\n                       message is left exactly as it arrived\n  --system-file        read the same default system prompt from a file, for a\n                       prompt too long to sit on a command line. Mutually\n                       exclusive with --system\n  --api-key            require this key on every request except GET /health,
                        as `Authorization: Bearer <key>` or `x-api-key: <key>`.
                        Falls back to $TURBOSPARK_API_KEY when absent (keeps
                        the key out of `ps`); with neither, the server has no
@@ -86,6 +86,17 @@ pub struct ModelArgs {
     pub session_slots: u32,
     /// Default reasoning effort for requests that do not specify reasoning_effort.
     pub reasoning: tokenizer::ReasoningEffort,
+    /// Default system prompt for requests that carry no system or developer
+    /// message of their own. Process-level for `reasoning`'s reason: there is
+    /// one runner per process, so there is nothing per-request to vary.
+    ///
+    /// THE CALLER WINS, and that is a hard requirement rather than a taste.
+    /// Three of the five fallback chat renderers refuse a system message that
+    /// is not at index 0 (`chat_template/{chatml,gemma,deepseek}.rs` all raise
+    /// "system message must be first"), so prepending a second system turn
+    /// beside the caller's would fail the render outright on those dialects
+    /// instead of merely reading oddly.
+    pub default_system: Option<String>,
     /// The `--api-key` flag's OWN value, or `None` if absent. Deliberately
     /// NOT resolved against `$TURBOSPARK_API_KEY` here: this parser reads
     /// only `args`, matching `power_profile`'s split (`None` here,
@@ -127,12 +138,19 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         session_slots: 1,
         steering: runtime::SteeringPolicy::off(),
         reasoning: tokenizer::ReasoningEffort::Off,
+        default_system: None,
         api_key: None,
     };
     // Held aside because `--steering-layers` may be given BEFORE or AFTER
     // `--steering`, and the restriction has to survive either order: the
     // range is applied when the set arrives and again here if it already has.
     let mut steering_layers: Option<(usize, usize)> = None;
+    // Repeatable, matching `turbospark-check`'s `--system` grammar: repeats
+    // join with a newline. Held aside rather than written straight into
+    // `parsed` so the `--system-file` conflict check below can tell "flag
+    // absent" from "flag given an empty value".
+    let mut system_parts: Vec<String> = Vec::new();
+    let mut system_file: Option<String> = None;
     // Tracked separately so the FILE's declared mode can win where the flag
     // is absent, and the flag where it is present -- the precedence
     // `crates/cli`'s `resolve_steering` applies, stated the same way.
@@ -353,6 +371,13 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     format!("--reasoning must be off, low, medium, high or xhigh, not {value}")
                 })?;
             }
+            "--system" => system_parts.push(value.clone()),
+            "--system-file" => {
+                if system_file.is_some() {
+                    return Err("--system-file may only be given once".to_string());
+                }
+                system_file = Some(value.clone());
+            }
             "--api-key" => {
                 if value.is_empty() {
                     return Err(
@@ -368,6 +393,32 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
     }
     if parsed.model.is_empty() {
         return Err(format!("--model needs a value\n{USAGE}"));
+    }
+    // NAMING BOTH IS REFUSED RATHER THAN RESOLVED. They are two spellings of
+    // one setting, so a command line carrying both says two things, and
+    // picking either silently is the shape this parser already refuses for an
+    // orphan steering parameter below.
+    if !system_parts.is_empty() && system_file.is_some() {
+        return Err(
+            "--system and --system-file are two spellings of one setting; give one".to_string(),
+        );
+    }
+    if let Some(path) = &system_file {
+        let text =
+            std::fs::read_to_string(path).map_err(|e| format!("--system-file {path}: {e}"))?;
+        // An EMPTY file is refused rather than treated as "no default". A
+        // caller who named a file meant to set a prompt, and silently serving
+        // every request unprompted is the failure they would not notice.
+        if text.trim().is_empty() {
+            return Err(format!("--system-file {path} is empty"));
+        }
+        parsed.default_system = Some(text.trim_end().to_string());
+    } else if !system_parts.is_empty() {
+        let text = system_parts.join("\n");
+        if text.trim().is_empty() {
+            return Err("--system must not be empty or whitespace".to_string());
+        }
+        parsed.default_system = Some(text);
     }
     // A pool with nothing to reuse a parked session FOR is not a smaller
     // version of the feature, it is a memory commitment that does nothing:

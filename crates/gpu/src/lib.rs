@@ -37,6 +37,8 @@
 #[cfg(target_os = "macos")]
 mod attention_decode;
 #[cfg(target_os = "macos")]
+mod attention_indexed;
+#[cfg(target_os = "macos")]
 mod bytes;
 #[cfg(target_os = "macos")]
 mod context;
@@ -97,6 +99,10 @@ mod power_state;
 #[cfg(target_os = "macos")]
 mod prefill_scratch;
 #[cfg(target_os = "macos")]
+mod qsa_indexer;
+#[cfg(target_os = "macos")]
+mod qsa_indexer_state;
+#[cfg(target_os = "macos")]
 mod resident_metal;
 #[cfg(target_os = "macos")]
 mod rms_norm;
@@ -111,6 +117,8 @@ mod vision;
 pub use attention_decode::{
     attention_decode, attention_decode_buffers, encode_attention_decode, AttentionScratch,
 };
+#[cfg(target_os = "macos")]
+pub use attention_indexed::{attention_decode_indexed, encode_attention_decode_indexed};
 #[cfg(target_os = "macos")]
 pub use bytes::{read_f32_buffer, read_f32_buffer_at};
 #[cfg(target_os = "macos")]
@@ -230,6 +238,12 @@ pub use power_state::{
 };
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
+#[cfg(target_os = "macos")]
+pub use qsa_indexer::{
+    encode_qsa_advance_blocks, encode_qsa_pool_blocks_mean, encode_qsa_score_blocks,
+};
+#[cfg(target_os = "macos")]
+pub use qsa_indexer_state::QsaIndexerCacheManager;
 #[cfg(target_os = "macos")]
 pub use resident_metal::{wrap_page_aligned_no_copy, ResidentGpuWeights};
 #[cfg(target_os = "macos")]

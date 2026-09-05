@@ -31,7 +31,7 @@ use metal::{FunctionConstantValues, MTLDataType};
 use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_bytes};
 use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext, PassEncoder};
 
-const SOURCE: &str = include_str!("shaders/attention.metal");
+pub(crate) const SOURCE: &str = include_str!("shaders/attention.metal");
 const THREADS_PER_GROUP: u64 = 256; // kAttnThreads.
 
 /// Upper bound on the split-KV chunk count, and therefore on how many
@@ -69,7 +69,7 @@ const MIN_POSITIONS_PER_CHUNK: u32 = 16;
 /// would compile 16 pipelines per (scale, ring) pair on the way up. The
 /// bench has 8 and 16 within a few percent of each other, so the rounding
 /// costs nothing measurable.
-fn chunks_for(range: u32) -> u32 {
+pub(crate) fn chunks_for(range: u32) -> u32 {
     let chunks = (range / MIN_POSITIONS_PER_CHUNK).clamp(1, MAX_CHUNKS);
     1 << chunks.ilog2()
 }
@@ -97,7 +97,7 @@ fn chunks_for(range: u32) -> u32 {
 /// pipeline for ring dispatches, and omitting the chunk count would reuse
 /// a pipeline whose specialized `NC` disagrees with the grid, which
 /// scrambles the chunk-to-threadgroup mapping instead of failing.
-fn attention_function_constants(
+pub(crate) fn attention_function_constants(
     scale: f32,
     ring_capacity: u32,
     num_chunks: u32,
@@ -124,7 +124,7 @@ fn attention_function_constants(
     values
 }
 
-fn attention_constants_key(
+pub(crate) fn attention_constants_key(
     scale: f32,
     ring_capacity: u32,
     num_chunks: u32,

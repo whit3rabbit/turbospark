@@ -50,6 +50,8 @@ pub struct RealChatModel {
     guardrails: crate::GuardrailConfig,
     /// Default reasoning effort level for requests that do not specify one.
     default_reasoning: tokenizer::ReasoningEffort,
+    /// Deployment-wide system prompt for requests that send none of their own.
+    default_system: Option<String>,
     /// The checkpoint's own image preprocessing parameters, read from the
     /// install's `preprocessor_config.json` at open (ROADMAP M-V8).
     ///
@@ -87,6 +89,7 @@ impl RealChatModel {
         steering: runtime::SteeringPolicy,
         load_policy: runtime::LoadPolicy,
         default_reasoning: tokenizer::ReasoningEffort,
+        default_system: Option<String>,
         prefix_reuse: bool,
         session_slots: u32,
     ) -> Result<Self, String> {
@@ -235,6 +238,7 @@ impl RealChatModel {
             drafter: choice.drafter,
             guardrails,
             default_reasoning,
+            default_system,
             // Read at OPEN rather than per request: it is a property of the
             // install, and a per-request read would put a file access on the
             // hot path for a value that cannot change.
@@ -405,6 +409,10 @@ impl ChatModel for RealChatModel {
 
     fn default_reasoning(&self) -> tokenizer::ReasoningEffort {
         self.default_reasoning
+    }
+
+    fn default_system(&self) -> Option<&str> {
+        self.default_system.as_deref()
     }
 
     /// The speculative loop when this process resolved one AND this request

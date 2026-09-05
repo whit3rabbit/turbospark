@@ -98,9 +98,11 @@ public struct AppSettingsView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                     .font(.caption)
+                    .accessibilityHidden(true)
                 TextField("Search settings...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.caption)
+                    .accessibilityLabel("Search settings")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -136,6 +138,7 @@ public struct AppSettingsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
+                    .accessibilityAddTraits(.isHeader)
 
                 ForEach(filtered) { tab in
                     let isSelected = selectedTab == tab
@@ -147,6 +150,7 @@ public struct AppSettingsView: View {
                                 .font(.system(size: 13, weight: .medium))
                                 .frame(width: 18)
                                 .foregroundStyle(isSelected ? appearanceManager.activeAccentColor(isDark: false) : .secondary)
+                                .accessibilityHidden(true)
 
                             Text(tab.title)
                                 .font(.subheadline)
@@ -162,6 +166,10 @@ public struct AppSettingsView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .help(tab.title)
+                    .accessibilityLabel(tab.title)
+                    .accessibilityHint("Switches settings view to \(tab.title)")
+                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
                     .appPointerCursor()
                 }
             }
@@ -309,6 +317,7 @@ public struct AppSettingsView: View {
     /// eventually.
     private var engineSettingsTab: some View {
         Form {
+            systemPromptSection
             generationDefaultsSection
             reasoningEffortSection
             guardrailsSection
@@ -320,6 +329,32 @@ public struct AppSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsTab)) { notification in
             if let tab = notification.object as? SettingsTab {
                 selectedTab = tab
+            }
+        }
+    }
+
+    /// A SEPARATE computed property, like every sibling section, for the
+    /// type-checker reason spelled out above `engineSettingsTab`.
+    private var systemPromptSection: some View {
+        Section("Default System Prompt") {
+            VStack(alignment: .leading, spacing: 6) {
+                TextEditor(text: $model.defaultSystemPrompt)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 100)
+                    .onChange(of: model.defaultSystemPrompt) { _, _ in
+                        model.persistSettingsDebounced()
+                    }
+                Text(
+                    "Sent as the first system message of every conversation, ahead of any "
+                    + "project rules. A chat with its own system prompt uses that instead. "
+                    + "Leave empty for none."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Text("\(model.defaultSystemPrompt.count) characters")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
         }
     }

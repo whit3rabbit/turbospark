@@ -28,7 +28,8 @@ pub use qwen4::{
 };
 pub use qwen4_decode::{
     build_synthetic_qwen4_exp_decode_install, build_synthetic_qwen4_exp_decode_install_raw_router,
-    tiny_qwen4_exp_decode_arch, HC_COUNT, HEAD_DIM, HIDDEN as QWEN4_DECODE_HIDDEN,
+    build_synthetic_qwen4_exp_decode_install_with_indexer_budget, tiny_qwen4_exp_decode_arch,
+    HC_COUNT, HEAD_DIM, HIDDEN as QWEN4_DECODE_HIDDEN,
     NGRAM_EOS_TOKEN_ID as QWEN4_DECODE_NGRAM_EOS_TOKEN_ID, NUM_EXPERTS,
     NUM_HEADS as QWEN4_DECODE_NUM_HEADS, NUM_KV_HEADS as QWEN4_DECODE_NUM_KV_HEADS,
     NUM_LAYERS as QWEN4_DECODE_NUM_LAYERS, PLE_LAYER as QWEN4_DECODE_PLE_LAYER, TOP_K,

@@ -424,7 +424,7 @@ public struct SkillImportSheet: View {
         remoteError = nil
         remoteManifest = nil
 
-        let source: SkillMarketplaceSource
+        let source: MarketplaceSource
         if input.hasPrefix("http://") || input.hasPrefix("https://") {
             source = .url(url: input, headers: nil)
         } else if input.contains("/") && !input.contains(":") {

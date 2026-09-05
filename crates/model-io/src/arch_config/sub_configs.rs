@@ -280,8 +280,9 @@ impl CompressedAttentionConfig {
     /// declares no indexer.
     ///
     /// `qwen4_exp`'s indexer returns early at `kv_len <= indexer_budget`, which
-    /// is what lets an engine without the selector serve short contexts
-    /// EXACTLY rather than approximately, and refuse longer ones.
+    /// is what let this engine serve short contexts EXACTLY before it had the
+    /// selector (and refuse longer ones); since 2026-09-05 the selector runs
+    /// above it, and below it the same early return keeps attention dense.
     pub fn sparse_below(&self) -> i64 {
         self.index_budget
     }

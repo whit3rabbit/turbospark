@@ -176,6 +176,20 @@ extension AppModel {
         persistChats()
     }
 
+    /// Sets or clears THIS chat's own system prompt.
+    ///
+    /// Blank clears it back to `nil` rather than storing `""`, so "no override"
+    /// has one representation on disk instead of two. `resolvedUserSystemPrompt`
+    /// treats them alike, which keeps a chat persisted before this normalizing
+    /// existed behaving the same.
+    public func setChatSystemPrompt(id: UUID, prompt: String) {
+        guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        chats[index].systemPrompt = trimmed.isEmpty ? nil : trimmed
+        chats[index].updatedAt = Date()
+        persistChats()
+    }
+
     public func deleteChat(id: UUID) {
         // **AND NOT MID-SUBMISSION** (state#77). `run()` captured this chat's
         // id before awaiting its hook and re-creates the row under the SAME

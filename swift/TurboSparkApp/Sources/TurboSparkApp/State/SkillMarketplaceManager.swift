@@ -1,77 +1,11 @@
 import Foundation
 
-/// Sources from which a skill marketplace or remote skill can be acquired.
-public enum SkillMarketplaceSource: Codable, Equatable, Sendable {
-    case url(url: String, headers: [String: String]?)
-    case github(repo: String, ref: String?, path: String?, sparsePaths: [String]?)
-    case git(url: String, ref: String?, path: String?, sparsePaths: [String]?)
-    case directory(path: String)
-
-    enum CodingKeys: String, CodingKey {
-        case type, url, headers, repo, ref, path, sparsePaths
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try container.decode(String.self, forKey: .type)
-        switch type.lowercased() {
-        case "url", "https", "http":
-            let url = try container.decode(String.self, forKey: .url)
-            let headers = try container.decodeIfPresent([String: String].self, forKey: .headers)
-            self = .url(url: url, headers: headers)
-        case "github":
-            let repo = try container.decode(String.self, forKey: .repo)
-            let ref = try container.decodeIfPresent(String.self, forKey: .ref)
-            let path = try container.decodeIfPresent(String.self, forKey: .path)
-            let sparse = try container.decodeIfPresent([String].self, forKey: .sparsePaths)
-            self = .github(repo: repo, ref: ref, path: path, sparsePaths: sparse)
-        case "git":
-            let url = try container.decode(String.self, forKey: .url)
-            let ref = try container.decodeIfPresent(String.self, forKey: .ref)
-            let path = try container.decodeIfPresent(String.self, forKey: .path)
-            let sparse = try container.decodeIfPresent([String].self, forKey: .sparsePaths)
-            self = .git(url: url, ref: ref, path: path, sparsePaths: sparse)
-        case "directory", "file", "local":
-            let path = try container.decode(String.self, forKey: .path)
-            self = .directory(path: path)
-        default:
-            let url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
-            self = .url(url: url, headers: nil)
-        }
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        switch self {
-        case .url(let url, let headers):
-            try container.encode("url", forKey: .type)
-            try container.encode(url, forKey: .url)
-            try container.encodeIfPresent(headers, forKey: .headers)
-        case .github(let repo, let ref, let path, let sparse):
-            try container.encode("github", forKey: .type)
-            try container.encode(repo, forKey: .repo)
-            try container.encodeIfPresent(ref, forKey: .ref)
-            try container.encodeIfPresent(path, forKey: .path)
-            try container.encodeIfPresent(sparse, forKey: .sparsePaths)
-        case .git(let url, let ref, let path, let sparse):
-            try container.encode("git", forKey: .type)
-            try container.encode(url, forKey: .url)
-            try container.encodeIfPresent(ref, forKey: .ref)
-            try container.encodeIfPresent(path, forKey: .path)
-            try container.encodeIfPresent(sparse, forKey: .sparsePaths)
-        case .directory(let path):
-            try container.encode("directory", forKey: .type)
-            try container.encode(path, forKey: .path)
-        }
-    }
-}
-
 /// Entry for an individual skill listed within a marketplace manifest.
 public struct MarketplaceSkillEntry: Identifiable, Codable, Equatable, Sendable {
     public var id: String { "\(name)@\(version ?? "latest")" }
     public var name: String
     public var description: String
-    public var source: SkillMarketplaceSource
+    public var source: MarketplaceSource
     public var category: String?
     public var tags: [String]?
     public var version: String?
@@ -80,7 +14,7 @@ public struct MarketplaceSkillEntry: Identifiable, Codable, Equatable, Sendable 
     public init(
         name: String,
         description: String,
-        source: SkillMarketplaceSource,
+        source: MarketplaceSource,
         category: String? = nil,
         tags: [String]? = nil,
         version: String? = nil,
@@ -179,20 +113,20 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
 
     // MARK: - Known Marketplaces Configuration
 
-    public func loadKnownMarketplaces() -> [String: SkillMarketplaceSource] {
+    public func loadKnownMarketplaces() -> [String: MarketplaceSource] {
         lock.lock()
         defer { lock.unlock() }
         guard let data = try? Data(contentsOf: knownMarketplacesURL),
-              let dict = try? JSONDecoder().decode([String: SkillMarketplaceSource].self, from: data) else {
+              let dict = try? JSONDecoder().decode([String: MarketplaceSource].self, from: data) else {
             return defaultMarketplaces
         }
         return dict
     }
 
-    public func saveKnownMarketplace(name: String, source: SkillMarketplaceSource) throws {
+    public func saveKnownMarketplace(name: String, source: MarketplaceSource) throws {
         lock.lock()
         defer { lock.unlock() }
-        var current = (try? JSONDecoder().decode([String: SkillMarketplaceSource].self, from: Data(contentsOf: knownMarketplacesURL))) ?? defaultMarketplaces
+        var current = (try? JSONDecoder().decode([String: MarketplaceSource].self, from: Data(contentsOf: knownMarketplacesURL))) ?? defaultMarketplaces
         current[name] = source
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -200,7 +134,7 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
         try data.write(to: knownMarketplacesURL, options: .atomic)
     }
 
-    private var defaultMarketplaces: [String: SkillMarketplaceSource] {
+    private var defaultMarketplaces: [String: MarketplaceSource] {
         [
             "turbospark-official": .github(
                 repo: "whit3rabbit/agent-skills",
@@ -213,7 +147,7 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
 
     // MARK: - Marketplace Manifest Fetching
 
-    public func fetchMarketplace(source: SkillMarketplaceSource) async throws -> MarketplaceManifest {
+    public func fetchMarketplace(source: MarketplaceSource) async throws -> MarketplaceManifest {
         switch source {
         case .url(let urlStr, _):
             guard let url = URL(string: urlStr) else {
@@ -234,10 +168,10 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
 
         case .git(let urlStr, _, let path, _):
             let cacheDir = marketplacesDirectory.appendingPathComponent(
-                urlStr.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-"),
-                isDirectory: true
-            )
-            try cloneOrPullGit(url: urlStr, targetDir: cacheDir, ref: nil, sparsePaths: path != nil ? [path!] : nil)
+                MarketplaceGit.cacheDirectoryName(for: urlStr), isDirectory: true)
+            try await cloneOrPullGit(
+                url: urlStr, targetDir: cacheDir, ref: nil,
+                sparsePaths: path != nil ? [path!] : nil)
             let manifestFile = cacheDir.appendingPathComponent(path ?? "marketplace.json")
             let data = try Data(contentsOf: manifestFile)
             return try JSONDecoder().decode(MarketplaceManifest.self, from: data)
@@ -252,54 +186,15 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
 
     // MARK: - Git Operations
 
-    private func cloneOrPullGit(url: String, targetDir: URL, ref: String?, sparsePaths: [String]?) throws {
-        if fileManager.fileExists(atPath: targetDir.appendingPathComponent(".git").path) {
-            // Already cloned, run git pull
-            let pull = Process()
-            pull.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            pull.currentDirectoryURL = targetDir
-            pull.arguments = ["pull", "--quiet"]
-            try pull.run()
-            pull.waitUntilExit()
-            return
-        }
-
-        try fileManager.createDirectory(at: targetDir, withIntermediateDirectories: true)
-        let isSparse = (sparsePaths != nil && !(sparsePaths?.isEmpty ?? true))
-        var args = ["clone", "--depth", "1"]
-        if isSparse {
-            args.append(contentsOf: ["--filter=blob:none", "--no-checkout"])
-        }
-        if let ref, !ref.isEmpty {
-            args.append(contentsOf: ["--branch", ref])
-        }
-        args.append(contentsOf: [url, targetDir.path])
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = args
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            throw NSError(domain: "SkillMarketplace", code: 10, userInfo: [NSLocalizedDescriptionKey: "git clone failed with exit code \(process.terminationStatus)"])
-        }
-
-        if isSparse, let sparsePaths {
-            let setCone = Process()
-            setCone.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            setCone.currentDirectoryURL = targetDir
-            setCone.arguments = ["sparse-checkout", "set", "--cone", "--"] + sparsePaths
-            try setCone.run()
-            setCone.waitUntilExit()
-
-            let checkout = Process()
-            checkout.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            checkout.currentDirectoryURL = targetDir
-            checkout.arguments = ["checkout", "HEAD"]
-            try checkout.run()
-            checkout.waitUntilExit()
-        }
+    /// Delegates to the shared `MarketplaceGit`, which bounds the spawn with a
+    /// timeout and an output cap and checks EVERY step's exit status. This used
+    /// to be four raw `Process()` calls here that checked only the clone, so a
+    /// failed `pull` was silent and the caller read a stale cache as fresh.
+    private func cloneOrPullGit(
+        url: String, targetDir: URL, ref: String?, sparsePaths: [String]?
+    ) async throws {
+        try await MarketplaceGit.cloneOrPull(
+            url: url, targetDir: targetDir, ref: ref, sparsePaths: sparsePaths)
     }
 
     // MARK: - Skill Installation
@@ -353,7 +248,8 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
             let tempGitDir = fileManager.temporaryDirectory.appendingPathComponent("git_skill_\(UUID().uuidString)", isDirectory: true)
             defer { try? fileManager.removeItem(at: tempGitDir) }
             let sparseP = sparse ?? (path != nil ? [path!] : nil)
-            try cloneOrPullGit(url: urlStr, targetDir: tempGitDir, ref: ref, sparsePaths: sparseP)
+            try await cloneOrPullGit(
+                url: urlStr, targetDir: tempGitDir, ref: ref, sparsePaths: sparseP)
             let sourceFolder = path != nil ? tempGitDir.appendingPathComponent(path!) : tempGitDir
             try copyDirectoryContents(from: sourceFolder, to: targetSkillDir)
             installedMdURL = targetSkillDir.appendingPathComponent("SKILL.md")

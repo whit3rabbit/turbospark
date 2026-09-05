@@ -534,6 +534,27 @@ live network).
   `prefill_scratch.rs` buffers above remain undispatched by all of this —
   the batched half added its own M-row scratch to `RealGemmaState`
   instead, sized by `MAX_PREFILL_BATCH` rather than the chunk span.
+- **`qwen4_exp`'s QSA is WIRED END TO END (2026-09-05), with block
+  selection on the host.** `families/qwen4/attn.rs` runs the indexer every
+  token (`index_qk_proj`, raw key into `QsaIndexerCacheManager`, newly
+  completed blocks pooled/normed/roped through `encode_qsa_advance_blocks`)
+  and, above `index_top_k` complete blocks, scores the pooled blocks on the
+  GPU (`qsa_score_blocks_fp16`), commits and waits mid-layer for the score
+  readback, runs `compute::select_blocks` on the host, uploads the sorted
+  position list and dispatches `attention_decode_indexed_partial`
+  (`attention_decode_partial` walking that list, `attention_decode_combine`
+  unchanged). What the reference does on the GPU end to end (a boolean mask
+  into dense SDPA) this port does with one host round trip per QSA layer
+  per above-budget token, the MoE router's own shape; a GPU top-k would
+  remove it and is not built. At or below the budget the dispatch stream is
+  byte-identical to the pre-indexer flow (the frozen quality-gate row and
+  `the_synthetic_flows_arithmetic_is_frozen` are the proof). Verified on the
+  synthetic fixture with mutation checks and on the real install
+  (`docs/QWEN4_EXP.md`'s "QSA wired end to end"). Not done: a cross-engine
+  KL above budget (no reference engine for this checkpoint fits this
+  machine; `crates/bench/tests/qwen4exp_qsa_probe.rs`'s force-dense arm is
+  the substitute), chunked prefill for this family (a long prompt runs one
+  `produce` per token), and moving the frozen bench window off 2,048.
 
 ## Phase 7 (runtime, CLI)
 

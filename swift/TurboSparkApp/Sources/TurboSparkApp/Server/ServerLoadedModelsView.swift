@@ -259,11 +259,14 @@ private struct ServerModelPickerSheet: View {
                 Spacer()
                 Image(systemName: "plus.circle")
                     .foregroundStyle(TurboSparkTheme.accentColor)
+                    .accessibilityHidden(true)
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
         }
         .buttonStyle(.plain)
+        .help("Attach \(candidate.alias) to server")
+        .accessibilityLabel("Attach \(candidate.alias) to server")
     }
 }

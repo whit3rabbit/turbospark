@@ -11,6 +11,7 @@ struct ChatSidebarView: View {
     private var languageRawValue = AppLanguage.system.rawValue
 
     @State private var chatBeingRenamed: AppChat?
+    @State private var chatForSystemPrompt: AppChat?
     @State private var renameText = ""
     @State private var chatPendingDeletion: AppChat?
     @State private var showingProjectSettingsSheet = false
@@ -56,6 +57,13 @@ struct ChatSidebarView: View {
                 onDismiss: {
                     projectForMcpSettings = nil
                 }
+            )
+        }
+        .sheet(item: $chatForSystemPrompt) { chat in
+            ChatSystemPromptSheet(
+                model: model,
+                chatID: chat.id,
+                onDismiss: { chatForSystemPrompt = nil }
             )
         }
         .alert(
@@ -160,7 +168,8 @@ struct ChatSidebarView: View {
                             chat: chat,
                             chatBeingRenamed: $chatBeingRenamed,
                             renameText: $renameText,
-                            chatPendingDeletion: $chatPendingDeletion
+                            chatPendingDeletion: $chatPendingDeletion,
+                            chatForSystemPrompt: $chatForSystemPrompt
                         )
                     }
                 }

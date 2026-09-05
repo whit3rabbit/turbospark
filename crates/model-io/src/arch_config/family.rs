@@ -154,10 +154,10 @@ pub enum ModelFamily {
     /// n-gram per-layer embedding at layer index 1
     /// ([`super::sub_configs::PleConfig`]), which is 30.8% of the checkpoint
     /// and streams from its own table. And its full-attention layers carry a
-    /// query-sparse INDEXER that selects blocks of compressed keys, which this
-    /// port does not implement -- see
+    /// query-sparse INDEXER that selects blocks of compressed keys
+    /// (`families/qwen4/attn.rs`) -- see
     /// [`super::sub_configs::CompressedAttentionConfig::sparse_below`] for why
-    /// capping context at `indexer_budget` is exact rather than approximate.
+    /// attention at or below `indexer_budget` is exactly dense.
     ///
     /// It is a VISION-language model and this port ingests the TEXT tower
     /// only, as `qwen3_5` and `muse_glimmer` already do.

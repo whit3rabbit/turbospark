@@ -112,6 +112,7 @@ struct InstalledModelDetailPaneView: View {
                         Image(systemName: visuals.iconSystemName)
                             .font(.caption2)
                             .foregroundStyle(visuals.accentColor)
+                            .accessibilityHidden(true)
                         Text(visuals.family)
                     }
                     .font(.subheadline)
@@ -119,6 +120,7 @@ struct InstalledModelDetailPaneView: View {
 
                     Text("\u{2022}")
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
 
                     Text(MetricFormat.storage(installedModel.installBytes))
                         .font(.subheadline.monospacedDigit())
@@ -126,6 +128,7 @@ struct InstalledModelDetailPaneView: View {
 
                     Text("\u{2022}")
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
 
                     Text(descriptor.storageSource.shortLabel)
                         .font(.caption.weight(.medium))
@@ -534,6 +537,8 @@ struct InstalledModelDetailPaneView: View {
                                     .font(.system(size: 8, weight: .bold))
                             }
                             .buttonStyle(.plain)
+                            .help("Remove tag \(tag)")
+                            .accessibilityLabel("Remove tag \(tag)")
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -618,11 +623,23 @@ struct InstalledModelDetailPaneView: View {
 
             cliSnippet(
                 title: "Serve OpenAI & Anthropic API",
-                command: "turbospark-server --model \(installedModel.alias)"
+                command: serveCommand
             )
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// The server launch line, carrying the app's own default system prompt so
+    /// a server the user starts from here behaves like the app does.
+    ///
+    /// `--system` is a STARTUP flag on that binary: there is no control route,
+    /// so a prompt changed here reaches a server only on its next launch.
+    private var serveCommand: String {
+        let base = "turbospark-server --model \(installedModel.alias)"
+        let prompt = model.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return base }
+        return "\(base) --system \(ShellQuote.single(prompt))"
     }
 
     private func cliSnippet(title: String, command: String) -> some View {

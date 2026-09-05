@@ -61,6 +61,7 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
         runtime::SteeringPolicy::off(),
         runtime::LoadPolicy::default(),
         tokenizer::ReasoningEffort::Off,
+        None,
         // PINNED OFF: this test asserts nothing about prefix reuse and stays
         // on the engine's baseline path, same reasoning as steering above.
         false,
@@ -213,6 +214,7 @@ async fn real_backend_reuses_kv_across_two_chat_turns() {
         runtime::SteeringPolicy::off(),
         runtime::LoadPolicy::default(),
         tokenizer::ReasoningEffort::Off,
+        None,
         // THE ONE FLAG THIS TEST IS ABOUT: on, unlike every other test in
         // this file.
         true,
@@ -338,6 +340,7 @@ async fn real_backend_reuses_kv_across_two_interleaved_conversations() {
         runtime::SteeringPolicy::off(),
         runtime::LoadPolicy::default(),
         tokenizer::ReasoningEffort::Off,
+        None,
         true,
         // THE ONE FLAG THIS TEST IS ABOUT: 2, unlike every other test in this
         // file, so the pool holds one live plus one parked session.
@@ -504,6 +507,7 @@ async fn real_backend_reads_an_image_sent_over_both_endpoints() {
         runtime::SteeringPolicy::off(),
         runtime::LoadPolicy::default(),
         tokenizer::ReasoningEffort::Off,
+        None,
         // PINNED OFF: the vision path taints `kv_prefix` on every call anyway
         // (`set_prompt_vision` taints, `crates/runtime/CLAUDE.md` Gotcha 30),
         // so reuse is inert here regardless. Pinning `false` documents that

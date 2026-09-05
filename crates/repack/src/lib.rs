@@ -126,6 +126,7 @@ pub use synthetic_model::{
 pub use synthetic_muse::{build_synthetic_muse_glimmer_install, tiny_muse_glimmer_arch};
 pub use synthetic_qwen::{
     build_synthetic_qwen4_exp_decode_install, build_synthetic_qwen4_exp_decode_install_raw_router,
+    build_synthetic_qwen4_exp_decode_install_with_indexer_budget,
     build_synthetic_qwen4_exp_install, build_synthetic_qwen4_exp_install_streamed,
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
     build_synthetic_qwen_gdn_dense_install_with_both_drafters,

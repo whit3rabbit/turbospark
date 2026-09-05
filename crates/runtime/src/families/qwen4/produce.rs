@@ -2,8 +2,10 @@
 //! `mod.rs`'s "## decoder layer" pseudocode, encoded directly: PLE at its
 //! one layer, two hyper-connection calls per layer (each read/inject
 //! replacing a plain residual add), a mid-layer commit ONLY for the MoE
-//! router readback (matching `families/qwen/produce.rs`'s shape -- GDN and
-//! QSA-as-dense-attention are both host-readback-free).
+//! router readback (matching `families/qwen/produce.rs`'s shape), plus, on a
+//! QSA layer ABOVE the indexer budget, a second commit inside
+//! `encode_full_attention_block` for the block-score readback (GDN and
+//! below-budget QSA are host-readback-free).
 
 use std::time::Instant;
 
@@ -168,9 +170,12 @@ impl RealForwardRunner {
                     layer,
                 )?;
             } else {
+                // `&mut pass`: above the QSA budget this commits and waits
+                // mid-layer for the indexer's score readback and hands back
+                // a fresh encoder (`attn.rs`'s own doc).
                 encode_full_attention_block(
                     context,
-                    &pass,
+                    &mut pass,
                     weights,
                     index,
                     &arch,
@@ -178,6 +183,7 @@ impl RealForwardRunner {
                     (&scratch.normed, 0),
                     scratch,
                     kv,
+                    phases,
                     layer,
                     position,
                 )?;

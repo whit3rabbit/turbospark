@@ -70,7 +70,9 @@ extension AppModel {
     func buildSkillStateHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {
         var history: [ChatMessage] = []
 
-        var systemContent = buildSystemPrompt(for: project)
+        var systemContent = buildSystemPrompt(
+            for: project,
+            userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex))
         systemContent = systemContent.isEmpty
             ? skillStateProtocol()
             : "\(systemContent)\n\n\(skillStateProtocol())"

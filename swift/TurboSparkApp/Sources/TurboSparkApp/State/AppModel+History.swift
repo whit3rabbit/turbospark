@@ -20,7 +20,9 @@ extension AppModel {
     /// there was nothing to notice either.
     func buildAppendOnlyHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {
         var history: [ChatMessage] = []
-        let systemContent = buildSystemPrompt(for: project)
+        let systemContent = buildSystemPrompt(
+            for: project,
+            userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex))
         if !systemContent.isEmpty {
             history.append(ChatMessage(role: .system, content: systemContent))
         }
@@ -110,7 +112,24 @@ extension AppModel {
         // turn is undercounted by roughly a page's worth of positions. The
         // images are passed anyway so the estimate tracks what is actually
         // sent rather than a different conversation.
-        var history = selectedChat.messages.compactMap { msg -> ChatMessage? in
+        // **THE SYSTEM MESSAGE COUNTS, AND IT DID NOT USED TO.** This estimate
+        // omitted it entirely, which was a small undercount while the prompt
+        // was project-derived and Chat mode had none at all. A user-authored
+        // default applies to EVERY chat, so leaving it out would under-report
+        // the composer's context fill by the whole prompt on every turn --
+        // and the meter exists to tell a user how close to the window they
+        // are. Assembled the same way `buildAppendOnlyHistory` does, so the
+        // two cannot describe different conversations.
+        var history: [ChatMessage] = []
+        let systemContent = buildSystemPrompt(
+            for: turnProject(chatID: selectedChatID),
+            // BY CHAT rather than by index: `selectedChat` falls back to the
+            // transient draft, which is not in `chats` and has no index.
+            userPrompt: resolvedUserSystemPrompt(chat: selectedChat))
+        if !systemContent.isEmpty {
+            history.append(ChatMessage(role: .system, content: systemContent))
+        }
+        history += selectedChat.messages.compactMap { msg -> ChatMessage? in
             guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { return nil }
             return ChatMessage(
                 role: msg.role,

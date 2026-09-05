@@ -136,6 +136,16 @@ pub trait ChatModel: Send + Sync {
     fn default_reasoning(&self) -> tokenizer::ReasoningEffort {
         tokenizer::ReasoningEffort::Off
     }
+
+    /// Deployment-wide system prompt for requests that carry no system or
+    /// developer message of their own (`--system` / `--system-file`).
+    ///
+    /// Process-level for `default_reasoning`'s reason, and applied at ONE
+    /// place -- `handler::plan` -- because every wire format this server
+    /// speaks converts to `ChatCompletionRequest` before it reaches there.
+    fn default_system(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Always replays the same scripted logit sequence, regardless of the
@@ -147,6 +157,7 @@ pub struct ScriptedChatModel {
     max_context: u32,
     steps: Vec<Vec<foundation::LogitValue>>,
     default_reasoning: tokenizer::ReasoningEffort,
+    default_system: Option<String>,
 }
 
 impl ScriptedChatModel {
@@ -162,11 +173,17 @@ impl ScriptedChatModel {
             max_context,
             steps,
             default_reasoning: tokenizer::ReasoningEffort::Off,
+            default_system: None,
         }
     }
 
     pub fn with_default_reasoning(mut self, reasoning: tokenizer::ReasoningEffort) -> Self {
         self.default_reasoning = reasoning;
+        self
+    }
+
+    pub fn with_default_system(mut self, system: impl Into<String>) -> Self {
+        self.default_system = Some(system.into());
         self
     }
 }
@@ -190,6 +207,10 @@ impl ChatModel for ScriptedChatModel {
 
     fn default_reasoning(&self) -> tokenizer::ReasoningEffort {
         self.default_reasoning
+    }
+
+    fn default_system(&self) -> Option<&str> {
+        self.default_system.as_deref()
     }
 
     fn with_producer(

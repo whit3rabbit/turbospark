@@ -3,12 +3,27 @@ import Foundation
 /// Transport protocol used to communicate with an MCP server.
 public enum McpTransportSpec: Codable, Sendable, Equatable {
     /// Local subprocess communicating over standard input and standard output via line-delimited JSON-RPC 2.0.
-    case stdio(command: String, args: [String] = [], env: [String: String] = [:])
+    ///
+    /// `cwd` is the directory the child is spawned in. Nil means the caller's
+    /// own choice stands, which for a tool call is the project root
+    /// (`AppToolRegistry.executeMcpCall`) and for a connection test is nothing.
+    ///
+    /// `envPassthrough` NAMES host variables to forward, and is an allowlist
+    /// rather than a switch on purpose. The child environment is built from
+    /// scratch (see `McpClientEngine.childEnvironment`) precisely so a
+    /// third-party server binary does not receive every credential this app
+    /// was launched with, and a wildcard here would undo that.
+    case stdio(
+        command: String,
+        args: [String] = [],
+        env: [String: String] = [:],
+        cwd: String? = nil,
+        envPassthrough: [String] = [])
     /// Remote server communicating over HTTP / Server-Sent Events (SSE).
     case sse(url: URL, headers: [String: String] = [:])
 
     enum CodingKeys: String, CodingKey {
-        case type, command, args, env, url, headers
+        case type, command, args, env, cwd, envPassthrough, url, headers
     }
 
     public init(from decoder: Decoder) throws {
@@ -22,18 +37,28 @@ public enum McpTransportSpec: Codable, Sendable, Equatable {
             let command = try container.decode(String.self, forKey: .command)
             let args = try container.decodeIfPresent([String].self, forKey: .args) ?? []
             let env = try container.decodeIfPresent([String: String].self, forKey: .env) ?? [:]
-            self = .stdio(command: command, args: args, env: env)
+            // Both added after the first servers were written to disk, so both
+            // are `decodeIfPresent` with a default (root Gotcha 13). An archive
+            // predating them decodes with no working directory and an empty
+            // passthrough, which is exactly the old behaviour.
+            let cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+            let envPassthrough =
+                try container.decodeIfPresent([String].self, forKey: .envPassthrough) ?? []
+            self = .stdio(
+                command: command, args: args, env: env, cwd: cwd, envPassthrough: envPassthrough)
         }
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .stdio(let command, let args, let env):
+        case .stdio(let command, let args, let env, let cwd, let envPassthrough):
             try container.encode("stdio", forKey: .type)
             try container.encode(command, forKey: .command)
             try container.encode(args, forKey: .args)
             try container.encode(env, forKey: .env)
+            try container.encodeIfPresent(cwd, forKey: .cwd)
+            try container.encode(envPassthrough, forKey: .envPassthrough)
         case .sse(let url, let headers):
             try container.encode("sse", forKey: .type)
             try container.encode(url, forKey: .url)
@@ -132,10 +157,45 @@ public struct McpServerConfig: Identifiable, Codable, Sendable, Equatable {
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
+    /// Whether `name` is already taken among `existing`.
+    ///
+    /// **NAME IS THE IDENTITY KEY, NOT `id`.** A model addresses a server by
+    /// name (`mcp__<server>__<tool>`), `AppToolRegistry.executeMcpCall` resolves
+    /// it with `first(where:)`, and `AppToolPermissionEngine.evaluate` resolves
+    /// its auto-approve arm the same way. Two servers sharing a name means the
+    /// second can never be dialled, while the approval card shows only the name
+    /// and so cannot tell the user which one they are about to run.
+    ///
+    /// The comparison is case-insensitive because both resolvers lowercase, and
+    /// `excludingID` is what lets an EDIT of a server keep its own name.
+    public static func nameIsTaken(_ name: String, among existing: [String]) -> Bool {
+        let candidate = normalizedName(name)
+        guard !candidate.isEmpty else { return false }
+        return existing.contains { normalizedName($0) == candidate }
+    }
+
+    /// The same question against configs, minus one row by id, which is what
+    /// lets an EDIT of a server keep its own name.
+    public static func nameIsTaken(
+        _ name: String,
+        among existing: [McpServerConfig],
+        excludingID: UUID?
+    ) -> Bool {
+        let names = existing
+            .filter { excludingID == nil || $0.id != excludingID }
+            .map(\.name)
+        return nameIsTaken(name, among: names)
+    }
+
+    /// How both resolvers see a name: trimmed and lowercased.
+    public static func normalizedName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     /// Single line summary of command or endpoint for UI display.
     public var commandSummary: String {
         switch transport {
-        case .stdio(let cmd, let args, _):
+        case .stdio(let cmd, let args, _, _, _):
             if args.isEmpty {
                 return cmd
             }

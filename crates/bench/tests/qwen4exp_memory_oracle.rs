@@ -53,6 +53,16 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
     // Steady-state replay grew +0.00 MiB on the second run; measured peaks
     // were 2503 / 2509 MiB.
     //
+    // A THIRD reading on 2026-09-05, after the QSA indexer was wired
+    // (`docs/QWEN4_EXP.md`'s "QSA wired end to end"): 2521 MiB, replay
+    // +0.02 MiB, 9.386 / 9.808 tok/s. The +12 MiB over the higher 2026-09-04
+    // peak is the indexer's own state at this window -- 12 QSA layers of
+    // raw-key history (2,048 x 256 B) and pooled blocks (512 x 256 B) is
+    // ~7.5 MiB, plus the per-layer scratch and expert-slot warming noise.
+    // Every token below the budget now runs the indexer's projection, key
+    // copy and block pooling, and the trunk's arithmetic did not move (the
+    // quality gate reproduced its frozen row the same day).
+    //
     // 288 experts at top-10, 48 layers, ~2.7648 MiB per expert blob
     // (AGENTS.md Gotcha 36): 16 slots is ~2,025.6 MiB of slot capacity alone,
     // leaving ~484 MiB for KV at 2,048 context plus the resident core and
