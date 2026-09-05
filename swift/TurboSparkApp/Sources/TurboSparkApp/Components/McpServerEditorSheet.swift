@@ -1,9 +1,22 @@
+import AppKit
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Modal sheet for adding or editing an MCP server configuration.
+@MainActor
 public struct McpServerEditorSheet: View {
     let existingConfig: McpServerConfig?
     let workingDirectory: URL?
+    /// Names already taken at the scope this server is being saved into,
+    /// with the server BEING EDITED excluded by the caller so it can keep its
+    /// own name.
+    ///
+    /// A server's NAME is its identity: `AppToolRegistry.executeMcpCall` picks
+    /// with `first(where:)` and `AppToolPermissionEngine.evaluate` resolves its
+    /// auto-approve arm the same way, so two servers sharing one name means the
+    /// second is unreachable and the approval card cannot tell them apart.
+    let existingNames: [String]
     let onSave: (McpServerConfig) -> Void
     let onDismiss: () -> Void
 
@@ -12,6 +25,8 @@ public struct McpServerEditorSheet: View {
     @State private var command: String = "npx"
     @State private var argsText: String = ""
     @State private var envText: String = ""
+    @State private var cwdText: String = ""
+    @State private var envPassthroughText: String = ""
     @State private var urlText: String = ""
     @State private var headersText: String = ""
     @State private var isEnabled: Bool = true
@@ -26,11 +41,13 @@ public struct McpServerEditorSheet: View {
     public init(
         existingConfig: McpServerConfig? = nil,
         workingDirectory: URL? = nil,
+        existingNames: [String] = [],
         onSave: @escaping (McpServerConfig) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.existingConfig = existingConfig
         self.workingDirectory = workingDirectory
+        self.existingNames = existingNames
         self.onSave = onSave
         self.onDismiss = onDismiss
     }
@@ -115,72 +132,19 @@ public struct McpServerEditorSheet: View {
     }
 
     private var stdioDetailsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Subprocess Configuration")
-                .font(.subheadline.weight(.semibold))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Command / Executable")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("npx, python3, uvx, docker, or absolute path", text: $command)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Arguments (one per line or space-separated)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $argsText)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(height: 60)
-                    .padding(4)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Environment Variables (KEY=VALUE per line)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $envText)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(height: 60)
-                    .padding(4)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
-            }
-        }
+        McpStdioTransportFields(
+            command: $command,
+            argsText: $argsText,
+            envText: $envText,
+            cwdText: $cwdText,
+            envPassthroughText: $envPassthroughText)
     }
 
     private var sseDetailsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("SSE Endpoint Configuration")
-                .font(.subheadline.weight(.semibold))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Server URL")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("https://example.com/sse", text: $urlText)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Headers (Header: Value per line)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $headersText)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(height: 60)
-                    .padding(4)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
-            }
-        }
+        McpRemoteTransportFields(
+            urlText: $urlText,
+            headersText: $headersText,
+            urlIsValid: parsedEndpointURL != nil)
     }
 
     private var permissionsSection: some View {
@@ -211,7 +175,7 @@ public struct McpServerEditorSheet: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(isTesting || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(isTesting || validationMessage != nil)
             }
 
             if let testResult {
@@ -257,17 +221,40 @@ public struct McpServerEditorSheet: View {
         HStack {
             Button("Cancel") { onDismiss() }
                 .keyboardShortcut(.cancelAction)
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
             Spacer()
             Button("Save Server") {
                 saveServer()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            .disabled(validationMessage != nil)
             .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
     }
+
+    // MARK: - Validation
+
+    /// The rules live in `McpServerFormValidation`, a pure value, so they can
+    /// be tested without a window (Gotcha 26).
+    private var validation: McpServerFormValidation {
+        McpServerFormValidation(
+            name: name,
+            transport: transportType == "stdio" ? .stdio : .sse,
+            command: command,
+            endpointURLText: urlText,
+            existingNames: existingNames)
+    }
+
+    private var parsedEndpointURL: URL? { validation.parsedEndpointURL }
+
+    private var validationMessage: String? { validation.message }
 
     private func populateValues() {
         guard let config = existingConfig else { return }
@@ -278,11 +265,13 @@ public struct McpServerEditorSheet: View {
         discoveredTools = config.discoveredTools
 
         switch config.transport {
-        case .stdio(let cmd, let args, let env):
+        case .stdio(let cmd, let args, let env, let cwd, let passthrough):
             transportType = "stdio"
             command = cmd
             argsText = args.joined(separator: "\n")
             envText = env.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+            cwdText = cwd ?? ""
+            envPassthroughText = passthrough.joined(separator: "\n")
         case .sse(let url, let headers):
             transportType = "sse"
             urlText = url.absoluteString
@@ -290,7 +279,7 @@ public struct McpServerEditorSheet: View {
         }
     }
 
-    private func buildConfig() -> McpServerConfig {
+    private func buildConfig() -> McpServerConfig? {
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let transport: McpTransportSpec
         if transportType == "stdio" {
@@ -309,9 +298,21 @@ public struct McpServerEditorSheet: View {
                     envDict[k] = v
                 }
             }
-            transport = .stdio(command: command.trimmingCharacters(in: .whitespaces), args: parsedArgs, env: envDict)
+            let trimmedCwd = cwdText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let passthrough = envPassthroughText.components(separatedBy: .newlines)
+                .flatMap { $0.components(separatedBy: " ") }
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+
+            transport = .stdio(
+                command: command.trimmingCharacters(in: .whitespaces),
+                args: parsedArgs,
+                env: envDict,
+                cwd: trimmedCwd.isEmpty ? nil : trimmedCwd,
+                envPassthrough: passthrough)
         } else {
-            let cleanUrl = URL(string: urlText.trimmingCharacters(in: .whitespaces)) ?? URL(string: "http://localhost:8000/sse")!
+            // Refuse rather than substitute: see `parsedEndpointURL`.
+            guard let cleanUrl = parsedEndpointURL else { return nil }
             var headersDict: [String: String] = [:]
             for line in headersText.components(separatedBy: .newlines) {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -340,7 +341,7 @@ public struct McpServerEditorSheet: View {
     }
 
     private func saveServer() {
-        let config = buildConfig()
+        guard let config = buildConfig() else { return }
         onSave(config)
         onDismiss()
     }
@@ -350,7 +351,12 @@ public struct McpServerEditorSheet: View {
         testResult = nil
         testIsError = false
 
-        let config = buildConfig()
+        guard let config = buildConfig() else {
+            testResult = validationMessage ?? "This server is not fully configured yet."
+            testIsError = true
+            isTesting = false
+            return
+        }
         do {
             let tools = try await McpClientEngine.shared.discoverTools(for: config, workingDirectory: workingDirectory)
             discoveredTools = tools

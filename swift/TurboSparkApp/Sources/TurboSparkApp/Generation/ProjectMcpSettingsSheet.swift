@@ -62,6 +62,12 @@ public struct ProjectMcpSettingsSheet: View {
             McpServerEditorSheet(
                 existingConfig: editingServer,
                 workingDirectory: project?.rootDirectoryURL,
+                // GLOBAL names count here too. `executeMcpCall` resolves over
+                // `globalServers + projectServers` and a global wins the
+                // collision by design (state#61), so a project server sharing a
+                // global name is not merely a duplicate: it can never be
+                // dialled at all.
+                existingNames: reservedServerNames,
                 onSave: { updatedConfig in
                     if editingServer != nil {
                         model.updateProjectMcpServer(projectID: projectID, config: updatedConfig)
@@ -176,6 +182,15 @@ public struct ProjectMcpSettingsSheet: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    /// Every name a project server would collide with: the other project
+    /// servers, minus the one being edited, plus every global server.
+    private var reservedServerNames: [String] {
+        let siblings = (project?.mcpServers ?? [])
+            .filter { $0.id != editingServer?.id }
+            .map(\.name)
+        return siblings + model.globalMcpServers.map(\.name)
     }
 
     private func runDetection() {

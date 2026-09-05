@@ -388,7 +388,7 @@ final class SkillSystemTests: XCTestCase {
     // MARK: - Marketplace & Budgeting Tests
 
     func testMarketplaceSourceEncodingAndDecoding() throws {
-        let sources: [SkillMarketplaceSource] = [
+        let sources: [MarketplaceSource] = [
             .url(url: "https://example.com/marketplace.json", headers: ["Authorization": "Bearer token"]),
             .github(repo: "whit3rabbit/agent-skills", ref: "main", path: "skills/test", sparsePaths: ["skills"]),
             .git(url: "git@github.com:whit3rabbit/repo.git", ref: "v1.0", path: nil, sparsePaths: nil),
@@ -400,7 +400,7 @@ final class SkillSystemTests: XCTestCase {
 
         for src in sources {
             let data = try encoder.encode(src)
-            let decoded = try decoder.decode(SkillMarketplaceSource.self, from: data)
+            let decoded = try decoder.decode(MarketplaceSource.self, from: data)
             XCTAssertEqual(src, decoded)
         }
     }

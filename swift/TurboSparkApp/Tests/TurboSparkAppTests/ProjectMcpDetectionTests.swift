@@ -46,7 +46,7 @@ final class ProjectMcpDetectionTests: XCTestCase {
 
         let memory = servers.first { $0.name == "memory-server" }
         XCTAssertNotNil(memory)
-        if case .stdio(let cmd, let args, let env) = memory?.transport {
+        if case .stdio(let cmd, let args, let env, _, _) = memory?.transport {
             XCTAssertEqual(cmd, "npx")
             XCTAssertEqual(args, ["-y", "@modelcontextprotocol/server-memory"])
             XCTAssertEqual(env["DEBUG"], "1")
@@ -56,7 +56,7 @@ final class ProjectMcpDetectionTests: XCTestCase {
 
         let fsServer = servers.first { $0.name == "filesystem-server" }
         XCTAssertNotNil(fsServer)
-        if case .stdio(_, let args, _) = fsServer?.transport {
+        if case .stdio(_, let args, _, _, _) = fsServer?.transport {
             XCTAssertEqual(args, ["-y", "@modelcontextprotocol/server-filesystem", tempDirURL.path])
         }
     }
@@ -83,7 +83,7 @@ final class ProjectMcpDetectionTests: XCTestCase {
         let servers = detected.first?.servers ?? []
         XCTAssertEqual(servers.count, 1)
         XCTAssertEqual(servers.first?.name, "opencode-tools")
-        if case .stdio(let cmd, let args, _) = servers.first?.transport {
+        if case .stdio(let cmd, let args, _, _, _) = servers.first?.transport {
             XCTAssertEqual(cmd, "node")
             XCTAssertEqual(args, ["./tools/server.js", tempDirURL.path])
         } else {
@@ -121,7 +121,7 @@ final class ProjectMcpDetectionTests: XCTestCase {
         // itself silent tool execution just by being imported.
         XCTAssertEqual(server?.autoApprove, false)
 
-        if case .stdio(let cmd, let args, _) = server?.transport {
+        if case .stdio(let cmd, let args, _, _, _) = server?.transport {
             XCTAssertEqual(cmd, "npx")
             XCTAssertEqual(args, ["-y", "@modelcontextprotocol/server-postgres", "\(tempDirURL.path)/db"])
         } else {
@@ -277,7 +277,7 @@ final class ProjectMcpDetectionTests: XCTestCase {
         let server = detected.first?.servers.first { $0.name == "exfil-server" }
         XCTAssertNotNil(server)
 
-        if case .stdio(_, let args, let env) = server?.transport {
+        if case .stdio(_, let args, let env, _, _) = server?.transport {
             // Args must not contain the resolved secrets
             for arg in args {
                 XCTAssertFalse(arg.contains("sk-ant-test-secret-value-12345"), "Arg '\(arg)' must not leak ANTHROPIC_API_KEY")

@@ -21,7 +21,7 @@ public enum McpResourceExecutor {
         for s in enabled {
             let transportLabel: String
             switch s.transport {
-            case .stdio(let cmd, _, _): transportLabel = "stdio: \(cmd)"
+            case .stdio(let cmd, _, _, _, _): transportLabel = "stdio: \(cmd)"
             case .sse(let url, _): transportLabel = "sse: \(url.absoluteString)"
             }
             results.append("\nServer: \(s.name) (\(transportLabel))")

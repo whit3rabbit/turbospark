@@ -37,13 +37,14 @@ public actor McpClientEngine {
     /// Discovers available tools by spawning the server, completing the MCP handshake, and querying `tools/list`.
     public func discoverTools(for config: McpServerConfig, workingDirectory: URL? = nil, timeoutSeconds: TimeInterval = 10.0) async throws -> [McpDiscoveredTool] {
         switch config.transport {
-        case .stdio(let command, let args, let env):
+        case .stdio(let command, let args, let env, let cwd, let envPassthrough):
             return try await discoverToolsViaStdio(
                 serverName: config.name,
                 command: command,
                 args: args,
                 env: env,
-                workingDirectory: workingDirectory,
+                envPassthrough: envPassthrough,
+                workingDirectory: Self.resolveWorkingDirectory(cwd: cwd, fallback: workingDirectory),
                 timeoutSeconds: timeoutSeconds
             )
         case .sse(let url, let headers):
@@ -65,15 +66,16 @@ public actor McpClientEngine {
         timeoutSeconds: TimeInterval = 30.0
     ) async throws -> String {
         switch config.transport {
-        case .stdio(let command, let args, let env):
+        case .stdio(let command, let args, let env, let cwd, let envPassthrough):
             return try await callToolViaStdio(
                 serverName: config.name,
                 command: command,
                 args: args,
                 env: env,
+                envPassthrough: envPassthrough,
                 toolName: toolName,
                 arguments: arguments,
-                workingDirectory: workingDirectory,
+                workingDirectory: Self.resolveWorkingDirectory(cwd: cwd, fallback: workingDirectory),
                 timeoutSeconds: timeoutSeconds
             )
         case .sse(let url, let headers):
@@ -101,6 +103,7 @@ public actor McpClientEngine {
         command: String,
         args: [String],
         env: [String: String],
+        envPassthrough: [String],
         workingDirectory: URL?,
         errorCode: Int
     ) throws -> (process: Process, stdinPipe: Pipe, stdoutBuffer: LineBuffer) {
@@ -110,7 +113,7 @@ public actor McpClientEngine {
         // "this server's command does not exist" indistinguishable from
         // "this server started and then failed", and put the lookup somewhere
         // this process could neither observe nor report.
-        guard let resolvedExecutable = resolveExecutablePath(command) else {
+        guard let resolvedExecutable = Self.resolveExecutablePath(command) else {
             throw NSError(
                 domain: "McpClientEngine", code: errorCode,
                 userInfo: [
@@ -122,30 +125,10 @@ public actor McpClientEngine {
         process.executableURL = URL(fileURLWithPath: resolvedExecutable)
         process.arguments = args
 
-        // **A MINIMAL ENVIRONMENT, NOT THE PARENT'S.**
-        //
-        // This used to seed from `ProcessInfo.processInfo.environment`, which
-        // hands a third-party server binary every variable this app was
-        // launched with: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`,
-        // `AWS_*`, whatever else is in the launching shell. An MCP server
-        // needs none of that to speak JSON-RPC on a pipe, and a config file
-        // that wants a credential passes it explicitly through `env` below.
-        //
-        // The four kept are what a normal program needs to run at all: a
-        // `PATH` for the subprocesses it shells out to, a `HOME` for its own
-        // config, a locale so its output is not mojibake, and a scratch
-        // directory.
-        let parentEnvironment = ProcessInfo.processInfo.environment
-        var environment: [String: String] = [:]
-        for key in ["PATH", "HOME", "LANG", "TMPDIR"] {
-            if let value = parentEnvironment[key] { environment[key] = value }
-        }
-        // The server's own declared variables win, including over the four
-        // above: a config naming its own PATH means it.
-        for (k, v) in env {
-            environment[k] = v
-        }
-        process.environment = environment
+        process.environment = Self.childEnvironment(
+            parent: ProcessInfo.processInfo.environment,
+            passthrough: envPassthrough,
+            declared: env)
 
         if let workingDirectory {
             process.currentDirectoryURL = workingDirectory
@@ -189,11 +172,13 @@ public actor McpClientEngine {
         command: String,
         args: [String],
         env: [String: String],
+        envPassthrough: [String],
         workingDirectory: URL?,
         timeoutSeconds: TimeInterval
     ) async throws -> [McpDiscoveredTool] {
         let (process, stdinPipe, stdoutBuffer) = try spawnStdioServer(
             serverName: serverName, command: command, args: args, env: env,
+            envPassthrough: envPassthrough,
             workingDirectory: workingDirectory, errorCode: 1
         )
 
@@ -275,6 +260,7 @@ public actor McpClientEngine {
         command: String,
         args: [String],
         env: [String: String],
+        envPassthrough: [String],
         toolName: String,
         arguments: [String: Any],
         workingDirectory: URL?,
@@ -282,6 +268,7 @@ public actor McpClientEngine {
     ) async throws -> String {
         let (process, stdinPipe, stdoutBuffer) = try spawnStdioServer(
             serverName: serverName, command: command, args: args, env: env,
+            envPassthrough: envPassthrough,
             workingDirectory: workingDirectory, errorCode: 2
         )
 
@@ -456,8 +443,79 @@ public actor McpClientEngine {
         throw NSError(domain: "McpClientEngine", code: 5, userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for MCP response (id: \(expectedId))."])
     }
 
+    // MARK: - Spawn inputs (pure, so they can be tested without spawning)
+
+    /// The baseline variables every child gets: a `PATH` for whatever it shells
+    /// out to, a `HOME` for its own config, a locale so its output is not
+    /// mojibake, and a scratch directory. Nothing else.
+    public static let baselineEnvironmentKeys = ["PATH", "HOME", "LANG", "TMPDIR"]
+
+    /// The environment an MCP child is spawned with, built from scratch rather
+    /// than inherited.
+    ///
+    /// **THIS FUNCTION IS AN ALLOWLIST AND MUST STAY ONE.** It used to seed
+    /// from `ProcessInfo.processInfo.environment`, which hands a third-party
+    /// server binary every variable this app was launched with:
+    /// `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `AWS_*`, whatever
+    /// else is in the launching shell. A server needs none of that to speak
+    /// JSON-RPC on a pipe, and a config wanting a credential passes it through
+    /// `declared`. Do not add a wildcard or an inherit-all flag here.
+    ///
+    /// Precedence is baseline, then `passthrough`, then `declared`, so a
+    /// config naming its own `PATH` means it. A passthrough key absent from
+    /// `parent` is OMITTED rather than set empty: an empty `HOME` is a
+    /// different failure from an unset one, and the second is the truth.
+    public static func childEnvironment(
+        parent: [String: String],
+        passthrough: [String],
+        declared: [String: String]
+    ) -> [String: String] {
+        var environment: [String: String] = [:]
+        for key in baselineEnvironmentKeys {
+            if let value = parent[key] { environment[key] = value }
+        }
+        for key in passthrough {
+            let trimmed = key.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            if let value = parent[trimmed] { environment[trimmed] = value }
+        }
+        for (key, value) in declared {
+            environment[key] = value
+        }
+        return environment
+    }
+
+    /// The directory the child is spawned in.
+    ///
+    /// A server's own `cwd` beats the caller's, because the caller's is a
+    /// default rather than a choice: `AppToolRegistry.executeMcpCall` passes
+    /// the project root for every server alike, and a connection test from
+    /// Settings passes nothing at all. An empty or unset `cwd` therefore falls
+    /// through to that default rather than meaning "the filesystem root".
+    public static func resolveWorkingDirectory(cwd: String?, fallback: URL?) -> URL? {
+        guard let cwd else { return fallback }
+        let expanded = expandPathVariables(cwd).trimmingCharacters(in: .whitespaces)
+        guard !expanded.isEmpty else { return fallback }
+        return URL(fileURLWithPath: (expanded as NSString).expandingTildeInPath)
+    }
+
+    /// Expands the same `${HOME}` / `$HOME` spellings a config file may carry.
+    /// `~` is handled by `expandingTildeInPath` at the call site above.
+    private static func expandPathVariables(_ raw: String) -> String {
+        var out = raw
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        for spelling in ["${HOME}", "$HOME"] {
+            out = out.replacingOccurrences(of: spelling, with: home)
+        }
+        return out
+    }
+
     /// The absolute path of `name`, or nil when it resolves nowhere.
-    private func resolveExecutablePath(_ name: String) -> String? {
+    ///
+    /// Static so the marketplace can ask the same question before installing an
+    /// entry. Two spellings of "can this command be launched" would drift, and
+    /// the one that drifted would accept a server the spawn then refuses.
+    public static func resolveExecutablePath(_ name: String) -> String? {
         if name.hasPrefix("/") || name.hasPrefix("./") || name.hasPrefix("../") {
             return name
         }

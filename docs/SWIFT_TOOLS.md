@@ -207,11 +207,26 @@ A custom tool is always workspace-rooted and is gated on the category it
 declares (state#71).
 
 **An MCP server, no code.** Configure it globally or in the project's
-`.mcp.json`. Its tools arrive as `mcp__<server>__<tool>` and route
-dynamically. A global server wins a name collision with a project one
-(state#61). Always rooted: the server gets the project root as its working
-directory. Stdio children get `PATH`, `HOME`, `LANG`, `TMPDIR` and the
-config's own `env`, nothing else (Gotcha 32).
+`.mcp.json`, or install it from a catalog (section 10). Its tools arrive as
+`mcp__<server>__<tool>` and route dynamically. A global server wins a name
+collision with a project one (state#61), which is why both editors refuse a
+duplicate name: the loser can never be dialled.
+
+Always rooted, but a server may state WHERE. The caller passes the project
+root and a server's own `cwd` beats it, because the caller's value is a
+default applied to every server alike while a `cwd` is a choice
+(`McpClientEngine.resolveWorkingDirectory`). An empty `cwd` falls through to
+the default rather than meaning the filesystem root.
+
+Stdio children get `PATH`, `HOME`, `LANG`, `TMPDIR`, then any host variable
+the config NAMES in `envPassthrough`, then the config's own `env`, and
+nothing else (Gotcha 32). The passthrough is an allowlist of names and must
+stay one: the child environment is built from scratch precisely so a
+third-party binary does not receive every credential the app was launched
+with, and a wildcard would undo that.
+`McpClientEngine.childEnvironment` is a pure function so that rule is
+testable without spawning anything, and
+`testAVariableThatWasNotNamedIsNotForwarded` is the case that pins it.
 
 **A native Swift tool.** Section 6.
 
@@ -313,3 +328,81 @@ touches a chat rather than the filesystem.
 - `Projects`, `Artifact`, `REPL`, and `Workflow` are schema definitions
   without local engines and are filtered out by `isImplemented` rather
   than stubbed (T5).
+
+## 10. Installing an MCP server from a catalog
+
+A catalog is a JSON manifest in a Git repository or a local folder, listing
+servers a user can install in one click. Settings, MCP Servers, Browse
+Marketplace.
+
+### The manifest
+
+`mcp-marketplace.json` at the repository root, or at the path the source
+names.
+
+```json
+{
+  "name": "Example Catalog",
+  "description": "Servers we run internally",
+  "owner": "example",
+  "servers": [
+    {
+      "name": "memory",
+      "description": "Knowledge graph over the codebase",
+      "category": "Storage",
+      "version": "1.2.0",
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@example/memory"],
+        "cwd": "~/work",
+        "envPassthrough": ["GITHUB_TOKEN"]
+      }
+    }
+  ]
+}
+```
+
+Every field except `name` and `transport` is optional. `transport` is
+deliberately NOT tolerant-decoded, the same decision
+`McpServerConfig.transport` makes: an entry with no readable transport cannot
+be launched, so the row drops rather than the catalog failing. One unreadable
+entry is one dropped row (`decodeLossyArray`); a `servers` key that is not an
+array still throws, so a mangled file is quarantined rather than read as an
+empty catalog.
+
+### What install does, and what it refuses
+
+`McpMarketplaceManager.makeServerConfig` validates BEFORE anything reaches
+the store, which is state#107's rule: the skills equivalent copies files into
+place and then parses them, so a bad entry is already installed by the time
+the throw happens. It refuses an empty name, a name already taken at the
+target scope, and a command that resolves nowhere
+(`McpClientEngine.resolveExecutablePath`, shared with the spawn path so two
+spellings of "can this be launched" cannot drift).
+
+**An installed server arrives DISABLED and not auto-approved.** A catalog is
+a file in somebody else's repository naming a binary this app will spawn. The
+hand-add path defaults to enabled only because the user typed that command
+themselves. For the same reason the import sheet shows the full command line
+above the Install button: what is being approved is that command, not a name.
+
+### Acquisition
+
+`MarketplaceSource` (shared with the skills marketplace) models `github`,
+`git`, `url` and `directory`. The import sheet builds the case from the
+segment the user picked rather than sniffing the text, because a heuristic
+routes `git@github.com:owner/repo.git` and a bare `owner/repo` differently
+for a reason the user cannot see.
+
+Git goes through `MarketplaceGit`, which routes to `ProcessExecutor` for a
+timeout and an output cap, sets `GIT_TERMINAL_PROMPT=0` so a private
+repository fails instead of waiting on a prompt nobody can answer, and checks
+EVERY step's exit status. The skills version checked only the clone, so a
+failed `pull` was silent and the caller read a stale cache as fresh.
+
+Registered sources persist through `AppStorageRoot` and `AppJSONStore` like
+every other store here, and the clone cache is a constructor parameter so
+tests get a temp directory. That is the deliberate departure from
+`SkillMarketplaceManager`, which hardcodes `~/.turbospark` and so is neither
+quarantine-protected nor test-redirected (Gotcha 43).
