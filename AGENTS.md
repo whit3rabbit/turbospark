@@ -614,14 +614,15 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     before re-deriving them.
 
 13. `st` (the ripgrep-alike used here) skips gitignored files, so it finds
-    NOTHING in `ROADMAP.md` -- that file is gitignored on purpose (see
-    Gotcha 5's sibling note about local-only edits). Read or `grep` it
-    directly. **And in a WORKTREE it does not exist at all**, because
-    gitignored files are not carried into one: `ROADMAP.md` and
-    `CLAUDE.local.md` live only in the main checkout, so edit them at that
-    path rather than relative to the worktree you are working in. `st` also
-    needs a per-tree index, so a fresh worktree answers every query with
-    "no index found" until `st index` has run once.
+    nothing in a gitignored one. **`ROADMAP.md` IS NOT ONE OF THEM, whatever
+    this entry used to say.** It is tracked and has been for as long as the
+    log goes back (last touched by `612be53`), it is not in `.gitignore`, and
+    it IS carried into a worktree -- checked directly on 2026-09-05, because
+    the claim was load-bearing for where to edit the file and was simply
+    false. `CLAUDE.local.md` is the genuinely gitignored one, and everything
+    below about worktrees applies to it alone. `st` also needs a per-tree
+    index, so a fresh worktree answers every query with "no index found"
+    until `st index` has run once.
     **AND NEITHER IS UNCOMMITTED WORK.** A worktree opened for a task whose
     subject sits unstaged in the main checkout starts EMPTY at HEAD, with
     none of the code the task describes -- which reads like the task being

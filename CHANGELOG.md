@@ -57,6 +57,38 @@ when this file gets updated relative to the version bump and the tag.
   turn is running.
 
 ### Added
+- `crates/runtime`: chunked prefill for the `qwen4_exp` family
+  (`families/qwen4/prefill.rs`), the seventh `ChunkedPrefillRunner` and the
+  same "step 1" shape as the other six -- the existing per-token kernels
+  looped inside a micro-batch, batching command buffers rather than GEMVs,
+  with no new kernel. QSA and GDN needed no change at all. Five buffers were
+  widened to `MAX_PREFILL_BATCH` rows and four encoder signatures gained row
+  offsets; the fifth (PLE's `ngram_emb`) is the one that mattered, because
+  its upload is a HOST `write_buffer_bytes` that does not respect
+  command-buffer commit order, so a single-row buffer silently fed every
+  token but the last of a micro-batch the wrong n-gram embedding. Verified
+  byte-identical to the sequential path on seven synthetic cases and on the
+  real REAP-288 install.
+- `crates/runtime`: `families/qwen4/prefill.rs` refuses
+  `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` by name, the pair
+  every other chunked driver already carried. Neither seam is wired for this
+  family, and serving the per-token loop under either arm's label would
+  report the unbatched engine as the batched one.
+- `crates/bench`: `--prefill-chunk off|auto|N` on `--model` mode, which is
+  the only way this binary reaches `run_raw_completion_chunked`. It
+  **defaults off**, because every frozen row in that crate was measured on
+  the sequential prefill path; the resolved path is echoed in the header on
+  both arms, along with `TURBOSPARK_ROUTED_BATCH` and
+  `TURBOSPARK_BATCHED_GEMV` (which need no flag -- they are read inside the
+  runtime's chunk drivers and go live the moment the driver is engaged, and
+  are marked INERT on the sequential arm). An install whose family has no
+  chunked driver is refused by name rather than falling back.
+  `TURBOSPARK_PREFILL_CHUNK` is likewise refused rather than inherited or
+  ignored, the one place this binary deliberately diverges from
+  `crates/cli`. Unblocks the prefill energy capture, which could not be
+  measured through `scripts/power.sh` at all before this.
+- `scripts/power.sh`: a `seq|chunked` arm pair on the prefill axis,
+  exclusive of every other arm.
 - `qwen4_exp` (Qwen3.8-Flash-Next) runs its QSA (query-sparse attention)
   indexer above `indexer_budget` instead of refusing context past 2,048
   tokens: every token projects and caches the indexer key and pools newly
