@@ -90,20 +90,27 @@ extension AppModel {
         if runtimeOptions.maxTokensPerSec > 0 {
             options.maxTokensPerSec = runtimeOptions.maxTokensPerSec
         }
-        let sPath = (runtimeOptions.steeringPath ?? steeringPath)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let sPath, !sPath.isEmpty {
-            options.steering = sPath
-            options.steeringMode = runtimeOptions.steeringMode.steeringMode
-            options.steeringScale = runtimeOptions.steeringScale
-            let layers = runtimeOptions.steeringLayers.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !layers.isEmpty {
-                options.steeringLayers = layers
-            }
-            if runtimeOptions.steeringMode == .clamp {
-                options.steeringTarget = runtimeOptions.steeringTarget
-            }
-            if runtimeOptions.steeringGate > 0 {
-                options.steeringGate = runtimeOptions.steeringGate
+        // STEERING IS GATED ON THE SWITCH, not on a path being present.
+        // `resolvedSteeringPreset` folds the named preset and the Inspector's
+        // raw knobs (the implicit "Custom" preset) into one value, so there
+        // is one answer to "what would this session steer with" rather than
+        // two the UI and the open could disagree about.
+        if steeringEnabled, let preset = resolvedSteeringPreset {
+            let sPath = preset.vectorPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sPath.isEmpty {
+                options.steering = sPath
+                options.steeringMode = preset.mode.steeringMode
+                options.steeringScale = preset.scale
+                let layers = preset.layers.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !layers.isEmpty {
+                    options.steeringLayers = layers
+                }
+                if preset.mode == .clamp {
+                    options.steeringTarget = preset.target
+                }
+                if preset.gate > 0 {
+                    options.steeringGate = preset.gate
+                }
             }
         }
         return options

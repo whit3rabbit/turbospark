@@ -15,6 +15,7 @@ public struct AppSettingsView: View {
         case permissions = "Files & Permissions"
         case models = "Models & Storage"
         case engine = "Engine"
+        case safety = "Safety & Steering"
         case mcp = "MCP Servers"
         case skills = "Skills"
         case agents = "Agents & Subagents"
@@ -32,6 +33,7 @@ public struct AppSettingsView: View {
             case .permissions: return "folder.badge.gearshape"
             case .models: return "cylinder.split.1x2"
             case .engine: return "cpu"
+            case .safety: return "dial.medium"
             case .mcp: return "server.rack"
             case .skills: return "wand.and.stars"
             case .agents: return "person.2.badge.gearshape"
@@ -43,7 +45,7 @@ public struct AppSettingsView: View {
             switch self {
             case .general, .appearance, .shortcuts, .permissions:
                 return "Personal"
-            case .models, .engine, .mcp, .skills, .agents, .hooks:
+            case .models, .engine, .safety, .mcp, .skills, .agents, .hooks:
                 return "Engine & Coding"
             }
         }
@@ -182,6 +184,8 @@ public struct AppSettingsView: View {
             ModelsSettingsPaneView(model: model)
         case .engine:
             engineSettingsTab
+        case .safety:
+            SafetySettingsPaneView(model: model)
         case .mcp:
             mcpSettingsTab
         case .skills:
@@ -448,7 +452,7 @@ public struct AppSettingsView: View {
             // to empty, starts an unauthenticated server, and looked
             // identical to a key that took.
             if let info = model.serverInfo {
-                let rows = ServerStatusRows(info: info)
+                let rows = ServerStatusRows(info: info, guardrails: model.serverStartedGuardrails)
 
                 HStack {
                     Text("Address")

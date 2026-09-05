@@ -42,6 +42,35 @@ extension KeyedDecodingContainer {
     /// is gone over a single wrong character. Corruption at the JSON level
     /// still quarantines, which is the right split: a file that will not
     /// parse is a file, a field that will not convert is a field.
+    /// Decodes an array ELEMENT BY ELEMENT, dropping the ones that will not
+    /// decode instead of losing the array.
+    ///
+    /// This is the second hazard in the type doc above, which named it and
+    /// had no helper for it: `decodeLenient([T].self, ...)` catches the throw
+    /// at the ARRAY level and falls back to `[]`, so one bad element discards
+    /// every good one. That is the archive loss of Gotcha 13 with a smaller
+    /// blast radius and the same shape -- silent, and read by a user as "the
+    /// app lost my presets" rather than as a decode failure.
+    ///
+    /// Uses an unkeyed container so a failing element can be SKIPPED: the
+    /// container's index advances on a successful decode of anything, so the
+    /// element is consumed as a throwaway `AnyDecodableValue` and the walk
+    /// continues.
+    func decodeLenientElements<T: Decodable>(_ type: T.Type, forKey key: Key) -> [T] {
+        guard var container = try? nestedUnkeyedContainer(forKey: key) else { return [] }
+        var out: [T] = []
+        while !container.isAtEnd {
+            if let value = try? container.decode(T.self) {
+                out.append(value)
+                continue
+            }
+            // Consume the element that failed, or the loop cannot advance and
+            // spins forever on it.
+            if (try? container.decode(AnyDecodableValue.self)) == nil { break }
+        }
+        return out
+    }
+
     func decodeLenient<T: Decodable>(_ type: T.Type, forKey key: Key, fallback: T) -> T {
         ((try? decodeIfPresent(type, forKey: key)) ?? nil) ?? fallback
     }
@@ -73,5 +102,19 @@ struct FailableDecodable<T: Decodable>: Decodable {
 
     init(from decoder: any Decoder) throws {
         value = try? T(from: decoder)
+    }
+}
+
+/// Decodes anything and keeps nothing.
+///
+/// Exists purely so `decodeLenientElements` can ADVANCE past an element it
+/// could not decode as `T`. Without it the unkeyed container's index never
+/// moves and the loop does not terminate.
+private struct AnyDecodableValue: Decodable {
+    init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(), !single.decodeNil() {
+            // Any scalar shape at all is fine; the value is discarded.
+            _ = try? single.decode(String.self)
+        }
     }
 }

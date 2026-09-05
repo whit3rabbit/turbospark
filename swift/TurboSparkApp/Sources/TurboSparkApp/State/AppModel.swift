@@ -260,8 +260,25 @@ public final class AppModel: ObservableObject {
     @Published public var stopSequences: String = ""
     /// Path to activation steering vectors file.
     @Published public var steeringPath: String? = nil
+    /// Named steering directions the operator registered. Empty until one is
+    /// added: nothing ships a direction.
+    @Published public var steeringPresets: [AppSteeringPreset] = []
+    /// `id` of the selected preset, or nil for the Inspector's raw knobs.
+    @Published public var activeSteeringPresetID: UUID? = nil
+    /// Whether steering is applied at the next model open. **Not derived from
+    /// "a path is set"**: a path is configuration, running the edit is a
+    /// decision, and separating them is what makes the A/B one click.
+    @Published public var steeringEnabled: Bool = false
     /// Forge Tool-Call Guardrails global mode ("alwaysOn", "alwaysOff", "select").
     @Published public var guardrailsMode: AppGuardrailsMode = .select
+    /// What the RUNNING server was started with, or nil when none is.
+    ///
+    /// Not persisted and not derived from `guardrailsMode`: a server resolves
+    /// its guardrails once at start and keeps them, so changing the setting
+    /// afterwards does not move what is already serving. Reporting the
+    /// setting instead of the start value would tell an operator the server
+    /// changed when it did not.
+    @Published public var serverStartedGuardrails: ServerOptions.Guardrails? = nil
     /// Per-session manual override for guardrails when not in a project workspace.
     @Published public var composerGuardrailsOverride: Bool? = nil
 

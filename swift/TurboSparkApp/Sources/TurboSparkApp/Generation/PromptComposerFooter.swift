@@ -60,6 +60,20 @@ struct PromptComposerFooter: View {
             }
             statusDot
             ForgeGuardrailsPillControl(model: model)
+            // **HIDDEN ON "NOTHING CONFIGURED", NEVER ON "NOT SUPPORTED".**
+            // The two axes are different questions and only one of them is a
+            // capability. A user who has registered no direction is not being
+            // told about a feature they lack -- steering is opt-in
+            // configuration, and a permanently grey pill in a dense status
+            // strip is chrome. A user who HAS configured one and loads a
+            // family that cannot steer needs to know why it is not running,
+            // so that case shows the pill disabled with the engine's own
+            // reason (swift/CLAUDE.md Gotchas 23 and 33). The Safety settings
+            // pane always shows the control either way.
+            if model.resolvedSteeringPreset != nil {
+                statusDot
+                SteeringPillControl(model: model)
+            }
 
             if model.estimatedPromptTokens > 0 {
                 Text("\(model.estimatedPromptTokens) tokens")

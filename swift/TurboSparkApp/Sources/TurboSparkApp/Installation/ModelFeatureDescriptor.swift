@@ -82,11 +82,36 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     public let format: WeightContainerFormat
     public let quantFormat: String
     public let storageSource: StorageSource
+    /// Whether this family's decode flow dispatches the steering edit.
+    ///
+    /// **DERIVED FROM THE INSTALL'S OWN `family`, against the exact set
+    /// `crates/runtime/src/steering.rs`'s `family_dispatches_steering`
+    /// answers true for.** It used to match alias SUBSTRINGS ("gemma",
+    /// "qwen38", "mixtral", ...), which is the U2 mistake this file's own
+    /// comments already record for routing: a side-loaded model whose alias
+    /// happens to contain "gemma" is not thereby a steerable family, and the
+    /// chain MISSED `gptOss` and `museGlimmer`, both of which steer and are
+    /// measured doing so on real installs in `docs/OBLITERATION.md`.
+    ///
+    /// A pre-open ESTIMATE from an exact table. When a session for this model
+    /// is open, `resolve` takes `info.steering.supported` instead, which is
+    /// the engine answering rather than this app agreeing with it.
     public let isSteeringReady: Bool
     public let hasLinearAttention: Bool
     public let supportsChunkedPrefill: Bool
     public let supportsReasoning: Bool
-    public let supportsToolCalls: Bool
+    /// Whether this checkpoint's own markup frames tool calls the engine
+    /// parses, or `nil` when that is not yet known.
+    ///
+    /// **`nil` UNTIL A SESSION IS OPEN, AND RENDERED AS "unknown".** This was
+    /// a hardcoded `true`, i.e. a badge that cannot fail (`swift/CLAUDE.md`
+    /// Gotcha 22), and it drove a "Tool Guardrails" chip on the detail pane.
+    /// The fact is a property of the DIALECT, which is resolved from the
+    /// tokenizer at load and appears in neither `installed.json` nor the
+    /// manifest's `arch` block -- so there is genuinely no pre-open answer,
+    /// and inventing one is Gotcha 23's "a zero from an absent measurement is
+    /// not a measurement of zero".
+    public let supportsToolCalls: Bool?
     public let supportsVision: Bool
     /// Rough estimate of the resident working set, in bytes. `nil` when
     /// there is no real measurement or on-disk size to derive it from --
@@ -117,9 +142,29 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
 
     // MARK: - Resolution
 
+    /// Family strings whose decode flow dispatches the steering edit.
+    ///
+    /// **THE EXACT SET FROM `crates/runtime/src/steering.rs:family_dispatches_steering`,
+    /// spelled with `ModelFamily::as_str`'s own strings** (note the camelCase
+    /// in `gptOss` and `museGlimmer`, which is what `installed.json` really
+    /// carries). Matched against the scanner-assigned `family`, never against
+    /// the free-text alias.
+    ///
+    /// The two families deliberately absent: `deepseekV4Flash` has no decode
+    /// flow at all, and `qwen4exp`'s residual is several streams wide, so the
+    /// boundary the edit would sit on is a different shape and has not been
+    /// decided. Requesting steering on either is refused at open BY NAME.
+    private static let steeringFamilies: Set<String> = [
+        "gemma4", "qwen36", "qwen35", "llama", "qwen3moe", "gptOss", "museGlimmer",
+    ]
+
+    /// - Parameter sessionInfo: the OPEN session's own report, when this
+    ///   model is the one loaded. Authoritative for the two capability fields
+    ///   that the engine can answer and this app can only estimate.
     public static func resolve(
         installedModel: InstalledModel?,
-        catalogEntry: CatalogEntry? = nil
+        catalogEntry: CatalogEntry? = nil,
+        sessionInfo: SessionInfo? = nil
     ) -> ModelFeatureDescriptor {
         let alias = installedModel?.alias ?? catalogEntry?.alias ?? ""
         let family = installedModel?.family ?? catalogEntry?.family ?? ""
@@ -282,18 +327,16 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         }
 
         // 6. Special capabilities
-        let isSteeringReady = lAlias.contains("qwen36") || lFamily == "qwen36"
-            || lAlias.contains("qwen38")
-            || lAlias.contains("qwen35")
-            || lAlias.contains("qwen3moe")
-            || lAlias.contains("mixtral")
-            || lAlias.contains("gemma")
-            || lFamily.contains("gemma")
+        //
+        // The engine's answer wins whenever there is one. Before that, the
+        // family table below is the estimate.
+        let isSteeringReady =
+            sessionInfo?.steering.supported ?? Self.steeringFamilies.contains(family)
 
         let hasLinearAttention = lAlias.contains("qwen36") || lFamily == "qwen36"
         let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral")
         let supportsReasoning = combined.contains("think") || combined.contains("reason") || combined.contains("harmony") || lAlias.contains("gptoss") || lAlias.contains("museglimmer") || lAlias.contains("deepseek") || lAlias.contains("qwen")
-        let supportsToolCalls = true
+        let supportsToolCalls: Bool? = sessionInfo?.toolCalling.native
         let supportsVision = combined.contains("vision") || combined.contains("vlm") || combined.contains("mrope")
 
         // 7. Working Set RAM estimation (U3): a dense model's on-disk size

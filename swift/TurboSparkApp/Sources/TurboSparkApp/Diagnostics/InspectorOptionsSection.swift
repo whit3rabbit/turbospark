@@ -180,8 +180,42 @@ extension InspectorView {
         model.runtimeOptions.maxTokensPerSec <= 0
     }
 
+    /// The RAW knobs, kept as the expert surface beside the named presets in
+    /// Settings > Safety and Steering. What is set here becomes the implicit
+    /// "Custom" preset, so a configuration made before presets existed keeps
+    /// working.
     var steeringSection: some View {
         Section("Directional Steering") {
+            // A family that does not dispatch the edit REFUSES a vector at
+            // open, so the knobs below can only produce a failed load there.
+            // Disabled with the engine's own reason rather than hidden
+            // (swift/CLAUDE.md Gotchas 23 and 33).
+            if model.steeringFamilySupported == false {
+                Label(
+                    model.info?.steering.reason
+                        ?? "This model's family does not dispatch the steering edit.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(Color.secondary)
+            }
+
+            // **STEERING RESOLVES ONCE, AT OPEN.** Editing a field here does
+            // nothing to the model already loaded, and until this note
+            // existed the app said nothing about that -- a knob that appears
+            // to work and does not.
+            if model.steeringNeedsReload {
+                HStack {
+                    Label("Not applied to the loaded model", systemImage: "arrow.clockwise")
+                        .font(.caption)
+                        .foregroundStyle(Color.orange)
+                    Spacer()
+                    Button("Reload") { model.reloadForSteering() }
+                        .font(.caption)
+                        .disabled(model.selected == nil || model.generating || model.opening)
+                }
+            }
+
             TextField("Control vector path (.gguf)", text: Binding(
                 get: { model.runtimeOptions.steeringPath ?? "" },
                 set: { model.runtimeOptions.steeringPath = $0.isEmpty ? nil : $0 }

@@ -1180,6 +1180,84 @@ so going through `make` recompiles the whole app every single time. Use
     same class returns, so anything touching Theme, a view helper, or a large
     SwiftUI container is worth reading with this in mind.
 
+46. **THIS APP HAD THREE ANSWERS TO "DOES THIS MODEL SUPPORT TOOL CALLS" AND
+    THEY DISAGREED; IT NOW HAS ONE, READ OFF THE ENGINE.** Fixed 2026-09-05.
+    `AppModel.isToolCallingSupported` matched a hardcoded nine-entry family
+    set and then fell through to dialect substrings;
+    `ModelFeatureDescriptor.supportsToolCalls` was a literal `true`, i.e.
+    Gotcha 22's badge that cannot fail, driving a "Tool Guardrails" chip; and
+    the fact itself lives in `crates/tokenizer`'s decoder, where three of
+    seven dialects emit no `ToolCall` at all. Both now read
+    `info.toolCalling.native`, and `crates/ffi` derives that from ONE
+    `ChatDialect::tool_call_support` match tied to the decoder by a
+    `debug_assert!` at every site that builds a call.
+
+    **`museGlimmer` WAS IN THAT FAMILY SET AND IS NOT NATIVE**, which is the
+    instance worth carrying: it DOES frame tool calls, as an
+    `<atem:function_calls>` block, and this engine has no parser for it -- so
+    the decoder routes them to the REASONING stream and a caller sees nothing.
+    Grepping for the markup finds it; grepping for the parser does not. A
+    family name cannot answer a question about a DIALECT (root Gotcha 37's
+    shape).
+
+    **AND `native == false` IS NOT A REASON TO HIDE A TOOL CONTROL.** It marks
+    the case a guardrail RESCUE helps most, since recovering a call from raw
+    prose is the whole first failure `docs/FORGE_GUARDRAILS.md` names. The
+    guardrails pill gates on whether the turn OFFERS tools
+    (`interactionMode == .projects` and a non-nil project, `extractToolCalls`'s
+    own guard), which is the condition under which `inspect` provably accepts
+    unconditionally. `isSteeringReady` had the same disease one field over --
+    alias substrings, missing `gptOss` and `museGlimmer`, which both steer --
+    and now matches the exact family set from
+    `crates/runtime/src/steering.rs`, with `info.steering.supported`
+    overriding it whenever a session exists.
+
+47. **STEERING RESOLVES ONCE, AT MODEL OPEN, AND UNTIL 2026-09-05 THE APP SAID
+    NOTHING ABOUT THAT.** Every `steering*` field in `AppRuntimeOptions` is
+    read by `buildOpenOptions`, so editing one changed nothing about the model
+    already loaded -- silently, forever, with the Inspector showing the new
+    value. A knob that appears to work and does not is precisely what
+    `docs/OBLITERATION.md`'s null control exists to catch one layer down.
+    `AppSteeringPolicy.needsReload` compares INTENT against
+    `info.steering`, so it is right in BOTH directions (turning steering off
+    without reloading is equally a lie), and the Safety pane, the Inspector
+    and the composer pill all show a reload prompt.
+
+    Three more things that surface is deliberate about, each a rule rather
+    than a preference. **Nothing ships a direction**, so the pane says so and
+    points at `scripts/extract_direction.py` -- a control labelled as though a
+    behaviour shipped would be Gotcha 23's "check the work exists before
+    adding the control that claims to do it". **The default strength is 0.3
+    and not 1.0**, because 1.0 over every layer is a documented collapse on a
+    real install and a default landing on a documented failure mode is worse
+    than no default. And **the compatibility check says "shape matches", never
+    "compatible"**: the engine refuses a width mismatch and a layer overrun
+    and refuses nothing else, so a vector extracted for another checkpoint of
+    the same width loads and steers something. `SteeringPolicyTests` asserts
+    the string does not contain the word.
+
+    The vector's shape is read through `ts_control_vector_info_json`, not
+    parsed here. A second GGUF reader in Swift would be free to disagree with
+    the one the open uses, which is the same argument
+    `family_dispatches_steering` makes for its own single predicate.
+
+48. **THE APP'S GUARDRAILS SETTING DID NOT REACH THE SERVED PATH, AND THE TWO
+    ENFORCEMENT POINTS ARE EASY TO CONFLATE.** `ForgeGuardrailsEngine` runs in
+    the agent loop over a reply this app read itself; every HTTP client of the
+    in-process server bypasses it entirely and got
+    `ChatModel::guardrails()`'s trait default. So a user who set "Always Off"
+    and pointed a client at the server got guardrails anyway, with nothing
+    saying so. `ServerOptions.guardrails` (2026-09-05) carries it, and
+    `serverStartedGuardrails` records what the START used rather than what the
+    setting says NOW -- a server resolves its guardrails once and keeps them,
+    so reporting the setting would claim a change that did not happen. A
+    server started before the value was tracked reports `unknown`, not `on`
+    (Gotcha 23 again).
+
+    `.select` resolves to ON for a server, and that is forced rather than
+    chosen: it means "decide per project or per chat" and a server request has
+    neither.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments that
