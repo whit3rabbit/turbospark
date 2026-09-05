@@ -790,3 +790,115 @@ until the attention piece lands.
    long-context hardware verification that needs both the attention piece
    and the budget lift to exist first. See `docs/QWEN4_EXP.md`'s own QSA
    sections for the fuller account.
+
+## QSA attention application: the indexed decode-attention kernel (2026-09-05)
+
+The prior handoff deliberately stopped short of applying the indexer's
+selected-block mask to real Q/K/V, calling it "a genuine design decision
+with real correctness risk". This session made that decision and built the
+kernel, and NOTHING ELSE: it is not wired into `families/qwen4/`, which
+still refuses context above `index_budget` and runs dense attention below
+it. It was built in a worktree at HEAD while a concurrent session was
+building the indexer's cache manager and the pool/norm/RoPE composition in
+the main checkout (the section above). The merge that landed both is the
+first time the two halves share a tree, and nothing calls across them yet.
+
+### The decision: gather the INDICES, not the rows
+
+Two shapes were on the table and a third fell out of reading the existing
+kernel:
+
+- **A from-scratch fused sparse kernel** mirroring mlx-vlm's. Rejected: new
+  online-softmax code, new GQA handling, new chunking, all unverified --
+  and the mlx-vlm in this machine's uv cache (`mlx_vlm/models/qwen4_exp/
+  language.py`) has no fused kernel at all. Its indexer returns a boolean
+  mask and `Qwen4ExpAttention.__call__` ANDs it onto the causal mask and
+  calls plain scaled-dot-product attention. The "fused kernel" the previous
+  handoff remembered reading is not in the version installed here.
+- **Gather the selected K/V rows into a compact buffer, then run the dense
+  kernel.** Reuses proven math, but copies ~2 MiB of K/V per QSA layer per
+  token on the real shape (2,051 rows x 2 kv heads x 256 x 2 bytes, K and
+  V) and needs a gather kernel anyway.
+- **Taken: an INDEXED variant of `attention_decode_partial`**
+  (`crates/gpu/src/shaders/attention_indexed.metal`,
+  `crates/gpu/src/attention_indexed.rs`). Same 256-thread threadgroup,
+  same `block_reduce_sum`, same online-softmax recurrence and FP op order,
+  same `(m, d, o)` partial layout, same `chunks_for` policy over the LIST
+  length. The only change is that the loop walks `positions[i]` for `i` in
+  the chunk's slice of a host-built sorted `u32` list instead of `p` in
+  `[p_start, p_end)`. Pass 2 is attention.metal's own
+  `attention_decode_combine`, unchanged. Cost above budget: one 8 KiB list
+  upload per QSA layer per token, no row copy.
+
+The consequence that makes this the low-risk choice is testable rather
+than argued: with the identity list at equal chunk count the indexed
+dispatch writes the dense kernel's exact FP32 partials and FP16 output,
+and `tests/attention_indexed_parity.rs` asserts it bitwise. That equality
+is what lets the dense kernel's real-model verification (every family's
+frozen gate) stand in for this kernel's until the family that uses it can
+be run above budget.
+
+### What was verified, and what the verification itself taught
+
+CPU reference `turbospark_compute::indexed_attention`: a gather followed by
+`causal_attention` over the compact sequence, so the two cannot disagree on
+the attention arithmetic, only on which rows enter it. Five GPU parity
+cases: a non-contiguous subset, a 2-chunk subset, the real shape (`head_dim`
+256, 24 q / 2 kv heads, 2,051 of 3,000 rows, 16 chunks, worst |diff| 2.4e-4
+against 4e-3), the bitwise identity case, and a NaN case (every unselected
+K and V row set to NaN, output required unchanged -- AGENTS.md Gotcha 59's
+trap used as a stray-read detector). Three mutations, each asserted to
+apply, each reddening exactly its own cases: wrong row (`i` for
+`positions[i]`), dropped chunk offset, host forcing one chunk.
+
+**The tests were wrong twice before the mutations reddened anything, and
+both failures are worth carrying** (`crates/gpu/CLAUDE.md`'s entry has the
+numbers):
+
+1. **Keys at magnitude 0.3 made the softmax near-uniform**, so the output
+   was the mean of V over WHATEVER rows were read -- close to the same
+   number for any row set -- and the wrong-row and dropped-offset mutations
+   both passed within tolerance on the multi-chunk and real-shape cases. A
+   parity tolerance is only meaningful if the fixture moves by much more
+   than it under the mutation being guarded against.
+2. **`sin(i * 1.3)` over the flat `[seq, heads, head_dim]` index is not a
+   random fixture.** Each key row is a small rotation of the previous one,
+   so the scores are near-periodic in position and two large row sets that
+   share most of their rows sample that pattern identically (gap 0.0008 on
+   the real shape, against a 0.004 tolerance). Hashed independent rows
+   (splitmix64 on the index) at key magnitude 3 give O(0.1) gaps.
+
+Both are now structural: `assert_fixture_discriminates` computes the CPU
+answer over the WRONG row set (rows `0..n_sel`) and over the first chunk's
+worth of the list, and requires both to differ from the right answer by
+more than 10x the tolerance before any parity line is trusted. And the
+NaN case compares the clean run against the CPU reference as well as
+against the poisoned run, because a kernel that read only a prefix of the
+list would never touch a poisoned row and would pass the clean-vs-poisoned
+comparison on its own.
+
+A third lesson is smaller: **FP16 output rounding absorbs
+reassociation-level differences.** The host mutation "always dispatch one
+chunk" produced the dense kernel's exact FP16 bytes against its four
+chunks, so an output-only bitwise test could not see it. Comparing the
+FP32 partial scratch (shared between the two dispatches, so a different
+chunk count writes a different slot set and different per-slot `m`/`d`)
+is what makes the bitwise claim mean "same chunking" as well as "same
+math".
+
+### What remains (Phase B, after the two halves meet)
+
+Everything in `families/qwen4/`: reading `self_attn.indexer.*` at open in
+place of the `index_budget` refusal, the `index_qk_proj` GEMV every token
+with the raw key copied into the indexer cache, `encode_qsa_advance_blocks`
+as blocks complete, and above budget the query norm+RoPE, the score kernel,
+a mid-layer commit for the score readback, `select_blocks`, the mask turned
+into a sorted position list, and `encode_attention_decode_indexed` in
+place of `encode_attention_decode`. Below budget the trunk's dispatch
+stream must stay byte-identical, which the frozen quality-gate digests
+(perplexity 8.7224) and `the_synthetic_flows_arithmetic_is_frozen` will
+say. The first real above-budget decode on this family is the greedy and
+sampled smoke at `--max-context 4096` with a prompt past 2,051 tokens; a
+force-dense diagnostic seam comparing logits with and without selection is
+the only quantitative instrument available above budget, since no 4-bit
+copy of this 125B checkpoint fits this machine for a cross-engine KL.

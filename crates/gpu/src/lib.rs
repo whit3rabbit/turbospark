@@ -37,6 +37,8 @@
 #[cfg(target_os = "macos")]
 mod attention_decode;
 #[cfg(target_os = "macos")]
+mod attention_indexed;
+#[cfg(target_os = "macos")]
 mod bytes;
 #[cfg(target_os = "macos")]
 mod context;
@@ -115,6 +117,8 @@ mod vision;
 pub use attention_decode::{
     attention_decode, attention_decode_buffers, encode_attention_decode, AttentionScratch,
 };
+#[cfg(target_os = "macos")]
+pub use attention_indexed::{attention_decode_indexed, encode_attention_decode_indexed};
 #[cfg(target_os = "macos")]
 pub use bytes::{read_f32_buffer, read_f32_buffer_at};
 #[cfg(target_os = "macos")]

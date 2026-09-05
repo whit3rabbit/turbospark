@@ -126,3 +126,122 @@ pub fn causal_attention_with_sinks(
     }
     out
 }
+
+/// Attention over an explicit SUBSET of key/value positions: the CPU
+/// reference for `qwen4_exp`'s QSA attention application
+/// (`docs/QWEN4_PHASE0.md` section 5, where the indexer's output "is a
+/// boolean mask ANDed onto the causal mask"). PORT-LOCAL, no Swift
+/// counterpart.
+///
+/// `positions` lists the key/value rows the query may attend to, oldest
+/// first; every entry must be `< seq_len` where `seq_len` is
+/// `k.len() / (num_kv_heads * head_dim)`. Rows NOT listed contribute
+/// nothing: not to the softmax denominator, not to the output. The
+/// reference is deliberately a GATHER followed by [`causal_attention`] over
+/// the compact sequence, so the two functions cannot disagree on the
+/// attention arithmetic itself, only on which rows enter it -- and with the
+/// identity list (`0..seq_len`) the two are the same function, which
+/// [`tests::identity_positions_reproduce_causal_attention_exactly`] pins.
+///
+/// `positions` is not required to be sorted or distinct here; the GPU
+/// kernel that matches this reference takes the sorted, distinct list the
+/// host builds from the indexer's mask.
+#[allow(clippy::too_many_arguments)]
+pub fn indexed_attention(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    positions: &[usize],
+    head_dim: usize,
+    num_q_heads: usize,
+    num_kv_heads: usize,
+    scale: Option<f32>,
+) -> Vec<f32> {
+    let row = num_kv_heads * head_dim;
+    assert!(row > 0, "num_kv_heads and head_dim must be positive");
+    assert_eq!(k.len() % row, 0, "K must be a whole number of rows");
+    assert_eq!(k.len(), v.len(), "K and V must have the same shape");
+    assert!(
+        !positions.is_empty(),
+        "at least one position must be selected"
+    );
+    let seq_len = k.len() / row;
+
+    let mut k_sel = Vec::with_capacity(positions.len() * row);
+    let mut v_sel = Vec::with_capacity(positions.len() * row);
+    for &p in positions {
+        assert!(p < seq_len, "selected position {p} is outside 0..{seq_len}");
+        k_sel.extend_from_slice(&k[p * row..(p + 1) * row]);
+        v_sel.extend_from_slice(&v[p * row..(p + 1) * row]);
+    }
+    causal_attention(
+        q,
+        &k_sel,
+        &v_sel,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        positions.len(),
+        None,
+        scale,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{causal_attention, indexed_attention};
+
+    fn fixture(seq_len: usize, num_kv_heads: usize, head_dim: usize) -> (Vec<f32>, Vec<f32>) {
+        let n = seq_len * num_kv_heads * head_dim;
+        let k: Vec<f32> = (0..n).map(|i| ((i as f32) * 0.37).sin() * 0.5).collect();
+        let v: Vec<f32> = (0..n).map(|i| ((i as f32) * 0.11).cos() * 0.5).collect();
+        (k, v)
+    }
+
+    #[test]
+    fn identity_positions_reproduce_causal_attention_exactly() {
+        let (head_dim, nq, nkv, seq_len) = (8usize, 4usize, 2usize, 11usize);
+        let q: Vec<f32> = (0..nq * head_dim)
+            .map(|i| (i as f32 - 16.0) * 0.05)
+            .collect();
+        let (k, v) = fixture(seq_len, nkv, head_dim);
+        let dense = causal_attention(&q, &k, &v, head_dim, nq, nkv, seq_len, None, None);
+        let all: Vec<usize> = (0..seq_len).collect();
+        let indexed = indexed_attention(&q, &k, &v, &all, head_dim, nq, nkv, None);
+        assert_eq!(dense, indexed, "identity list must be the same function");
+    }
+
+    #[test]
+    fn unselected_rows_do_not_enter_the_softmax_or_the_output() {
+        // Selecting rows {1, 4} of a 6-row sequence must equal dense
+        // attention over a 2-row sequence made of exactly those rows -- and
+        // must DIFFER from dense attention over all 6, or the test could
+        // pass on a reference that ignores `positions`.
+        let (head_dim, nq, nkv, seq_len) = (4usize, 2usize, 1usize, 6usize);
+        let q: Vec<f32> = vec![0.3, -0.2, 0.5, 0.1, -0.4, 0.2, 0.0, 0.6];
+        let (k, v) = fixture(seq_len, nkv, head_dim);
+        let picked = [1usize, 4usize];
+        let indexed = indexed_attention(&q, &k, &v, &picked, head_dim, nq, nkv, None);
+
+        let row = nkv * head_dim;
+        let mut k2 = Vec::new();
+        let mut v2 = Vec::new();
+        for &p in &picked {
+            k2.extend_from_slice(&k[p * row..(p + 1) * row]);
+            v2.extend_from_slice(&v[p * row..(p + 1) * row]);
+        }
+        let compact = causal_attention(&q, &k2, &v2, head_dim, nq, nkv, 2, None, None);
+        assert_eq!(indexed, compact);
+
+        let dense = causal_attention(&q, &k, &v, head_dim, nq, nkv, seq_len, None, None);
+        assert_ne!(indexed, dense, "fixture must make the subset observable");
+    }
+
+    #[test]
+    #[should_panic(expected = "outside")]
+    fn a_position_past_the_sequence_is_refused() {
+        let (k, v) = fixture(3, 1, 2);
+        let q = vec![1.0, 0.0];
+        indexed_attention(&q, &k, &v, &[3], 2, 1, 1, None);
+    }
+}

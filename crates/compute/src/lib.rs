@@ -58,7 +58,7 @@ pub mod vision;
 /// Walsh-Hadamard Transform (WHT) compute kernels.
 pub mod wht;
 
-pub use attention::{causal_attention, causal_attention_with_sinks};
+pub use attention::{causal_attention, causal_attention_with_sinks, indexed_attention};
 pub use gating::{sigmoid_gate_mul, sigmoid_scalar_mul, split_q_gate};
 pub use gdn::{gated_norm_sigmoid, sigmoid, silu, softplus, GdnDims, GdnReference, GDN_RMS_EPS};
 pub use hyper_connection::{hc_inject_add, hc_mix};

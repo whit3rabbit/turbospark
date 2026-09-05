@@ -534,6 +534,20 @@ live network).
   `prefill_scratch.rs` buffers above remain undispatched by all of this —
   the batched half added its own M-row scratch to `RealGemmaState`
   instead, sized by `MAX_PREFILL_BATCH` rather than the chunk span.
+- **`attention_indexed.metal` is BUILT and NOT DISPATCHED (2026-09-05).**
+  `attention_decode_indexed_partial` (`crates/gpu/src/attention_indexed.rs`)
+  is decode attention over an explicit position list, the attention
+  APPLICATION half of `qwen4_exp`'s QSA -- `attention_decode_partial` with
+  its position range replaced by `positions[i]` and nothing else changed,
+  reusing `attention_decode_combine` unchanged. Bit-identical to the dense
+  kernel on the identity list (FP32 partials and FP16 output), matched to
+  `turbospark_compute::indexed_attention`, mutation-checked
+  (`crates/gpu/tests/attention_indexed_parity.rs`). Nothing in
+  `families/qwen4/` calls it yet: that flow still refuses context above
+  `index_budget` and runs dense attention below it. Wiring it needs the
+  indexer's raw-key and pooled-block cache manager plus the host-side
+  block selection and a mid-layer commit for the score readback, which is
+  `docs/QWEN4_EXP.md`'s "QSA attention application" section's Phase B.
 
 ## Phase 7 (runtime, CLI)
 
