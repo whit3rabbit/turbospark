@@ -130,12 +130,44 @@ pub struct OpenOptions {
 pub struct SteeringInfo {
     /// True when a control vector is active on this session.
     pub active: bool,
+    /// **Whether this family's decode flow dispatches the edit AT ALL**, which
+    /// is a different question from `active` and the one a caller has BEFORE
+    /// it offers the control.
+    ///
+    /// `active` says a vector was loaded and is running. This says one COULD
+    /// be: `open` refuses a direction set on a family that answers `false`
+    /// (`runtime::steering::family_dispatches_steering`), so a GUI offering
+    /// the knob against such an install offers one whose only outcome is a
+    /// failed load. Reported for the same reason `vision.active` is: a control
+    /// that can only fail is worse than a disabled one that says why.
+    pub supported: bool,
+    /// Why `supported` is false, in the exact words `open` would refuse with,
+    /// or null when it is true.
+    pub reason: Option<String>,
     /// `ablate` | `add` | `clamp` | `renorm`, present only when active.
     pub mode: Option<String>,
     /// Active scale multiplier, present only when active.
     pub scale: Option<f64>,
     /// Human-readable one-line description, or null when inactive.
     pub summary: Option<String>,
+}
+
+/// What a session resolved about this checkpoint's own tool-call markup.
+///
+/// **`native: false` IS NOT "TOOLS DO NOT WORK", and a caller that reads it
+/// that way will hide the wrong control.** It says the checkpoint's own
+/// framing hands no call over, so nothing arrives as a parsed call -- which is
+/// exactly the case `docs/FORGE_GUARDRAILS.md`'s rescue exists for. Report it,
+/// do not gate on it.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallingInfo {
+    /// True when this dialect's markup carries calls this engine parses, i.e.
+    /// when `StructuredAssistantDecoder` can emit one.
+    pub native: bool,
+    /// Why `native` is false, naming the dialect and (for Muse Glimmer) the
+    /// markup that exists but has no parser. Null when `native` is true.
+    pub reason: Option<String>,
 }
 
 /// What a session resolved about speculative decoding, once, at open.
@@ -444,6 +476,7 @@ pub struct SessionInfo {
     /// and is not a label -- read `reasoning_support` and say "On".
     pub reasoning_levels: Vec<String>,
     pub steering: SteeringInfo,
+    pub tool_calling: ToolCallingInfo,
     /// What speculative decoding resolved to. **`block` being non-null is a
     /// statement about this SESSION and not about the next turn**:
     /// acceptance is exact only at temperature 0, so a sampled turn decodes
@@ -468,6 +501,21 @@ pub struct ServerOptions {
     /// server unauthenticated, appropriate for a server bound to loopback
     /// and reachable only by the process embedding it.
     pub api_key: Option<String>,
+    /// `"on"` | `"off"`, or absent for the engine default (on).
+    ///
+    /// **PROCESS-LEVEL, matching `turbospark-server --guardrails` and for the
+    /// same reason** (`crates/server/src/args.rs`): a per-request field would
+    /// let any client opt its own traffic out of the repair this deployment
+    /// chose. It is set here rather than per attached model because a host
+    /// turning guardrails off is making a deployment decision, not a
+    /// per-model one.
+    ///
+    /// This existing at all is a fix. `ts_server_start` took the
+    /// `ChatModel::guardrails()` trait default and nothing could override it,
+    /// so a host with its own guardrails setting had no way to make the
+    /// SERVED path agree with it -- the setting looked global and reached
+    /// only whatever the host itself did with a reply.
+    pub guardrails: Option<String>,
 }
 
 /// What `ts_server_info_json` returns.

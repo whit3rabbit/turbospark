@@ -223,9 +223,13 @@ info.dialect            // chat template dialect ("harmony", "qwen", ...)
 info.reasoningSupport   // .level | .toggleOnly | .none -- what KIND of control
 info.reasoningEfforts   // [.off, .low, .medium, .xhigh] -- what to put IN it
 info.steering.active    // true when a control vector is active
+info.steering.supported // whether one COULD be -- gate a control on THIS
+info.steering.reason    // why `supported` is false, in the open's own words
 info.steering.mode      // "ablate", "add", "clamp", "renorm" or nil
 info.steering.scale     // active scale multiplier or nil
 info.steering.summary   // human-readable one-line description or nil
+info.toolCalling.native // does this checkpoint's own markup frame tool calls
+info.toolCalling.reason // why not, naming the dialect
 info.speculation.block  // the RESOLVED block, or nil when off
 info.speculation.drafter// .mtp | .dflash, non-nil exactly when block is
 info.speculation.reason // why it is off, when you might expect otherwise
@@ -236,6 +240,22 @@ info.specialTokens.stopTokenIds // [151643, 151645]
 info.specialTokens.thinkStartId // e.g. 151648 or nil
 info.specialTokens.thinkEndId   // e.g. 151649 or nil
 ```
+
+
+**`steering.supported` AND `steering.active` ARE DIFFERENT QUESTIONS.**
+`active` says a vector is running; `supported` says one COULD be. An open is
+REFUSED on a family whose decode flow does not dispatch the edit, so a UI
+offering the knob there offers one whose only outcome is a failed load -- and
+an unsteered session on a family that steers answers
+`active: false, supported: true`, so gating on `active` would disable the
+control for every model that is not already steering.
+
+**`toolCalling.native == false` IS NOT "TOOLS DO NOT WORK", AND HIDING A TOOL
+CONTROL ON IT IS BACKWARDS.** It says the checkpoint's own framing hands no
+call over, which is exactly the case a guardrail rescue is for
+(`docs/FORGE_GUARDRAILS.md` section 0c). Report it; do not gate on it. Three
+of seven dialects answer `false`, and one of them (Muse Glimmer) frames calls
+in markup this engine has no parser for, so they reach a caller as reasoning.
 
 **Read these rather than what you asked for.** Under automatic sizing you
 asked for nothing, and the KV cache has already been allocated at the
@@ -555,6 +575,15 @@ keeps it off the network and reachable by every process on this machine.
 whitespace-only key means none at all -- `info().authEnabled` is what
 actually happened.
 
+**`ServerOptions.guardrails` IS A SECOND ENFORCEMENT POINT, and a host with
+its own guardrails setting has to pass it here too.** `.on` / `.off` / absent
+(the engine default, on), with the same grammar and the same process-level
+scope `turbospark-server --guardrails` has. It applies to every model attached
+to that server, including ones attached later, and cannot be changed without
+restarting it. A host that applies its own repair to a reply it read itself
+covers only that path: every HTTP client of this server bypasses it. See
+`docs/FORGE_GUARDRAILS.md` section 0b.
+
 ### Watching it
 
 ```swift
@@ -726,6 +755,7 @@ byte callback is *also* called concurrently from worker threads.
 | `ts_model_delete(alias)` | delete installed model directory and forget row |
 | `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
+| `ts_control_vector_info_json(path, out)` | a `.gguf` control vector's shape: no model, no session, no network |
 | `ts_install_bytes_json(alias, out)` | cost before committing |
 | `ts_install(alias, cb, ud, out)` | blocks for minutes; cannot resume |
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |

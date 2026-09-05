@@ -71,6 +71,10 @@ pub struct Server {
     /// string was built from (see the module doc).
     host: String,
     auth_enabled: bool,
+    /// Resolved ONCE here and handed to every model attached later, so a
+    /// server cannot end up serving two models under different rules. The
+    /// same process-level scope `turbospark-server --guardrails` has.
+    guardrails: turbospark_server::GuardrailConfig,
     started: Instant,
     /// Shared with the router on the background thread. Attaching and
     /// detaching mutate THIS, which is what lets a running server gain and
@@ -92,7 +96,11 @@ impl Server {
     /// [`Self::attach`] straight after when it was handed a session, which
     /// is what makes a null `session` mean "start empty" rather than being a
     /// second code path.
-    pub(crate) fn start(port: u16, api_key: Option<String>) -> Result<Self, String> {
+    pub(crate) fn start(
+        port: u16,
+        api_key: Option<String>,
+        guardrails: turbospark_server::GuardrailConfig,
+    ) -> Result<Self, String> {
         let auth_enabled = api_key.is_some();
         let registry = Arc::new(LiveRegistry::default());
         let events = Arc::new(EventRing::default());
@@ -185,6 +193,7 @@ impl Server {
             port: resolved.port(),
             host: resolved.ip().to_string(),
             auth_enabled,
+            guardrails,
             started: Instant::now(),
             registry,
             events,
@@ -203,8 +212,9 @@ impl Server {
         core: Arc<SessionCore>,
         model_id: String,
     ) -> Result<String, String> {
-        let model: Arc<dyn turbospark_server::ChatModel> =
-            Arc::new(crate::server_model::FfiChatModel::new(core, model_id));
+        let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(
+            crate::server_model::FfiChatModel::new(core, model_id, self.guardrails),
+        );
         let id = self.registry.attach(model)?;
         ServerObserver::record(
             &*self.events,

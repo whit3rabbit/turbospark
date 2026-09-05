@@ -648,6 +648,46 @@ fn server_info(server: *const Server) -> serde_json::Value {
     serde_json::from_str(&unsafe { take(out) }).unwrap()
 }
 
+/// **THE `guardrails` OPTION IS ACTUALLY READ, and an unrecognized spelling
+/// is refused rather than silently defaulted.**
+///
+/// This is the assertion that says the field is WIRED, not merely declared:
+/// a `ts_server_start` that ignored the key entirely would start happily on
+/// every input here, and the unit tests over `guardrails_config` would still
+/// pass because they call the parser directly. The refusal is the observable
+/// that can only happen if the option reached the validator.
+///
+/// It matters because the failure it guards against is invisible: a host that
+/// asked for guardrails off and got them on has no way to tell from the
+/// outside, which is exactly the state `swift/TurboSparkApp` was in before
+/// this option existed.
+#[test]
+fn the_server_guardrails_option_is_read_rather_than_ignored() {
+    let session = endless_session(fixture(), "h", 4);
+
+    for good in ["{}", r#"{"guardrails":"on"}"#, r#"{"guardrails":"off"}"#] {
+        let server = unsafe { start_server(&session, good) };
+        unsafe { ts_server_stop(server) };
+    }
+
+    // Case matters, and so does an empty string: `crates/server/src/args.rs`
+    // matches these two literals and nothing else, so accepting more here
+    // would make the ABI looser than the flag it mirrors.
+    for bad in [
+        r#"{"guardrails":"disabled"}"#,
+        r#"{"guardrails":"OFF"}"#,
+        r#"{"guardrails":""}"#,
+    ] {
+        let opts = c(bad);
+        let mut server: *mut Server = ptr::null_mut();
+        let code = unsafe { ts_server_start(&session, opts.as_ptr(), &mut server) };
+        assert_ne!(code, abi::TS_OK, "{bad} must be refused");
+        assert!(server.is_null(), "a refused start must write no handle");
+        let err = last_error();
+        assert!(err.contains("guardrails"), "{bad}: {err}");
+    }
+}
+
 /// A real HTTP round trip through the server this session started, proving
 /// `ts_server_start` actually serves requests rather than merely building a
 /// `Router` nothing is listening on.

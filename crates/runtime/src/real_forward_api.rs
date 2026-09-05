@@ -548,6 +548,23 @@ impl RealForwardRunner {
         self.steering.as_ref().map(|s| s.coefficients())
     }
 
+    /// Whether this session's family dispatches the steering edit at all.
+    ///
+    /// **NOT "is steering on"** -- that is `steering_line().is_some()`. This
+    /// answers the question a caller has BEFORE it offers the control:
+    /// requesting a direction set on a family that answers `false` is refused
+    /// at open (`real_forward_open`), so a GUI that offers the knob anyway is
+    /// offering one whose only outcome is a failed load.
+    pub fn steering_supported(&self) -> bool {
+        crate::steering::family_dispatches_steering(self.arch.family)
+    }
+
+    /// Why [`RealForwardRunner::steering_supported`] is false, in the exact
+    /// words the open-time refusal would use, or `None` when it is true.
+    pub fn steering_unsupported_reason(&self) -> Option<String> {
+        crate::steering::steering_unsupported_reason(self.arch.family)
+    }
+
     /// [`RealForwardRunner::open_with_options`] with an explicit SWA ring
     /// capacity override, for tests that need the ring to wrap after a
     /// handful of tokens instead of `sliding_window + 128`. Not part of

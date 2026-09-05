@@ -17,8 +17,15 @@
 //! remain are honest ones: a SCRIPTED session has no tower to run, and off
 //! macOS there is no runner at all.
 //!
-//! Guardrails default to whatever `ChatModel::guardrails()`'s trait default
-//! is (on); nothing here overrides it, matching `ScriptedChatModel`.
+//! **GUARDRAILS ARE RESOLVED AT `ts_server_start` AND CARRIED PER MODEL.**
+//! This paragraph used to say "nothing here overrides" the
+//! `ChatModel::guardrails()` trait default, which was true and was the reason
+//! a host with its own guardrails setting could not make the SERVED path
+//! agree with it: the setting looked global and reached only whatever the
+//! host did with a reply itself. `ts_server_start`'s `guardrails` option is
+//! the override, taking the same `on` | `off` grammar and the same
+//! process-level scope `turbospark-server --guardrails` has, and absent it
+//! the trait default (on) still applies.
 //!
 //! Speculation and chunked prefill ARE replicated, because both are already
 //! live on this crate's own `generate.rs` dispatch (`Engine::Real` there) and
@@ -42,11 +49,20 @@ use crate::session::{Engine, SessionCore};
 pub(crate) struct FfiChatModel {
     core: Arc<SessionCore>,
     model_id: String,
+    guardrails: turbospark_server::GuardrailConfig,
 }
 
 impl FfiChatModel {
-    pub(crate) fn new(core: Arc<SessionCore>, model_id: String) -> Self {
-        Self { core, model_id }
+    pub(crate) fn new(
+        core: Arc<SessionCore>,
+        model_id: String,
+        guardrails: turbospark_server::GuardrailConfig,
+    ) -> Self {
+        Self {
+            core,
+            model_id,
+            guardrails,
+        }
     }
 
     /// The MODEL's padded head width, never the tokenizer dialect's
@@ -187,6 +203,11 @@ impl ChatModel for FfiChatModel {
 
     fn rate_control(&self) -> runtime::RateControl {
         self.core.rate
+    }
+
+    /// What `ts_server_start` resolved, not the trait default.
+    fn guardrails(&self) -> turbospark_server::GuardrailConfig {
+        self.guardrails
     }
 
     fn with_producer(

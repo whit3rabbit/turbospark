@@ -145,6 +145,22 @@ public enum TurboSparkCatalog {
         }
     }
 
+    /// What a `.gguf` control vector declares, read from the file alone: no
+    /// model, no session, no network. A vector is around 1.3 MB, so this is
+    /// milliseconds.
+    ///
+    /// Call it BEFORE offering a vector against an install, so a UI can say
+    /// "this file is 4096 wide and your model is 5120" instead of letting
+    /// `TurboSparkSession.init` fail minutes into a load. It reads the same
+    /// parser the open reads, so the two cannot disagree about what a file
+    /// means.
+    public static func controlVectorInfo(path: String) throws -> ControlVectorInfo {
+        let json = try takeString { out in
+            path.withCString { p in ts_control_vector_info_json(p, out) }
+        }
+        return try decode(ControlVectorInfo.self, from: json)
+    }
+
     /// Deletes an installed model from `~/.turbospark` and removes its directory.
     public static func delete(_ alias: String) throws {
         try check(alias.withCString { ts_model_delete($0) })
@@ -310,4 +326,38 @@ private func withOptionalCString<R>(
 ) -> R {
     guard let value else { return body(nil) }
     return value.withCString { body($0) }
+}
+
+/// What a `.gguf` control vector declares about itself.
+///
+/// **A SHAPE MATCH IS NOT A SEMANTIC MATCH, and this reports the shape only.**
+/// The engine refuses a width or layer-count mismatch and refuses NOTHING
+/// else: a vector extracted for a different checkpoint of the same hidden size
+/// opens, steers, and changes behaviour in a direction nobody asked for,
+/// silently. A UI rendering these fields owes its user that sentence.
+public struct ControlVectorInfo: Decodable, Sendable, Equatable {
+    /// The hidden size every direction in the file declares. Must equal the
+    /// install's own `arch.hiddenSize` or the open refuses the set.
+    public let hidden: Int
+    /// How many blocks actually carry a direction.
+    public let coveredLayers: Int
+    /// Lowest block index covered.
+    ///
+    /// **NORMALLY 1, NOT 0, AND THAT IS NOT A GAP.** Block 0 is not
+    /// expressible in a file this engine writes and llama.cpp never applies a
+    /// direction there, so a "31 of 32" reading is that convention working.
+    public let minLayer: Int?
+    /// Highest block index covered.
+    public let maxLayer: Int?
+    /// The span the directions cover, which is what the install's own
+    /// `arch.numLayers` is compared against. A gapped vector covering 4 blocks
+    /// across 8 spans 8: comparing the COUNT instead would call it compatible
+    /// with a 5-layer model.
+    public let spannedLayers: Int
+    /// The mode the file itself declares, used when a caller names none.
+    public let declaredMode: String?
+    /// The architecture the file was extracted against, when it carries one.
+    /// **Advisory only** -- nothing validates against it, which is exactly why
+    /// it is worth showing.
+    public let declaredArch: String?
 }

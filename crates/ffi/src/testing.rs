@@ -86,7 +86,26 @@ pub fn session_for_testing_named(
                 .into_iter()
                 .map(|level| level.as_str().to_string())
                 .collect(),
-            steering: wire::SteeringInfo::default(),
+            // A scripted producer runs no decode flow, so there is no
+            // boundary for the edit to sit on and `supported` is honestly
+            // false rather than defaulted into. `open` refuses a vector on a
+            // scripted session for the same reason.
+            steering: wire::SteeringInfo {
+                reason: Some(
+                    "a scripted session runs no decode flow, so there is no residual stream \
+                     to steer"
+                        .to_string(),
+                ),
+                ..Default::default()
+            },
+            // ASKED rather than asserted, for the reason the reasoning field
+            // above records: the dialect is real even when the producer is
+            // not, and a fixture whose dialect DOES frame tool calls should
+            // not report otherwise.
+            tool_calling: wire::ToolCallingInfo {
+                native: tokenizer.dialect.tool_call_support() == tokenizer::ToolCallSupport::Native,
+                reason: tokenizer.dialect.tool_call_unsupported_reason(),
+            },
             speculation: wire::SpeculationInfo::default(),
             // No tower behind a scripted producer, and `default()` is the
             // absence of a capability rather than a refusal a caller could

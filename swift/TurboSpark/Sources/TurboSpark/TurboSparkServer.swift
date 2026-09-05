@@ -20,10 +20,31 @@ public struct ServerOptions: Encodable, Sendable {
     /// `turbospark-server --api-key`. `nil` (the default) leaves the server
     /// unauthenticated.
     public var apiKey: String?
+    /// Tool-call guardrails for everything this server serves, or `nil` for
+    /// the engine default (on).
+    ///
+    /// **PROCESS-LEVEL, matching `turbospark-server --guardrails`**: a
+    /// per-request field would let any client opt its own traffic out of the
+    /// repair this deployment chose. It applies to every model attached to
+    /// this server, including ones attached later.
+    ///
+    /// A host with its own guardrails setting has to pass it HERE as well.
+    /// The two enforcement points are different code: an in-process
+    /// guardrail a host applies to a reply it read itself covers only that
+    /// path, and every HTTP client of this server bypasses it.
+    public var guardrails: Guardrails?
 
-    public init(port: UInt16 = 0, apiKey: String? = nil) {
+    /// The server's own `on` | `off` spelling, matching the CLI flag. Anything
+    /// else is refused by the engine rather than silently defaulted.
+    public enum Guardrails: String, Encodable, Sendable {
+        case on
+        case off
+    }
+
+    public init(port: UInt16 = 0, apiKey: String? = nil, guardrails: Guardrails? = nil) {
         self.port = port
         self.apiKey = apiKey
+        self.guardrails = guardrails
     }
 }
 
