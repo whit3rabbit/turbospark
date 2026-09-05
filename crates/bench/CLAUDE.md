@@ -145,6 +145,20 @@ TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
 TURBOSPARK_QWEN4EXP_INSTALL_DIR=~/.turbospark/models/qwen4-reap288.gturbo \
   cargo test -p turbospark-bench --test qwen4exp_memory_oracle --release -- --ignored --nocapture
 
+# CHUNKED PREFILL, which this binary reaches ONLY through this flag and
+# which DEFAULTS OFF (Gotcha 27). Every frozen row in this crate was
+# measured on the sequential path, so an omitted flag reproduces them.
+# `auto` resolves to DEFAULT_CHUNK_SIZE and the header echoes the resolved
+# number. TURBOSPARK_ROUTED_BATCH and TURBOSPARK_BATCHED_GEMV need no flag:
+# they are read inside the runtime's chunk drivers and go live the moment
+# the driver is engaged, which is why the header echoes them on both arms.
+cargo run --release -p turbospark-bench --bin turbospark-bench -- \
+  --model ~/models/gemma4.gturbo --case short-explanation --prefill-chunk auto
+
+# The prefill A/B under the power harness. `seq` is the SAME invocation as
+# `default`, so this axis is exclusive of every other arm.
+ARMS=seq,chunked MODEL=~/models/gemma4.gturbo scripts/power.sh
+
 # Quality gate: reference-answer perplexity + frozen output digests
 # (ROADMAP Phase Q). One target per family, ~1 min each.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
@@ -802,3 +816,91 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    engage, and the arm measures the fallback (AGENTS.md Gotcha 64). The floor
    is guarding a real property; it is the VARIANCE that makes 0.50x a
    coin-flip on a busy machine.
+
+27. **`--prefill-chunk` IS THE ONLY WAY THIS BINARY REACHES THE CHUNKED
+   PREFILL DRIVER, AND IT DEFAULTS OFF.** Until 2026-09-05 `real_model.rs`
+   reached only `run_raw_completion` and `run_raw_completion_speculative`,
+   so the chunked driver was unreachable from `turbospark-bench` and from
+   `scripts/power.sh`, which drives it: a power or throughput row taken
+   through either tool measured the sequential prefill path no matter what
+   `TURBOSPARK_PREFILL_CHUNK` was set to. That is why ROADMAP's "Prefill
+   Energy Capture" row read BLOCKED.
+
+   **ONLY ONE OF THE THREE ENV VARS EVER NEEDED WIRING**, which is the part
+   worth carrying rather than re-deriving. `TURBOSPARK_PREFILL_CHUNK` is
+   read by FRONT ENDS (`crates/cli`'s `resolve_chunk_tokens`,
+   `crates/server`'s open path), so this binary genuinely could not see it.
+   `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` are read INSIDE
+   the runtime's chunk drivers, so they were never a wiring problem at all:
+   they become live the moment the chunked driver is engaged, and what they
+   needed was a header echo, not a flag.
+
+   **THE DEFAULT IS OFF AND THAT IS LOAD-BEARING.** Every frozen row in this
+   crate -- all eight memory oracles, every `docs/BENCHMARKS.md` and
+   `docs/POWER_BASELINE.md` row -- was measured on the sequential path.
+   `main.rs` therefore holds `Option<usize>` initialized `None` and
+   deliberately NOT `invocation::PrefillChunk`, whose `Default` is
+   `Fixed(DEFAULT_CHUNK_SIZE)`, i.e. ON, because the CLI carries that flag on
+   every invocation whether or not a caller typed it. Reusing that type is
+   the single most likely way to retire every frozen row in this crate by
+   accident. `run_protocol_case_with_budget`'s signature is unchanged and
+   passes a literal `None`, which is what keeps all three `oracle_common`
+   call sites untouched diff lines.
+
+   Verified by MEASUREMENT and not only by argument (Gotcha 24's discipline):
+   a release binary built from the pre-change sources and one built after it,
+   run against the real Gemma 4 install with no new flag, agree on the stop
+   reason, the prompt-token count and the new-token count (`endOfTurn`, 61,
+   505), and two runs of the pre-change binary agree with each other on those
+   same three -- which is what makes the comparison mean anything, since the
+   timing and peak columns legitimately move run to run and cannot be part of
+   the signature.
+
+   **THE ENV VAR IS REFUSED HERE, NOT INHERITED AND NOT IGNORED**, and this
+   is the one place this binary deliberately diverges from `crates/cli`
+   (where the env var correctly wins, because the CLI serves a user rather
+   than labelling a measurement). Inheriting it would hand this harness an
+   arm nobody typed, which is Gotcha 4's rule. Ignoring it is the
+   silent-ignore class that let `TURBOSPARK_ROUTED_BATCH=1` run on an unwired
+   family with no message and no batching. Only refusing fails loudly, and
+   nothing else in `tests/mference_bench.rs` can see the difference between
+   the three behaviours -- flipping that guard reddens exactly one case.
+
+   **THE HEADER ECHOES THE RESOLVED PATH ON BOTH ARMS**, and the sequential
+   arm's echo is the half that closes this gotcha's original complaint
+   rather than the chunked one:
+
+   ```
+     prefill=sequential routed_batch=unset batched_gemv=unset (both seams live only in the chunked driver; INERT here)
+     prefill=chunked chunk_tokens=128 routed_batch=1 batched_gemv=unset
+   ```
+
+   An operator who exports `TURBOSPARK_ROUTED_BATCH=1` and forgets
+   `--prefill-chunk` still gets a sequential row, exactly as before -- the
+   difference is that the artifact now says so, instead of the fact being
+   recoverable only by reading the source.
+
+   Two refusals, both placed in `main.rs` rather than in `model_mode.rs` so
+   they are reachable with no install and on any platform, which is what
+   lets black-box tests pin them: `--speculative` with `--prefill-chunk`
+   (not composable, the speculative loop owns its own prefill and has no
+   chunked variant), and the env var above. A THIRD refusal, by family name,
+   necessarily sits after the open in `model_mode.rs`, since the family is
+   only knowable from an opened runner; it refuses rather than falling back,
+   the same contract `--speculative` gives.
+
+   **THAT FAMILY REFUSAL IS UNTESTED AGAINST A REAL INSTALL ON THIS
+   MACHINE**, and the reason is worth recording rather than leaving as a
+   silent hole: `qwenGdnMoe` is the only family with no chunked driver left,
+   and no `qwenGdnMoe` install is on disk (Ornith 35B is gone -- ROADMAP's
+   artifact table). Every install here answers `supports_chunked_prefill()`
+   true, so the refusal's message text has never been read off a real run.
+
+   `scripts/power.sh` carries the matching `seq|chunked` arm pair. `seq`
+   passes NOTHING and is byte-for-byte the same invocation as `default`,
+   which is why that axis is exclusive of every other arm: pairing `seq` with
+   `default` varies nothing and puts one condition in two rows. Note the
+   guard's `SAW_SPEC` clause is load-bearing -- `chunk` sets neither
+   `SAW_OTHER` nor `SAW_FLAG`, so the pre-existing speculation guard does not
+   catch `ARMS=spec,chunked`, and without it that pair reaches the bench and
+   is refused mid-capture, after `sudo -v` and after the fans are pinned.

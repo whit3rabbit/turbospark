@@ -25,6 +25,7 @@ pub fn run_model_mode(
     speculative: Option<usize>,
     drafter: Option<bool>,
     shaping: turbospark_bench::real_model::ProtocolShaping,
+    prefill_chunk: Option<usize>,
 ) -> std::process::ExitCode {
     use turbospark_bench::memory::AppMemorySampler;
     use turbospark_bench::protocol::{swift_footer, PROTOCOL_CASES};
@@ -165,6 +166,49 @@ pub fn run_model_mode(
             if use_dflash { "dflash2" } else { "mtp" },
         ),
     }
+    // REFUSED BY FAMILY NAME rather than falling back to the sequential
+    // loop, the same contract `--speculative` gives above: a power or
+    // throughput row that quietly measured sequential prefill under a
+    // `chunked` arm label is exactly what the resolved-parameter header
+    // exists to prevent. Placed after the open (the family is only knowable
+    // from the runner) but before the header, so no partial artifact is
+    // emitted for a run that does not happen.
+    if prefill_chunk.is_some() && !runner.supports_chunked_prefill() {
+        eprintln!(
+            "--prefill-chunk was passed and this install's family ({}) has no chunked \
+             prefill driver. REFUSING rather than falling back to the sequential loop. \
+             Re-run without --prefill-chunk to measure the sequential path deliberately.",
+            params.family.as_str()
+        );
+        return std::process::ExitCode::from(2);
+    }
+    // The RESOLVED prefill path, printed on BOTH arms for the reason the
+    // power pair below is printed, plus one this line closes on its own.
+    // `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` are read
+    // INSIDE the runtime's chunk drivers, so they do nothing at all on the
+    // sequential arm -- an operator who exports one and forgets
+    // `--prefill-chunk` gets a silently sequential row today, and echoing
+    // both here as INERT is what makes that visible in the artifact rather
+    // than recoverable only by reading the source (crate Gotcha 27).
+    let seam = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "unset".to_string())
+    };
+    match prefill_chunk {
+        None => println!(
+            "  prefill=sequential routed_batch={} batched_gemv={} \
+             (both seams live only in the chunked driver; INERT here)",
+            seam("TURBOSPARK_ROUTED_BATCH"),
+            seam("TURBOSPARK_BATCHED_GEMV"),
+        ),
+        Some(chunk) => println!(
+            "  prefill=chunked chunk_tokens={chunk} routed_batch={} batched_gemv={}",
+            seam("TURBOSPARK_ROUTED_BATCH"),
+            seam("TURBOSPARK_BATCHED_GEMV"),
+        ),
+    }
     println!(
         "  power_profile={} max_tok_s={} thermal_stepping={}",
         profile.as_str(),
@@ -190,6 +234,7 @@ pub fn run_model_mode(
             params.max_new,
             shaping,
             resolved_block,
+            prefill_chunk,
         ) {
             eprintln!("{} warmup failed: {e}", case.id);
             return std::process::ExitCode::from(1);
@@ -217,6 +262,7 @@ pub fn run_model_mode(
             params.max_new,
             shaping,
             resolved_block,
+            prefill_chunk,
         );
         eprintln!(
             "[power-window case={} phase=end unix_ms={}]",
@@ -275,6 +321,7 @@ pub fn run_model_mode(
     _speculative: Option<usize>,
     _drafter: Option<bool>,
     _shaping: turbospark_bench::real_model::ProtocolShaping,
+    _prefill_chunk: Option<usize>,
 ) -> std::process::ExitCode {
     eprintln!("--model requires macOS (Metal)");
     std::process::ExitCode::from(2)

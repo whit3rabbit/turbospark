@@ -58,7 +58,7 @@ mod scripted;
 
 use std::path::PathBuf;
 
-use foundation::runtime_config::ALLOWED_CACHE_SLOTS;
+use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CHUNK_SIZE};
 use model_mode::run_model_mode;
 use runtime::{rate_control_for, PowerProfile};
 use scripted::{run_real_mode, run_scripted_mode};
@@ -74,7 +74,7 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     };
     if first == "--model" {
-        const USAGE: &str = "usage: turbospark-bench --model <install-dir> [--case <id>] [--expert-cache-slots N] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]";
+        const USAGE: &str = "usage: turbospark-bench --model <install-dir> [--case <id>] [--expert-cache-slots N] [--prefill-chunk off|auto|N] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]";
         let Some(install_dir) = args.next() else {
             eprintln!("{USAGE}");
             return std::process::ExitCode::from(2);
@@ -94,6 +94,16 @@ fn main() -> std::process::ExitCode {
         let mut drafter: Option<bool> = None;
         // A SEPARATE axis from speculation, so a spec A/B holds it fixed.
         let mut shaping = turbospark_bench::real_model::ProtocolShaping::Sampled;
+        // DEFAULTS OFF, EXPLICITLY, and deliberately NOT
+        // `invocation::PrefillChunk::default()` -- that type defaults to
+        // `Fixed(DEFAULT_CHUNK_SIZE)`, i.e. ON, because the CLI carries the
+        // flag on every invocation whether or not the caller typed it.
+        // EVERY frozen row in this crate (all eight memory oracles, every
+        // `docs/BENCHMARKS.md` and `docs/POWER_BASELINE.md` row) was
+        // measured on the sequential prefill path, so reusing that type
+        // here would silently retire all of them. `None` is off; `Some(n)`
+        // is a resolved chunk size.
+        let mut prefill_chunk: Option<usize> = None;
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--case" => match args.next() {
@@ -140,6 +150,27 @@ fn main() -> std::process::ExitCode {
                         return std::process::ExitCode::from(2);
                     }
                 },
+                "--prefill-chunk" => match args.next().as_deref() {
+                    Some("off") => prefill_chunk = None,
+                    Some("auto") => prefill_chunk = Some(DEFAULT_CHUNK_SIZE as usize),
+                    Some(v) => match v.parse::<u32>() {
+                        Ok(n) if ALLOWED_CHUNK_SIZES.contains(&n) => {
+                            prefill_chunk = Some(n as usize)
+                        }
+                        _ => {
+                            eprintln!(
+                                "--prefill-chunk needs off, auto or one of {ALLOWED_CHUNK_SIZES:?}"
+                            );
+                            return std::process::ExitCode::from(2);
+                        }
+                    },
+                    None => {
+                        eprintln!(
+                            "--prefill-chunk needs off, auto or one of {ALLOWED_CHUNK_SIZES:?}"
+                        );
+                        return std::process::ExitCode::from(2);
+                    }
+                },
                 "--shaping" => match args.next().as_deref() {
                     Some("protocol") => {
                         shaping = turbospark_bench::real_model::ProtocolShaping::Sampled
@@ -174,6 +205,35 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
+        // NOT COMPOSABLE. Refused HERE rather than inside `real_model.rs`
+        // so the guard is reachable with no install and on any platform,
+        // which is what lets a black-box test pin it. The speculative loop
+        // owns its own prefill and has no chunked variant.
+        if speculative.is_some() && prefill_chunk.is_some() {
+            eprintln!(
+                "--speculative and --prefill-chunk are not composable: the speculative \
+                 loop has its own prefill and no chunked variant, so a run with both \
+                 would measure one of them under the other's arm name"
+            );
+            return std::process::ExitCode::from(2);
+        }
+        // REFUSED, neither inherited nor ignored, and this is the one place
+        // this binary deliberately diverges from `crates/cli` (where the env
+        // var correctly wins, because the CLI serves a user rather than
+        // labelling a measurement). Inheriting it would hand this harness an
+        // arm nobody typed, which is AGENTS.md Gotcha 35's rule. Ignoring it
+        // is the silent-ignore class that let `TURBOSPARK_ROUTED_BATCH=1`
+        // run on an unwired family with no message and no batching. Refusing
+        // is the only option that fails loudly.
+        if std::env::var_os("TURBOSPARK_PREFILL_CHUNK").is_some() {
+            eprintln!(
+                "TURBOSPARK_PREFILL_CHUNK is set, and --model mode does not read it. A \
+                 measurement tool must not inherit an arm nobody typed, and silently \
+                 ignoring a seam an operator deliberately set is the other half of the \
+                 same failure. Pass --prefill-chunk off|auto|N instead."
+            );
+            return std::process::ExitCode::from(2);
+        }
         let rate = rate_control_for(power_profile, max_tokens_per_sec);
         return run_model_mode(
             &install_dir,
@@ -184,6 +244,7 @@ fn main() -> std::process::ExitCode {
             speculative,
             drafter,
             shaping,
+            prefill_chunk,
         );
     }
     let tokenizer_dir = first;

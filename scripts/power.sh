@@ -118,6 +118,7 @@ arm_kind() {
     utility)                             echo qos ;;
     performance | balanced | efficiency) echo profile ;;
     nospec | spec)                       echo spec ;;
+    seq | chunked)                       echo chunk ;;
     *)
       # A bare number is a --max-tokens-per-sec cap. `=~` rather than a
       # `*[!0-9.]*` glob, which would accept "1.2.3"; bash 3.2 has `=~`
@@ -155,6 +156,7 @@ IFS=',' read -ra ARM_LIST <<< "$ARMS"
 SAW_QOS=""
 SAW_FLAG=""
 SAW_SPEC=""
+SAW_CHUNK=""
 SAW_OTHER=""
 for arm in "${ARM_LIST[@]}"; do
   case "$(arm_kind "$arm")" in
@@ -162,10 +164,11 @@ for arm in "${ARM_LIST[@]}"; do
     qos) SAW_QOS=1; SAW_OTHER=1 ;;
     profile | cap) SAW_FLAG=1; SAW_OTHER=1 ;;
     spec) SAW_SPEC=1 ;;
+    chunk) SAW_CHUNK=1 ;;
     *)
       echo "unknown arm '$arm' in ARMS=$ARMS" >&2
       echo "want default|utility|performance|balanced|efficiency|nospec|spec," >&2
-      echo "or a positive number" >&2
+      echo "seq|chunked, or a positive number" >&2
       exit 2
       ;;
   esac
@@ -186,6 +189,26 @@ if [ -n "$SAW_SPEC" ] && [ -n "$SAW_OTHER" ]; then
   echo "ARMS=$ARMS mixes the speculation axis (nospec|spec) with another arm" >&2
   echo "the spec arms run --shaping greedy and the others do not, so pairing" >&2
   echo "them varies two things; use ARMS=nospec,spec on its own" >&2
+  exit 2
+fi
+# THE PREFILL AXIS IS EXCLUSIVE TOO, and its reason is NOT the speculation
+# axis's. `nospec` differs from `default` by `--shaping greedy`, so pairing
+# them varies two things. `seq` is byte-for-byte the SAME invocation as
+# `default`, so pairing THEM varies nothing at all and just puts one
+# condition in two rows, which reads as a comparison. Different mechanism,
+# same verdict.
+#
+# The `SAW_SPEC` clause is load-bearing and easy to drop: `chunk` sets
+# neither SAW_OTHER nor SAW_FLAG, so the speculation guard above does NOT
+# catch `ARMS=spec,chunked`. Without this clause that pair reaches the bench,
+# which refuses `--speculative` alongside `--prefill-chunk` -- mid-capture,
+# after `sudo -v` and after the fans are pinned, which is precisely what
+# validating ARMS up here exists to prevent.
+if [ -n "$SAW_CHUNK" ] && { [ -n "$SAW_OTHER" ] || [ -n "$SAW_SPEC" ]; }; then
+  echo "ARMS=$ARMS mixes the prefill axis (seq|chunked) with another arm" >&2
+  echo "seq is the SAME invocation as default, so naming both puts one" >&2
+  echo "condition in two rows; and --prefill-chunk is refused alongside" >&2
+  echo "--speculative. Use ARMS=seq,chunked on its own" >&2
   exit 2
 fi
 
@@ -351,6 +374,22 @@ run_arm() {
         arm_args=(--shaping greedy --speculative auto)
       else
         arm_args=(--shaping greedy)
+      fi
+      ;;
+    # `seq` passes NOTHING and is deliberately the identical invocation to
+    # `default`: the arm column is the only thing telling the two rows
+    # apart, and that identity is what makes this a one-variable
+    # comparison. `auto` resolves to DEFAULT_CHUNK_SIZE inside the bench,
+    # which echoes the resolved number in its header.
+    #
+    # TURBOSPARK_ROUTED_BATCH and TURBOSPARK_BATCHED_GEMV are NOT set here.
+    # They are read inside the runtime's chunk drivers, so they ride
+    # whatever the caller exported and the bench header reports them on
+    # both arms. Setting one here would fold a second variable into this
+    # axis.
+    chunk)
+      if [ "$ARM" = "chunked" ]; then
+        arm_args=(--prefill-chunk auto)
       fi
       ;;
     *)

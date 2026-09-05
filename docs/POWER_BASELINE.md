@@ -35,6 +35,30 @@ bench (ROADMAP Phase P2). The two kinds cannot be mixed in one run: the
 arm name is a single column of `rows.tsv` and a single grouping key in the
 summary, so mixing them would compare two different seams under one label.
 
+## EVERY ROW BELOW IS A SEQUENTIAL-PREFILL ROW
+
+Stated up front because until 2026-09-05 it could not have been otherwise
+and nothing said so. `scripts/power.sh` drives `turbospark-bench`, and that
+binary's `--model` mode reached only `run_raw_completion` -- never
+`run_raw_completion_chunked` -- so every capture on this page measured the
+sequential prefill path no matter what `TURBOSPARK_PREFILL_CHUNK`,
+`TURBOSPARK_ROUTED_BATCH` or `TURBOSPARK_BATCHED_GEMV` were set to, with
+nothing in `rows.tsv` or the summary recording which path ran.
+
+`turbospark-bench --prefill-chunk` and `scripts/power.sh`'s `seq|chunked`
+arm pair close that. The flag DEFAULTS OFF, so every row here still
+describes the invocation it was taken with, and the bench header now prints
+`prefill=sequential` or `prefill=chunked` so a future row cannot silently be
+the other one.
+
+**A chunked row is a NEW row, not a re-freeze of an old one.** This is the
+same rule the mapped-residency seam already carries in
+`crates/bench/CLAUDE.md` Gotcha 1: an arm that changes which code path runs
+produces a row that belongs beside its predecessor rather than replacing
+it. Chunked prefill is the DEFAULT for the CLI and the server, so a chunked
+row is arguably the more representative one for a user, and that is an
+argument for measuring it, never for overwriting a sequential row with it.
+
 ## Run provenance
 
 | | |

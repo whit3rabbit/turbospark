@@ -674,11 +674,35 @@ So this is one phase followed by an optional one, rather than a fork:
      sibling the byte-identity cases build. Both the refusal and the
      agreement are pinned.
 
-   **NO THROUGHPUT NUMBER IS RECORDED HERE YET**, deliberately: it landed
-   on a machine running another build, and Gotcha 43 says a prefill A/B
-   taken then is contamination rather than a measurement. The seam ships
-   OFF and the interleaved pairs are owed on a quiet machine, alongside the
-   prefill energy capture.
+   **A FIRST ATTEMPT 2026-09-05 CONFIRMS THE DIRECTION AND NOT THE
+   MAGNITUDE, AND IS ITS OWN INSTANCE OF GOTCHA 43.** Real Gemma 4 install,
+   frozen `long-synthesis` prompt (3,015 tokens), `--max-new 8`,
+   `--expert-cache-slots 24` (`TURBOSPARK_ROUTED_BATCH=1` refuses anything
+   at or above 32, which `auto` now resolves to on this machine since
+   `ALLOWED_CACHE_SLOTS` widened past the 8/16/24/32 set this measurement
+   predates), one discarded warmup, three interleaved pairs of
+   `TURBOSPARK_ROUTED_BATCH=1` alone against the same plus
+   `TURBOSPARK_BATCHED_GEMV=1`:
+
+   | pair | no `BATCHED_GEMV` | with `BATCHED_GEMV` | ratio |
+   | ---: | ---: | ---: | ---: |
+   | 1 | 42.44 s | 36.05 s | 1.18x |
+   | 2 | 45.19 s | 44.19 s | 1.02x |
+   | 3 | 54.90 s | 39.78 s | 1.38x |
+   | mean | 47.51 s | 40.01 s | **1.19x** |
+
+   The direction is unambiguous (the batched arm was never slower across
+   three pairs) but the SPREAD -- 1.02x to 1.38x on supposedly identical
+   work -- is the exact tell Gotcha 43 names: `ps -A -o %cpu,comm` taken
+   right after the run showed a background MCP process at 150% CPU plus a
+   browser and two IDE helpers, none of it quiesced first. That is
+   contamination, not noise to average away, so **1.19x is a directional
+   number and not a citable one**. The interleaved pairs are still owed on
+   a machine confirmed idle before the run starts (check `ps -A -o
+   %cpu,comm | sort -rn | head` reads near-zero, not just `pmset -g therm`),
+   alongside the prefill energy capture -- which is separately blocked
+   until `crates/bench`'s model mode calls the chunked path at all
+   (`ROADMAP.md`'s Active Tasks table).
 
    **A SECOND FAMILY WIRED TO THIS SEAM 2026-08-29, THE DENSE HALF OF THE
    QWEN LINEAR-ATTENTION FLOW, AND IT COST NO DISPATCH CODE AT ALL** --
@@ -1498,3 +1522,79 @@ threadgroup, `simdgroup_barrier` twice per 64-element K block, and eight
 `simdgroup_float8x8` accumulators owned by 32 lanes. A re-tile has to change
 THAT, and anyone starting one now knows which three things not to spend a
 day on.
+
+---
+
+## The seventh flow, `qwen4_exp`, and a host-write hazard the pattern had not seen (2026-09-05)
+
+`families/qwen4/prefill.rs` is step 1 again and needs no new kernel: a
+per-layer `cb1` covering all M tokens' PLE / attn_hc / GDN-or-QSA /
+hc_inject / mlp_hc / router, then a per-token routed loop pipelined through
+the same `RoutedSlot` / `routed_pipeline_banks` / `pending_routed` module
+every other MoE driver uses.
+
+**Two predicted blockers turned out not to exist, and both predictions were
+recorded in ROADMAP before anyone tried.** The claim was that the QSA
+indexer's per-token key write and its block pooling would have to be
+re-expressed per micro-batch, and that QSA would need a position list per
+layer rather than the single shared buffer decode relies on. Neither was
+true. `encode_full_attention_block` already takes `pass: &mut PassEncoder`
+and already owns its above-budget mid-layer commit, so calling it once per
+token in increasing order reproduces the sequential path exactly; and the
+shared `qsa_positions` buffer stays safe for the same reason the routed
+half's pipelining does not disturb it, namely that a layer's whole
+attention-and-router half commits and waits before that layer's routed loop
+starts, so no two QSA layers' writes are ever in flight at once. GDN needed
+nothing either, matching dense qwen's precedent.
+
+**PLE is where the real bug was, and it generalizes.** Four buffers needed
+the familiar M-row widening for the familiar reasons. A fifth, PLE's
+`ngram_emb`, needed it for a reason the standing rule does not cover. The
+rule this document and `crates/runtime/CLAUDE.md` both state is *what decides
+which buffers need a per-token row is who WRITES them, not who reads them*,
+and it is about GPU dispatches: command buffers on one queue execute in
+commit order, so a GPU-only intermediate is safe to reuse across a chunk's
+tokens. `ngram_emb` is uploaded with `gpu::write_buffer_bytes`, a HOST write
+that executes the instant the encoding function runs rather than a dispatch
+queued for later. It does not respect commit order at all. A single-row
+buffer therefore held only the LAST token's embedding for the entire pass's
+execution, and every earlier token in the micro-batch computed PLE from the
+wrong n-gram embedding, silently, with no error and plausible output.
+
+Caught by `the_chunk_boundary_does_not_move_the_logits` at chunk span 2, the
+first multi-token micro-batch it tried. **Any future family whose flow does
+its own host-side dequant-then-upload step owes this same check before
+assuming commit order protects it.**
+
+Both batching seams are refused by name here (`TURBOSPARK_ROUTED_BATCH` and
+`TURBOSPARK_BATCHED_GEMV`), the pair every other chunked driver carries. The
+routed seam is MEANINGFUL on this family rather than vacuous, since it has a
+routed half, which is why it is owed at all.
+
+## Measuring chunked prefill: the instrument, and what it could not see before
+
+Until 2026-09-05 `crates/bench/src/real_model.rs` reached only
+`run_raw_completion` and `run_raw_completion_speculative`, so the chunked
+driver was unreachable from `turbospark-bench` and therefore from
+`scripts/power.sh`, which drives it. A power or throughput row taken through
+either tool measured the SEQUENTIAL path regardless of what
+`TURBOSPARK_PREFILL_CHUNK` was set to, with nothing in the artifact saying
+so. That is why this document's own energy row stayed open.
+
+`--prefill-chunk off|auto|N` is the instrument, and it **defaults off**
+because every frozen row in `crates/bench` was measured sequentially.
+
+**Only one of the three seams ever needed wiring**, which is worth not
+re-deriving: `TURBOSPARK_PREFILL_CHUNK` is read by front ends, so the bench
+genuinely could not see it, while `TURBOSPARK_ROUTED_BATCH` and
+`TURBOSPARK_BATCHED_GEMV` are read INSIDE the runtime's chunk drivers and go
+live the moment the driver is engaged. Those two needed a header echo, not a
+flag. The header prints the resolved path on both arms and marks the two
+seams INERT on the sequential one, so an operator who exports
+`TURBOSPARK_ROUTED_BATCH=1` and forgets `--prefill-chunk` can see from the
+artifact that they measured sequential prefill.
+
+`scripts/power.sh` carries the matching `seq|chunked` arm pair. `seq` passes
+nothing and is byte-for-byte the same invocation as `default`, which is why
+that axis is exclusive of every other arm: pairing them varies nothing and
+puts one condition in two rows.

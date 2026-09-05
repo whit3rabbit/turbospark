@@ -8,8 +8,8 @@
 //! every 8th decoded token, and once after the run.
 
 use runtime::{
-    run_raw_completion, run_raw_completion_speculative, GenerationConfig, RateControl,
-    RawDecodeProgress, RealForwardRunner, StopReason,
+    run_raw_completion, run_raw_completion_chunked, run_raw_completion_speculative,
+    GenerationConfig, RateControl, RawDecodeProgress, RealForwardRunner, StopReason,
 };
 use selection::ShapingConfig;
 use tokenizer::{Message, MfTokenizer, Role};
@@ -25,6 +25,16 @@ pub struct CaseResult {
     pub case_id: &'static str,
     pub prompt_tokens: usize,
     pub prefill_seconds: f64,
+    /// The chunk size this run's prefill ACTUALLY used, `None` for the
+    /// sequential loop.
+    ///
+    /// REPORTED rather than inferred, and that is the point: byte-identity
+    /// against the sequential path is the chunked driver's OWN contract, so
+    /// a silent fallback to `run_raw_completion` passes an identity check
+    /// trivially. Without this field the only thing distinguishing an
+    /// engaged chunked arm from a silently sequential one is the seconds
+    /// column, which is exactly the number under measurement.
+    pub prefill_chunk_tokens: Option<usize>,
     pub new_tokens: usize,
     pub decode_seconds: f64,
     pub peak_footprint_bytes: Option<u64>,
@@ -124,6 +134,11 @@ pub fn run_protocol_case_with_budget(
         max_new,
         ProtocolShaping::Sampled,
         None,
+        // The sequential prefill loop, explicitly. This wrapper's signature
+        // does not change, which is what keeps every `oracle_common` call
+        // site an untouched diff line and every frozen memory-oracle row
+        // measured on the path it was frozen on.
+        None,
     )
 }
 
@@ -168,7 +183,23 @@ pub fn run_protocol_case_speculating(
     max_new: u32,
     shaping_mode: ProtocolShaping,
     speculative_block: Option<usize>,
+    prefill_chunk: Option<usize>,
 ) -> Result<CaseResult, String> {
+    // NOT COMPOSABLE, and refused rather than silently ordered. The
+    // speculative loop owns its own prefill and has no chunked variant, so
+    // honouring one flag and dropping the other would report one workload
+    // under the other's arm name -- the same failure the speculation
+    // refusal below exists to prevent. `crates/cli` lets speculation win
+    // here instead, correctly: it serves a user, this labels an artifact.
+    if speculative_block.is_some() && prefill_chunk.is_some() {
+        return Err(
+            "speculative decoding and chunked prefill are not composable here: \
+                    the speculative loop has its own prefill and no chunked variant, \
+                    so a run with both would measure one of them under the other's \
+                    label"
+                .to_string(),
+        );
+    }
     if speculative_block.is_some() && shaping_mode != ProtocolShaping::Greedy {
         return Err(
             "speculative decoding needs greedy shaping (acceptance is exact only at \
@@ -218,8 +249,12 @@ pub fn run_protocol_case_speculating(
             }
         }
     };
-    let result = match speculative_block {
-        None => run_raw_completion(
+    let result = match (speculative_block, prefill_chunk) {
+        // UNCHANGED, deliberately byte for byte: this is the arm every
+        // frozen row in this crate was measured on, and the guarantee that
+        // the new flag moves none of them is that `None` still reaches this
+        // exact call with these exact arguments.
+        (None, None) => run_raw_completion(
             runner,
             tokenizer,
             &prompt_ids,
@@ -228,13 +263,27 @@ pub fn run_protocol_case_speculating(
             vocab_size,
             progress,
         ),
+        // The chunked prefill driver, which is what makes
+        // `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` reachable
+        // from this harness at all: both are read INSIDE the runtime's chunk
+        // drivers, so neither needs wiring here, only engaging.
+        (None, Some(chunk)) => run_raw_completion_chunked(
+            runner,
+            tokenizer,
+            &prompt_ids,
+            &config,
+            max_context,
+            vocab_size,
+            chunk,
+            progress,
+        ),
         // REFUSES rather than falling back when the install cannot serve a
         // drafter, which is the same contract `--speculative` gives on the
         // CLI: a power capture that quietly measured the non-speculative
         // engine and reported it under a `spec` arm label is the exact
         // failure `scripts/power.sh`'s resolved-parameter header exists to
         // prevent.
-        Some(block) => run_raw_completion_speculative(
+        (Some(block), _) => run_raw_completion_speculative(
             runner,
             tokenizer,
             &prompt_ids,
@@ -252,6 +301,7 @@ pub fn run_protocol_case_speculating(
         case_id: case.id,
         prompt_tokens: result.prompt_tokens,
         prefill_seconds: result.prefill_seconds,
+        prefill_chunk_tokens: prefill_chunk,
         new_tokens: result.new_tokens,
         decode_seconds: result.decode_seconds,
         peak_footprint_bytes: sampler.peak_bytes(),
