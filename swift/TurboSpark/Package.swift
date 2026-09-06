@@ -25,11 +25,6 @@ let package = Package(
             name: "TurboSpark",
             dependencies: ["CTurboSpark"],
             linkerSettings: [
-                // `unsafeFlags` blocks this package from being consumed as a
-                // versioned dependency by another package. Accepted: it is
-                // the only way to point at a staticlib whose path is a build
-                // artifact, and the consumer here is an app in this repo.
-                .unsafeFlags(["-LSources/CTurboSpark"]),
                 .linkedLibrary("turbospark_ffi"),
                 // A Rust `staticlib` does NOT record the frameworks its
                 // dependencies asked for, so the final link has to supply
@@ -45,6 +40,15 @@ let package = Package(
         // Links the staticlib and calls into it. This is what proves the
         // HAND-WRITTEN header matches the Rust side -- a mismatch is a link
         // error or a wrong answer here, and nowhere else.
-        .testTarget(name: "TurboSparkTests", dependencies: ["TurboSpark"]),
+        .testTarget(
+            name: "TurboSparkTests",
+            dependencies: ["TurboSpark"],
+            linkerSettings: [
+                // `unsafeFlags` resolves relative to the package being built.
+                // Placed on the test target so it does not leak as an invalid
+                // relative search path to downstream consumers like TurboSparkApp.
+                .unsafeFlags(["-LSources/CTurboSpark"])
+            ]
+        ),
     ]
 )

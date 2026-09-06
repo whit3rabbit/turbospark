@@ -31,8 +31,12 @@ public struct ModelRecommendation: Decodable, Sendable, Identifiable, Equatable 
     public let verdictSummary: String
     /// Whether the model can run on this hardware configuration.
     public let runs: Bool
-    /// Estimated memory bytes allocated when loaded.
+    /// Estimated memory bytes allocated when loaded: expert slot cache plus
+    /// KV. **Guard it on `countedSource`** -- a row nothing has read reports
+    /// 0 here, and 0 bytes reads as "fits easily".
     public let countedBytes: UInt64
+    /// Whether `countedBytes` was measured, computed, or never established.
+    public let countedSource: CountedSource
     /// Total on-disk footprint in bytes.
     public let installBytes: UInt64
     /// Recommended slot cache slot count for MoE models.
@@ -41,10 +45,15 @@ public struct ModelRecommendation: Decodable, Sendable, Identifiable, Equatable 
     public let largestContext: UInt32
     /// Informational notes regarding performance or memory constraints.
     public let notes: [String]
-    /// Minimum expected decode rate in tokens per second.
+    /// Minimum expected decode rate in tokens per second, from a row taken
+    /// on THIS chip. `nil` on any other silicon; see `throughput`.
     public let toksPerSecondMin: Double?
-    /// Maximum expected decode rate in tokens per second.
+    /// Maximum expected decode rate in tokens per second, this chip only.
     public let toksPerSecondMax: Double?
+    /// A decode band to report, which may have been measured on a DIFFERENT
+    /// chip. Carries the chip so a host can label it rather than pass it off
+    /// as this machine's answer. Deliberately not part of the ranking.
+    public let throughput: ThroughputBand?
 }
 
 /// System hardware and power telemetry readings.

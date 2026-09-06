@@ -454,6 +454,20 @@ private let streamCallback: TsEventCallback = {
         let bytes = UnsafeRawBufferPointer(start: text, count: len)
         guard let s = String(bytes: bytes, encoding: .utf8) else { return }
         box.continuation.yield(kind == TS_EVENT_CONTENT ? .content(s) : .reasoning(s))
+    case TS_EVENT_TOOL:
+        guard let text, len > 0 else { return }
+        let bytes = UnsafeRawBufferPointer(start: text, count: len)
+        guard let s = String(bytes: bytes, encoding: .utf8) else { return }
+        if let call = GenerationToolCall(parsingJSON: s) {
+            box.continuation.yield(.toolCall(call))
+        }
+    case TS_EVENT_FINISH:
+        // The terminal stream event; `.finished` still follows with the
+        // full result once ts_generate returns.
+        guard let text, len > 0 else { return }
+        let bytes = UnsafeRawBufferPointer(start: text, count: len)
+        guard let s = String(bytes: bytes, encoding: .utf8) else { return }
+        box.continuation.yield(.stopped(stopReason: s, newTokens: Int(a), promptTokens: Int(b)))
     default:
         // An unknown kind is a newer library than this wrapper. Dropping it
         // is right: the alternative is crashing on a field nobody asked for.

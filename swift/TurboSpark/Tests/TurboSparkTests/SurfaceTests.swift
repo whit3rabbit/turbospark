@@ -192,6 +192,179 @@ final class SurfaceTests: XCTestCase {
         XCTAssertFalse(first.verdictSummary.isEmpty)
     }
 
+    /// A recommendation says WHERE its footprint came from, and a row nothing
+    /// has read says `unknown` rather than reporting a zero as a figure.
+    ///
+    /// This is the field that stops a detail pane advertising "Zero KB" and
+    /// "16 slots" for a checkpoint whose header nobody opened -- the 16 being
+    /// the slot floor resolved by ignorance, which is indistinguishable from
+    /// a measured 16 without this.
+    func testRecommendationsCarryTheSourceOfTheirFootprint() throws {
+        let recs = try TurboSparkCatalog.recommend(context: 4096)
+        XCTAssertFalse(recs.isEmpty)
+        for row in recs where row.countedSource == .unknown {
+            XCTAssertEqual(
+                row.verdict, .unknown,
+                "\(row.alias): an unsourced footprint cannot produce a fit verdict")
+        }
+        XCTAssertTrue(
+            recs.contains { $0.countedSource == .measured },
+            "the curated table carries frozen rows for this chip")
+    }
+
+    /// The slot count reaches the ranking, and an illegal one is refused
+    /// rather than panicking the host.
+    ///
+    /// The engine is linked INTO this process, so an out-of-set count aborts
+    /// the whole app rather than raising something a UI can show. Both arms
+    /// matter: a validator that rejected everything would satisfy the refusal
+    /// alone.
+    func testRecommendTakesASlotCountAndRefusesAnIllegalOne() throws {
+        let auto = try TurboSparkCatalog.recommend(context: 4096, expertCacheSlots: .auto)
+        let fixed = try TurboSparkCatalog.recommend(context: 4096, expertCacheSlots: .fixed(32))
+        XCTAssertFalse(auto.isEmpty)
+        XCTAssertEqual(auto.count, fixed.count)
+
+        XCTAssertThrowsError(
+            try TurboSparkCatalog.recommend(context: 4096, expertCacheSlots: .fixed(12))
+        ) { error in
+            let e = error as? TurboSparkError
+            XCTAssertEqual(e?.code, .invalidArgument)
+            XCTAssertTrue(
+                e?.message.contains("expertCacheSlots") == true,
+                "the message should name the knob, got \(e?.message ?? "")")
+        }
+    }
+
+    /// The probe report decodes from the bytes the engine actually emits.
+    ///
+    /// Written as a literal rather than driven through a network probe so it
+    /// pins the WIRE SPELLING on both sides: this binding sets no
+    /// `keyDecodingStrategy`, which is what makes a drift on either side a
+    /// test failure instead of a silent nil.
+    func testProbeReportDecodesTheEmittedShape() throws {
+        let json = """
+            {"repo":"owner/name","revision":"main","file":"m-Q4_K_M.gguf",
+             "downloadBytes":17179869184,"architecture":"qwen3moe","family":"qwen3moe",
+             "runnable":true,"refusedBecause":null,
+             "types":[{"name":"Q4_K","tensors":338,"bytes":16000000000,"executable":true},
+                      {"name":"IQ2_XS","tensors":2,"bytes":null,"executable":false}],
+             "affine":null,"expertStride":2920000,"trainedContext":40960,
+             "slotCacheBytes":[{"slots":8,"bytes":1120000000},{"slots":16,"bytes":2240000000}],
+             "sidecarsPresent":["tokenizer.json"],"sidecarsMissing":["merges.txt"],
+             "chatTemplate":"tokenizer_config.json:chat_template","warnings":[],
+             "fit":{"verdict":"streams","verdictSummary":"fits, streams experts from disk",
+                    "runs":true,"countedBytes":2880000000,"countedSource":"estimated",
+                    "mappedBytes":17179869184,"mappedSource":"download","slotCacheSlots":16,
+                    "slotCacheBytes":2240000000,"kvBytes":640000000,
+                    "residentBytes":960000000,"largestContext":40960,"context":4096,
+                    "trainedContext":40960,
+                    "contextLadder":[
+                      {"context":4096,"kvBytes":640000000,"counted":2880000000,
+                       "verdict":"streams","runs":true,"pastTrained":false,
+                       "isTrainedMax":false,"isLargestFitting":false},
+                      {"context":40960,"kvBytes":6400000000,"counted":8640000000,
+                       "verdict":"tight","runs":true,"pastTrained":false,
+                       "isTrainedMax":true,"isLargestFitting":true},
+                      {"context":131072,"kvBytes":20480000000,"counted":22720000000,
+                       "verdict":"refused","runs":false,"pastTrained":true,
+                       "isTrainedMax":false,"isLargestFitting":false}]}}
+            """
+        let report = try JSONDecoder().decode(ProbeReport.self, from: Data(json.utf8))
+        XCTAssertTrue(report.runnable)
+        XCTAssertNil(report.refusedBecause)
+        XCTAssertEqual(report.expertStride, 2_920_000)
+        XCTAssertEqual(report.slotCacheBytes.count, 2)
+
+        // An unsized type is nil, NOT 0. A zero sorts to the bottom of a
+        // share column, which is the inverse of its real rank.
+        let unsized = try XCTUnwrap(report.types.first { !$0.executable })
+        XCTAssertNil(unsized.bytes)
+
+        let fit = try XCTUnwrap(report.fit)
+        XCTAssertEqual(fit.verdict, .streams)
+        XCTAssertEqual(fit.countedSource, .estimated)
+        // The mapped figure is the published checkpoint, and says so.
+        XCTAssertEqual(fit.mappedSource, "download")
+        XCTAssertEqual(fit.context, 4096)
+
+        // The ladder is what answers "can I use the full window", and its
+        // rungs must NOT be reconstructable by multiplication: the whole
+        // reason it is computed in the engine is that a sliding-window layer
+        // stops growing while a full one does not.
+        XCTAssertEqual(fit.contextLadder.count, 3)
+        XCTAssertEqual(report.trainedContext, 40960)
+        let trained = try XCTUnwrap(fit.contextLadder.first { $0.isTrainedMax })
+        XCTAssertEqual(trained.context, 40960)
+        XCTAssertFalse(trained.pastTrained)
+        // Past the trained window is REPORTED, never dropped: RoPE
+        // extrapolates rather than failing.
+        let beyond = try XCTUnwrap(fit.contextLadder.first { $0.pastTrained })
+        XCTAssertEqual(beyond.verdict, .refused)
+        XCTAssertFalse(beyond.runs)
+    }
+
+    /// A band measured on other silicon decodes and says so. Showing nothing
+    /// leaves a user on an M1 with no throughput signal at all; showing it
+    /// unlabelled would present another machine's number as theirs.
+    func testThroughputBandCarriesTheChipItWasMeasuredOn() throws {
+        let json = """
+            {"minTokensPerSecond":33.039,"maxTokensPerSecond":45.648,
+             "chip":"Apple M4 Max","measuredOnThisChip":false}
+            """
+        let band = try JSONDecoder().decode(ThroughputBand.self, from: Data(json.utf8))
+        XCTAssertEqual(band.chip, "Apple M4 Max")
+        XCTAssertFalse(band.measuredOnThisChip)
+    }
+
+    /// An install whose shape could not be read has an EMPTY ladder, which is
+    /// a question nothing answered rather than a model with no memory cost.
+    func testAnUnreadableInstallHasAnEmptyLadderRatherThanZeroRungs() throws {
+        let json = """
+            {"path":"/tmp/nope","trainedContext":null,"rungs":[]}
+            """
+        let ladder = try JSONDecoder().decode(ContextLadder.self, from: Data(json.utf8))
+        XCTAssertTrue(ladder.rungs.isEmpty)
+        XCTAssertNil(ladder.trainedContext)
+    }
+
+    /// A refused probe carries the reason, and `fit` is absent rather than
+    /// zeroed when the header yielded no shape.
+    func testProbeReportDecodesARefusalWithNoFit() throws {
+        let json = """
+            {"repo":"owner/name","revision":"main","file":null,"downloadBytes":null,
+             "architecture":"phi3","family":null,"runnable":false,
+             "refusedBecause":"GGUF architecture \\"phi3\\" is recognized but has no decode flow here",
+             "types":[],"affine":null,"expertStride":null,"slotCacheBytes":[],
+             "sidecarsPresent":[],"sidecarsMissing":["tokenizer.json"],
+             "chatTemplate":null,"warnings":["no base model named"],"trainedContext":null,
+             "fit":null}
+            """
+        let report = try JSONDecoder().decode(ProbeReport.self, from: Data(json.utf8))
+        XCTAssertFalse(report.runnable)
+        XCTAssertTrue(try XCTUnwrap(report.refusedBecause).contains("no decode flow"))
+        XCTAssertNil(report.fit, "an absent shape is nil, never a zeroed fit")
+    }
+
+    /// The variant listing decodes, keeps unrunnable rows, and reports the
+    /// shard count that explains a short picker.
+    func testRepoVariantsDecodeAndKeepUnrunnableRows() throws {
+        let json = """
+            {"repo":"owner/name","revision":"main","shardedSkipped":5,
+             "variants":[{"file":"m-Q8_0.gguf","bytes":32000000000,"quantLabel":"Q8_0",
+                          "ladderRank":0,"executable":true},
+                         {"file":"m-Q2_K.gguf","bytes":null,"quantLabel":null,
+                          "ladderRank":null,"executable":false}]}
+            """
+        let listed = try JSONDecoder().decode(RepoVariants.self, from: Data(json.utf8))
+        XCTAssertEqual(listed.shardedSkipped, 5)
+        XCTAssertEqual(listed.variants.count, 2)
+        // A type with no kernels is LISTED, not hidden: a picker showing
+        // three of eight files reads as the repository having three.
+        XCTAssertFalse(listed.variants[1].executable)
+        XCTAssertNil(listed.variants[1].bytes, "an unknown length is nil, not 0")
+    }
+
     /// Tests that system hardware and power telemetry is readable.
     func testSystemTelemetryIsReadable() throws {
         let telemetry = try XCTUnwrap(TurboSparkSession.systemTelemetry)
@@ -788,6 +961,50 @@ final class SurfaceTests: XCTestCase {
         }
         """
         return try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
+    }
+
+    // MARK: - TS_EVENT_TOOL
+
+    /// **THE OTHER HALF OF A CONTRACT NEITHER SIDE'S SUITE COULD SEE.** No
+    /// `GenerateOptions` field offers tools, so no real turn can carry a
+    /// `TS_EVENT_TOOL` payload and no end-to-end case can reach this parser
+    /// at all. The Rust side pins what `tool_call_json` EMITS
+    /// (`a_tool_call_row_carries_id_name_and_an_object_of_arguments`); this
+    /// pins what Swift ACCEPTS, against the same three spellings. Written
+    /// from the emitted shape by hand rather than shared, because a fixture
+    /// generated by the producer would agree with the producer whatever it
+    /// spelled.
+    func testAToolCallPayloadParsesIntoItsThreeFields() throws {
+        let payload = #"{"id":"toolu_0","name":"get_weather","arguments":{"city":"Oslo","days":3}}"#
+        let call = try XCTUnwrap(GenerationToolCall(parsingJSON: payload))
+        XCTAssertEqual(call.id, "toolu_0")
+        XCTAssertEqual(call.name, "get_weather")
+        // `argumentsJSON` is re-serialized rather than sliced out of the
+        // payload, so assert the VALUE it decodes to and never its bytes:
+        // JSONSerialization does not promise key order.
+        let decoded = try JSONSerialization.jsonObject(
+            with: Data(call.argumentsJSON.utf8)) as? [String: Any]
+        XCTAssertEqual(decoded?["city"] as? String, "Oslo")
+        XCTAssertEqual(decoded?["days"] as? Int, 3)
+    }
+
+    /// A payload this parser cannot make sense of yields nil, which
+    /// `streamCallback` drops. **That is the right failure for a STREAM
+    /// event**: the alternative is throwing out of a C callback, and the
+    /// turn's own `toolCalls` result field carries the same rows anyway, so
+    /// a dropped event costs the live update and not the data.
+    ///
+    /// `name` is the required field because it is the only one a host can
+    /// act on: an id it did not generate and arguments it cannot attribute
+    /// are not a call.
+    func testAToolCallPayloadWithoutANameIsRejectedRatherThanHalfBuilt() {
+        XCTAssertNil(GenerationToolCall(parsingJSON: #"{"id":"toolu_0"}"#))
+        XCTAssertNil(GenerationToolCall(parsingJSON: "not json at all"))
+        // An id is NOT required: it is generated engine-side and a row
+        // missing one is still an actionable call.
+        let call = GenerationToolCall(parsingJSON: #"{"name":"ping","arguments":{}}"#)
+        XCTAssertEqual(call?.name, "ping")
+        XCTAssertEqual(call?.id, "")
     }
 
 }

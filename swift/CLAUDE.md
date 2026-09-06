@@ -67,6 +67,7 @@ swift/
     |   |                            # McpServerEditorSheet (+ McpTransportFieldsView),
     |   |                            # McpImportSheet (+ McpCatalogSourceFormView),
     |   |                            # PermissionsSettingsPaneView,
+    |   |                            # PluginSettingsPaneView (+ PluginMarketplaceSheet),
     |   |                            # ToastOverlayView, ErrorBanner
     |   +-- Theme/                   # AppearanceSettings, AppearanceTypes, AppDockIconRenderer,
     |   |                            # TurboSparkTheme, AppChromePresentation,
@@ -83,7 +84,11 @@ swift/
     |   |   +-- Guardrails/          # ForgeGuardrailsEngine (tool-call rescue)
     |   |   +-- Custom/              # user JSON tools: definition, parser, executor
     |   |   +-- MCP/                 # McpClientEngine, McpServerSpec, ProjectMcpDetector
-    |   |   +-- File/ Terminal/ Web/ # per-domain schemas and executors
+    |   |   +-- File/ Web/           # per-domain schemas and executors
+    |   |   +-- Terminal/            # TerminalTools (schemas only), plus
+    |   |   |                        # ShellCommandRunner, BackgroundShellManager,
+    |   |   |                        # ShellCwdTracker, ShellOutputFormatting
+    |   |   |                        # -- execution left the registry, Gotcha 50
     |   |   \-- Tasks/ Planning/ Projects/ Automation/
     |   \-- Resources/               # app-prompts.json, Logos/ (Bundle.module)
     \-- Tests/TurboSparkAppTests/    # Unit tests covering appearance settings,
@@ -128,6 +133,21 @@ and duplicating them would have duplicated three defects with it: no timeout
 and no output cap, only the clone's exit status checked, and a cache directory
 hardcoded outside `AppStorageRoot`. `MarketplaceGit` routes through
 `ProcessExecutor`, checks every step, and takes its directory as a parameter.
+
+**THE PLUGIN SYSTEM IS A PORT OF CLAUDE CODE'S, AND ITS TWO DEVIATIONS ARE
+DECISIONS, NOT GAPS.** `docs/SWIFT_PLUGINS.md` is the map: manifest at
+`.claude-plugin/plugin.json`, contributions named `plugin:`-namespaced
+skills/commands/agents and `plugin:<plugin>:<server>` MCP servers, an
+enable cascade of project over user over Claude Code's own setting, and a
+marketplace that reads `.claude-plugin/marketplace.json`. The deviations:
+plugin hooks stay behind the SHA-256 trust gate (Claude Code runs them on
+install), and a malformed `userConfig` entry is dropped with a diagnostic
+rather than failing the plugin. When adding a contribution surface, wire it
+through `PluginManager+Contributions` and give it the namespaced name --
+a bare name would collide with user content, and `executeMcpCall`'s
+precedence rule assumes namespacing is what prevents collisions there.
+Everything is testable because every manager takes injectable roots; do
+not introduce a `~`-hardcoded plugin path.
 
 **AND THE ANSWER TO "CAN THIS COMMAND BE LAUNCHED" HAS ONE SPELLING.**
 `McpClientEngine.resolveExecutablePath` is static and is called both by the
@@ -215,13 +235,18 @@ so going through `make` recompiles the whole app every single time. Use
    own tests link and wrong for anyone depending on it; `TurboSparkApp`
    carries `-L../TurboSpark/Sources/CTurboSpark`, the same directory seen
    from its own root. A third consumer needs its own spelling of that path.
-   The observable is a `ld: warning: search path 'Sources/CTurboSpark' not
-   found` on every app build, which is the library's own flag being resolved
-   against the app's root and finding nothing; the link then succeeds on the
-   app's own copy of it. Expected, not a regression. The `unsafeFlags` also
-   block `TurboSpark` from being consumed as a versioned dependency by an
-   out-of-repo package, which is accepted: the library it points at is a
-   build artifact, not a checked-in file.
+   **SINCE 2026-09-05 THE LIBRARY TARGET DECLARES NO `-L` AT ALL** -- the
+   flag moved to `TurboSparkTests`, the only target in that package that
+   links. The observable it used to produce, `ld: warning: search path
+   'Sources/CTurboSpark' not found` on every app build, is gone with it;
+   that was the library's own flag resolved against the app's root and
+   finding nothing, and the link succeeded on the app's own copy anyway. A
+   build still warning that way is linking a stale package manifest rather
+   than reproducing a documented quirk. The `unsafeFlags` still block
+   `TurboSpark`'s TEST target from being consumed as a versioned dependency
+   by an out-of-repo package, which is accepted and now costs less: the
+   library face carries only `.linkedLibrary("turbospark_ffi")`, and the
+   archive it names is a build artifact rather than a checked-in file.
 
 3. **SwiftPM DOES NOT TREAT THE STATICLIB AS A BUILD INPUT, so a rebuilt
    `.a` under unchanged Swift sources triggers NO relink.** The archive
@@ -1326,6 +1351,71 @@ so going through `make` recompiles the whole app every single time. Use
     `.select` resolves to ON for a server, and that is forced rather than
     chosen: it means "decide per project or per chat" and a server request has
     neither.
+
+50. **SHELL EXECUTION MOVED OUT OF THE TOOL REGISTRY, AND `Tools/Terminal/`
+    IS FOUR FILES DOING FOUR DIFFERENT JOBS.** Until 2026-09-05
+    `AppToolRegistry+Handlers.swift` owned a `runCommand` and
+    `TerminalTools.swift` owned the Codable payloads. Both are gone;
+    `TerminalTools.swift` is schema-only now, and execution lives in:
+
+    - `ShellCommandRunner.swift`: the foreground entry point, plus
+      `backgroundOutput` / `killBackground`.
+    - `BackgroundShellManager.swift`: the process-lifetime registry behind
+      `run_in_background: true`. Ids are `bg_N` and **scoped to the launching
+      chat** -- a subagent or another chat cannot read or kill them -- with a
+      ceiling of 20 concurrently running shells and 50 finished records kept
+      per chat. Nothing survives an app restart, by design.
+    - `ShellCwdTracker.swift`: a `pwd -P` capture appended to every
+      FOREGROUND command, so a `cd` persists across calls within a project.
+      Background commands deliberately run the raw command so they cannot
+      move the anchor. Leaving the project root resets it with a note, and
+      both sides are symlink-resolved before comparison.
+    - `ShellOutputFormatting.swift`: ANSI/CSI/OSC stripping, head+tail
+      compaction, the hang-prevention environment (`GIT_EDITOR=true`,
+      `PAGER=cat`, `TERM=dumb`, `NO_COLOR=1`) and the BENIGN-EXIT mapping --
+      `grep`, `rg`, `diff` and `test` exiting 1 return as ANSWERS rather than
+      errors, because "no match" is a result and reporting it as a failure
+      makes a model retry a command that worked.
+
+    One known break, documented rather than fixed: a command ending in a
+    line continuation splices the cwd-capture suffix into its own arguments.
+
+51. **`continue: false` IS NOT A BLOCK, AND CONFLATING THEM COSTS A STOP
+    RE-ENTRY.** The Claude Code hook contract distinguishes them and this app
+    now follows it at all five sites (Stop, UserPromptSubmit, PreToolUse,
+    PermissionRequest, PostToolUse). `continue: false` ENDS THE TURN and
+    shows its `stopReason` to the USER; a block feeds its reason to the MODEL
+    and, on Stop, re-enters the loop. Prevent-continuation must therefore
+    never consume one of the 8 Stop re-entries.
+
+    Three neighbouring rules landed with it. The legacy `decision` field maps
+    onto the permission ladder on permission events (`approve` to allow,
+    `block` to deny) and still blocks the turn elsewhere. `PermissionDenied`,
+    `SubagentStart` and `SubagentStop` exist, the first firing both from the
+    engine's deny and from the user's refusal at the approval card. And
+    **`prompt` and `agent` hooks FAIL LOUDLY rather than falling through**:
+    `agent` maps to the unevaluated `.prompt` type, because falling through
+    to `.command` would run prompt text as a shell command. Discovery emits a
+    diagnostic and the hooks pane badges the row "not evaluated".
+
+    Three things are parsed and deliberately not acted on, which is worth
+    knowing before reading their absence as a bug: `suppressOutput` has
+    nothing to suppress here, `hookSpecificOutput.retry` on `PermissionDenied`
+    is inert, and prompt/agent hooks never run. `docs/SWIFT_TOOLS.md` is the
+    home for all five divergences.
+
+52. **TWO SETTINGS SURFACES MOVED OFF THEIR OLD STORES, AND ONE OF THEM HAS
+    NO TEST COVERAGE ON PURPOSE.** The server API key now lives in the login
+    Keychain (`ServerKeychain.swift`, service `TurboSpark.server`,
+    `kSecAttrAccessibleAfterFirstUnlock`) rather than in `settings.json`; an
+    empty string deletes the item and any Keychain error degrades to "no key
+    restored" rather than failing the load. **`ServerKeychain` itself is
+    untested**, because a round-trip test would write into the host user's
+    real keychain -- stated here so its absence reads as a decision rather
+    than an oversight. `AppearanceManager` moved from `UserDefaults` (11 keys
+    and 2 JSON blobs) to `appearance.json`, with a one-way migration that
+    reads the legacy keys only when the file is absent and removes them only
+    after the first successful save.
 
 ## The `state#N` ledger
 

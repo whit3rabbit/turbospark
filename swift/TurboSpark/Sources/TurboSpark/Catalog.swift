@@ -125,24 +125,80 @@ public enum TurboSparkCatalog {
     }
 
     /// Probes a Hugging Face repository by header alone: kilobytes and
-    /// seconds, no download. Returns the raw JSON, since a probe report is
-    /// for display and its shape follows what the engine learns to read.
+    /// seconds, no download.
     ///
     /// `repo` is `owner/name` or `owner/name@revision`.
+    ///
+    /// **`context`, `expertCacheSlots` and `loadGuard` MUST be what your
+    /// sessions will OPEN with**, for `recommend`'s reason: `report.fit` is
+    /// an answer at one configuration, and probing under one while opening
+    /// under another promises a fit the loader then refuses.
     public static func probe(
         repo: String,
         file: String? = nil,
-        sidecarRepo: String? = nil
-    ) throws -> String {
-        try takeString { out in
+        sidecarRepo: String? = nil,
+        context: UInt32 = 4096,
+        expertCacheSlots: OpenOptions.Sizing? = nil,
+        loadGuard: OpenOptions.LoadGuard? = nil
+    ) throws -> ProbeReport {
+        let options = ProbeOptions(
+            contextWindow: context == 0 ? nil : context,
+            loadGuard: loadGuard,
+            expertCacheSlots: expertCacheSlots)
+        let json = try encodeOptions(options)
+        let raw = try takeString { out in
             repo.withCString { r in
                 withOptionalCString(file) { f in
                     withOptionalCString(sidecarRepo) { s in
-                        ts_probe_json(r, f, s, out)
+                        withOptionalCString(json) { o in
+                            ts_probe_json(r, f, s, o, out)
+                        }
                     }
                 }
             }
         }
+        return try decode(ProbeReport.self, from: raw)
+    }
+
+    /// What a longer context window would cost an INSTALLED model.
+    ///
+    /// A different question from `recommend`'s and not derivable from it: KV
+    /// is not linear in the window, so multiplying one figure is 3.5x high on
+    /// a sliding-window family. `rungs` is EMPTY when the install's shape
+    /// could not be read, which is a question nothing answered rather than a
+    /// model with no memory cost.
+    public static func contextLadder(
+        modelPath: String,
+        expertCacheSlots: OpenOptions.Sizing? = nil,
+        loadGuard: OpenOptions.LoadGuard? = nil
+    ) throws -> ContextLadder {
+        let json = try encodeOptions(
+            ProbeOptions(
+                contextWindow: nil, loadGuard: loadGuard,
+                expertCacheSlots: expertCacheSlots))
+        return try decode(
+            ContextLadder.self,
+            from: try takeString { out in
+                modelPath.withCString { p in
+                    withOptionalCString(json) { o in
+                        ts_context_ladder_json(p, o, out)
+                    }
+                }
+            })
+    }
+
+    /// Every `.gguf` a repository publishes, best quality first. One API
+    /// call, no header reads, no download.
+    ///
+    /// **It carries no fit**, deliberately: a fit needs the checkpoint's
+    /// shape, which needs a header read PER FILE. Use this to fill a
+    /// quantization picker and `probe(repo:file:)` on the one the user picks.
+    public static func variants(repo: String) throws -> RepoVariants {
+        try decode(
+            RepoVariants.self,
+            from: try takeString { out in
+                repo.withCString { ts_repo_variants_json($0, out) }
+            })
     }
 
     /// What a `.gguf` control vector declares, read from the file alone: no
@@ -174,25 +230,33 @@ public enum TurboSparkCatalog {
     /// ranking under `.relaxed` while opening under `.strict` promises a fit
     /// the loader then refuses, in the one place a user cannot see the two
     /// disagree. `nil` means `.relaxed`, the default on both sides.
+    /// **`expertCacheSlots` must match too**, for the same reason one term
+    /// over: a footprint is `slots x layers x expert stride`, so a ranking at
+    /// one slot count and an open at another are two configurations rather
+    /// than one approximation.
     public static func recommend(
         context: UInt32 = 4096,
+        expertCacheSlots: OpenOptions.Sizing? = nil,
         loadGuard: OpenOptions.LoadGuard? = nil
     ) throws -> [ModelRecommendation] {
-        let json: String?
-        if let loadGuard {
-            let data = try JSONEncoder().encode(RecommendOptions(loadGuard: loadGuard))
-            json = String(decoding: data, as: UTF8.self)
-        } else {
-            json = nil
-        }
+        let json = try encodeOptions(
+            RecommendOptions(loadGuard: loadGuard, expertCacheSlots: expertCacheSlots))
         return try decode(
             [ModelRecommendation].self,
             from: try takeString { out in
-                if let json {
-                    return json.withCString { ts_recommend_json(context, $0, out) }
-                }
-                return ts_recommend_json(context, nil, out)
+                withOptionalCString(json) { ts_recommend_json(context, $0, out) }
             })
+    }
+
+    /// Encodes an options bag, or `nil` when every field is absent.
+    ///
+    /// NULL and `{}` mean the same thing to the ABI, so sending nothing when
+    /// there is nothing to send keeps the no-options call byte-identical to
+    /// what it was before these knobs existed.
+    private static func encodeOptions<T: Encodable>(_ options: T) throws -> String? {
+        let data = try JSONEncoder().encode(options)
+        let text = String(decoding: data, as: UTF8.self)
+        return text == "{}" ? nil : text
     }
 
     /// The one-key options bag `ts_recommend_json` takes. Private because the
@@ -200,7 +264,17 @@ public enum TurboSparkCatalog {
     /// argument for the reason every other options bag in this ABI is one --
     /// a knob added later is a field rather than a break.
     private struct RecommendOptions: Encodable {
-        let loadGuard: OpenOptions.LoadGuard
+        let loadGuard: OpenOptions.LoadGuard?
+        let expertCacheSlots: OpenOptions.Sizing?
+    }
+
+    /// The options bag `ts_probe_json` takes: `RecommendOptions` plus the
+    /// window, because a probe reports a FIT and a fit is only meaningful at
+    /// a stated context and slot count.
+    private struct ProbeOptions: Encodable {
+        let contextWindow: UInt32?
+        let loadGuard: OpenOptions.LoadGuard?
+        let expertCacheSlots: OpenOptions.Sizing?
     }
 
     /// Installs a catalog row, streaming progress.
