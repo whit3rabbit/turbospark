@@ -769,19 +769,35 @@ bytes those two gates already certified; a session that wants the sidecar
 arm measured through those specific instruments should budget it as its
 own pass rather than a follow-on to this one.
 
-### What Part B started and did not finish
+### Part B, and C, landed
 
-`VisionScratch`'s per-page buffers are the OTHER memory cost this feature
-did not close. B1 (`VISION_MLP_TILE_ROWS`, described in "Memory" above)
-row-tiles the MLP so `h1` never holds more than one tile's rows -- the -555
-MB term at the 64,516-patch extreme this page already named as the lever.
-Unbuilt: B2 (aliasing the five buffers that are never live at once under
-the serial encoder's commit order, `normed`/`attn`, `q`/`proj`, `k`/`m1`),
-B3 (deriving `max_pixels` from the memory guard's own budget rather than
-only from the checkpoint's declared ceiling), Part C (an explicit
-`release_vision_tower` so an idle session can drop the two pinned slots and
-the mapped-residency mapping), and Part D (a Qwen3-VL Phase 0 scoping
-document -- no code).
+`VisionScratch`'s per-page buffers were the other memory cost this feature
+had not closed, and all three of B's sub-parts are now built. B1
+(`VISION_MLP_TILE_ROWS`, described in "Memory" above) row-tiles the MLP so
+`h1` never holds more than one tile's rows -- the -555 MB term at the
+64,516-patch extreme this page already named as the lever. B2 aliases the
+five buffers that are never live at once under the serial encoder's
+commit-order guarantee (`normed`/`attn`, `q`/`proj`, `k`/`m1`, the last pair
+equal in byte count by algebraic identity rather than by luck), dropping
+`VisionScratch` from seven physical `seq * hidden` allocations to five. B3
+(`crates/runtime/src/vision/budget.rs`) derives `max_pixels` from the
+memory guard's own budget -- a binary search against `VisionShape::
+scratch_bytes` between the checkpoint's `min_pixels` and its declared
+ceiling -- rather than only from the checkpoint's declared ceiling, so a
+`--load-guard strict` session on a small machine gets a smaller image
+than the checkpoint would otherwise hand it, with the whole subtraction
+shown (`VisionBudgetTooSmall`) when even the floor does not fit.
+
+Part C (`release_vision_tower`, exposed through `ts_session_release_vision`)
+gives an idle session back the two pinned streamer slots (or the
+mapped-residency mapping), the position table, and a sidecar's own
+resident weights and mmap, without forgetting an attached sidecar
+directory or un-declaring the install's vision capability -- the next
+image reopens the tower from wherever it would have opened from before.
+
+Part D (a Qwen3-VL Phase 0 scoping document, `docs/QWEN3VL_PHASE0.md`) is
+the one sub-part that is deliberately documentation only, with no code:
+fact-finding for a future bring-up, not a bring-up.
 
 ## What is not built
 
