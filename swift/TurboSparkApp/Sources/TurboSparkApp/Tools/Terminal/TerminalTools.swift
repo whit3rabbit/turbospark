@@ -1,87 +1,5 @@
 import Foundation
 
-// MARK: - Bash / Terminal Command Tool
-
-/// Input parameters for executing a command in the local shell.
-public struct BashInput: Codable, Sendable, Equatable {
-    /// Shell command string to execute.
-    public var command: String
-    /// Optional execution timeout in milliseconds.
-    public var timeout: Int?
-    /// Concise explanation of why the command is being run.
-    public var description: String?
-    /// Whether the process should be launched asynchronously as a background task.
-    public var runInBackground: Bool?
-    /// Whether sandboxing restrictions should be bypassed.
-    public var dangerouslyDisableSandbox: Bool?
-
-    enum CodingKeys: String, CodingKey {
-        case command
-        case timeout
-        case description
-        case runInBackground = "run_in_background"
-        case dangerouslyDisableSandbox
-    }
-
-    public init(
-        command: String,
-        timeout: Int? = nil,
-        description: String? = nil,
-        runInBackground: Bool? = nil,
-        dangerouslyDisableSandbox: Bool? = nil
-    ) {
-        self.command = command
-        self.timeout = timeout
-        self.description = description
-        self.runInBackground = runInBackground
-        self.dangerouslyDisableSandbox = dangerouslyDisableSandbox
-    }
-}
-
-/// Output returned upon completion or interruption of a shell command.
-public struct BashOutput: Codable, Sendable, Equatable {
-    /// Standard output text.
-    public var stdout: String
-    /// Standard error text.
-    public var stderr: String
-    /// File path where full raw output was persisted if large.
-    public var rawOutputPath: String?
-    /// Whether the command execution was cancelled or interrupted.
-    public var interrupted: Bool
-    /// Whether stdout contains binary image data.
-    public var isImage: Bool?
-    /// Task identifier if dispatched as a background task.
-    public var backgroundTaskId: String?
-    /// Timeout duration reached if timed out.
-    public var timedOutAfterMs: Int?
-    /// Human-readable explanation of non-zero exit code if applicable.
-    public var returnCodeInterpretation: String?
-    /// Process numeric exit status code.
-    public var exitCode: Int?
-
-    public init(
-        stdout: String,
-        stderr: String = "",
-        rawOutputPath: String? = nil,
-        interrupted: Bool = false,
-        isImage: Bool? = nil,
-        backgroundTaskId: String? = nil,
-        timedOutAfterMs: Int? = nil,
-        returnCodeInterpretation: String? = nil,
-        exitCode: Int? = nil
-    ) {
-        self.stdout = stdout
-        self.stderr = stderr
-        self.rawOutputPath = rawOutputPath
-        self.interrupted = interrupted
-        self.isImage = isImage
-        self.backgroundTaskId = backgroundTaskId
-        self.timedOutAfterMs = timedOutAfterMs
-        self.returnCodeInterpretation = returnCodeInterpretation
-        self.exitCode = exitCode
-    }
-}
-
 // MARK: - REPL Tool
 
 /// Input parameters for evaluating code in a persistent interactive REPL session.
@@ -134,19 +52,63 @@ public struct REPLOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for Terminal Operations
 
-/// OpenAI tool definition schemas for Bash and REPL execution.
+/// OpenAI tool definition schemas for terminal operations.
 public enum TerminalToolDefinitions {
     public static let bash = OpenAITool.function(
         name: "Bash",
-        description: "Execute a shell command inside the project environment or workspace terminal.",
+        description: """
+            Execute a shell command in the project workspace.
+
+            Runs under zsh with the project root as the working directory. The working \
+            directory persists between calls within the project, so "cd build && ninja" \
+            is still in effect on the next call; a command that moves the shell outside \
+            the project directory resets it back to the root with a note.
+
+            Output combines stdout and stderr in the order they were written, with ANSI \
+            escape sequences removed, and is truncated to 30,000 characters (head and \
+            tail kept) before being returned.
+
+            The timeout parameter is in milliseconds: default 120000, maximum 600000. A \
+            command that exceeds it is terminated and reported as an error with whatever \
+            output it produced.
+
+            For long-running commands (dev servers, large builds, watchers) set \
+            run_in_background to true: the call returns immediately with a shell ID, \
+            the command keeps running with no timeout, and you retrieve its output with \
+            the BashOutput tool and stop it with the KillShell tool. Shell IDs are valid \
+            only in the conversation that started them.
+            """,
         parameters: .object(
             properties: [
                 "command": .string(description: "The shell command to execute."),
-                "timeout": .integer(description: "Optional execution timeout in milliseconds."),
+                "timeout": .integer(description: "Optional execution timeout in milliseconds. Default 120000, maximum 600000."),
                 "description": .string(description: "Concise active-voice explanation of what the command does."),
-                "run_in_background": .boolean(description: "Set to true to run the command asynchronously in the background.")
+                "run_in_background": .boolean(description: "Set to true to run the command asynchronously in the background. Returns a shell ID immediately; retrieve output later with BashOutput.")
             ],
             required: ["command"]
+        )
+    )
+
+    public static let bashOutput = OpenAITool.function(
+        name: "BashOutput",
+        description: "Retrieve the output of a background shell started with Bash and run_in_background: true.",
+        parameters: .object(
+            properties: [
+                "task_id": .string(description: "The background shell ID returned by the Bash tool."),
+                "wait_seconds": .integer(description: "Optional. Seconds to wait for completion before returning the current output. Default 30, maximum 120. Use 0 to poll without waiting.")
+            ],
+            required: ["task_id"]
+        )
+    )
+
+    public static let killShell = OpenAITool.function(
+        name: "KillShell",
+        description: "Stop a background shell started with Bash and run_in_background: true.",
+        parameters: .object(
+            properties: [
+                "task_id": .string(description: "The background shell ID returned by the Bash tool.")
+            ],
+            required: ["task_id"]
         )
     )
 
@@ -164,6 +126,6 @@ public enum TerminalToolDefinitions {
     )
 
     public static let all: [OpenAITool] = [
-        bash, repl
+        bash, bashOutput, killShell, repl
     ]
 }
