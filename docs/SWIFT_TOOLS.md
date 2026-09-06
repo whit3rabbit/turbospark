@@ -384,7 +384,15 @@ touches a chat rather than the filesystem.
 - `standardTools` is dead and `systemPromptAddendum(for:tools:)` ignores
   its `tools` parameter.
 - `McpClientEngine`'s SSE transport throws by design until it is
-  implemented (Gotcha 32).
+  implemented (Gotcha 32). Remote servers therefore have no OAuth, no
+  reconnect, and no streamable HTTP.
+- MCP `prompts/list` (prompts as slash commands), real
+  `resources/list` / `resources/read` (the two resource tools answer from
+  stubs), and server `instructions` injection are not implemented.
+- Detection of project MCP config files scans the project ROOT only. The
+  reference implementation also walks parent directories; importing
+  servers declared OUTSIDE the workspace the user pointed at is the
+  riskier behavior, so this port does not.
 - `Projects`, `Artifact`, `REPL`, and `Workflow` are schema definitions
   without local engines and are filtered out by `isImplemented` rather
   than stubbed (T5).
@@ -466,3 +474,98 @@ every other store here, and the clone cache is a constructor parameter so
 tests get a temp directory. That is the deliberate departure from
 `SkillMarketplaceManager`, which hardcodes `~/.turbospark` and so is neither
 quarantine-protected nor test-redirected (Gotcha 43).
+
+## 11. How MCP tools reach the model: advertisement, approval, rules
+
+Three layers sit between a discovered MCP tool and a model's use of it.
+Each exists because the turn path has NO `tools` array: the model reads its
+vocabulary from the system prompt and emits `<tool_call>` blocks, so
+whatever the prompt does not name, the model cannot call reliably.
+
+### Advertisement (`AppToolCatalogMcp`)
+
+`AppToolCatalogMcp.toolDefinitions` turns the cache into one advertised
+entry per discovered tool, named `mcp__<server>__<tool>` -- the exact
+spelling `AppToolRegistry.execute` and `AppToolPermissionEngine` resolve.
+`AppToolCatalog.systemPromptAddendum(for:mcpServers:project:)` appends the
+lines, and `SubagentRunner.buildSystemPrompt` appends the same section so a
+subagent sees what the parent sees. The `.coder` and `.general` agent types
+now include the static MCP tool group.
+
+- Tools come from `McpToolCatalogCache`, never inline: discovery spawns the
+  server and pays a full JSON-RPC handshake (seconds), and a turn must not
+  wait on that. Refreshes are event-driven (project selection, server
+  CRUD, Test Connection, the project approval flow), never on a timer. A
+  stale entry is safe: a tool advertised but since removed fails the call
+  with the server's own "unknown tool" error.
+- The description line carries the argument names and types, summarized
+  from the tool's input schema (`path: string, force: boolean, optional`),
+  because the description is the only channel that survives the prompt.
+  The server's description text is capped at 160 characters; the argument
+  summary is appended after the cap, since it is the part the model cannot
+  guess.
+- DENY rules strip tools here, before the model sees them, at server or
+  tool level. Disabled servers are refused in `toolDefinitions` too, not
+  only in `visibleServers`, so a caller that forgets the filter still
+  cannot advertise a server the user switched off.
+
+### Project approval lifecycle (`AppModel+Mcp`)
+
+A repo-declared server (`mcp.json`, `opencode.json`, `.cursor/mcp.json`,
+and the other formats `ProjectMcpDetector` reads) is never dialed or
+advertised until the user has answered for it once. On project selection
+`detectProjectMcpServers` scans the root and sorts every declared name into
+one of four buckets: already imported, in `approvedMcpJsonServers`, in
+`rejectedMcpJsonServers`, or PENDING. Pending names raise
+`ProjectMcpApprovalSheet` over the root view, one server at a time, with
+the reference implementation's three answers: Approve (import enabled,
+never auto-approved), Approve All Future (sets
+`approveAllProjectMcpServers`, which also imports the config's other
+undeclared names), Reject (records the name; it never prompts again). The
+registries live on `AppProject` and survive relaunch. Dismissing the sheet
+DEFERS rather than rejects: an undecided name re-prompts on the next
+selection, and a config that GAINS a name prompts only for the new one.
+
+Imported servers are gated again at the permission layer: a server whose
+`sourcePath` is set (repo provenance) ASKS on every call in `auto` mode
+unless the user explicitly opted that server into `autoApprove` in-app.
+Without that arm, the auto mode's trailing default let a cloned config's
+servers run non-high-risk calls silently the moment they were imported.
+Permissive keeps its documented contract (explicitly chosen, still gated
+by deny rules and high risk).
+
+### Permission rules (`McpPermissionRules.swift`)
+
+`AppProjectPermissions.mcpAllowRules` / `mcpDenyRules` hold rules in the
+reference syntax: `mcp__server` covers every tool on a server,
+`mcp__server__tool` is exact, and `mcp__server__*` is accepted as a
+wildcard spelling. Tool names may themselves contain `__`, so everything
+after the second separator is the tool name -- the same parse
+`McpPermissionRule.targetOfCall` applies to a call, the approval card uses
+when writing a rule, and the engine uses when matching one, so a rule is
+always matched with the parse that wrote it.
+
+Evaluation order in `AppToolPermissionEngine.evaluate`, relative to the
+existing spine: a deny rule sits immediately after the category deny (an
+explicitly denied tool cannot be resurrected by a session approval, an
+allow rule, or `autoApprove`); an allow rule sits AFTER the high-risk gate
+and BEFORE session approvals -- a grant buys back the ask prompt, never
+the risk ceiling, and this call's own arguments were assessed first.
+
+Server-declared `annotations` (`readOnly`, `destructiveHint`, ...) are
+parsed at discovery time and folded into risk at evaluation time via
+`ToolRiskClassifier.adjusting`. They can only RAISE risk, never lower it:
+`destructiveHint` on an otherwise-safe name forces the ask (even in
+permissive mode, through the high-risk gate), while a `readOnly` claim
+never overrides a heuristic verdict. The lookup goes through
+`McpToolCatalogCache` because the parser that precomputes most assessments
+cannot know which server a bare tool name belongs to.
+
+Tests: `McpCatalogApprovalRulesTests.swift` covers the rule parser, the
+engine ordering (deny over session approval, allow under high risk, the
+repo-import ask, permissive unchanged), the annotation path, deny
+stripping, the approval lifecycle against a temp project root, and archive
+compatibility. Every guard above is mutation-checked: disabling the deny
+arm, the allow arm, the repo-import gate, the annotation adjustment, the
+catalog's deny strip, its `isEnabled` filter, or flipping a decode default
+each reddens exactly its own case.

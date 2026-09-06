@@ -249,7 +249,17 @@ public actor McpClientEngine {
                let schemaStr = String(data: schemaData, encoding: .utf8) {
                 schemaJSON = schemaStr
             }
-            discovered.append(McpDiscoveredTool(name: name, description: desc, inputSchemaJSON: schemaJSON, serverName: serverName))
+            var annotations: McpToolAnnotations?
+            if let rawAnnotations = rawTool["annotations"] as? [String: Any] {
+                annotations = McpToolAnnotations(
+                    title: rawAnnotations["title"] as? String,
+                    readOnly: rawAnnotations["readOnly"] as? Bool,
+                    destructiveHint: rawAnnotations["destructiveHint"] as? Bool,
+                    idempotentHint: rawAnnotations["idempotentHint"] as? Bool,
+                    openWorldHint: rawAnnotations["openWorldHint"] as? Bool
+                )
+            }
+            discovered.append(McpDiscoveredTool(name: name, description: desc, inputSchemaJSON: schemaJSON, serverName: serverName, annotations: annotations))
         }
 
         return discovered

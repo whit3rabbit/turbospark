@@ -80,11 +80,13 @@ extension AppModel {
             """)
         }
 
-        let toolsPrompt = AppToolRegistry.systemPromptAddendum(for: agentType)
+        let activeMcpServers = AppToolCatalogMcp.visibleServers(global: globalMcpServers, project: project)
+        let toolsPrompt = AppToolCatalog.systemPromptAddendum(
+            for: agentType,
+            mcpServers: activeMcpServers,
+            project: project)
         sections.append(toolsPrompt)
 
-        let activeMcpServers = (globalMcpServers + (project.mcpServers)).filter { $0.isEnabled }
-            + PluginManager.shared.pluginMcpServers(projectURL: project.rootDirectoryURL)
         if !activeMcpServers.isEmpty {
             var mcpLines: [String] = ["## Connected MCP Servers"]
             mcpLines.append("The following Model Context Protocol (MCP) servers are active and can be called via `call_mcp_tool` or `mcp__<server>__<tool>`:")

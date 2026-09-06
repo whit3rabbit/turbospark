@@ -86,6 +86,17 @@ public enum AppToolPermissionEngine {
     /// That paragraph described every mode except the one that skipped all
     /// three gates in a single line at the top. `readOnly` is the only
     /// absolute arm here, and it is absolute in the SAFE direction.
+    ///
+    /// The MCP layers slot into that spine as follows. A persisted DENY rule
+    /// sits immediately after the category deny (an explicitly denied tool
+    /// must not be resurrected by a session approval, a allow rule, or an
+    /// `autoApprove` flag). A persisted ALLOW rule sits AFTER the high-risk
+    /// gate -- "always allow this tool" buys back the ask prompt, never the
+    /// risk ceiling -- and BEFORE session approvals. And a server imported
+    /// from a repository config asks once in `auto` mode unless the user
+    /// explicitly opted it into `autoApprove` in-app, so a cloned
+    /// `.mcp.json` cannot grant silent execution by being imported.
+    ///
     /// - Parameter globalServers: the app-level MCP configurations, passed in
     ///   rather than re-read from disk (state#61). Every caller has them in
     ///   memory already, and this function runs on the main actor.
@@ -99,7 +110,27 @@ public enum AppToolPermissionEngine {
         // No project selected: fall back to the guarded default or chosen fallback mode.
         let permissions = project?.permissions ?? AppProjectPermissions.preset(for: fallbackMode ?? .auto)
         let category = call.category
-        let risk = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+
+        // The server/tool pair this call addresses, in whichever spelling
+        // the model used. Shared with the approval card and rule writing so
+        // a rule is always matched with the parse that wrote it.
+        let mcpTarget: (server: String, tool: String?)? = {
+            guard category == .mcp else { return nil }
+            return McpPermissionRule.targetOfCall(name: call.name, arguments: call.arguments)
+        }()
+
+        let risk: ToolRiskAssessment = {
+            let base = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+            // Server-declared annotations raise a safe verdict on a
+            // destructive-marked tool; they never lower a heuristic one.
+            guard category == .mcp, let target = mcpTarget, let tool = target.tool,
+                  let annotations = McpToolCatalogCache.shared
+                      .tools(forServerName: target.server)?
+                      .first(where: { $0.name == tool })?.annotations else {
+                return base
+            }
+            return ToolRiskClassifier.adjusting(base, annotations: annotations)
+        }()
 
         // 1. Strict Read-Only Mode. Absolute: session approval never applies here.
         if permissions.mode == .readOnly {
@@ -128,6 +159,16 @@ public enum AppToolPermissionEngine {
 
         if categoryPermission == .deny {
             return .deny(reason: "The \(category.label) category is set to Deny in project settings.")
+        }
+
+        // 2b. Persisted MCP deny rule: refused outright, ahead of every
+        // gate below including session approvals and high-risk ask. The
+        // same rules strip the tool from the advertised list
+        // (`AppToolCatalogMcp`), so a call reaching here means the model
+        // emitted a name it was never shown.
+        if let target = mcpTarget, permissions.mcpDenyMatches(serverName: target.server, toolName: target.tool) {
+            let toolPart = target.tool.map { "__\($0)" } ?? " (all tools)"
+            return .deny(reason: "MCP tool 'mcp__\(target.server)\(toolPart)' is denied by a project permission rule.")
         }
 
         // 3. High-risk actions ALWAYS require a fresh confirmation, regardless
@@ -160,42 +201,57 @@ public enum AppToolPermissionEngine {
             return .allow
         }
 
-        // 5. Session-level pre-approval bypasses prompts for repeats of a
+        // 5. Persisted MCP allow rule: the user granted this server or tool
+        // across sessions, so it skips the ask prompt. It sits BELOW the
+        // high-risk gate on purpose -- a grant is a statement about asking,
+        // not about risk, and this call's own arguments were still assessed
+        // first.
+        if let target = mcpTarget, permissions.mcpAllowMatches(serverName: target.server, toolName: target.tool) {
+            return .allow
+        }
+
+        // 6. Session-level pre-approval bypasses prompts for repeats of a
         // call already vetted this session, now that deny and high-risk have
         // both had the first word.
         if sessionApproved {
             return .allow
         }
 
-        // 6. MCP Server-level Auto-Approval Check
-        if category == .mcp {
-            let serverName: String?
-            if call.name.hasPrefix("mcp__") {
-                let parts = call.name.components(separatedBy: "__")
-                serverName = parts.count >= 2 ? parts[1] : nil
-            } else {
-                serverName = call.arguments["server"] ?? call.arguments["server_name"]
+        // 7. MCP Server-level Auto-Approval Check
+        if let target = mcpTarget {
+            // **GLOBAL FIRST, MATCHING THE EXECUTOR** (state#61). The two
+            // resolved a name collision in OPPOSITE orders, so the
+            // `autoApprove` flag consulted here could belong to a
+            // different server from the one `executeMcpCall` then dialled
+            // -- a project `.mcp.json` inheriting a global server's
+            // "approved" bit for a command nobody approved. Read off
+            // `globalMcpServers` where it is already in memory; this runs
+            // on the main actor and `GlobalMcpFileStore.load()` is a disk
+            // read per evaluation.
+            let allServers = globalServers + (project?.mcpServers ?? [])
+            let matched = allServers.first(where: { $0.name.lowercased() == target.server.lowercased() })
+            if let server = matched, server.autoApprove && !risk.isHighRisk {
+                return .allow
             }
 
-            if let sName = serverName {
-                // **GLOBAL FIRST, MATCHING THE EXECUTOR** (state#61). The two
-                // resolved a name collision in OPPOSITE orders, so the
-                // `autoApprove` flag consulted here could belong to a
-                // different server from the one `executeMcpCall` then dialled
-                // -- a project `.mcp.json` inheriting a global server's
-                // "approved" bit for a command nobody approved. Read off
-                // `globalMcpServers` where it is already in memory; this runs
-                // on the main actor and `GlobalMcpFileStore.load()` is a disk
-                // read per evaluation.
-                let allServers = globalServers + (project?.mcpServers ?? [])
-                if let server = allServers.first(where: { $0.name.lowercased() == sName.lowercased() }),
-                   server.autoApprove && !risk.isHighRisk {
-                    return .allow
-                }
+            // 7b. A server imported from a repository config file asks in
+            // auto mode unless auto-approval was explicitly opted into
+            // above. `sourcePath` records that origin for imports from
+            // every supported format, and without this arm the auto mode's
+            // trailing default allowed a cloned `.mcp.json`'s servers to
+            // run non-high-risk calls silently the moment they were
+            // imported -- the one gap the project approval lifecycle
+            // (`AppModel+Mcp`) cannot close on its own for archives saved
+            // before it existed.
+            if permissions.mode == .auto, let server = matched, !server.autoApprove,
+               let source = server.sourcePath, !source.isEmpty {
+                return .ask(
+                    assessment: risk,
+                    reason: "MCP server '\(server.name)' was imported from a repository config (\(source)) and has not been marked auto-approved.")
             }
         }
 
-        // 7. Always Ask Mode: Prompts on any mutating or external action
+        // 8. Always Ask Mode: Prompts on any mutating or external action
         if permissions.mode == .ask || categoryPermission == .ask {
             if category == .fileRead && risk.level == .safe {
                 return .allow
@@ -204,7 +260,7 @@ public enum AppToolPermissionEngine {
             return .ask(assessment: risk, reason: reason)
         }
 
-        // 8. Auto Mode ("Approve for me" - Unsloth Studio default): runs
+        // 9. Auto Mode ("Approve for me" - Unsloth Studio default): runs
         // safe and low-risk operations silently. High-risk was already
         // handled in step 4, above every other check in this function.
         if permissions.mode == .auto {

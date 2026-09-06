@@ -50,6 +50,8 @@ public struct ProjectMcpSettingsSheet: View {
                     )
                     Divider()
                     serversSection
+                    Divider()
+                    permissionRulesSection
                 }
                 .padding(20)
             }
@@ -92,7 +94,7 @@ public struct ProjectMcpSettingsSheet: View {
                     Image(systemName: "folder.badge.gearshape")
                         .foregroundStyle(TurboSparkTheme.accentColor)
                         .help("Project MCP Tool Configuration")
-                    Text("\(project?.name ?? "Project") – MCP External Tools")
+                    Text("\(project?.name ?? "Project") - MCP External Tools")
                         .font(.headline)
                 }
                 Text("Manage project-specific MCP servers and import configs from codebase.")
@@ -171,6 +173,76 @@ public struct ProjectMcpSettingsSheet: View {
                 }
             }
         }
+    }
+
+    /// Persistent per-server and per-tool MCP permission rules. Allow
+    /// rules skip the ask prompt; deny rules refuse outright AND strip the
+    /// tool from the model's advertised list. Written from the approval
+    /// card's "Always Allow" menu or removed here.
+    private var permissionRulesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Permission Rules")
+                    .font(.subheadline.weight(.semibold))
+                Text("`mcp__server` covers every tool on a server; `mcp__server__tool` covers one. Deny also hides the tool from the assistant.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            let permissions = project?.permissions
+            if (permissions?.mcpAllowRules.isEmpty ?? true) && (permissions?.mcpDenyRules.isEmpty ?? true) {
+                Text("No MCP permission rules for this project.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(permissions?.mcpAllowRules ?? [], id: \.self) { rule in
+                        ruleRow(rule, isAllow: true)
+                    }
+                    ForEach(permissions?.mcpDenyRules ?? [], id: \.self) { rule in
+                        ruleRow(rule, isAllow: false)
+                    }
+                }
+            }
+        }
+    }
+
+    private func ruleRow(_ rule: String, isAllow: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: isAllow ? "checkmark.circle.fill" : "nosign")
+                .foregroundStyle(isAllow ? Color.green : Color.red)
+                .font(.caption)
+            Text(rule)
+                .font(.caption.monospaced())
+            Spacer()
+            Button {
+                removeRule(rule)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Remove this rule")
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func removeRule(_ rule: String) {
+        guard var permissions = project?.permissions else { return }
+        permissions.mcpAllowRules.removeAll { $0.caseInsensitiveCompare(rule) == .orderedSame }
+        permissions.mcpDenyRules.removeAll { $0.caseInsensitiveCompare(rule) == .orderedSame }
+        var updated = project!
+        updated.permissions = permissions
+        updated.updatedAt = Date()
+        model.updateProject(updated)
     }
 
     private var footer: some View {

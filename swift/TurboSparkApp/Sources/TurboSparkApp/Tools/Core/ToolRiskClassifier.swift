@@ -438,6 +438,28 @@ public enum ToolRiskClassifier {
 
     // MARK: - Helpers
 
+    /// Folds a server's own `annotations` hints into an assessment already
+    /// computed by the name heuristics.
+    ///
+    /// **ANNOTATIONS CAN ONLY RAISE RISK, NEVER LOWER IT.** `readOnly` on a
+    /// tool named `delete_everything` is the server describing itself, and
+    /// the heuristics win on conflict by construction here: a high or low
+    /// heuristic verdict passes through untouched, while a SAFE verdict on
+    /// a tool the server itself marks `destructiveHint` is raised to ask.
+    /// The engine looks the hints up from `McpToolCatalogCache` at
+    /// evaluation time, since the parser that precomputes most assessments
+    /// cannot know which server a bare tool name belongs to.
+    public static func adjusting(
+        _ assessment: ToolRiskAssessment,
+        annotations: McpToolAnnotations?
+    ) -> ToolRiskAssessment {
+        guard let annotations, assessment.level != .high else { return assessment }
+        guard annotations.destructiveHint == true else { return assessment }
+        var reasons = assessment.reasons
+        reasons.append("Server annotations mark this tool destructive.")
+        return ToolRiskAssessment(level: .high, category: assessment.category, reasons: reasons)
+    }
+
     /// Checks whether a given path references sensitive system files or credentials.
     public static func isSensitivePath(_ path: String) -> Bool {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)

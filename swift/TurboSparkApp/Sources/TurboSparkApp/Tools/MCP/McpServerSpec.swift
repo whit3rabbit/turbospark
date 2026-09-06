@@ -67,6 +67,36 @@ public enum McpTransportSpec: Codable, Sendable, Equatable {
     }
 }
 
+/// The MCP tool annotations a server may declare beside a tool in its
+/// `tools/list` response.
+///
+/// Hints, not guarantees: the permission engine folds them into risk
+/// assessment as one input beside the name heuristics, and the name
+/// heuristics win on conflict. A server declaring `readOnly` on a tool
+/// named `delete_everything` is describing itself, and the classifier
+/// does not take its word for it.
+public struct McpToolAnnotations: Codable, Sendable, Equatable {
+    public var title: String?
+    public var readOnly: Bool?
+    public var destructiveHint: Bool?
+    public var idempotentHint: Bool?
+    public var openWorldHint: Bool?
+
+    public init(
+        title: String? = nil,
+        readOnly: Bool? = nil,
+        destructiveHint: Bool? = nil,
+        idempotentHint: Bool? = nil,
+        openWorldHint: Bool? = nil
+    ) {
+        self.title = title
+        self.readOnly = readOnly
+        self.destructiveHint = destructiveHint
+        self.idempotentHint = idempotentHint
+        self.openWorldHint = openWorldHint
+    }
+}
+
 /// Description of a single tool discovered from an MCP server.
 public struct McpDiscoveredTool: Identifiable, Codable, Sendable, Equatable {
     public var id: String { "\(serverName)::\(name)" }
@@ -78,12 +108,25 @@ public struct McpDiscoveredTool: Identifiable, Codable, Sendable, Equatable {
     public var inputSchemaJSON: String
     /// Owning server identifier.
     public var serverName: String
+    /// Server-declared behaviour hints, when the server sends them.
+    ///
+    /// Optional and defaulted so archives written before the field
+    /// existed decode unchanged (synthesized Codable uses
+    /// `decodeIfPresent` for optionals).
+    public var annotations: McpToolAnnotations?
 
-    public init(name: String, description: String, inputSchemaJSON: String = "{}", serverName: String) {
+    public init(
+        name: String,
+        description: String,
+        inputSchemaJSON: String = "{}",
+        serverName: String,
+        annotations: McpToolAnnotations? = nil
+    ) {
         self.name = name
         self.description = description
         self.inputSchemaJSON = inputSchemaJSON
         self.serverName = serverName
+        self.annotations = annotations
     }
 }
 

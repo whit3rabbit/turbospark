@@ -102,6 +102,28 @@ public enum SubagentRunner {
             sections.append(lines.joined(separator: "\n"))
         }
 
+        // 4. Discovered MCP tools, under the agent's own allow-list too. The
+        // main loop advertises these through `systemPromptAddendum`; a
+        // subagent without them would propose `mcp__` calls the parent
+        // demonstrably has, or never use servers the project enabled.
+        if let project {
+            let servers = AppToolCatalogMcp.visibleServers(
+                global: GlobalMcpFileStore.load().servers, project: project)
+            let mcpDefinitions = AppToolCatalogMcp.toolDefinitions(
+                servers: servers, permissions: project.permissions)
+                .filter { agent.isToolAllowed($0.function.name) }
+            if !mcpDefinitions.isEmpty {
+                var lines: [String] = [
+                    "## MCP Server Tools",
+                    "Tools discovered from connected MCP servers. Call them by their full `mcp__<server>__<tool>` name; each entry lists its arguments:",
+                ]
+                for tool in mcpDefinitions {
+                    lines.append("- `\(tool.function.name)`: \(tool.function.description)")
+                }
+                sections.append(lines.joined(separator: "\n"))
+            }
+        }
+
         return sections.joined(separator: "\n\n")
     }
 
@@ -286,8 +308,29 @@ public enum SubagentRunner {
             }
 
             finalContent = generatedText
-            let parsedCalls = extractToolCalls(
+            var parsedCalls = extractToolCalls(
                 from: generatedText, projectURL: project?.rootDirectoryURL)
+
+            let availableSpecs = availableTools(for: agent, project: project)
+            let verdict = ForgeGuardrailsEngine.inspect(
+                text: generatedText,
+                parsedCalls: parsedCalls,
+                availableTools: availableSpecs,
+                requiresCall: false
+            )
+
+            switch verdict {
+            case .accept:
+                break
+            case .rescued(let rescuedCalls, _):
+                parsedCalls = rescuedCalls
+            case .retry(let nudge):
+                if currentTurn < maxTurns && !nudge.isEmpty {
+                    history.append(ChatMessage(role: .assistant, content: generatedText))
+                    history.append(ChatMessage(role: .user, content: nudge))
+                    continue
+                }
+            }
 
             if parsedCalls.isEmpty {
                 // Completed prose answer with no more tool calls
@@ -311,7 +354,10 @@ public enum SubagentRunner {
         // is the last turn's raw text, which on this exit is a tool call the
         // loop never got to execute -- reported as `completed` it reaches the
         // parent as an answer, with unexecuted XML as its content.
-        let exhausted = currentTurn >= maxTurns && !extractToolCalls(from: finalContent, projectURL: project?.rootDirectoryURL).isEmpty
+        let availableNames = Set(availableTools(for: agent, project: project).map { $0.function.name })
+        let lastHasCalls = !extractToolCalls(from: finalContent, projectURL: project?.rootDirectoryURL).isEmpty
+            || !ForgeGuardrailsEngine.rescueToolCalls(from: finalContent, availableToolNames: availableNames).isEmpty
+        let exhausted = currentTurn >= maxTurns && lastHasCalls
         // A run whose own history was truncated says so (state#75). Dropping
         // turns is a legitimate outcome and a silent one is indistinguishable
         // from a subagent that simply forgot what it had already done.
@@ -335,7 +381,18 @@ public enum SubagentRunner {
         )
     }
 
-    // MARK: - Tool Call Parsing
+    /// The tools available to this agent under the turn's project and MCP environment.
+    public static func availableTools(for agent: AppAgentDefinition, project: AppProject?) -> [OpenAITool] {
+        let baseTools = AppToolCatalog.tools(for: project?.agentType ?? .coder)
+            .filter { agent.isToolAllowed($0.function.name) }
+        guard let project else { return baseTools }
+        let servers = AppToolCatalogMcp.visibleServers(
+            global: GlobalMcpFileStore.load().servers, project: project)
+        let mcpDefinitions = AppToolCatalogMcp.toolDefinitions(
+            servers: servers, permissions: project.permissions)
+            .filter { agent.isToolAllowed($0.function.name) }
+        return baseTools + mcpDefinitions
+    }
 
     /// **THE PARSER IS `ToolCallParser`'S NOW.** This file used to carry a
     /// byte-identical copy of it plus its own `parseJSONArguments`, which is

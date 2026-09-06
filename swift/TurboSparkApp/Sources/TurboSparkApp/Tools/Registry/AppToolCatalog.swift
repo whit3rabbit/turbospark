@@ -66,6 +66,7 @@ public enum AppToolCatalog {
             l.append(contentsOf: taskAgentTools)
             l.append(contentsOf: projectArtifactTools)
             l.append(contentsOf: webTools)
+            l.append(contentsOf: mcpTools)
             l.append(contentsOf: planningInteractiveTools)
             list = l
 
@@ -87,6 +88,7 @@ public enum AppToolCatalog {
             l.append(contentsOf: terminalTools)
             l.append(contentsOf: webTools)
             l.append(contentsOf: taskAgentTools)
+            l.append(contentsOf: mcpTools)
             list = l
         }
 
@@ -163,5 +165,32 @@ public enum AppToolCatalog {
         lines.append("## Task & Progress Tracking")
         lines.append("For multi-step or non-trivial tasks (3+ steps), proactively use `TodoWrite` to organize your plan, track progress, and update status in real-time. Mark a task as `in_progress` BEFORE working on it and `completed` IMMEDIATELY upon finishing.")
         return lines.joined(separator: "\n")
+    }
+
+    /// `systemPromptAddendum` with one line per DISCOVERED MCP tool
+    /// appended, from `AppToolCatalogMcp` (deny rules already stripped).
+    ///
+    /// This is the only channel the dynamic `mcp__<server>__<tool>`
+    /// vocabulary reaches the model through -- there is no `tools` array on
+    /// the wire -- so an enabled server whose tools were never discovered
+    /// (cache cold) is silent here, and its tools cannot be called
+    /// reliably, until a refresh populates the cache.
+    public static func systemPromptAddendum(
+        for agentType: AppAgentType,
+        mcpServers: [McpServerConfig],
+        project: AppProject?
+    ) -> String {
+        let base = systemPromptAddendum(for: agentType)
+        let definitions = AppToolCatalogMcp.toolDefinitions(servers: mcpServers, permissions: project?.permissions)
+        guard !definitions.isEmpty else { return base }
+        var lines: [String] = [
+            "",
+            "## MCP Server Tools",
+            "Tools discovered from connected MCP servers. Call them by their full `mcp__<server>__<tool>` name; each entry lists its arguments:",
+        ]
+        for tool in definitions {
+            lines.append("- `\(tool.function.name)`: \(tool.function.description)")
+        }
+        return base + "\n" + lines.joined(separator: "\n")
     }
 }
