@@ -24,9 +24,7 @@ struct CatalogSheet: View {
         }
         .frame(minWidth: 640, minHeight: 480)
         .task {
-            if let recs = try? TurboSparkCatalog.recommend(loadGuard: model.activeLoadGuard) {
-                recommendations = recs
-            }
+            recommendations = model.fitRecommendations()
         }
     }
 

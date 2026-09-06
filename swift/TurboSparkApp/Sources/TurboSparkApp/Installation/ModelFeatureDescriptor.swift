@@ -118,7 +118,20 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// never a placeholder byte count presented as if it were one (U3;
     /// `swift/CLAUDE.md` Gotcha 23 fixed the same shape once already, on
     /// the sibling numeric fields on this same pane).
-    public let estimatedWorkingSetRAM: UInt64?
+    // `estimatedWorkingSetRAM` was HERE and is deliberately gone. It
+    // hardcoded 2.2 GB for `gemma4`, 1.7 GB for `qwen36`, nil for every other
+    // MoE family, and a dense model's on-disk size as a proxy for its
+    // resident weights -- which is wrong in the one direction that matters,
+    // since a dense install's mapped weights are not charged to the process
+    // footprint at all (root Gotcha 40: Qwen3.8-27B reads 661 MiB against
+    // 15.1 GB of weights).
+    //
+    // Two numbers measured in `crates/bench` and asserted here is exactly the
+    // rot root Gotcha 58 is about, and nothing went red when they went stale.
+    // The engine answers this now: `AppModel.fit(for:)` reads
+    // `ts_recommend_json`, which applies a frozen catalog row when one was
+    // taken at this context AND this slot count, and estimates from the
+    // checkpoint's own shape otherwise.
     public let isSlotCacheStreaming: Bool
     public let contextLimit: Int?
     public let layerCount: Int?
@@ -339,27 +352,11 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         let supportsToolCalls: Bool? = sessionInfo?.toolCalling.native
         let supportsVision = combined.contains("vision") || combined.contains("vlm") || combined.contains("mrope")
 
-        // 7. Working Set RAM estimation (U3): a dense model's on-disk size
-        // is a genuine (if approximate) proxy for its resident weight size,
-        // so that is reported when known; when it is not, this is `nil`
-        // rather than a flat guessed byte count. For MoE, only the two
-        // families this port has an actual measured oracle ceiling for
-        // (`CLAUDE.local.md`) get a specific figure; every other MoE
-        // family is `nil` rather than an unfounded average.
+        // 7. Whether this model STREAMS its experts, which is a property of
+        // the routing and is all this descriptor claims about memory. The
+        // byte figure is the engine's answer, not this file's; see the note
+        // on the removed `estimatedWorkingSetRAM` above.
         let isSlotCache = (routingType == .moe)
-        let estimatedRAM: UInt64?
-        if isSlotCache {
-            if lFamily == "gemma4" {
-                estimatedRAM = 2_200_000_000 // ~2.2 GiB, measured oracle ceiling
-            } else if lFamily == "qwen36" {
-                estimatedRAM = 1_700_000_000 // ~1.7 GiB, measured oracle ceiling
-            } else {
-                estimatedRAM = nil
-            }
-        } else {
-            let bytes = installedModel?.installBytes ?? catalogEntry?.installBytes ?? resolvedCatalogEntry?.installBytes ?? 0
-            estimatedRAM = bytes > 0 ? bytes : nil
-        }
 
         return ModelFeatureDescriptor(
             alias: alias,
@@ -377,7 +374,6 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             supportsReasoning: supportsReasoning,
             supportsToolCalls: supportsToolCalls,
             supportsVision: supportsVision,
-            estimatedWorkingSetRAM: estimatedRAM,
             isSlotCacheStreaming: isSlotCache,
             // No per-alias guessed default (U3): a trained context this
             // port did not read off the install's own manifest is unknown,

@@ -49,6 +49,7 @@ final class ModelHubFilterTests: XCTestCase {
           "verdictSummary": "",
           "runs": true,
           "countedBytes": 0,
+          "countedSource": "estimated",
           "installBytes": 0,
           "slotCacheSlots": 16,
           "largestContext": 4096,

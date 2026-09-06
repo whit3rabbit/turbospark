@@ -12,6 +12,21 @@ struct ModelDetailPaneView: View {
     let installedModel: InstalledModel?
     let recommendation: ModelRecommendation?
     @State private var showingDeleteConfirm = false
+    @State private var showsInstallConfirm = false
+
+    /// What this machine says about installing this row.
+    ///
+    /// No probe here: a curated row is curated, so the memory verdict and the
+    /// free disk are the two questions left. `ModelProbeSheet` adds the probe
+    /// arm for an arbitrary repository.
+    private var installDecision: ModelInstallDecision {
+        ModelInstallGate.decide(
+            probeRunnable: nil,
+            refusedBecause: nil,
+            verdict: recommendation?.verdict,
+            installBytes: recommendation?.installBytes ?? entry.installBytes,
+            freeDiskBytes: ModelInstallGate.freeSpace(at: AppStorageRoot.directory))
+    }
 
     private var visuals: ModelFamilyVisuals {
         ModelFamilyVisuals.resolve(alias: entry.alias, family: entry.family, name: entry.name)
@@ -215,6 +230,20 @@ struct ModelDetailPaneView: View {
                 actionButtons
             }
 
+            // The cause sits BESIDE the control, in the card's vertical
+            // stack rather than the button row. A disabled button whose
+            // reason lives only in a tooltip reads as a broken button.
+            if let reason = installDecision.reason, !isInstalled {
+                Label(
+                    reason,
+                    systemImage: installDecision.isBlocked
+                        ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(installDecision.isBlocked ? Color.red : Color.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
             if isDownloadingThis {
                 downloadProgressArea
             }
@@ -273,14 +302,24 @@ struct ModelDetailPaneView: View {
                 .accessibilityHint("Removes the model files from disk after confirmation")
             } else {
                 Button {
-                    model.installModel(alias: entry.alias)
+                    if case .confirm = installDecision {
+                        showsInstallConfirm = true
+                    } else {
+                        model.installModel(alias: entry.alias)
+                    }
                 } label: {
                     Label("Download & Install", systemImage: "arrow.down.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
-                .disabled(model.isInstallingModel || model.isRunning)
+                .disabled(model.isInstallingModel || model.isRunning || installDecision.isBlocked)
                 .accessibilityHint("Downloads and installs \(entry.alias)")
+                .alert("Install anyway?", isPresented: $showsInstallConfirm) {
+                    Button("Cancel", role: .cancel) {}
+                    Button("Install") { model.installModel(alias: entry.alias) }
+                } message: {
+                    Text(installDecision.reason ?? "")
+                }
             }
         }
     }

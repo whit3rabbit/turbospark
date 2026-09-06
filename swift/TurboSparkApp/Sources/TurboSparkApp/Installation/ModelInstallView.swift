@@ -194,9 +194,7 @@ struct ModelInstallView: View {
 
     private func loadRecommendations() {
         isLoadingRecommendations = true
-        if let recs = try? TurboSparkCatalog.recommend(loadGuard: model.activeLoadGuard) {
-            self.recommendations = recs
-        }
+        recommendations = model.fitRecommendations()
         isLoadingRecommendations = false
     }
 }

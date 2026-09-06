@@ -145,37 +145,6 @@ struct ModelHardwareFitCardView: View {
 
     @ViewBuilder
     private func verdictPill(_ verdict: ModelRecommendation.FitVerdict) -> some View {
-        switch verdict {
-        case .resident:
-            Text("Full Resident Fit")
-                .font(.caption.weight(.bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Color.green.opacity(0.18), in: Capsule())
-                .foregroundStyle(.green)
-        case .streams:
-            Text("Fast MoE Streaming")
-                .font(.caption.weight(.bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Color.blue.opacity(0.18), in: Capsule())
-                .foregroundStyle(.blue)
-        case .tight:
-            Text("Tight Memory Headroom")
-                .font(.caption.weight(.bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Color.orange.opacity(0.18), in: Capsule())
-                .foregroundStyle(.orange)
-        case .refused:
-            Text("Exceeds Memory Limit")
-                .font(.caption.weight(.bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Color.red.opacity(0.18), in: Capsule())
-                .foregroundStyle(.red)
-        case .unknown:
-            EmptyView()
-        }
+        ModelFitVerdictPill(verdict: verdict)
     }
 }

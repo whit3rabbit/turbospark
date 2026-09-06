@@ -88,15 +88,12 @@ struct ModelHubFilter: Equatable {
         return orderedFitLabels.filter { present.contains($0) }
     }
 
-    /// Display label for a fit verdict. The single place this mapping lives.
+    /// Display label for a fit verdict, as this filter's menu groups by.
+    /// The mapping lives in `ModelFitPresentation`; this is a thin forward so
+    /// the badge and the filter cannot disagree about what a verdict is
+    /// called (swift Gotcha 22).
     static func fitLabel(_ verdict: ModelRecommendation.FitVerdict) -> String {
-        switch verdict {
-        case .resident: return "Fits in memory"
-        case .streams: return "Streams"
-        case .tight: return "Tight fit"
-        case .refused: return "Too large"
-        case .unknown: return "Unknown"
-        }
+        ModelFitPresentation.filterLabel(verdict)
     }
 
     private static let orderedFitLabels = [

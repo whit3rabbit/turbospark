@@ -275,10 +275,7 @@ struct ModelHubView: View {
     }
 
     private func loadRecommendations() {
-        guard let recommended = try? TurboSparkCatalog.recommend(loadGuard: model.activeLoadGuard)
-        else { return }
-        recommendations = Dictionary(
-            recommended.map { ($0.alias, $0) },
-            uniquingKeysWith: { first, _ in first })
+        // One accessor, not a fourth spelling of the same three knobs.
+        recommendations = model.fitRecommendationsByAlias()
     }
 }

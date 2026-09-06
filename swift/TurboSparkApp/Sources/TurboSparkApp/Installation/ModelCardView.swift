@@ -199,68 +199,6 @@ struct ModelCardView: View {
 
     @ViewBuilder
     private func verdictBadge(_ verdict: ModelRecommendation.FitVerdict) -> some View {
-        switch verdict {
-        case .resident:
-            HStack(spacing: 2) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 7, weight: .bold))
-                    .accessibilityHidden(true)
-                Text("Resident")
-            }
-            .font(.caption2.weight(.semibold))
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1.5)
-            .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.green)
-            .help("Fits entirely in unified memory")
-        case .streams:
-            HStack(spacing: 2) {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 7, weight: .bold))
-                    .accessibilityHidden(true)
-                Text("Streams")
-            }
-            .font(.caption2.weight(.semibold))
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1.5)
-            .background(Color.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.blue)
-            .help("Streams experts dynamically from NVMe storage (~2-4 GB RAM)")
-        case .tight:
-            HStack(spacing: 2) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 7, weight: .bold))
-                Text("Tight")
-            }
-            .font(.caption2.weight(.semibold))
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1.5)
-            .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.orange)
-            .help("Runs with tight memory headroom")
-        case .refused:
-            HStack(spacing: 2) {
-                Image(systemName: "xmark.octagon.fill")
-                    .font(.system(size: 7, weight: .bold))
-                Text("Too Large")
-            }
-            .font(.caption2.weight(.semibold))
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1.5)
-            .background(Color.red.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.red)
-            .help("Exceeds available system memory")
-        case .unknown:
-            EmptyView()
-        }
+        ModelFitVerdictPill(verdict: verdict, compact: true)
     }
-
 }

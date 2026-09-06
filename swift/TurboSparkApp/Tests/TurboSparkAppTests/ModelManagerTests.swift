@@ -199,22 +199,38 @@ final class ModelManagerTests: XCTestCase {
         XCTAssertNil(desc.contextLimit, "An unread trained context must be nil, not a guessed 8192/2048/4096 default.")
     }
 
-    func testRamEstimateIsNilForAnUnrecognizedMoEFamily() {
-        let unknownMoE = InstalledModel(
+    /// **THE DESCRIPTOR NO LONGER ESTIMATES RAM, AND THE THREE CASES THAT
+    /// USED TO LIVE HERE PINNED THE IMPLEMENTATION RATHER THAN A
+    /// REQUIREMENT** (swift Gotcha 42).
+    ///
+    /// `estimatedWorkingSetRAM` hardcoded 2.2 GB for `gemma4`, 1.7 GB for
+    /// `qwen36`, nil for every other MoE family, and a dense model's on-disk
+    /// size as a proxy for its resident weights. `testRamEstimateUsesReal
+    /// InstallBytesForDenseModels` asserted that last one, and it was a
+    /// defect being held in place: a dense install's mapped weights are not
+    /// charged to the process footprint at all (root Gotcha 40, where
+    /// Qwen3.8-27B reads 661 MiB against 15.1 GB of weights), so on-disk size
+    /// overstates a dense working set by more than an order of magnitude.
+    ///
+    /// Two figures measured in `crates/bench` and restated here is the rot
+    /// root Gotcha 58 is about, and nothing went red when they went stale.
+    /// The engine answers it now, through `AppModel.fit(for:)`.
+    ///
+    /// What survives is the ROUTING claim, which is a property of the
+    /// architecture and is this descriptor's own to make.
+    func testTheDescriptorClaimsRoutingAndNotAByteCount() {
+        let moe = InstalledModel(
             alias: "some-future-moe-model",
             repo: "someone/future-moe",
             path: "/tmp/does-not-exist-\(UUID().uuidString)",
-            family: "mixtral" // in the known set, but with 0 install bytes and no manifest
+            family: "mixtral"
         )
-        // Force through the MoE branch via a recognized family, but with no
-        // real data behind the estimate for anything outside the two
-        // grounded buckets (gemma4, qwen36).
-        let desc = ModelFeatureDescriptor.resolve(installedModel: unknownMoE)
-        XCTAssertEqual(desc.routingType, .moe)
-        XCTAssertNil(desc.estimatedWorkingSetRAM, "An MoE family with no measured oracle ceiling must report nil, not an invented average.")
-    }
+        let moeDesc = ModelFeatureDescriptor.resolve(installedModel: moe)
+        XCTAssertEqual(moeDesc.routingType, .moe)
+        XCTAssertTrue(
+            moeDesc.isSlotCacheStreaming,
+            "an MoE install streams routed experts through the slot cache")
 
-    func testRamEstimateUsesRealInstallBytesForDenseModels() {
         let dense = InstalledModel(
             alias: "dense-with-bytes",
             repo: "someone/dense",
@@ -222,20 +238,10 @@ final class ModelManagerTests: XCTestCase {
             family: "mistral",
             installBytes: 4_300_000_000
         )
-        let desc = ModelFeatureDescriptor.resolve(installedModel: dense)
-        XCTAssertEqual(desc.estimatedWorkingSetRAM, 4_300_000_000)
-    }
-
-    func testRamEstimateIsNilForADenseModelWithNoKnownSize() {
-        let dense = InstalledModel(
-            alias: "dense-no-bytes",
-            repo: "someone/dense",
-            path: "/tmp/does-not-exist-\(UUID().uuidString)",
-            family: "mistral",
-            installBytes: 0
-        )
-        let desc = ModelFeatureDescriptor.resolve(installedModel: dense)
-        XCTAssertNil(desc.estimatedWorkingSetRAM, "Zero install bytes must not become a flat 4GB guess.")
+        let denseDesc = ModelFeatureDescriptor.resolve(installedModel: dense)
+        XCTAssertFalse(
+            denseDesc.isSlotCacheStreaming,
+            "a dense install has no routed experts to stream")
     }
 
     // MARK: - Storage Source Respects TURBOSPARK_HOME (U4)
