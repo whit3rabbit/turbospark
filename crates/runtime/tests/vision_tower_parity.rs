@@ -285,7 +285,8 @@ fn compare(name: &str, got: &[f32], want: &[f32]) -> Verdict {
 /// added coverage, and the localization the four points buy is in the
 /// REPORT rather than in which case reddens.
 #[test]
-#[ignore]
+#[ignore = "needs a real vision install (TURBOSPARK_QWEN38_VISION_INSTALL_DIR) and an \
+            mlx-vlm dump (TURBOSPARK_VISION_DUMP_DIR); see this file's header"]
 fn the_tower_agrees_with_mlx_vlm_at_every_stage() {
     let Some(install) = env_dir("TURBOSPARK_QWEN38_VISION_INSTALL_DIR") else {
         eprintln!("SKIP: set TURBOSPARK_QWEN38_VISION_INSTALL_DIR to the vision install");

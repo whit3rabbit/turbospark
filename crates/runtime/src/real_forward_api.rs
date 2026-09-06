@@ -224,20 +224,32 @@ impl RealForwardRunner {
     /// hard refusal can never disagree. Gemma 4, BOTH halves of `llama`
     /// (Mistral, Llama 2/3.x, Mixtral, `qwen3moe`), `muse_glimmer` and
     /// `gpt-oss` today, plus the DENSE half of the qwen flow
-    /// (`qwenGdnDense`) as long as this open has no image prompt attached
-    /// and no drafter open -- `prefill_chunk_real_qwen_dense`'s two named
-    /// refusals (`crates/runtime/CLAUDE.md`'s qwen chunked-prefill Gotcha).
+    /// (`qwenGdnDense`) as long as no drafter is open --
+    /// `prefill_chunk_real_qwen_dense`'s named refusal
+    /// (`crates/runtime/CLAUDE.md`'s qwen chunked-prefill Gotcha).
     /// The MoE half of qwen (`qwenGdnMoe`) still answers `false`. `qwen4_exp`
     /// answers `true` unconditionally: unlike the dense qwen flow it has no
-    /// vision or drafter feature to refuse in the first place (`mod.rs`'s own
-    /// scope doc), so there is no open-time condition to check.
+    /// drafter feature to refuse in the first place (`mod.rs`'s own scope
+    /// doc), so there is no open-time condition to check.
+    ///
+    /// **AN IMAGE PROMPT USED TO BE A THIRD CONJUNCT HERE AND IS NOT ANY
+    /// MORE** (2026-09-06): the dense qwen driver mirrors both halves of the
+    /// sequential flow's vision handling now, so an install carrying a live
+    /// `prompt_vision` map chunks like any other.
+    ///
+    /// **THAT DRIVER'S REMAINING VISION REFUSAL IS DELIBERATELY NOT MIRRORED
+    /// HERE.** `TURBOSPARK_BATCHED_GEMV` plus an image prompt is refused by
+    /// name inside the driver, and this predicate must keep answering `true`
+    /// for that install: the question here is about the INSTALL, while the
+    /// seam is a per-RUN choice the driver's own backstop catches. Folding it
+    /// in would make one env var change what an install is reported to
+    /// support.
     pub fn supports_chunked_prefill(&self) -> bool {
         self.real.is_some()
             || self.real_llama.is_some()
             || self.real_muse.is_some()
             || self.real_gpt_oss.is_some()
             || (self.real_qwen.as_ref().is_some_and(|s| s.dense)
-                && self.prompt_vision.is_none()
                 && self.real_mtp.is_none()
                 && self.real_dflash.is_none())
             || self.real_qwen4.is_some()

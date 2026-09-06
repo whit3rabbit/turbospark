@@ -194,6 +194,40 @@ pub trait SpeculativeProducer: LogitProducer {
     /// see the trait note.
     fn rollback(&mut self, point: &Self::Checkpoint);
 
+    /// Record the tokens a round COMMITTED and the verify FED, at `pos0`,
+    /// so a later turn can reuse the KV they built (`crate::kv_prefix`).
+    /// The batched half of what [`LogitProducer::produce`] records for the
+    /// sequential path: a verify feeds a block and only the caller knows
+    /// how much of it survived, so the loop reports it here after the round.
+    /// Default no-op, for every producer without a real KV cache.
+    fn record_committed(&mut self, _tokens: &[TokenId], _pos0: usize) {}
+
+    /// Whether [`Self::rollback_retaining`] can run: the producer records
+    /// what each verify consumed and can replay an accepted prefix's
+    /// recurrent state over it. `false` by default; a caller that gets
+    /// `false` falls back to [`Self::rollback`] plus a shortened re-verify.
+    fn supports_retaining_rollback(&self) -> bool {
+        false
+    }
+
+    /// Restore the target to `point` while KEEPING the first `keep_rows`
+    /// rows the last verify fed: their KV rows stay in place and any
+    /// recurrent state is replayed across them, so the verify's own logits
+    /// for row `keep_rows - 1` remain valid and the caller does not
+    /// re-verify. `keep_rows` counts the confirmed token plus the accepted
+    /// proposals; the bonus is not fed yet and is not part of the count.
+    ///
+    /// Errors rather than degrading when there is no tape for this
+    /// checkpoint: the caller's alternative is the expensive path, and
+    /// silently doing the expensive thing is how a broken fast path hides.
+    fn rollback_retaining(
+        &mut self,
+        _point: &Self::Checkpoint,
+        _keep_rows: usize,
+    ) -> Result<(), String> {
+        Err("this producer does not record a verify tape".to_string())
+    }
+
     /// Run `feed.len()` positions through the TARGET starting at `base`,
     /// writing one full-vocab row per fed token. Row `i` predicts the token
     /// after `feed[i]`.

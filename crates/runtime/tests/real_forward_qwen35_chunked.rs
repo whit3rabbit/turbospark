@@ -340,20 +340,25 @@ fn the_m_row_scratch_is_allocated_only_when_the_seam_is_on_and_only_once() {
     );
 }
 
-/// The vision refusal, by name rather than a silent fallback
-/// (`families/qwen/prefill.rs`'s header, `crates/runtime/CLAUDE.md` Gotcha
-/// 27): the image injection is this family's only embedding call site
-/// today, and the chunked driver does not carry a second one.
+/// **THIS USED TO BE `a_vision_prompt_is_refused_by_name`.** The dense qwen
+/// driver mirrors both halves of the sequential flow's vision handling since
+/// 2026-09-06, so the presence of a `prompt_vision` map no longer refuses
+/// anything and no longer suppresses `supports_chunked_prefill`.
 ///
-/// The position table is DEGENERATE (`(p, p, p)` triples, no spans) and no
-/// image embedding is attached -- following
-/// `vision_inject_synthetic.rs`'s own "image-free map" construction -- so
-/// this proves the refusal fires on the mere PRESENCE of a `prompt_vision`
-/// map, which is what `supports_chunked_prefill` and the driver's own guard
-/// both check, rather than on any particular span content.
+/// The construction is kept exactly as the refusal test had it, because it
+/// is worth more as an equivalence than it was as a refusal: the position
+/// table is DEGENERATE (`(p, p, p)` triples, `rope_delta` 0, no spans) and
+/// no image embedding is attached, so this is the CHUNKED mirror of
+/// `vision_inject_synthetic.rs`'s
+/// `a_degenerate_position_table_is_byte_identical_to_no_table_at_all` --
+/// every row takes the table lookup and every angle is the one a text-only
+/// prompt would have got.
+///
+/// It therefore pins the half of the change that must move NOTHING. The
+/// image cases live in `vision_chunked_synthetic.rs`, which needs a tower.
 #[test]
-fn a_vision_prompt_is_refused_by_name() {
-    let mut runner = open_runner("vision-refused");
+fn an_image_free_map_reproduces_the_sequential_logits() {
+    let mut runner = open_runner("vision-image-free-map");
     let positions = MropePositions {
         triples: (0..PROMPT.len() as i32).map(|p| (p, p, p)).collect(),
         rope_delta: 0,
@@ -363,18 +368,18 @@ fn a_vision_prompt_is_refused_by_name() {
         .set_prompt_vision(&[], &positions, PROMPT.len())
         .expect("an image-free map validates");
     assert!(
-        !runner.supports_chunked_prefill(),
-        "an install with a live prompt_vision map must not report chunked-prefill support"
+        runner.supports_chunked_prefill(),
+        "an image prompt chunks now: a live prompt_vision map must not suppress support"
     );
 
-    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
-    let err = runner
-        .prefill_chunk(&PROMPT, 0, &mut logits)
-        .expect_err("a vision prompt must be refused by the chunked driver");
-    assert!(
-        err.to_string().contains("text-only"),
-        "the refusal must name the reason; got {err}"
-    );
+    let reference = sequential_prefill(&mut runner, &PROMPT);
+    for chunk in [1usize, 2, 3, 4, 7, 11] {
+        let got = chunked_prefill(&mut runner, &PROMPT, chunk);
+        assert_eq!(
+            got, reference,
+            "chunk {chunk} moved the logits under a degenerate position table"
+        );
+    }
 }
 
 /// An open drafter is refused by name too (`families/qwen/prefill.rs`'s

@@ -166,10 +166,17 @@ impl<'a> TurnSplitter<'a> {
             Ok(events) => out_structured(events, out),
             // A model writing prose that merely looks like a tool call must
             // not fail the turn. On a parser error the decoder is abandoned
-            // and the rest of the run is emitted as raw text; what the
-            // decoder had already buffered when it gave up is lost with it.
+            // and the rest of the run is emitted as raw text; the span body
+            // it was still buffering comes back with the error via
+            // `take_failed_span_text`, because that text is exactly what a
+            // downstream rescue layer (the server's guardrails) parses calls
+            // out of -- dropping it made a malformed span lose its call
+            // twice over, once to the parser and once to the rescue.
             Err(_) => {
                 self.degraded = true;
+                if let Some(body) = decoder.take_failed_span_text() {
+                    out(TurnEvent::Content(body));
+                }
                 if !text.is_empty() {
                     out(TurnEvent::Content(text));
                 }
@@ -403,6 +410,46 @@ mod tests {
         let mut sink = Vec::new();
         assert!(s.finish(&mut |e| sink.push(e)).is_ok());
         assert!(sink.is_empty());
+    }
+
+    #[test]
+    fn a_malformed_span_releases_its_body_as_content() {
+        // The pre-3.5 Qwen shape: bare JSON inside the `<tool_call>` /
+        // `</tool_call>` special-token pair. The XML parser refuses it, the
+        // splitter degrades -- and the body itself must reach the stream as
+        // content, because the server's rescue layer parses the call back
+        // out of `generated.text`. Before the failed-span release existed,
+        // this text was dropped with the decoder and the call was lost
+        // twice over.
+        let tok = fixture("ChatMLTokenizer");
+        let allowed: HashSet<String> = ["f".to_string()].into_iter().collect();
+        let mut s = TurnSplitter::new(&tok, &allowed, ReasoningEffort::Off, String::new, &[]);
+        assert!(s.decodes());
+
+        let body = r#"{"name": "f", "arguments": {"x": "1"}}"#;
+        let body_ids = tok.encode(body, false);
+        let mut events = Vec::new();
+        feed_all(
+            &mut s,
+            &mut events,
+            &std::iter::once(delta(tok.tool_call_start_id, ""))
+                .chain(body_ids.iter().map(|&id| delta(id, "")))
+                .chain(std::iter::once(delta(tok.tool_call_end_id, "")))
+                .chain([delta(-6, " then "), delta(-7, "prose")])
+                .collect::<Vec<_>>(),
+        );
+
+        // No tool call, no failure surfaced, and the body IS the stream's
+        // leading content -- followed by the post-error raw pass-through.
+        assert!(s.degraded());
+        assert_eq!(
+            events,
+            vec![
+                TurnEvent::Content(body.to_string()),
+                TurnEvent::Content(" then ".to_string()),
+                TurnEvent::Content("prose".to_string()),
+            ]
+        );
     }
 
     #[test]

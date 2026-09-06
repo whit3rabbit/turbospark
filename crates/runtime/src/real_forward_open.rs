@@ -157,6 +157,7 @@ impl RealForwardRunner {
             real_qwen: None,
             real_mtp: None,
             real_dflash: None,
+            batched_tape: None,
             real_llama: None,
             real_gpt_oss: None,
             real_muse: None,

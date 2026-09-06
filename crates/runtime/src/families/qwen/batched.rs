@@ -212,6 +212,10 @@ impl RealForwardRunner {
         let top_k = arch.top_k_experts as usize;
         let num_experts = arch.num_experts as usize;
         let moe_inter = arch.moe_intermediate_size;
+        // The linear-layer ordinal the tape records slots by. Advances only
+        // on linear layers, in layer order, which is the order both the
+        // recording blit and the replay walk use.
+        let mut linear_slot = 0usize;
         // The last MoE layer's routed buffer is still in flight when the
         // loop ends; the head below reads `scratch.x`, which it writes.
         let mut routed_in_flight: Option<gpu::CommittedPass> = None;
@@ -245,6 +249,16 @@ impl RealForwardRunner {
                 &layer_tensor(layer, "post_attention_layernorm.weight"),
                 hidden,
             )?;
+            // The tape slot is this pass's linear-layer ordinal, the same
+            // ordinal the replay walk recomputes. Constant when the scratch
+            // records no tape.
+            let tape_slot = if batched.verify_tape.is_some() && arch.layer_is_linear(layer) {
+                let slot = linear_slot;
+                linear_slot += 1;
+                Some(slot)
+            } else {
+                None
+            };
             super::verify_layers::encode_qwen_layer_attn_and_norms_batched(
                 context,
                 &pass,
@@ -261,6 +275,7 @@ impl RealForwardRunner {
                 hidden,
                 start_position,
                 batch,
+                tape_slot,
             )?;
 
             if num_experts == 0 {
@@ -373,6 +388,17 @@ impl RealForwardRunner {
             gpu::write_buffer_bytes(&scratch.x, 0, &last);
         }
         gpu::read_buffer_f16_into(&batched.logits, 0, logits);
+        // THE TAPE RECORD, valid until the next trunk pass clears it: this
+        // pass's start and row count, the metadata half of what
+        // `rollback_retaining` needs (the row inputs themselves sit in the
+        // scratch's tape buffers). Set AFTER the pass completes, so a
+        // failed pass records nothing.
+        if batched.verify_tape.is_some() {
+            self.batched_tape = Some(crate::real_forward_rollback::VerifyTape {
+                start_position,
+                rows: batch,
+            });
+        }
         // The dflash capture's bookkeeping, last so it cannot alias the
         // scratch borrow above: `batch` rows whose positions start at
         // `start_position`, ready for the next round's context write over

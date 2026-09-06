@@ -336,7 +336,15 @@ cargo test -p turbospark-runtime
 
     **The GDN recurrent state is the one thing no other Step-1 driver has to reason about, and it resolves for free.** `encode_linear_block`'s decode-shaped kernels advance `qwen.gdn.state_buffer(layer)` in place with no position argument, so calling it once per token, strictly in order, within one layer's inner loop before the next layer starts, reproduces sequential decode's math exactly -- Gotcha 4's constraint, satisfied by construction rather than by new machinery. It is also why cross-chunk continuity needs no handoff: the state buffer is the one sequential decode already reads and writes, so a prompt spanning several `prefill_chunk` calls carries it forward automatically.
 
-    Two refusals are BY NAME, both specific to this family. An image prompt (`self.prompt_vision.is_some()`) is refused: the image injection in `produce.rs` is this family's only embedding call site (Gotcha 27), and this first cut stays text-only rather than growing a second site sight unseen. An open drafter (`self.real_mtp.is_some() || self.real_dflash.is_some()`) is refused too: the sequential dense branch fires the DFlash2 aux-capture hook on every pass, which this driver does not encode, so silently prefilling through it would leave the drafter reading a stale or empty capture. `supports_chunked_prefill()` folds both into its qwen clause so a caller routes around the driver entirely in the ordinary case; the driver keeps both checks as a backstop. `qwenGdnMoe` (Ornith 35B) is a follow-up, matching how `llama`'s two halves landed as separate steps.
+    **AN IMAGE PROMPT CHUNKS SINCE 2026-09-06, and this paragraph used to record its refusal.** The driver mirrors both halves of `produce.rs`'s vision handling now -- the tower-row blit that REPLACES the table lookup, and the mRoPE angle -- so `supports_chunked_prefill` no longer excludes a live `prompt_vision` map and `crates/ffi`'s own `image_parts.is_empty()` conjunct is gone with it. This is the payoff case rather than a completeness one: a real page is over a thousand merged tokens of a ~1,300-token prompt, which is exactly the regime chunking exists for.
+
+    **THE HOST-WRITE ARGUMENT IS THE REUSABLE PART, because it is the counterexample to Gotcha 14's `qwen4` PLE bug rather than another instance of it.** `write_buffer_bytes` lands the instant the encoding function runs, not in commit order -- that is what left `ngram_emb` holding only the LAST token's value for a whole micro-batch. Two things make the same primitive correct here, and BOTH are properties of the DESTINATION rather than of the write: `scratch.x` is `hidden * MAX_PREFILL_BATCH` halfs wide so each row targets a disjoint byte range, and an image row has NO competing GPU write, because the blit replaces the embedding dispatch rather than racing it. **The second clause holds only while the lookup is dispatched PER ROW** -- an M-row tiled `encode_embed_any` would execute after commit and clobber every host write that had already landed, which is the PLE symptom exactly. So the rule generalises as: a host write into a per-token buffer is safe when the rows are disjoint AND nothing dispatched later writes the same range.
+
+    Its ordering argument is also NOT `produce.rs`'s. There it is "the pass is not committed until the first router wait far below"; here it is that this arm commits EXACTLY ONCE and `pass` is bound immutably, so nothing between the blit and the commit can commit. Any future mid-pass commit in this driver breaks it silently.
+
+    Two refusals remain BY NAME. **`TURBOSPARK_BATCHED_GEMV` plus an image prompt**, and it is about the ANGLE rather than the embedding: the blit is arm-agnostic and lands fine, but `encode_full_attention_block_batched` dispatches `rope_neox_subdim` at the raw position and takes no `RopePosition` at all, so every image position would be rotated by its INDEX. That encoder is SHARED with the MTP/DFlash2 verify pass, which is vision-blind in both halves, so it is deliberately left without the parameter rather than given one that one of its two callers would fill with a placeholder -- an absence stays visible, a defaulted argument does not. **An open drafter** (`self.real_mtp.is_some() || self.real_dflash.is_some()`) is refused too: the sequential dense branch fires the DFlash2 aux-capture hook on every pass, which this driver does not encode, so silently prefilling through it would leave the drafter reading a stale or empty capture. `supports_chunked_prefill()` folds the drafter clause into its qwen clause so a caller routes around the driver entirely in the ordinary case; it deliberately does NOT fold in the batched-GEMV one, because that predicate answers about the INSTALL while the seam is a per-RUN choice. `qwenGdnMoe` (Ornith 35B) is a follow-up, matching how `llama`'s two halves landed as separate steps.
+
+    **The two vision halves cannot be separated by an ordinary image prompt, which is measured rather than assumed.** On a prompt with a real image, deleting the blit and forcing `Sequential` redden exactly the same set of cases, so a red run says "vision is broken" and not which half. `vision_chunked_synthetic.rs` carries two purpose-built cases that do attribute it: a ONE-MERGED-TOKEN image (2x2 grid at merge 2), whose table is degenerate and whose `rope_delta` is 0, so the angle mutation cannot reach it; and a spans-free table SHIFTED by a constant, which has no image row at all, so the blit mutation cannot reach it. Also measured, and refuting the obvious prediction: `row_for(t)` instead of `row_for(start_position + t)` reddens even a SINGLE-CHUNK case, because a chunk is split into micro-batches of 16 inside the driver and `start_position` advances within it. What reaches that bug is the prompt being longer than a micro-batch, never the chunk size.
 
     **`TURBOSPARK_BATCHED_GEMV` WAS WIRED THE SAME DAY** and this paragraph's "no new kernel, no new buffer" describes the DEFAULT arm alone; the seam's arm reuses `batched_layers.rs`'s three verify-pass encoders and allocates a `BatchedScratch` lazily. What stays refused is the WIDTH rather than the family (INT4-affine only), and the batched arm is NOT byte-identical on a real install -- see Gotcha 7's `TURBOSPARK_BATCHED_GEMV` bullet for the shape floor that makes that expected rather than a bug, and for the three guards the arm carries.
 
@@ -948,11 +956,20 @@ cargo test -p turbospark-runtime
     against a flow that ignores token ids entirely, the second alone against
     one that never blits.
 
-    **This is the family's ONLY embedding call site**, which is what makes
-    one seam sufficient. The qwen flow is the one `supports_chunked_prefill()`
-    answers `false` for, so there is no chunked driver with a second call, and
-    `produce_prefill` is the same inner function under `skip_head`. A family
-    that acquires a chunked driver acquires a second site with it.
+    **THIS PARAGRAPH USED TO SAY "the family's ONLY embedding call site", AND
+    ITS OWN CLOSING SENTENCE PREDICTED WHAT WOULD END THAT.** It read "a family
+    that acquires a chunked driver acquires a second site with it", and on
+    2026-09-06 the dense qwen driver acquired one. There are two sites now:
+    this one and `prefill.rs`'s embed loop. `produce_prefill` is still not a
+    third -- it is this same inner function under `skip_head`.
+
+    **Two sites means the seam is no longer sufficient on its own, and what
+    replaces it is an EQUIVALENCE rather than a second review.**
+    `vision_chunked_synthetic.rs` requires the chunked driver to be
+    byte-identical to this flow on an image prompt across a chunk-span sweep,
+    so a change made here and not there reddens rather than diverging quietly.
+    Reach for that file when touching either site, and read Gotcha 14's qwen
+    paragraph for why the driver's host-write argument is not this one's.
 
 28. **THE mRoPE DISPATCH CONDITION IS A PROPERTY OF THE DATA, NOT A
     CLASSIFICATION OF THE TOKEN.** `RopePosition::Triple(t, h, w)` with

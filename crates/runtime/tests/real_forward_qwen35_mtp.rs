@@ -41,7 +41,7 @@ use turbospark_repack::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
     build_synthetic_qwen_gdn_dense_install_with_mtp,
 };
-use turbospark_runtime::{LogitProducer, RealForwardRunner};
+use turbospark_runtime::{LogitProducer, RealForwardRunner, SpeculativeProducer};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -756,9 +756,105 @@ fn a_rewound_head_and_a_rolled_back_trunk_redraft_the_same_logits() {
         .expect_err("rewinding forwards must be refused");
 }
 
+/// The retaining rollback's MTP half: after a partial round undone by
+/// `rollback_retaining` (KV rows kept, GDN state replayed over the verify
+/// tape) instead of `rollback` plus a shortened re-verify, the FIRST DRAFT
+/// off the bonus token must be byte-identical to the old shape's. The draft
+/// is the sharpest observable for this, because it reads two things the two
+/// shapes could in principle disagree about: the trunk's GDN/KV state, AND
+/// `h_t` out of scratch row 0 -- which the re-verify used to refresh and
+/// which the retaining path refreshes with an explicit copy of the last
+/// kept row.
+///
+/// INT4, like the batched-parity test below: the batched GEMM exists at 4
+/// bits alone, so the verify this round is built on cannot run on the 1-bit
+/// fixture the rest of this file uses.
+#[test]
+fn the_draft_after_a_retaining_rollback_matches_the_reverify_shape() {
+    ask_for_drafts();
+    let dir = temp_dir("retaining");
+    build_synthetic_qwen_gdn_dense_install_with_mtp(&dir, VOCAB, LAYERS, "mtp-int4", 4)
+        .expect("a 4-bit dense install with a head builds");
+    let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("manifest peeks");
+
+    fn draft_after_rollback(runner: &mut RealForwardRunner, retain: bool) -> String {
+        let vocab = VOCAB as usize;
+        runner.reset();
+        let mut row = vec![f16::from_f32(0.0); vocab];
+        let mut token = 5i32;
+        for position in 0..4usize {
+            runner.produce(token, position, &mut row).expect("produce");
+            token = argmax(&row);
+            if position + 1 < 4 {
+                runner.mtp_prime_step(token, position).expect("prime");
+            }
+        }
+        let base = 4usize;
+
+        // Learn the target's row argmaxes on a throwaway verify; a full
+        // rollback undoes it (and clears the tape with it). Causality makes
+        // rows 0 and 1 exactly what the real pass below will compute.
+        let mut learn = vec![f16::from_f32(0.0); 3 * vocab];
+        let point = runner.checkpoint();
+        runner
+            .verify(&[token, 13, 21], base, &mut learn)
+            .expect("learn verify");
+        let a0 = argmax(&learn[0..vocab]);
+        let a1 = argmax(&learn[vocab..2 * vocab]);
+        runner.rollback(&point);
+
+        // The real feed: one accepted proposal, one rejected, so the round
+        // is partial and keep_rows == 2.
+        let rejected = ((a1 as usize + 1) % vocab) as i32;
+        let feed = [token, a0, rejected];
+        let mut batch = vec![f16::from_f32(0.0); 3 * vocab];
+        let point = runner.checkpoint();
+        runner.verify(&feed, base, &mut batch).expect("verify");
+        assert_eq!(
+            argmax(&batch[0..vocab]),
+            a0,
+            "the crafted first proposal must be accepted"
+        );
+        assert_ne!(
+            argmax(&batch[vocab..2 * vocab]),
+            rejected,
+            "the crafted second proposal must be rejected"
+        );
+
+        let keep = 2usize;
+        if retain {
+            runner
+                .rollback_retaining(&point, keep)
+                .expect("the retaining rollback replays the tape");
+        } else {
+            runner.rollback(&point);
+            let mut replay = vec![f16::from_f32(0.0); keep * vocab];
+            runner
+                .verify(&feed[..keep], base, &mut replay)
+                .expect("the shortened replay verify runs");
+        }
+        // The bonus comes from the last kept row. The head is untouched by
+        // either rollback shape, so it still sits at its prefill cursor
+        // covering `[0, base - 1)` -- draft there, where the step is legal,
+        // and it reads `h_t` out of trunk scratch row 0: exactly the row
+        // the two shapes could disagree about.
+        let bonus = argmax(&batch[(keep - 1) * vocab..keep * vocab]);
+        let mut draft = vec![f16::from_f32(0.0); vocab];
+        runner
+            .mtp_draft_step(bonus, base - 1, &mut draft)
+            .expect("draft");
+        digest(&draft)
+    }
+
+    let mut legacy = open_at_depth(&dir, peeked.clone()).expect("open");
+    let a = draft_after_rollback(&mut legacy, false);
+    let mut retained = open_at_depth(&dir, peeked).expect("open");
+    let b = draft_after_rollback(&mut retained, true);
+    assert_eq!(a, b, "the draft after the two rollback shapes diverged");
+}
+
 /// STEP 4's WHOLE CONTRACT: one batched pass is BIT-IDENTICAL to the same
 /// tokens run one at a time (`docs/MTP_SPECULATIVE.md`).
-///
 /// This is what makes speculative output provably identical to
 /// non-speculative output, and it is asserted with `==` rather than a
 /// tolerance because the batched kernel does not reassociate any sum -- each

@@ -167,6 +167,12 @@ pub struct RealForwardRunner {
     /// field so nothing can disagree with the bytes.
     pub(crate) real_mtp: Option<crate::families::qwen::MtpState>,
     pub(crate) real_dflash: Option<crate::families::qwen::DflashState>,
+    /// The last batched verify's tape record (`crate::real_forward_rollback::
+    /// VerifyTape`), `None` until one runs and after any other trunk pass or
+    /// any rollback consumes or invalidates it. This is what lets a partial
+    /// speculative round replay the accepted prefix's recurrent state over
+    /// recorded row inputs instead of re-running a whole forward pass.
+    pub(crate) batched_tape: Option<crate::real_forward_rollback::VerifyTape>,
     /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
     /// is Mixtral-style MoE only; a dense one is refused at build.
     pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,

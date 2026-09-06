@@ -8,8 +8,8 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-1,435 tests as of 2026-08-29, all passing, plus 147 that are `#[ignore]`d
-(see below). **Re-count before quoting either number.** Both were stale by more
+1,435 tests as of 2026-08-29, plus 157 that are `#[ignore]`d, re-counted
+2026-09-06 (see below). **Re-count before quoting either number.** Both were stale by more
 than 2x when this line was last corrected (they read 458 and 18, unchanged
 since 2026-08-08 while eleven families and phases landed), and nothing goes
 red when they rot: a count is prose. The one-liners that produce them are
@@ -145,10 +145,16 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-80 targets carry `#[ignore]`d tests, 147 functions between them as of
-2026-08-29 (`bench` 35/52, `repack` 33/61, `gpu` 4/15, `runtime` 2/6,
-`selection` 2/4, `catalog` 2/3, `server` 1/3, `tokenizer` 1/3). Each has a reason string and
+85 targets carry `#[ignore]`d tests, 157 functions between them as of
+2026-09-06 (`bench` 39/59, `repack` 33/61, `gpu` 4/15, `runtime` 3/7,
+`selection` 2/4, `catalog` 2/3, `server` 1/5, `tokenizer` 1/3). Each has a reason string and
 a module doc with the exact command. The commands below are the ones that are gates.
+
+Those numbers read 147 across 80 targets until 2026-09-06, unchanged since
+2026-08-29 while ten more landed. Nothing goes red when they rot, which is
+what the paragraph above says and is worth demonstrating rather than only
+asserting. **The one-liner counts `crates/*/tests` only**, so an `#[ignore]`
+inside a crate's `src/` (there is one, in `crates/ffi`) is not in it.
 
 **The BENCHMARK targets are not gates and report rather than assert**, so
 they are listed here and documented where their numbers live rather than
@@ -258,10 +264,14 @@ TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
 # families in one process cannot each have a ceiling.
 #
 # THE TWO BLOCKS BELOW ARE EXAMPLES, NOT THE FULL LIST, and the list has
-# grown past what is worth duplicating here: SEVEN oracle targets (gemma4,
-# qwen36, qwen3moe, mistral, gptoss, qwen38, ternary) and SEVEN quality
-# gates (the same list without mistral, which has none, plus iq3's).
-# AGENTS.md's command block carries all fourteen
+# grown past what is worth duplicating here: TWELVE oracle targets (gemma4,
+# qwen36, qwen3moe, mistral, gptoss, museglimmer, ornith9b, ornith35b,
+# qwen38, qwen4exp, ternary, vision) and ELEVEN quality gates (the same
+# list without mistral and vision, which have none, plus iq3's).
+#
+# Those two numbers read SEVEN and SEVEN until 2026-09-06, which is the
+# rot this very paragraph tells you to check for -- run the `ls` below
+# rather than believing them. AGENTS.md's command block carries the full set
 # with their env vars and their per-family quirks -- the two windows that
 # are not 4,096, the one budget that is not 1,024, and which installs each
 # needs. Run `ls crates/bench/tests/*_{quality_gate,memory_oracle}.rs` if
@@ -304,6 +314,41 @@ TURBOSPARK_GEMMA4_IQ_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
 # strided subset of the routed experts, re-measure. About 30 seconds.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test quality_sensitivity --release -- --ignored --nocapture
+
+# THE VISION GATES (docs/VISION.md's stages 2 and 4). Listed because they
+# were in none of these sections until 2026-09-06 -- this file did not
+# contain the word "vision" at all, through nine landed milestones.
+#
+# `~/models/qwen38-27b-vision.gturbo` is a SEPARATE install from
+# `qwen38-27b.gturbo` on purpose: that one backs the frozen qwen38 rows and
+# ~0.9 GiB of tower would force a re-freeze for a component neither gate
+# exercises. Do not merge them.
+#
+# The multi-page memory oracle. Four rounds over ONE open runner (large ->
+# medium -> small -> large again), asserting the peak does not grow past
+# what the largest page establishes AND that each round's transcription
+# carries a marker unique to that page -- the second half is not decoration,
+# an oracle that asserts only a memory SHAPE cannot see whether the pages
+# were read at all, which is the M-V5 bug's exact shape.
+TURBOSPARK_QWEN38_VISION_INSTALL_DIR=~/models/qwen38-27b-vision.gturbo \
+  cargo test -p turbospark-bench --test vision_memory_oracle --release -- --ignored --nocapture
+
+# The tower against mlx-vlm, per stage. Needs a dump from
+# `scripts/vision_tower_probe.py --mode dump` as well as the install, and
+# the probe tower must be at the revision the install was STREAMED from --
+# the two published towers have identical shapes, so pairing the wrong one
+# compares two different models and fails nothing loudly.
+TURBOSPARK_QWEN38_VISION_INSTALL_DIR=~/models/qwen38-27b-vision.gturbo \
+TURBOSPARK_VISION_DUMP_DIR=/tmp/vision-dump \
+  cargo test -p turbospark-runtime --test vision_tower_parity --release -- --ignored --nocapture
+
+# The full model against mlx-vlm on a text+image prompt, which is the only
+# instrument that reaches which rows land at which positions and whether
+# the mRoPE selector agrees. Its working dump is ~2 GB and regenerable in
+# about four minutes, so /tmp is correct for it. See docs/VISION.md.
+TURBOSPARK_QWEN38_VISION_INSTALL_DIR=~/models/qwen38-27b-vision.gturbo \
+TURBOSPARK_VISION_KLD_DIR=/tmp/vision-kld \
+  cargo test -p turbospark-bench --test vision_logit_dump --release -- --ignored --nocapture
 
 # The cross-engine half of Phase Q, and the one test here whose second
 # step is NOT cargo: it dumps this port's full-vocab logits plus the exact

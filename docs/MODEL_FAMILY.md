@@ -53,15 +53,24 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     Mixtral and dense Llama, only the MoE half has a decode flow, and the
     refusal for the dense half therefore lives at `RealForwardRunner::open`
     rather than here (nothing in the string says which half a file is)
+  - `"qwen35"` -> `ModelFamily::QwenGdnDense`, the dense sibling of
+    `qwen35moe` and one suffix away from it -- exact equality is load-bearing
+    (see the HF table below)
   - `"qwen3moe"` -> `ModelFamily::Qwen3Moe`, which runs through the same
     decode flow as `Llama`: the layer graph is identical, and the two
     differences (per-head q/k norms, RMS epsilon 1e-6 against 1e-5) are
     keyed on the family inside that flow rather than given a fourth copy
     of it
-  - anything else -> refused, with a message that says whether the string is
-    *recognized but unported* (and what it would need) or *unknown*.
+  - `"gpt-oss"` -> `ModelFamily::GptOss` (MXFP4 experts, attention sinks)
+  - `"llama4"`, `"deepseek2"`, `"phi3"` are recognized but unported: the
+    refusal names what each would need, and `tests/arch_registry_network.rs`
+    re-reads every row's witness header so the string cannot rot silently
+  - anything else -> refused as unknown. The audited candidate strings for
+    future bring-ups are in ROADMAP.md section 13, not here.
 - **Hugging Face Safetensors**: the family is chosen by the caller, which picks
-  `write_gemma4_install` or `write_qwen_gdn_moe_install`. `config.json`'s `model_type`
+  the per-family install writer (`write_gemma4_install`,
+  `write_qwen_gdn_moe_install`, and one sibling per family below).
+  `config.json`'s `model_type`
   is a guard on that choice rather than a dispatcher: each parser refuses a
   config that positively claims another family, since without it the wrong
   parser silently produces an `ArchConfig` labelled with the family it
@@ -79,6 +88,14 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     and 2 bits, and they share one `ArchConfig` exactly. The last two needed
     no field, no kernel-independent change and no decode flow, only their
     own affine width.
+  - `"muse_glimmer"` / `"muse_glimmer_text"` -> `ModelFamily::MuseGlimmer`
+  - `"qwen4_exp"` / `"qwen4_exp_text"` -> `ModelFamily::Qwen4Exp`
+  - The last two families are HF-ONLY in the registry: published GGUF
+    conversions of both now exist (`muse-glimmer` and `qwen4exp`,
+    witnessed off unsloth's conversions, 2026-09-06 -- note the third
+    naming drift, HF underscores where GGUF hyphenates or drops the
+    underscore), but the GGUF table above has no row for either, so
+    `pull`ing those files refuses at the registry until rows land.
   - The `_text` spellings are what the multimodal checkpoints' `text_config`
     carries. `architectures` (class names like
     `Gemma4ForConditionalGeneration`) is deliberately not consulted: it is a
@@ -88,7 +105,14 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
 
 ## 2. Complete Model Family Parity Matrix
 
-The table below provides a comprehensive list of all major LLM architectures supported across `llama.cpp`, `mlx-lm`, `turbo-fieldfare`, and `turbospark`.
+The table records what the code does TODAY: the nine `ModelFamily` variants
+(eight running, one scaffolded), the three registered-but-unported strings,
+and the closest comparisons across `llama.cpp`, `mlx-lm`, and
+`turbo-fieldfare`. **The forward-looking family list is deliberately not this
+page's job**: candidates, witnessed `general.architecture` strings, expert-slot
+arithmetic, and bring-up notes live in ROADMAP.md section 13 (the oMLX and
+Unsloth catalog audits, 2026-09-06). A family appears here when a
+`ModelFamily` variant, a baseline and a decode flow do.
 
 **Read the footprint column as an MoE result, not a general one.** The
 ~1.6-2.2 GiB figures come from streaming routed experts: only the resident core
@@ -116,37 +140,47 @@ rather than assumed (`tests/arch_registry_network.rs`): **Mixtral reports
 expresses its MoE through `llama.expert_count = 8`. The two halves need very
 different work, so they are two rows below even though they are one string.
 Rows marked *Registered, planned* have had their architecture string read
-off a real published file and carry a row in `arch_registry.rs`. On every other
-row the parenthesised string is llama.cpp's naming, unconfirmed here and not in
-the registry -- pointing a checkpoint at one of those gets the "not in this
-port's registry" message rather than the "recognized, needs X" one.
+off a real published file and carry a row in `arch_registry.rs`. Every other
+turbospark-column status on this table means the string is NOT in the
+registry, whether or not it has been witnessed in the wild -- pointing a
+checkpoint at one of those gets the "not in this port's registry" message
+rather than the "recognized, needs X" one.
 
 | Model Family / GGUF `general.architecture` | Key Architectural Features | `turbospark` (Rust) | `turbo-fieldfare` (Swift) | `llama.cpp` | `mlx-lm` | Peak RAM Footprint in `turbospark` |
 | --- | --- | :---: | :---: | :---: | :---: | ---: |
 | **Gemma 4 26B-A4B** (`gemma4`) | SWA/Full Attention, MoE (128 experts, top-8), Tied Embeddings | **Full Support** | **Full Support** | Full Support | Full Support | **~2.1 GiB RAM** |
 | **Qwen 3.6 35B-A3B** (`qwen35moe`) | Gated-DeltaNet Linear Attention + MoE (256 experts, top-8) | **Full Support** | **Full Support** | Full Support | Full Support | **~1.6 GiB RAM** |
-| **DeepSeek V3** (`deepseek2`, confirmed) | Multi-head Latent Attention (MLA), DeepSeek MoE | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
-| **DeepSeek V4 Flash** (string unconfirmed) | MLA, mHC streams, Sinkhorn combine, INT2 experts | *Scaffolded* | *Scaffolded* | Full Support | Full Support | *TBD* |
+| **DeepSeek V3** (`deepseek2`, confirmed; the same string also reports Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3) | Multi-head Latent Attention (MLA), DeepSeek MoE | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **DeepSeek V4 Flash / Pro** (`deepseek4`, witnessed 2026-09-06) | MLA, hyper connections, SWA (window 128), 256-384 experts top-6; the Flash variant carries a VISION tower | *Scaffolded* (`DeepseekV4Flash`) | *Scaffolded* | Full Support | Full Support | *TBD* |
 | **Mixtral 8x7B / 8x22B** (`llama` + `expert_count`) | Plain GQA attention + MoE (8 experts, top-2), no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 2, Mistral 7B, TinyLlama** (`llama`, dense) | Standard Dense Transformer, GQA | **Full Support** (ROADMAP M4) | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
+| **Qwen3.8-Flash-Next / REAP-288** (`qwen4_exp`, HF only) | Fine-grained MoE (288-512 experts, top-10), GDN + sigmoid-gated norm, QSA block-sparse attention, PLE n-gram head, hyper-connections | **Full Support** | *Planned* | Full Support (`qwen4exp`) | Full Support | **~2.5 GiB RAM** (oracle peak at the 2,048 bench window; the 68G install streams) |
 | **Llama 3.1 / 3.2 / 3.3** (`llama`, dense) | The above plus LEARNED RoPE frequency scaling, which ships as a TENSOR (`rope_freqs.weight`) and has no kernel input here | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks, per-projection biases, YaRN, clamped SwiGLU | **Full Support** | *Planned* | Full Support | Full Support | *MoE at 12.6 MiB per expert; 20B keeps the ceiling at 4.73 GiB of slot cache, 120B does not stream usefully* |
-| **Muse Glimmer 30B** (`muse_glimmer`, HF only) | Dense GQA, 3-sliding/1-full 2048 window, **NoPE on the full layers**, separate attention output gate, CENTERED per-layer norms against a PLAIN final one, TWO RMS epsilons, logit softcap behind an output multiplier | **Full Support** | *Not supported* | *No GGUF published* | Full Support (mlx-vlm) | **~535 MiB RAM** (dense at 8,192 context; see note) |
-| **Phi-3 / Phi-3.5** (`phi3`) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
-| **Command-R / Command-R+** (`command-r`) | RAG / Tool-calling tuned architecture | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **Grok-1** (`grok`) | 314B MoE architecture (8 experts, top-2) | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **DBRX** (`dbrx`) | Fine-grained MoE (16 experts, top-4) | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **StarCoder / StarCoder2 / Stargate** (`starcoder`, `starcoder2`) | Specialized code generation Transformer | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **Falcon 7B / 40B / 180B** (`falcon`) | Multi-Query Attention (MQA), parallel attention/FFN | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **Baichuan / Baichuan2** (`baichuan`) | ALiBi / RoPE dense architecture | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **InternLM / InternLM2** (`internlm2`) | GQA, RoPE scaling | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **MiniCPM / MiniCPM3** (`minicpm`, `minicpm3`) | SwiGLU, Scale-depth RoPE | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **OLMo / OLMo 2** (`olmo`, `olmo2`) | Non-bias LayerNorm, SwiGLU | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **Exaone** (`exaone`) | GQA, SwiGLU | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **GPT-2 / GPT-NeoX / MPT / Bloom** (`gpt2`, `gptneox`, `mpt`, `bloom`) | Legacy dense autoregressive Transformers | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
+| **Muse Glimmer 30B** (`muse_glimmer`, HF only) | Dense GQA, 3-sliding/1-full 2048 window, **NoPE on the full layers**, separate attention output gate, CENTERED per-layer norms against a PLAIN final one, TWO RMS epsilons, logit softcap behind an output multiplier | **Full Support** | *Not supported* | Full Support (`muse-glimmer`, published after this row was written) | Full Support (mlx-vlm) | **~535 MiB RAM** (dense at 8,192 context; see note) |
+| **Phi-3 / Phi-3.5** (`phi3`; Phi-4 reports the same string) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
+
+Every family not named above is UNREGISTERED here and refused as unknown --
+including Command-R, Grok, DBRX, StarCoder, Falcon, Baichuan, InternLM,
+MiniCPM, OLMo, Exaone and the GPT-2/NeoX/MPT/Bloom legacy lines, which an
+earlier version of this table carried as "*Planned*" without a registry row,
+a baseline, or a roadmap entry behind them. The candidate list for future
+bring-ups, each entry with its witnessed `general.architecture` string,
+expert-slot arithmetic, and what it would need in this engine, is
+[ROADMAP.md section 13](../ROADMAP.md) and is not duplicated here.
+
+**Vision is per-tower, not per-family, so this page records it once**: the
+engine runs exactly one vision tower (the `qwen3_5` tower, the Qwen3-VL-lineage
+ViT with mRoPE), and only the `qwen3_5` family consumes it end to end --
+[`docs/VISION.md`](VISION.md) is the home for how it works. A VLM checkpoint of
+any other running family parses to a TEXT-only config today: Gemma 4's and
+Muse Glimmer's vision tensors are dropped at repack, and "Full Support" above
+therefore never means vision support. The per-model vision inventory -- which
+vision-capable models `mlx-vlm` ships and which of them this port lacks --
+lives in [ROADMAP.md section 14](../ROADMAP.md) and is not duplicated here.
 
 ---
 
@@ -163,12 +197,18 @@ port's registry" message rather than the "recognized, needs X" one.
 ### How `turbospark` Implements This Strategy
 `turbospark` follows a clean, strongly-typed Rust implementation of the same pattern:
 - **Architecture Registry** (`crates/repack/src/arch_registry.rs`): the string tables, split into what runs and what is merely recognized. llama.cpp's `llm_arch` enum conflates the two because every variant it names has a graph builder; here they are separate, so a recognized-but-unported architecture is a better error rather than a half-wired family.
-- **`ModelFamily` Enum** (`crates/model-io/src/arch_config.rs`): Defines supported discriminators (`Gemma4`, `QwenGdnMoe`, `Llama`, `DeepseekV4Flash`).
+- **`ModelFamily` Enum** (`crates/model-io/src/arch_config/family.rs`): nine
+  discriminators -- `Gemma4`, `QwenGdnMoe`, `Llama`, `Qwen3Moe`, `GptOss`,
+  `QwenGdnDense`, `MuseGlimmer`, `Qwen4Exp`, and `DeepseekV4Flash`
+  (declared, scaffolded, no baseline yet). The planned strings deliberately
+  get NO variant: `known_architecture` is exhaustive and `arch_validation`
+  compares its result field by field, so a placeholder would validate
+  installs against invented numbers (`arch_registry.rs`'s own doc).
 
 **One architecture string can cover two models, and support is then partial in a way no table column expresses.** `llama` is both Mixtral and dense Llama; only the MoE half has a decode flow, and nothing in the architecture string says which half a file is -- only `expert_count` does. So the registry calls `llama` supported, and `RealForwardRunner::open` refuses the dense half by name. A parity matrix row per MODEL rather than per string is the honest rendering, which is why the two rows above are split.
 - **Baseline Specifications** (`crates/model-io/src/arch_baselines.rs`): Provides compile-time defaults for behavioral architecture flags missing from GGUF metadata.
 - **Tensor Mapping Engine** (`crates/repack/src/gguf_names.rs`): Maps GGUF tensor naming conventions to canonical parameter names.
-- **Dedicated Metal Forward Passes** (`crates/runtime/src/real_forward_*.rs`): Each family owns an optimized Metal execution flow tuned for its layer graph.
+- **Dedicated Metal Forward Passes** (`crates/runtime/src/families/<family>/`): Each family owns an optimized Metal execution flow tuned for its layer graph; seven of them carry a chunked-prefill driver (all but the MoE half of `qwenGdnMoe`).
 
 ---
 
@@ -192,9 +232,11 @@ is keyed by string precisely so it can land without that risk.
 memory result comes from streaming routed experts, so an MoE architecture reuses
 the machinery that produces it, while a dense one gives up the ceiling and
 competes with llama.cpp on ground where this port has no advantage. That is why
-the first planned bring-up (ROADMAP Phase M2) is the `llama` architecture's MoE
-half (Mixtral) rather than its dense half, even though dense Llama is the
-cheaper of the two.
+the first bring-up (ROADMAP Phase M2, complete) was the `llama` architecture's
+MoE half (Mixtral) rather than its dense half, even though dense Llama is the
+cheaper of the two. Which family to bring up NEXT is a ROADMAP.md question,
+not a this-page question: section 13 carries the audited candidate list with
+witnessed strings and slot arithmetic.
 
 **Being MoE turned out to be necessary and not sufficient, and the correction
 is what chose the family after it.** The slot cache is
@@ -211,6 +253,8 @@ bring-up wrote. Both numbers come off the GGUF header before any download
 
 ## 5. Document References
 
+- Forward-looking family candidates, with witnessed strings and slot arithmetic: [ROADMAP.md section 13](../ROADMAP.md)
+- Per-model vision inventory (which VLMs `mlx-vlm` supports and this port does not): [ROADMAP.md section 14](../ROADMAP.md); the one running tower's mechanics: [`docs/VISION.md`](VISION.md)
 - Installing a model, and probing one that is not listed: [`docs/MODELS.md`](MODELS.md)
 - Architecture Bring-up Guide: [`docs/NEW_MODEL.md`](docs/NEW_MODEL.md)
 - `.gturbo` Format Specification: [`docs/GTURBO.md`](docs/GTURBO.md)

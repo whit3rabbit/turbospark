@@ -131,9 +131,16 @@ impl MtpState {
         let hidden = arch.hidden_size as u64;
         // `depth + 1`: a round verifies the confirmed token plus `depth`
         // proposals, so the widest pass is one row wider than the block.
-        let batched =
-            super::batched::BatchedScratch::new(context, arch, gdn_shape, depth.saturating_add(1))
-                .map_err(RealForwardError::Gpu)?;
+        // The tape records: the MTP path's partial rounds replay over it
+        // exactly as the DFlash2 path does.
+        let batched = super::batched::BatchedScratch::new(
+            context,
+            arch,
+            gdn_shape,
+            depth.saturating_add(1),
+            true,
+        )
+        .map_err(RealForwardError::Gpu)?;
         Ok(Some(Self {
             kv,
             concat: context.new_output_buffer(2 * hidden * 2),

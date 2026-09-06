@@ -125,7 +125,18 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         )));
     }
 
-    producer.reset();
+    // THE REUSE CONTRACT, the sequential loop's own: ask how much of this
+    // prompt the producer's state already covers, and reset only when the
+    // answer is none. On the real producer a drafter install reuses only
+    // the PURE-CONTINUATION case (`try_reuse_prefix`'s drafter guard) --
+    // exactly the multi-turn case a chat client generates, and the case
+    // this loop used to re-prefill in full every turn.
+    let reused = producer
+        .try_reuse_prefix(prompt_ids)
+        .min(prompt_ids.len() - 1);
+    if reused == 0 {
+        producer.reset();
+    }
     let mut logits = vec![LogitValue::from_f32(0.0); vocab_size];
     let mut draft_logits = vec![LogitValue::from_f32(0.0); vocab_size];
     // The confirmed token plus every proposal.
@@ -143,9 +154,15 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     // is also the configuration every number in `docs/MTP.md` was measured
     // in. Cheapening it is a real opportunity and needs the drafter's input
     // to be shown to survive `skip_head`, which nobody has measured.
+    //
+    // The reused positions are already in the producer's KV -- and, by the
+    // drafter guard that allowed the reuse, in the drafter's context KV too
+    // -- so both cursors start past them and `history` is seeded with the
+    // ids that built them.
     let prefill_start = Instant::now();
-    let mut position = 0usize;
-    for (i, &token) in prompt_ids.iter().enumerate() {
+    let mut position = reused;
+    history.extend_from_slice(&prompt_ids[..reused]);
+    for (i, &token) in prompt_ids.iter().enumerate().skip(reused) {
         producer
             .produce(token, position, &mut logits)
             .map_err(RuntimeError::Producer)?;
@@ -166,8 +183,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
                 position,
                 prompt_ids.len(),
                 prefill_start,
-                // Neither of these loops offers prefix reuse yet.
-                0,
+                reused,
                 producer.session_slot_evicted(),
             ));
         }
@@ -329,19 +345,44 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         //
         //    A SEQUENTIAL verify stops at the first rejection and so never
         //    overshoots; only a batched pass can, which is the asymmetry that
-        //    makes block 2 pay and block 8 lose (`docs/MTP.md`). Restoring is
-        //    the expensive half -- on the real drafter's family it copies the
-        //    whole gated-DeltaNet state, because a recurrent layer cannot be
-        //    rewound incrementally the way a KV cursor can.
+        //    makes block 2 pay and block 8 lose (`docs/MTP.md`).
+        //
+        //    Two restore shapes. With a TAPE (the real producer on the GDN
+        //    flow), the kept rows' KV stays in place and their recurrent
+        //    state is replayed over the inputs the verify recorded -- a few
+        //    small dispatches, and the verify's own logits for the bonus row
+        //    remain valid, so no forward pass runs. Without one, the whole
+        //    state goes back to the block start -- on the real drafter's
+        //    family that is a copy of the entire gated-DeltaNet snapshot,
+        //    because a recurrent layer cannot be rewound incrementally the
+        //    way a KV cursor can -- and a shortened re-verify replays the
+        //    accepted prefix through the model. The re-verify is the term
+        //    that made throughput track the rollback rate
+        //    (`docs/DFLASH2.md`); the tape removes it.
         if committed < proposals.len() {
             stat_rollbacks += 1;
-            producer.rollback(&point);
-            let keep = committed + 1;
-            producer
-                .verify(&feed[..keep], base, &mut batch_logits[..keep * vocab_size])
-                .map_err(RuntimeError::Producer)?;
+            if producer.supports_retaining_rollback() {
+                producer
+                    .rollback_retaining(&point, committed + 1)
+                    .map_err(RuntimeError::Producer)?;
+            } else {
+                producer.rollback(&point);
+                let keep = committed + 1;
+                producer
+                    .verify(&feed[..keep], base, &mut batch_logits[..keep * vocab_size])
+                    .map_err(RuntimeError::Producer)?;
+            }
         }
         position = sink.history.len();
+
+        // THE RECORD, the half that lets the NEXT turn reuse: the verify fed
+        // these rows and the round committed them, so the KV rows are real.
+        // The batched half of what `produce` records for the plain-step
+        // fallback above. `committed + 1` rows: the confirmed token plus
+        // every committed proposal, positions `base .. base + committed +
+        // 1` -- the bonus is not fed yet and belongs to the next round.
+        producer
+            .record_committed(&feed[..committed + 1], base);
 
         // The drafter goes to where the accepted prefix ENDED and continues;
         // the target went back to where the block STARTED and replayed. Two
@@ -388,7 +429,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     }
 
     Ok(RawDecodeResult {
-        reused_prefix_tokens: 0,
+        reused_prefix_tokens: reused,
         session_slot_evicted: producer.session_slot_evicted(),
         prompt_tokens: prompt_ids.len(),
         new_tokens: sink.generated,

@@ -195,6 +195,7 @@ pub(crate) fn encode_linear_block_batched(
     batched: &BatchedScratch,
     layer: usize,
     batch: usize,
+    tape_slot: Option<usize>,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
@@ -226,6 +227,50 @@ pub(crate) fn encode_linear_block_batched(
             (out, 0),
             batch,
         )?;
+    }
+
+    // THE TAPE, when this scratch records one: copy the three row inputs
+    // the state advance is a function of, per linear-layer ordinal. The
+    // conv tail update and the delta rule below never rewrite them, so the
+    // copies can sit anywhere after the projections; they sit here so the
+    // pass keeps one ordering for every layer. `z` is not copied -- see
+    // `BatchedVerifyTape`'s note.
+    if let Some(tape) = batched.verify_tape.as_ref() {
+        // The general strided-row copy; dflash-named because the drafter's
+        // aux capture was its first caller.
+        let slot = tape_slot.expect("a tape-carrying scratch must be driven with a slot");
+        let off = |dim: usize| (slot * batch * dim * 2) as u64;
+        let (rows, w_qkv, w_heads) = (batch as u32, qkv_dim as u32, v_heads as u32);
+        gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            (&batched.gdn_qkv_raw, 0),
+            (&tape.qkv_raw, off(qkv_dim)),
+            rows,
+            w_qkv,
+            w_qkv,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            (&batched.gdn_a, 0),
+            (&tape.a, off(v_heads)),
+            rows,
+            w_heads,
+            w_heads,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            (&batched.gdn_b, 0),
+            (&tape.b, off(v_heads)),
+            rows,
+            w_heads,
+            w_heads,
+        )
+        .map_err(gpu_err)?;
     }
 
     let conv_w = norm_view(
@@ -316,6 +361,111 @@ pub(crate) fn encode_linear_block_batched(
         (&batched.o, 0),
         batch,
     )
+}
+
+/// Replays the first `keep_rows` rows of the last verify's linear-layer
+/// state advance over the verify tape, restoring the recurrent state to
+/// what the same rows of that pass produced -- bit for bit, because these
+/// are the same kernels over the same recorded inputs from the same
+/// snapshot the pass started at. The caller has already written the
+/// snapshot back with `GdnStateManager::restore`; this advances each
+/// linear layer's conv tail and state across the kept rows and nothing
+/// else. The gated norm and the out projection are NOT replayed: their
+/// outputs feed the residual stream, which the next pass recomputes from
+/// embeddings anyway.
+///
+/// This is the whole of what a retaining rollback costs on the GDN half.
+/// The expensive alternative it replaces -- a full shortened verify pass
+/// over the kept rows -- is `speculative.rs`'s old rollback shape, whose
+/// cost is the term `docs/DFLASH2.md` names as the throughput driver.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn replay_linear_state_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    qwen: &RealQwenState,
+    batched: &BatchedScratch,
+    keep_rows: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let shape = qwen.shape;
+    let qkv_dim = shape.qkv_dim() as usize;
+    let v_heads = shape.num_v_heads as usize;
+    let conv_kernel = shape.conv_kernel_size as usize;
+    let tape = batched.verify_tape.as_ref().ok_or_else(|| {
+        RealForwardError::Unsupported(
+            "replay needs a verify tape; this scratch was built with record_tape = false"
+                .to_string(),
+        )
+    })?;
+    let rows = keep_rows as u32;
+    // The tape's per-slot stride is the scratch's FULL batch, not
+    // `keep_rows`, because that is the stride the recording blit laid
+    // slots down with.
+    let slot_stride_qkv = batched.batch * qkv_dim * 2;
+    let slot_stride_heads = batched.batch * v_heads * 2;
+    let mut slot = 0usize;
+    for layer in 0..arch.num_layers as usize {
+        if !arch.layer_is_linear(layer) {
+            continue;
+        }
+        let name = |suffix: &str| layer_tensor(layer, &format!("linear_attn.{suffix}"));
+        let qkv_off = (slot * slot_stride_qkv) as u64;
+        let heads_off = (slot * slot_stride_heads) as u64;
+        let conv_w = norm_view(
+            weights,
+            index,
+            &name("conv1d.weight"),
+            qkv_dim * conv_kernel,
+        )?;
+        gpu::encode_gdn_conv_prefill(
+            context,
+            pass,
+            shape,
+            (qwen.gdn.conv_tail_buffer(layer), 0),
+            (&tape.qkv_raw, qkv_off),
+            conv_w,
+            (&batched.gdn_conv_out, 0),
+            rows,
+            // Undilated, matching both verify call sites.
+            1,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_gdn_conv_tail_update(
+            context,
+            pass,
+            shape,
+            (qwen.gdn.conv_tail_buffer(layer), 0),
+            (&tape.qkv_raw, qkv_off),
+            rows,
+            1,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_gdn_qk_norm(context, pass, shape, (&batched.gdn_conv_out, 0), rows)
+            .map_err(gpu_err)?;
+        // A_log and dt_bias carry NO `.weight` suffix in the checkpoint,
+        // exactly as the verify path's own comment records.
+        let a_log = norm_view(weights, index, &name("A_log"), v_heads)?;
+        let dt_bias = norm_view(weights, index, &name("dt_bias"), v_heads)?;
+        gpu::encode_gdn_delta_prefill(
+            context,
+            pass,
+            shape,
+            (&batched.gdn_conv_out, 0),
+            (&tape.a, heads_off),
+            (&tape.b, heads_off),
+            a_log,
+            dt_bias,
+            qwen.gdn.state_buffer(layer),
+            (&batched.gdn_y, 0),
+            rows,
+        )
+        .map_err(gpu_err)?;
+        slot += 1;
+    }
+    Ok(())
 }
 
 /// The dense FFN at M rows: batched gate/up, `silu_mul` per token, batched

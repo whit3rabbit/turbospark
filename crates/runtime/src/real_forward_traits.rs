@@ -30,6 +30,7 @@ impl LogitProducer for RealForwardRunner {
         // Cleared HERE, beside the cache it describes, so the two can never
         // disagree about what the state holds.
         self.kv_prefix.clear();
+        self.batched_tape = None;
         self.kv.reset();
         if let Some(qwen) = self.real_qwen.as_mut() {
             qwen.reset();
@@ -80,6 +81,10 @@ impl LogitProducer for RealForwardRunner {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
+        // A per-token pass overwrites the scratch the tape's row inputs sit
+        // in and advances the state they describe, so whatever a previous
+        // verify recorded describes nothing after it.
+        self.batched_tape = None;
         let result = gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
             .map_err(|e| e.to_string());
         // Recorded only on SUCCESS, and after the call: a failed forward may
@@ -132,6 +137,39 @@ impl LogitProducer for RealForwardRunner {
             return 0;
         }
         let back = cursor - keep;
+        // THE DRAFTER'S CONTINUITY GUARD. A drafter's context KV is
+        // target-derived rows for exactly the span its own cursor covers,
+        // and it is NOT part of a session slot, so neither a rewind nor a
+        // swap leaves it describing this prompt: a rewind opens a hole
+        // BEHIND its cursor (the skipped prefix's rows were never written
+        // in this open), and a swap hands it the previous conversation's
+        // rows. Both draft over rows nobody or nobody-here wrote -- wrong
+        // proposals with no error anywhere, which reads as an acceptance
+        // verdict rather than as a bug. So a drafter install reuses only
+        // the PURE-CONTINUATION case: nothing rewound, nothing swapped,
+        // and the drafter's cursor within ONE row of the reuse point. The
+        // one row is the BONUS LAG: the loop rewinds the drafter to the
+        // last accepted proposal, and the bonus row's context write happens
+        // at the next round's start, from the captures the last verify
+        // left pending -- which is exactly the heal, and why those captures
+        // must still be unconsumed for this to be safe. A bigger lag (a
+        // run that ended on plain steps, whose produce-captures cover one
+        // row) refuses: the hole would draft over rows nobody wrote.
+        if self.real_dflash.is_some() || self.real_mtp.is_some() {
+            if back != 0 || swapped {
+                return 0;
+            }
+            if let Some(d) = &self.real_dflash {
+                if keep.saturating_sub(d.kv.position()) > 1 {
+                    return 0;
+                }
+            }
+            if let Some(m) = &self.real_mtp {
+                if keep.saturating_sub(m.kv_position()) > 1 {
+                    return 0;
+                }
+            }
+        }
         if back > 0 {
             if self.real_qwen.is_some() || self.real_qwen4.is_some() {
                 return 0;
@@ -290,6 +328,22 @@ impl SpeculativeProducer for RealForwardRunner {
         RealForwardRunner::rollback(self, point)
     }
 
+    fn supports_retaining_rollback(&self) -> bool {
+        // The tape replays LINEAR-layer state, so it is meaningful only on
+        // the GDN flow; `produce_batched` refuses everything else anyway,
+        // so a verify -- the only thing that records a tape -- cannot have
+        // run without it.
+        self.real_qwen.is_some()
+    }
+
+    fn rollback_retaining(
+        &mut self,
+        point: &RollbackPoint,
+        keep_rows: usize,
+    ) -> Result<(), String> {
+        RealForwardRunner::rollback_retaining(self, point, keep_rows)
+    }
+
     fn verify(
         &mut self,
         feed: &[i32],
@@ -299,15 +353,22 @@ impl SpeculativeProducer for RealForwardRunner {
         let result = self
             .produce_batched(feed, base, logits)
             .map_err(|e| e.to_string());
-        // TAINTED rather than recorded. A verify feeds a whole block and the
-        // caller then rolls back whatever the target rejected, so the record
-        // would have to track an accept count this method is not told. The
-        // only caller is `run_raw_completion_speculative`, which does not
-        // offer prefix reuse anyway, so refusing costs nothing real and is
-        // the safe direction: a wrong record answers the next turn from
-        // another conversation's state, silently.
-        self.kv_prefix.taint();
+        // NOT recorded here, and no longer TAINTED either. This used to
+        // taint, on the reasoning that the record would have to track an
+        // accept count this method is never told -- which left the
+        // speculative loop unable to reuse a prefix even when the caller
+        // opted in, because every round re-tainted. The loop now reports
+        // the surviving prefix through
+        // [`SpeculativeProducer::record_committed`] once per round, which
+        // is the one place the accept count is known. A caller that
+        // verifies and records nothing leaves the record describing LESS
+        // than the KV holds -- the safe direction: reuse then rewinds to a
+        // position whose rows are genuinely valid, and only loses reuse.
         result
+    }
+
+    fn record_committed(&mut self, tokens: &[i32], pos0: usize) {
+        self.kv_prefix.record(tokens, pos0);
     }
 }
 
@@ -327,6 +388,9 @@ impl ChunkedPrefillRunner for RealForwardRunner {
         start_position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
+        // Same invalidation as `produce`: a chunk pass overwrites the
+        // scratch the tape lives in.
+        self.batched_tape = None;
         let result = self.prefill_chunk_inner(tokens, start_position, logits);
         // The server routes long prompts through here rather than through
         // `produce`, so without this the case prefix reuse exists for would

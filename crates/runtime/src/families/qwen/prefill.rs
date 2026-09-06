@@ -73,13 +73,25 @@
 //! hazard to guard against (that hazard belongs to the M-row GEMM path in
 //! `batched_layers.rs`, which this driver does not use).
 //!
+//! **AN IMAGE PROMPT CHUNKS SINCE 2026-09-06, and that made this driver the
+//! family's SECOND embedding call site** (`crates/runtime/CLAUDE.md` Gotcha
+//! 27, which said acquiring a chunked driver would do exactly that). Both
+//! halves of the sequential flow's vision handling are mirrored here: the
+//! tower-row blit that REPLACES the table lookup at an image-pad position,
+//! and the mRoPE angle. The blit's soundness argument is at its call site
+//! below and is NOT the sequential flow's -- it rests on this driver's single
+//! commit rather than on a router wait.
+//!
 //! Two refusals are BY NAME rather than silent, per this repo's convention:
 //!
-//! - **Vision.** The image injection in `produce.rs` is this family's only
-//!   embedding call site today (Gotcha 27). This first cut stays text-only;
-//!   `RealForwardRunner::supports_chunked_prefill` also excludes an install
-//!   with a live `prompt_vision` map so callers route around this driver
-//!   entirely rather than reaching the refusal.
+//! - **`TURBOSPARK_BATCHED_GEMV` on an image prompt.** The ANGLE, not the
+//!   embedding: `encode_full_attention_block_batched` dispatches
+//!   `rope_neox_subdim` at the raw position and takes no `RopePosition` at
+//!   all, so the blit above would land correctly and every image position
+//!   would then be rotated by its INDEX rather than by its `(t, h, w)`. That
+//!   encoder is shared with the MTP/DFlash2 verify pass, which has its own
+//!   vision gap, so it is left alone rather than given a parameter one of its
+//!   two callers would fill with a placeholder.
 //! - **An open drafter.** `produce.rs`'s dense branch fires the DFlash2
 //!   aux-capture hook on every forward pass, which `dflash_prime_from_capture`
 //!   later reads; this driver does not encode that hook, so it refuses
@@ -90,6 +102,7 @@ use std::time::Instant;
 
 use foundation::LogitValue;
 
+use super::attn::RopePosition;
 use super::layer_tensor;
 use super::prefill_layers::{
     encode_qwen_dense_layer_batched_prefill, encode_qwen_dense_layer_per_token_prefill,
@@ -116,14 +129,6 @@ impl RealForwardRunner {
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
-        if self.prompt_vision.is_some() {
-            return Err(RealForwardError::Unsupported(
-                "the qwen chunked prefill driver is text-only: this install has an image \
-                 prompt attached, and the image injection's only embedding call site is the \
-                 sequential flow"
-                    .to_string(),
-            ));
-        }
         if self.real_mtp.is_some() || self.real_dflash.is_some() {
             return Err(RealForwardError::Unsupported(
                 "the qwen chunked prefill driver does not encode the drafter's aux capture; \
@@ -147,6 +152,31 @@ impl RealForwardRunner {
                      per-token GEMVs anyway would measure the unbatched engine under the \
                      batched arm's label"
                 )));
+            }
+            // THE ANGLE, NOT THE EMBEDDING. The blit below this block is
+            // arm-agnostic and would land correctly here, but
+            // `encode_full_attention_block_batched` calls
+            // `gpu::encode_rope_neox_subdim` at the raw position and has no
+            // `RopePosition` parameter to take, so every image position would
+            // be rotated by its INDEX rather than by its `(t, h, w)` triple --
+            // fluent, finite, and a different picture. Refused by name rather
+            // than silently producing that.
+            //
+            // The fix is not local: that encoder is shared with the
+            // MTP/DFlash2 verify pass (`verify_layers.rs`), which is vision-
+            // blind in BOTH halves (it embeds placeholders from the table too).
+            // Threading a `RopePosition` slice through it and filling it with
+            // `Sequential` at the verify call site would make that site look
+            // like it had made a considered choice. Close the verify gap
+            // first, then both callers get the parameter together.
+            if self.prompt_vision.is_some() {
+                return Err(RealForwardError::Unsupported(
+                    "TURBOSPARK_BATCHED_GEMV cannot serve an image prompt: the batched \
+                     attention block rotates at the raw position and takes no mRoPE triple, \
+                     so every image position would get the wrong angle. Unset it to chunk \
+                     this prompt, or prefill sequentially"
+                        .to_string(),
+                ));
             }
             // The ONE place this arm's M-row scratch is allocated, and it is
             // here rather than at open so a run that never sets the seam
@@ -260,22 +290,84 @@ impl RealForwardRunner {
         let embed_name = "language_model.model.embed_tokens.weight";
 
         let pass = self.context.begin_pass_labeled("qwen dense chunk cb");
+        // THE IMAGE INJECTION, this family's SECOND embedding call site
+        // (`produce.rs`'s is the first). At an image-pad position the tower's
+        // row IS the embedding, so the table lookup is REPLACED and not
+        // blended, exactly as the sequential flow does it -- the placeholder
+        // id carries no meaning.
+        //
+        // **WHY THE HOST WRITE IS SAFE HERE WHERE `qwen4`'s PLE UPLOAD WAS
+        // NOT** (`crates/runtime/CLAUDE.md` Gotcha 14). `write_buffer_bytes`
+        // lands the instant this line runs rather than in commit order, which
+        // is what left `ngram_emb` holding only the LAST token's value for a
+        // whole micro-batch. Two things make it correct here and both are
+        // properties of the DESTINATION rather than of the write: `scratch.x`
+        // is `hidden * MAX_PREFILL_BATCH` halfs wide, so each `t` targets a
+        // disjoint byte range and sixteen writes cannot alias; and an image
+        // row has no competing GPU write at all, because the blit REPLACES
+        // the dispatch rather than racing it.
+        //
+        // **That second clause holds only while the lookup is dispatched PER
+        // ROW.** An M-row tiled `encode_embed_any` writing `[0, m * hidden)`
+        // in one dispatch would execute after commit and clobber every host
+        // write that had already landed -- the qwen4 PLE symptom exactly.
+        //
+        // **AND THE ORDERING ARGUMENT IS THIS DRIVER'S, NOT `produce.rs`'s.**
+        // There it is "the pass is not committed until the first router wait
+        // far below"; here it is simpler and stronger: this arm commits
+        // EXACTLY ONCE, at the `commit_and_wait_with_gpu_time` below, and
+        // `pass` is bound immutably so nothing between here and there can
+        // commit. Introduce any mid-pass commit into this driver (a GDN
+        // readback, a mid-layer wait) and blits encoded after it become a
+        // race the GPU wins silently.
+        //
         // No `sqrt(hidden)` embedding scale, matching the sequential flow:
         // `RealQwenState::build` refuses an install that declares
         // `embeddingScaledBySqrtHidden`.
         for (t, &token) in tokens.iter().enumerate() {
-            encode_embed_any(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                embed_name,
-                (&self.scratch.x, (t * hidden * 2) as u64),
-                token as u32,
-                hidden as u32,
-                1.0,
-            )?;
+            match self
+                .prompt_vision
+                .as_ref()
+                .and_then(|pv| pv.row_for(start_position + t))
+            {
+                Some(row) => gpu::write_buffer_bytes(&self.scratch.x, t * hidden * 2, row),
+                None => encode_embed_any(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    embed_name,
+                    (&self.scratch.x, (t * hidden * 2) as u64),
+                    token as u32,
+                    hidden as u32,
+                    1.0,
+                )?,
+            }
         }
+
+        // THE mRoPE ANGLE, resolved ONCE per micro-batch rather than once per
+        // layer, and resolved HERE because the borrow split below hands
+        // `self`'s fields out piecewise (Gotcha 15's E0502 shape) --
+        // `produce.rs` resolves its single position for the same reason.
+        //
+        // A `Vec<RopePosition>` rather than a `PromptVision` threaded down:
+        // the layer encoder never has to learn what an image is, and at 64
+        // layers by 16 rows on the real install this is one walk instead of
+        // 64. `Sequential` on every row of a text-only prompt, which is the
+        // slice every pre-vision caller effectively passed.
+        //
+        // `t == h == w` still takes the PRE-EXISTING kernel inside
+        // `encode_full_attention_block`, so a text token of a MIXED prompt is
+        // on the dispatch path it was always on (Gotcha 28).
+        let rope: Vec<RopePosition> = (0..m)
+            .map(|t| match self.prompt_vision.as_ref() {
+                Some(pv) => {
+                    let (rt, rh, rw) = pv.rope_position(start_position + t);
+                    RopePosition::Triple(rt, rh, rw)
+                }
+                None => RopePosition::Sequential,
+            })
+            .collect();
 
         let (context, weights, index, scratch, kv, qwen, resid_capture, steering) = (
             &mut self.context,
@@ -343,6 +435,7 @@ impl RealForwardRunner {
                     use_silu,
                     start_position,
                     m,
+                    &rope,
                 )?;
             }
         }

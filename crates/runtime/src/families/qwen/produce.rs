@@ -78,10 +78,13 @@ impl RealForwardRunner {
         // wins silently, with the previous token's residual reaching the first
         // layer.
         //
-        // This is the family's ONLY embedding call. The qwen flow is the one
-        // `supports_chunked_prefill()` answers `false` for, so there is no
-        // chunked driver with a second site, and `produce_prefill` is this
-        // same function under `skip_head`.
+        // **THE FAMILY HAS TWO EMBEDDING CALL SITES SINCE 2026-09-06**, and
+        // this comment used to say it had one. `produce_prefill` is still
+        // this same function under `skip_head`, but the chunked driver
+        // (`prefill.rs`) is a genuine second site and carries its own copy of
+        // both halves -- the blit and the mRoPE angle. Change either here and
+        // the driver diverges silently; `vision_chunked_synthetic.rs` is what
+        // holds the two together, by requiring byte-identity between them.
         match self
             .prompt_vision
             .as_ref()

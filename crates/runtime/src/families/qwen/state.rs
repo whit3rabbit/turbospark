@@ -311,6 +311,9 @@ impl RealQwenState {
                 arch,
                 self.shape,
                 crate::real_forward_types::MAX_PREFILL_BATCH,
+                // No tape: a prefill chunk is never rolled back, so the
+                // buffers would be dead weight on every chunked prompt.
+                false,
             )
             .map_err(RealForwardError::Gpu)?,
         );

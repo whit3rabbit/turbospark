@@ -167,14 +167,14 @@ fn round(
         accepted += 1;
     }
     if accepted < block {
-        runner.rollback(&point);
+        // The shipped loop's retaining shape: the kept rows' KV stays and
+        // the GDN state replays over the tape, so no forward pass runs and
+        // `batch_logits` keeps the original verify's rows (identical to
+        // what the old rollback-plus-re-verify rebuilt -- that identity is
+        // `retaining_rollback_matches_rollback_plus_reverify`'s claim).
         runner
-            .verify(
-                &feed[..accepted + 1],
-                base,
-                &mut batch_logits[..(accepted + 1) * vocab],
-            )
-            .expect("the shortened replay verify runs");
+            .rollback_retaining(&point, accepted + 1)
+            .expect("the retaining rollback replays the tape");
     }
     runner
         .dflash_rewind_to(base + accepted)
@@ -264,6 +264,223 @@ fn argmax_of_prompt(reference: &mut RealForwardRunner, logits: &mut [LogitValue]
             .expect("reference prefill");
     }
     argmax(logits)
+}
+
+/// One PARTIAL round, run to a deterministic `keep_rows == 2`, with the
+/// rollback half chosen by `retain`: `false` is the old shape (full
+/// rollback plus a shortened re-verify), `true` is the shipped loop's
+/// retaining shape (KV kept, GDN state replayed over the tape).
+///
+/// Partial acceptance is CRAFTED rather than hoped for, because the
+/// fixture's weights are untrained and a drafter-off feed would accept
+/// nothing: a throwaway verify learns the target's row argmaxes, a full
+/// rollback undoes it, and the real feed's first proposal is that learned
+/// argmax (accepted) while its second is one past the learned next argmax
+/// (rejected). Row argmaxes are causal, so the learning pass's rows 0 and 1
+/// are exactly the real pass's.
+fn run_partial_round(
+    runner: &mut RealForwardRunner,
+    retain: bool,
+) -> (Vec<i32>, Vec<LogitValue>, i32, String, String) {
+    let vocab = VOCAB as usize;
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    for (i, &token) in PROMPT.iter().enumerate() {
+        runner.produce(token, i, &mut logits).expect("produce");
+        if i + 1 < PROMPT.len() {
+            runner.prime_drafter(PROMPT[i + 1], i).expect("prime");
+        }
+    }
+    let next = argmax(&logits);
+    let base = PROMPT.len();
+
+    // The learning pass, undone by a full rollback before anything is kept.
+    let probe = [next, 13, 21];
+    let mut learn = vec![LogitValue::from_f32(0.0); 3 * vocab];
+    let point = runner.checkpoint();
+    runner
+        .verify(&probe, base, &mut learn)
+        .expect("learn verify");
+    let a0 = argmax(&learn[0..vocab]);
+    let a1 = argmax(&learn[vocab..2 * vocab]);
+    runner.rollback(&point);
+
+    // The real feed: one accepted proposal, one rejected.
+    let rejected = ((a1 as usize + 1) % vocab) as i32;
+    let feed = vec![next, a0, rejected];
+    let mut batch_logits = vec![LogitValue::from_f32(0.0); 3 * vocab];
+    let point = runner.checkpoint();
+    runner
+        .verify(&feed, base, &mut batch_logits)
+        .expect("the batched verify runs");
+    assert_eq!(
+        argmax(&batch_logits[0..vocab]),
+        a0,
+        "the crafted first proposal must be accepted"
+    );
+    assert_ne!(
+        argmax(&batch_logits[vocab..2 * vocab]),
+        rejected,
+        "the crafted second proposal must be rejected"
+    );
+
+    let keep = 2usize;
+    if retain {
+        runner
+            .rollback_retaining(&point, keep)
+            .expect("the retaining rollback replays the tape");
+    } else {
+        runner.rollback(&point);
+        let mut replay = vec![LogitValue::from_f32(0.0); keep * vocab];
+        runner
+            .verify(&feed[..keep], base, &mut replay)
+            .expect("the shortened replay verify runs");
+        batch_logits[..keep * vocab].copy_from_slice(&replay);
+    }
+
+    // The bonus comes from row `keep - 1` -- the last kept row -- and both
+    // arms then feed it through the target at the same position, whose
+    // logits are the observable proxy for the whole engine state (KV rows,
+    // GDN state, conv tails, cursor) the two rollback shapes leave behind.
+    let bonus = argmax(&batch_logits[(keep - 1) * vocab..keep * vocab]);
+    let kept_rows = digest(&batch_logits[..keep * vocab]);
+    let mut after = vec![LogitValue::from_f32(0.0); vocab];
+    runner
+        .produce(bonus, base + keep, &mut after)
+        .expect("produce after rollback");
+    (feed, batch_logits, bonus, kept_rows, digest(&after))
+}
+
+/// The central claim of the tape rollback, stated as bytes: keeping the
+/// accepted rows' KV and replaying their recurrent state over the recorded
+/// inputs leaves the same engine state that rolling all the way back and
+/// re-verifying does. Both shapes run here on two fresh opens of the same
+/// install, from identical prefills, over the same forced-partial round.
+#[test]
+fn retaining_rollback_matches_rollback_plus_reverify() {
+    let dir = build();
+    let mut legacy = open(&dir, 2);
+    let (feed_a, _, bonus_a, kept_a, after_a) = run_partial_round(&mut legacy, false);
+    let mut retained = open(&dir, 2);
+    let (feed_b, _, bonus_b, kept_b, after_b) = run_partial_round(&mut retained, true);
+
+    assert_eq!(feed_a, feed_b, "the arms must run the same round");
+    assert_eq!(bonus_a, bonus_b, "the bonus must not move");
+    assert_eq!(
+        kept_a, kept_b,
+        "the kept rows' logits differ from what the re-verify rebuilt"
+    );
+    assert_eq!(
+        after_a, after_b,
+        "the state after the two rollback shapes diverged"
+    );
+}
+
+/// A tape describes exactly one verify. A retaining rollback with no verify
+/// behind it, and one whose tape a later produce consumed, are both REFUSED
+/// by name rather than served from stale state.
+#[test]
+fn a_stale_tape_refuses_the_retaining_rollback() {
+    let dir = build();
+    let vocab = VOCAB as usize;
+    let mut runner = open(&dir, 2);
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    for (i, &token) in PROMPT.iter().enumerate() {
+        runner.produce(token, i, &mut logits).expect("produce");
+        if i + 1 < PROMPT.len() {
+            runner.prime_drafter(PROMPT[i + 1], i).expect("prime");
+        }
+    }
+    let next = argmax(&logits);
+    let base = PROMPT.len();
+
+    // No verify has run: nothing to replay over.
+    let point = runner.checkpoint();
+    let err = runner
+        .rollback_retaining(&point, 1)
+        .expect_err("an empty tape must refuse");
+    assert!(err.contains("tape"), "wrong refusal: {err}");
+
+    // A verify records, the next produce consumes the tape, and a second
+    // ask against the pre-produce checkpoint refuses again.
+    let feed = [next, 13];
+    let mut batch = vec![LogitValue::from_f32(0.0); 2 * vocab];
+    runner.verify(&feed, base, &mut batch).expect("verify");
+    let point = runner.checkpoint();
+    runner
+        .produce(13, base + feed.len(), &mut logits)
+        .expect("produce");
+    let err = runner
+        .rollback_retaining(&point, 1)
+        .expect_err("a consumed tape must refuse");
+    assert!(err.contains("tape"), "wrong refusal: {err}");
+}
+
+/// The speculative loop's reuse contract, at the runner level: a
+/// continuation of the just-generated stream reuses the whole fed prefix,
+/// and a trunk that has run PAST the drafter's one-row bonus lag refuses.
+///
+/// The lag is the mechanism, not a tolerance to tune: the loop rewinds the
+/// drafter to the last accepted proposal, and the bonus row's context write
+/// happens at the NEXT round's start from the captures the last verify left
+/// pending -- so a lag of one self-heals and a lag of more is a hole the
+/// drafter would attend over.
+#[test]
+fn speculative_reuse_fires_on_pure_continuation_and_refuses_a_lagging_drafter() {
+    let dir = build();
+    let vocab = VOCAB as usize;
+    let mut runner = open(&dir, 2);
+    runner.set_prefix_reuse(true);
+
+    // Generation 1: prefill + prime, then two manual rounds, recording the
+    // committed stream exactly as the loop's bookkeeping would.
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    for (i, &token) in PROMPT.iter().enumerate() {
+        runner.produce(token, i, &mut logits).expect("produce");
+        if i + 1 < PROMPT.len() {
+            runner.prime_drafter(PROMPT[i + 1], i).expect("prime");
+        }
+    }
+    let mut next = argmax(&logits);
+    let mut stream: Vec<i32> = Vec::new();
+    for _ in 0..2 {
+        stream.push(next);
+        let base = PROMPT.len() + stream.len() - 1;
+        let (accepted, bonus) = round(&mut runner, next, base, 2, vocab);
+        // The loop's per-round record: the confirmed token plus the
+        // accepted proposals, which is exactly the feed prefix that
+        // survived.
+        let mut committed_rows = vec![next];
+        committed_rows.extend_from_slice(&accepted);
+        runner.record_committed(&committed_rows, base);
+        stream.extend_from_slice(&accepted);
+        next = bonus;
+    }
+
+    // The pure continuation: every fed id, plus one token left to feed.
+    let mut prompt2 = PROMPT.to_vec();
+    prompt2.extend_from_slice(&stream);
+    prompt2.push(42);
+    let keep = runner.try_reuse_prefix(&prompt2);
+    assert_eq!(
+        keep,
+        PROMPT.len() + stream.len(),
+        "a pure continuation must reuse the whole fed prefix"
+    );
+
+    // Two plain steps put the trunk three rows past the drafter's cursor:
+    // more than the bonus lag, so the guard refuses and the caller resets.
+    runner
+        .produce(42, PROMPT.len() + stream.len(), &mut logits)
+        .expect("produce");
+    runner
+        .produce(43, PROMPT.len() + stream.len() + 1, &mut logits)
+        .expect("produce");
+    let mut prompt3 = PROMPT.to_vec();
+    prompt3.extend_from_slice(&stream);
+    prompt3.extend_from_slice(&[42, 43]);
+    prompt3.push(7);
+    let keep = runner.try_reuse_prefix(&prompt3);
+    assert_eq!(keep, 0, "a lagging drafter must refuse reuse");
 }
 
 /// The drafter refuses an install without `dflash.*` tensors BY NAME under

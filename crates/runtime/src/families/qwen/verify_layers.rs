@@ -158,6 +158,10 @@ pub(crate) fn encode_qwen_layer_attn_and_norms_batched(
     hidden: usize,
     start_position: usize,
     batch: usize,
+    // This layer's tape slot when the pass records one, `None` otherwise.
+    // Forwarded to the linear block, whose projections are what the tape
+    // copies; attention layers have no tape.
+    tape_slot: Option<usize>,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     for m in 0..batch {
@@ -175,7 +179,7 @@ pub(crate) fn encode_qwen_layer_attn_and_norms_batched(
 
     if arch.layer_is_linear(layer) {
         encode_linear_block_batched(
-            context, pass, weights, index, arch, qwen, batched, layer, batch,
+            context, pass, weights, index, arch, qwen, batched, layer, batch, tape_slot,
         )?;
     } else {
         encode_full_attention_block_batched(

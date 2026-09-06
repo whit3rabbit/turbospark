@@ -5,11 +5,14 @@ What is built, what it measures, and the traps. Facts about the CHECKPOINT
 live in `docs/VISION_PHASE0.md` and are not repeated here; this page is about
 the IMPLEMENTATION.
 
-Status as of 2026-08-30: milestones M-V0 through M-V9 are done, and the FFI
-and the macOS app reach the tower too. The tower runs, agrees with mlx-vlm,
-and an image reaches a generated token from the CLI, from both server
-endpoints, and from `ts_generate` -- which is what the SwiftUI app and the
-in-process server sit on.
+Status as of 2026-09-06: milestones M-V0 through M-V9 are done AND COMMITTED
+(`c400329`, `2aee922`; the "not yet committed" note that stood in "What is
+not built" for a week is corrected there), and the FFI and the macOS app
+reach the tower too. The tower runs, agrees with mlx-vlm, and an image
+reaches a generated token from the CLI, from both server endpoints, and from
+`ts_generate` -- which is what the SwiftUI app and the in-process server sit
+on. An image prompt also CHUNKS its prefill now, on the CLI and through the
+FFI; the server's image path still takes the sequential loop.
 
 **THE FRONT-END GAP WAS THE LAST ONE AND IT WAS INVISIBLE FROM THIS PAGE.**
 Every milestone through M-V9 was true of the engine and of two front ends,
@@ -224,6 +227,17 @@ rows. Setup is in the test's own header. Measured 2026-08-28:
 **Stage 3, `crates/runtime/tests/vision_inject_synthetic.rs`** (1.1 s, no
 network). Ten cases over the same synthetic fixture, covering the two seams
 M-V5 adds plus the lifetime rule M-V7 corrected. Four of them are worth naming.
+
+Its sibling `crates/runtime/tests/vision_chunked_synthetic.rs` (2026-09-06)
+holds the CHUNKED driver to the sequential one on an image prompt, over a
+chunk-span sweep and two 24-token prompts -- one whose image sits inside the
+first micro-batch and one whose image straddles the boundary at 16. **Its
+useful finding is that an ordinary image prompt cannot separate the blit
+from the angle**: deleting either reddens the same set of cases, so a red run
+says "vision is broken" and not which half. Two purpose-built cases attribute
+it -- a one-merged-token image, whose degenerate table the angle mutation
+cannot reach, and a spans-free shifted table, which has no image row for the
+blit mutation to reach.
 
 A vision install handed no image reproduces a SEPARATELY BUILT no-tower
 install's logits exactly, which says the tower's presence moves no trunk byte.
@@ -546,9 +560,32 @@ the page's line numbers.
 
 ## What is not built
 
-Nothing, as of 2026-08-29: M-V9 landed, all three items, each verified
-against the real `qwen38-27b-vision.gturbo` install. Read the last
-paragraph of this section before assuming it has reached `main`.
+Nothing of M-V0 through M-V9, as of 2026-08-29: all three of M-V9's items
+landed and are on `main` (see the last paragraph of this section, which
+corrects what this line used to point at).
+
+**One thing the milestone list never covered and that IS now built
+(2026-09-06): an image prompt can CHUNK its prefill.** The dense qwen
+chunked driver refused a live `prompt_vision` map by name -- a deliberate
+first-cut scope line, since the injection in `produce.rs` was the family's
+only embedding call site -- so the one family with a tower could not chunk
+the prompts that need it most. A real page is over a thousand merged tokens
+of a ~1,300-token prompt. `families/qwen/prefill.rs` mirrors both halves
+now, the blit and the mRoPE angle, and `crates/runtime/CLAUDE.md` Gotchas
+14 and 27 carry the design. `TURBOSPARK_BATCHED_GEMV` plus an image prompt
+is still refused, about the ANGLE rather than the embedding.
+
+**Still not built, and it is pre-existing rather than new**: the MTP /
+DFlash2 VERIFY pass is vision-blind in both halves -- `produce_batched`
+embeds every row from the table and rotates at the raw position. Past an
+image prompt a decode position is `(p, p, p)` with `p = position +
+rope_delta`, so the target and the verify rotate by different angles, and
+the verify pass is what EMITS the accepted tokens. Unreachable today, and
+by a checkpoint gap rather than a guard: no install carries both a tower
+and an `mtp.*` head, so `speculation_blocker` refuses on the missing head.
+Nothing refuses the COMBINATION, so one repack carrying both would make
+`--image X --speculative 4` silently wrong. The fix is a fourth arm in
+`produce_batched`'s existing by-name refusal set.
 
 - **NaN-safe parity instruments.** The two remaining ungated files
   (`crates/gpu/tests/vision_block_parity.rs`, `crates/gpu/tests/rope_mrope_parity.rs`)
@@ -590,17 +627,35 @@ paragraph of this section before assuming it has reached `main`.
 `turbospark-gpu` / `turbospark-bench` suites, `vision_tower_parity`
 against the real install (merger cosine reproduces the documented
 0.99999334 exactly), and text-only greedy/sampled smoke on
-`qwen38-27b.gturbo`. **NOT yet done**: the whole-workspace gate
-(`cargo build --workspace && cargo test --workspace`) and a commit -- a
-concurrent session's `LoadPolicy` / `LoadGuard` refactor was mid-flight
-across several unrelated crates for most of the session this landed in,
-so verification was scoped to the five files this milestone touched
-(`crates/gpu/tests/{vision_block_parity,rope_mrope_parity}.rs`,
-`crates/runtime/src/vision/{mod,overflow}.rs`,
-`crates/bench/tests/vision_memory_oracle.rs`). Re-run the workspace gate
-and commit before treating this as landed on `main`.
+`qwen38-27b.gturbo`.
 
-No `models.json` catalog row exists yet for `qwen38-27b-vision.gturbo`,
-so there is no `assert_agrees_with_catalog` test alongside the oracle
-above, unlike every other family's oracle. Add both once this ceiling
-has stood for a while.
+**THE TWO PARAGRAPHS THAT STOOD HERE UNTIL 2026-09-06 WERE BOTH WRONG, AND
+HOW THEY GOT THAT WAY IS THE POINT.** One said the whole-workspace gate and
+a commit were "NOT yet done" and told the reader to re-run both "before
+treating this as landed on `main`". The other said no `models.json` row
+existed for `qwen38-27b-vision.gturbo`, so the oracle had no
+`assert_agrees_with_catalog` sibling, "unlike every other family's oracle".
+
+Both had been false for a week. M-V9 is commit `c400329` (2026-08-29), and
+it carries exactly the five files the paragraph listed as unverified; the
+catalog row and its oracle tie are `2aee922` the same day
+(`crates/catalog/src/models.json`'s `qwen38-27b-vision` alias, and
+`vision_memory_oracle.rs`'s `the_baselines_agree_with_the_catalogs_measured_rows`,
+which is not `#[ignore]`d and needs no install). Neither sentence had to
+change for it to become wrong -- only the work it described had to finish,
+which is precisely the rot `docs/BENCHMARKS.md` recorded once already about
+a stale blocker. A status line written in the future tense goes stale
+silently and nothing goes red.
+
+Check the claim before believing it: `git merge-base --is-ancestor c400329
+HEAD` costs nothing and is what settled this.
+
+**What was genuinely still owed, and is now done (2026-09-06).**
+`crates/runtime/src/vision/overflow.rs` -- M-V9's third deliverable -- had
+no test at all, and nothing in the repo sets `TURBOSPARK_VISION_OVERFLOW`
+(deliberately: env is process-global and `cargo test` runs a binary's cases
+in parallel). Its scan is split out of the readback as `scan_block` and
+covered offline. `vision_tower_parity.rs`'s `#[ignore]` was the only bare
+one under `crates/*/tests` and has a reason string. And `docs/TESTING.md`
+did not contain the word "vision" at all, through nine landed milestones --
+the three gated vision commands are in its ignored-tests section now.

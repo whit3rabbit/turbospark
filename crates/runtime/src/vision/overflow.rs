@@ -88,8 +88,21 @@ impl VisionOverflowCapture {
         count: usize,
     ) -> Result<(), RealForwardError> {
         let values = gpu::read_buffer_f16(x, 0, count);
+        self.scan_block(block, &values)
+    }
+
+    /// The whole of `check_block` EXCEPT the readback, split out so it can be
+    /// tested without a Metal device or an install. Its caller is the only
+    /// thing that needs a GPU; every decision this capture makes is here.
+    ///
+    /// **Do not fold this back into `check_block`.** The tests below are the
+    /// only coverage this file has -- `TURBOSPARK_VISION_OVERFLOW` is set by
+    /// nothing in the suite, deliberately (env is process-global and cargo
+    /// runs cases in one binary in parallel), so the readback path is
+    /// exercised only by hand.
+    fn scan_block(&mut self, block: usize, values: &[half::f16]) -> Result<(), RealForwardError> {
         let mut absmax = 0.0f32;
-        for v in &values {
+        for v in values {
             let f = v.to_f32();
             if !f.is_finite() {
                 return Err(RealForwardError::Unsupported(format!(
@@ -157,5 +170,132 @@ impl Drop for VisionOverflowCapture {
                 self.path.display()
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use half::f16;
+
+    /// The capture without the env var, so the cases below need neither
+    /// `TURBOSPARK_VISION_OVERFLOW` nor a Metal device. `from_env` is the
+    /// only other constructor and reading process-global env inside a test
+    /// binary that runs its cases in parallel is exactly what this repo
+    /// avoids elsewhere.
+    fn capture() -> VisionOverflowCapture {
+        VisionOverflowCapture {
+            path: std::path::PathBuf::from("/dev/null"),
+            image: 0,
+            peaks: Vec::new(),
+        }
+    }
+
+    fn row(values: &[f32]) -> Vec<f16> {
+        values.iter().map(|&v| f16::from_f32(v)).collect()
+    }
+
+    #[test]
+    fn a_finite_block_records_its_absmax_and_nothing_else() {
+        let mut c = capture();
+        c.note_image_start();
+        c.scan_block(7, &row(&[1.0, -40.0, 3.5, 12.0]))
+            .expect("a finite block is accepted");
+
+        assert_eq!(c.peaks.len(), 1, "one block, one peak");
+        assert_eq!(c.peaks[0].image, 1);
+        assert_eq!(c.peaks[0].block, 7);
+        // ABSOLUTE magnitude, so the negative wins. MEASURED: dropping the
+        // `.abs()` records 12.0 here and reddens this case AND the JSON one,
+        // which asserts on a negative input of its own. Not unique, and said
+        // so rather than left as a claim nobody re-ran.
+        assert_eq!(c.peaks[0].absmax, 40.0);
+    }
+
+    /// AGENTS.md Gotcha 60: an FP16 overflow presents downstream as a NaN,
+    /// i.e. as anything but an overflow, so the message has to say WHERE.
+    /// Asserting the message rather than only the `Err` is the point --
+    /// a refusal that does not name the image and block sends a reader
+    /// looking for a NaN from nowhere, which is the failure this file exists
+    /// to prevent.
+    #[test]
+    fn a_non_finite_value_is_refused_by_name_and_locates_itself() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut c = capture();
+            c.note_image_start();
+            c.note_image_start();
+            let Err(err) = c.scan_block(26, &row(&[1.0, bad, 2.0])) else {
+                panic!("a non-finite value must be refused; {bad} was accepted");
+            };
+            let text = err.to_string();
+            assert!(text.contains("image 2"), "must name the image; got {text}");
+            assert!(text.contains("block 26"), "must name the block; got {text}");
+            assert!(
+                text.contains("Gotcha 60"),
+                "must point at the reason a NaN here is an overflow; got {text}"
+            );
+            assert!(
+                c.peaks.is_empty(),
+                "a refused block must not also record a peak"
+            );
+        }
+    }
+
+    /// Past the warn fraction is LOUD but not fatal -- a page shape the
+    /// Phase 0 probe never measured crossing the headroom is informative,
+    /// not necessarily wrong. The `eprintln!` itself is not asserted (that
+    /// would mean capturing stderr); what is asserted is that the block is
+    /// still accepted and still recorded.
+    #[test]
+    fn a_value_past_the_warn_fraction_still_succeeds_and_still_records() {
+        let mut c = capture();
+        c.note_image_start();
+        let loud = WARN_FRACTION * FP16_MAX + 1_000.0;
+        assert!(loud < FP16_MAX, "the warn threshold is below the ceiling");
+        c.scan_block(9, &row(&[loud]))
+            .expect("a warning is not a failure");
+
+        assert_eq!(c.peaks.len(), 1);
+        assert!(c.peaks[0].absmax > WARN_FRACTION * FP16_MAX);
+    }
+
+    /// The report is hand-rolled JSON, so it is worth proving it parses at
+    /// all rather than only that it contains the right substrings.
+    ///
+    /// MUTATION: change the `",\n"` separator to `"\n"` and this reddens on
+    /// the parse, which is what a substring check would have missed.
+    #[test]
+    fn the_report_is_valid_json_and_carries_one_object_per_peak() {
+        let mut c = capture();
+        c.note_image_start();
+        c.scan_block(0, &row(&[1.0])).expect("finite");
+        c.scan_block(1, &row(&[-2.0])).expect("finite");
+        c.note_image_start();
+        c.scan_block(0, &row(&[3.0])).expect("finite");
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&c.report_json()).expect("the report parses as JSON");
+        assert_eq!(parsed["fp16_max"], FP16_MAX);
+        assert_eq!(parsed["warn_fraction"], WARN_FRACTION);
+
+        let peaks = parsed["peaks"].as_array().expect("peaks is an array");
+        assert_eq!(peaks.len(), 3, "one object per recorded block");
+        assert_eq!(peaks[0]["image"], 1);
+        assert_eq!(peaks[1]["block"], 1);
+        assert_eq!(peaks[1]["absmax"], 2.0);
+        assert_eq!(peaks[2]["image"], 2, "the counter advances per image");
+    }
+
+    /// An empty capture still has to produce parseable JSON, because `Drop`
+    /// is what writes the file and nothing upstream guarantees a block ran.
+    #[test]
+    fn an_empty_report_is_still_valid_json() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&capture().report_json()).expect("parses");
+        assert_eq!(
+            parsed["peaks"].as_array().expect("array").len(),
+            0,
+            "no blocks, no peaks"
+        );
     }
 }

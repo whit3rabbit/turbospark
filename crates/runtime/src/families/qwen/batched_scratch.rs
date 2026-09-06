@@ -47,6 +47,28 @@ pub(crate) struct BatchedScratch {
     /// per `crates/runtime` Gotcha 12's note on the two widths), so the
     /// sizes below are not merely wasted, they are meaningless.
     pub(crate) routed: Option<BatchedRoutedScratch>,
+    /// Per-linear-layer copies of the row inputs the GDN state advance
+    /// consumed (`qkv_raw`, `a`, `b`), `[layer ordinal][batch][dim]` FP16,
+    /// `Some` only on the VERIFY scratch the drafters own. This is the tape
+    /// `RealForwardRunner::rollback_retaining` replays the accepted prefix
+    /// over; the chunked-prefill driver's own `BatchedScratch`
+    /// (`RealQwenState::batched_prefill`) passes `false` and holds `None`,
+    /// because a prefill is never rolled back and the bytes would be dead
+    /// weight on every chunked prompt.
+    pub(crate) verify_tape: Option<BatchedVerifyTape>,
+}
+
+/// The tape buffers. One `qkv_raw` row set and one `a`/`b` row set per
+/// linear layer; the recurrent state after `C` rows is a function of the
+/// block-start snapshot and these rows for `C` only, which is what makes a
+/// retaining rollback a kernel replay instead of a forward pass. `z` is
+/// deliberately not taped: the state advance never reads it (it feeds the
+/// gated norm, whose output feeds the residual, which the next pass
+/// recomputes from embeddings anyway).
+pub(crate) struct BatchedVerifyTape {
+    pub(crate) qkv_raw: gpu::MetalBuffer,
+    pub(crate) a: gpu::MetalBuffer,
+    pub(crate) b: gpu::MetalBuffer,
 }
 
 /// The M-row siblings of the buffers the per-token routed pass
@@ -84,11 +106,15 @@ pub(crate) struct BatchedRoutedScratch {
 }
 
 impl BatchedScratch {
+    /// `record_tape` is `true` only for the verify scratch the drafters
+    /// own (`MtpState`, `DflashState`); the chunked-prefill driver's
+    /// instance passes `false`.
     pub(crate) fn new(
         context: &mut gpu::MetalContext,
         arch: &ArchConfig,
         qwen_shape: gpu::GdnShape,
         batch: usize,
+        record_tape: bool,
     ) -> Result<Self, gpu::GpuError> {
         let hidden = arch.hidden_size as u64;
         let q_dim = (arch.num_heads * arch.full_head_dim) as u64;
@@ -110,6 +136,21 @@ impl BatchedScratch {
             )?)
         };
         let halfs = |n: u64| context.new_output_buffer(n.max(1) * b * 2);
+        // One row set per LINEAR layer, addressed by linear-layer ordinal
+        // (`arch.layer_is_linear`), not by layer index -- the same ordinal
+        // both the recording blit and the replay walk compute.
+        let verify_tape = if record_tape {
+            let linear_layers = (0..arch.num_layers as usize)
+                .filter(|&l| arch.layer_is_linear(l))
+                .count() as u64;
+            Some(BatchedVerifyTape {
+                qkv_raw: halfs(linear_layers * qkv_dim),
+                a: halfs(linear_layers * v_heads),
+                b: halfs(linear_layers * v_heads),
+            })
+        } else {
+            None
+        };
         let routed = wide_blobs.map(|wide_blobs| {
             let top_k = arch.top_k_experts as u64;
             let moe_inter = arch.moe_intermediate_size.max(1) as u64;
@@ -148,6 +189,7 @@ impl BatchedScratch {
             h2: halfs(hidden),
             logits: halfs(vocab),
             routed,
+            verify_tape,
         })
     }
 }

@@ -54,7 +54,12 @@ pub(crate) fn encode_qwen_dense_layer_batched_prefill(
     if is_linear {
         // The recurrence still runs in token order -- it is inside
         // `gdn_conv_prefill` / `gdn_delta_prefill` rather than in this loop.
-        encode_linear_block_batched(context, pass, weights, index, arch, qwen, batched, layer, m)?;
+        // No tape slot: this scratch records none (a prefill chunk is never
+        // rolled back), and `None` is what keeps the copy from being asked
+        // for.
+        encode_linear_block_batched(
+            context, pass, weights, index, arch, qwen, batched, layer, m, None,
+        )?;
     } else {
         encode_full_attention_block_batched(
             context,
@@ -137,10 +142,26 @@ pub(crate) fn encode_qwen_dense_layer_per_token_prefill(
     use_silu: bool,
     start_position: usize,
     m: usize,
+    rope: &[RopePosition],
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let is_linear = arch.layer_is_linear(layer);
-    for t in 0..m {
+    // The loop below is driven BY `rope`, so a short slice would silently
+    // encode fewer tokens than the micro-batch holds -- leaving the tail rows
+    // of `scratch.x` carrying whatever the previous micro-batch left there,
+    // which is finite and fluent and wrong. Checked here rather than left to
+    // the caller, who builds it at length `m` one function up.
+    //
+    // No test reddens on deleting this: every caller is in-tree and correct,
+    // so it is a backstop rather than a covered branch. Said plainly so a
+    // future reader does not go looking for the guard's test.
+    if rope.len() != m {
+        return Err(RealForwardError::Unsupported(format!(
+            "rope position table has {} entries for a micro-batch of {m}",
+            rope.len()
+        )));
+    }
+    for (t, &rope_position) in rope.iter().enumerate() {
         let position = start_position + t;
         let x_off = (t * hidden * 2) as u64;
 
@@ -172,7 +193,7 @@ pub(crate) fn encode_qwen_dense_layer_per_token_prefill(
                 layer,
                 position,
                 QkNormConvention::Plain,
-                RopePosition::Sequential,
+                rope_position,
             )?;
         }
 
