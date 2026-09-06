@@ -50,20 +50,11 @@ harness only: it never publishes to crates.io. See
   32 buys roughly 15% more decode throughput and about 1.5 GB more
   footprint. Every frozen benchmark row is measured at 16 specifically.
 - Don't assume a bench or `scripts/power.sh` row measured CHUNKED prefill.
-  Until 2026-09-05 `real_model.rs` reached only `run_raw_completion` and
-  `run_raw_completion_speculative`, so every row ever taken through either
-  tool measured the SEQUENTIAL path no matter what `TURBOSPARK_PREFILL_CHUNK`
-  was set to. `--prefill-chunk off|auto|N` is the way in and it defaults OFF,
-  because every frozen row in this crate is a sequential row. A chunked row
-  is a NEW row, never a re-freeze of an old one. The header prints
-  `prefill=sequential` or `prefill=chunked` so a row cannot silently be the
-  other one.
-- Don't reach for `invocation::PrefillChunk` when adding a prefill knob
-  here. Its `Default` is `Fixed(DEFAULT_CHUNK_SIZE)`, i.e. ON, because the
-  CLI carries the flag on every invocation whether or not a caller typed it.
-  Using it in this crate would silently retire every frozen row. Use
+  `--prefill-chunk off|auto|N` is the only way in and it defaults OFF, so
+  every frozen row here is a sequential row and a chunked row is a NEW row
+  rather than a re-freeze. The header prints `prefill=sequential` or
+  `prefill=chunked` so a row cannot silently be the other one. See
+  [[will-a-chunked-prefill-driver-pay-on-this-family]].
+- Don't reach for `invocation::PrefillChunk` for a prefill knob here. Its
+  `Default` is ON, so it would silently retire every frozen row. Use
   `Option<usize>` initialized `None`.
-- Don't wire `TURBOSPARK_ROUTED_BATCH` or `TURBOSPARK_BATCHED_GEMV` here.
-  Unlike `TURBOSPARK_PREFILL_CHUNK` (read by front ends) those two are read
-  INSIDE the runtime's chunk drivers, so they go live the moment the chunked
-  driver is engaged. They need a header echo, not a flag.
