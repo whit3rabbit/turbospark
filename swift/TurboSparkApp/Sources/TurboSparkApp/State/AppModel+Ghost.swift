@@ -135,6 +135,14 @@ extension AppModel {
     /// normal chat -- it is the PERSISTENCE that differs, not the run.
     /// Returns the ghost chat's id, or the current selection unchanged when
     /// the turn lifecycle refuses a switch.
+    ///
+    /// **ONE GHOST CHAT PER SESSION, STAMPED ONCE.** Re-entering after
+    /// switching to a different project resumes the SAME ghost chat under
+    /// whichever project was active the first time it was created -- the
+    /// stamp does not follow later project switches, and nothing in the UI
+    /// discloses which project a live ghost session is bound to. Deliberate
+    /// (one session, one temporary conversation), not a bug; end the ghost
+    /// chat first if a fresh one under the current project is wanted.
     @discardableResult
     public func enterGhostChat() -> UUID {
         guard !generating, !submitting, pendingToolCall == nil else { return selectedChatID }

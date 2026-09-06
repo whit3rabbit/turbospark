@@ -137,6 +137,11 @@ struct TopBarView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(model.isInGhostChat ? TurboSparkTheme.accentColor : Color.secondary)
+        // `enterGhostChat()`/`endGhostChat()` both no-op under exactly this
+        // guard, matching the File menu's "New Temporary Chat" (`.disabled(
+        // model.isRunning)`); without it the button looks live during a turn
+        // and silently does nothing when clicked.
+        .disabled(model.generating || model.submitting || model.pendingToolCall != nil)
         .help(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
         .accessibilityLabel(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
         .accessibilityHint(

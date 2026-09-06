@@ -67,10 +67,15 @@ struct ChatSidebarChatRowView: View {
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
 
             Menu {
+                // A ghost chat's title is a fixed "Temporary Chat"
+                // (`AppModel+Submission.swift` skips auto-titling it for
+                // exactly this reason); Rename is disabled here so that
+                // promise holds for a manual override too.
                 Button("Rename", systemImage: "pencil") {
                     renameText = chat.title
                     chatBeingRenamed = chat
                 }
+                .disabled(chat.isGhost)
                 Divider()
                 Button("Delete", systemImage: "trash", role: .destructive) {
                     chatPendingDeletion = chat
@@ -104,7 +109,7 @@ struct ChatSidebarChatRowView: View {
                 renameText = chat.title
                 chatBeingRenamed = chat
             }
-            .disabled(model.isRunning)
+            .disabled(model.isRunning || chat.isGhost)
             Button(chat.systemPrompt == nil ? "Set System Prompt" : "Edit System Prompt") {
                 chatForSystemPrompt = chat
             }
