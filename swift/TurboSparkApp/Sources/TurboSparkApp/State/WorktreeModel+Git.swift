@@ -238,14 +238,111 @@ extension WorktreeModel {
         return (true, branch, changes, totalAdds, totalDels)
     }
 
+    /// Initializes a new Git repository in `rootPath`.
+    static func runGitInit(rootPath: String) async -> Bool {
+        let result = await runGitCommand(args: ["init"], rootPath: rootPath)
+        return result.exitCode == 0
+    }
+
+    /// Queries local Git branches in `rootPath`.
+    static func queryGitBranches(rootPath: String) async -> [String] {
+        let result = await runGitCommand(
+            args: ["branch", "--list", "--format=%(refname:short)"],
+            rootPath: rootPath
+        )
+        guard result.exitCode == 0 else { return [] }
+        return result.stdout
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Queries recent Git commits in `rootPath`.
+    static func queryRecentCommits(rootPath: String, maxCount: Int = 25) async -> [WorktreeCommit] {
+        let result = await runGitCommand(
+            args: ["log", "-n", "\(maxCount)", "--pretty=format:%H%x09%h%x09%an%x09%cr%x09%s"],
+            rootPath: rootPath
+        )
+        guard result.exitCode == 0 else { return [] }
+        var commits: [WorktreeCommit] = []
+        for line in result.stdout.components(separatedBy: .newlines) {
+            let parts = line.components(separatedBy: "\t")
+            guard parts.count >= 5 else { continue }
+            commits.append(
+                WorktreeCommit(
+                    hash: parts[0],
+                    shortHash: parts[1],
+                    author: parts[2],
+                    relativeDate: parts[3],
+                    summary: parts[4]
+                )
+            )
+        }
+        return commits
+    }
+
+    /// Checks out or switches to another local Git branch.
+    static func runGitCheckout(rootPath: String, branch: String) async -> (exitCode: Int32, error: String) {
+        let result = await runGitCommand(args: ["switch", branch], rootPath: rootPath)
+        if result.exitCode == 0 {
+            return (0, "")
+        }
+        let fallback = await runGitCommand(args: ["checkout", branch], rootPath: rootPath)
+        return (fallback.exitCode, fallback.stderr)
+    }
+
+    /// Queries registered Git worktrees for this repository.
+    static func queryGitWorktrees(rootPath: String) async -> [GitWorktreeInfo] {
+        let result = await runGitCommand(args: ["worktree", "list", "--porcelain"], rootPath: rootPath)
+        guard result.exitCode == 0 else { return [] }
+        return parseWorktreeListOutput(result.stdout, currentRoot: rootPath)
+    }
+
+    /// Queries the files modified in a specific Git commit.
+    static func queryCommitFiles(rootPath: String, hash: String) async -> [WorktreeFileChange] {
+        let numstat = await runGitCommand(args: ["show", hash, "--numstat", "--format="], rootPath: rootPath)
+        let nameStatus = await runGitCommand(args: ["show", hash, "--name-status", "--format="], rootPath: rootPath)
+        return parseNameStatusAndNumstat(numstatOutput: numstat.stdout, nameStatusOutput: nameStatus.stdout)
+    }
+
+    /// Queries files modified across a branch compared against a base branch.
+    static func queryBranchDiffFiles(rootPath: String, baseBranch: String) async -> [WorktreeFileChange] {
+        var numstat = await runGitCommand(args: ["diff", "\(baseBranch)...HEAD", "--numstat"], rootPath: rootPath)
+        var nameStatus = await runGitCommand(args: ["diff", "\(baseBranch)...HEAD", "--name-status"], rootPath: rootPath)
+        if numstat.exitCode != 0 || nameStatus.exitCode != 0 {
+            numstat = await runGitCommand(args: ["diff", baseBranch, "--numstat"], rootPath: rootPath)
+            nameStatus = await runGitCommand(args: ["diff", baseBranch, "--name-status"], rootPath: rootPath)
+        }
+        return parseNameStatusAndNumstat(numstatOutput: numstat.stdout, nameStatusOutput: nameStatus.stdout)
+    }
+
     /// **`nonisolated`, BOUNDED, AND CONTAINED** (state#90). The untracked
     /// fallback below read a whole file into a String with no size limit and
     /// no containment check, on the MAIN ACTOR -- so previewing an untracked
     /// 2 GB checkpoint or log froze the window, and a `file` argument that
     /// escaped the repository (git will not produce one, but this function's
     /// signature does not say so) was read and displayed.
-    nonisolated static func queryGitDiff(rootPath: String, file: String) async -> String {
-        let diffResult = await runGitCommand(args: ["diff", "HEAD", "--", file], rootPath: rootPath)
+    nonisolated static func queryGitDiff(
+        rootPath: String,
+        file: String,
+        comparisonMode: WorktreeComparisonMode = .uncommitted
+    ) async -> String {
+        let diffArgs: [String]
+        switch comparisonMode {
+        case .uncommitted:
+            diffArgs = ["diff", "HEAD", "--", file]
+        case .againstBranch(let branch):
+            diffArgs = ["diff", "\(branch)...HEAD", "--", file]
+        case .commit(let hash, _):
+            diffArgs = ["show", hash, "--", file]
+        }
+
+        var diffResult = await runGitCommand(args: diffArgs, rootPath: rootPath)
+        if diffResult.exitCode != 0 || diffResult.stdout.isEmpty {
+            if case .againstBranch(let branch) = comparisonMode {
+                diffResult = await runGitCommand(args: ["diff", branch, "--", file], rootPath: rootPath)
+            }
+        }
         if diffResult.exitCode == 0 && !diffResult.stdout.isEmpty {
             return diffResult.stdout
         }

@@ -72,6 +72,108 @@ public struct WorktreeFileChange: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Comparison target for diff computation in the working tree.
+public enum WorktreeComparisonMode: Hashable, Sendable {
+    case uncommitted
+    case againstBranch(String)
+    case commit(hash: String, summary: String)
+
+    public var title: String {
+        switch self {
+        case .uncommitted:
+            return "Uncommitted changes"
+        case .againstBranch(let branch):
+            return "All changes vs \(branch)"
+        case .commit(let hash, let summary):
+            let short = String(hash.prefix(7))
+            return "\(short): \(summary)"
+        }
+    }
+}
+
+/// Layout mode for displaying changed files in the working tree.
+public enum WorktreeViewMode: String, CaseIterable, Sendable {
+    case tree
+    case flat
+
+    public var title: String {
+        switch self {
+        case .tree: return "Tree View"
+        case .flat: return "Flat List"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .tree: return "list.bullet.indent"
+        case .flat: return "list.bullet"
+        }
+    }
+}
+
+/// Top-level view tab in the Git inspector.
+public enum WorktreeTabMode: String, CaseIterable, Sendable {
+    case changes
+    case timeline
+    case worktrees
+
+    public var title: String {
+        switch self {
+        case .changes: return "Changes"
+        case .timeline: return "Timeline"
+        case .worktrees: return "Worktrees"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .changes: return "arrow.triangle.swap"
+        case .timeline: return "clock.arrow.circlepath"
+        case .worktrees: return "folder.badge.gearshape"
+        }
+    }
+}
+
+/// Information about a linked or main Git worktree.
+public struct GitWorktreeInfo: Identifiable, Hashable, Sendable {
+    public var id: String { path }
+    public let path: String
+    public let head: String
+    public let branch: String
+    public let isCurrent: Bool
+
+    public init(path: String, head: String, branch: String, isCurrent: Bool) {
+        self.path = path
+        self.head = head
+        self.branch = branch
+        self.isCurrent = isCurrent
+    }
+}
+
+/// One Git commit record from recent history.
+public struct WorktreeCommit: Identifiable, Hashable, Sendable {
+    public var id: String { hash }
+    public let hash: String
+    public let shortHash: String
+    public let author: String
+    public let relativeDate: String
+    public let summary: String
+
+    public init(
+        hash: String,
+        shortHash: String,
+        author: String,
+        relativeDate: String,
+        summary: String
+    ) {
+        self.hash = hash
+        self.shortHash = shortHash
+        self.author = author
+        self.relativeDate = relativeDate
+        self.summary = summary
+    }
+}
+
 /// Observable coordinator managing Git worktree branch, status, changes, and diffs for a project directory.
 @MainActor
 public final class WorktreeModel: ObservableObject {
@@ -86,6 +188,24 @@ public final class WorktreeModel: ObservableObject {
     @Published public var selectedFileDiff: String?
     @Published public var isLoadingDiff: Bool = false
     @Published public var isGitRepository: Bool = false
+
+    // Claude Code-style expansion, comparison, and view options
+    @Published public var activeTab: WorktreeTabMode = .changes
+    @Published public var comparisonMode: WorktreeComparisonMode = .againstBranch("main")
+    @Published public var availableBranches: [String] = []
+    @Published public var recentCommits: [WorktreeCommit] = []
+    @Published public var worktrees: [GitWorktreeInfo] = []
+    @Published public var viewMode: WorktreeViewMode = .tree
+    @Published public var searchQuery: String = ""
+    @Published public var isSearchVisible: Bool = false
+    @Published public var isExpandedSplitMode: Bool = false
+    @Published public var selectedCommit: WorktreeCommit? = nil
+
+    // Timeline and branch diff scope
+    @Published public var selectedTimelineCommit: WorktreeCommit? = nil
+    @Published public var selectedCommitFiles: [WorktreeFileChange] = []
+    @Published public var isLoadingCommitFiles: Bool = false
+    @Published public var branchComparisonFiles: [WorktreeFileChange] = []
 
     private var refreshTask: Task<Void, Never>?
     /// Held so `loadDiff` can cancel its predecessor: an unstored `Task`'s
@@ -155,12 +275,23 @@ public final class WorktreeModel: ObservableObject {
 
             let path = self.rootDirectoryPath
             let (isGit, branch, changes, adds, dels) = await Self.queryGitStatus(rootPath: path)
+            var branches: [String] = []
+            var commits: [WorktreeCommit] = []
+            var worktreeItems: [GitWorktreeInfo] = []
+            if isGit {
+                branches = await Self.queryGitBranches(rootPath: path)
+                commits = await Self.queryRecentCommits(rootPath: path, maxCount: 25)
+                worktreeItems = await Self.queryGitWorktrees(rootPath: path)
+            }
 
             guard !Task.isCancelled, self.refreshGeneration == generation else { return }
 
             self.isGitRepository = isGit
             self.currentBranch = branch.isEmpty ? "main" : branch
             self.files = changes
+            self.availableBranches = branches
+            self.recentCommits = commits
+            self.worktrees = worktreeItems
             self.totalAdditions = adds
             self.totalDeletions = dels
             self.lastRefreshTime = Date()
@@ -174,7 +305,111 @@ public final class WorktreeModel: ObservableObject {
         }
     }
 
-    /// Loads the git diff for a specific file path.
+    /// Selects a commit from the timeline to inspect its files and message.
+    public func selectTimelineCommit(_ commit: WorktreeCommit) {
+        selectedTimelineCommit = commit
+        isLoadingCommitFiles = true
+        selectedCommitFiles = []
+        let path = rootDirectoryPath
+        let hash = commit.hash
+        Task { [weak self] in
+            guard let self = self else { return }
+            let files = await Self.queryCommitFiles(rootPath: path, hash: hash)
+            guard !Task.isCancelled else { return }
+            self.selectedCommitFiles = files
+            self.isLoadingCommitFiles = false
+            if let first = files.first {
+                self.loadDiff(for: first.relativePath)
+            }
+        }
+    }
+
+    /// Loads files modified between the current branch and a base branch.
+    public func loadBranchComparisonFiles(baseBranch: String) {
+        let path = rootDirectoryPath
+        Task { [weak self] in
+            guard let self = self else { return }
+            let files = await Self.queryBranchDiffFiles(rootPath: path, baseBranch: baseBranch)
+            guard !Task.isCancelled else { return }
+            self.branchComparisonFiles = files
+        }
+    }
+
+    /// Switches the active project repository to another linked Git worktree.
+    public func selectWorktree(path: String) {
+        guard path != rootDirectoryPath else { return }
+        updateRoot(path: path)
+    }
+
+    /// Checks out another local Git branch.
+    public func switchBranch(to branchName: String) async -> (success: Bool, error: String?) {
+        guard !rootDirectoryPath.isEmpty else { return (false, "No repository root") }
+        let (exitCode, stderr) = await Self.runGitCheckout(rootPath: rootDirectoryPath, branch: branchName)
+        if exitCode == 0 {
+            refresh()
+            return (true, nil)
+        } else {
+            return (false, stderr.isEmpty ? "Failed to switch branch." : stderr)
+        }
+    }
+
+    /// Sets the active diff comparison target and reloads the current diff if any.
+    public func setComparisonMode(_ mode: WorktreeComparisonMode) {
+        self.comparisonMode = mode
+        switch mode {
+        case .againstBranch(let base):
+            loadBranchComparisonFiles(baseBranch: base)
+        case .commit(let hash, _):
+            if let commit = recentCommits.first(where: { $0.hash == hash }) {
+                selectTimelineCommit(commit)
+            }
+        case .uncommitted:
+            break
+        }
+        if let selected = selectedFilePath {
+            loadDiff(for: selected)
+        }
+    }
+
+    /// Initializes a Git repository in the current root directory.
+    public func initRepository() {
+        guard !rootDirectoryPath.isEmpty else { return }
+        let path = rootDirectoryPath
+        Task { [weak self] in
+            let success = await Self.runGitInit(rootPath: path)
+            if success {
+                self?.refresh()
+            }
+        }
+    }
+
+    /// File changes scoped to the active comparison mode (working tree, branch, or commit).
+    public var scopedFiles: [WorktreeFileChange] {
+        switch comparisonMode {
+        case .uncommitted:
+            return files
+        case .againstBranch:
+            return branchComparisonFiles.isEmpty ? files : branchComparisonFiles
+        case .commit:
+            return selectedCommitFiles.isEmpty ? files : selectedCommitFiles
+        }
+    }
+
+    /// Filtered file changes matching the active search query within the active scope.
+    public var filteredFiles: [WorktreeFileChange] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let source = scopedFiles
+        guard !q.isEmpty else { return source }
+        return source.filter {
+            $0.relativePath.lowercased().contains(q) || $0.fileName.lowercased().contains(q)
+        }
+    }
+
+    /// Hierarchical tree nodes built from filtered file changes.
+    public var treeNodes: [WorktreeTreeNode] {
+        Self.buildTree(from: filteredFiles)
+    }
+
     /// Loads the git diff for a specific file path.
     ///
     /// **THE TASK IS STORED, AND THAT IS WHAT MAKES THE CANCEL CHECK REAL.**
@@ -190,10 +425,11 @@ public final class WorktreeModel: ObservableObject {
         selectedFileDiff = nil
         isLoadingDiff = true
         let path = rootDirectoryPath
+        let mode = comparisonMode
 
         diffTask = Task { [weak self] in
             guard let self = self else { return }
-            let diff = await Self.queryGitDiff(rootPath: path, file: relativePath)
+            let diff = await Self.queryGitDiff(rootPath: path, file: relativePath, comparisonMode: mode)
             // Cancelled means a SUCCESSOR owns the spinner, so leave it up.
             guard !Task.isCancelled else { return }
             // Not cancelled but the selection moved anyway -- a `refresh()`
