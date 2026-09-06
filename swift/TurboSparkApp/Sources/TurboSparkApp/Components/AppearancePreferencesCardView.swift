@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Preferences card view for dock icon, pointer cursors, font smoothing, and sizing.
+/// Preferences card view for pointer cursors, status bar, and font sizing.
 public struct AppearancePreferencesCardView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject public var manager: AppearanceManager
 
     public init(manager: AppearanceManager) {
@@ -12,7 +13,7 @@ public struct AppearancePreferencesCardView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Preferences")
-                .font(.headline.weight(.semibold))
+                .font(theme.ui(.large, weight: .semibold))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
 
@@ -44,21 +45,6 @@ public struct AppearancePreferencesCardView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 175)
                 .labelsHidden()
-            }
-
-            Divider().padding(.leading, 16)
-
-            // 3. Dock icon
-            preferenceRow(
-                title: "Dock icon",
-                description: "Choose the icon the app will use in the dock"
-            ) {
-                HStack(spacing: 8) {
-                    dockIconOption(.emeraldSpark, systemSymbol: "sparkles", gradientColors: [Color(red: 0.1, green: 0.3, blue: 0.15), Color(red: 0.05, green: 0.15, blue: 0.08)])
-                    dockIconOption(.codexDark, systemSymbol: "chevron.left.forwardslash.chevron.right", gradientColors: [Color(white: 0.25), Color(white: 0.12)])
-                    dockIconOption(.terminalPro, systemSymbol: "terminal.fill", gradientColors: [Color(red: 0.1, green: 0.25, blue: 0.5), Color(red: 0.05, green: 0.1, blue: 0.25)])
-                    dockIconOption(.minimalist, systemSymbol: "bolt.fill", gradientColors: [Color(white: 0.15), Color(white: 0.08)])
-                }
             }
 
             Divider().padding(.leading, 16)
@@ -97,21 +83,42 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 5. UI font size
+            // 5. UI font
+            preferenceRow(
+                title: "UI font",
+                description: "Select the typeface and weight for the TurboSpark interface"
+            ) {
+                fontPicker(
+                    family: Binding(
+                        get: { manager.uiFontFamily },
+                        set: { manager.setUIFont(family: $0) }
+                    ),
+                    weight: Binding(
+                        get: { manager.uiFontWeight },
+                        set: { manager.setUIFont(weight: $0) }
+                    ),
+                    options: AppFontCatalog.availableUIFamilies(installed: AppFontCatalog.installedFamilies()),
+                    isCodeFont: false
+                )
+            }
+
+            Divider().padding(.leading, 16)
+
+            // 6. UI font size
             preferenceRow(
                 title: "UI font size",
                 description: "Adjust the base size used for the TurboSpark UI"
             ) {
                 HStack(spacing: 6) {
-                    Stepper("", value: $manager.uiFontSize, in: 11...20, step: 1)
+                    Stepper("", value: $manager.uiFontSize, in: 11...28, step: 1)
                         .labelsHidden()
 
                     Text("\(Int(manager.uiFontSize))")
-                        .font(.subheadline.monospacedDigit())
-                        .frame(width: 24, alignment: .center)
+                        .font(theme.ui(points: 14, weight: .medium).monospacedDigit())
+                        .frame(width: 28, alignment: .center)
 
                     Text("px")
-                        .font(.caption)
+                        .font(theme.ui(.small))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 8)
@@ -126,21 +133,42 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 5. Code font size
+            // 7. Code font
+            preferenceRow(
+                title: "Code font",
+                description: "Select the typeface and weight for code blocks and diffs"
+            ) {
+                fontPicker(
+                    family: Binding(
+                        get: { manager.codeFontFamily },
+                        set: { manager.setCodeFont(family: $0) }
+                    ),
+                    weight: Binding(
+                        get: { manager.codeFontWeight },
+                        set: { manager.setCodeFont(weight: $0) }
+                    ),
+                    options: AppFontCatalog.availableCodeFamilies(installed: AppFontCatalog.installedFamilies()),
+                    isCodeFont: true
+                )
+            }
+
+            Divider().padding(.leading, 16)
+
+            // 8. Code font size
             preferenceRow(
                 title: "Code font size",
                 description: "Adjust the base size used for code across chats and diffs"
             ) {
                 HStack(spacing: 6) {
-                    Stepper("", value: $manager.codeFontSize, in: 10...18, step: 1)
+                    Stepper("", value: $manager.codeFontSize, in: 10...24, step: 1)
                         .labelsHidden()
 
                     Text("\(Int(manager.codeFontSize))")
-                        .font(.subheadline.monospacedDigit())
-                        .frame(width: 24, alignment: .center)
+                        .font(theme.ui(points: 14, weight: .medium).monospacedDigit())
+                        .frame(width: 28, alignment: .center)
 
                     Text("px")
-                        .font(.caption)
+                        .font(theme.ui(.small))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 8)
@@ -155,7 +183,7 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 6. Diff markers
+            // 7. Diff markers
             preferenceRow(
                 title: "Diff markers",
                 description: "Show changes using colors or +/- markers"
@@ -187,11 +215,11 @@ public struct AppearancePreferencesCardView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.subheadline.weight(.medium))
+                    .font(theme.ui(.base, weight: .medium))
                     .foregroundStyle(.primary)
 
                 Text(description)
-                    .font(.caption)
+                    .font(theme.ui(.small))
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 16)
@@ -201,30 +229,33 @@ public struct AppearancePreferencesCardView: View {
         .padding(.vertical, 12)
     }
 
-    private func dockIconOption(_ icon: AppDockIcon, systemSymbol: String, gradientColors: [Color]) -> some View {
-        let isSelected = manager.dockIcon == icon
-        return Button {
-            manager.dockIcon = icon
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(LinearGradient(colors: gradientColors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 32, height: 32)
-
-                Image(systemName: systemSymbol)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(
-                        isSelected ? Color.accentColor : Color.clear,
-                        lineWidth: isSelected ? 2 : 0
-                    )
+    private func fontPicker(
+        family: Binding<String>,
+        weight: Binding<String>,
+        options: [String],
+        isCodeFont: Bool = false
+    ) -> some View {
+        HStack(spacing: 8) {
+            Picker("", selection: family) {
+                ForEach(options, id: \.self) { fam in
+                    Text(fam)
+                        .font(AppFontDescriptor(family: fam, weight: .regular, size: 13, isCode: isCodeFont).font)
+                        .tag(fam)
+                }
             }
-            .frame(width: 32, height: 32)
+            .pickerStyle(.menu)
+            .frame(width: 140)
+            .labelsHidden()
+
+            Picker("", selection: weight) {
+                Text("Regular").font(AppFontDescriptor(family: family.wrappedValue, weight: .regular, size: 13, isCode: isCodeFont).font).tag("Regular")
+                Text("Medium").font(AppFontDescriptor(family: family.wrappedValue, weight: .medium, size: 13, isCode: isCodeFont).font).tag("Medium")
+                Text("Semibold").font(AppFontDescriptor(family: family.wrappedValue, weight: .semibold, size: 13, isCode: isCodeFont).font).tag("Semibold")
+                Text("Bold").font(AppFontDescriptor(family: family.wrappedValue, weight: .bold, size: 13, isCode: isCodeFont).font).tag("Bold")
+            }
+            .pickerStyle(.menu)
+            .frame(width: 100)
+            .labelsHidden()
         }
-        .buttonStyle(.plain)
-        .help(icon.label)
-        .appPointerCursor()
     }
 }

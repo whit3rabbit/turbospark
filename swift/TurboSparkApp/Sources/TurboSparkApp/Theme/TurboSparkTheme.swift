@@ -97,9 +97,23 @@ public enum TurboSparkTheme {
 
     public static var barBackgroundColor: Color { barBackgroundColor(isDark: resolvedIsDark) }
 
-    /// Fill for cards, chips and the composer: the raised surface in the app.
+    /// Fill for cards and chips: the raised surface in the app.
     public static var surfaceColor: Color {
         Color(nsColor: .controlBackgroundColor)
+    }
+
+    /// Background color specifically for the prompt composer textbox so it
+    /// cleanly contrasts against the window background in both light and dark modes.
+    nonisolated public static func composerBackgroundColor(isDark: Bool) -> Color {
+        if isDark {
+            return Color(nsColor: NSColor(white: 0.20, alpha: 1.0))
+        } else {
+            return Color(nsColor: NSColor(white: 0.94, alpha: 1.0))
+        }
+    }
+
+    public static var composerBackgroundColor: Color {
+        composerBackgroundColor(isDark: resolvedIsDark)
     }
 
     public static var hairlineColor: Color { hairlineColor(isDark: resolvedIsDark) }

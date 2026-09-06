@@ -344,7 +344,11 @@ public struct SkillImportSheet: View {
             var found: [ImportableSkillCandidate] = []
             let home = FileManager.default.homeDirectoryForCurrentUser
 
-            for (agent, relPath) in manager.knownUserAgentSkillRoots where agent != .turboSpark {
+            // The cross-agent roots are shared home-directory trees, so a
+            // non-default profile -- which owns its own skills folder --
+            // offers nothing from them.
+            for (agent, relPath) in manager.knownUserAgentSkillRoots
+            where agent != .turboSpark && UserProfileStore.isDefault {
                 let url = home.appendingPathComponent(relPath, isDirectory: true)
                 guard FileManager.default.fileExists(atPath: url.path) else { continue }
                 let skills = manager.scanDirectory(url, scope: .userGlobal, defaultAgent: agent)

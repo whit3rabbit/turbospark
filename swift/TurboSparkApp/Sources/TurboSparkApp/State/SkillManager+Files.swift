@@ -52,6 +52,8 @@ extension SkillManager {
                 .appendingPathComponent(".turbospark", isDirectory: true)
                 .appendingPathComponent("skills", isDirectory: true)
                 .appendingPathComponent(sanitizedName, isDirectory: true)
+        case .plugin:
+            throw NSError(domain: "TurboSparkSkill", code: 4, userInfo: [NSLocalizedDescriptionKey: "Skills contributed by a plugin are owned by that plugin and cannot be created here. Edit the plugin's own files or create the skill in user or project scope."])
         }
 
         try fileManager.createDirectory(at: targetDir, withIntermediateDirectories: true)
@@ -126,6 +128,8 @@ extension SkillManager {
             destinationBaseDir = projectRootURL
                 .appendingPathComponent(".turbospark", isDirectory: true)
                 .appendingPathComponent("skills", isDirectory: true)
+        case .plugin:
+            throw NSError(domain: "TurboSparkSkill", code: 5, userInfo: [NSLocalizedDescriptionKey: "A skill cannot be imported into plugin scope; plugins own their own files."])
         }
 
         try fileManager.createDirectory(at: destinationBaseDir, withIntermediateDirectories: true)

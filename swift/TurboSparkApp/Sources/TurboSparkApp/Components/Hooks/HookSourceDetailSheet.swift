@@ -254,6 +254,20 @@ public struct HookSourceDetailSheet: View {
                                 .background(Color(nsColor: .separatorColor).opacity(0.3))
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                         }
+
+                        // Prompt/agent hooks load but are never evaluated
+                        // (see AppHookExecutionEngine); the badge keeps the
+                        // no-op from being a silent one.
+                        if hook.type == .prompt {
+                            Text("not evaluated")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.12))
+                                .clipShape(Capsule())
+                                .help("Prompt-type hooks are not run by this client. The entry is shown so the gap is visible.")
+                        }
                     }
                 }
 

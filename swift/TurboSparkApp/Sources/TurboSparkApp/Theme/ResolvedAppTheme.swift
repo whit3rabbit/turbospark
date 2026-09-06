@@ -92,6 +92,11 @@ public struct ResolvedAppTheme: Equatable, Sendable {
     public var borderStrokeOpacity: Double {
         max(0.3, (contrast / 100.0) * 0.85)
     }
+
+    /// Background color specifically for the prompt composer textbox.
+    public var composerBackground: Color {
+        TurboSparkTheme.composerBackgroundColor(isDark: isDark)
+    }
 }
 
 public extension ResolvedAppTheme {
@@ -163,7 +168,7 @@ public extension ResolvedAppTheme {
         foreground: Color(hex: ThemeModeConfig.defaultLight.foregroundHex) ?? .primary,
         contrast: ThemeModeConfig.defaultLight.contrast,
         uiFontDescriptor: AppFontDescriptor(
-            family: AppFontCatalog.systemDefault, weight: .regular, size: 14, isCode: false),
+            family: AppFontCatalog.systemDefault, weight: .regular, size: 16, isCode: false),
         codeFontDescriptor: AppFontDescriptor(
             family: AppFontCatalog.systemDefault, weight: .regular, size: 12, isCode: true))
 }
@@ -191,6 +196,7 @@ public struct AppThemeInjector: ViewModifier {
         return content
             .environment(\.appTheme, theme)
             .tint(theme.accent)
+            .font(theme.uiFont)
     }
 }
 

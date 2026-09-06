@@ -49,6 +49,7 @@ extension AppModel {
         self.seed = settings.seed
         self.stopSequences = settings.stopSequences
         self.defaultSystemPrompt = settings.defaultSystemPrompt
+        self.pluginEnableState = settings.enabledPlugins
         self.runtimeOptions.powerProfile = AppPowerProfileOption(rawValue: settings.powerProfile) ?? .auto
         self.runtimeOptions.loadGuard = AppLoadGuardOption(rawValue: settings.loadGuard) ?? .relaxed
         self.runtimeOptions.loadGuardCustomBytes = settings.loadGuardCustomBytes
@@ -79,6 +80,10 @@ extension AppModel {
         self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
         self.modelReasoningDefaults = settings.modelReasoningDefaults
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
+        // The pinned port is a plain preference; the server API key is a
+        // credential and comes from the Keychain instead (ServerKeychain).
+        self.serverPinnedPort = settings.serverPinnedPort
+        self.serverAPIKeyInput = ServerKeychain.loadKey() ?? ""
         // `ToolRiskClassifier` is a static surface reached from the agent loop
         // with no AppModel in hand, so the flag lives on the gate rather than
         // being threaded through `assessTerminalCommand`. Set it here, once,
@@ -143,8 +148,16 @@ extension AppModel {
             guardrailsMode: guardrailsMode.rawValue,
             modelReasoningDefaults: modelReasoningDefaults,
             interactionMode: interactionMode.rawValue,
-            defaultSystemPrompt: defaultSystemPrompt
+            serverPinnedPort: serverPinnedPort,
+            defaultSystemPrompt: defaultSystemPrompt,
+            enabledPlugins: pluginEnableState
         )
+        // The API key follows its own storage: Keychain, written only when
+        // the field changed, so a persist of unrelated settings does not
+        // touch the item.
+        if serverAPIKeyInput != (ServerKeychain.loadKey() ?? "") {
+            ServerKeychain.saveKey(serverAPIKeyInput)
+        }
         MacAppSettingsFileStore.save(settings)
     }
 

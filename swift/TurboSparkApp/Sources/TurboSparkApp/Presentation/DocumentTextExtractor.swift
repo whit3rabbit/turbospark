@@ -152,6 +152,12 @@ public enum DocumentTextExtractor {
         guard let document = PDFDocument(url: url) else {
             throw DocumentTextExtractionError.unreadableFile(url.lastPathComponent)
         }
+        if document.isLocked {
+            throw DocumentTextExtractionError.unreadableFile("Password-protected PDF: \(url.lastPathComponent)")
+        }
+        if document.pageCount == 0 {
+            throw DocumentTextExtractionError.noExtractableText(url.lastPathComponent)
+        }
 
         var pages: [String] = []
         var extractedCharacterCount = 0
@@ -166,6 +172,9 @@ public enum DocumentTextExtractor {
             if extractedCharacterCount > maximumExtractedCharacters * 2 {
                 break
             }
+        }
+        guard !pages.isEmpty else {
+            throw DocumentTextExtractionError.noExtractableText("\(url.lastPathComponent) (document may be a scanned image without a text layer)")
         }
         return pages.joined(separator: "\n\n")
     }

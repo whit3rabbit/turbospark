@@ -70,7 +70,7 @@ struct PromptComposerEditor: View {
                     .focused(promptFocused)
                     .overlay(alignment: .topLeading) {
                         if model.promptText.isEmpty {
-                            Text("Ask a question, request code, or explore ideas...")
+                            Text("Ask anything")
                                 .font(theme.uiFont)
                                 .foregroundStyle(.tertiary)
                                 .padding(.leading, 5)

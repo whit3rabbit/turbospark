@@ -114,6 +114,28 @@ public final class AppModel: ObservableObject {
     @Published public var worktree: WorktreeModel? = nil
     /// Global application-level MCP server configurations.
     @Published public var globalMcpServers: [McpServerConfig] = []
+    /// Global / rootless chat permission mode (defaults to .auto / Approve for me).
+    @Published public var activePermissionMode: AppPermissionMode = .auto
+    /// Web search tool toggle state in the chat bar.
+    @Published public var webSearchEnabled: Bool = false
+
+    /// Effective permission mode for current chat or project.
+    public var effectivePermissionMode: AppPermissionMode {
+        selectedProject?.permissions.mode ?? activePermissionMode
+    }
+
+    /// Updates permission mode for current project or global chat.
+    public func setEffectivePermissionMode(_ mode: AppPermissionMode) {
+        if let project = selectedProject {
+            var updated = project
+            updated.permissions = AppProjectPermissions.preset(for: mode)
+            updated.permissions.mode = mode
+            updateProject(updated)
+        } else {
+            activePermissionMode = mode
+        }
+    }
+
     /// Currently pending tool call requiring user approval.
     @Published public var pendingToolCall: AppToolCall? = nil
     /// The chat the pending tool call was proposed in, captured at proposal
@@ -144,6 +166,25 @@ public final class AppModel: ObservableObject {
     @Published public var userSkills: [AppSkill] = []
     /// Project-scoped skills for the currently selected project.
     @Published public var projectSkills: [AppSkill] = []
+
+    // Plugins State
+    /// Every plugin discovered across both roots, precedence-ordered,
+    /// including disabled ones. Refreshed by `reloadPlugins()`.
+    @Published public var installedPlugins: [LoadedPlugin] = []
+    /// One line per plugin that failed to load, plus shadowed-name notes.
+    @Published public var pluginLoadDiagnostics: [String] = []
+    /// User-scope plugin enable state, keyed `<plugin>@<origin>`. Persisted
+    /// inside `settings.json` via `persistSettings`, NOT by `PluginManager`
+    /// -- a direct write there would be clobbered by this model's own
+    /// debounced settings save.
+    @Published public var pluginEnableState: [String: Bool] = [:]
+
+    // Profiles State
+    /// The ADDITIONAL users this installation knows about. The Default user
+    /// is implicit and never in this list; `currentProfile` resolves it.
+    /// Which user a run belongs to was fixed before any store opened
+    /// (`UserProfileStore.active`); this list is display and management.
+    @Published public var profiles: [UserProfile] = []
 
     // Agents State
     /// All discovered agents (built-in, user, project).
@@ -377,11 +418,13 @@ public final class AppModel: ObservableObject {
     /// Creates and initializes the application model, restoring saved settings and chats.
     public init() {
         loadSettings()
+        loadProfiles()
         loadProjects()
         loadChats()
         loadGlobalMcpServers()
         reloadSkills()
         reloadAgents()
+        reloadPlugins()
         refreshModels()
         AppToolRegistry.activeSessionProvider = { [weak self] in
             self?.session

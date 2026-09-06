@@ -8,6 +8,9 @@ public enum SkillScope: Codable, Equatable, Hashable, Sendable {
     case projectLocal(projectPath: String)
     /// Bundled default skill packaged with TurboSpark.
     case bundled
+    /// Contributed by an installed plugin; `pluginID` is the
+    /// `<name>@<origin>` id whose enable state gates the whole set.
+    case plugin(pluginID: String)
 
     public var isProjectScope: Bool {
         if case .projectLocal = self {
@@ -24,6 +27,8 @@ public enum SkillScope: Codable, Equatable, Hashable, Sendable {
             return "Project Scope"
         case .bundled:
             return "Bundled"
+        case .plugin:
+            return "Plugin"
         }
     }
 
@@ -35,6 +40,8 @@ public enum SkillScope: Codable, Equatable, Hashable, Sendable {
             return "folder.fill"
         case .bundled:
             return "cube.box.fill"
+        case .plugin:
+            return "puzzlepiece.extension.fill"
         }
     }
 }

@@ -20,11 +20,11 @@ public struct AppSidebarControlPresentation: Equatable, Sendable {
         case .chats:
             systemImage = "sidebar.left"
             title = isVisible ? "Hide chats" : "Show chats"
-            help = "\(title) (⌃⌘S)"
+            help = "\(title) (Ctrl+Cmd+S)"
         case .inspector:
             systemImage = "sidebar.right"
             title = isVisible ? "Hide settings" : "Show settings"
-            help = "\(title) (⇧⌘I)"
+            help = "\(title) (Shift+Cmd+I)"
         }
     }
 }
@@ -33,8 +33,13 @@ public enum AppChromeLayout {
     public static let primaryMinimumWidth: CGFloat = 520
     public static let chatSidebarWidth: CGFloat = 260
     public static let inspectorWidth: CGFloat = 320
+    public static let expandedInspectorWidth: CGFloat = 720
     public static let dividerWidth: CGFloat = 1
     public static let minimumHeight: CGFloat = 520
+
+    public static func inspectorWidth(isExpanded: Bool) -> CGFloat {
+        isExpanded ? expandedInspectorWidth : inspectorWidth
+    }
 
     /// Width of the always-visible icon rail holding the top-level sections.
     public static let navigationRailWidth: CGFloat = 52
@@ -50,12 +55,15 @@ public enum AppChromeLayout {
 
     public static func minimumWindowWidth(
         isChatSidebarVisible: Bool,
-        isInspectorVisible: Bool
+        isInspectorVisible: Bool,
+        isExpandedInspector: Bool = false
     ) -> CGFloat {
-        navigationRailWidth
+        let currentInspectorWidth = isExpandedInspector ? expandedInspectorWidth : inspectorWidth
+        return navigationRailWidth
             + dividerWidth
             + primaryMinimumWidth
             + (isChatSidebarVisible ? chatSidebarWidth + dividerWidth : 0)
-            + (isInspectorVisible ? inspectorWidth + dividerWidth : 0)
+            + (isInspectorVisible ? currentInspectorWidth + dividerWidth : 0)
     }
 }
+

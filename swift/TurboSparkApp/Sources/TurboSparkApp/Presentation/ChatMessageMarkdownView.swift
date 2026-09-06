@@ -14,7 +14,7 @@ public struct ChatMessageMarkdownView: View {
     public var body: some View {
         Markdown(text)
             .markdownTheme(.turboSpark(ui: theme.uiFontDescriptor, code: theme.codeFontDescriptor))
-            .id(theme.uiFontDescriptor)
+            .id("\(theme.uiFontDescriptor.family)-\(theme.uiFontDescriptor.size)-\(theme.uiFontDescriptor.weight)-\(theme.codeFontDescriptor.family)-\(theme.codeFontDescriptor.size)-\(theme.codeFontDescriptor.weight)")
             .foregroundStyle(theme.foreground)
             .textSelection(.enabled)
     }
@@ -50,6 +50,46 @@ extension Theme {
         .link {
             ForegroundColor(Color.accentColor)
             UnderlineStyle(.single)
+        }
+        .heading1 { configuration in
+            configuration.label
+                .relativeLineSpacing(.em(0.2))
+                .markdownMargin(top: 16, bottom: 8)
+                .markdownTextStyle {
+                    FontFamily(ui.markdownFamily)
+                    FontSize(.em(1.5))
+                    FontWeight(.bold)
+                }
+        }
+        .heading2 { configuration in
+            configuration.label
+                .relativeLineSpacing(.em(0.2))
+                .markdownMargin(top: 14, bottom: 6)
+                .markdownTextStyle {
+                    FontFamily(ui.markdownFamily)
+                    FontSize(.em(1.3))
+                    FontWeight(.bold)
+                }
+        }
+        .heading3 { configuration in
+            configuration.label
+                .relativeLineSpacing(.em(0.2))
+                .markdownMargin(top: 12, bottom: 4)
+                .markdownTextStyle {
+                    FontFamily(ui.markdownFamily)
+                    FontSize(.em(1.15))
+                    FontWeight(.semibold)
+                }
+        }
+        .heading4 { configuration in
+            configuration.label
+                .relativeLineSpacing(.em(0.2))
+                .markdownMargin(top: 10, bottom: 4)
+                .markdownTextStyle {
+                    FontFamily(ui.markdownFamily)
+                    FontSize(.em(1.05))
+                    FontWeight(.semibold)
+                }
         }
         .codeBlock { configuration in
             CodeBlockContainer(

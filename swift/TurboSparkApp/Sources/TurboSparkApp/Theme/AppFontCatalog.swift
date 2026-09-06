@@ -108,7 +108,7 @@ public enum AppFontCatalog {
     /// defaults to. An explicit point size at a call site is expressed
     /// RELATIVE to these, so the shipped design renders unchanged at the
     /// defaults and scales as a whole when the user moves the base.
-    public static let defaultUISize: CGFloat = 14
+    public static let defaultUISize: CGFloat = 16
     public static let defaultCodeSize: CGFloat = 12
 
     /// Families that name the system face and therefore need nothing installed.
@@ -119,12 +119,12 @@ public enum AppFontCatalog {
 
     /// Every UI family the pane may offer, in menu order.
     public static let offeredUIFamilies = [
-        "System default", "SF Pro", "Inter", "Helvetica Neue", "Avenir"
+        "System default", "SF Pro", "Inter", "Helvetica Neue", "Avenir", "Georgia", "Palatino", "Charter"
     ]
 
     /// Every code family the pane may offer, in menu order.
     public static let offeredCodeFamilies = [
-        "System default", "SF Mono", "Menlo", "JetBrains Mono", "Fira Code", "Courier"
+        "System default", "SF Mono", "Menlo", "JetBrains Mono", "Fira Code", "Courier New"
     ]
 
     /// Narrows an offered list to the families that will actually render.
@@ -162,6 +162,7 @@ public enum AppFontCatalog {
     /// registered. Call after `AppFontRegistrar.registerBundledFonts()`.
     @MainActor
     public static func installedFamilies() -> Set<String> {
-        Set(NSFontManager.shared.availableFontFamilies)
+        AppFontRegistrar.registerBundledFonts()
+        return Set(NSFontManager.shared.availableFontFamilies)
     }
 }

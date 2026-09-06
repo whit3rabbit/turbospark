@@ -33,7 +33,6 @@ final class AppearanceSettingsTests: XCTestCase {
 
     func testAppearanceManagerPresetApplication() {
         let manager = AppearanceManager.shared
-        let initialPreset = manager.lightConfig.preset
 
         if let midnight = ThemePreset.presets.first(where: { $0.id == "midnight" }) {
             manager.applyPreset(midnight, forMode: false)
@@ -246,6 +245,27 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertEqual(manager.textSize, .standard)
     }
 
+    func testResetTextSizeRestoresDefaults() {
+        let manager = AppearanceManager.shared
+        let savedUI = manager.uiFontSize
+        let savedCode = manager.codeFontSize
+        let savedText = manager.textSize
+        defer {
+            manager.uiFontSize = savedUI
+            manager.codeFontSize = savedCode
+            manager.textSize = savedText
+        }
+
+        manager.uiFontSize = 22.0
+        manager.codeFontSize = 18.0
+        manager.textSize = .large
+
+        manager.resetTextSize()
+        XCTAssertEqual(manager.uiFontSize, 16.0)
+        XCTAssertEqual(manager.codeFontSize, 12.0)
+        XCTAssertEqual(manager.textSize, .standard)
+    }
+
     func testResolvedThemeScalesWithAppTextSize() {
         let manager = AppearanceManager.shared
         let savedUI = manager.uiFontSize
@@ -298,6 +318,11 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertEqual(
             AppFontCatalog.availableUIFamilies(installed: ["Avenir", "Inter"]),
             ["System default", "SF Pro", "Inter", "Avenir"])
+
+        let withSerifs = AppFontCatalog.availableUIFamilies(installed: ["Georgia", "Palatino", "Charter"])
+        XCTAssertTrue(withSerifs.contains("Georgia"))
+        XCTAssertTrue(withSerifs.contains("Palatino"))
+        XCTAssertTrue(withSerifs.contains("Charter"))
     }
 
     /// A config naming a family that is not installed falls back BY NAME.
@@ -479,4 +504,29 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertFalse(blackColor.isLight)
         XCTAssertEqual(blackColor.contrastForeground, Color.white)
     }
+
+    func testMarkdownRenderingWithCustomFont() {
+        let text = "The quick brown fox jumps over the lazy dog"
+        let descSystem = AppFontDescriptor(family: "System default", weight: .regular, size: 16, isCode: false)
+        let descAvenir = AppFontDescriptor(family: "Avenir", weight: .regular, size: 16, isCode: false)
+        let codeDesc = AppFontDescriptor(family: "SF Mono", weight: .regular, size: 12, isCode: true)
+
+        let viewSystem = ChatMessageMarkdownView(text)
+            .environment(\.appTheme, ResolvedAppTheme(
+                isDark: false, accent: .black, background: .white, foreground: .black, contrast: 50,
+                uiFontDescriptor: descSystem, codeFontDescriptor: codeDesc))
+        let viewAvenir = ChatMessageMarkdownView(text)
+            .environment(\.appTheme, ResolvedAppTheme(
+                isDark: false, accent: .black, background: .white, foreground: .black, contrast: 50,
+                uiFontDescriptor: descAvenir, codeFontDescriptor: codeDesc))
+
+        let hostSystem = NSHostingView(rootView: viewSystem)
+        hostSystem.layout()
+        let hostAvenir = NSHostingView(rootView: viewAvenir)
+        hostAvenir.layout()
+
+        print("Markdown fitting width: System=\(hostSystem.fittingSize.width), Avenir=\(hostAvenir.fittingSize.width)")
+        XCTAssertNotEqual(hostSystem.fittingSize.width, hostAvenir.fittingSize.width)
+    }
 }
+

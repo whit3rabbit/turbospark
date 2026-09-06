@@ -60,7 +60,21 @@ final class FlowingTextXMLParser: NSObject, XMLParserDelegate {
             output += capturedText ?? ""
             capturedText = nil
         case "p":
-            output += "\n"
+            if !output.hasSuffix("\n") {
+                output += "\n"
+            }
+        case "tc":
+            if output.hasSuffix("\n") {
+                output.removeLast()
+            }
+            output += "\t"
+        case "tr":
+            if output.hasSuffix("\t") {
+                output.removeLast()
+            }
+            if !output.hasSuffix("\n") {
+                output += "\n"
+            }
         default:
             break
         }

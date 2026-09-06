@@ -69,13 +69,11 @@ public final class SkillManager: @unchecked Sendable {
 
     // MARK: - Standard Directories
 
-    /// Standard user skills directory (~/.turbospark/skills).
+    /// Standard user skills directory: `~/.turbospark/skills` for the Default
+    /// profile (where other agent harnesses read the same files), inside that
+    /// profile's own folder for anyone else, who shares nothing.
     public var defaultUserSkillsDirectory: URL {
-        let home = fileManager.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".turbospark", isDirectory: true)
-            .appendingPathComponent("skills", isDirectory: true)
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        UserProfileStore.userScopeSubdirectory("skills")
     }
 
     /// Known agent user-scope skill roots as documented in agent-config support matrix.
@@ -136,8 +134,11 @@ public final class SkillManager: @unchecked Sendable {
             }
         }
 
-        // 2. Scan standard external user agent roots if enabled
-        if includeExternalAgents {
+        // 2. Scan standard external user agent roots if enabled. The
+        // cross-agent roots are SHARED home-directory trees, so a non-default
+        // profile -- whose whole point is owning its own content -- skips
+        // them entirely.
+        if includeExternalAgents, UserProfileStore.isDefault {
             let home = fileManager.homeDirectoryForCurrentUser
             for (agent, relPath) in knownUserAgentSkillRoots where agent != .turboSpark {
                 let agentURL = home.appendingPathComponent(relPath, isDirectory: true)
@@ -311,7 +312,14 @@ public final class SkillManager: @unchecked Sendable {
 
     private func computeEffectiveSkills(projectURL: URL?) -> [AppSkill] {
         let userSkills = discoverUserSkills()
-        guard let projectURL else { return userSkills }
+        // Plugin skills are namespaced (`plugin:skill`), so they cannot
+        // collide with a bare user or project name and need no precedence
+        // rule -- the colon IS the namespace, as in Claude Code.
+        let pluginSkills = PluginManager.shared.pluginSkills(projectURL: projectURL)
+        guard let projectURL else {
+            return (userSkills + pluginSkills)
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
 
         let projectSkills = discoverProjectSkills(projectRootURL: projectURL)
         var mergedMap: [String: AppSkill] = [:]
@@ -321,7 +329,12 @@ public final class SkillManager: @unchecked Sendable {
             mergedMap[skill.name.lowercased()] = skill
         }
 
-        // 2. Override with project skills (higher precedence)
+        // 2. Plugin skills beside them (disjoint by namespace)
+        for skill in pluginSkills {
+            mergedMap[skill.name.lowercased()] = skill
+        }
+
+        // 3. Override with project skills (higher precedence)
         for skill in projectSkills {
             mergedMap[skill.name.lowercased()] = skill
         }

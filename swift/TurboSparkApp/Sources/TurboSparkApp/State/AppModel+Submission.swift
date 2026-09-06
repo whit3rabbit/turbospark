@@ -106,6 +106,16 @@ extension AppModel {
             let verdict = await self.evaluateUserPromptSubmit(
                 prompt: fullUserContent, chatID: submissionChatID, project: submissionProject)
             guard !Task.isCancelled else { return }
+            // `continue: false` from a hook's JSON output refuses the prompt
+            // outright. Like a block, nothing is appended and the draft is
+            // kept; unlike a block (whose reason is an error naming the
+            // hook), the stopReason is Claude Code's "shown to the user"
+            // message.
+            if verdict.preventContinuation {
+                self.error = verdict.continuationStopReason
+                    ?? "A hook declined to continue this prompt."
+                return
+            }
             if verdict.isBlocked {
                 self.error = verdict.blockReason ?? "Prompt blocked by a UserPromptSubmit hook."
                 return

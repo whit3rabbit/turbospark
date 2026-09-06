@@ -193,7 +193,7 @@ final class StateCleanupTests: XCTestCase {
         """
         let parsed = SkillParser.parseContent(rawText: text)
         XCTAssertEqual(
-            parsed.manifest.allowedTools ?? [], ["read_file", "run_command"],
+            parsed.manifest.allowedTools, ["read_file", "run_command"],
             "The marker fell to the scalar arm and produced a list whose one entry is the "
                 + "literal \"|\", which matches no tool.")
     }

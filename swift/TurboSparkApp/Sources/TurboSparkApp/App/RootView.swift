@@ -139,6 +139,9 @@ struct RootView: View {
         } else if isInspectorVisible {
             verticalHairline
 
+            let isExpandedWorktree = (model.interactionMode == .projects && model.worktree?.isExpandedSplitMode == true)
+            let currentWidth = AppChromeLayout.inspectorWidth(isExpanded: isExpandedWorktree)
+
             Group {
                 if model.interactionMode == .projects, let worktree = model.worktree {
                     WorktreeView(model: model, worktree: worktree)
@@ -146,7 +149,7 @@ struct RootView: View {
                     InspectorView(model: model)
                 }
             }
-            .frame(width: AppChromeLayout.inspectorWidth)
+            .frame(width: currentWidth)
             .frame(maxHeight: .infinity)
             .background(Color(nsColor: .windowBackgroundColor))
             .clipped()

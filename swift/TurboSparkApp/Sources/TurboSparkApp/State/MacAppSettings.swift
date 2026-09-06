@@ -142,6 +142,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var modelReasoningDefaults: [String: String]
     /// Last-used primary interaction mode ("chat" or "projects").
     public var interactionMode: String
+    /// Port the in-process server pins to, 0 = first free port. Persisted
+    /// because the field had a settings UI that reset every launch; the
+    /// server API key deliberately does NOT live here (see
+    /// `ServerKeychain`).
+    public var serverPinnedPort: UInt16
     /// User-authored system prompt applied to every turn that has no per-chat
     /// prompt of its own.
     ///
@@ -151,6 +156,12 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// which is what every install written before this field existed decodes
     /// to and therefore leaves their behaviour unchanged.
     public var defaultSystemPrompt: String
+    /// User-scope plugin enable state, keyed `<plugin>@<origin>`
+    /// (`docs/SWIFT_PLUGINS.md`). Absent means enabled: an installed plugin
+    /// that nothing disabled runs. Claude Code's own setting is consulted
+    /// only for its interop plugins and only when neither this nor a
+    /// project's map answers.
+    public var enabledPlugins: [String: Bool]
 
     public init(
         contextTokens: Int = 0,
@@ -192,7 +203,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         guardrailsMode: String = "select",
         modelReasoningDefaults: [String: String] = [:],
         interactionMode: String = "chat",
-        defaultSystemPrompt: String = ""
+        serverPinnedPort: UInt16 = 0,
+        defaultSystemPrompt: String = "",
+        enabledPlugins: [String: Bool] = [:]
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -233,7 +246,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = minAutoContextTokens
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
+        self.serverPinnedPort = serverPinnedPort
         self.defaultSystemPrompt = defaultSystemPrompt
+        self.enabledPlugins = enabledPlugins
     }
 
     /// Tolerant of a wrong TYPE as well as an absent key (state#59).
@@ -291,8 +306,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = c.decodeLenient(UInt32.self, forKey: .minAutoContextTokens, fallback: 0)
         self.modelReasoningDefaults = c.decodeLenient([String: String].self, forKey: .modelReasoningDefaults, fallback: [:])
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
+        self.serverPinnedPort = c.decodeLenient(UInt16.self, forKey: .serverPinnedPort, fallback: 0)
         self.defaultSystemPrompt = c.decodeLenient(
             String.self, forKey: .defaultSystemPrompt, fallback: "")
+        self.enabledPlugins = c.decodeLenient(
+            [String: Bool].self, forKey: .enabledPlugins, fallback: [:])
     }
 }
 

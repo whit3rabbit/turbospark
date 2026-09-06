@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Card view for customizing a specific theme mode configuration (Light or Dark).
 public struct ThemeConfigCardView: View {
+    @Environment(\.appTheme) private var theme
     public let title: String
     public let isDark: Bool
     @Binding public var config: ThemeModeConfig
@@ -37,7 +38,7 @@ public struct ThemeConfigCardView: View {
             // Header
             HStack {
                 Text(title)
-                    .font(.headline.weight(.semibold))
+                    .font(theme.ui(.large, weight: .semibold))
 
                 Spacer()
 
@@ -46,7 +47,7 @@ public struct ThemeConfigCardView: View {
                         importThemePreset()
                     }
                     .buttonStyle(.plain)
-                    .font(.caption)
+                    .font(theme.ui(.small))
                     .foregroundStyle(.secondary)
                     .appPointerCursor()
 
@@ -54,7 +55,7 @@ public struct ThemeConfigCardView: View {
                         copyThemeJSON()
                     }
                     .buttonStyle(.plain)
-                    .font(.caption)
+                    .font(theme.ui(.small))
                     .foregroundStyle(.secondary)
                     .appPointerCursor()
 
@@ -68,16 +69,16 @@ public struct ThemeConfigCardView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text("Aa")
-                                .font(.caption.weight(.bold))
+                                .font(theme.ui(.small, weight: .bold))
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 2)
                                 .background(Color.accentColor.opacity(0.15))
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
                             Text(config.preset)
-                                .font(.caption)
+                                .font(theme.ui(.small))
                             Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2)
+                                .font(theme.ui(.tiny))
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -112,6 +113,7 @@ public struct ThemeConfigCardView: View {
                     label: "UI font",
                     family: $config.uiFontFamily,
                     weight: $config.uiFontWeight,
+                    isCodeFont: false,
                     familyOptions: AppFontCatalog.availableUIFamilies(installed: installedFamilies)
                 )
                 Divider().padding(.leading, 16)
@@ -120,6 +122,7 @@ public struct ThemeConfigCardView: View {
                     label: "Code font",
                     family: $config.codeFontFamily,
                     weight: $config.codeFontWeight,
+                    isCodeFont: true,
                     familyOptions: AppFontCatalog.availableCodeFamilies(installed: installedFamilies)
                 )
                 Divider().padding(.leading, 16)
@@ -141,7 +144,7 @@ public struct ThemeConfigCardView: View {
     private var accentRow: some View {
         HStack {
             Text("Accent")
-                .font(.subheadline)
+                .font(theme.ui(.base))
             Spacer()
 
             // Always carries the selected value, so the menu cannot render
@@ -158,6 +161,7 @@ public struct ThemeConfigCardView: View {
                             .fill(Color(hex: option.hex) ?? .primary)
                             .frame(width: 8, height: 8)
                         Text(option.name)
+                            .font(theme.ui(.base))
                     }
                     .tag(option.hex)
                 }
@@ -176,7 +180,7 @@ public struct ThemeConfigCardView: View {
     private func colorRow(label: String, hexString: Binding<String>) -> some View {
         HStack {
             Text(label)
-                .font(.subheadline)
+                .font(theme.ui(.base))
             Spacer()
 
             HStack(spacing: 8) {
@@ -187,7 +191,7 @@ public struct ThemeConfigCardView: View {
                 .labelsHidden()
 
                 TextField("", text: hexString)
-                    .font(.caption.monospaced())
+                    .font(theme.code(.small))
                     .frame(width: 80)
                     .textFieldStyle(.roundedBorder)
             }
@@ -200,28 +204,51 @@ public struct ThemeConfigCardView: View {
         label: String,
         family: Binding<String>,
         weight: Binding<String>,
+        isCodeFont: Bool = false,
         familyOptions: [String]
     ) -> some View {
         HStack {
             Text(label)
-                .font(.subheadline)
+                .font(theme.ui(.base))
             Spacer()
 
             HStack(spacing: 8) {
-                Picker("", selection: family) {
+                Picker("", selection: Binding(
+                    get: { family.wrappedValue },
+                    set: { newFamily in
+                        family.wrappedValue = newFamily
+                        if isCodeFont {
+                            manager.setCodeFont(family: newFamily)
+                        } else {
+                            manager.setUIFont(family: newFamily)
+                        }
+                    }
+                )) {
                     ForEach(familyOptions, id: \.self) { fam in
-                        Text(fam).tag(fam)
+                        Text(fam)
+                            .font(AppFontDescriptor(family: fam, weight: .regular, size: 13, isCode: isCodeFont).font)
+                            .tag(fam)
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(width: 130)
+                .frame(width: 140)
                 .labelsHidden()
 
-                Picker("", selection: weight) {
-                    Text("Regular").tag("Regular")
-                    Text("Medium").tag("Medium")
-                    Text("Semibold").tag("Semibold")
-                    Text("Bold").tag("Bold")
+                Picker("", selection: Binding(
+                    get: { weight.wrappedValue },
+                    set: { newWeight in
+                        weight.wrappedValue = newWeight
+                        if isCodeFont {
+                            manager.setCodeFont(weight: newWeight)
+                        } else {
+                            manager.setUIFont(weight: newWeight)
+                        }
+                    }
+                )) {
+                    Text("Regular").font(AppFontDescriptor(family: family.wrappedValue, weight: .regular, size: 13, isCode: isCodeFont).font).tag("Regular")
+                    Text("Medium").font(AppFontDescriptor(family: family.wrappedValue, weight: .medium, size: 13, isCode: isCodeFont).font).tag("Medium")
+                    Text("Semibold").font(AppFontDescriptor(family: family.wrappedValue, weight: .semibold, size: 13, isCode: isCodeFont).font).tag("Semibold")
+                    Text("Bold").font(AppFontDescriptor(family: family.wrappedValue, weight: .bold, size: 13, isCode: isCodeFont).font).tag("Bold")
                 }
                 .pickerStyle(.menu)
                 .frame(width: 100)
@@ -235,7 +262,7 @@ public struct ThemeConfigCardView: View {
     private var translucentSidebarRow: some View {
         HStack {
             Text("Translucent sidebar")
-                .font(.subheadline)
+                .font(theme.ui(.base))
             Spacer()
 
             Toggle("", isOn: $config.translucentSidebar)
@@ -250,16 +277,16 @@ public struct ThemeConfigCardView: View {
     private var contrastRow: some View {
         HStack(spacing: 16) {
             Text("Contrast")
-                .font(.subheadline)
+                .font(theme.ui(.base))
             Spacer()
 
             Slider(value: $config.contrast, in: 0...100, step: 1)
                 .frame(width: 160)
 
-            Text("\(Int(config.contrast))")
-                .font(.caption.monospacedDigit())
+            Text("\(Int(config.contrast))%")
+                .font(theme.ui(.small).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 28, alignment: .trailing)
+                .frame(width: 36, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -279,6 +306,12 @@ public struct ThemeConfigCardView: View {
     }
 
     private func importThemePreset() {
+        if let string = NSPasteboard.general.string(forType: .string),
+           let data = string.data(using: .utf8),
+           let imported = try? JSONDecoder().decode(ThemeModeConfig.self, from: data) {
+            config = imported
+            return
+        }
         if let preset = ThemePreset.presets.first(where: { $0.id == "turbospark" }) {
             manager.applyPreset(preset, forMode: isDark)
         }

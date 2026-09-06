@@ -78,4 +78,135 @@ enum AttachmentImporter {
         }
         return Outcome(importedCount: imported, failures: failures)
     }
+
+    /// Recursively scans a directory for supported text, code, document, and image files.
+    static func importFolder(
+        _ folderURL: URL,
+        into model: AppModel,
+        chatID: UUID?,
+        maxFiles: Int = 80
+    ) async -> Outcome {
+        let didAccess = folderURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let collectedURLs = await Task.detached(priority: .userInitiated) { () -> [URL] in
+            collectFolderURLs(from: folderURL, maxFiles: maxFiles)
+        }.value
+
+        guard !collectedURLs.isEmpty else {
+            return Outcome(
+                importedCount: 0,
+                failures: ["No supported code, text, or document files found in \(folderURL.lastPathComponent)."]
+            )
+        }
+
+        return await importDocuments(collectedURLs, into: model, chatID: chatID)
+    }
+
+    private nonisolated static func collectFolderURLs(
+        from folderURL: URL,
+        maxFiles: Int
+    ) -> [URL] {
+        let fileManager = FileManager.default
+        var isDir: ObjCBool = false
+        guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDir), isDir.boolValue else {
+            return []
+        }
+
+        let canonicalRoot = PathContainment.canonical(folderURL)
+        let rootDepth = canonicalRoot.pathComponents.count
+        let maxDepth = 12
+        var visitedCanonicalPaths: Set<String> = [canonicalRoot.path]
+
+        let skipDirectoryNames: Set<String> = [
+            ".git", ".svn", ".hg", "node_modules", "target", ".build",
+            ".next", "dist", "build", "venv", ".venv", "env",
+            "Pods", "Carthage", "DerivedData", ".DS_Store", "__pycache__"
+        ]
+
+        let supportedExtensions: Set<String> = [
+            "pdf", "docx", "pptx", "xlsx", "txt", "md", "markdown", "json",
+            "swift", "py", "rs", "c", "cpp", "h", "hpp", "js", "ts", "tsx", "jsx",
+            "html", "css", "yaml", "yml", "toml", "sh", "sql", "xml", "csv",
+            "png", "jpg", "jpeg", "webp", "gif", "heic", "tiff", "bmp"
+        ]
+
+        var results: [URL] = []
+        var totalBytes: Int64 = 0
+        let maxTotalBytes: Int64 = 40 * 1024 * 1024 // 40 MB max cumulative size
+
+        guard let enumerator = fileManager.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return []
+        }
+
+        while let fileURL = enumerator.nextObject() as? URL {
+            // Check containment and resolve symlinks
+            let canonical = PathContainment.canonical(fileURL)
+            guard PathContainment.isContained(canonical, in: canonicalRoot) else {
+                // Escaped the folder via symlink: do not process and do not descend
+                enumerator.skipDescendants()
+                continue
+            }
+
+            let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey])
+            let isSymlink = resourceValues?.isSymbolicLink ?? false
+            let isDirectory = resourceValues?.isDirectory ?? fileURL.hasDirectoryPath
+
+            if isDirectory {
+                // Symlinked directories are never descended into to prevent infinite recursion
+                if isSymlink {
+                    enumerator.skipDescendants()
+                    continue
+                }
+
+                // Depth limit from root
+                let currentDepth = canonical.pathComponents.count - rootDepth
+                if currentDepth > maxDepth {
+                    enumerator.skipDescendants()
+                    continue
+                }
+
+                if skipDirectoryNames.contains(fileURL.lastPathComponent) {
+                    enumerator.skipDescendants()
+                    continue
+                }
+
+                if visitedCanonicalPaths.contains(canonical.path) {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                visitedCanonicalPaths.insert(canonical.path)
+                continue
+            }
+
+            // Regular file check
+            if visitedCanonicalPaths.contains(canonical.path) {
+                continue
+            }
+            visitedCanonicalPaths.insert(canonical.path)
+
+            let ext = fileURL.pathExtension.lowercased()
+            if supportedExtensions.contains(ext) {
+                let fileSize = Int64(resourceValues?.fileSize ?? 0)
+                if totalBytes + fileSize > maxTotalBytes && !results.isEmpty {
+                    break
+                }
+                totalBytes += fileSize
+                results.append(fileURL)
+                if results.count >= maxFiles {
+                    break
+                }
+            }
+        }
+        return results
+    }
 }
+

@@ -26,6 +26,9 @@ struct TopBarView: View {
             HStack(spacing: 8) {
                 sidebarToggle
                 GenerationPhaseIndicator(model: model)
+                if let worktree = model.worktree, worktree.isGitRepository {
+                    gitPill(worktree: worktree)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -105,6 +108,47 @@ struct TopBarView: View {
         .accessibilityLabel(presentation.title)
         .accessibilityHint(presentation.help)
         .accessibilityValue(presentation.accessibilityValue)
+    }
+
+    private func gitPill(worktree: WorktreeModel) -> some View {
+        Button {
+            NotificationCenter.default.post(name: .toggleInspector, object: nil)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+
+                Text(worktree.currentBranch)
+                    .font(theme.code(.small, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
+                    HStack(spacing: 2) {
+                        if worktree.totalAdditions > 0 {
+                            Text("+\(worktree.totalAdditions)")
+                                .font(.caption2.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(.green)
+                        }
+                        if worktree.totalDeletions > 0 {
+                            Text("-\(worktree.totalDeletions)")
+                                .font(.caption2.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(TurboSparkTheme.surfaceColor, in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Git: \(worktree.currentBranch) (click to open changes pane)")
+        .accessibilityLabel("Git branch \(worktree.currentBranch)")
     }
 }
 

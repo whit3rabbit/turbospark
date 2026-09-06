@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 public struct AppearanceSettingsPaneView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject private var manager = AppearanceManager.shared
     @Environment(\.colorScheme) private var colorScheme
 
@@ -22,6 +23,8 @@ public struct AppearanceSettingsPaneView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 themeSelectionSection
+
+                ThemeTypographyPreviewView(manager: manager, isDark: isCurrentlyDark)
 
                 ThemeCodePreviewView(manager: manager, isDark: isCurrentlyDark)
 
@@ -50,7 +53,7 @@ public struct AppearanceSettingsPaneView: View {
     private var themeSelectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Theme")
-                .font(.headline)
+                .font(theme.ui(.large, weight: .semibold))
                 .foregroundStyle(.primary)
 
             HStack(spacing: 16) {
@@ -100,7 +103,7 @@ public struct AppearanceSettingsPaneView: View {
                 .shadow(color: isSelected ? manager.activeAccentColor(isDark: isCurrentlyDark).opacity(0.2) : Color.black.opacity(0.04), radius: 4, y: 2)
 
                 Text(title)
-                    .font(.caption.weight(isSelected ? .semibold : .regular))
+                    .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? .primary : .secondary)
             }
             .frame(maxWidth: .infinity)

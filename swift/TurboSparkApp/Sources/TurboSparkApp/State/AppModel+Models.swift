@@ -69,6 +69,64 @@ extension AppModel {
         runtimeOptions.loadGuard.loadGuard(customBytes: runtimeOptions.loadGuardCustomBytes)
     }
 
+    /// The expert-cache slot policy both the loader and the model hub must
+    /// use, for `activeLoadGuard`'s reason one term over.
+    ///
+    /// A footprint is `slots x layers x expert stride`, so a hub ranking at
+    /// one slot count beside a session opening at another is not an
+    /// approximation of the same answer, it is a different configuration.
+    /// Gemma 4 reads 2,175 MiB at 16 slots and 3,654 at 32.
+    ///
+    /// `0` is this app's spelling of automatic (`allowedSlotCounts`), which
+    /// the binding spells `.auto`.
+    public var activeCacheSlots: OpenOptions.Sizing {
+        runtimeOptions.expertCacheSlots > 0
+            ? .fixed(UInt32(runtimeOptions.expertCacheSlots)) : .auto
+    }
+
+    /// The context window a fit should be computed at.
+    ///
+    /// **Read off the SESSION when there is one.** `SessionInfo` holds what
+    /// was RESOLVED, and under automatic sizing nothing was asked for (swift
+    /// Gotcha 6), so the Inspector's setting is the request and `info` is the
+    /// answer. Falls back to the request, then to the engine's own default.
+    public var activeFitContext: UInt32 {
+        if let resolved = session?.info.maxContext, resolved > 0 {
+            return UInt32(resolved)
+        }
+        return maxContextTokens > 0 ? UInt32(maxContextTokens) : 4096
+    }
+
+    /// Curated rows ranked for this machine, at the configuration this app
+    /// will actually open under.
+    ///
+    /// One call for every caller: `ModelHubView`, `CatalogSheet`,
+    /// `ModelInstallView` and the installed-model detail pane all read the
+    /// same rows, so a fifth assembling its own would compile and be wrong
+    /// only once the user moved a setting off its default.
+    /// **Ranked**, and the order is the answer: `rank_recommendations` puts
+    /// fitting rows above non-fitting ones and frozen evidence above
+    /// estimates. Callers that need lookup take `fitRecommendationsByAlias`
+    /// rather than rebuilding a dictionary and losing it.
+    public func fitRecommendations() -> [ModelRecommendation] {
+        (try? TurboSparkCatalog.recommend(
+            context: activeFitContext,
+            expertCacheSlots: activeCacheSlots,
+            loadGuard: activeLoadGuard)) ?? []
+    }
+
+    /// The same rows keyed by alias, for a view that joins rather than lists.
+    public func fitRecommendationsByAlias() -> [String: ModelRecommendation] {
+        Dictionary(fitRecommendations().map { ($0.alias, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// This machine's fit for one installed model, or `nil` when the catalog
+    /// has no row for it (a scanned or side-loaded install).
+    public func fit(for alias: String?) -> ModelRecommendation? {
+        guard let alias, !alias.isEmpty else { return nil }
+        return fitRecommendationsByAlias()[alias]
+    }
+
     public func buildOpenOptions() -> OpenOptions {
         var options = OpenOptions()
         if maxContextTokens > 0 {

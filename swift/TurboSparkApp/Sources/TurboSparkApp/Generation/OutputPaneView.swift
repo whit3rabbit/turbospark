@@ -192,7 +192,13 @@ private struct MessageRowView: View {
                     }
 
                     if !message.toolCalls.isEmpty {
-                        ForEach(message.toolCalls) { call in
+                        if message.toolCalls.count > 1 {
+                            ToolGroupView(
+                                model: model,
+                                toolCalls: message.toolCalls,
+                                toolResults: message.toolResults
+                            )
+                        } else if let call = message.toolCalls.first {
                             let matchResult = message.toolResults.first(where: { $0.callID == call.id })
                             ToolCallCardView(model: model, call: call, result: matchResult)
                         }
@@ -200,8 +206,11 @@ private struct MessageRowView: View {
 
                     if !message.content.isEmpty && message.toolCalls.isEmpty {
                         CollapsibleMessageContentView(text: message.content, isUser: false, maxHeight: 380)
-                    } else if !message.content.isEmpty && !message.content.starts(with: "<tool_call>") && !message.content.starts(with: "Invoking tool") {
-                        CollapsibleMessageContentView(text: message.content, isUser: false, maxHeight: 380)
+                    } else if !message.content.isEmpty {
+                        let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.starts(with: "<tool_call>") && !trimmed.starts(with: "Invoking tool") {
+                            CollapsibleMessageContentView(text: message.content, isUser: false, maxHeight: 380)
+                        }
                     }
 
                     if isHovered || isCurrentlySpeakingThis {
@@ -267,6 +276,9 @@ private struct ActiveStreamingRowView: View {
                 if !reasoning.isEmpty {
                     ReasoningDisclosureView(reasoning: reasoning, defaultExpanded: true)
                 }
+                if let pending = model.pendingToolCall {
+                    ToolCallCardView(model: model, call: pending, result: nil)
+                }
                 if !output.isEmpty {
                     ChatMessageMarkdownView(output)
                 }
@@ -280,10 +292,12 @@ private struct ActiveStreamingRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Copy shown while nothing has streamed yet: which of the three waiting
-    /// states (prefilling, reasoning, or plain decode) the turn is in.
+    /// Copy shown while nothing has streamed yet: which of the waiting
+    /// states (tool approval, prefilling, reasoning, or plain decode) the turn is in.
     private var waitingStatusText: String {
-        if model.phase == .prefill {
+        if model.pendingToolCall != nil {
+            "Awaiting tool confirmation..."
+        } else if model.phase == .prefill {
             "Reading prompt..."
         } else if model.reasoning != .off {
             "Thinking..."

@@ -21,13 +21,16 @@ struct ServerAdvancedSettingsView: View {
 
             field(
                 "API key",
-                help: "Required on every route except /health, as x-api-key or a Bearer token."
+                help: "Required on every route except /health, as x-api-key or a Bearer token. Stored in the Keychain, not settings.json."
             ) {
                 SecureField("", text: $model.serverAPIKeyInput)
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
                     .frame(width: 240)
                     .disabled(isRunning)
+                    .onChange(of: model.serverAPIKeyInput) { _, _ in
+                        model.persistSettingsDebounced()
+                    }
             }
 
             // **NOT DECORATION.** A loopback socket is reachable by every
@@ -53,6 +56,7 @@ struct ServerAdvancedSettingsView: View {
                         .disabled(isRunning)
                         .onChange(of: portText) { _, value in
                             model.serverPinnedPort = UInt16(value) ?? 0
+                            model.persistSettingsDebounced()
                         }
                     if model.serverPinnedPort == 0 {
                         Text("automatic")

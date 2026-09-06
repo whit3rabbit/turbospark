@@ -166,6 +166,10 @@ extension AppModel {
                         if let start = self.decodeStartTime {
                             self.liveElapsedDecodeSeconds = Date().timeIntervalSince(start)
                         }
+                    case .toolCall, .stopped:
+                        // No binding surface offers tools yet, and `.stopped`
+                        // precedes the `.finished` this loop finalizes on.
+                        break
                     case .finished(let result):
                         self.phase = .idle
                         let phaseReport = try? await session.phases()

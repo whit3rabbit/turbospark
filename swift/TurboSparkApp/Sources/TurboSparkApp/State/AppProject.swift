@@ -2,12 +2,14 @@ import Foundation
 
 /// High-level permission mode governing tool execution and risk gating (Unsloth Studio parity).
 public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Smart auto-approval: runs safe & low-risk development commands silently, prompts on high-risk operations.
-    case auto
     /// Always ask: prompts before executing any mutating, terminal, network, or external tool.
     case ask
+    /// Smart auto-approval: runs safe & low-risk development commands silently, prompts on high-risk operations.
+    case auto
     /// Permissive: executes all tools without prompting within sandbox bounds.
     case permissive
+    /// Full access: unrestricted, no approval prompts and the code sandbox is disabled.
+    case fullAccess
     /// Strict read-only: denies mutating actions, file writes, terminal executions, and crons.
     case readOnly
 
@@ -15,30 +17,34 @@ public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Send
 
     public var label: String {
         switch self {
-        case .auto: return "Auto (Approve for me)"
-        case .ask: return "Always Ask"
-        case .permissive: return "Always Allow"
+        case .ask: return "Ask for approval"
+        case .auto: return "Approve for me"
+        case .permissive: return "Run automatically"
+        case .fullAccess: return "Full access"
         case .readOnly: return "Strict Read-Only"
         }
     }
 
     public var shortLabel: String {
         switch self {
-        case .auto: return "Auto"
-        case .ask: return "Ask"
-        case .permissive: return "Allow All"
+        case .ask: return "Ask for approval"
+        case .auto: return "Approve for me"
+        case .permissive: return "Run automatically"
+        case .fullAccess: return "Full access"
         case .readOnly: return "Read Only"
         }
     }
 
     public var descriptionText: String {
         switch self {
-        case .auto:
-            return "Runs standard development commands silently (file reads, cargo/npm builds, safe searches, diffs) and automatically pauses for approval on high-risk actions (destructive deletions, sudo, credential access, dangerous git resets, unverified network egress)."
         case .ask:
-            return "Prompts for manual user confirmation before executing any tool call that performs writes, terminal commands, network fetches, or external MCP calls."
+            return "Always ask before tool calls edit files or use the internet"
+        case .auto:
+            return "Run tool calls, but ask before high-risk actions like credential access, privilege escalation, or destructive commands"
         case .permissive:
-            return "Allows all tool actions to execute immediately without interactive approval prompts, bounded only by workspace sandbox limits."
+            return "Run tool calls without approval prompts inside the sandbox"
+        case .fullAccess:
+            return "Unrestricted: no approval prompts and the code sandbox is disabled"
         case .readOnly:
             return "Allows only inspection, search, and reading. Prohibits all file modifications, terminal executions, destructive MCP calls, and background automations."
         }
@@ -46,9 +52,10 @@ public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Send
 
     public var systemImage: String {
         switch self {
-        case .auto: return "sparkles.shield.fill"
-        case .ask: return "questionmark.shield.fill"
-        case .permissive: return "lock.open.shield.fill"
+        case .ask: return "hand.raised.fill"
+        case .auto: return "shield.lefthalf.filled"
+        case .permissive: return "play.circle.fill"
+        case .fullAccess: return "exclamationmark.triangle.fill"
         case .readOnly: return "lock.shield.fill"
         }
     }
@@ -203,6 +210,30 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             automation: .deny
         )
     }
+
+    /// Full access configuration: unrestricted tool actions without approval prompts.
+    public static var fullAccess: AppProjectPermissions {
+        AppProjectPermissions(
+            mode: .fullAccess,
+            fileRead: .allow,
+            fileWrite: .allow,
+            terminal: .allow,
+            web: .allow,
+            mcp: .allow,
+            automation: .allow
+        )
+    }
+
+    /// Resolves canonical permissions configuration for a given permission mode.
+    public static func preset(for mode: AppPermissionMode) -> AppProjectPermissions {
+        switch mode {
+        case .ask: return .alwaysAsk
+        case .auto: return .standard
+        case .permissive: return .permissive
+        case .fullAccess: return .fullAccess
+        case .readOnly: return .readOnly
+        }
+    }
 }
 
 /// Agent specialization profile governing behavior and prompt engineering.
@@ -306,6 +337,10 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     /// Carry a bounded execution state between agent steps instead of the full
     /// transcript (docs/SKILL_STATE.md). Opt-in: off leaves the loop unchanged.
     public var skillStateEnabled: Bool
+    /// Project-scope plugin enable state, keyed `<plugin>@<origin>`
+    /// (`docs/SWIFT_PLUGINS.md`). Overrides the user setting: a project may
+    /// turn off a plugin it does not trust without turning it off everywhere.
+    public var enabledPlugins: [String: Bool]
     /// Timestamp when the project was created.
     public var createdAt: Date
     /// Timestamp when the project was last updated.
@@ -323,6 +358,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         mcpServers: [McpServerConfig] = [],
         forgeGuardrailsEnabled: Bool? = nil,
         skillStateEnabled: Bool = false,
+        enabledPlugins: [String: Bool] = [:],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -337,6 +373,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.mcpServers = mcpServers
         self.forgeGuardrailsEnabled = forgeGuardrailsEnabled
         self.skillStateEnabled = skillStateEnabled
+        self.enabledPlugins = enabledPlugins
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -344,7 +381,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, name, rootDirectoryPath, agentType, rulePreference, customInstructions
         case permissions, maxAutonomousSteps, mcpServers, forgeGuardrailsEnabled
-        case skillStateEnabled, createdAt, updatedAt
+        case skillStateEnabled, enabledPlugins, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -367,6 +404,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.mcpServers = try container.decodeLossyArray(McpServerConfig.self, forKey: .mcpServers)
         self.forgeGuardrailsEnabled = try container.decodeIfPresent(Bool.self, forKey: .forgeGuardrailsEnabled)
         self.skillStateEnabled = try container.decodeIfPresent(Bool.self, forKey: .skillStateEnabled) ?? false
+        self.enabledPlugins = try container.decodeIfPresent([String: Bool].self, forKey: .enabledPlugins) ?? [:]
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }

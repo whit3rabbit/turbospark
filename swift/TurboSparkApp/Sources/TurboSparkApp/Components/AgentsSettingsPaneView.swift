@@ -372,6 +372,7 @@ public struct AgentsSettingsPaneView: View {
         case .builtIn: return .blue
         case .userGlobal: return .purple
         case .project: return .green
+        case .plugin: return .orange
         }
     }
 }

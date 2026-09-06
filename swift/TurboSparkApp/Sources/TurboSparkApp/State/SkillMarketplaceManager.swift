@@ -93,18 +93,17 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
 
     // MARK: - Standard Directories
 
+    /// Marketplace clone cache: `~/.turbospark/marketplaces` for the Default
+    /// profile, inside that profile's own folder for anyone else.
     public var marketplacesDirectory: URL {
-        let home = fileManager.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".turbospark/marketplaces", isDirectory: true)
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        UserProfileStore.userScopeSubdirectory("marketplaces")
     }
 
+    /// The install ledger for skills added from a marketplace. Per profile,
+    /// so two users can hold different versions of the same skill.
     public var installedLedgerURL: URL {
-        let home = fileManager.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".turbospark/plugins", isDirectory: true)
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("installed_skills.json")
+        UserProfileStore.userScopeSubdirectory("plugins")
+            .appendingPathComponent("installed_skills.json")
     }
 
     public var knownMarketplacesURL: URL {
@@ -214,6 +213,8 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
         case .projectLocal(let projectPath):
             destBaseDir = URL(fileURLWithPath: projectPath).appendingPathComponent(".turbospark/skills", isDirectory: true)
             scopeKey = "project"
+        case .plugin:
+            throw NSError(domain: "SkillMarketplace", code: 6, userInfo: [NSLocalizedDescriptionKey: "A marketplace skill cannot be installed into plugin scope."])
         }
 
         let targetSkillDir = destBaseDir.appendingPathComponent(entry.name, isDirectory: true)

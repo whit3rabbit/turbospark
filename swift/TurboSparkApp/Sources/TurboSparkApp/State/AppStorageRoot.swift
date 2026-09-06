@@ -36,16 +36,20 @@ public enum AppStorageRoot {
         return NSClassFromString("XCTestCase") != nil
     }
 
-    /// The store root: the user's Application Support directory in the app, a
-    /// throwaway directory under a test host, or whatever the override names.
-    public static let directory: URL = {
+    /// Where the base root lives, and whether a user profile may redirect it.
+    /// `profilesApply` is false exactly when the root was pinned by the
+    /// override environment or a test host: profiles are a real-app concept,
+    /// and a redirected run or a test must always see the root it was given,
+    /// never someone's profile folder.
+    private static let resolvedBase: (url: URL, profilesApply: Bool) = {
         let fileManager = FileManager.default
+        let environment = ProcessInfo.processInfo.environment
 
-        if let override = ProcessInfo.processInfo.environment[overrideEnvironmentKey],
+        if let override = environment[overrideEnvironmentKey],
            !override.isEmpty {
             let url = URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
             try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-            return url
+            return (url, false)
         }
 
         if isRunningTests {
@@ -56,14 +60,30 @@ public enum AppStorageRoot {
                     "TurboSparkTests-\(ProcessInfo.processInfo.processIdentifier)",
                     isDirectory: true)
             try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-            return url
+            return (url, false)
         }
 
         let appSupport = fileManager
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let url = appSupport.appendingPathComponent("TurboSpark", isDirectory: true)
         try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        return (url, true)
+    }()
+
+    /// The machine-level store root, shared by every profile: the Default
+    /// user's stores live here directly, other profiles in `profiles/<id>/`
+    /// under it, and the profile registry itself sits at its top level.
+    public static var machineRoot: URL { resolvedBase.url }
+
+    /// The store root for THIS run: the machine root for the Default user,
+    /// that user's `profiles/<id>/` folder for anyone else. Evaluated once,
+    /// like before profiles existed -- which is also why switching profiles
+    /// is a relaunch rather than a re-pointing.
+    public static let directory: URL = {
+        guard resolvedBase.profilesApply, let store = UserProfileStore.storeDirectory() else {
+            return resolvedBase.url
+        }
+        return store
     }()
 
     /// A subdirectory of the store root, created on demand.

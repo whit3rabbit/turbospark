@@ -1,69 +1,166 @@
 import AppKit
 import SwiftUI
 
-/// Footer component for the chat sidebar showing chat count and quick appearance picker.
+/// Footer component for the chat sidebar showing user profile, device connection, and settings.
 struct ChatSidebarFooterView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     let chatCount: Int
     @Binding var languageRawValue: String
 
-    @ScaledMetric private var actionButtonSize: CGFloat = 26
-    @ScaledMetric private var sidebarFooterMinHeight: CGFloat = 42
+    @ScaledMetric private var actionButtonSize: CGFloat = 24
+    @ScaledMetric private var avatarSize: CGFloat = 26
+    @ScaledMetric private var sidebarFooterMinHeight: CGFloat = 46
 
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "internaldrive")
-                .accessibilityHidden(true)
-            Text("\(chatCount) local chats", bundle: .module)
-            Spacer()
-            appearanceMenu
+    private var profileDisplayName: String {
+        let active = UserProfileStore.active
+        if active.id != UserProfileStore.defaultProfileID && !active.name.isEmpty {
+            return active.name
         }
-        .font(theme.ui(points: 11))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 16)
-        .frame(minHeight: sidebarFooterMinHeight)
-        .help("Local chat history stored on device")
+        let fullName = NSFullUserName()
+        if !fullName.isEmpty {
+            return fullName
+        }
+        return active.name.isEmpty ? "User" : active.name
     }
 
-    private var appearanceMenu: some View {
-        let appearance = appearanceManager.appearance
-        return Menu {
-            Picker("Appearance", selection: $appearanceManager.appearance) {
-                ForEach(AppAppearance.allCases) { option in
-                    Label(option.label, systemImage: option.systemImage)
-                        .tag(option)
+    private var profileInitial: String {
+        let name = profileDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = name.first else { return "U" }
+        return String(first).uppercased()
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // User Avatar & Name Menu
+            Menu {
+                Section("Active Profile") {
+                    Label(profileDisplayName, systemImage: "person.circle.fill")
+                    if UserProfileStore.isDefault {
+                        Text("Default Machine Profile")
+                    } else {
+                        Text("Profile ID: \(UserProfileStore.active.id)")
+                    }
                 }
-            }
 
-            Divider()
+                Divider()
 
-            Picker("Text Size", selection: $appearanceManager.textSize) {
-                ForEach(AppTextSize.allCases) { size in
-                    Text(size.label)
-                        .tag(size)
+                Section("Appearance") {
+                    Picker("Theme", selection: $appearanceManager.appearance) {
+                        ForEach(AppAppearance.allCases) { option in
+                            Label(option.label, systemImage: option.systemImage)
+                                .tag(option)
+                        }
+                    }
+
+                    Picker("Text Size", selection: $appearanceManager.textSize) {
+                        ForEach(AppTextSize.allCases) { size in
+                            Text(size.label)
+                                .tag(size)
+                        }
+                    }
+
+                    Picker("Language", selection: $languageRawValue) {
+                        ForEach(AppLanguage.allCases) { language in
+                            Text(language.label)
+                                .tag(language.rawValue)
+                        }
+                    }
                 }
-            }
 
-            Divider()
+                Divider()
 
-            Picker("Language", selection: $languageRawValue) {
-                ForEach(AppLanguage.allCases) { language in
-                    Text(language.label)
-                        .tag(language.rawValue)
+                Text("\(chatCount) local chats stored")
+            } label: {
+                HStack(spacing: 7) {
+                    avatarView
+
+                    Text(profileDisplayName)
+                        .font(theme.ui(points: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    badgePill
                 }
+                .contentShape(.rect)
             }
-        } label: {
-            Label("Display & Language Settings", systemImage: appearance.systemImage)
-                .labelStyle(.iconOnly)
-                .frame(width: actionButtonSize, height: actionButtonSize)
-                .contentShape(Circle())
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("User Profile: \(profileDisplayName)")
+            .accessibilityLabel("User Profile \(profileDisplayName)")
+
+            Spacer(minLength: 4)
+
+            // Device / Companion Icon
+            deviceButton
+
+            // Settings Cog
+            settingsButton
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Appearance & Language Settings")
-        .accessibilityLabel("Display and Language Settings")
-        .accessibilityHint("Change theme, text size, and language")
+        .padding(.horizontal, 10)
+        .frame(minHeight: sidebarFooterMinHeight)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(TurboSparkTheme.hairlineColor)
+                .frame(height: 0.5)
+        }
+    }
+
+    private var avatarView: some View {
+        ZStack {
+            Circle()
+                .fill(Color(nsColor: .controlAccentColor).opacity(0.85))
+                .frame(width: avatarSize, height: avatarSize)
+
+            Text(profileInitial)
+                .font(theme.ui(points: 11, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var badgePill: some View {
+        Text("P")
+            .font(theme.code(points: 9, weight: .bold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(
+                Color.primary.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 4, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+            )
+            .accessibilityLabel("Profile badge")
+    }
+
+    private var deviceButton: some View {
+        Button {
+            // Companion / local server indicator
+        } label: {
+            Image(systemName: "iphone")
+                .font(theme.ui(points: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: actionButtonSize, height: actionButtonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Local Engine & Device Status")
+        .accessibilityLabel("Local Engine and Device Status")
+    }
+
+    private var settingsButton: some View {
+        SettingsLink {
+            Image(systemName: "gearshape")
+                .font(theme.ui(points: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: actionButtonSize, height: actionButtonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Settings (Cmd+,)")
+        .accessibilityLabel("Application Settings")
     }
 }

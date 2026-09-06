@@ -30,9 +30,39 @@ extension AppModel {
         return "about \(hours)h \(minutes)m remaining"
     }
 
+    /// Whether this machine will refuse to install `alias`, and why.
+    ///
+    /// **THE GATE IS HERE AS WELL AS ON THE BUTTON**, and that is the whole
+    /// point. A conservative rule spelled at three sites and a permissive one
+    /// at the site users reach is how every project in this app came to run
+    /// shell commands unprompted (swift Gotcha 28). A view may disable its
+    /// button from this; nothing may install past it.
+    ///
+    /// `nil` when the catalog has no row for the alias: an unsized candidate
+    /// is not a refused one, and refusing what nothing has measured would
+    /// block every side-loaded install.
+    public func installBlockReason(alias: String) -> String? {
+        guard let row = fit(for: alias) else { return nil }
+        let decision = ModelInstallGate.decide(
+            probeRunnable: nil,
+            refusedBecause: nil,
+            verdict: row.verdict,
+            installBytes: row.installBytes,
+            freeDiskBytes: ModelInstallGate.freeSpace(at: AppStorageRoot.directory))
+        return decision.isBlocked ? decision.reason : nil
+    }
+
     /// Initiates a background download and build of a model catalog alias.
     public func installModel(alias: String) {
         guard !isInstallingModel, !generating else { return }
+        // A refusal is reported rather than swallowed: a Download button that
+        // does nothing reads as a broken button.
+        if let why = installBlockReason(alias: alias) {
+            showToast(
+                "'\(alias)' will not run on this machine. \(why)",
+                style: .warning, duration: 8.0)
+            return
+        }
         guard !abandonedInstallAliases.contains(alias) else {
             // A previous install of this alias was abandoned and its walk
             // cannot be stopped, so it may still be writing that directory.

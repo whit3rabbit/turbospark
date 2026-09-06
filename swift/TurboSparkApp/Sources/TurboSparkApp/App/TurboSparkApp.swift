@@ -33,6 +33,10 @@ struct TurboSparkApp: App {
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
 
+    init() {
+        AppFontRegistrar.registerBundledFonts()
+    }
+
     var body: some Scene {
         let currentLanguage = AppLanguage.resolve(languageRawValue)
         Window("TurboSpark", id: "main") {
@@ -147,7 +151,7 @@ struct TurboSparkApp: App {
             }
 
             CommandMenu("Model") {
-                Button("Choose Model Folder…") {
+                Button("Choose Model Folder...") {
                     ModelLocationPicker.choose(for: model)
                 }
                 .disabled(model.isRunning || model.isInstallingModel)
@@ -160,6 +164,25 @@ struct TurboSparkApp: App {
 
                 Button("Unload Model", action: model.unloadModel)
                     .disabled(!model.canUnloadModel)
+            }
+
+            CommandMenu("Profile") {
+                // Switching is a save-and-relaunch, so every entry here ends
+                // the process once `switchToProfile` has flushed and saved.
+                ForEach([UserProfileStore.defaultProfile] + model.profiles) { profile in
+                    Button(profile.id == model.currentProfile.id
+                            ? "\(profile.name) (current)"
+                            : "Switch to \(profile.name)") {
+                        model.switchToProfile(profile)
+                    }
+                    .disabled(profile.id == model.currentProfile.id || !model.canSwitchProfile)
+                }
+
+                Divider()
+
+                Button("New Profile...") {
+                    model.openSettings(tab: .profiles)
+                }
             }
 
             CommandMenu("Appearance") {

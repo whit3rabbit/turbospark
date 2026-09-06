@@ -64,4 +64,23 @@ public enum MessageTimestampFormatter {
     public static func standardString(for date: Date) -> String {
         exactDateFormatter.string(from: date)
     }
+
+    /// Returns a compact relative time representation such as "now", "5m", "2h", "52d".
+    public static func compactRelativeString(for date: Date, relativeTo now: Date = Date()) -> String {
+        let interval = now.timeIntervalSince(date)
+        if interval < 60 {
+            return "now"
+        }
+        let minutes = Int(interval / 60.0)
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+        let hours = Int(interval / 3600.0)
+        if hours < 24 {
+            return "\(hours)h"
+        }
+        let days = Int(interval / 86400.0)
+        return "\(days)d"
+    }
 }
+

@@ -9,15 +9,14 @@ extension AppModel {
     }
 
     /// Combined list of active skills, with project-level skills taking precedence over user-level skills with matching names.
+    ///
+    /// This routes through `SkillManager.resolveEffectiveSkills` rather than
+    /// re-merging the published arrays, because only the manager's path also
+    /// merges PLUGIN skills -- a second merge here would show them in the
+    /// prompt while the `skill` tool resolved a different set.
     public var effectiveSkills: [AppSkill] {
-        var merged: [String: AppSkill] = [:]
-        for skill in userSkills where skill.isEnabled {
-            merged[skill.name.lowercased()] = skill
-        }
-        for skill in projectSkills where skill.isEnabled {
-            merged[skill.name.lowercased()] = skill
-        }
-        return Array(merged.values).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        SkillManager.shared.resolveEffectiveSkills(
+            projectURL: selectedProject?.rootDirectoryURL)
     }
 
     /// All skills (both user and project scope) for management in settings.

@@ -23,7 +23,10 @@ struct GenerateControl: View {
     }
 
     private var generateButton: some View {
-        let fgColor = model.canRun ? TurboSparkTheme.accentColor.contrastForeground : Color.secondary.opacity(0.6)
+        let ready = model.canRun
+        let sendGreen = Color(red: 0.08, green: 0.65, blue: 0.50)
+        let bgFill = ready ? sendGreen : Color.primary.opacity(0.08)
+        let fgColor = ready ? Color.white : Color.secondary.opacity(0.5)
         return Button {
             model.run()
         } label: {
@@ -32,18 +35,17 @@ struct GenerateControl: View {
                 .foregroundStyle(fgColor)
                 .frame(width: circularButtonSize, height: circularButtonSize)
                 .background(
-                    Circle()
-                        .fill(model.canRun ? TurboSparkTheme.accentColor : Color.primary.opacity(0.08))
+                    Circle().fill(bgFill)
                 )
                 .overlay {
-                    Circle().stroke(model.canRun ? TurboSparkTheme.accentColor.contrastForeground.opacity(0.16) : Color.primary.opacity(0.06), lineWidth: 0.5)
+                    Circle().stroke(ready ? Color.white.opacity(0.18) : Color.primary.opacity(0.06), lineWidth: 0.5)
                 }
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .keyboardShortcut(.return, modifiers: .command)
         .disabled(!model.canRun)
-        .help(model.canRun ? "Generate (Cmd+Return)" : "Generate (disabled)")
+        .help(ready ? "Generate (Cmd+Return)" : "Generate (disabled)")
         .accessibilityLabel("Generate")
     }
 

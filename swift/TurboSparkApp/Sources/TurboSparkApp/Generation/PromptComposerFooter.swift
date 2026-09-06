@@ -16,7 +16,12 @@ struct PromptComposerFooter: View {
     @ObservedObject var model: AppModel
     @Binding var showingPromptTips: Bool
     let isExtractingDocuments: Bool
-    let onAttach: () -> Void
+    let onAttachFiles: () -> Void
+    let onAttachFolder: () -> Void
+    let onNewProject: () -> Void
+    let onAddMcpServer: () -> Void
+    let onCreateSkill: () -> Void
+    let onInsertPromptText: (String) -> Void
     var promptFocused: FocusState<Bool>.Binding
 
     @ScaledMetric private var iconButtonSize: CGFloat = 28
@@ -31,20 +36,24 @@ struct PromptComposerFooter: View {
     }
 
     private var leading: some View {
-        FlowLayout(spacing: 6, lineSpacing: 6) {
-            PromptAttachDocumentButton(
+        HStack(spacing: 6) {
+            PromptComposerPlusMenu(
+                model: model,
                 iconButtonSize: iconButtonSize,
                 isRunning: model.isRunning,
                 isExtracting: isExtractingDocuments,
-                onAttach: onAttach
+                onAttachFiles: onAttachFiles,
+                onAttachFolder: onAttachFolder,
+                onNewProject: onNewProject,
+                onAddMcpServer: onAddMcpServer,
+                onCreateSkill: onCreateSkill,
+                onInsertPromptText: onInsertPromptText
             )
-            PromptTipsButton(
-                iconButtonSize: iconButtonSize,
-                showingTips: $showingPromptTips
-            )
-            // Guarded here as well as inside the pill: a view that renders
-            // nothing is still a subview, and FlowLayout would leave its
-            // spacing behind as a phantom gap.
+
+            ToolApprovalDropdown(model: model)
+
+            SearchToggleButton(model: model)
+
             if model.selectedProject != nil {
                 PromptProjectContextPill(model: model)
             }
@@ -52,52 +61,13 @@ struct PromptComposerFooter: View {
     }
 
     private var trailing: some View {
-        HStack(spacing: 4) {
-            PromptModelSelectorPill(model: model)
-            if model.reasoningPickerEnabled {
-                statusDot
-                PromptReasoningPillControl(model: model)
-            }
-            statusDot
-            ForgeGuardrailsPillControl(model: model)
-            // **HIDDEN ON "NOTHING CONFIGURED", NEVER ON "NOT SUPPORTED".**
-            // The two axes are different questions and only one of them is a
-            // capability. A user who has registered no direction is not being
-            // told about a feature they lack -- steering is opt-in
-            // configuration, and a permanently grey pill in a dense status
-            // strip is chrome. A user who HAS configured one and loads a
-            // family that cannot steer needs to know why it is not running,
-            // so that case shows the pill disabled with the engine's own
-            // reason (swift/CLAUDE.md Gotchas 23 and 33). The Safety settings
-            // pane always shows the control either way.
-            if model.resolvedSteeringPreset != nil {
-                statusDot
-                SteeringPillControl(model: model)
-            }
-
-            if model.estimatedPromptTokens > 0 {
-                Text("\(model.estimatedPromptTokens) tokens")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.leading, 4)
-                    .help("Estimated prompt length: \(model.estimatedPromptTokens) tokens")
-                    .accessibilityLabel("Estimated prompt length: \(model.estimatedPromptTokens) tokens")
-            }
-
+        HStack(spacing: 6) {
             clearAction
-                .padding(.leading, 2)
+
+            PromptAudioInputButton(promptFocused: promptFocused)
 
             GenerateControl(model: model)
-                .padding(.leading, 4)
         }
-    }
-
-    private var statusDot: some View {
-        Text("\u{00B7}")
-            .font(theme.ui(points: 11))
-            .foregroundStyle(.tertiary)
     }
 
     @ViewBuilder
@@ -107,29 +77,16 @@ struct PromptComposerFooter: View {
                 model.promptText = ""
                 promptFocused.wrappedValue = true
             } label: {
-                Label("Clear prompt", systemImage: "xmark.circle.fill")
-                    .labelStyle(.iconOnly)
-                    .symbolRenderingMode(.hierarchical)
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.tertiary)
                     .frame(width: iconButtonSize, height: iconButtonSize)
                     .contentShape(Circle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("Clear prompt")
             .accessibilityLabel("Clear prompt")
             .accessibilityHint("Empties the prompt editor")
-        } else if !model.isRunning && model.hasOutputTranscript {
-            Button {
-                model.clearOutput()
-            } label: {
-                Label("Clear chat history", systemImage: "trash")
-                    .labelStyle(.iconOnly)
-                    .frame(width: iconButtonSize, height: iconButtonSize)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.borderless)
-            .help("Clear chat history")
-            .accessibilityLabel("Clear chat history")
-            .accessibilityHint("Removes the current chat transcript")
         }
     }
 }

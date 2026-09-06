@@ -3,147 +3,229 @@ import Combine
 import SwiftUI
 
 /// Global observable manager for application appearance, fonts, colors, and dock icon.
+///
+/// Persisted through `AppearanceFileStore` (`appearance.json` under the
+/// shared store root) rather than UserDefaults -- see that type's header for
+/// why. Every `didSet` funnels into `persist()`; the legacy defaults keys are
+/// read once at first load and removed after the first successful save.
 @MainActor
 public final class AppearanceManager: ObservableObject {
     public static let shared = AppearanceManager()
 
-    private let defaults = UserDefaults.standard
-
-    // Keys
-    private static let keyAppearance = "TurboSpark.appearance"
-    private static let keyTextSize = AppTextSize.storageKey
-    private static let keyLightConfig = "TurboSpark.theme.lightConfig"
-    private static let keyDarkConfig = "TurboSpark.theme.darkConfig"
-    private static let keyUsePointerCursors = "TurboSpark.prefs.usePointerCursors"
-    private static let keyDockIcon = "TurboSpark.prefs.dockIcon"
-    private static let keyReduceMotion = "TurboSpark.prefs.reduceMotion"
-    private static let keyUiFontSize = "TurboSpark.prefs.uiFontSize"
-    private static let keyCodeFontSize = "TurboSpark.prefs.codeFontSize"
-    private static let keyDiffMarkers = "TurboSpark.prefs.diffMarkers"
-    private static let keyStatusBarViewMode = "TurboSpark.prefs.statusBarViewMode"
+    /// Set when `load()` reported the archive came from the legacy
+    /// UserDefaults keys; cleared after the first successful JSON save,
+    /// which is what makes removing them safe.
+    private var needsLegacyCleanup = false
 
     /// Resolved app appearance mode (system, light, dark).
     @Published public var appearance: AppAppearance {
-        didSet { defaults.set(appearance.rawValue, forKey: Self.keyAppearance) }
+        didSet { persist() }
     }
 
     /// User interface text scaling level (Default, Large, Extra Large).
     @Published public var textSize: AppTextSize {
-        didSet { defaults.set(textSize.rawValue, forKey: Self.keyTextSize) }
+        didSet { persist() }
     }
 
     /// Theme styling configuration used when light mode is active.
     @Published public var lightConfig: ThemeModeConfig {
-        didSet { saveLightConfig() }
+        didSet { persist() }
     }
 
     /// Theme styling configuration used when dark mode is active.
     @Published public var darkConfig: ThemeModeConfig {
-        didSet { saveDarkConfig() }
+        didSet { persist() }
     }
 
     /// Presentation mode for bottom toolbar benchmarks (numbers or live graphs).
     @Published public var statusBarViewMode: StatusBarViewMode {
-        didSet { defaults.set(statusBarViewMode.rawValue, forKey: Self.keyStatusBarViewMode) }
+        didSet { persist() }
     }
 
     /// Whether interactive buttons and clickable controls display a pointer cursor on hover.
     @Published public var usePointerCursors: Bool {
-        didSet { defaults.set(usePointerCursors, forKey: Self.keyUsePointerCursors) }
+        didSet { persist() }
     }
 
     /// Selected application dock icon variant.
     @Published public var dockIcon: AppDockIcon {
         didSet {
-            defaults.set(dockIcon.rawValue, forKey: Self.keyDockIcon)
+            persist()
             updateDockIcon()
         }
     }
 
     /// Motion reduction preference for transitions and animations.
     @Published public var reduceMotion: ReduceMotionPreference {
-        didSet { defaults.set(reduceMotion.rawValue, forKey: Self.keyReduceMotion) }
+        didSet { persist() }
     }
 
     /// Base font point size for primary user interface text.
     @Published public var uiFontSize: Double {
-        didSet { defaults.set(uiFontSize, forKey: Self.keyUiFontSize) }
+        didSet { persist() }
     }
 
     /// Base font point size for code blocks, terminal, and monospace views.
     @Published public var codeFontSize: Double {
-        didSet { defaults.set(codeFontSize, forKey: Self.keyCodeFontSize) }
+        didSet { persist() }
     }
 
     /// Presentation style for inline and side-by-side diff markers.
     @Published public var diffMarkers: DiffMarkerPreference {
-        didSet { defaults.set(diffMarkers.rawValue, forKey: Self.keyDiffMarkers) }
+        didSet { persist() }
     }
 
     public init() {
-        let appStr = defaults.string(forKey: Self.keyAppearance) ?? AppAppearance.system.rawValue
-        self.appearance = AppAppearance.resolve(appStr)
+        let (archive, migrated) = AppearanceFileStore.load()
+        needsLegacyCleanup = migrated
 
-        let textStr = defaults.string(forKey: Self.keyTextSize) ?? AppTextSize.standard.rawValue
-        self.textSize = AppTextSize.resolve(textStr)
+        self.appearance = AppAppearance.resolve(archive.appearance)
+        self.textSize = AppTextSize.resolve(archive.textSize)
+        self.lightConfig = archive.lightConfig
+        self.darkConfig = archive.darkConfig
+        self.statusBarViewMode = StatusBarViewMode(rawValue: archive.statusBarViewMode) ?? .text
+        self.usePointerCursors = archive.usePointerCursors
+        self.dockIcon = AppDockIcon(rawValue: archive.dockIcon) ?? .emeraldSpark
+        self.reduceMotion = ReduceMotionPreference(rawValue: archive.reduceMotion) ?? .system
+        self.uiFontSize = archive.uiFontSize
+        self.codeFontSize = archive.codeFontSize
+        self.diffMarkers = DiffMarkerPreference(rawValue: archive.diffMarkers) ?? .color
 
-        if let data = defaults.data(forKey: Self.keyLightConfig),
-           let config = try? JSONDecoder().decode(ThemeModeConfig.self, from: data) {
-            self.lightConfig = config
-        } else {
-            self.lightConfig = .defaultLight
-        }
-
-        if let data = defaults.data(forKey: Self.keyDarkConfig),
-           let config = try? JSONDecoder().decode(ThemeModeConfig.self, from: data) {
-            self.darkConfig = config
-        } else {
-            self.darkConfig = .defaultDark
-        }
-
-        let statusViewStr = defaults.string(forKey: Self.keyStatusBarViewMode) ?? StatusBarViewMode.text.rawValue
-        self.statusBarViewMode = StatusBarViewMode(rawValue: statusViewStr) ?? .text
-
-        self.usePointerCursors = defaults.object(forKey: Self.keyUsePointerCursors) as? Bool ?? false
-
-        let dockStr = defaults.string(forKey: Self.keyDockIcon) ?? AppDockIcon.emeraldSpark.rawValue
-        self.dockIcon = AppDockIcon(rawValue: dockStr) ?? .emeraldSpark
-
-        let motionStr = defaults.string(forKey: Self.keyReduceMotion) ?? ReduceMotionPreference.system.rawValue
-        self.reduceMotion = ReduceMotionPreference(rawValue: motionStr) ?? .system
-
-        self.uiFontSize = defaults.object(forKey: Self.keyUiFontSize) as? Double ?? 14.0
-        self.codeFontSize = defaults.object(forKey: Self.keyCodeFontSize) as? Double ?? 12.0
-
-        let diffStr = defaults.string(forKey: Self.keyDiffMarkers) ?? DiffMarkerPreference.color.rawValue
-        self.diffMarkers = DiffMarkerPreference(rawValue: diffStr) ?? .color
-
+        AppFontRegistrar.registerBundledFonts()
         updateDockIcon()
+    }
+
+    /// Resolves whether the active visual environment is dark.
+    public var effectiveIsDark: Bool {
+        switch appearance {
+        case .system:
+            if let match = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) {
+                return match == .darkAqua
+            }
+            return false
+        case .light:
+            return false
+        case .dark:
+            return true
+        }
+    }
+
+    /// Global UI font family preference, kept in sync across both light and dark configs.
+    public var uiFontFamily: String {
+        get { activeConfig(isDark: effectiveIsDark).uiFontFamily }
+        set {
+            lightConfig.uiFontFamily = newValue
+            darkConfig.uiFontFamily = newValue
+        }
+    }
+
+    /// Global UI font weight preference.
+    public var uiFontWeight: String {
+        get { activeConfig(isDark: effectiveIsDark).uiFontWeight }
+        set {
+            lightConfig.uiFontWeight = newValue
+            darkConfig.uiFontWeight = newValue
+        }
+    }
+
+    /// Global code font family preference, kept in sync across both light and dark configs.
+    public var codeFontFamily: String {
+        get { activeConfig(isDark: effectiveIsDark).codeFontFamily }
+        set {
+            lightConfig.codeFontFamily = newValue
+            darkConfig.codeFontFamily = newValue
+        }
+    }
+
+    /// Global code font weight preference.
+    public var codeFontWeight: String {
+        get { activeConfig(isDark: effectiveIsDark).codeFontWeight }
+        set {
+            lightConfig.codeFontWeight = newValue
+            darkConfig.codeFontWeight = newValue
+        }
+    }
+
+    public func setUIFont(family: String? = nil, weight: String? = nil) {
+        if let family {
+            lightConfig.uiFontFamily = family
+            darkConfig.uiFontFamily = family
+        }
+        if let weight {
+            lightConfig.uiFontWeight = weight
+            darkConfig.uiFontWeight = weight
+        }
+    }
+
+    public func setCodeFont(family: String? = nil, weight: String? = nil) {
+        if let family {
+            lightConfig.codeFontFamily = family
+            darkConfig.codeFontFamily = family
+        }
+        if let weight {
+            lightConfig.codeFontWeight = weight
+            darkConfig.codeFontWeight = weight
+        }
+    }
+
+    /// Writes every published field into the JSON store, and completes the
+    /// one-way migration from UserDefaults on the first successful save.
+    private func persist() {
+        let archive = AppearanceArchive(
+            appearance: appearance.rawValue,
+            textSize: textSize.rawValue,
+            lightConfig: lightConfig,
+            darkConfig: darkConfig,
+            statusBarViewMode: statusBarViewMode.rawValue,
+            usePointerCursors: usePointerCursors,
+            dockIcon: dockIcon.rawValue,
+            reduceMotion: reduceMotion.rawValue,
+            uiFontSize: uiFontSize,
+            codeFontSize: codeFontSize,
+            diffMarkers: diffMarkers.rawValue)
+        guard AppearanceFileStore.save(archive) else { return }
+        if needsLegacyCleanup {
+            AppearanceFileStore.removeLegacyKeys()
+            needsLegacyCleanup = false
+        }
     }
 
     /// Applies a preset configuration across light, dark, or both color modes.
     public func applyPreset(_ preset: ThemePreset, forMode isDark: Bool? = nil) {
+        let currentUIFamily = isDark == true ? darkConfig.uiFontFamily : lightConfig.uiFontFamily
+        let currentUIWeight = isDark == true ? darkConfig.uiFontWeight : lightConfig.uiFontWeight
+        let currentCodeFamily = isDark == true ? darkConfig.codeFontFamily : lightConfig.codeFontFamily
+        let currentCodeWeight = isDark == true ? darkConfig.codeFontWeight : lightConfig.codeFontWeight
+
         if let isDark = isDark {
             if isDark {
-                self.darkConfig = preset.dark
+                var dark = preset.dark
+                dark.uiFontFamily = currentUIFamily
+                dark.uiFontWeight = currentUIWeight
+                dark.codeFontFamily = currentCodeFamily
+                dark.codeFontWeight = currentCodeWeight
+                self.darkConfig = dark
             } else {
-                self.lightConfig = preset.light
+                var light = preset.light
+                light.uiFontFamily = currentUIFamily
+                light.uiFontWeight = currentUIWeight
+                light.codeFontFamily = currentCodeFamily
+                light.codeFontWeight = currentCodeWeight
+                self.lightConfig = light
             }
         } else {
-            self.lightConfig = preset.light
-            self.darkConfig = preset.dark
-        }
-    }
-
-    private func saveLightConfig() {
-        if let data = try? JSONEncoder().encode(lightConfig) {
-            defaults.set(data, forKey: Self.keyLightConfig)
-        }
-    }
-
-    private func saveDarkConfig() {
-        if let data = try? JSONEncoder().encode(darkConfig) {
-            defaults.set(data, forKey: Self.keyDarkConfig)
+            var light = preset.light
+            var dark = preset.dark
+            light.uiFontFamily = currentUIFamily
+            light.uiFontWeight = currentUIWeight
+            light.codeFontFamily = currentCodeFamily
+            light.codeFontWeight = currentCodeWeight
+            dark.uiFontFamily = currentUIFamily
+            dark.uiFontWeight = currentUIWeight
+            dark.codeFontFamily = currentCodeFamily
+            dark.codeFontWeight = currentCodeWeight
+            self.lightConfig = light
+            self.darkConfig = dark
         }
     }
 
@@ -188,9 +270,11 @@ public final class AppearanceManager: ObservableObject {
         }
     }
 
-    /// Resets the interface text size to Default.
+    /// Resets the interface text size to Default (16px UI, 12px code).
     public func resetTextSize() {
         textSize = .standard
+        uiFontSize = 16.0
+        codeFontSize = 12.0
     }
 
     /// Builds the code-font descriptor for a mode.
