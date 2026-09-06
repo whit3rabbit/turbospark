@@ -118,5 +118,13 @@ pub fn session_for_testing_named(
             },
         },
         tokenizer,
+        // A scripted producer has no install to budget against and no
+        // tower to attach a pixel ceiling for -- `LoadPolicy::default()`
+        // and zero committed/KV bytes are the same "absence of a
+        // capability" answer `vision: wire::VisionInfo::default()` above
+        // already gives.
+        load_policy: runtime::LoadPolicy::default(),
+        committed_bytes: 0,
+        kv_bytes: 0,
     })
 }

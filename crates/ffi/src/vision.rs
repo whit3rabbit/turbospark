@@ -69,8 +69,19 @@ pub(crate) struct PreparedImage {
 /// A3) finds `preprocessor_config.json` beside the sidecar's `manifest.json`
 /// rather than the trunk's own install, which for a text-only trunk has no
 /// such file at all.
+///
+/// `guard`/`physical`/`committed`/`kv_bytes` clamp the checkpoint's own
+/// declared `max_pixels` ceiling to this session's memory budget (vision
+/// memory sidecar, Part B3) -- the SAME four values `ts_session_open`
+/// resolved for `maxContext`, threaded through by both call sites
+/// (`open::vision_info` at open, `generate::vision::attach_images` per
+/// turn) from `SessionCore`'s own fields, never re-derived.
 pub(crate) fn preprocess_params(
     runner: &runtime::RealForwardRunner,
+    guard: model_io::LoadGuard,
+    physical: u64,
+    committed: u64,
+    kv_bytes: u64,
 ) -> Result<PreprocessParams, String> {
     let path = runner.vision_dir().join("preprocessor_config.json");
     let json = std::fs::read_to_string(&path).map_err(|e| {
@@ -80,7 +91,7 @@ pub(crate) fn preprocess_params(
             path.display()
         )
     })?;
-    let params = PreprocessParams::from_preprocessor_config_json(&json)
+    let mut params = PreprocessParams::from_preprocessor_config_json(&json)
         .map_err(|e| format!("{}: {e}", path.display()))?;
 
     let vision = runner.vision_config();
@@ -107,6 +118,20 @@ pub(crate) fn preprocess_params(
             params.temporal_patch_size,
             vision.temporal_patch_size,
         ));
+    }
+
+    let budget = runner
+        .resolve_vision_pixel_budget(
+            params.max_pixels,
+            params.min_pixels,
+            guard,
+            physical,
+            committed,
+            kv_bytes,
+        )
+        .map_err(|e| e.to_string())?;
+    if budget.clamped {
+        params.max_pixels = budget.resolved_max_pixels;
     }
     Ok(params)
 }

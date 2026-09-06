@@ -250,6 +250,10 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         .map_err(|e| format!("failed to load a tokenizer from {}: {e}", dir.display()))?;
 
     let trained = repack::trained_context_meta::peek(dir);
+    // Bound rather than computed inline: the vision pixel budget (Part B3)
+    // needs the SAME committed-bytes figure `max_context` resolved against,
+    // not a second read of the install.
+    let committed = runtime::committed_bytes(dir);
     let plan = runtime::resolve_max_context(
         match max_context {
             Some(n) => runtime::MaxContext::Fixed(n),
@@ -266,7 +270,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         // from what `turbospark-check` resolves for the same install.
         foundation::runtime_config::DEFAULT_MAX_CONTEXT,
         runtime::physical_memory(),
-        runtime::committed_bytes(dir),
+        committed,
         &load_policy,
     )
     .map_err(|e| e.to_string())?;
@@ -454,7 +458,13 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
                 runtime::SpeculationPlan::Enabled { .. } => None,
             },
         },
-        vision: vision_info(&runner, vision_sidecar_dir.as_deref()),
+        vision: vision_info(
+            &runner,
+            vision_sidecar_dir.as_deref(),
+            load_policy.guard,
+            committed,
+            plan.kv_bytes,
+        ),
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
@@ -474,6 +484,9 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         rate,
         speculation_block,
         info,
+        load_policy,
+        committed_bytes: committed,
+        kv_bytes: plan.kv_bytes,
     }))
 }
 
@@ -495,6 +508,9 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
 fn vision_info(
     runner: &runtime::RealForwardRunner,
     sidecar_dir: Option<&Path>,
+    guard: model_io::LoadGuard,
+    committed: u64,
+    kv_bytes: u64,
 ) -> crate::wire::VisionInfo {
     if !runner.has_vision_tower() {
         return crate::wire::VisionInfo::default();
@@ -504,13 +520,20 @@ fn vision_info(
         Some(dir) => (Some("sidecar".to_string()), Some(dir.display().to_string())),
         None => (Some("install".to_string()), None),
     };
-    match crate::vision::preprocess_params(runner) {
-        Ok(_) => crate::wire::VisionInfo {
+    match crate::vision::preprocess_params(
+        runner,
+        guard,
+        runtime::physical_memory(),
+        committed,
+        kv_bytes,
+    ) {
+        Ok(params) => crate::wire::VisionInfo {
             active: true,
             image_token_id: Some(image_token_id),
             reason: None,
             source,
             sidecar_path,
+            max_pixels: Some(params.max_pixels),
         },
         Err(reason) => crate::wire::VisionInfo {
             active: false,
@@ -518,6 +541,7 @@ fn vision_info(
             reason: Some(reason),
             source,
             sidecar_path,
+            max_pixels: None,
         },
     }
 }

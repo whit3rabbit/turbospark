@@ -30,6 +30,18 @@ pub(crate) struct Session {
     /// Whether this session drafts ahead, resolved once at open against the
     /// install and the sampling settings. See [`resolve_speculation`].
     pub(crate) speculation: SpeculationPlan,
+    /// The guard tier this session actually opened under (vision memory
+    /// sidecar Part B3). Carried so a later `--image`'s pixel-budget clamp
+    /// resolves against the SAME tier `--max-context` did, never a second,
+    /// possibly different one (`crates/ffi/CLAUDE.md` Gotcha 12's rule).
+    pub(crate) load_policy: runtime::LoadPolicy,
+    /// What this install already commits before KV -- `runtime::
+    /// committed_bytes(model_dir)`, the same value `--max-context`
+    /// resolved against.
+    pub(crate) committed_bytes: u64,
+    /// This session's own KV cache at [`Self::max_context`], i.e.
+    /// `ContextPlan::kv_bytes`.
+    pub(crate) kv_bytes: u64,
 }
 
 pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, String> {
@@ -69,6 +81,10 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         guard: map_load_guard(request.load_guard),
         min_auto_context: request.min_auto_context,
     };
+    // Bound rather than computed inline: the vision pixel budget (Part B3)
+    // needs the SAME committed-bytes figure `--max-context` resolved
+    // against, not a second read of the install.
+    let committed = runtime::committed_bytes(model_dir);
     let plan = runtime::resolve_max_context(
         match request.max_context {
             invocation::MaxContext::Auto => runtime::MaxContext::Auto,
@@ -78,7 +94,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         trained,
         invocation::request::DEFAULT_MAX_CONTEXT,
         runtime::physical_memory(),
-        runtime::committed_bytes(model_dir),
+        committed,
         &load_policy,
     )
     .map_err(|e| e.to_string())?;
@@ -264,6 +280,9 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         speculation,
         rate,
         max_context: plan.resolved,
+        load_policy,
+        committed_bytes: committed,
+        kv_bytes: plan.kv_bytes,
     })
 }
 

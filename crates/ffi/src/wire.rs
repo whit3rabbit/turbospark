@@ -310,6 +310,13 @@ pub struct VisionInfo {
     pub source: Option<String>,
     /// The sidecar directory, present only when `source` is `"sidecar"`.
     pub sidecar_path: Option<String>,
+    /// The RESOLVED pixel ceiling this session will actually preprocess an
+    /// image against (vision memory sidecar, Part B3): the checkpoint's own
+    /// declared `max_pixels`, or a smaller value this session's own
+    /// `loadGuard` tier and committed memory could afford. Null exactly
+    /// when `active` is false -- there is no ceiling to report for a
+    /// session that cannot serve an image at all.
+    pub max_pixels: Option<usize>,
 }
 
 /// One piece of a multimodal message's content, in prompt order.

@@ -95,6 +95,11 @@ impl RealChatModel {
         vision_sidecar: Option<&Path>,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
+        // Bound rather than computed inline: the vision pixel budget (Part
+        // B3) needs the SAME committed-bytes figure `max_context` resolved
+        // against, and the `--session-slots` refusal below already reads
+        // this same install a second time -- one read, three consumers.
+        let committed = runtime::committed_bytes(model_dir);
         let context = runtime::resolve_max_context(
             match max_context {
                 Some(n) => runtime::MaxContext::Fixed(n),
@@ -104,7 +109,7 @@ impl RealChatModel {
             repack::trained_context_meta::peek(model_dir),
             foundation::runtime_config::DEFAULT_MAX_CONTEXT,
             runtime::physical_memory(),
-            runtime::committed_bytes(model_dir),
+            committed,
             &load_policy,
         )
         .map_err(|e| e.to_string())?;
@@ -133,9 +138,7 @@ impl RealChatModel {
             let physical = runtime::physical_memory();
             let budget = load_policy.guard.budget();
             if physical > 0 && budget.refuses {
-                let available = load_policy
-                    .guard
-                    .available(physical, runtime::committed_bytes(model_dir));
+                let available = load_policy.guard.available(physical, committed);
                 let pool_extra =
                     runtime::session_pool_bytes(&arch, context.resolved, session_slots);
                 let needs = context.kv_bytes.saturating_add(pool_extra);
@@ -242,13 +245,56 @@ impl RealChatModel {
         // `manifest.json` -- reading it here, before `runner` moves into the
         // `Mutex` below, is what lets that method see whichever directory is
         // actually authoritative once one is attached.
-        let preprocess_params =
+        let mut preprocess_params =
             std::fs::read_to_string(runner.vision_dir().join("preprocessor_config.json"))
                 .ok()
                 .and_then(|json| {
                     turbospark_vision_io::PreprocessParams::from_preprocessor_config_json(&json)
                         .ok()
                 });
+        // Vision memory sidecar (Part B3): clamp the checkpoint's own
+        // declared `max_pixels` ceiling to what THIS process's own
+        // `--load-guard` tier can afford on top of the KV cache and
+        // resident weights already committed above -- the SAME tier
+        // `--max-context` resolved against, never a second one
+        // (`crates/ffi/CLAUDE.md` Gotcha 12's rule). Resolved ONCE here,
+        // like `preprocess_params` itself, and printed only when it
+        // actually moved something -- matching this crate's other
+        // resolved-at-open lines (the sidecar-attach line just above,
+        // the guardrails/prefix-reuse lines) that stay silent on the
+        // common case.
+        // A budget refusal (not even `min_pixels` fits) degrades to "this
+        // server cannot serve an image" rather than failing the whole open,
+        // matching the `.ok()` chain just above: a text-only request must
+        // still work on an install whose vision config the machine cannot
+        // afford. Reported on stderr either way, since a silently-dropped
+        // capability is worse here than the sidecar/parse failures the
+        // `.ok()` chain already swallows without a line of its own.
+        if let Some(params) = preprocess_params.as_mut() {
+            let declared_max_pixels = params.max_pixels;
+            match runner.resolve_vision_pixel_budget(
+                declared_max_pixels,
+                params.min_pixels,
+                load_policy.guard,
+                runtime::physical_memory(),
+                committed,
+                context.kv_bytes,
+            ) {
+                Ok(budget) if budget.clamped => {
+                    params.max_pixels = budget.resolved_max_pixels;
+                    eprintln!(
+                        "vision: max_pixels {declared_max_pixels} -> {} (memory budget, {})",
+                        budget.resolved_max_pixels,
+                        load_policy.guard.as_str(),
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("vision: disabled ({e})");
+                    preprocess_params = None;
+                }
+            }
+        }
         // **RESOLVED AS THOUGH THE REQUEST WERE DETERMINISTIC, which is the
         // one place this server cannot follow the CLI's shape.** On the CLI
         // the whole process has one shaping, so `open_session` knows at open

@@ -36,6 +36,7 @@
 //! quietly become a general one.
 
 mod block;
+mod budget;
 mod inject;
 mod overflow;
 mod scratch;
@@ -43,6 +44,7 @@ mod shape;
 mod stages;
 mod weights;
 
+pub use budget::{PixelBudget, VisionBudgetTooSmall};
 pub use inject::PromptVision;
 
 use std::path::Path;

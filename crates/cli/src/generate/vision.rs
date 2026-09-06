@@ -64,7 +64,7 @@ pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, S
             path.display()
         )
     })?;
-    let params = PreprocessParams::from_preprocessor_config_json(&json)
+    let mut params = PreprocessParams::from_preprocessor_config_json(&json)
         .map_err(|e| format!("{}: {e}", path.display()))?;
 
     let vision = session.runner.vision_config();
@@ -91,6 +91,33 @@ pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, S
             params.temporal_patch_size,
             vision.temporal_patch_size,
         ));
+    }
+
+    // Vision memory sidecar (Part B3): clamp the checkpoint's own declared
+    // `max_pixels` ceiling to what THIS session's `--load-guard` tier can
+    // actually afford, on top of the KV cache and resident weights it
+    // already committed at open -- neither of which `params.max_pixels`
+    // alone has any way to see. The SAME tier `--max-context` resolved
+    // against, never a second one (`crates/ffi/CLAUDE.md` Gotcha 12's rule).
+    let declared_max_pixels = params.max_pixels;
+    let budget = session
+        .runner
+        .resolve_vision_pixel_budget(
+            declared_max_pixels,
+            params.min_pixels,
+            session.load_policy.guard,
+            runtime::physical_memory(),
+            session.committed_bytes,
+            session.kv_bytes,
+        )
+        .map_err(|e| e.to_string())?;
+    if budget.clamped {
+        params.max_pixels = budget.resolved_max_pixels;
+        eprintln!(
+            "vision: max_pixels {declared_max_pixels} -> {} (memory budget, {})",
+            budget.resolved_max_pixels,
+            session.load_policy.guard.as_str(),
+        );
     }
     Ok(params)
 }

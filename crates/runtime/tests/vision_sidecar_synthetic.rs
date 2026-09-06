@@ -420,6 +420,93 @@ fn opening_a_sidecar_directory_as_a_model_is_refused_by_name() {
     let _ = std::fs::remove_dir_all(&sidecar_dir);
 }
 
+/// `release_vision_tower` frees the OPEN resources without forgetting the
+/// sidecar ATTACHMENT (vision memory sidecar, Part C).
+///
+/// Built on a TEXT-ONLY trunk plus a standalone sidecar, deliberately, rather
+/// than on a combined install: a text-only trunk has no tower of its own to
+/// fall through to, so if release wrongly cleared `vision_sidecar_dir` too,
+/// the second `encode_image` below would have nothing to silently produce a
+/// plausible-but-wrong answer from -- it would refuse outright instead. A
+/// combined-install fixture could not tell "released cleanly and reopened
+/// the sidecar" apart from "forgot the sidecar and silently ran the trunk's
+/// own tower instead", because both would pass a byte-identity check
+/// trivially in the second case (`vision_is_sidecar`'s own module-doc
+/// precedent, applied one feature over).
+#[test]
+fn release_vision_tower_frees_resources_but_preserves_a_sidecar_attachment() {
+    let trunk_dir = temp_dir("release-trunk");
+    let trunk_arch =
+        build_synthetic_qwen_gdn_dense_install(&trunk_dir, VOCAB, LAYERS, "qwen35-trunk-release")
+            .expect("a text-only dense install builds");
+
+    let sidecar_dir = temp_dir("release-sidecar");
+    build_synthetic_vision_sidecar(&sidecar_dir, "qwen35-sidecar-release")
+        .expect("a standalone sidecar builds");
+
+    let mut runner = open(&trunk_dir, trunk_arch);
+    runner
+        .attach_vision_sidecar(&sidecar_dir)
+        .expect("a compatible sidecar attaches");
+
+    let p = params();
+    let img = image(&p);
+
+    let first = runner
+        .encode_image(&img, &p)
+        .expect("the sidecar's tower runs for the first image");
+    assert!(
+        runner.vision_slot_bytes().is_some(),
+        "the tower must report itself open after the first image"
+    );
+    assert_eq!(runner.vision_is_sidecar(), Some(true));
+
+    runner.release_vision_tower();
+
+    // Releasing frees the open resources and nothing else: the install still
+    // declares the capability and the sidecar directory is still the one a
+    // re-open should read from.
+    assert!(
+        runner.has_vision_tower(),
+        "release must not un-declare the vision capability (arch.vision.is_active())"
+    );
+    assert_eq!(
+        runner.vision_dir(),
+        sidecar_dir.as_path(),
+        "release must not forget which sidecar is attached"
+    );
+    assert!(
+        runner.vision_slot_bytes().is_none(),
+        "release must free the open tower's resources"
+    );
+    assert_eq!(
+        runner.vision_is_sidecar(),
+        None,
+        "no tower is open right after release"
+    );
+
+    // A second image through the SAME runner must reopen from the sidecar and
+    // reproduce byte-identical output, proving re-open rebuilds the exact
+    // same tower rather than a subtly different one.
+    let second = runner
+        .encode_image(&img, &p)
+        .expect("a second image reopens the sidecar's tower");
+    assert_eq!(
+        first.rows, second.rows,
+        "re-opening after release must reproduce byte-identical vision output"
+    );
+    assert_eq!(first.merged_tokens, second.merged_tokens);
+    assert_eq!(first.out_hidden, second.out_hidden);
+    assert_eq!(
+        runner.vision_is_sidecar(),
+        Some(true),
+        "the sidecar attachment must survive release and reopen"
+    );
+
+    let _ = std::fs::remove_dir_all(&trunk_dir);
+    let _ = std::fs::remove_dir_all(&sidecar_dir);
+}
+
 /// Attaching a sidecar must not perturb a text-only run: the same trunk with
 /// and without an attached (but never imaged) sidecar must produce
 /// byte-identical text output. The module doc's lazy-open reasoning implies

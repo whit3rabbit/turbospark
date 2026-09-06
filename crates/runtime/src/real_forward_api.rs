@@ -333,6 +333,35 @@ impl RealForwardRunner {
         self.vision.as_ref().map(|v| v.is_sidecar())
     }
 
+    /// Free the vision tower's open resources, without forgetting a sidecar
+    /// attachment (vision memory sidecar, Part C).
+    ///
+    /// Once opened -- lazily, on the first image a session ever processes --
+    /// a tower stays open and pinned for the runner's whole life:
+    /// [`crate::vision::VISION_SLOTS`] streamer slots (or the mapped-residency
+    /// arm's whole-tower mapping), a 10.6 MB host `pos_table`, and, for a
+    /// sidecar, a second `ResidentGpuWeights`/mmap pair of its own. A session
+    /// that will never see another image -- a GUI where the user attached one
+    /// file and moved on, a server whose next hundred requests are all text --
+    /// has had no way to give any of that back. This is that way.
+    ///
+    /// Sets [`Self::vision`] to `None`, which frees everything the tower owns
+    /// through ordinary `Drop`: the slot buffers (or the mapped buffer and its
+    /// mapping), the position table, and the sidecar's own weights and mmap
+    /// when one is attached. Nothing else moves. [`Self::has_vision_tower`]
+    /// still reads `arch.vision.is_active()`, which this does not touch, so
+    /// the install's declared capability survives release exactly as it
+    /// survives never having been opened. [`Self::vision_dir`]'s backing
+    /// `vision_sidecar_dir` is untouched too -- releasing forgets the OPEN
+    /// RESOURCES, never the ATTACHMENT -- so the next [`Self::encode_image`]
+    /// reopens the tower exactly as the first one did, from the attached
+    /// sidecar if there is one or from this install if not
+    /// (`open_vision_tower` reads only `vision_sidecar_dir` and `arch.vision`,
+    /// neither of which this method reaches).
+    pub fn release_vision_tower(&mut self) {
+        self.vision = None;
+    }
+
     /// Whether [`crate::producer::ChunkedPrefillRunner::prefill_chunk`] would
     /// serve this install rather than refuse it by name.
     ///

@@ -121,7 +121,14 @@ impl FfiChatModel {
                 crate::generate::SCRIPTED_HAS_NO_TOWER.to_string(),
             ));
         };
-        let params = crate::vision::preprocess_params(runner).map_err(RuntimeError::Producer)?;
+        let params = crate::vision::preprocess_params(
+            runner,
+            self.core.load_policy.guard,
+            runtime::physical_memory(),
+            self.core.committed_bytes,
+            self.core.kv_bytes,
+        )
+        .map_err(RuntimeError::Producer)?;
 
         let mut embeddings = Vec::with_capacity(images.images.len());
         for (i, image) in images.images.iter().enumerate() {
@@ -176,7 +183,14 @@ impl ChatModel for FfiChatModel {
             let Engine::Real(runner) = &*engine else {
                 return None;
             };
-            let params = crate::vision::preprocess_params(runner).ok()?;
+            let params = crate::vision::preprocess_params(
+                runner,
+                self.core.load_policy.guard,
+                runtime::physical_memory(),
+                self.core.committed_bytes,
+                self.core.kv_bytes,
+            )
+            .ok()?;
             Some(turbospark_server::vision::VisionInfo {
                 params,
                 specials: crate::vision::special_ids(runner),

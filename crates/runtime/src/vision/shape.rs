@@ -40,6 +40,12 @@ pub(crate) struct VisionShape {
     /// non-square table cannot be bilinearly indexed by `(h, w)` at all, and
     /// a rounded side would silently read the wrong rows.
     pub(crate) pos_side: usize,
+    /// Spatial patch edge in pixels (16 on this family). NOT recoverable
+    /// from `patch_dim`, which also folds in `temporal_patch_size` and
+    /// `in_channels` -- kept separately for `vision::budget`'s pixel-budget
+    /// conversion (Part B3), which needs `patch_size * merge` the same way
+    /// `turbospark_vision_io::PreprocessParams::spatial_factor` does.
+    pub(crate) patch_size: usize,
 }
 
 impl VisionShape {
@@ -145,6 +151,7 @@ impl VisionShape {
             patch_dim: temporal * patch * patch * channels,
             pos_rows,
             pos_side,
+            patch_size: patch,
         })
     }
 }
