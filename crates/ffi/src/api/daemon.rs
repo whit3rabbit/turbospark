@@ -250,9 +250,7 @@ fn stop_daemon_internal() -> Result<(), String> {
 /// Stops the background turbospark server daemon if running.
 #[no_mangle]
 pub unsafe extern "C" fn ts_daemon_stop() -> c_int {
-    guard_result(|| {
-        stop_daemon_internal().map_err(|e| (abi::TS_ERR_OPEN, e))
-    })
+    guard_result(|| stop_daemon_internal().map_err(|e| (abi::TS_ERR_OPEN, e)))
 }
 
 /// Starts the turbospark background server daemon with optional arguments.

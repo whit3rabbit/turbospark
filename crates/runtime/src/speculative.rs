@@ -381,8 +381,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         // fallback above. `committed + 1` rows: the confirmed token plus
         // every committed proposal, positions `base .. base + committed +
         // 1` -- the bonus is not fed yet and belongs to the next round.
-        producer
-            .record_committed(&feed[..committed + 1], base);
+        producer.record_committed(&feed[..committed + 1], base);
 
         // The drafter goes to where the accepted prefix ENDED and continues;
         // the target went back to where the block STARTED and replayed. Two

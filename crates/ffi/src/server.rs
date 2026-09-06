@@ -218,15 +218,14 @@ impl Server {
         core: Arc<SessionCore>,
         model_id: String,
     ) -> Result<String, String> {
-        let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(
-            crate::server_model::FfiChatModel::new(
+        let model: Arc<dyn turbospark_server::ChatModel> =
+            Arc::new(crate::server_model::FfiChatModel::new(
                 core,
                 model_id,
                 self.guardrails,
                 self.default_system.clone(),
                 self.default_reasoning,
-            ),
-        );
+            ));
         let id = self.registry.attach(model)?;
         ServerObserver::record(
             &*self.events,

@@ -1510,7 +1510,8 @@ fn cosine_similarity_c_surface() {
 
 #[test]
 fn server_attach_embedding_model_null_and_missing_checks() {
-    let code = unsafe { ts_server_attach_embedding_model(ptr::null(), ptr::null(), ptr::null_mut()) };
+    let code =
+        unsafe { ts_server_attach_embedding_model(ptr::null(), ptr::null(), ptr::null_mut()) };
     assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
 
     // Start an empty server
@@ -1527,7 +1528,8 @@ fn server_attach_embedding_model_null_and_missing_checks() {
 
     // Missing path
     let missing_path = CString::new("/nonexistent/model/path").unwrap();
-    let code = unsafe { ts_server_attach_embedding_model(server_ptr, missing_path.as_ptr(), &mut out) };
+    let code =
+        unsafe { ts_server_attach_embedding_model(server_ptr, missing_path.as_ptr(), &mut out) };
     assert_eq!(code, abi::TS_ERR_OPEN);
 
     unsafe { ts_server_stop(server_ptr) };
@@ -1544,10 +1546,10 @@ fn embedding_encode_null_and_invalid_checks() {
     assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
 
     let bad_json = CString::new("not valid json").unwrap();
-    let code = unsafe { ts_embedding_encode_json(dummy_path.as_ptr(), bad_json.as_ptr(), &mut out) };
+    let code =
+        unsafe { ts_embedding_encode_json(dummy_path.as_ptr(), bad_json.as_ptr(), &mut out) };
     #[cfg(target_os = "macos")]
     assert_eq!(code, abi::TS_ERR_JSON);
     #[cfg(not(target_os = "macos"))]
     assert_eq!(code, abi::TS_ERR_UNSUPPORTED_PLATFORM);
 }
-
