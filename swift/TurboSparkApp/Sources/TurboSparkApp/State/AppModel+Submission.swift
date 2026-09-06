@@ -17,52 +17,19 @@ extension AppModel {
     public func run() {
         guard canRun, session != nil else { return }
         let userDraft = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachments = promptAttachments
 
-        // **A PICTURE IS NOT AN ATTACHMENT WITH EMPTY TEXT.** Images go to
-        // the vision tower by path and are injected at the marker the
-        // template renders; inlining them here would produce an empty
-        // "--- Attachment ---" block and send the model nothing at all.
-        // Only a picture whose source is still on disk can be sent, because
-        // the engine reads the file itself.
-        let (imageDocs, textDocs) = attachments.reduce(
-            into: ([AppPromptAttachment](), [AppPromptAttachment]())
-        ) { split, doc in
-            if doc.isSendableImage {
-                split.0.append(doc)
-            } else {
-                split.1.append(doc)
-            }
-        }
-        // **A PICTURE THAT CANNOT BE SENT IS REFUSED, NOT DROPPED.** This used
-        // to resolve to an empty list when `visionIsActive` was false, which
-        // put the image in neither list and then cleared the draft below: an
-        // image-only turn returned at the emptiness guard and Send read as
-        // dead. The install already states WHY it refuses
-        // (`info.vision.reason`), and that is the sentence a user needs.
-        if !imageDocs.isEmpty && !visionIsActive {
-            let reason = visionRefusalReason ?? "the loaded model has no active vision tower"
-            showToast(
-                "Cannot send \(imageDocs.count == 1 ? "this image" : "these images"): \(reason)",
-                style: .warning)
+        // A meta-command is not a prompt, and it is handled before everything
+        // else here for the same reason the agent slash commands are handled
+        // inside the task: placement decides whether a `UserPromptSubmit`
+        // hook sees it. The hook receives prompt content, and a maintenance
+        // command is not content -- unlike an agent command, which IS a
+        // prompt and must be hookable. The names live in the shared
+        // `BuiltInSlashCommand` table; the drift test pins there being
+        // exactly one meta command, so a second one edits this dispatcher.
+        if BuiltInSlashCommand.isMetaCommand(userDraft) {
+            handleCompactCommand(userDraft)
             return
         }
-        let promptImages: [ChatImage] = imageDocs.compactMap { $0.sourcePath.map(ChatImage.path) }
-
-        var fullUserContent = userDraft
-        if !textDocs.isEmpty {
-            let docsText = textDocs.map { doc in
-                "--- Attachment: \(doc.fileName) (\(doc.formatLabel)) ---\n\(doc.extractedText)\n--- End of \(doc.fileName) ---"
-            }.joined(separator: "\n\n")
-            if fullUserContent.isEmpty {
-                fullUserContent = docsText
-            } else {
-                fullUserContent = "\(fullUserContent)\n\n\(docsText)"
-            }
-        }
-
-        // A turn carrying only a picture has no text and is still a turn.
-        guard !fullUserContent.isEmpty || !promptImages.isEmpty else { return }
 
         // Captured BEFORE the hook await below. The draft this turn was built
         // from belongs to THIS chat; a switch while a slow `UserPromptSubmit`
@@ -103,6 +70,77 @@ extension AppModel {
                 if !self.generating { self.isCancellationPending = false }
             }
             self.stopHookReentryCount = 0
+
+            // **`@path` MENTIONS RESOLVE FIRST**, before the attachments are
+            // read and before the hook: each resolvable token becomes an
+            // ordinary attachment (a folder through the same bounded walk
+            // the folder picker uses), so the hook sees the content it gates
+            // on, not the pointer. Unresolvable tokens stay as prose in the
+            // message, silently.
+            if MentionResolver.draftContainsMentions(userDraft) {
+                await MentionResolver.resolveMentions(
+                    in: userDraft,
+                    projectRoot: submissionProject?.rootDirectoryURL,
+                    chatID: submissionChatID,
+                    into: self)
+            }
+
+            // **A PICTURE IS NOT AN ATTACHMENT WITH EMPTY TEXT.** Images go to
+            // the vision tower by path and are injected at the marker the
+            // template renders; inlining them here would produce an empty
+            // "--- Attachment ---" block and send the model nothing at all.
+            // Only a picture whose source is still on disk can be sent, because
+            // the engine reads the file itself.
+            //
+            // Captured BY ID rather than through `promptAttachments`: the
+            // mention resolution above can take seconds, and a chat switched
+            // in that window must not donate ITS attachments to this turn.
+            let attachments: [AppPromptAttachment] = {
+                if let row = self.chats.first(where: { $0.id == submissionChatID }) {
+                    return row.draftAttachments
+                }
+                return self.activeDraftChat.id == submissionChatID
+                    ? self.activeDraftChat.draftAttachments : []
+            }()
+            let (imageDocs, textDocs) = attachments.reduce(
+                into: ([AppPromptAttachment](), [AppPromptAttachment]())
+            ) { split, doc in
+                if doc.isSendableImage {
+                    split.0.append(doc)
+                } else {
+                    split.1.append(doc)
+                }
+            }
+            // **A PICTURE THAT CANNOT BE SENT IS REFUSED, NOT DROPPED.** This used
+            // to resolve to an empty list when `visionIsActive` was false, which
+            // put the image in neither list and then cleared the draft below: an
+            // image-only turn returned at the emptiness guard and Send read as
+            // dead. The install already states WHY it refuses
+            // (`info.vision.reason`), and that is the sentence a user needs.
+            if !imageDocs.isEmpty && !visionIsActive {
+                let reason = visionRefusalReason ?? "the loaded model has no active vision tower"
+                showToast(
+                    "Cannot send \(imageDocs.count == 1 ? "this image" : "these images"): \(reason)",
+                    style: .warning)
+                return
+            }
+            let promptImages: [ChatImage] = imageDocs.compactMap { $0.sourcePath.map(ChatImage.path) }
+
+            var fullUserContent = userDraft
+            if !textDocs.isEmpty {
+                let docsText = textDocs.map { doc in
+                    "--- Attachment: \(doc.fileName) (\(doc.formatLabel)) ---\n\(doc.extractedText)\n--- End of \(doc.fileName) ---"
+                }.joined(separator: "\n\n")
+                if fullUserContent.isEmpty {
+                    fullUserContent = docsText
+                } else {
+                    fullUserContent = "\(fullUserContent)\n\n\(docsText)"
+                }
+            }
+
+            // A turn carrying only a picture has no text and is still a turn.
+            guard !fullUserContent.isEmpty || !promptImages.isEmpty else { return }
+
             // **GHOST MODE DISPATCHES NO `UserPromptSubmit` HOOK.** The hook
             // receives the full prompt text, and a hook script is free to
             // log it -- a user who asked for a conversation that leaves no
@@ -147,7 +185,7 @@ extension AppModel {
                 return
             }
 
-            if self.handleSkillSlashCommand(fullUserContent, chatID: submissionChatID) {
+            if self.handleSkillSlashCommand(fullUserContent) {
                 return
             }
 

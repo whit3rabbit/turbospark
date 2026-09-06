@@ -142,10 +142,11 @@ extension AppModel {
     /// **THE SAME TWO GATES THE `skill` TOOL APPLIES** (state#64). This had
     /// neither, so it ran a skill the user had switched off (state#12's other
     /// half, on the path nothing currently calls) and would run one declaring
-    /// `disable-model-invocation` if a model ever reached it. It has no
-    /// caller today, which is exactly why the gates have to be here rather
-    /// than at a call site: the first one added would otherwise inherit the
-    /// hole.
+    /// `disable-model-invocation` if a model ever reached it. The user slash
+    /// path (`handleSkillSlashCommand`) is its caller, which is exactly why
+    /// the gates live here rather than at a call site: the next caller would
+    /// otherwise inherit the hole. (`disable-model-invocation` stays a
+    /// MODEL-side gate; a user may always invoke their own skill.)
     public func executeSkill(named name: String, arguments: [String: String] = [:]) -> String? {
         guard let skill = findSkill(named: name), skill.isEnabled else {
             return nil
@@ -167,7 +168,11 @@ extension AppModel {
 
     /// Handles user-typed slash commands for skills (e.g. `/my-skill [args]` or `/skill <name> [args]`).
     /// Returns true if recognized and handled.
-    public func handleSkillSlashCommand(_ input: String, chatID: UUID) -> Bool {
+    ///
+    /// Acts on the CURRENTLY SELECTED chat: it rewrites `promptText` and
+    /// calls `run()`, both of which resolve the selection themselves, so a
+    /// chat-id parameter would be an argument nothing reads.
+    public func handleSkillSlashCommand(_ input: String) -> Bool {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/") else { return false }
 

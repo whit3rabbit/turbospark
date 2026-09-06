@@ -91,25 +91,21 @@ struct PromptComposerPlusMenu: View {
     private var slashCommandsSection: some View {
         Section {
             Menu {
-                Button {
-                    onInsertPromptText("/explore ")
-                } label: {
-                    Label("/explore: Codebase search with subagent", systemImage: "magnifyingglass")
+                ForEach(BuiltInSlashCommand.all) { command in
+                    Button {
+                        onInsertPromptText("/\(command.name) ")
+                    } label: {
+                        Label(
+                            "/\(command.name): \(command.summary)",
+                            systemImage: command.iconName)
+                    }
                 }
 
-                Button {
-                    onInsertPromptText("/plan ")
-                } label: {
-                    Label("/plan: Multi-step implementation plan", systemImage: "list.bullet.clipboard")
-                }
-
-                Button {
-                    onInsertPromptText("/agent ")
-                } label: {
-                    Label("/agent: Invoke specialized persona", systemImage: "person.crop.square")
-                }
-
+                // The same two gates the submit-time slash handler applies:
+                // a disabled or model-only skill listed here would be
+                // refused with a toast the moment it was sent.
                 let skills = model.effectiveSkills
+                    .filter { $0.isEnabled && $0.manifest.userInvocable }
                 if !skills.isEmpty {
                     Divider()
                     ForEach(skills) { skill in

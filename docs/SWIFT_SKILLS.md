@@ -48,7 +48,7 @@ The skills subsystem is organized into five functional layers:
 |   * Inline expansion vs Subagent fork (isolated token budget)           |
 +-------------------------------------------------------------------------+
 |                            Chat Integration                             |
-|   * Slash command autocomplete in PromptComposerEditor (type "/")       |
+|   * Slash and @ autocomplete in the composer (type "/" or "@")          |
 |   * Direct tool invocation via AppToolRegistry ("skill")                |
 |   * Session capture ("skillify" / propose_skills)                       |
 +-------------------------------------------------------------------------+
@@ -336,14 +336,35 @@ When the model proposes `skill(name: "...", arguments: {...})`:
 
 ## 6. Chat and user interface integration
 
-### A. Slash command autocomplete
-In `Generation/PromptComposerEditor.swift`:
-- Typing `/` triggers an inline autocomplete popover.
-- Reads `model.effectiveSkills` filtered by `userInvocable == true`.
-- Each suggestion shows the skill name, a scope badge (`User` vs `Project`),
-  and a short description.
-- Selecting an item populates the prompt with `/name ` and optional argument
-  hints.
+### A. Slash and `@` autocomplete
+In `Generation/PromptComposerEditor.swift`, `ComposerAutocompleteController`
+and `ComposerAutocompleteEngine`:
+- Typing `/` as the draft's trailing token triggers an inline autocomplete
+  list; typing `@` does the same for files and folders under the open
+  project's root (`Files/ProjectFileIndex.swift`, a bounded walk with the
+  attachment importer's skip list, directories included, refreshed on a
+  short TTL). Detection is TRAILING TOKEN ONLY: `TextEditor` exposes no
+  caret, so a trigger typed mid-draft does not open the list. An unterminated
+  `@"partial path` stays a trigger across spaces; the closed `@"..."` form
+  is not.
+- Slash rows are the `BuiltInSlashCommand` table (the SAME table the plus
+  menu and the submit-time parsers read; `/compact`, `/explore`, `/plan`,
+  `/review`, `/agent`) plus `model.effectiveSkills` filtered by
+  `isEnabled == true && userInvocable == true`. A skill named like a built-in
+  command is dropped: the agent parser runs first at submit time, so the
+  skill is unreachable and must not be offered.
+- Up/down arrows move the selection, Tab and Return accept, Escape dismisses
+  only the popup (a second Escape still cancels a running turn), and a click
+  accepts. Accepting replaces the trigger token with `/name ` or
+  `@relative/path ` (quoted when the path has spaces) and closes the list.
+- `@` with no project open shows a hint row instead of scanning.
+- At SEND time (`Files/MentionResolver.swift`, inside `AppModel.run()`'s
+  submission task, before the `UserPromptSubmit` hook): every `@path` that
+  resolves becomes an ordinary attachment -- a file through
+  `DocumentTextExtractor`, a folder through the same bounded walk the folder
+  picker uses -- and the `@path` token STAYS in the message text. A token
+  that resolves to nothing stays as prose, silently; the missing chip is the
+  feedback.
 
 ### B. Session capture ("Skillify" / propose_skills)
 - When a complex task completes successfully, the user or model can invoke the

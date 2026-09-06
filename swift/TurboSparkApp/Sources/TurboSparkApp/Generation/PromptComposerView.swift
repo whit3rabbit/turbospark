@@ -5,6 +5,7 @@ struct PromptComposerView: View {
     @ObservedObject var model: AppModel
     @Environment(\.appTheme) private var theme
     @FocusState private var promptFocused: Bool
+    @StateObject private var autocomplete = ComposerAutocompleteController()
     @State private var showingPromptTips = false
     @State private var isImportingDocuments = false
     @State private var isImportingFolder = false
@@ -25,7 +26,13 @@ struct PromptComposerView: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            PromptComposerEditor(model: model, promptFocused: $promptFocused)
+            if autocomplete.isVisible {
+                ComposerSuggestionPopup(controller: autocomplete) {
+                    acceptAutocomplete()
+                }
+            }
+            PromptComposerEditor(
+                model: model, promptFocused: $promptFocused, autocomplete: autocomplete)
             if model.isInGhostChat {
                 // Under the text box, before sending: the one place the user
                 // is certain to look as they compose. Persistent rather than
@@ -134,6 +141,23 @@ struct PromptComposerView: View {
             // keyboard-only user can start typing without reaching for the
             // mouse.
             promptFocused = true
+        }
+        .onChange(of: model.promptText) { _, newValue in
+            // The `/` and `@` popup rides the draft text: every keystroke
+            // re-derives the trigger from the trailing token.
+            autocomplete.textChanged(
+                text: newValue,
+                skills: model.effectiveSkills,
+                projectRoot: model.selectedProject?.rootDirectoryURL)
+        }
+        .onChange(of: promptFocused) { _, isFocused in
+            autocomplete.focusChanged(isFocused: isFocused)
+        }
+    }
+
+    private func acceptAutocomplete() {
+        if let newText = autocomplete.accept(in: model.promptText) {
+            model.promptText = newText
         }
     }
 

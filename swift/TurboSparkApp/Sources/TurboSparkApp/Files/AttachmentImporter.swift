@@ -21,10 +21,15 @@ enum AttachmentImporter {
     }
 
     /// Extracts every URL and attaches the successes to the given chat.
+    ///
+    /// `allowDuringSubmission` is for `MentionResolver`, which imports while
+    /// the submission it belongs to is already `submitting`; every
+    /// interactive caller leaves it false and keeps the guard.
     static func importDocuments(
         _ urls: [URL],
         into model: AppModel,
-        chatID: UUID?
+        chatID: UUID?,
+        allowDuringSubmission: Bool = false
     ) async -> Outcome {
         guard !urls.isEmpty else { return Outcome(importedCount: 0, failures: []) }
 
@@ -62,15 +67,18 @@ enum AttachmentImporter {
         for (url, size, outcome) in outcomes {
             switch outcome {
             case .success(let document):
-                model.addPromptAttachment(
-                    AppPromptAttachment(
-                        fileName: document.fileName,
-                        formatLabel: document.formatLabel,
-                        extractedText: document.text,
-                        wasTruncatedDuringExtraction: document.wasTruncated,
-                        sourcePath: url.path,
-                        sourceByteSize: size),
-                    toChatID: chatID)
+                let attachment = AppPromptAttachment(
+                    fileName: document.fileName,
+                    formatLabel: document.formatLabel,
+                    extractedText: document.text,
+                    wasTruncatedDuringExtraction: document.wasTruncated,
+                    sourcePath: url.path,
+                    sourceByteSize: size)
+                if allowDuringSubmission {
+                    model.appendPromptAttachmentDuringSubmission(attachment, toChatID: chatID)
+                } else {
+                    model.addPromptAttachment(attachment, toChatID: chatID)
+                }
                 imported += 1
             case .failure(let error):
                 failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
@@ -84,7 +92,8 @@ enum AttachmentImporter {
         _ folderURL: URL,
         into model: AppModel,
         chatID: UUID?,
-        maxFiles: Int = 80
+        maxFiles: Int = 80,
+        allowDuringSubmission: Bool = false
     ) async -> Outcome {
         let didAccess = folderURL.startAccessingSecurityScopedResource()
         defer {
@@ -104,7 +113,9 @@ enum AttachmentImporter {
             )
         }
 
-        return await importDocuments(collectedURLs, into: model, chatID: chatID)
+        return await importDocuments(
+            collectedURLs, into: model, chatID: chatID,
+            allowDuringSubmission: allowDuringSubmission)
     }
 
     private nonisolated static func collectFolderURLs(
@@ -122,11 +133,7 @@ enum AttachmentImporter {
         let maxDepth = 12
         var visitedCanonicalPaths: Set<String> = [canonicalRoot.path]
 
-        let skipDirectoryNames: Set<String> = [
-            ".git", ".svn", ".hg", "node_modules", "target", ".build",
-            ".next", "dist", "build", "venv", ".venv", "env",
-            "Pods", "Carthage", "DerivedData", ".DS_Store", "__pycache__"
-        ]
+        let skipDirectoryNames = FileSystemScanRules.skipDirectoryNames
 
         let supportedExtensions: Set<String> = [
             "pdf", "docx", "pptx", "xlsx", "txt", "md", "markdown", "json",

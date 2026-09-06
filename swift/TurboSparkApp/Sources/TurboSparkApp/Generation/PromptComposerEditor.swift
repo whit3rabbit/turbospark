@@ -15,6 +15,10 @@ import SwiftUI
 struct PromptComposerEditor: View {
     @ObservedObject var model: AppModel
     var promptFocused: FocusState<Bool>.Binding
+    /// The shared `/` and `@` autocomplete state. While its popup is
+    /// visible, the arrow keys, Tab, Return and Escape are the popup's
+    /// before they are the editor's.
+    var autocomplete: ComposerAutocompleteController? = nil
     @Environment(\.appTheme) private var theme
 
     @ScaledMetric private var editorMinHeight: CGFloat = 34
@@ -80,6 +84,30 @@ struct PromptComposerEditor: View {
                         }
                     }
                     .onKeyPress(phases: .down) { press in
+                        if let autocomplete, autocomplete.isVisible {
+                            switch press.key {
+                            case .upArrow:
+                                autocomplete.moveSelection(-1)
+                                return .handled
+                            case .downArrow:
+                                autocomplete.moveSelection(1)
+                                return .handled
+                            case .tab:
+                                acceptAutocomplete()
+                                return .handled
+                            case .escape:
+                                // The popup consumes the first Escape;
+                                // canceling a running turn stays on the
+                                // second.
+                                autocomplete.dismiss()
+                                return .handled
+                            case .return where !press.modifiers.contains(.shift):
+                                acceptAutocomplete()
+                                return .handled
+                            default:
+                                break
+                            }
+                        }
                         if press.key == .escape {
                             if model.isRunning && model.canCancel {
                                 model.cancel()
@@ -122,6 +150,13 @@ struct PromptComposerEditor: View {
                     .transition(.opacity)
                 }
             }
+    }
+
+    private func acceptAutocomplete() {
+        guard let autocomplete,
+            let newText = autocomplete.accept(in: model.promptText)
+        else { return }
+        model.promptText = newText
     }
 }
 
