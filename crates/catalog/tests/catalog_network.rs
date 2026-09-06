@@ -99,7 +99,27 @@ fn every_row_still_names_files_that_exist_at_the_size_it_records() {
                 .filter_map(|f| client.content_length(&weights.file_url(f)).ok().flatten())
                 .sum(),
         };
-        if published > 0 {
+        // **A VISION-TOWER ROW'S `download_bytes` IS NOT COMPARABLE TO THE
+        // WHOLE-REPO SHARD SUM ABOVE.** A tower row's weights repository is
+        // the FULL trunk-plus-tower checkpoint (`mlx-community/Qwen3.8-27B-4bit`
+        // for `qwen38-vision-tower`), because that is where the tower's
+        // tensors live; `published` for an Mlx row is the sum of every
+        // `.safetensors` shard in that repo, tens of gigabytes, where the
+        // row's own `download_bytes` deliberately records only the tower's
+        // OWN tensor bytes (`fetch_prefixed_shards` reads per-tensor ranges,
+        // never a whole shard). Comparing the two would read every real
+        // pull as catastrophically wrong when nothing has drifted -- the
+        // quantities are different by construction, not by rot. This skip
+        // still lets the loop above catch the finding that DOES apply to a
+        // tower row: the repo going missing, or losing its `.safetensors`
+        // files entirely.
+        if entry.kind == turbospark_catalog::EntryKind::VisionTower {
+            eprintln!(
+                "  size      skipped for a vision-tower row: recorded {} is the tower's \
+                 own tensor bytes, not the whole repo's shard sum",
+                entry.download_bytes
+            );
+        } else if published > 0 {
             let drift = (published as f64 - entry.download_bytes as f64).abs()
                 / entry.download_bytes.max(1) as f64;
             eprintln!(

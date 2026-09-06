@@ -192,6 +192,35 @@ pub struct Measured {
     pub source: String,
 }
 
+/// What kind of row this is: an installable trunk model, or a vision-tower
+/// sidecar with no text half of its own (vision memory sidecar, part A5).
+///
+/// **Defaults to [`EntryKind::Model`] on an absent `kind` key**, which is
+/// AGENTS.md Gotcha 39's rule applied here: a default is a claim about what
+/// silence means, and every row written before this field existed IS a
+/// trunk model -- the thing a user types `pull <alias>` for and points
+/// `--model` at. A tower row is never that: it has no tokenizer, cannot be
+/// opened as a session on its own, and is not a fit candidate (a tower is
+/// not a thing you "run" standalone).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum EntryKind {
+    #[default]
+    Model,
+    VisionTower,
+}
+
+impl EntryKind {
+    /// String identifier for this row kind ("model" or "vision-tower"),
+    /// matching the JSON spelling exactly.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EntryKind::Model => "model",
+            EntryKind::VisionTower => "vision-tower",
+        }
+    }
+}
+
 /// One curated model.
 ///
 /// Not `Eq`: [`Measured`] carries `f64` throughput readings. Nothing keys a
@@ -200,6 +229,9 @@ pub struct Measured {
 pub struct CatalogEntry {
     /// The short name a user types. Unique across the table.
     pub alias: String,
+    /// What kind of row this is. See [`EntryKind`].
+    #[serde(default)]
+    pub kind: EntryKind,
     /// A human-readable name including the quantization, since two rows of
     /// one model differ only there.
     pub name: String,
@@ -328,11 +360,33 @@ impl CatalogEntry {
                 self.alias
             ));
         }
-        if !self.sidecars.files.iter().any(|f| f == "tokenizer.json") {
-            return Err(format!(
-                "{}: sidecars.files must include tokenizer.json",
-                self.alias
-            ));
+        // A tower has no tokenizer of its own, so it takes the OPPOSITE
+        // requirement: `preprocessor_config.json` (what `vision_dir()` reads
+        // for preprocessing settings, Part A3) rather than `tokenizer.json`.
+        match self.kind {
+            EntryKind::Model => {
+                if !self.sidecars.files.iter().any(|f| f == "tokenizer.json") {
+                    return Err(format!(
+                        "{}: sidecars.files must include tokenizer.json",
+                        self.alias
+                    ));
+                }
+            }
+            EntryKind::VisionTower => {
+                if !self
+                    .sidecars
+                    .files
+                    .iter()
+                    .any(|f| f == "preprocessor_config.json")
+                {
+                    return Err(format!(
+                        "{}: a vision-tower row needs sidecars.files to include \
+                         preprocessor_config.json (a tower has no tokenizer, so it does \
+                         not need tokenizer.json)",
+                        self.alias
+                    ));
+                }
+            }
         }
         if let Some(mtp) = &self.mtp {
             if mtp.repo.split('/').count() != 2 {
@@ -407,5 +461,92 @@ impl Measured {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod entry_kind_tests {
+    use super::*;
+
+    fn model_entry(kind: EntryKind, sidecar_files: &[&str]) -> CatalogEntry {
+        CatalogEntry {
+            alias: "x".to_string(),
+            kind,
+            name: "X".to_string(),
+            family: "qwen35".to_string(),
+            source: Source {
+                kind: SourceKind::Mlx,
+                repo: "owner/name".to_string(),
+                revision: "main".to_string(),
+                file: None,
+            },
+            sidecars: Sidecars {
+                repo: None,
+                revision: None,
+                files: sidecar_files.iter().map(|s| s.to_string()).collect(),
+            },
+            download_bytes: 1,
+            install_bytes: 1,
+            status: Status::Runs,
+            gates: Vec::new(),
+            measured: Vec::new(),
+            notes: None,
+            mtp: None,
+        }
+    }
+
+    /// An entry with no `kind` key deserializes as `Model`, and the field
+    /// round-trips through the exact JSON spelling `models.json` uses.
+    #[test]
+    fn entry_kind_defaults_to_model_when_the_key_is_absent() {
+        let json = r#"{"repo":"owner/name"}"#;
+        #[derive(Deserialize)]
+        struct Probe {
+            #[serde(default)]
+            kind: EntryKind,
+        }
+        let probe: Probe = serde_json::from_str(json).unwrap();
+        assert_eq!(probe.kind, EntryKind::Model);
+    }
+
+    #[test]
+    fn entry_kind_round_trips_through_its_kebab_case_spelling() {
+        assert_eq!(
+            serde_json::to_string(&EntryKind::Model).unwrap(),
+            "\"model\""
+        );
+        assert_eq!(
+            serde_json::to_string(&EntryKind::VisionTower).unwrap(),
+            "\"vision-tower\""
+        );
+        assert_eq!(
+            serde_json::from_str::<EntryKind>("\"vision-tower\"").unwrap(),
+            EntryKind::VisionTower
+        );
+        assert_eq!(EntryKind::VisionTower.as_str(), "vision-tower");
+        assert_eq!(EntryKind::Model.as_str(), "model");
+    }
+
+    #[test]
+    fn a_model_row_requires_tokenizer_json_and_not_preprocessor_config() {
+        let ok = model_entry(EntryKind::Model, &["tokenizer.json"]);
+        assert!(ok.validate().is_ok(), "{:?}", ok.validate());
+
+        let missing = model_entry(EntryKind::Model, &["preprocessor_config.json"]);
+        let err = missing.validate().unwrap_err();
+        assert!(err.contains("tokenizer.json"), "{err}");
+    }
+
+    #[test]
+    fn a_vision_tower_row_requires_preprocessor_config_and_not_tokenizer_json() {
+        let ok = model_entry(EntryKind::VisionTower, &["preprocessor_config.json"]);
+        assert!(ok.validate().is_ok(), "{:?}", ok.validate());
+
+        // Missing preprocessor_config.json is refused, even with a
+        // tokenizer.json present -- a tower row is judged by its own
+        // requirement, not by the model row's.
+        let missing = model_entry(EntryKind::VisionTower, &["tokenizer.json"]);
+        let err = missing.validate().unwrap_err();
+        assert!(err.contains("preprocessor_config.json"), "{err}");
     }
 }

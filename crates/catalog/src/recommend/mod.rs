@@ -177,8 +177,14 @@ pub fn recommend_catalog(
     context: u32,
     slots: model_io::ExpertCacheSlots,
 ) -> Vec<Recommendation> {
+    // A vision-tower row is not a fit CANDIDATE: it has no tokenizer, cannot
+    // be opened as a session on its own, and pairs with a trunk rather than
+    // competing with one for the same memory budget. Ranking one here would
+    // put a component beside the models it attaches to as though it were a
+    // rival choice.
     let mut out: Vec<Recommendation> = entries
         .iter()
+        .filter(|entry| entry.kind == crate::entry::EntryKind::Model)
         .map(|entry| from_entry(entry, machine, context, slots, None))
         .collect();
     rank(&mut out, |r| r.key());

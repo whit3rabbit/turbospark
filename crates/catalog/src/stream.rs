@@ -1,7 +1,8 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use model_io::{ArchConfig, ModelFamily};
+use model_io::{ArchConfig, ModelFamily, VisionConfig};
 use repack::{ByteProgressCallback, Gemma4Shards, HttpRangeSource, RangeSource, SafetensorsHeader};
 
 use crate::hf::{Client, RepoRef};
@@ -248,51 +249,286 @@ pub(crate) fn stream_mlx(
 /// registry would offer it under a name `classify_for_family` does not
 /// recognize and the walk would refuse the whole install by name, most of an
 /// hour into the trunk's own stream.
+///
+/// A thin wrapper over [`fetch_prefixed_shards`], so every existing caller
+/// and test keeps this exact return shape (no shard filename, which nothing
+/// here has ever needed) while the general form gains a second caller in
+/// [`stream_vision_sidecar`].
 fn fetch_mtp_shards(
     mtp: &RepoRef,
     client: &Client,
     byte_progress: Option<&ByteProgressCallback>,
 ) -> Result<Vec<(SafetensorsHeader, HttpRangeSource)>, String> {
-    let index_url = mtp.file_url("model.safetensors.index.json");
-    let index_bytes = client
-        .get(&index_url)
-        .map_err(|e| format!("fetching {mtp}'s shard index: {e}"))?;
-    let index: serde_json::Value = serde_json::from_slice(&index_bytes)
-        .map_err(|e| format!("parsing {mtp}'s shard index: {e}"))?;
+    let shards = fetch_prefixed_shards(mtp, &[repack::MTP_PREFIX], None, client, byte_progress)
+        .map_err(|e| {
+            // Preserve the original wording for the "nothing matched" case,
+            // which named the head explicitly rather than a generic prefix
+            // list -- nothing tests the string today, but a caller reading a
+            // failed `pull --reuse-trunk-from` error deserves the specific one.
+            if e.contains("declares no tensor under") {
+                format!("{mtp} declares no mtp.* tensor; the catalog row's mtp source is wrong")
+            } else {
+                e
+            }
+        })?;
+    Ok(shards.into_iter().map(|(_name, h, s)| (h, s)).collect())
+}
+
+/// Which shard file(s) in a safetensors index carry at least one tensor whose
+/// name starts with one of `prefixes`.
+///
+/// Pure and split out from the network fetch so it is testable with a
+/// constructed JSON value and no HTTP round trip -- the same split
+/// `crate::probe`'s `evaluate_gguf`/`evaluate_config` already make between a
+/// gate's decision and its fetch.
+fn shard_names_for_prefixes(
+    index: &serde_json::Value,
+    prefixes: &[&str],
+) -> Result<BTreeSet<String>, String> {
     let map = index
         .get("weight_map")
         .and_then(|m| m.as_object())
-        .ok_or_else(|| format!("{mtp}'s shard index has no weight_map"))?;
-
-    let mut mtp_shard_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for (name, shard) in map {
-        if name.starts_with(repack::MTP_PREFIX) {
+        .ok_or_else(|| "shard index has no weight_map".to_string())?;
+    let mut names = BTreeSet::new();
+    for (tensor, shard) in map {
+        if prefixes.iter().any(|p| tensor.starts_with(p)) {
             if let Some(shard) = shard.as_str() {
-                mtp_shard_names.insert(shard.to_string());
+                names.insert(shard.to_string());
             }
         }
     }
-    if mtp_shard_names.is_empty() {
-        return Err(format!(
-            "{mtp} declares no mtp.* tensor; the catalog row's mtp source is wrong"
-        ));
+    Ok(names)
+}
+
+/// Shard(s) of `repo` carrying at least one tensor under any of `prefixes`,
+/// each header filtered down to just those tensors.
+///
+/// Reads `repo`'s safetensors shard index when it has one (a repository too
+/// small to shard, or one this port reads only for a sub-component such as a
+/// vision tower, may have none at all) and falls back to `explicit_file` when
+/// the index is absent OR present but names nothing under `prefixes` -- the
+/// same "index first, explicit name as the fallback" order [`shard_names`]
+/// already uses for the trunk's own shard list. Refuses only when NEITHER
+/// source names a candidate, so a caller with no index and no `--file` gets a
+/// message naming the gap rather than an empty result.
+pub(crate) fn fetch_prefixed_shards(
+    repo: &RepoRef,
+    prefixes: &[&str],
+    explicit_file: Option<&str>,
+    client: &Client,
+    byte_progress: Option<&ByteProgressCallback>,
+) -> Result<Vec<(String, SafetensorsHeader, HttpRangeSource)>, String> {
+    let index_url = repo.file_url("model.safetensors.index.json");
+    let indexed = client.get_optional(&index_url)?;
+    let mut shard_names: BTreeSet<String> = match &indexed {
+        Some(bytes) => {
+            let index: serde_json::Value = serde_json::from_slice(bytes)
+                .map_err(|e| format!("parsing {repo}'s shard index: {e}"))?;
+            shard_names_for_prefixes(&index, prefixes).map_err(|e| format!("{repo}: {e}"))?
+        }
+        None => BTreeSet::new(),
+    };
+    if shard_names.is_empty() {
+        match explicit_file {
+            Some(file) => {
+                shard_names.insert(file.to_string());
+            }
+            None => {
+                return Err(format!(
+                    "{repo} declares no tensor under {prefixes:?} {}; pass an explicit file",
+                    if indexed.is_some() {
+                        "in its shard index"
+                    } else {
+                        "and has no shard index"
+                    }
+                ));
+            }
+        }
     }
 
-    let mut out = Vec::with_capacity(mtp_shard_names.len());
-    for shard_name in mtp_shard_names {
-        let url = mtp.file_url(&shard_name);
+    let mut out = Vec::with_capacity(shard_names.len());
+    for shard_name in shard_names {
+        let url = repo.file_url(&shard_name);
         let source = match byte_progress {
             Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
             None => HttpRangeSource::new(url),
         };
         let mut header = repack::fetch_safetensors_header(&source)
-            .map_err(|e| format!("{mtp}/{shard_name} header: {e}"))?;
+            .map_err(|e| format!("{repo}/{shard_name} header: {e}"))?;
         header
             .tensors
-            .retain(|name, _| name.starts_with(repack::MTP_PREFIX));
-        out.push((header, source));
+            .retain(|name, _| prefixes.iter().any(|p| name.starts_with(p)));
+        if header.tensors.is_empty() {
+            return Err(format!(
+                "{repo}/{shard_name} carries no tensor under {prefixes:?} after filtering; \
+                 wrong shard or wrong prefix list"
+            ));
+        }
+        out.push((shard_name, header, source));
     }
     Ok(out)
+}
+
+/// Streams a vision-tower SIDECAR install (vision memory sidecar, part A5):
+/// `weights`'s `config.json` decides the family and the tower's own shape,
+/// its shard(s) are fetched and canonicalized, and the result is written
+/// through [`repack::write_vision_sidecar`] into `out_dir`.
+///
+/// **Fetches its own `config.json`, independent of whatever sidecar files
+/// `install()` wrote into `out_dir`**, the same way [`stream_mlx`] fetches
+/// its own copy rather than reading one a caller may have written first: the
+/// two `stream_*` functions are meant to be usable on their own, and a
+/// vision-only install additionally keeps `config.json` on disk afterwards
+/// (`crate::install::InstallPlan::vision_only`), which is a property of the
+/// INSTALL rather than of this function's own needs.
+///
+/// Refuses a repository declaring no vision tower at all, and refuses one
+/// whose trunk `hidden_size` disagrees with its own `vision_config`'s
+/// `out_hidden_size` -- architecturally the two are the same number (the
+/// merger writes straight into the trunk's residual stream), so a mismatch
+/// is a checkpoint this walk has never seen rather than a value to silently
+/// prefer one side of.
+pub(crate) fn stream_vision_sidecar(
+    weights: &RepoRef,
+    out_dir: &Path,
+    explicit_file: Option<&str>,
+    client: &Client,
+    progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
+) -> Result<VisionConfig, String> {
+    let config_text = String::from_utf8(client.get(&weights.file_url("config.json"))?)
+        .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&config_text).map_err(|e| format!("parsing config.json: {e}"))?;
+
+    // Family and hidden_size, off the SAME text-config-unwrapping logic every
+    // family parser already carries -- reused rather than re-derived, so a
+    // future family's `text_config` convention change cannot drift the two
+    // apart. Only `hidden_size` is used, as a cross-check on the tower's own
+    // declared output width; the rest of the arch this returns describes the
+    // TRUNK, which this walk does not install.
+    let family = repack::config_json_family(&config)
+        .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?;
+    let arch = match family {
+        ModelFamily::Gemma4 => repack::parse_gemma4_config(&config_text).map_err(|e| e.to_string()),
+        ModelFamily::QwenGdnMoe => {
+            repack::parse_qwen_gdn_moe_config(&config_text).map_err(|e| e.to_string())
+        }
+        ModelFamily::QwenGdnDense => {
+            repack::parse_qwen_gdn_dense_config(&config_text).map_err(|e| e.to_string())
+        }
+        ModelFamily::MuseGlimmer => {
+            repack::parse_muse_glimmer_config(&config_text).map_err(|e| e.to_string())
+        }
+        ModelFamily::Qwen4Exp => {
+            repack::parse_qwen4_exp_config(&config_text).map_err(|e| e.to_string())
+        }
+        other => Err(format!(
+            "{} has no safetensors intake here, so its vision tower cannot be read either",
+            other.as_str()
+        )),
+    }?;
+
+    let vision = repack::parse_vision_config(&config_text).map_err(|e| e.to_string())?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{weights} declares no vision_config; there is no tower here to install"
+        ));
+    }
+    if arch.hidden_size != vision.out_hidden_size {
+        return Err(format!(
+            "{weights}: trunk hidden_size {} does not match vision_config.out_hidden_size {}; \
+             refusing an inconsistent checkpoint",
+            arch.hidden_size, vision.out_hidden_size
+        ));
+    }
+
+    progress(&format!(
+        "{weights}: family {}, tower depth {}, out_hidden_size {}",
+        family.as_str(),
+        vision.depth,
+        vision.out_hidden_size
+    ));
+
+    let fetched = fetch_prefixed_shards(
+        weights,
+        &repack::VISION_SOURCE_PREFIXES,
+        explicit_file,
+        client,
+        byte_progress,
+    )?;
+    progress(&format!("{} vision shard(s) fetched", fetched.len()));
+
+    let mut shard_names = Vec::with_capacity(fetched.len());
+    let mut headers = Vec::with_capacity(fetched.len());
+    let mut sources = Vec::with_capacity(fetched.len());
+    for (name, mut header, source) in fetched {
+        repack::canonicalize_vision_header(&mut header).map_err(|e| e.to_string())?;
+        shard_names.push(name);
+        headers.push(header);
+        sources.push(source);
+    }
+
+    let vision_bases: Vec<&str> = headers
+        .iter()
+        .flat_map(|h| h.tensors.keys())
+        .filter(|k| k.starts_with(repack::VISION_PREFIX))
+        .map(String::as_str)
+        .collect();
+    if vision_bases.is_empty() {
+        return Err(format!(
+            "{weights}: fetched shard(s) carry no {:?}-prefixed tensor after canonicalization",
+            repack::VISION_PREFIX
+        ));
+    }
+
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect(),
+    );
+    let read = repack::read_vision_entries(&shards, &vision_bases, &vision)
+        .map_err(|e| format!("reading the vision tower: {e}"))?;
+
+    // Reported the same way `write_gemma4_install_streamed` reports the
+    // combined-install tower's cost (`crates/repack` Gotcha 13): a nonzero
+    // count here means values in FP16's subnormal range, never a wholesale
+    // precision loss.
+    let lossy: usize = read.lossy_conversion.iter().map(|(_, n)| n).sum();
+    if lossy > 0 {
+        progress(&format!(
+            "converted {} vision tensors to FP16 with {lossy} values losing bits \
+             (subnormals; the normal range is exact)",
+            read.lossy_conversion.len()
+        ));
+    }
+
+    let record = model_io::SidecarRecord {
+        kind: model_io::SIDECAR_KIND.to_string(),
+        pairs_with: model_io::PairsWith {
+            family: family.as_str().to_string(),
+            hidden_size: vision.out_hidden_size,
+        },
+        source: model_io::SidecarSource {
+            repo: weights.repo.clone(),
+            revision: weights.revision.clone(),
+            prefix: repack::VISION_PREFIX.to_string(),
+            file: shard_names.join(", "),
+        },
+        tower_blocks: vision.depth,
+        block_stride: read.block_stride,
+    };
+
+    repack::write_vision_sidecar(out_dir, family, &vision, &weights.repo, &read, record)
+        .map_err(|e| format!("writing the vision sidecar: {e}"))?;
+    progress(&format!(
+        "vision sidecar written: {} block(s), {} bytes/block",
+        vision.depth, read.block_stride
+    ));
+
+    Ok(vision)
 }
 
 /// Shard filenames, from the index where there is one.
@@ -316,4 +552,71 @@ pub(crate) fn shard_names(plan: &InstallPlan, client: &Client) -> Result<Vec<Str
         }
     }
     Ok(vec!["model.safetensors".to_string()])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shard_names_for_prefixes;
+
+    /// The pure half of [`super::fetch_prefixed_shards`]: given an index, find
+    /// the shard(s) carrying at least one tensor under any of the prefixes,
+    /// with no HTTP round trip.
+    #[test]
+    fn shard_names_for_prefixes_finds_matching_shards_across_the_map() {
+        let index = serde_json::json!({
+            "weight_map": {
+                "language_model.model.embed_tokens.weight": "model-00001-of-00003.safetensors",
+                "vision_tower.blocks.0.norm1.weight": "model-00002-of-00003.safetensors",
+                "vision_tower.merger.norm.weight": "model-00003-of-00003.safetensors",
+                "mtp.fc.weight": "model-00003-of-00003.safetensors",
+            }
+        });
+        let names = shard_names_for_prefixes(&index, &["vision_tower.", "model.visual."]).unwrap();
+        assert_eq!(
+            names,
+            [
+                "model-00002-of-00003.safetensors",
+                "model-00003-of-00003.safetensors"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+        );
+    }
+
+    #[test]
+    fn shard_names_for_prefixes_matches_the_hf_native_spelling_too() {
+        let index = serde_json::json!({
+            "weight_map": {
+                "model.visual.blocks.0.norm1.weight": "shard-a.safetensors",
+                "model.language_model.embed_tokens.weight": "shard-b.safetensors",
+            }
+        });
+        let names = shard_names_for_prefixes(&index, &["vision_tower.", "model.visual."]).unwrap();
+        assert_eq!(
+            names,
+            ["shard-a.safetensors"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+    }
+
+    #[test]
+    fn shard_names_for_prefixes_is_empty_when_nothing_matches() {
+        let index = serde_json::json!({
+            "weight_map": {
+                "language_model.model.embed_tokens.weight": "shard-a.safetensors",
+            }
+        });
+        let names = shard_names_for_prefixes(&index, &["vision_tower.", "model.visual."]).unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn shard_names_for_prefixes_refuses_a_map_with_no_weight_map() {
+        let index = serde_json::json!({"not_weight_map": {}});
+        let err = shard_names_for_prefixes(&index, &["vision_tower."]).unwrap_err();
+        assert!(err.contains("weight_map"), "{err}");
+    }
 }

@@ -28,13 +28,16 @@ mod probe;
 mod recommend;
 mod store;
 mod stream;
+mod vision;
 
 pub use catalog::{Catalog, SCHEMA_VERSION};
-pub use entry::{CatalogEntry, Measured, MtpSource, Sidecars, Source, SourceKind, Status};
+pub use entry::{
+    CatalogEntry, EntryKind, Measured, MtpSource, Sidecars, Source, SourceKind, Status,
+};
 pub use hf::{Client, PopularRepo, RepoFile, RepoRef};
 pub use install::{
     gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,
-    InstallPlan, Installed,
+    InstallPlan, Installed, VISION_SIDECAR_FILES,
 };
 pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,
@@ -46,6 +49,7 @@ pub use recommend::{
     ThroughputBand,
 };
 pub use store::{default_root, directory_bytes, resolve_model_arg, InstalledModel, Store};
+pub use vision::resolve_vision_sidecar;
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate's tokenizer

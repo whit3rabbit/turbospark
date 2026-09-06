@@ -66,10 +66,16 @@ pub fn entry(entry: &CatalogEntry, is_user_row: bool, store: &Store) {
             row.installed_on,
             human_bytes(row.install_bytes)
         ),
-        None => println!(
-            "  installed   no -- `turbospark-model pull {}`",
-            entry.alias
-        ),
+        None => {
+            let verb = match entry.kind {
+                catalog::EntryKind::VisionTower => "pull-vision",
+                catalog::EntryKind::Model => "pull",
+            };
+            println!(
+                "  installed   no -- `turbospark-model {verb} {}`",
+                entry.alias
+            )
+        }
     }
     if let Some(notes) = &entry.notes {
         println!("\n{notes}");

@@ -328,6 +328,32 @@
       "notes": "A THIRD entry for this same repo and revision, deliberately kept separate from qwen38-27b: that row backs qwen38_memory_oracle and qwen38_quality_gate's frozen numbers, and adding ~0.9 GiB of vision tower to it would force a re-freeze for a component neither gate exercises. Streamed WITH vision_tower.* included (crates/repack/tests/qwen38_checkpoint_network.rs's vision-carrying test), where the plain row's install excludes it. The decode_tok_s_min reading is the FIRST of four rounds, a cold-GPU forward pass (AGENTS.md Gotcha 20), not the largest page -- the repeated large-page round later in the same run reads faster (15.997) than either smaller page. See docs/VISION.md."
     },
     {
+      "alias": "qwen38-vision-tower",
+      "kind": "vision-tower",
+      "name": "Qwen3.8 27B vision tower (BF16, sidecar)",
+      "family": "qwen35",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen3.8-27B-4bit",
+        "revision": "3e6447f082e89cc7f0bc6e5441afd38dfce760ff",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "preprocessor_config.json",
+          "config.json"
+        ]
+      },
+      "download_bytes": 921460192,
+      "install_bytes": 970000000,
+      "status": "caveat",
+      "gates": [],
+      "measured": [],
+      "notes": "TOWER-ONLY sidecar (vision memory sidecar, part A5): the SAME repo and revision as qwen38-27b and qwen38-27b-vision, but this row installs ONLY the 333 vision_tower.* tensors through write_vision_sidecar into an <alias>.gturbo-vision/ directory, pairing at runtime with any qwen35-family trunk at hidden_size 5120 (resolve_vision_sidecar, --vision-sidecar). NOT YET PULLED OR VERIFIED against a real install -- Part A5 added this row as the target for Part A6's real-hardware pull-vision plus byte-for-byte comparison against the already-installed qwen38-27b-vision.gturbo tower; that is why status is caveat rather than runs/verified and gates is empty. download_bytes is HEAD/header-derived rather than a completed pull's measurement: read 2026-09-06 as the exact sum of the 333 vision_tower.*-prefixed tensors' data_offsets spans inside model-00001-of-00003.safetensors's own safetensors header (921,460,192 bytes, matching CLAUDE.local.md's independently-recorded 879 MiB for this exact tower), which is what fetch_prefixed_shards's per-tensor ranged reads actually transfer -- NOT the shard's own published size (5,343,268,662 bytes, x-linked-size), which is what a whole-shard HEAD or catalog_network.rs's generic Mlx sum would report and which that rot guard now skips for a vision-tower row by design (see its own comment) because the two are different quantities by construction, not by drift. install_bytes is a generous estimate over download_bytes for the 16-KiB block-stride page rounding across 27 blocks."
+    },
+    {
       "alias": "gemma4-iq3",
       "name": "Gemma 4 26B-A4B Instruct (GGUF UD-Q3_K_M, IQ3_XXS/IQ4_NL experts)",
       "family": "gemma4",

@@ -43,6 +43,14 @@ pub struct InstalledModel {
     /// pull. Recorded rather than looked up later, because a row's status
     /// can change under an install that did not.
     pub status: String,
+    /// [`crate::EntryKind::as_str`]'s spelling ("vision-tower"), or `None`.
+    ///
+    /// **Absence means a regular trunk model**, which is AGENTS.md Gotcha
+    /// 39's rule: every `installed.json` row written before this field
+    /// existed is exactly that, and `#[serde(default)]` is what lets those
+    /// rows keep deserializing rather than failing to parse the whole file.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 /// The `~/.turbospark` tree.
@@ -87,6 +95,15 @@ impl Store {
     /// Where a pull of `alias` lands by default.
     pub fn install_path(&self, alias: &str) -> PathBuf {
         self.root.join("models").join(format!("{alias}.gturbo"))
+    }
+
+    /// Where a vision-tower sidecar pull of `alias` lands by default: the
+    /// same `models/` directory, `-vision` distinguishing it from a trunk
+    /// install of the same alias.
+    pub fn vision_install_path(&self, alias: &str) -> PathBuf {
+        self.root
+            .join("models")
+            .join(format!("{alias}.gturbo-vision"))
     }
 
     fn record_path(&self) -> PathBuf {
@@ -150,7 +167,16 @@ impl Store {
             return Some(row.path.clone());
         }
         let default = self.install_path(name);
-        default.is_dir().then_some(default)
+        if default.is_dir() {
+            return Some(default);
+        }
+        // The vision-tower default, tried second for the same "a store
+        // populated by hand still resolves" reason the trunk default
+        // exists: a recorded row (the arm above) already carries whichever
+        // path the install actually used, so this is only reached when
+        // nothing was ever recorded.
+        let vision_default = self.vision_install_path(name);
+        vision_default.is_dir().then_some(vision_default)
     }
 }
 

@@ -309,6 +309,106 @@ fn the_recommend_flags_do_not_apply_to_other_commands() {
 /// parser has an optional value, so the case is worth pinning: `--discover
 /// --budget 36GiB` has to mean the default scan and a 36 GiB budget, not a
 /// scan of `--budget`.
+/// `list` marks a vision-tower row distinguishably from a trunk row: the
+/// KIND column reads `vision-tower` rather than `model` (vision memory
+/// sidecar, part A5, Task 6's `qwen38-vision-tower` row).
+#[test]
+fn list_marks_a_vision_tower_row_distinguishably() {
+    let (code, stdout, _) = run(&["list"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("qwen38-vision-tower"), "{stdout}");
+    assert!(stdout.contains("vision-tower"), "{stdout}");
+    assert!(stdout.contains("KIND"), "{stdout}");
+}
+
+/// `info` on a vision-tower row still prints in full -- nothing about the
+/// new field changes the print path for an ordinary lookup.
+#[test]
+fn info_prints_a_vision_tower_row() {
+    let (code, stdout, _) = run(&["info", "qwen38-vision-tower"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("preprocessor_config.json"), "{stdout}");
+}
+
+/// An uninstalled row's hint names the command that would ACTUALLY install
+/// it: `pull-vision` for a tower, `pull` for a model. Printing the wrong one
+/// for a tower row would send a reader into `pull`'s own "is a model row,
+/// not a vision-tower row" refusal.
+#[test]
+fn info_hints_pull_vision_for_an_uninstalled_tower_and_pull_for_a_model() {
+    let (_, tower, _) = run(&["info", "qwen38-vision-tower"]);
+    assert!(tower.contains("pull-vision qwen38-vision-tower"), "{tower}");
+
+    let (_, model, _) = run(&["info", "ternary27b"]);
+    assert!(model.contains("pull ternary27b"), "{model}");
+    assert!(!model.contains("pull-vision"), "{model}");
+}
+
+/// `pull-vision --repo` needs `--alias`, the same shape `pull --repo` has.
+#[test]
+fn pull_vision_by_repo_requires_an_alias_and_refuses_both_forms_at_once() {
+    let (code, _, stderr) = run(&["pull-vision", "--repo", "owner/name"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("--alias"), "{stderr}");
+
+    let (code, _, stderr) = run(&[
+        "pull-vision",
+        "qwen38-vision-tower",
+        "--repo",
+        "owner/name",
+        "--alias",
+        "x",
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("not both"), "{stderr}");
+}
+
+/// `pull-vision` with no arguments at all is a usage error, not a silent
+/// no-op.
+#[test]
+fn pull_vision_with_no_arguments_is_a_usage_error() {
+    let (code, _, stderr) = run(&["pull-vision"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("--repo"), "{stderr}");
+}
+
+/// `pull-vision` on an alias that exists but is a MODEL row (not a
+/// vision-tower one) is refused by name, pointing at `pull` instead --
+/// caught before any network call, so this stays in the offline suite.
+#[test]
+fn pull_vision_on_a_model_alias_is_refused_and_points_at_pull() {
+    let (code, _, stderr) = run(&["pull-vision", "gemma4"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("not a vision-tower row"), "{stderr}");
+    assert!(
+        stderr.contains("pull gemma4") || stderr.contains("`pull "),
+        "{stderr}"
+    );
+}
+
+/// An unknown alias to `pull-vision` gets the same near-match suggestion
+/// every other alias lookup does.
+#[test]
+fn pull_vision_on_an_unknown_alias_suggests_near_matches() {
+    // A substring of the real alias, not a superstring: `find` matches by
+    // `alias.contains(needle)`, so a typo that ADDS characters (like a
+    // doubled trailing letter) is never a substring of the shorter real
+    // alias and would find nothing to suggest.
+    let (code, _, stderr) = run(&["pull-vision", "qwen38-visio"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("qwen38-vision-tower"), "{stderr}");
+}
+
+#[test]
+fn a_malformed_pull_vision_repo_reference_is_a_usage_error() {
+    let (code, _, stderr) = run(&["pull-vision", "--repo", "notowneronly", "--alias", "x"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("owner/name") || stderr.contains("revision"),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn a_bare_discover_does_not_swallow_the_next_flag() {
     // Parse only: `--budget 1` makes every row refuse, so nothing reaches the
