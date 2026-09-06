@@ -207,6 +207,19 @@ impl RealChatModel {
         // constant: two checkpoints can share a dialect and pad differently.
         let vocab_size = runner.vocab_size();
         let expert_cache_slots = runner.expert_cache_slots();
+        // Read from `runner.vision_dir()` rather than `model_dir` directly,
+        // so a later `--vision-sidecar` attach (vision memory sidecar, Part
+        // A4) finds `preprocessor_config.json` beside the sidecar's own
+        // `manifest.json` -- reading it here, before `runner` moves into the
+        // `Mutex` below, is what lets that method see whichever directory is
+        // actually authoritative once one is attached.
+        let preprocess_params =
+            std::fs::read_to_string(runner.vision_dir().join("preprocessor_config.json"))
+                .ok()
+                .and_then(|json| {
+                    turbospark_vision_io::PreprocessParams::from_preprocessor_config_json(&json)
+                        .ok()
+                });
         // **RESOLVED AS THOUGH THE REQUEST WERE DETERMINISTIC, which is the
         // one place this server cannot follow the CLI's shape.** On the CLI
         // the whole process has one shaping, so `open_session` knows at open
@@ -239,15 +252,7 @@ impl RealChatModel {
             guardrails,
             default_reasoning,
             default_system,
-            // Read at OPEN rather than per request: it is a property of the
-            // install, and a per-request read would put a file access on the
-            // hot path for a value that cannot change.
-            preprocess_params: std::fs::read_to_string(model_dir.join("preprocessor_config.json"))
-                .ok()
-                .and_then(|json| {
-                    turbospark_vision_io::PreprocessParams::from_preprocessor_config_json(&json)
-                        .ok()
-                }),
+            preprocess_params,
         })
     }
 

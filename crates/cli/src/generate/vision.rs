@@ -49,11 +49,14 @@ pub(crate) struct PreparedImage {
 /// `in_channels`) is cross-checked against the install's own `arch.vision`,
 /// because the two files could disagree and the tower would then refuse at a
 /// shape check far from the config that caused it.
-pub(crate) fn preprocess_params(
-    session: &Session,
-    model_dir: &std::path::Path,
-) -> Result<PreprocessParams, String> {
-    let path = model_dir.join("preprocessor_config.json");
+///
+/// Reads `session.runner.vision_dir()` rather than the session's own model
+/// directory, so a trunk with an attached vision SIDECAR (vision memory
+/// sidecar, Part A3) finds `preprocessor_config.json` beside the sidecar's
+/// `manifest.json` rather than the trunk's own install, which for a
+/// text-only trunk has no such file at all.
+pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, String> {
+    let path = session.runner.vision_dir().join("preprocessor_config.json");
     let json = std::fs::read_to_string(&path).map_err(|e| {
         format!(
             "{}: {e}\n  this install declares no image preprocessing config; re-stream it with \

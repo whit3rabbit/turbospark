@@ -36,7 +36,7 @@ pub(crate) fn attach_images(
             session.info.model_path
         ));
     }
-    let params = crate::vision::preprocess_params(runner, &session.model_dir)?;
+    let params = crate::vision::preprocess_params(runner)?;
     let images = crate::vision::prepare(parts, &params)?;
     crate::vision::attach(runner.as_mut(), rendered, &images, &params)
 }

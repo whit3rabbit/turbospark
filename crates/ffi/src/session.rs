@@ -33,7 +33,6 @@
 //! on.
 
 use std::ops::Deref;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -75,13 +74,6 @@ pub struct SessionCore {
     /// what IS cached is everything resolved at open, which a later call
     /// must not re-derive.
     pub(crate) info: SessionInfo,
-    /// The install's directory, RESOLVED.
-    ///
-    /// Never the caller's `--model` argument, which may be a catalog alias
-    /// (`crates/cli` Gotcha 5). Carried because `preprocessor_config.json` is
-    /// read from it per turn that attaches an image, and the pixel budget has
-    /// no default worth falling back to (`crates/vision-io` Gotcha 6).
-    pub(crate) model_dir: PathBuf,
     /// The RESOLVED context window. Read from here and never from a
     /// request: under `auto` the request carries no number, and the KV cache
     /// was allocated at this one.

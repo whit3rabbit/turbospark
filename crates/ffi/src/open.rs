@@ -427,7 +427,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
                 runtime::SpeculationPlan::Enabled { .. } => None,
             },
         },
-        vision: vision_info(&runner, dir),
+        vision: vision_info(&runner),
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
@@ -443,7 +443,6 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         engine: Mutex::new(Engine::Real(Box::new(runner))),
         tokenizer,
         cancel: Arc::new(AtomicBool::new(false)),
-        model_dir: dir.to_path_buf(),
         max_context: plan.resolved,
         rate,
         speculation_block,
@@ -460,12 +459,12 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
 /// checks, in the same order, so the gate and the refusal cannot disagree --
 /// a detection probe must not be able to pass where its own resolver fails
 /// (AGENTS.md Gotcha 52).
-fn vision_info(runner: &runtime::RealForwardRunner, dir: &Path) -> crate::wire::VisionInfo {
+fn vision_info(runner: &runtime::RealForwardRunner) -> crate::wire::VisionInfo {
     if !runner.has_vision_tower() {
         return crate::wire::VisionInfo::default();
     }
     let image_token_id = runner.vision_config().image_token_id as i32;
-    match crate::vision::preprocess_params(runner, dir) {
+    match crate::vision::preprocess_params(runner) {
         Ok(_) => crate::wire::VisionInfo {
             active: true,
             image_token_id: Some(image_token_id),
