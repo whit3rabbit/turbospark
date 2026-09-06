@@ -5,6 +5,8 @@
 #![forbid(unsafe_code)]
 
 mod config;
+#[cfg(target_os = "macos")]
+pub mod encoder;
 mod error;
 #[cfg(target_os = "macos")]
 mod families;
@@ -58,6 +60,8 @@ mod turn_stream;
 pub mod vision;
 
 pub use config::GenerationConfig;
+#[cfg(target_os = "macos")]
+pub use encoder::{cosine_similarity, EncoderRunner};
 // The two sizing policies LIVE IN `model_io` and are re-exported here.
 //
 // They moved there when `crates/catalog` needed the same arithmetic to answer

@@ -13,6 +13,9 @@
 mod auth;
 mod cancel;
 mod completions;
+mod embeddings;
+#[cfg(target_os = "macos")]
+mod encoder_model;
 mod guardrails;
 mod handler;
 mod messages;
@@ -33,6 +36,9 @@ pub mod vision;
 /// one client-visible mechanism rather than two names for the same signal.
 pub(crate) const DEGRADATION_HEADER: &str = "x-anyllm-degradation";
 
+#[cfg(target_os = "macos")]
+/// Embedding model running encoder forward passes for embeddings.
+pub use encoder_model::RealEncoderModel;
 /// Tool-call guardrail configuration: rescue parsing, argument validation,
 /// and the retry budget.
 pub use guardrails::GuardrailConfig;
@@ -157,11 +163,14 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
         .route("/v1/messages/count_tokens", post(messages::count_tokens))
         .route("/v1/models", get(handler::models))
         .route("/v1/models/:model", get(handler::model_detail))
+        .route("/v1/embeddings", post(embeddings::embeddings))
         .route("/api/tags", get(ollama::tags))
         .route("/api/version", get(ollama::version))
         .route("/api/show", post(ollama::show))
         .route("/api/chat", post(ollama::chat))
-        .route("/api/generate", post(ollama::generate));
+        .route("/api/generate", post(ollama::generate))
+        .route("/api/embeddings", post(embeddings::ollama_embeddings))
+        .route("/api/embed", post(embeddings::ollama_embed));
     let protected = match options.api_key {
         Some(key) => protected.layer(axum::middleware::from_fn_with_state(
             auth::ApiKey(key.into()),

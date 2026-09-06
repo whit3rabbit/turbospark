@@ -50,6 +50,11 @@ anyllm_translate = "0.16"
 # in-process, so a client, a proxy route and a managed-server process manager
 # are all dead weight. Do not turn the defaults on to reach one function.
 forge-guardrails = { version = "0.1.3", default-features = false, features = ["guardrails"] }
+# The local rescue strategies (`guardrails/extra_formats.rs`) match dialect
+# markup with regexes. `regex-lite` is ALREADY in this crate's dependency
+# tree -- forge's own `guardrails` feature pulls it -- so this adds no new
+# package, only a second direct edge to it.
+regex-lite = "0.1"
 axum = { version = "0.7", features = ["json"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"] }
 tokio-stream = "0.1"

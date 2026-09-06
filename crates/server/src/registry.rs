@@ -55,6 +55,10 @@ pub trait ModelRegistry: Send + Sync {
     fn resolve(&self, requested: Option<&str>) -> Resolution;
     /// Every attached model, in a stable order.
     fn rows(&self) -> Vec<ModelRow>;
+    /// Resolves an embedding backend for embedding requests.
+    fn resolve_embedding(&self, requested: Option<&str>) -> Resolution {
+        self.resolve(requested)
+    }
 }
 
 /// The one-model registry every pre-registry caller gets, including all of
@@ -71,6 +75,10 @@ impl SingleModel {
 
 impl ModelRegistry for SingleModel {
     fn resolve(&self, _requested: Option<&str>) -> Resolution {
+        Resolution::Model(Arc::clone(&self.0))
+    }
+
+    fn resolve_embedding(&self, _requested: Option<&str>) -> Resolution {
         Resolution::Model(Arc::clone(&self.0))
     }
 
@@ -102,6 +110,10 @@ impl ModelRegistry for StaticRegistry {
         resolve_among(&self.0, requested)
     }
 
+    fn resolve_embedding(&self, requested: Option<&str>) -> Resolution {
+        resolve_embedding_among(&self.0, requested)
+    }
+
     fn rows(&self) -> Vec<ModelRow> {
         self.0
             .iter()
@@ -119,8 +131,10 @@ impl ModelRegistry for StaticRegistry {
 /// rather than restating it against its own storage.
 pub fn resolve_among(models: &[Arc<dyn ChatModel>], requested: Option<&str>) -> Resolution {
     if let Some(name) = requested {
-        if let Some(hit) = models.iter().find(|m| m.model_id() == name) {
-            return Resolution::Model(Arc::clone(hit));
+        if !name.is_empty() {
+            if let Some(hit) = models.iter().find(|m| m.model_id() == name) {
+                return Resolution::Model(Arc::clone(hit));
+            }
         }
     }
     match models {
@@ -129,11 +143,70 @@ pub fn resolve_among(models: &[Arc<dyn ChatModel>], requested: Option<&str>) -> 
         // resolve, so an unrecognized name is the caller's label for the
         // conversation rather than a routing instruction.
         [only] => Resolution::Model(Arc::clone(only)),
-        several => Resolution::Unknown {
-            requested: requested.unwrap_or("").to_string(),
-            available: several.iter().map(|m| m.model_id().to_string()).collect(),
-        },
+        several => {
+            // When multiple models are attached, but exactly one is generative
+            // (i.e. not an embedding-only model), default generative chat requests
+            // to that single generative model rather than failing with 404.
+            let gen_models: Vec<_> = several
+                .iter()
+                .filter(|m| !m.supports_embeddings())
+                .collect();
+            if gen_models.len() == 1 {
+                return Resolution::Model(Arc::clone(gen_models[0]));
+            }
+
+            Resolution::Unknown {
+                requested: requested.unwrap_or("").to_string(),
+                available: several.iter().map(|m| m.model_id().to_string()).collect(),
+            }
+        }
     }
+}
+
+/// Resolves `requested` against a slice of attached models for an embedding request.
+/// If `requested` matches an attached model by id, that model is returned.
+/// If `requested` is omitted (None) or is a generic/default embedding model name
+/// (e.g. "text-embedding-ada-002", "text-embedding-3-small", "default", "bge-small", "snowflake-arctic"),
+/// and an attached model supports embeddings, that embedding model is preferred as the default.
+pub fn resolve_embedding_among(
+    models: &[Arc<dyn ChatModel>],
+    requested: Option<&str>,
+) -> Resolution {
+    if let Some(name) = requested {
+        if !name.is_empty() {
+            if let Some(hit) = models.iter().find(|m| m.model_id() == name) {
+                return Resolution::Model(Arc::clone(hit));
+            }
+            // Check if name is a well-known default or generic embedding alias
+            let is_generic_or_default = matches!(
+                name,
+                "default"
+                    | "embedding"
+                    | "embeddings"
+                    | "text-embedding-ada-002"
+                    | "text-embedding-3-small"
+                    | "text-embedding-3-large"
+                    | "bge-small"
+                    | "bge-small-en-v1.5"
+                    | "snowflake-arctic-embed"
+                    | "snowflake-arctic-embed-l-v2.0"
+            );
+            if is_generic_or_default {
+                if let Some(emb) = models.iter().find(|m| m.supports_embeddings()) {
+                    return Resolution::Model(Arc::clone(emb));
+                }
+            }
+        }
+    }
+
+    // When requested is None or empty:
+    // If any attached model supports embeddings, default to it!
+    if let Some(emb) = models.iter().find(|m| m.supports_embeddings()) {
+        return Resolution::Model(Arc::clone(emb));
+    }
+
+    // Fall back to general resolution
+    resolve_among(models, requested)
 }
 
 #[cfg(test)]
@@ -144,20 +217,24 @@ mod tests {
     /// `ScriptedChatModel::model_id` is the constant `"scripted"`, so a
     /// per-id backend needs a wrapper. Naming it after the install
     /// directory mirrors what `RealChatModel::open` and the FFI both do.
-    struct Named(ScriptedChatModel, String);
+    struct Named {
+        inner: ScriptedChatModel,
+        id: String,
+        is_embedding: bool,
+    }
 
     impl ChatModel for Named {
         fn tokenizer(&self) -> &tokenizer::MfTokenizer {
-            self.0.tokenizer()
+            self.inner.tokenizer()
         }
         fn vocab_size(&self) -> usize {
-            self.0.vocab_size()
+            self.inner.vocab_size()
         }
         fn max_context(&self) -> u32 {
-            self.0.max_context()
+            self.inner.max_context()
         }
         fn model_id(&self) -> &str {
-            &self.1
+            &self.id
         }
         fn with_producer(
             &self,
@@ -166,18 +243,26 @@ mod tests {
             )
                 -> Result<runtime::RawDecodeResult, runtime::RuntimeError>,
         ) -> Result<runtime::RawDecodeResult, runtime::RuntimeError> {
-            self.0.with_producer(f)
+            self.inner.with_producer(f)
+        }
+        fn supports_embeddings(&self) -> bool {
+            self.is_embedding
         }
     }
 
     fn model(id: &str) -> Arc<dyn ChatModel> {
+        model_with_embedding(id, false)
+    }
+
+    fn model_with_embedding(id: &str, is_embedding: bool) -> Arc<dyn ChatModel> {
         let dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
         let tok = tokenizer::MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer");
-        Arc::new(Named(
-            ScriptedChatModel::new(tok, 4096, Vec::new()),
-            id.to_string(),
-        ))
+        Arc::new(Named {
+            inner: ScriptedChatModel::new(tok, 4096, Vec::new()),
+            id: id.to_string(),
+            is_embedding,
+        })
     }
 
     #[test]
@@ -220,5 +305,59 @@ mod tests {
             resolve_among(&[], Some("anything")),
             Resolution::Empty
         ));
+    }
+
+    #[test]
+    fn embedding_resolution_defaults_to_embedding_model_when_omitted() {
+        let models = vec![
+            model_with_embedding("gemma4.gturbo", false),
+            model_with_embedding("bge-small-en-v1.5", true),
+        ];
+
+        // An embedding request omitting the model defaults to bge-small-en-v1.5
+        match resolve_embedding_among(&models, None) {
+            Resolution::Model(m) => assert_eq!(m.model_id(), "bge-small-en-v1.5"),
+            _ => panic!("expected default embedding model"),
+        }
+    }
+
+    #[test]
+    fn embedding_resolution_handles_generic_defaults_and_exact_match() {
+        let models = vec![
+            model_with_embedding("gemma4.gturbo", false),
+            model_with_embedding("bge-small-en-v1.5", true),
+        ];
+
+        // Standard OpenAI default model name text-embedding-3-small routes to bge-small-en-v1.5
+        match resolve_embedding_among(&models, Some("text-embedding-3-small")) {
+            Resolution::Model(m) => assert_eq!(m.model_id(), "bge-small-en-v1.5"),
+            _ => panic!("expected generic embedding alias to route to attached embedding model"),
+        }
+
+        // Exact match
+        match resolve_embedding_among(&models, Some("bge-small-en-v1.5")) {
+            Resolution::Model(m) => assert_eq!(m.model_id(), "bge-small-en-v1.5"),
+            _ => panic!("expected exact match"),
+        }
+    }
+
+    #[test]
+    fn mixed_generative_and_embedding_models_route_chat_and_embeddings_transparently() {
+        let models = vec![
+            model_with_embedding("gemma4.gturbo", false),
+            model_with_embedding("bge-small-en-v1.5", true),
+        ];
+
+        // Chat requests without model or with unrecognized client name route to the single generative model
+        match resolve_among(&models, Some("claude-sonnet-4-6")) {
+            Resolution::Model(m) => assert_eq!(m.model_id(), "gemma4.gturbo"),
+            _ => panic!("expected chat request to default to single generative model"),
+        }
+
+        // Embedding requests default to the embedding model
+        match resolve_embedding_among(&models, None) {
+            Resolution::Model(m) => assert_eq!(m.model_id(), "bge-small-en-v1.5"),
+            _ => panic!("expected embedding request to default to embedding model"),
+        }
     }
 }

@@ -12,6 +12,7 @@ mod arch_baselines;
 mod arch_config;
 mod arch_validation;
 mod context_policy;
+pub mod encoder_config;
 mod error;
 mod expert_cache_policy;
 mod install_receipt;
@@ -22,6 +23,7 @@ mod ngram_table;
 mod packed_experts_layout;
 mod resident_buffer;
 mod resident_index;
+pub mod safetensors;
 mod sha256;
 mod steering_set;
 
@@ -40,6 +42,7 @@ pub use context_policy::{
     ContextRefused, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
     CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
+pub use encoder_config::{EncoderConfig, EncoderQuantization};
 pub use error::ModelError;
 pub use expert_cache_policy::{ExpertCacheSlots, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES};
 pub use install_receipt::{
@@ -73,6 +76,7 @@ pub use resident_index::{
     load as load_resident_index, ResidentIndex, ResidentIndexEntry, ResidentIndexHeader,
     ENTRY_BYTES, HEADER_BYTES,
 };
+pub use safetensors::SafetensorsFile;
 pub use sha256::{hash_data, hash_file, verify_file};
 pub use steering_set::{LayerDirection, SteeringSet};
 

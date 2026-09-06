@@ -60,6 +60,19 @@ pub trait ChatModel: Send + Sync {
         None
     }
 
+    /// Whether this model supports dense vector embedding generation.
+    fn supports_embeddings(&self) -> bool {
+        false
+    }
+
+    /// Encode input texts into dense vector embeddings.
+    fn encode(&self, _texts: &[&str]) -> Result<Vec<Vec<f32>>, String> {
+        Err(format!(
+            "model {} does not support embeddings",
+            self.model_id()
+        ))
+    }
+
     /// Runs one generation, and owns the choice of WHICH decode loop.
     ///
     /// **`images` CANNOT BE A SEPARATE CALL, and that is a concurrency
@@ -219,5 +232,23 @@ impl ChatModel for ScriptedChatModel {
     ) -> Result<RawDecodeResult, RuntimeError> {
         let mut producer = runtime::ScriptedLogitProducer::new(self.steps.clone());
         f(&mut producer)
+    }
+
+    fn supports_embeddings(&self) -> bool {
+        true
+    }
+
+    fn encode(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, String> {
+        let mut out = Vec::with_capacity(texts.len());
+        for text in texts {
+            let len = text.len() as f32;
+            let mut vec = vec![1.0, len * 0.1, 0.5, -0.2];
+            let norm: f32 = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
+            for x in &mut vec {
+                *x /= norm;
+            }
+            out.push(vec);
+        }
+        Ok(out)
     }
 }
