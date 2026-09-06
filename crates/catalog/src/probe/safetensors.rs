@@ -65,6 +65,7 @@ pub fn evaluate_config(
         types: Vec::new(),
         affine: None,
         expert_stride: None,
+        trained_context: repack::trained_context_meta::from_config_json(config_text),
         sidecars_present: Vec::new(),
         sidecars_missing: Vec::new(),
         chat_template: None,

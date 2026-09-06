@@ -40,9 +40,10 @@ pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,
 };
 pub use recommend::{
-    discover, fit, from_entry, name_params_hint, probe_entry, rank_recommendations,
-    recommend_catalog, CountedSource, DiscoverOptions, Evidence, Fit, FitVerdict, Machine, Origin,
-    Recommendation, Shape,
+    context_ladder, discover, fit, from_entry, gguf_variants, name_params_hint, probe_entry,
+    rank_recommendations, recommend_catalog, CountedSource, DiscoverOptions, Evidence, Fit,
+    FitVerdict, GgufVariant, GgufVariants, LadderRung, Machine, Origin, Recommendation, Shape,
+    ThroughputBand,
 };
 pub use store::{default_root, directory_bytes, resolve_model_arg, InstalledModel, Store};
 

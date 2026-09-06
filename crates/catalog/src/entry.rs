@@ -272,6 +272,28 @@ impl CatalogEntry {
             .max_by_key(|m| m.chip.len())
     }
 
+    /// The best measurement available for this row REGARDLESS of chip, and
+    /// the chip it was taken on.
+    ///
+    /// **FOR THROUGHPUT ONLY, AND ONLY TO REPORT.** A footprint transfers
+    /// across silicon roughly at best (slot warming and memory layout vary)
+    /// and a decode rate does not transfer at all, so this must never reach
+    /// `Fit::counted` and must never be shown without naming its chip. It
+    /// exists because every frozen row in this table was taken on one
+    /// machine, so `measured_for` answers `None` for every other Mac and a
+    /// user there is left with no throughput signal at all. Reporting a
+    /// measurement at its own stated configuration is honest; presenting it
+    /// as this machine's answer is not.
+    ///
+    /// Prefers a row for this chip when there is one, so the caller's
+    /// `this_machine` flag is true whenever it can be.
+    pub fn any_measured(&self, brand: &str) -> Option<(&Measured, bool)> {
+        if let Some(m) = self.measured_for(brand) {
+            return Some((m, true));
+        }
+        self.measured.first().map(|m| (m, false))
+    }
+
     /// Structural checks that hold for every row, applied at load so a
     /// malformed user override fails at the point of reading rather than at
     /// the point of streaming.

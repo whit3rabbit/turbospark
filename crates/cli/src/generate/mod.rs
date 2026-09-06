@@ -17,12 +17,13 @@
 //! renders a JSON conversation through the tokenizer's own chat template,
 //! and `--chat` runs the interactive REPL in [`crate::chat`].
 
+use std::collections::HashSet;
 use std::io::Write;
 
 use invocation::{InvocationRequest, Mode};
 use runtime::{
     run_raw_completion, run_raw_completion_chunked, run_raw_completion_speculative,
-    GenerationConfig, RawDecodeProgress, RawDecodeResult,
+    GenerationConfig, RawDecodeResult, TurnSplitter,
 };
 use tokenizer::{Message, MfTokenizer, ReasoningEffort, ReasoningSupport};
 
@@ -31,7 +32,7 @@ pub(crate) mod session;
 pub(crate) mod vision;
 
 pub(crate) use format::{
-    map_reasoning_effort, parse_messages_file, print_footer, print_phases, role_name, ChannelSplit,
+    map_reasoning_effort, parse_messages_file, print_footer, print_phases, role_name,
 };
 pub(crate) use runtime::SpeculationPlan;
 pub(crate) use session::{open_session, Session};
@@ -356,39 +357,29 @@ pub(crate) fn stream_turn(
     let mut reply = String::new();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    let mut split = ChannelSplit::new(
+    let tools = HashSet::new();
+    let mut split = TurnSplitter::new(
         &session.tokenizer,
+        &tools,
         map_reasoning_effort(request.reasoning),
+        String::new,
         prompt_ids,
     );
     let on_progress = |event| {
-        // Both variants carry visible text: `Tail` is what the stop
-        // matcher withheld, so dropping it truncates the reply.
-        let (id, text) = match event {
-            RawDecodeProgress::Token { id, delta, .. } => (id, delta),
-            // A withheld tail has no token id behind it, which is what
-            // the tokenizer's "no such token" sentinel means.
-            RawDecodeProgress::Tail(tail) => (tokenizer::NO_SUCH_TOKEN_ID, tail),
-            RawDecodeProgress::Prefill { .. } => return,
-        };
-        // NO EARLY RETURN ON EMPTY TEXT. Harmony's frame tokens decode to
-        // nothing at all -- the detokenizer skips special tokens -- so
-        // skipping them here means the state machine never sees a single
-        // `<|channel|>` and the whole turn reads as one run of content.
-        // Every transition this split makes arrives as `(id, "")`.
-        //
-        // Reasoning goes to stderr so redirecting stdout captures the
-        // ANSWER alone, and only the answer becomes the assistant turn.
-        let (answer, reasoning) = split.push(id, &text);
-        if !reasoning.is_empty() {
-            eprint!("{reasoning}");
-        }
-        if answer.is_empty() {
-            return;
-        }
-        let _ = write!(out, "{answer}");
-        let _ = out.flush();
-        reply.push_str(&answer);
+        split.feed(event, &mut |turn| match turn {
+            // No prefill progress on stdout, and no tool rendering: the
+            // allowlist is empty, so a call stays reasoning and no
+            // TurnEvent::ToolCall can arrive.
+            runtime::TurnEvent::Prefill { .. } | runtime::TurnEvent::ToolCall(_) => {}
+            // Reasoning goes to stderr so redirecting stdout captures the
+            // ANSWER alone, and only the answer becomes the assistant turn.
+            runtime::TurnEvent::Reasoning(reasoning) => eprint!("{reasoning}"),
+            runtime::TurnEvent::Content(answer) => {
+                let _ = write!(out, "{answer}");
+                let _ = out.flush();
+                reply.push_str(&answer);
+            }
+        });
     };
     let chunk_tokens = resolve_chunk_tokens(session, request);
     let result = match (&session.speculation, chunk_tokens) {

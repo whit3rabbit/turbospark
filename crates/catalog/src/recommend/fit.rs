@@ -322,3 +322,84 @@ fn verdict_for(
 #[cfg(test)]
 #[path = "fit_tests.rs"]
 mod tests;
+
+/// The context windows a ladder always reports, before the checkpoint's own
+/// two are folded in.
+///
+/// Powers of two from the engine's default up. They are STANDARD rather than
+/// derived so two models can be compared row against row, which is the whole
+/// point of showing a ladder instead of one number.
+const LADDER_WINDOWS: [u32; 6] = [4_096, 8_192, 16_384, 32_768, 65_536, 131_072];
+
+/// One context window and what it costs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LadderRung {
+    pub context: u32,
+    pub kv_bytes: u64,
+    /// Slot cache plus this window's KV. The slot cache term does NOT move
+    /// with the window, which is why a long-context question is really a
+    /// question about the KV alone on a streamed MoE.
+    pub counted: u64,
+    pub verdict: FitVerdict,
+    /// Past the checkpoint's trained window. Reported and never hidden:
+    /// RoPE extrapolates rather than failing and some checkpoints carry YaRN
+    /// scaling meant to exceed it, so this is a warning and not a refusal
+    /// (AGENTS.md Gotcha 55).
+    pub past_trained: bool,
+    pub is_trained_max: bool,
+    pub is_largest_fitting: bool,
+}
+
+/// What each window in [`LADDER_WINDOWS`] costs, plus the checkpoint's trained
+/// maximum and the largest window this machine affords.
+///
+/// **THE CURVE IS NOT LINEAR AND A CALLER MUST NOT MULTIPLY.** A
+/// sliding-window layer is a ring capped at `sliding_window + 128`, so past
+/// that cap it stops growing and only the FULL layers still cost anything.
+/// Measured on the shipped baselines from 4,096 to 131,072: Mistral 7B grows
+/// 32x (512 MiB to 16,384, every layer full) while Gemma 4 grows 9x (305 MiB
+/// to 2,785, 25 of its 30 layers being rings). A UI doing its own arithmetic
+/// is 3.5x wrong on Gemma, in the direction that refuses a model that runs.
+/// Linear-attention layers contribute zero KV and a fixed
+/// [`model_io::gdn_state_bytes`] instead, which moves with nothing.
+///
+/// Empty when `shape.arch` is `None`. There is no ladder without a shape and
+/// the family baseline is not a substitute for one (Gotcha 10).
+pub fn context_ladder(
+    shape: &Shape,
+    physical_bytes: u64,
+    slot_policy: model_io::ExpertCacheSlots,
+    guard: model_io::LoadGuard,
+    trained: Option<u32>,
+) -> Vec<LadderRung> {
+    if shape.arch.is_none() {
+        return Vec::new();
+    }
+    // One fit establishes the slot count and the largest fitting window; both
+    // are independent of the window being priced, so they are computed once.
+    let anchor = fit(shape, physical_bytes, 4_096, slot_policy, guard);
+    let largest = anchor.largest_context;
+
+    let mut windows: Vec<u32> = LADDER_WINDOWS.to_vec();
+    windows.extend(trained);
+    windows.push(largest);
+    windows.retain(|w| *w > 0 && *w <= model_io::MAX_SUPPORTED_CONTEXT);
+    windows.sort_unstable();
+    windows.dedup();
+
+    windows
+        .into_iter()
+        .map(|context| {
+            let rung = fit(shape, physical_bytes, context, slot_policy, guard);
+            LadderRung {
+                context,
+                kv_bytes: rung.kv_bytes,
+                counted: rung.counted,
+                verdict: rung.verdict,
+                past_trained: trained.is_some_and(|t| context > t),
+                is_trained_max: trained == Some(context),
+                is_largest_fitting: context == largest,
+            }
+        })
+        .collect()
+}

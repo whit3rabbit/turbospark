@@ -508,3 +508,125 @@ fn the_fit_remembers_which_tier_produced_it() {
         );
     }
 }
+
+/// **THE LADDER'S WHOLE REASON FOR EXISTING IS THAT KV IS NOT LINEAR IN THE
+/// WINDOW**, so the guard is a comparison between two families rather than a
+/// number for one. A dense install grows with every layer; Gemma 4's 25
+/// sliding-window layers of 30 are rings capped at `sliding_window + 128` and
+/// stop growing past it, so only its 5 full layers keep costing.
+///
+/// Measured 4,096 -> 131,072 on the shipped baselines: Mistral 7B 512 MiB to
+/// 16,384 (32x, exactly the context ratio) against Gemma 4's 305 to 2,785
+/// (9x). A caller multiplying its own 4,096 figure by 32 is 3.5x high on
+/// Gemma, which refuses a configuration that runs.
+#[test]
+fn the_context_ladder_is_not_linear_and_the_two_families_prove_it() {
+    let ratio = |family: model_io::ModelFamily| {
+        let arch = model_io::known_architecture(family);
+        let shape = Shape {
+            install_bytes: 4 * GIB,
+            expert_stride: None,
+            arch: Some(arch),
+            measured_counted: None,
+        };
+        let rungs = context_ladder(
+            &shape,
+            96 * GIB,
+            model_io::ExpertCacheSlots::Fixed(16),
+            model_io::LoadGuard::Off,
+            None,
+        );
+        let at = |c: u32| {
+            rungs
+                .iter()
+                .find(|r| r.context == c)
+                .unwrap_or_else(|| panic!("{c} is a standard rung"))
+                .kv_bytes as f64
+        };
+        at(131_072) / at(4_096)
+    };
+
+    let dense = ratio(model_io::ModelFamily::Llama);
+    let sliding = ratio(model_io::ModelFamily::Gemma4);
+
+    // A model with no sliding-window layers tracks the context ratio exactly.
+    assert!(
+        (dense - 32.0).abs() < 0.01,
+        "a fully-attentive model is linear in the window, got {dense}"
+    );
+    // Gemma's rings cap it far below that. The bound is loose on purpose:
+    // the POINT is that a linear model is badly wrong, not the third digit.
+    assert!(
+        sliding < 12.0,
+        "sliding-window layers must stop growing, got {sliding}"
+    );
+    assert!(
+        dense / sliding > 2.5,
+        "the two families must not be interchangeable, got {dense} vs {sliding}"
+    );
+}
+
+/// The ladder folds in the checkpoint's own two windows and marks them, and
+/// it reports past-trained rather than hiding it -- RoPE extrapolates rather
+/// than failing, and some checkpoints ship YaRN scaling meant to exceed the
+/// trained window (Gotcha 55).
+#[test]
+fn the_ladder_marks_the_trained_window_and_reports_past_it() {
+    let shape = Shape {
+        install_bytes: 4 * GIB,
+        expert_stride: None,
+        arch: Some(model_io::known_architecture(model_io::ModelFamily::Llama)),
+        measured_counted: None,
+    };
+    let rungs = context_ladder(
+        &shape,
+        96 * GIB,
+        model_io::ExpertCacheSlots::Fixed(16),
+        model_io::LoadGuard::Off,
+        Some(40_960),
+    );
+
+    let trained: Vec<&LadderRung> = rungs.iter().filter(|r| r.is_trained_max).collect();
+    assert_eq!(trained.len(), 1, "exactly one rung is the trained maximum");
+    assert_eq!(trained[0].context, 40_960);
+    assert!(
+        !trained[0].past_trained,
+        "the trained window is not past itself"
+    );
+
+    assert!(
+        rungs.iter().any(|r| r.past_trained && r.context > 40_960),
+        "a window past the trained one is reported, not dropped"
+    );
+    assert!(
+        rungs.iter().all(|r| r.context <= 40_960 || r.past_trained),
+        "every window above the trained one is marked"
+    );
+    // Sorted and unique, or a picker renders the same window twice.
+    let contexts: Vec<u32> = rungs.iter().map(|r| r.context).collect();
+    let mut sorted = contexts.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(contexts, sorted);
+}
+
+/// **NO SHAPE MEANS NO LADDER.** Filling it from the family baseline is what
+/// Gotcha 10 refuses: `llama` alone covers Mixtral 8x7B, Mistral 7B and
+/// TinyLlama 1.1B, whose layer counts and head dimensions differ.
+#[test]
+fn an_unprobed_shape_has_no_ladder_rather_than_a_guessed_one() {
+    let shape = Shape {
+        install_bytes: 13 * GIB,
+        expert_stride: None,
+        arch: None,
+        measured_counted: None,
+    };
+    assert!(context_ladder(
+        &shape,
+        36 * GIB,
+        model_io::ExpertCacheSlots::Auto,
+        model_io::LoadGuard::default(),
+        Some(40_960),
+    )
+    .is_empty());
+}

@@ -49,6 +49,11 @@ pub struct DiscoverOptions {
     pub scan: usize,
     /// The context window to fit against.
     pub context: u32,
+    /// The expert-cache slot policy to fit against. A slot count is half of
+    /// what a footprint means (`slots x layers x expert_stride`), so a caller
+    /// that resolves slots differently to this scan would rank against a
+    /// configuration it will not open under.
+    pub slots: model_io::ExpertCacheSlots,
     /// How many repositories to probe at once. Every probe is two or three
     /// small requests and the wall clock is entirely latency, so this is
     /// worth having; it is bounded because the ceiling here is Hugging
@@ -61,6 +66,7 @@ impl Default for DiscoverOptions {
         Self {
             scan: 20,
             context: 4096,
+            slots: model_io::ExpertCacheSlots::Auto,
             concurrency: 8,
         }
     }
@@ -159,7 +165,7 @@ fn consider(
         &shape,
         machine.physical_bytes,
         options.context,
-        model_io::ExpertCacheSlots::Auto,
+        options.slots,
         machine.load_guard,
     );
     // A refusal upstream of the arithmetic outranks the arithmetic: a model
@@ -179,6 +185,8 @@ fn consider(
         evidence: Evidence::Discovered,
         measured: None,
         suspicious: suspicious(&listed.id, install_bytes),
+        // A discovered repository has no frozen row anywhere, on any chip.
+        throughput: None,
         notes,
     })
 }
@@ -219,6 +227,80 @@ fn choose_quantization(
         .rfind(|f| f.size.is_some_and(|s| s <= physical))
         .or_else(|| runnable.first())
         .map(|f| (*f).clone())
+}
+
+/// Every `.gguf` a repository publishes, with the quantization its name
+/// declares, ordered best-quality first.
+///
+/// **THIS IS A LISTING AND NOT A CHOICE.** [`choose_quantization`] answers
+/// "what should a scan pick"; this answers "what is on offer", which is a
+/// different question with a different failure mode -- a picker showing three
+/// of a repository's eight files reads as the repository having three, so a
+/// file naming a type with no kernels is LISTED with `executable: false`
+/// rather than filtered away. What refuses it is the probe, in the words the
+/// probe already uses.
+///
+/// One API call and no header reads, so it is cheap enough to populate a menu
+/// on open. A fit needs an `ArchConfig`, which needs a header read per file,
+/// so a caller probes the file the user actually picks.
+///
+/// Sharded files are the one exclusion, for [`choose_quantization`]'s reason:
+/// installing one shard installs a fraction of a model that then fails to
+/// open. They are COUNTED rather than merely dropped, because a repository
+/// that publishes nothing else would otherwise present an empty picker, which
+/// reads as "no GGUF here" instead of "this port cannot walk a shard set".
+pub fn gguf_variants(client: &Client, repo: &RepoRef) -> Result<GgufVariants, String> {
+    let files = client.file_list_with_sizes(repo)?;
+    let ggufs: Vec<&crate::hf::RepoFile> =
+        files.iter().filter(|f| f.name.ends_with(".gguf")).collect();
+    let sharded_skipped = ggufs.iter().filter(|f| f.name.contains("-of-0")).count();
+
+    let mut variants: Vec<GgufVariant> = ggufs
+        .iter()
+        .filter(|f| !f.name.contains("-of-0"))
+        .map(|f| {
+            let rank = ladder_rank(&f.name);
+            GgufVariant {
+                file: f.name.clone(),
+                bytes: f.size,
+                quant_label: rank.map(|i| QUANT_LADDER[i].to_string()),
+                ladder_rank: rank,
+                executable: rank.is_some(),
+            }
+        })
+        .collect();
+    // Best quality first, and an unrecognized type last rather than first --
+    // `None` sorts below `Some` on `Option`, which is the wrong end for a
+    // menu, so the key is built explicitly.
+    variants.sort_by_key(|v| (v.ladder_rank.unwrap_or(usize::MAX), v.file.clone()));
+
+    Ok(GgufVariants {
+        variants,
+        sharded_skipped,
+    })
+}
+
+/// One publishable `.gguf` in a repository. See [`gguf_variants`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GgufVariant {
+    pub file: String,
+    /// `None` when Hugging Face reported no length for it, never 0.
+    pub bytes: Option<u64>,
+    /// The [`QUANT_LADDER`] entry the filename names, or `None` when it names
+    /// none. `Q4_K_M` is a FILE-NAME label rather than a ggml type, so this is
+    /// what the name declares and not what the header contains.
+    pub quant_label: Option<String>,
+    pub ladder_rank: Option<usize>,
+    /// Whether the type this name declares has kernels here.
+    pub executable: bool,
+}
+
+/// The result of [`gguf_variants`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GgufVariants {
+    pub variants: Vec<GgufVariant>,
+    /// How many `.gguf` files were shard parts, and so unpickable.
+    pub sharded_skipped: usize,
 }
 
 /// Where a filename sits on [`QUANT_LADDER`], or `None` when it names no

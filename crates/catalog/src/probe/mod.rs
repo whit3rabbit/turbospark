@@ -233,6 +233,7 @@ mod chat_template_resolution_tests {
             types: Vec::new(),
             affine: None,
             expert_stride: None,
+            trained_context: None,
             sidecars_present: Vec::new(),
             sidecars_missing: Vec::new(),
             chat_template: None,

@@ -2,10 +2,10 @@
 
 use std::collections::HashSet;
 
-use runtime::{CancelFlag, GenerationConfig, RawDecodeProgress, RawDecodeResult, RuntimeError};
-use tokenizer::{
-    ParsedToolCall, ReasoningEffort, StructuredAssistantDecoder, StructuredAssistantEvent,
+use runtime::{
+    CancelFlag, GenerationConfig, RawDecodeResult, RuntimeError, TurnEvent, TurnSplitter,
 };
+use tokenizer::{ParsedToolCall, ReasoningEffort};
 
 use super::plan::AppState;
 use crate::cancel::Cancel;
@@ -21,7 +21,7 @@ pub(crate) enum GenError {
 pub(crate) enum Piece {
     Text(String),
     /// Reasoning the model produced before its answer. Only `gpt-oss`'s
-    /// Harmony frame separates one (see [`needs_decoder`]).
+    /// Harmony frame separates one.
     Reasoning(String),
     Tool(ParsedToolCall),
 }
@@ -33,49 +33,6 @@ pub(crate) struct Generated {
     pub reasoning: String,
     pub calls: Vec<ParsedToolCall>,
     pub decode: RawDecodeResult,
-}
-
-/// Whether this generation's output has to go through
-/// [`StructuredAssistantDecoder`] rather than straight to the caller.
-///
-/// THREE INDEPENDENT REASONS, and keeping them independent is the point.
-/// Tools need the decoder because the tool-chat generation prompt opens a
-/// thought channel and the calls arrive as markup. Harmony needs it because
-/// `gpt-oss` writes its reasoning into an `analysis` channel BEFORE its
-/// answer, so without decoding the reasoning and the frame markup reach the
-/// caller as the reply. A ChatML or Gemma request that ASKED for reasoning
-/// needs it because the thought channel it just enabled would otherwise
-/// arrive as the reply: the frame tokens render to the empty string, so the
-/// client gets the model's scratch work run together with its answer and no
-/// way to tell them apart. Measured on the real Gemma 4 install, where it
-/// also prepends a bare `thought` -- the channel label as prose.
-///
-/// The third condition is keyed on the REQUEST rather than the dialect,
-/// unlike Harmony's, and that asymmetry is the whole reason it is safe: with
-/// no level asked for, `plan` renders a pre-closed `<think></think>` (ChatML)
-/// or no thought channel at all (Gemma), so every existing request keeps the
-/// pass-through path it has always had.
-///
-/// **The prompt path in `plan` stays keyed on `tools` ALONE** (crate Gotcha
-/// 7). Those conditions used to be the same expression, and widening this one
-/// is exactly the change that could couple them again: rendering the tool
-/// template for a request with no tools would change every Harmony prompt.
-fn needs_decoder(model: &AppState, tools: &HashSet<String>, reasoning: ReasoningEffort) -> bool {
-    let dialect = model.tokenizer().dialect;
-    !tools.is_empty()
-        // Harmony and Muse Glimmer reason on EVERY turn, whatever the request
-        // asked for: both templates put a reasoning directive in the system
-        // message unconditionally, so an undecoded stream sends the scratchpad
-        // and the frame markup to the client as the reply.
-        || matches!(
-            dialect,
-            tokenizer::ChatDialect::Harmony | tokenizer::ChatDialect::MuseGlimmer
-        )
-        || (reasoning != ReasoningEffort::Off
-            && matches!(
-                dialect,
-                tokenizer::ChatDialect::ChatMl | tokenizer::ChatDialect::Gemma
-            ))
 }
 
 /// Runs a generation to completion.
@@ -132,12 +89,17 @@ pub(crate) async fn run_full(
 /// [`run_full`] go through here, so the stop-string tail handling and the
 /// structured decoding are written once.
 ///
-/// Text is passed straight through unless [`needs_decoder`] says otherwise,
-/// exactly as before tool calling existed. Through the decoder, it is split
-/// into visible content, reasoning, and parsed calls; Harmony's `analysis`
-/// channel and ChatML's `<think>` body both come back as [`Piece::Reasoning`].
+/// The dialect/reasoning/tool decision of whether this turn decodes at all
+/// lives in `runtime::TurnSplitter` now, shared with the CLI and the FFI.
 ///
-/// `prompt_ids` is handed to the decoder because a ChatML generation prompt
+/// **The prompt path in `plan` stays keyed on `tools` ALONE** (crate Gotcha
+/// 7). The splitter's build-a-decoder condition is a SUPERSET of the prompt
+/// condition (Harmony decodes with no tools in the request), and that is
+/// safe precisely because the two were never the same expression: rendering
+/// the tool template for a request with no tools would change every Harmony
+/// prompt.
+///
+/// `prompt_ids` is handed to the splitter because a ChatML generation prompt
 /// OPENS the `<think>` frame itself when thinking is on, so the model never
 /// emits the opening token and a decoder starting in the visible channel
 /// reports the whole scratchpad as the reply
@@ -158,22 +120,22 @@ pub(crate) fn stream_blocking(
     // never against an earlier turn's. A counter is enough, and keeps
     // responses reproducible.
     let mut next_id = 0usize;
-    let mut decoder = needs_decoder(model, tools, effort).then(|| {
-        StructuredAssistantDecoder::new(
-            model.tokenizer(),
-            tools.clone(),
-            move || {
-                next_id += 1;
-                format!("toolu_{}", next_id - 1)
-            },
-            prompt_ids,
-        )
-    });
-    // A model writing prose that merely looks like a tool call must not fail
-    // the request. On a parser error the decoder is abandoned and the rest of
-    // the run is emitted as raw text; what the decoder had already buffered
-    // when it gave up is lost with it.
-    let mut degraded = false;
+    let mut split = TurnSplitter::new(
+        model.tokenizer(),
+        tools,
+        effort,
+        move || {
+            next_id += 1;
+            format!("toolu_{}", next_id - 1)
+        },
+        prompt_ids,
+    );
+    let mut emit_piece = |event: TurnEvent| match event {
+        TurnEvent::Prefill { .. } => {}
+        TurnEvent::Content(delta) => on_piece(Piece::Text(delta)),
+        TurnEvent::Reasoning(delta) => on_piece(Piece::Reasoning(delta)),
+        TurnEvent::ToolCall(call) => on_piece(Piece::Tool(call)),
+    };
 
     // `run_completion` and not `with_producer` + `run_raw_completion`: the
     // BACKEND owns which decode loop runs, because the speculative one takes
@@ -182,58 +144,21 @@ pub(crate) fn stream_blocking(
     // implementation is the sequential loop this line used to spell out, so
     // the scripted backend's path is unchanged.
     let result = model.run_completion(prompt_ids, config, images, cancel, &mut |e| {
-        let (id, text) = match e {
-            RawDecodeProgress::Token { id, delta, .. } => (id, delta),
-            // `-1` is the tokenizer's "no such token": a flushed tail
-            // is text with no token id behind it.
-            RawDecodeProgress::Tail(tail) => (tokenizer::NO_SUCH_TOKEN_ID, tail),
-            _ => return,
-        };
-        match decoder.as_mut().filter(|_| !degraded) {
-            None => {
-                if !text.is_empty() {
-                    on_piece(Piece::Text(text));
-                }
-            }
-            Some(decoder) => match decoder.consume(id, &text) {
-                Ok(events) => {
-                    for event in events {
-                        on_piece(piece_for(event));
-                    }
-                }
-                Err(_) => {
-                    degraded = true;
-                    if !text.is_empty() {
-                        on_piece(Piece::Text(text));
-                    }
-                }
-            },
-        }
+        split.feed(e, &mut emit_piece);
     });
 
-    // NOT OPTIONAL, AND NOT SYMMETRIC WITH `consume`. Harmony ends a tool call
+    // NOT OPTIONAL, AND NOT SYMMETRIC WITH `feed`. Harmony ends a tool call
     // with `<|call|>`, which is a stop token, so `run_raw_completion` breaks
     // before the progress callback and the decoder never sees the token that
     // terminates the call it is parsing -- `finish` is where that call is
-    // emitted. Its OTHER job is releasing the tail DeepSeek's arm withholds as
-    // a possible tool-marker prefix, which this loop used to drop.
+    // emitted. Its OTHER job is releasing the tail DeepSeek's arm withholds
+    // as a possible tool-marker prefix, which this loop used to drop.
     //
-    // An error here is the degraded path, not a failed request: the run itself
-    // succeeded, and what a decoder abandons is the markup it could not parse.
+    // A decoder error here is the degraded path, not a failed request: the
+    // run itself succeeded, and what a decoder abandons is the markup it
+    // could not parse.
     if result.is_ok() {
-        if let Some(decoder) = decoder.as_mut().filter(|_| !degraded) {
-            for event in decoder.finish().unwrap_or_default() {
-                on_piece(piece_for(event));
-            }
-        }
+        let _ = split.finish(&mut emit_piece);
     }
     result
-}
-
-fn piece_for(event: StructuredAssistantEvent) -> Piece {
-    match event {
-        StructuredAssistantEvent::Content(c) => Piece::Text(c),
-        StructuredAssistantEvent::Reasoning(r) => Piece::Reasoning(r),
-        StructuredAssistantEvent::ToolCall(c) => Piece::Tool(c),
-    }
 }

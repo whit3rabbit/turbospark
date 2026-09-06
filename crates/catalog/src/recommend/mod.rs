@@ -33,8 +33,8 @@ mod discover;
 mod fit;
 mod rank;
 
-pub use discover::{discover, DiscoverOptions};
-pub use fit::{fit, CountedSource, Fit, FitVerdict, Shape};
+pub use discover::{discover, gguf_variants, DiscoverOptions, GgufVariant, GgufVariants};
+pub use fit::{context_ladder, fit, CountedSource, Fit, FitVerdict, LadderRung, Shape};
 pub use rank::{name_params_hint, rank, Evidence, Key};
 
 use crate::entry::{CatalogEntry, Measured};
@@ -110,6 +110,18 @@ impl Origin {
     }
 }
 
+/// A measured decode band and the chip it was taken on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThroughputBand {
+    pub min: f64,
+    pub max: f64,
+    /// The chip it was measured on, which is PART OF THE VALUE rather than
+    /// provenance: tok/s does not transfer across silicon.
+    pub chip: String,
+    /// Whether that chip is this machine's.
+    pub this_machine: bool,
+}
+
 /// One ranked candidate.
 #[derive(Debug, Clone)]
 pub struct Recommendation {
@@ -126,6 +138,11 @@ pub struct Recommendation {
     pub suspicious: bool,
     /// Advisory lines: the probe's warnings, plus anything the fit turned up.
     pub notes: Vec<String>,
+    /// A decode band to REPORT, with the chip it was taken on, which may not
+    /// be this machine's. Display only: it is deliberately not part of
+    /// [`Recommendation::key`], because ranking a table by a foreign chip's
+    /// rates would silently reorder it on every other Mac.
+    pub throughput: Option<ThroughputBand>,
 }
 
 impl Recommendation {
@@ -158,10 +175,11 @@ pub fn recommend_catalog(
     entries: &[&CatalogEntry],
     machine: &Machine,
     context: u32,
+    slots: model_io::ExpertCacheSlots,
 ) -> Vec<Recommendation> {
     let mut out: Vec<Recommendation> = entries
         .iter()
-        .map(|entry| from_entry(entry, machine, context, None))
+        .map(|entry| from_entry(entry, machine, context, slots, None))
         .collect();
     rank(&mut out, |r| r.key());
     out
@@ -188,6 +206,7 @@ pub fn from_entry(
     entry: &CatalogEntry,
     machine: &Machine,
     context: u32,
+    slots: model_io::ExpertCacheSlots,
     probed: Option<&ProbeReport>,
 ) -> Recommendation {
     let measured = entry.measured_for(&machine.chip).cloned();
@@ -205,7 +224,7 @@ pub fn from_entry(
         &shape,
         machine.physical_bytes,
         context,
-        model_io::ExpertCacheSlots::Auto,
+        slots,
         machine.load_guard,
     );
 
@@ -280,6 +299,14 @@ pub fn from_entry(
         evidence: Evidence::of(entry.status),
         measured,
         suspicious: false,
+        throughput: entry
+            .any_measured(&machine.chip)
+            .map(|(m, this_machine)| ThroughputBand {
+                min: m.decode_tok_s_min,
+                max: m.decode_tok_s_max,
+                chip: m.chip.clone(),
+                this_machine,
+            }),
         notes,
     }
 }

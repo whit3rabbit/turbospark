@@ -256,3 +256,57 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
     `HF_TOKEN="$(cat ~/.cache/huggingface/token)"` (or wherever `hf auth
     login` wrote it) before trusting a probe's chat-template verdict on a
     gated repo.
+
+13. **THE SLOT POLICY IS A CALLER'S PARAMETER NOW, ALL THE WAY OUT TO THE C
+    ABI, AND THAT IS GOTCHA 9 BECOMING REACHABLE RATHER THAN A NEW RULE.**
+    `from_entry` and `recommend_catalog` hardcoded
+    `ExpertCacheSlots::Auto` while `fit()` already took the policy as an
+    argument, so the one caller that could disagree with `open()` about a
+    slot count -- a GUI whose inspector is set to 32 -- had no way to say so.
+    Both take it now, `DiscoverOptions` carries it beside `context`, and
+    `ts_recommend_json` and `ts_probe_json` take it in their options bags
+    under `expertCacheSlots`, spelled exactly as `ts_session_open` spells it.
+    `the_requested_slot_count_reaches_the_fit` is the guard, and it reads at
+    8,192 deliberately: at 4,096 `gemma4`'s frozen row is APPLIED and
+    `Fit::slots` comes from the measurement rather than from the policy, so
+    the obvious version of that test passes with the parameter ignored.
+
+    **THE VALIDATION HAS TO TRAVEL WITH IT.** `ExpertCacheSlots::Fixed` is
+    built from whatever it is handed and the setters panic outside
+    `ALLOWED_CACHE_SLOTS`; `crates/ffi` is linked INTO its host, so an
+    unvalidated count aborts the app rather than raising an error a GUI can
+    show. `ts_session_open` had learned that already and the check lived in
+    its own body, which is why the two new entry points would each have
+    needed their own copy. It is `wire::expert_cache_slots` now, one
+    validator with three callers -- and the mutation that proves it reddens
+    the open's pre-existing case as well as the two new ones.
+
+14. **A PROBE REPORTS A FIT, AND ITS `mapped` TERM IS THE PUBLISHED
+    CHECKPOINT RATHER THAN THE INSTALL THIS PORT WOULD WRITE.**
+    `ProbeReport` carried the expert stride and the slot-cache table and no
+    verdict, so an arbitrary repository could be sized and not judged.
+    `models::probe_fit` closes that with the same `fit()` the curated rows
+    take, at the context and slot count the caller names.
+
+    The one honest gap is the size: `install_bytes` and `download_bytes` are
+    separate `CatalogEntry` fields because they differ, and a probe has only
+    the second. `recommend::discover` already relied on that approximation
+    and states why (a GGUF's expert blobs are written verbatim and only the
+    small resident core is transcoded); it is looser for an MLX repository.
+    So the JSON says `mappedSource: "download"` and the GUI labels it "as
+    published" rather than presenting it as an install size. `counted` is
+    unaffected -- it is built from the arch and the stride, which are
+    properties of the checkpoint rather than of the container.
+
+15. **`gguf_variants` IS A LISTING AND `choose_quantization` IS A CHOICE, AND
+    THE TWO FILTER DIFFERENTLY ON PURPOSE.** The scan picks the largest
+    runnable file, so it drops anything naming a type with no kernels. A
+    PICKER that dropped those would show three of a repository's eight files
+    and read as the repository having three, so the listing keeps them with
+    `executable: false` and lets the probe refuse them in the probe's own
+    words. Sharded files are the one real exclusion, for the scan's reason
+    (installing one shard installs a fraction of a model that then fails to
+    open) -- and they are COUNTED rather than merely dropped, because a
+    repository publishing nothing else would otherwise present an empty
+    picker, which reads as "no GGUF here" instead of "this port cannot walk a
+    shard set".

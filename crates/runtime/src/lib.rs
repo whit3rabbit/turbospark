@@ -51,8 +51,9 @@ mod session_pool;
 mod speculation_policy;
 mod speculative;
 #[cfg(target_os = "macos")]
-pub mod steering;
+mod steering;
 mod token_sink;
+mod turn_stream;
 #[cfg(target_os = "macos")]
 pub mod vision;
 
@@ -118,6 +119,7 @@ pub use speculative::{
 };
 #[cfg(target_os = "macos")]
 pub use steering::{SteeringPolicy, MAX_STEER_ROWS};
+pub use turn_stream::{TurnEvent, TurnSplitter};
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

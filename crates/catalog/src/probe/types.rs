@@ -60,6 +60,17 @@ pub struct ProbeReport {
     pub affine: Option<(u32, u32)>,
     /// One routed expert's bytes, for an MoE. `None` for a dense model.
     pub expert_stride: Option<u64>,
+    /// The window the checkpoint was TRAINED at, from the same header this
+    /// probe already fetched.
+    ///
+    /// Deliberately beside `arch` rather than inside it: it is a property of
+    /// the CHECKPOINT where `ArchConfig` is per-ARCHITECTURE, and a
+    /// YaRN-extended release declares a longer one than the base it was built
+    /// from, so putting it there would make every such pair a baseline
+    /// mismatch (AGENTS.md Gotcha 55).
+    ///
+    /// `None` means the file declares none, never "a window of zero".
+    pub trained_context: Option<u32>,
     /// Sidecars this port can use, split by whether the repo has them.
     pub sidecars_present: Vec<String>,
     pub sidecars_missing: Vec<String>,

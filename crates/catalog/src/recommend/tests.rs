@@ -13,9 +13,17 @@ fn m4_max() -> Machine {
 }
 
 fn ranked(machine: &Machine, context: u32) -> Vec<Recommendation> {
+    ranked_at(machine, context, model_io::ExpertCacheSlots::Auto)
+}
+
+fn ranked_at(
+    machine: &Machine,
+    context: u32,
+    slots: model_io::ExpertCacheSlots,
+) -> Vec<Recommendation> {
     let catalog = Catalog::embedded().expect("the embedded catalog parses");
     let entries: Vec<&CatalogEntry> = catalog.entries().collect();
-    recommend_catalog(&entries, machine, context)
+    recommend_catalog(&entries, machine, context, slots)
 }
 
 /// The development machine at the protocol window: the rows with frozen
@@ -61,7 +69,13 @@ fn the_measured_rows_lead_on_the_machine_they_were_measured_on() {
 fn an_unprobed_row_does_not_pass_off_the_slot_floor_as_a_resolved_count() {
     let catalog = Catalog::embedded().unwrap();
     let gemma = catalog.get("gemma4").unwrap();
-    let r = from_entry(gemma, &m4_max(), 4096, None);
+    let r = from_entry(
+        gemma,
+        &m4_max(),
+        4096,
+        model_io::ExpertCacheSlots::Auto,
+        None,
+    );
     assert_eq!(r.fit.counted_source, CountedSource::Measured);
     assert_eq!(r.fit.slots, 16, "the measured row's own configuration");
     assert!(r
@@ -78,7 +92,13 @@ fn an_unprobed_row_does_not_pass_off_the_slot_floor_as_a_resolved_count() {
     let mut at_32 = gemma.clone();
     at_32.measured[0].expert_cache_slots = 32;
     at_32.measured[0].peak_footprint_mib = 3654;
-    let r = from_entry(&at_32, &m4_max(), 4096, None);
+    let r = from_entry(
+        &at_32,
+        &m4_max(),
+        4096,
+        model_io::ExpertCacheSlots::Auto,
+        None,
+    );
     assert_eq!(r.fit.counted_source, CountedSource::Measured);
     assert_eq!(r.fit.slots, 32);
     assert_eq!(r.fit.counted, 3654 * 1024 * 1024);
@@ -143,4 +163,32 @@ fn the_working_set_advisory_is_about_the_candidate_and_not_the_machine() {
         ..machine
     }
     .exceeds_working_set(300 * GIB));
+}
+
+/// **THE SLOT POLICY IS A PARAMETER AND HAS TO REACH THE ARITHMETIC.** It was
+/// hardcoded to `Auto` here until a GUI needed to fit against the slot count
+/// its own inspector is set to, and a caller that resolves slots differently
+/// to this ranking would be shown a footprint it will not then allocate --
+/// the same disagreement `Machine::load_guard` exists to prevent one term
+/// over (Gotcha 9's last paragraph).
+///
+/// Read at 8,192, where `gemma4`'s 4,096 measurement is REPORTED rather than
+/// applied, so `Fit::slots` is what the policy resolved rather than what the
+/// frozen row states. Passing `Auto` for an unprobed row resolves the floor
+/// of 16 by ignorance; an explicit 32 must survive to the answer.
+#[test]
+fn the_requested_slot_count_reaches_the_fit() {
+    let auto = ranked_at(&m4_max(), 8192, model_io::ExpertCacheSlots::Auto);
+    let fixed = ranked_at(&m4_max(), 8192, model_io::ExpertCacheSlots::Fixed(32));
+
+    let slots_of = |rows: &[Recommendation]| {
+        rows.iter()
+            .find(|r| r.origin == Origin::Catalog("gemma4".into()))
+            .expect("gemma4 is in the table")
+            .fit
+            .slots
+    };
+
+    assert_eq!(slots_of(&auto), 16, "the floor, resolved by ignorance");
+    assert_eq!(slots_of(&fixed), 32, "the count the caller asked for");
 }

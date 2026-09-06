@@ -294,13 +294,21 @@ cargo test -p turbospark-tokenizer
     `chat_template::encode_text_continuation`, and
     `structured_decoder::consume`'s dialect match are all non-wildcard, so a
     missing arm is a build error rather than a runtime panic.
-    **NOT COMPILER-ENFORCED:** `server::handler::exec::needs_decoder`,
-    `cli::generate::format`, and `ffi::generate` key on the dialect through
-    `matches!(dialect, A | B)`, which compiles fine with a new variant
-    matching neither arm -- decide by hand whether the new dialect belongs
-    in those unions. `ChatDialect::Llama3` needed none of them (no
-    tool-calling or thinking markup to decode), which is why it is not the
-    worked example for that half.
+    **NOT COMPILER-ENFORCED, AND THERE IS EXACTLY ONE OF THEM SINCE
+    2026-09-05:** `runtime::turn_stream::TurnSplitter::new` keys on the
+    dialect through `matches!(dialect, A | B)`, which compiles fine with a
+    new variant matching neither arm -- decide by hand whether the new
+    dialect belongs in those unions. `ChatDialect::Llama3` needed none of
+    them (no tool-calling or thinking markup to decode), which is why it is
+    not the worked example for that half.
+
+    **THIS ENTRY USED TO NAME THREE SITES** --
+    `server::handler::exec::needs_decoder`, `cli::generate::format`'s
+    `ChannelSplit` and `ffi::generate`'s port of it -- which is what the
+    `TurnSplitter` refactor collapsed. Worth knowing because the failure
+    mode of a stale list here is the quiet one: a reader follows it to three
+    files, finds no dialect match in any of them, correctly concludes
+    nothing needs doing, and misses the one place that does.
 
 12. **A MULTIMODAL MESSAGE RENDERS THROUGH A CONTENT-PART LIST, AND A
     TEXT-ONLY ONE STILL RENDERS THROUGH THE BARE STRING** (ROADMAP M-V6).

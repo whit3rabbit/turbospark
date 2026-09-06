@@ -328,6 +328,11 @@ pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Resul
         ));
     }
     let context = options.context.unwrap_or(DEFAULT_RECOMMEND_CONTEXT);
+    // This subcommand has no slot flag, so it fits against what `open()`
+    // would pick here. `DiscoverOptions::default()` below carries the same
+    // policy, and the two must not drift: a discovered row ranked at one slot
+    // count beside a curated row ranked at another is not one table.
+    const SLOT_POLICY: model_io::ExpertCacheSlots = model_io::ExpertCacheSlots::Auto;
 
     let entries: Vec<&catalog::CatalogEntry> = catalog.entries().collect();
     let mut rows: Vec<catalog::Recommendation> = if options.probe {
@@ -341,13 +346,13 @@ pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Resul
                 // header read timed out would be the worse answer.
                 let report = catalog::probe_entry(client, entry).ok();
                 pb.inc(1);
-                catalog::from_entry(entry, &machine, context, report.as_ref())
+                catalog::from_entry(entry, &machine, context, SLOT_POLICY, report.as_ref())
             })
             .collect();
         pb.finish_and_clear();
         results
     } else {
-        catalog::recommend_catalog(&entries, &machine, context)
+        catalog::recommend_catalog(&entries, &machine, context, SLOT_POLICY)
     };
 
     if let Some(scan) = options.discover {

@@ -56,6 +56,10 @@ pub fn evaluate_gguf(
         types: Vec::new(),
         affine: None,
         expert_stride: None,
+        // Read through the SAME parser the install writes its manifest with,
+        // so a probe and the install it produces cannot disagree about the
+        // checkpoint's own window.
+        trained_context: repack::trained_context_meta::from_gguf(header),
         sidecars_present: Vec::new(),
         sidecars_missing: Vec::new(),
         chat_template: None,

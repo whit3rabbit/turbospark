@@ -49,6 +49,7 @@ crates/runtime/
 |   +-- real_forward_utils_tests.rs # Unit tests for type conversions and utilities
 |   +-- steering.rs             # Directional steering dispatch & runtime layer application
 |   +-- steering_tests.rs       # Unit tests for steering dispatch logic
+|   +-- turn_stream.rs         # TurnSplitter/TurnEvent: the ONE turn-splitting adapter (docs/STREAMING.md)
 |   +-- families/               # Model-family-specific decode implementations
 |   |   +-- mod.rs              # Re-exports model family submodules
 |   |   +-- gemma4/             # Gemma 4 decode flow
