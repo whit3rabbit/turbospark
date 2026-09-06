@@ -27,8 +27,8 @@ crates/ffi/
 |   +-- session.rs          # the opaque handle (Session over shared SessionCore); the cancel flag
 |   +-- open.rs             # opening an install (macOS)
 |   +-- generate/           # one turn: render, decode, stream, report
-|   |   +-- mod.rs          # turn execution driver, budget clamp, speculation block
-|   |   +-- channel.rs      # channel split: separating reasoning and content
+|   |   +-- mod.rs          # turn driver, budget clamp, speculation block, the
+|   |   |                  # TurnSplitter wiring and the TS_EVENT_* kinds
 |   |   +-- prompt.rs       # message decoding, prompt template rendering, tokenization
 |   |   +-- vision.rs       # image attachment and injection lifecycle
 |   |   \-- tests.rs        # unit tests: speculation, wire compatibility, image parts
@@ -188,13 +188,20 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
    jumps backwards.
 
 8. **A SwiftPM `-L` FLAG IS RESOLVED AGAINST THE PACKAGE BEING BUILT, NOT
-   THE ONE THAT DECLARED IT.** So `swift/TurboSpark`'s own
-   `-LSources/CTurboSpark` is correct when its tests link and wrong for
-   every consumer, and `swift/TurboSparkApp` has to repeat the flag with
-   its own view of the same directory. That is a SwiftPM limitation rather
-   than a mistake; the fix for a published package is an `.xcframework`
-   binary target, which resolves paths for its consumers properly. A
-   two-package repository does not need the packaging step.
+   THE ONE THAT DECLARED IT, WHICH IS WHY IT SITS ON THE TEST TARGET.**
+   `swift/TurboSpark`'s `-LSources/CTurboSpark` is correct when its own
+   tests link and meaningless for every consumer, and `swift/TurboSparkApp`
+   has to spell the same directory from its own root either way. Since
+   2026-09-05 the flag is declared on `TurboSparkTests` rather than on the
+   `TurboSpark` library target, so it no longer leaks an unresolvable
+   relative search path to a downstream package -- the `ld: warning: search
+   path 'Sources/CTurboSpark' not found` that used to fire on every app
+   build is gone with it. The library still declares
+   `.linkedLibrary("turbospark_ffi")`, which is what makes the consumer's
+   own `-L` sufficient. That is a SwiftPM limitation rather than a mistake;
+   the fix for a published package is an `.xcframework` binary target, which
+   resolves paths for its consumers properly. A two-package repository does
+   not need the packaging step.
 
 9. **SwiftPM DOES NOT TREAT THE STATICLIB AS A BUILD INPUT, so `swift test`
    will happily link the PREVIOUS one.** The `-L` path arrives as an unsafe

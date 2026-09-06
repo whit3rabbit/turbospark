@@ -58,7 +58,10 @@ pub unsafe extern "C" fn ts_recommend_json(
             abi::parse_json_or_default::<crate::wire::RecommendOptions>(options_json, "options")?;
         let guard = crate::wire::load_guard(&options.load_guard)
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let json = models::recommend_json(ctx, guard).map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        let slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json =
+            models::recommend_json(ctx, slots, guard).map_err(|e| (abi::TS_ERR_GENERATE, e))?;
         strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
@@ -70,6 +73,7 @@ pub unsafe extern "C" fn ts_probe_json(
     repo: *const c_char,
     file: *const c_char,
     sidecar_repo: *const c_char,
+    options_json: *const c_char,
     out: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
@@ -79,7 +83,62 @@ pub unsafe extern "C" fn ts_probe_json(
             strings::optional(file, "file").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let sidecars = strings::optional(sidecar_repo, "sidecarRepo")
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let json = models::probe_json(repo, file, sidecars).map_err(|e| (abi::TS_ERR_JSON, e))?;
+        // NULL, empty and `{}` mean the same defaults `ts_recommend_json`
+        // takes, so a host that fits a curated row and a probed repository
+        // side by side compares two numbers rather than two configurations.
+        let options =
+            abi::parse_json_or_default::<crate::wire::ProbeOptions>(options_json, "options")?;
+        let guard = crate::wire::load_guard(&options.load_guard)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let context = options.context_window.filter(|c| *c > 0);
+        let json = models::probe_json(repo, file, sidecars, context, slots, guard)
+            .map_err(|e| (abi::TS_ERR_JSON, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// What a longer context window would cost an INSTALLED model.
+///
+/// A different question from `ts_recommend_json`'s and NOT derivable from it:
+/// KV is not linear in the window, so multiplying one figure is 3.5x high on
+/// a sliding-window family.
+#[no_mangle]
+pub unsafe extern "C" fn ts_context_ladder_json(
+    model_path: *const c_char,
+    options_json: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let path = strings::required(model_path, "modelPath")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let options =
+            abi::parse_json_or_default::<crate::wire::ProbeOptions>(options_json, "options")?;
+        let guard = crate::wire::load_guard(&options.load_guard)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json = models::context_ladder_json(path, slots, guard)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Every `.gguf` a Hugging Face repository publishes, as JSON, best quality
+/// first. One API call, no header reads, no download.
+///
+/// Carries no fit: see `models::repo_variants_json`. Pair it with
+/// `ts_probe_json` on the file the user picks.
+#[no_mangle]
+pub unsafe extern "C" fn ts_repo_variants_json(
+    repo: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let repo =
+            strings::required(repo, "repo").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json = models::repo_variants_json(repo).map_err(|e| (abi::TS_ERR_JSON, e))?;
         strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }

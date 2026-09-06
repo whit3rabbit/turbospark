@@ -126,3 +126,53 @@ fn a_text_only_conversation_collects_no_images() {
         .expect("no shapes to get wrong")
         .is_empty());
 }
+
+/// **THE `TS_EVENT_TOOL` / `toolCalls` SHAPE, PINNED WHERE NOTHING ELSE CAN
+/// SEE IT.** No `GenerateOptions` field offers tools, so no end-to-end case
+/// can reach a non-empty tool call at all -- `the_finish_event_terminates_a_
+/// successful_event_stream_exactly_once` asserts the EMPTY array, which is a
+/// true statement about today and says nothing about the row shape. Swift's
+/// `GenerationToolCall(parsingJSON:)` is already written against these three
+/// spellings, so renaming one here would break a consumer with no gate
+/// between the two sides. Calling the pure function directly is the only way
+/// to assert it before the surface goes live.
+///
+/// **`arguments` MUST BE AN OBJECT AND NOT A STRING.** Those are the two
+/// plausible encodings of a parsed call and they are not interchangeable: a
+/// host reading `arguments.city` gets `nil` from the string form, with no
+/// error, which reads as a model that sent no arguments.
+#[test]
+fn a_tool_call_row_carries_id_name_and_an_object_of_arguments() {
+    let arguments = tokenizer::JsonValue::parse(r#"{"city":"Oslo","days":3}"#)
+        .expect("fixture arguments parse");
+    let call = tokenizer::ParsedToolCall {
+        id: "toolu_0".to_string(),
+        name: "get_weather".to_string(),
+        arguments_json: arguments.encoded(),
+        arguments,
+    };
+
+    let row = tool_call_json(&call);
+    assert_eq!(row["id"], "toolu_0");
+    assert_eq!(row["name"], "get_weather");
+    // An OBJECT, addressable field by field, never the encoded string.
+    assert!(row["arguments"].is_object(), "{row}");
+    assert_eq!(row["arguments"]["city"], "Oslo");
+    assert_eq!(row["arguments"]["days"], 3);
+    // Exactly three keys: a host switching on this row must not have to
+    // tolerate a fourth appearing without a version bump.
+    assert_eq!(row.as_object().expect("an object").len(), 3, "{row}");
+
+    // The whole row at once. Compared as a VALUE and not as a string: key
+    // ORDER is not part of this contract (it follows whether serde_json is
+    // built with `preserve_order`, which is a dependency's business), while
+    // the key SET and the nesting are.
+    assert_eq!(
+        row,
+        serde_json::json!({
+            "id": "toolu_0",
+            "name": "get_weather",
+            "arguments": {"city": "Oslo", "days": 3},
+        })
+    );
+}

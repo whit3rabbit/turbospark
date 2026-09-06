@@ -23,12 +23,13 @@ use foundation::LogitValue;
 use tokenizer::MfTokenizer;
 use turbospark_ffi::{
     abi, session_for_testing, session_for_testing_named, ts_generate, ts_last_error,
-    ts_model_delete, ts_probe_json, ts_recommend_json, ts_server_attach_session,
-    ts_server_detach_model, ts_server_info_json, ts_server_poll_events_json, ts_server_start,
-    ts_server_stop, ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
-    ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
-    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
-    Server, Session, TS_EVENT_CONTENT, TS_EVENT_PREFILL,
+    ts_model_delete, ts_probe_json, ts_recommend_json, ts_repo_variants_json,
+    ts_server_attach_session, ts_server_detach_model, ts_server_info_json,
+    ts_server_poll_events_json, ts_server_start, ts_server_stop, ts_session_cancel,
+    ts_session_count_text_tokens, ts_session_count_tokens, ts_session_detokenize_json,
+    ts_session_fit_window_json, ts_session_info_json, ts_session_open, ts_session_render_prompt,
+    ts_session_tokenize_json, ts_string_free, ts_system_info_json, Server, Session,
+    TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_TOOL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -237,6 +238,77 @@ fn a_generation_streams_events_and_reports_a_result() {
     assert_eq!(result["content"].as_str().unwrap(), streamed);
 }
 
+/// A sink that records the full callback payload, not just the text.
+struct FullSink {
+    events: Mutex<Vec<(i32, String, u32, u32)>>,
+}
+
+extern "C" fn collect_full(
+    ud: *mut c_void,
+    kind: c_int,
+    text: *const c_char,
+    len: usize,
+    a: u32,
+    b: u32,
+) {
+    let sink = unsafe { &*(ud as *const FullSink) };
+    let text = if text.is_null() || len == 0 {
+        String::new()
+    } else {
+        unsafe {
+            std::str::from_utf8(std::slice::from_raw_parts(text as *const u8, len))
+                .unwrap()
+                .to_string()
+        }
+    };
+    sink.events.lock().unwrap().push((kind, text, a, b));
+}
+
+#[test]
+fn the_finish_event_terminates_a_successful_event_stream_exactly_once() {
+    let session = endless_session(fixture(), "h", 32);
+    let sink = FullSink {
+        events: Mutex::new(Vec::new()),
+    };
+    let messages = c(r#"[{"role":"user","content":"hi"}]"#);
+    let options = c(r#"{"maxNewTokens":5,"temperature":0.0,"topK":0,"topP":1.0}"#);
+    let mut out: *mut c_char = ptr::null_mut();
+
+    let code = unsafe {
+        ts_generate(
+            &session,
+            messages.as_ptr(),
+            options.as_ptr(),
+            Some(collect_full),
+            &sink as *const FullSink as *mut c_void,
+            &mut out,
+        )
+    };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let result: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
+
+    let events = sink.events.lock().unwrap();
+    // Exactly one FINISH, and it is the LAST event: a callback-driven host
+    // learns the turn ended on the same channel that carried it.
+    let finishes: Vec<_> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, (k, ..))| *k == TS_EVENT_FINISH)
+        .collect();
+    assert_eq!(finishes.len(), 1, "{events:?}");
+    assert_eq!(finishes[0].0, events.len() - 1);
+    let (_, text, a, b) = finishes[0].1;
+    // The stop reason spelled as result_json spells it, and the same counts
+    // the result reports, so neither side can drift from the other.
+    assert_eq!(*text, result["stopReason"]);
+    assert_eq!(*a as usize, result["newTokens"]);
+    assert_eq!(*b as usize, result["promptTokens"]);
+    // No tools were offered, so no TOOL event can exist and `toolCalls` is
+    // an empty array rather than a missing key.
+    assert!(!events.iter().any(|(k, ..)| *k == TS_EVENT_TOOL));
+    assert_eq!(result["toolCalls"], serde_json::json!([]));
+}
+
 #[test]
 fn a_null_callback_still_generates() {
     // A caller that only wants the finished turn passes no callback, and the
@@ -428,13 +500,104 @@ fn a_malformed_repository_is_rejected_before_any_network_call() {
     for bad in ["nameonly", "too/many/parts", "/leading", "trailing/"] {
         let repo = c(bad);
         let mut out: *mut c_char = ptr::null_mut();
-        let code = unsafe { ts_probe_json(repo.as_ptr(), ptr::null(), ptr::null(), &mut out) };
+        let code = unsafe {
+            ts_probe_json(
+                repo.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+                &mut out,
+            )
+        };
         assert_eq!(code, abi::TS_ERR_JSON, "{bad} should be refused");
         assert!(
             last_error().contains("owner/name"),
             "{bad}: got {:?}",
             last_error()
         );
+
+        // Same shape check, same wording, on the variant listing -- which is
+        // the other entry point that takes a bare repository string.
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_repo_variants_json(repo.as_ptr(), &mut out) };
+        assert_eq!(code, abi::TS_ERR_JSON, "{bad} should be refused");
+        assert!(
+            last_error().contains("owner/name"),
+            "{bad}: got {:?}",
+            last_error()
+        );
+    }
+}
+
+/// **AN OUT-OF-SET SLOT COUNT IS AN ERROR AND NOT A PANIC, ON EVERY ENTRY
+/// POINT THAT TAKES ONE.** The setters panic outside `ALLOWED_CACHE_SLOTS`
+/// (`crates/core` Gotcha 1) and this engine is linked INTO its host, so an
+/// unvalidated count aborts the whole app rather than raising something a GUI
+/// can show. `ts_session_open` learned that once; these two took the same
+/// knob afterwards, and the check is shared rather than restated.
+///
+/// No network: the option bag is parsed before anything is fetched, which is
+/// also the property being asserted -- a caller who sent both a bad repo and
+/// a bad slot count hears about the one they can fix from the header alone.
+#[test]
+fn an_out_of_set_slot_count_is_refused_before_any_network_call() {
+    // 12 is not in ALLOWED_CACHE_SLOTS; 999 is not either and is not a typo
+    // for anything in it.
+    for bad in ["12", "999", "0"] {
+        let repo = c("owner/name");
+        let opts = c(&format!(r#"{{"expertCacheSlots":{bad}}}"#));
+
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_recommend_json(4096, opts.as_ptr(), &mut out) };
+        assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "recommend, slots {bad}");
+        assert!(
+            last_error().contains("expertCacheSlots"),
+            "recommend, slots {bad}: got {:?}",
+            last_error()
+        );
+
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe {
+            ts_probe_json(
+                repo.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                opts.as_ptr(),
+                &mut out,
+            )
+        };
+        assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "probe, slots {bad}");
+        assert!(
+            last_error().contains("expertCacheSlots"),
+            "probe, slots {bad}: got {:?}",
+            last_error()
+        );
+    }
+}
+
+/// A legal count and `"auto"` both reach the ranking. Paired with the case
+/// above so the refusal is not passing for the wrong reason: a validator that
+/// rejected EVERYTHING would satisfy that test alone.
+#[test]
+fn recommend_json_accepts_every_allowed_slot_count() {
+    let mut spellings: Vec<String> = vec![r#""auto""#.to_string()];
+    spellings.extend(
+        foundation::runtime_config::ALLOWED_CACHE_SLOTS
+            .iter()
+            .map(|n| n.to_string()),
+    );
+    for slots in spellings {
+        let mut out: *mut c_char = ptr::null_mut();
+        let opts = c(&format!(r#"{{"expertCacheSlots":{slots}}}"#));
+        let code = unsafe { ts_recommend_json(4096, opts.as_ptr(), &mut out) };
+        assert_ne!(
+            code,
+            abi::TS_ERR_INVALID_ARGUMENT,
+            "{slots} should be a legal slot count"
+        );
+        if code == abi::TS_OK {
+            let _ = unsafe { take(out) };
+        }
     }
 }
 

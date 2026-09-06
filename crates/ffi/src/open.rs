@@ -173,27 +173,21 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // (`CLAUDE.md` Gotcha 2), reach these spellings with no install on the
     // machine.
     let max_context = sized(&options.max_context, "maxContext")?;
-    let expert_cache_slots = sized(&options.expert_cache_slots, "expertCacheSlots")?;
     // **A SLOT COUNT OUTSIDE THE ALLOWED SET IS A PANIC LATER, IN PROCESS.**
-    // `sized` only proves this is a non-negative integer; `ExpertCacheSlots::
-    // Fixed` was then built from it unvalidated, and this engine is linked
-    // into its host (`swift/TurboSparkApp` has no server and no IPC), so the
-    // failure is not an error a GUI can show -- it aborts the whole app.
-    // Every other front end validates: `crates/invocation`'s parser,
-    // `crates/bench`'s and `crates/server`'s argument loops, and
-    // `catalog::entry`. This binding was the one that did not, and it is the
-    // one whose caller is a picker rather than a typed flag. Root Gotcha 64
+    // `sized` only proves a non-negative integer; `ExpertCacheSlots::Fixed`
+    // was built from it unvalidated, and this engine is linked into its host
+    // (`swift/TurboSparkApp` has no server and no IPC), so the failure is not
+    // an error a GUI can show -- it aborts the whole app. Every other front
+    // end validates: `crates/invocation`'s parser, `crates/bench`'s and
+    // `crates/server`'s argument loops, and `catalog::entry`. Root Gotcha 64
     // is the concrete case -- at `slots == top_k` a stale reservation leaves
     // no room for the next token's misses and `expert_cache.rs` panics on the
     // first multi-token prompt.
-    if let Some(n) = expert_cache_slots {
-        if !foundation::runtime_config::ALLOWED_CACHE_SLOTS.contains(&n) {
-            return Err(format!(
-                "expertCacheSlots must be \"auto\" or one of {:?}, got {n}",
-                foundation::runtime_config::ALLOWED_CACHE_SLOTS
-            ));
-        }
-    }
+    //
+    // The check lives in `wire::expert_cache_slots` because `ts_recommend_json`
+    // and `ts_probe_json` take the same knob now, and a second copy of an
+    // allowed set is the thing that goes stale.
+    let expert_cache_slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)?;
     // Mapped here with the rest, BEFORE anything is read from disk, so a
     // misspelled tier outranks a bad path in the error -- the rule this file
     // already follows, and what lets the SwiftPM target reach these spellings
@@ -316,10 +310,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         dir,
         arch,
         plan.resolved as usize,
-        match expert_cache_slots {
-            Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
-            None => runtime::ExpertCacheSlots::Auto,
-        },
+        expert_cache_slots,
         runtime::draft_policies(&choice, asked),
         steering_policy.clone(),
     )

@@ -50,7 +50,9 @@ mod vision;
 pub mod wire;
 
 pub use api::*;
-pub use generate::{TS_EVENT_CONTENT, TS_EVENT_PREFILL, TS_EVENT_REASONING};
+pub use generate::{
+    TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING, TS_EVENT_TOOL,
+};
 pub use models::{TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 pub use server::Server;
 pub use session::Session;
@@ -65,7 +67,12 @@ pub type TsServer = Server;
 
 /// One streamed event. `kind` is one of the `TS_EVENT_*` constants; `text`
 /// is UTF-8 of length `len` and is NOT NUL-terminated and NOT owned by the
-/// callee. For `TS_EVENT_PREFILL`, `a` is tokens done and `b` the total.
+/// callee. For `TS_EVENT_PREFILL`, `a` is tokens done and `b` the total; for
+/// `TS_EVENT_TOOL`, `text` is the call's JSON object and `a` its zero-based
+/// index; `TS_EVENT_FINISH` is the terminal event of a successful turn, with
+/// the stop reason in `text` and the token counts in `a` and `b`. A host
+/// treats any kind it does not know as a no-op: new kinds are appended by
+/// newer libraries and that is not a version break.
 pub type TsEventCallback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_char, usize, u32, u32)>;
 

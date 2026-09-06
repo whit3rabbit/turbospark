@@ -75,6 +75,23 @@ extern "C" {
  * analysis, and Qwen's template drops prior-turn <think> blocks, so sending
  * it back gives the model something it was never trained to read. */
 #define TS_EVENT_REASONING 2
+/* One parsed tool call, as a JSON object `{"id","name","arguments"}` in
+ * `text` and the call's zero-based index within the turn in `a`. Fires only
+ * when the caller offered the tool by name, which no ts_generate option
+ * does yet: the kind is wired so hosts and the pipeline do not need a
+ * second pass when the binding grows a way to offer tools. */
+#define TS_EVENT_TOOL 3
+/* Terminal event, fired ONCE per successful ts_generate just before it
+ * returns, after every other event of the turn. `text` is the stop reason
+ * spelled exactly as result_json's `stopReason` field spells it
+ * ("endOfTurn", "toolCalls", "eos", "stopString", "maxTokens",
+ * "cancelled"); `a` is the generated token count and `b` the prompt token
+ * count. NOT fired when the run fails: a non-zero return plus
+ * ts_last_error remains the only error signal.
+ *
+ * A HOST MUST TREAT ANY KIND IT DOES NOT KNOW AS A NO-OP. New kinds are
+ * appended by newer libraries and that is not a version break. */
+#define TS_EVENT_FINISH 4
 
 /* ---- install progress kinds ---- */
 
@@ -624,14 +641,24 @@ int32_t ts_model_delete(const char *alias);
  * tokens (e.g. 4096 or 8192, 0 means default 4096). Returns JSON array of
  * recommendations.
  *
- * `options_json` may be NULL, "" or "{}", all meaning every default. One key:
+ * `options_json` may be NULL, "" or "{}", all meaning every default:
  *
- *   loadGuard  same spellings as ts_session_open's, and it MUST be the same
- *              value the host will OPEN with. This ranking and the loader's
- *              refusal share one memory budget by construction, which is what
- *              makes a recommendation trustworthy; ranking under "relaxed"
- *              while sessions open under "strict" promises a fit the loader
- *              then refuses, where the user cannot see the two disagree.
+ *   loadGuard         same spellings as ts_session_open's, and it MUST be the
+ *                     same value the host will OPEN with. This ranking and the
+ *                     loader's refusal share one memory budget by construction,
+ *                     which is what makes a recommendation trustworthy; ranking
+ *                     under "relaxed" while sessions open under "strict"
+ *                     promises a fit the loader then refuses, where the user
+ *                     cannot see the two disagree.
+ *   expertCacheSlots  same spellings as ts_session_open's ("auto" or a count),
+ *                     and it MUST likewise be the value the host will OPEN
+ *                     with. A footprint is slots x layers x expert stride, so
+ *                     a ranking at one slot count and an open at another are
+ *                     two configurations rather than one approximation.
+ *
+ * Each row carries "countedSource": "measured" | "estimated" | "unknown".
+ * NEVER render an "unknown" row's countedBytes as a figure -- a row whose
+ * header nobody has read reports zeros, and zero bytes reads as "fits easily".
  */
 int32_t ts_recommend_json(uint32_t context_window, const char *options_json,
                           char **out);
@@ -644,9 +671,71 @@ int32_t ts_recommend_json(uint32_t context_window, const char *options_json,
  * The result carries "runnable" and, when false, "refusedBecause". Read
  * "slotCacheBytes" before "downloadBytes": what decides whether a model runs
  * here is slots x layers x expert stride, not the model's size.
+ *
+ * `options_json` may be NULL, "" or "{}". Keys: contextWindow (0 or absent
+ * means 4096), loadGuard and expertCacheSlots, all with ts_recommend_json's
+ * spellings and its rule that they must match what the host will OPEN with.
+ *
+ * "fit" is this machine's answer for that context and slot count, or NULL
+ * when the header yielded no shape -- never a zeroed object, because an
+ * absent measurement is not a measurement of zero. Its "mappedBytes" is the
+ * PUBLISHED CHECKPOINT and not the .gturbo this port would write, which is
+ * why it is labelled "mappedSource": "download". The two differ; the figure
+ * is close for a GGUF (expert blobs are written verbatim, only the small
+ * resident core is transcoded) and looser for MLX. "countedBytes" is
+ * unaffected: it is built from the arch and the expert stride.
  */
 int32_t ts_probe_json(const char *repo, const char *file,
-                      const char *sidecar_repo, char **out);
+                      const char *sidecar_repo, const char *options_json,
+                      char **out);
+
+/*
+ * What a longer context window would cost an INSTALLED model, read off its
+ * own manifest.
+ *
+ *   { "path", "trainedContext",
+ *     "rungs": [ { "context", "kvBytes", "counted", "verdict", "runs",
+ *                  "pastTrained", "isTrainedMax", "isLargestFitting" } ] }
+ *
+ * `options_json` takes loadGuard and expertCacheSlots, same spellings and the
+ * same must-match-your-open rule as ts_recommend_json. contextWindow is
+ * ignored: this call prices a LADDER of windows rather than one.
+ *
+ * DO NOT EXTRAPOLATE FROM ONE RUNG. KV is not linear in the window: a
+ * sliding-window layer is a ring capped at sliding_window + 128 and stops
+ * growing past it, while a fully-attentive layer grows forever. Measured
+ * 4,096 -> 131,072 on the shipped baselines, Mistral 7B grows 32x (512 MiB to
+ * 16,384) and Gemma 4 grows 9x (305 to 2,785). A caller multiplying its own
+ * 4,096 figure is 3.5x high on Gemma, in the direction that refuses a window
+ * that runs. Linear-attention layers contribute no KV at all.
+ *
+ * "rungs" is EMPTY when the install's shape could not be read. That is not a
+ * model with no memory cost; it is a question nothing answered.
+ */
+int32_t ts_context_ladder_json(const char *model_path, const char *options_json,
+                               char **out);
+
+/*
+ * Every .gguf a Hugging Face repository publishes, best quality first. One
+ * API call, no header reads, no download -- cheap enough to fill a
+ * quantization picker as a sheet opens.
+ *
+ *   { "repo", "revision", "shardedSkipped",
+ *     "variants": [ { "file", "bytes", "quantLabel", "ladderRank",
+ *                     "executable" } ] }
+ *
+ * IT CARRIES NO FIT, deliberately: a fit needs an ArchConfig, which needs a
+ * header read PER FILE. Use this for the menu and ts_probe_json() for the
+ * file the user picks.
+ *
+ * A file naming a type with no kernels here is LISTED with executable false
+ * rather than hidden, because a picker showing three of a repository's eight
+ * files reads as the repository having three. "bytes" and "quantLabel" are
+ * null when unknown, never 0 and never "": a 0-byte row reads as a tiny file.
+ * "shardedSkipped" counts multi-part files, which this port cannot walk; a
+ * nonzero value is why a picker may be short or empty.
+ */
+int32_t ts_repo_variants_json(const char *repo, char **out);
 
 /*
  * What a .gguf control vector declares, read from the file alone: no model,

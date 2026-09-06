@@ -97,6 +97,10 @@ for try await event in session.generate(
         print(text, terminator: "")
     case .reasoning(let text):
         print("[thinking] \(text)", terminator: "")
+    case .toolCall(let call):
+        print("[tool] \(call.name)\(call.argumentsJSON)")
+    case .stopped(let reason, let newTokens, _):
+        print("\n[stopped: \(reason) after \(newTokens) tokens]")
     case .finished(let result):
         print("\n\(result.newTokens) tokens, \(result.stopReason)")
     }
@@ -363,6 +367,17 @@ case .reasoning(let text):  thinking += text     // display only
 convention drops prior-turn analysis and Qwen's template drops prior-turn
 `<think>` blocks, so replaying it sends the model something it was never
 trained to read.
+
+**Two more events ride the same stream.** `.stopped` arrives when the model
+stops, on the stream itself and just before `.finished`, with the stop
+reason spelled as `GenerationResult.stopReason` spells it plus both token
+counts; a UI can finalize from it without waiting for the result decode.
+`.toolCall` carries one parsed invocation (`id`, `name`, `argumentsJSON`),
+and `GenerationResult.toolCalls` carries them all in the result. NEITHER
+CAN FIRE YET: a tool call is parsed only when the caller offered the tool
+by name, and no `GenerateOptions` field offers tools -- tool calling stays
+on the server surface. The events are wired so that growing the binding to
+offer tools is an options change, not a stream redesign.
 
 **The accepted levels are the checkpoint's, not this library's.** Qwen 3.8
 rejects `.high` and its top setting is `.xhigh`, while gpt-oss and Muse

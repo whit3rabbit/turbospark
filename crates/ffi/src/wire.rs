@@ -35,6 +35,34 @@ pub fn sized(value: &Option<serde_json::Value>, name: &str) -> Result<Option<u32
     }
 }
 
+/// Reads an expert-cache slot policy: a COUNT, `"auto"`, `null`, or absent.
+///
+/// **THE ALLOWED-SET CHECK IS WHY THIS IS A FUNCTION RATHER THAN A `sized`
+/// CALL AT EACH SITE.** `ExpertCacheSlots::Fixed` is built from whatever it
+/// is handed and the setters panic outside `ALLOWED_CACHE_SLOTS`
+/// (`crates/core` Gotcha 1), and this engine is linked INTO its host, so an
+/// unvalidated count aborts the whole app rather than raising an error a GUI
+/// can show. `ts_session_open` learned that once; every later caller reaches
+/// the same check through here rather than restating it.
+///
+/// Absent, `null` and `"auto"` all mean `Auto`, matching [`sized`].
+pub fn expert_cache_slots(
+    value: &Option<serde_json::Value>,
+) -> Result<model_io::ExpertCacheSlots, String> {
+    match sized(value, "expertCacheSlots")? {
+        None => Ok(model_io::ExpertCacheSlots::Auto),
+        Some(n) => {
+            if !foundation::runtime_config::ALLOWED_CACHE_SLOTS.contains(&n) {
+                return Err(format!(
+                    "expertCacheSlots must be \"auto\" or one of {:?}, got {n}",
+                    foundation::runtime_config::ALLOWED_CACHE_SLOTS
+                ));
+            }
+            Ok(model_io::ExpertCacheSlots::Fixed(n as usize))
+        }
+    }
+}
+
 /// Reads a load guard that may be a tier NAME, a byte ceiling, `null`, or
 /// absent.
 ///
@@ -73,6 +101,24 @@ pub struct RecommendOptions {
     /// Same spellings as `OpenOptions::load_guard`, and it MUST be the same
     /// value the host will open with; see `models::recommend_json`.
     pub load_guard: Option<serde_json::Value>,
+    /// Same spellings as `OpenOptions::expert_cache_slots`, and it MUST be
+    /// the same value the host will open with, for `load_guard`'s reason one
+    /// term over: a footprint is `slots x layers x expert_stride`, so a
+    /// ranking at one slot count and an `open()` at another describe
+    /// different configurations rather than the same one approximately
+    /// (`crates/catalog` Gotcha 9).
+    pub expert_cache_slots: Option<serde_json::Value>,
+}
+
+/// Arguments to `ts_probe_json`. The same two knobs as [`RecommendOptions`]
+/// plus the window, because a probe now reports a FIT and a fit is only
+/// meaningful at a stated context and slot count.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProbeOptions {
+    pub context_window: Option<u32>,
+    pub load_guard: Option<serde_json::Value>,
+    pub expert_cache_slots: Option<serde_json::Value>,
 }
 
 /// Arguments to `ts_session_open`. Every field is optional; `{}` is valid and
@@ -420,6 +466,14 @@ pub struct GenerateResult {
     /// `endOfTurn` | `toolCalls` | `eos` | `stopString` | `maxTokens` |
     /// `cancelled`.
     pub stop_reason: String,
+    /// Every tool call the model invoked this turn, in emission order, as
+    /// `{"id", "name", "arguments"}` objects. Empty unless a call was
+    /// parsed, which needs the tool to have been offered by name -- no
+    /// `GenerateOptions` field offers tools yet, so this is always empty
+    /// today and exists so the shape does not need a second pass when the
+    /// binding grows a way to offer them. The same rows arrive on the
+    /// stream as `TS_EVENT_TOOL` events.
+    pub tool_calls: Vec<serde_json::Value>,
     /// Decode tokens per second, or null when no decoding happened (a run
     /// cancelled during prefill). Null rather than zero so a caller cannot
     /// plot a rate that was never measured.

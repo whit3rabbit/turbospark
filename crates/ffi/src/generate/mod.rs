@@ -1,22 +1,43 @@
 //! One turn: render, decode, stream, and report.
 
-mod channel;
 mod prompt;
 #[cfg(test)]
 mod tests;
 mod vision;
 
-pub(crate) use channel::ChannelSplit;
-pub use channel::{TS_EVENT_CONTENT, TS_EVENT_PREFILL, TS_EVENT_REASONING};
+/// Prefill progress event kind.
+pub const TS_EVENT_PREFILL: i32 = 0;
+/// Content text delta event kind.
+pub const TS_EVENT_CONTENT: i32 = 1;
+/// Reasoning / thought text delta event kind.
+pub const TS_EVENT_REASONING: i32 = 2;
+/// Parsed tool call event kind. `text` is the call as a JSON object
+/// (`{"id", "name", "arguments"}`), `a` is the call's zero-based index
+/// within the turn. Fires only when the caller offered the tool by name,
+/// which no `GenerateOptions` field does yet -- the kind is wired so the
+/// pipeline does not need a second pass when the binding grows a way to
+/// offer tools.
+pub const TS_EVENT_TOOL: i32 = 3;
+/// Terminal event kind, fired once per successful `ts_generate` just
+/// before it returns. `text` is the stop reason spelled as it appears in
+/// `result_json`'s `stopReason` (`endOfTurn`, `toolCalls`, `eos`,
+/// `stopString`, `maxTokens`, `cancelled`), `a` is the new token count and
+/// `b` the prompt token count. Not fired when the run FAILS: a non-zero
+/// return plus `ts_last_error` remains the only error signal.
+pub const TS_EVENT_FINISH: i32 = 4;
+
 pub(crate) use prompt::{
     count_text_tokens, count_tokens, detokenize, fit_window, render_prompt, tokenize,
 };
 pub(crate) use vision::SCRIPTED_HAS_NO_TOWER;
 
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
-use runtime::{GenerationConfig, RawDecodeProgress, RawDecodeResult, StopReason};
-use tokenizer::ReasoningEffort;
+use runtime::{
+    GenerationConfig, RawDecodeProgress, RawDecodeResult, StopReason, TurnEvent, TurnSplitter,
+};
+use tokenizer::{ParsedToolCall, ReasoningEffort};
 
 use crate::session::{Engine, Session};
 use crate::wire::{GenerateOptions, GenerateResult, WireMessage};
@@ -33,6 +54,27 @@ fn stop_reason_name(reason: StopReason) -> &'static str {
         StopReason::MaxTokens => "maxTokens",
         StopReason::Cancelled => "cancelled",
     }
+}
+
+/// The wire JSON of one parsed tool call, matching `result_json`'s
+/// `toolCalls` rows exactly.
+///
+/// **`arguments` IS AN OBJECT AND NEVER A STRING**, so a host reads
+/// `call.arguments.city` rather than parsing a second time. It is converted
+/// through the tokenizer's own [`tokenizer::JsonValue::to_serde_json`], which
+/// is where `arguments_json` was rendered FROM one frame earlier
+/// (`ParsedToolCall` carries both). Re-parsing that string instead would be
+/// the same value by a longer route, and would put a `.expect` on
+/// model-generated data inside the one crate where a panic escaping into C is
+/// a named hazard (AGENTS.md Gotcha 9): unreachable today, and unreachable
+/// only for as long as every producer of that string keeps rendering
+/// something `serde_json` will take back.
+fn tool_call_json(call: &ParsedToolCall) -> serde_json::Value {
+    serde_json::json!({
+        "id": call.id,
+        "name": call.name,
+        "arguments": call.arguments.to_serde_json(),
+    })
 }
 
 /// The per-turn generation budget: never more than asked, never more than
@@ -121,33 +163,38 @@ pub(crate) fn generate(
 
     let mut content = String::new();
     let mut reasoning_text = String::new();
-    let mut split = ChannelSplit::new(&session.tokenizer, reasoning, &prompt_ids);
-    let total = prompt_ids.len() as u32;
+    let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+    let tools = HashSet::new();
+    let mut split = TurnSplitter::new(
+        &session.tokenizer,
+        &tools,
+        reasoning,
+        String::new,
+        &prompt_ids,
+    );
 
     let mut on_progress = |event: RawDecodeProgress| {
-        let (id, text) = match event {
-            RawDecodeProgress::Token { id, delta, .. } => (id, delta),
-            // A withheld tail has no token id behind it, which is what the
-            // tokenizer's "no such token" sentinel means.
-            RawDecodeProgress::Tail(tail) => (tokenizer::NO_SUCH_TOKEN_ID, tail),
-            RawDecodeProgress::Prefill { done, .. } => {
-                emit(TS_EVENT_PREFILL, "", done as u32, total);
-                return;
+        split.feed(event, &mut |turn| match turn {
+            TurnEvent::Prefill { done, total } => {
+                emit(TS_EVENT_PREFILL, "", done as u32, total as u32)
             }
-        };
-        // NO EARLY RETURN ON EMPTY TEXT. Special tokens decode to the empty
-        // string, so every Harmony frame token arrives as `(id, "")` -- skip
-        // them and the state machine never sees a single `<|channel|>` and
-        // the whole turn reads as one run of content.
-        let (answer, reason) = split.push(id, &text);
-        if !reason.is_empty() {
-            reasoning_text.push_str(&reason);
-            emit(TS_EVENT_REASONING, &reason, 0, 0);
-        }
-        if !answer.is_empty() {
-            content.push_str(&answer);
-            emit(TS_EVENT_CONTENT, &answer, 0, 0);
-        }
+            // Fires only when the caller offered the tool by name, which no
+            // `GenerateOptions` field does yet; see `TS_EVENT_TOOL`.
+            TurnEvent::ToolCall(call) => {
+                let value = tool_call_json(&call);
+                let text = value.to_string();
+                tool_calls.push(value);
+                emit(TS_EVENT_TOOL, &text, tool_calls.len() as u32 - 1, 0);
+            }
+            TurnEvent::Reasoning(reason) => {
+                reasoning_text.push_str(&reason);
+                emit(TS_EVENT_REASONING, &reason, 0, 0);
+            }
+            TurnEvent::Content(answer) => {
+                content.push_str(&answer);
+                emit(TS_EVENT_CONTENT, &answer, 0, 0);
+            }
+        });
     };
 
     let predicate = || cancel.load(Ordering::Acquire);
@@ -253,6 +300,18 @@ pub(crate) fn generate(
     }
     let result: RawDecodeResult = decoded.map_err(|e| e.to_string())?;
 
+    // THE TERMINAL EVENT, after every content/reasoning/tool event and just
+    // before the call that ran the turn returns, so a callback-driven host
+    // sees the turn end on the same channel that carried it. A FAILED run
+    // emits nothing here: the error contract stays non-zero return plus
+    // `ts_last_error`.
+    emit(
+        TS_EVENT_FINISH,
+        stop_reason_name(result.reason),
+        result.new_tokens as u32,
+        result.prompt_tokens as u32,
+    );
+
     Ok(GenerateResult {
         prompt_tokens: result.prompt_tokens,
         new_tokens: result.new_tokens,
@@ -266,6 +325,7 @@ pub(crate) fn generate(
             .then(|| result.new_tokens as f64 / result.decode_seconds),
         content,
         reasoning: reasoning_text,
+        tool_calls,
         peak_memory_pressure: format!("{:?}", result.peak_memory_pressure).to_lowercase(),
     })
 }
