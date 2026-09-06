@@ -61,6 +61,17 @@ func takeString(_ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> 
     return String(cString: out)
 }
 
+/// Runs a C call that fills a `char **`, returning nil if `out` is null.
+func takeOptionalString(_ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Int32)
+    throws -> String?
+{
+    var out: UnsafeMutablePointer<CChar>?
+    try check(body(&out))
+    guard let out else { return nil }
+    defer { ts_string_free(out) }
+    return String(cString: out)
+}
+
 /// Decodes JSON the library produced.
 ///
 /// `keyDecodingStrategy` is deliberately NOT set: the Rust side already

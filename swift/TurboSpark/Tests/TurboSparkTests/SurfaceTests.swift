@@ -1007,6 +1007,76 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(call?.id, "")
     }
 
+    // MARK: - Hugging Face Token Auth
+
+    func testHfTokenLifecycleAndValidationDecoding() throws {
+        let baselineToken = try TurboSparkCatalog.getHfToken()
+        defer {
+            if let baselineToken {
+                try? TurboSparkCatalog.setHfToken(baselineToken)
+            } else {
+                try? TurboSparkCatalog.clearHfToken()
+            }
+        }
+
+        // Test set and get
+        try TurboSparkCatalog.setHfToken("hf_test_swift_token_123")
+        XCTAssertEqual(try TurboSparkCatalog.getHfToken(), "hf_test_swift_token_123")
+
+        // Test clear: reverts to whatever ambient token (env/cache) or nil existed
+        try TurboSparkCatalog.clearHfToken()
+        XCTAssertEqual(try TurboSparkCatalog.getHfToken(), baselineToken)
+
+        // Test validate decoding
+        let status = try TurboSparkCatalog.validateHfToken("hf_dummy_invalid_token")
+        switch status {
+        case .invalid, .unavailable:
+            break
+        default:
+            XCTFail("Expected invalid or unavailable for dummy token, got \(status)")
+        }
+    }
+
+    // MARK: - Hugging Face Mirror Endpoint
+
+    func testHfEndpointLifecycle() throws {
+        let baseline = try TurboSparkCatalog.getHfEndpoint()
+        defer {
+            try? TurboSparkCatalog.setHfEndpoint(baseline == "https://huggingface.co" ? nil : baseline)
+        }
+
+        try TurboSparkCatalog.setHfEndpoint("https://hf-mirror.com")
+        XCTAssertEqual(try TurboSparkCatalog.getHfEndpoint(), "https://hf-mirror.com")
+
+        try TurboSparkCatalog.setHfEndpoint(nil)
+        XCTAssertEqual(try TurboSparkCatalog.getHfEndpoint(), "https://huggingface.co")
+    }
+
+    // MARK: - Embedding and Similarity
+
+    func testCosineSimilarity() {
+        let v1: [Float] = [1.0, 0.0, 0.0]
+        let v2: [Float] = [1.0, 0.0, 0.0]
+        let v3: [Float] = [0.0, 1.0, 0.0]
+
+        let same = TurboSparkEmbedding.cosineSimilarity(v1, v2)
+        XCTAssertEqual(same, 1.0, accuracy: 1e-5)
+
+        let ortho = TurboSparkEmbedding.cosineSimilarity(v1, v3)
+        XCTAssertEqual(ortho, 0.0, accuracy: 1e-5)
+
+        // Empty and mismatched length checks
+        XCTAssertEqual(TurboSparkEmbedding.cosineSimilarity([], []), 0.0)
+        XCTAssertEqual(TurboSparkEmbedding.cosineSimilarity([1.0], [1.0, 2.0]), 0.0)
+    }
+
+    func testServerAttachEmbeddingModelRefusesMissingPath() throws {
+        let server = try TurboSparkServer.start(options: ServerOptions(port: 0))
+        defer { server.stop() }
+
+        XCTAssertThrowsError(try server.attachEmbeddingModel("/nonexistent/model/path"))
+    }
+
 }
 
 

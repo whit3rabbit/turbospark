@@ -56,6 +56,22 @@ fn guardrails_config(raw: Option<&str>) -> Result<turbospark_server::GuardrailCo
     }
 }
 
+fn reasoning_effort(raw: Option<&str>) -> Result<tokenizer::ReasoningEffort, String> {
+    match raw {
+        None => Ok(tokenizer::ReasoningEffort::Off),
+        Some(s) => match s.trim().to_lowercase().as_str() {
+            "off" => Ok(tokenizer::ReasoningEffort::Off),
+            "low" => Ok(tokenizer::ReasoningEffort::Low),
+            "medium" => Ok(tokenizer::ReasoningEffort::Medium),
+            "high" => Ok(tokenizer::ReasoningEffort::High),
+            "xhigh" | "extra_high" | "extrahigh" => Ok(tokenizer::ReasoningEffort::XHigh),
+            other => Err(format!(
+                "reasoning must be off, low, medium, high or xhigh, got \"{other}\""
+            )),
+        },
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ts_server_start(
     session: *const TsSession,
@@ -69,8 +85,22 @@ pub unsafe extern "C" fn ts_server_start(
         let options = parse_json_or_default::<wire::ServerOptions>(options_json, "options")?;
         let guardrails = guardrails_config(options.guardrails.as_deref())
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let server = Server::start(options.port, options.api_key, guardrails)
-            .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+        let default_reasoning = reasoning_effort(options.default_reasoning.as_deref())
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let default_system = options.default_system.filter(|s| !s.trim().is_empty());
+        let server = Server::start(
+            options.port,
+            options.api_key,
+            guardrails,
+            default_system,
+            default_reasoning,
+        )
+        .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+        if let Some(endpoint) = &options.hf_endpoint {
+            if !endpoint.trim().is_empty() {
+                std::env::set_var("HF_ENDPOINT", endpoint.trim());
+            }
+        }
         // Attached AFTER the bind, through the same call a later attach
         // takes, so there is one code path rather than two. A failure here
         // drops `server`, which stops the thread it just started.
@@ -79,6 +109,11 @@ pub unsafe extern "C" fn ts_server_start(
                 session::borrow(session).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
             server
                 .attach(session.core(), model_id_of(session))
+                .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+        }
+        if let Some(emb) = &options.embedding_model {
+            server
+                .attach_embedding_model(emb)
                 .map_err(|e| (abi::TS_ERR_OPEN, e))?;
         }
         *out = Box::into_raw(Box::new(server));
@@ -110,6 +145,27 @@ pub unsafe extern "C" fn ts_server_attach_session(
         let id = server
             .attach(session.core(), model_id_of(session))
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        strings::emit(&id, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Adds an embedding model to a running server, enabling `/v1/embeddings`,
+/// `/api/embeddings`, and `/api/embed`.
+///
+/// Writes the attached model id to `out`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_attach_embedding_model(
+    server: *const TsServer,
+    model_path: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(server).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let path = strings::required(model_path, "modelPath")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let id = server
+            .attach_embedding_model(path)
+            .map_err(|e| (abi::TS_ERR_OPEN, e))?;
         strings::emit(&id, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }

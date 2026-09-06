@@ -124,6 +124,35 @@ public enum TurboSparkCatalog {
             })
     }
 
+    /// Resolves a model alias or relative directory path to its canonical on-disk install path.
+    ///
+    /// - Parameter modelOrAlias: The catalog alias (e.g. "gemma4") or directory path.
+    /// - Returns: The canonical path if the model exists on disk, or nil if unresolved.
+    public static func resolvePath(for modelOrAlias: String) throws -> String? {
+        do {
+            return try takeString { out in
+                modelOrAlias.withCString { ts_model_resolve_path($0, out) }
+            }
+        } catch let error as TurboSparkError where error.code == .open {
+            return nil
+        }
+    }
+
+    /// Returns the install path for an alias if installed, or nil if not installed.
+    public static func path(of alias: String) throws -> String? {
+        try resolvePath(for: alias)
+    }
+
+    /// Checks whether a model alias or directory path is installed locally.
+    public static func isInstalled(_ aliasOrPath: String) throws -> Bool {
+        try resolvePath(for: aliasOrPath) != nil
+    }
+
+    /// Returns the catalog entry for a given alias from the curated table, if present.
+    public static func entry(for alias: String) throws -> CatalogEntry? {
+        try available().first { $0.alias == alias }
+    }
+
     /// Probes a Hugging Face repository by header alone: kilobytes and
     /// seconds, no download.
     ///

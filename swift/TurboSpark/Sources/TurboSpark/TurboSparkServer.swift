@@ -33,6 +33,15 @@ public struct ServerOptions: Encodable, Sendable {
     /// guardrail a host applies to a reply it read itself covers only that
     /// path, and every HTTP client of this server bypasses it.
     public var guardrails: Guardrails?
+    /// Optional embedding model (.safetensors directory or alias) to attach at startup.
+    public var embeddingModel: String?
+    /// Optional Hugging Face mirror endpoint (e.g. https://hf-mirror.com).
+    public var hfEndpoint: String?
+    /// Deployment-wide default system prompt for requests that carry no system or
+    /// developer message of their own (turbospark-server --system).
+    public var defaultSystem: String?
+    /// Default reasoning effort when a request omits reasoning_effort (turbospark-server --reasoning).
+    public var defaultReasoning: GenerateOptions.Reasoning?
 
     /// The server's own `on` | `off` spelling, matching the CLI flag. Anything
     /// else is refused by the engine rather than silently defaulted.
@@ -41,10 +50,22 @@ public struct ServerOptions: Encodable, Sendable {
         case off
     }
 
-    public init(port: UInt16 = 0, apiKey: String? = nil, guardrails: Guardrails? = nil) {
+    public init(
+        port: UInt16 = 0,
+        apiKey: String? = nil,
+        guardrails: Guardrails? = nil,
+        embeddingModel: String? = nil,
+        hfEndpoint: String? = nil,
+        defaultSystem: String? = nil,
+        defaultReasoning: GenerateOptions.Reasoning? = nil
+    ) {
         self.port = port
         self.apiKey = apiKey
         self.guardrails = guardrails
+        self.embeddingModel = embeddingModel
+        self.hfEndpoint = hfEndpoint
+        self.defaultSystem = defaultSystem
+        self.defaultReasoning = defaultReasoning
     }
 }
 
@@ -121,7 +142,8 @@ public enum ServerEvent: Decodable, Sendable, Equatable {
     case requestRouted(id: UInt64, requested: String?, served: String, stream: Bool)
     case generated(
         id: UInt64, model: String, promptTokens: UInt32, newTokens: UInt32,
-        prefillSeconds: Double, decodeSeconds: Double, stopReason: String)
+        prefillSeconds: Double, decodeSeconds: Double, stopReason: String,
+        reusedPrefixTokens: UInt32 = 0, sessionSlotEvicted: Bool = false)
     case requestFinished(id: UInt64, status: UInt16, durationMs: UInt32)
     case modelAttached(atMs: UInt64, model: String)
     case modelDetached(atMs: UInt64, model: String)
@@ -139,7 +161,7 @@ public enum ServerEvent: Decodable, Sendable, Equatable {
         switch self {
         case let .requestStarted(id, _, _, _): return id
         case let .requestRouted(id, _, _, _): return id
-        case let .generated(id, _, _, _, _, _, _): return id
+        case let .generated(id, _, _, _, _, _, _, _, _): return id
         case let .requestFinished(id, _, _): return id
         case .modelAttached, .modelDetached, .unknown: return nil
         }
@@ -148,6 +170,7 @@ public enum ServerEvent: Decodable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case kind, id, atMs, method, path, requested, served, stream
         case model, promptTokens, newTokens, prefillSeconds, decodeSeconds, stopReason
+        case reusedPrefixTokens, sessionSlotEvicted
         case status, durationMs
     }
 
@@ -175,7 +198,9 @@ public enum ServerEvent: Decodable, Sendable, Equatable {
                 newTokens: try c.decode(UInt32.self, forKey: .newTokens),
                 prefillSeconds: try c.decode(Double.self, forKey: .prefillSeconds),
                 decodeSeconds: try c.decode(Double.self, forKey: .decodeSeconds),
-                stopReason: try c.decode(String.self, forKey: .stopReason))
+                stopReason: try c.decode(String.self, forKey: .stopReason),
+                reusedPrefixTokens: try c.decodeIfPresent(UInt32.self, forKey: .reusedPrefixTokens) ?? 0,
+                sessionSlotEvicted: try c.decodeIfPresent(Bool.self, forKey: .sessionSlotEvicted) ?? false)
         case "requestFinished":
             self = .requestFinished(
                 id: try c.decode(UInt64.self, forKey: .id),
@@ -288,6 +313,21 @@ public final class TurboSparkServer: @unchecked Sendable {
         try checkRunning()
         return try session.withRawHandle { sessionHandle in
             try takeString { ts_server_attach_session(handle.raw, sessionHandle, $0) }
+        }
+    }
+
+    /// Adds an embedding model to this running server, enabling `/v1/embeddings`,
+    /// `/api/embeddings`, and `/api/embed`.
+    ///
+    /// The model path can be a directory containing `config.json`, `model.safetensors`,
+    /// and `tokenizer.json`, or a catalog alias.
+    @discardableResult
+    public func attachEmbeddingModel(_ modelPath: String) throws -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        return try modelPath.withCString { path in
+            try takeString { ts_server_attach_embedding_model(handle.raw, path, $0) }
         }
     }
 

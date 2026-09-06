@@ -22,14 +22,16 @@ use std::sync::{Arc, Mutex};
 use foundation::LogitValue;
 use tokenizer::MfTokenizer;
 use turbospark_ffi::{
-    abi, session_for_testing, session_for_testing_named, ts_generate, ts_last_error,
+    abi, session_for_testing, session_for_testing_named, ts_cosine_similarity,
+    ts_embedding_encode_json, ts_generate, ts_hf_endpoint_get, ts_hf_endpoint_set,
+    ts_hf_token_clear, ts_hf_token_get, ts_hf_token_set, ts_hf_token_validate_json, ts_last_error,
     ts_model_delete, ts_probe_json, ts_recommend_json, ts_repo_variants_json,
-    ts_server_attach_session, ts_server_detach_model, ts_server_info_json,
-    ts_server_poll_events_json, ts_server_start, ts_server_stop, ts_session_cancel,
-    ts_session_count_text_tokens, ts_session_count_tokens, ts_session_detokenize_json,
-    ts_session_fit_window_json, ts_session_info_json, ts_session_open, ts_session_render_prompt,
-    ts_session_tokenize_json, ts_string_free, ts_system_info_json, Server, Session,
-    TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_TOOL,
+    ts_server_attach_embedding_model, ts_server_attach_session, ts_server_detach_model,
+    ts_server_info_json, ts_server_poll_events_json, ts_server_start, ts_server_stop,
+    ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
+    ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
+    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
+    Server, Session, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_TOOL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -1365,3 +1367,187 @@ fn an_out_of_set_expert_cache_slot_count_is_refused_before_the_model_is_read() {
         "automatic sizing must not be caught by the allowed-set check"
     );
 }
+
+#[test]
+fn hf_token_c_surface_lifecycle() {
+    let tmp = std::env::temp_dir().join(format!("ts_hf_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let old_home = std::env::var_os("TURBOSPARK_HOME");
+    let old_hf_token = std::env::var_os("HF_TOKEN");
+    let old_hub_token = std::env::var_os("HUGGING_FACE_HUB_TOKEN");
+    let old_hf_home = std::env::var_os("HF_HOME");
+
+    std::env::set_var("TURBOSPARK_HOME", &tmp);
+    std::env::set_var("HF_HOME", tmp.join("hf_home"));
+    std::env::remove_var("HF_TOKEN");
+    std::env::remove_var("HUGGING_FACE_HUB_TOKEN");
+
+    // Null check
+    let code = unsafe { ts_hf_token_get(ptr::null_mut()) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+
+    let code = unsafe { ts_hf_token_set(ptr::null()) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+
+    // Initial get: should be null pointer and TS_OK
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hf_token_get(&mut out) };
+    assert_eq!(code, abi::TS_OK);
+    assert!(out.is_null());
+
+    // Set token
+    let token_c = CString::new("hf_testtoken12345").unwrap();
+    let code = unsafe { ts_hf_token_set(token_c.as_ptr()) };
+    assert_eq!(code, abi::TS_OK);
+
+    // Get token
+    let code = unsafe { ts_hf_token_get(&mut out) };
+    assert_eq!(code, abi::TS_OK);
+    assert!(!out.is_null());
+    let token_read = unsafe { take(out) };
+    assert_eq!(token_read, "hf_testtoken12345");
+
+    // Clear token
+    let code = unsafe { ts_hf_token_clear() };
+    assert_eq!(code, abi::TS_OK);
+
+    // Get again
+    out = ptr::null_mut();
+    let code = unsafe { ts_hf_token_get(&mut out) };
+    assert_eq!(code, abi::TS_OK);
+    assert!(out.is_null());
+
+    // Validate invalid token
+    let invalid_c = CString::new("hf_dummy_bad_token").unwrap();
+    let mut val_out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hf_token_validate_json(invalid_c.as_ptr(), &mut val_out) };
+    assert_eq!(code, abi::TS_OK);
+    assert!(!val_out.is_null());
+    let json_str = unsafe { take(val_out) };
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    assert!(parsed.get("status").is_some());
+
+    if let Some(h) = old_home {
+        std::env::set_var("TURBOSPARK_HOME", h);
+    } else {
+        std::env::remove_var("TURBOSPARK_HOME");
+    }
+    if let Some(t) = old_hf_token {
+        std::env::set_var("HF_TOKEN", t);
+    }
+    if let Some(t) = old_hub_token {
+        std::env::set_var("HUGGING_FACE_HUB_TOKEN", t);
+    }
+    if let Some(h) = old_hf_home {
+        std::env::set_var("HF_HOME", h);
+    } else {
+        std::env::remove_var("HF_HOME");
+    }
+}
+
+#[test]
+fn hf_endpoint_c_surface_lifecycle() {
+    let old_ep = std::env::var_os("HF_ENDPOINT");
+
+    // Null out check
+    let code = unsafe { ts_hf_endpoint_get(ptr::null_mut()) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+
+    // Initial get: should be default https://huggingface.co
+    std::env::remove_var("HF_ENDPOINT");
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hf_endpoint_get(&mut out) };
+    assert_eq!(code, abi::TS_OK);
+    assert!(!out.is_null());
+    let default_val = unsafe { take(out) };
+    assert_eq!(default_val, "https://huggingface.co");
+
+    // Set custom mirror endpoint
+    let custom_c = CString::new("https://hf-mirror.com").unwrap();
+    let code = unsafe { ts_hf_endpoint_set(custom_c.as_ptr()) };
+    assert_eq!(code, abi::TS_OK);
+
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hf_endpoint_get(&mut out) };
+    assert_eq!(code, abi::TS_OK);
+    let custom_read = unsafe { take(out) };
+    assert_eq!(custom_read, "https://hf-mirror.com");
+
+    // Reset via null pointer
+    let code = unsafe { ts_hf_endpoint_set(ptr::null()) };
+    assert_eq!(code, abi::TS_OK);
+
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hf_endpoint_get(&mut out) };
+    assert_eq!(code, abi::TS_OK);
+    let reset_read = unsafe { take(out) };
+    assert_eq!(reset_read, "https://huggingface.co");
+
+    if let Some(ep) = old_ep {
+        std::env::set_var("HF_ENDPOINT", ep);
+    } else {
+        std::env::remove_var("HF_ENDPOINT");
+    }
+}
+
+#[test]
+fn cosine_similarity_c_surface() {
+    // Null checks
+    let sim = unsafe { ts_cosine_similarity(ptr::null(), ptr::null(), 0) };
+    assert_eq!(sim, 0.0);
+
+    let v1 = [1.0f32, 0.0f32, 0.0f32];
+    let v2 = [1.0f32, 0.0f32, 0.0f32];
+    let v3 = [0.0f32, 1.0f32, 0.0f32];
+
+    let sim_same = unsafe { ts_cosine_similarity(v1.as_ptr(), v2.as_ptr(), 3) };
+    assert!((sim_same - 1.0).abs() < 1e-5);
+
+    let sim_ortho = unsafe { ts_cosine_similarity(v1.as_ptr(), v3.as_ptr(), 3) };
+    assert!(sim_ortho.abs() < 1e-5);
+}
+
+#[test]
+fn server_attach_embedding_model_null_and_missing_checks() {
+    let code = unsafe { ts_server_attach_embedding_model(ptr::null(), ptr::null(), ptr::null_mut()) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+
+    // Start an empty server
+    let mut server_ptr: *mut Server = ptr::null_mut();
+    let opts = CString::new(r#"{"port":0}"#).unwrap();
+    let code = unsafe { ts_server_start(ptr::null(), opts.as_ptr(), &mut server_ptr) };
+    assert_eq!(code, abi::TS_OK);
+    assert!(!server_ptr.is_null());
+
+    // Null path
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_server_attach_embedding_model(server_ptr, ptr::null(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+
+    // Missing path
+    let missing_path = CString::new("/nonexistent/model/path").unwrap();
+    let code = unsafe { ts_server_attach_embedding_model(server_ptr, missing_path.as_ptr(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_OPEN);
+
+    unsafe { ts_server_stop(server_ptr) };
+}
+
+#[test]
+fn embedding_encode_null_and_invalid_checks() {
+    let code = unsafe { ts_embedding_encode_json(ptr::null(), ptr::null(), ptr::null_mut()) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+
+    let dummy_path = CString::new("/nonexistent/path").unwrap();
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_embedding_encode_json(dummy_path.as_ptr(), ptr::null(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+
+    let bad_json = CString::new("not valid json").unwrap();
+    let code = unsafe { ts_embedding_encode_json(dummy_path.as_ptr(), bad_json.as_ptr(), &mut out) };
+    #[cfg(target_os = "macos")]
+    assert_eq!(code, abi::TS_ERR_JSON);
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(code, abi::TS_ERR_UNSUPPORTED_PLATFORM);
+}
+

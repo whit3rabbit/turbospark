@@ -235,21 +235,24 @@ pub(crate) fn generate(
         // `crates/cli`'s default `--prefill-chunk` wiring and
         // `crates/server`'s `RealChatModel::run_completion` both check
         // (`crates/server/CLAUDE.md` Gotcha 19), so a caller who never
-        // touched a chunk-size knob still gets it. **Gated on
-        // `image_parts.is_empty()` too, matching the server's own
-        // discipline (Gotcha 21): a vision-carrying prompt takes the qwen
-        // dense flow's driver, which refuses an open image prompt BY NAME
-        // (`crates/runtime/CLAUDE.md` Gotcha 14) rather than silently
-        // mishandling it, so composing the two here would turn an image
-        // turn that used to succeed into one that fails on a family whose
-        // general chunked-prefill support has nothing to do with whether
-        // THIS call happens to carry a picture.** Decode's per-token
-        // progress callback is unaffected either way, since only the
-        // PREFILL portion routes differently.
+        // touched a chunk-size knob still gets it.
+        //
+        // **AN IMAGE PROMPT COMPOSES WITH IT SINCE 2026-09-06.** This arm
+        // carried an `image_parts.is_empty()` conjunct until then, for one
+        // reason that has since gone away: the qwen dense driver refused an
+        // open image prompt by name, so composing would have turned an image
+        // turn that used to succeed into one that failed. That driver mirrors
+        // both halves of the sequential flow's vision handling now (the
+        // tower-row blit and the mRoPE angle), `supports_chunked_prefill` no
+        // longer excludes a live map, and an image prompt is exactly the
+        // shape chunking pays on -- a real page is over a thousand merged
+        // tokens. Keeping the conjunct would deny the optimization to the
+        // prompts that need it most.
+        //
+        // Decode's per-token progress callback is unaffected either way,
+        // since only the PREFILL portion routes differently.
         #[cfg(target_os = "macos")]
-        (Engine::Real(runner), None)
-            if image_parts.is_empty() && runner.supports_chunked_prefill() =>
-        {
+        (Engine::Real(runner), None) if runner.supports_chunked_prefill() => {
             runtime::run_raw_completion_chunked_cancellable(
                 runner.as_mut(),
                 &session.tokenizer,

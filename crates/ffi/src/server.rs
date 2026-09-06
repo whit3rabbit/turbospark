@@ -75,6 +75,8 @@ pub struct Server {
     /// server cannot end up serving two models under different rules. The
     /// same process-level scope `turbospark-server --guardrails` has.
     guardrails: turbospark_server::GuardrailConfig,
+    default_system: Option<String>,
+    default_reasoning: tokenizer::ReasoningEffort,
     started: Instant,
     /// Shared with the router on the background thread. Attaching and
     /// detaching mutate THIS, which is what lets a running server gain and
@@ -100,6 +102,8 @@ impl Server {
         port: u16,
         api_key: Option<String>,
         guardrails: turbospark_server::GuardrailConfig,
+        default_system: Option<String>,
+        default_reasoning: tokenizer::ReasoningEffort,
     ) -> Result<Self, String> {
         let auth_enabled = api_key.is_some();
         let registry = Arc::new(LiveRegistry::default());
@@ -194,6 +198,8 @@ impl Server {
             host: resolved.ip().to_string(),
             auth_enabled,
             guardrails,
+            default_system,
+            default_reasoning,
             started: Instant::now(),
             registry,
             events,
@@ -213,7 +219,13 @@ impl Server {
         model_id: String,
     ) -> Result<String, String> {
         let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(
-            crate::server_model::FfiChatModel::new(core, model_id, self.guardrails),
+            crate::server_model::FfiChatModel::new(
+                core,
+                model_id,
+                self.guardrails,
+                self.default_system.clone(),
+                self.default_reasoning,
+            ),
         );
         let id = self.registry.attach(model)?;
         ServerObserver::record(
@@ -224,6 +236,31 @@ impl Server {
             },
         );
         Ok(id)
+    }
+
+    /// Adds an embedding model to this running server.
+    pub(crate) fn attach_embedding_model(&self, model_arg: &str) -> Result<String, String> {
+        #[cfg(target_os = "macos")]
+        {
+            let dir = catalog::resolve_model_arg(model_arg);
+            let model = turbospark_server::RealEncoderModel::open(&dir)
+                .map_err(|e| format!("failed to open embedding model from {}: {e}", dir.display()))?
+                .with_model_id(model_arg.to_string());
+            let id = self.registry.attach(Arc::new(model))?;
+            ServerObserver::record(
+                &*self.events,
+                turbospark_server::observe::ServerEvent::ModelAttached {
+                    at_ms: now_ms(),
+                    model: id.clone(),
+                },
+            );
+            Ok(id)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = model_arg;
+            Err("embedding models are supported on macOS only".to_string())
+        }
     }
 
     /// Removes a model by id, releasing this server's reference to it.

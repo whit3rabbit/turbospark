@@ -50,6 +50,8 @@ pub(crate) struct FfiChatModel {
     core: Arc<SessionCore>,
     model_id: String,
     guardrails: turbospark_server::GuardrailConfig,
+    default_system: Option<String>,
+    default_reasoning: tokenizer::ReasoningEffort,
 }
 
 impl FfiChatModel {
@@ -57,11 +59,15 @@ impl FfiChatModel {
         core: Arc<SessionCore>,
         model_id: String,
         guardrails: turbospark_server::GuardrailConfig,
+        default_system: Option<String>,
+        default_reasoning: tokenizer::ReasoningEffort,
     ) -> Self {
         Self {
             core,
             model_id,
             guardrails,
+            default_system,
+            default_reasoning,
         }
     }
 
@@ -208,6 +214,14 @@ impl ChatModel for FfiChatModel {
     /// What `ts_server_start` resolved, not the trait default.
     fn guardrails(&self) -> turbospark_server::GuardrailConfig {
         self.guardrails
+    }
+
+    fn default_reasoning(&self) -> tokenizer::ReasoningEffort {
+        self.default_reasoning
+    }
+
+    fn default_system(&self) -> Option<&str> {
+        self.default_system.as_deref()
     }
 
     fn with_producer(

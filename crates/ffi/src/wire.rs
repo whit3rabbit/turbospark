@@ -570,6 +570,16 @@ pub struct ServerOptions {
     /// SERVED path agree with it -- the setting looked global and reached
     /// only whatever the host itself did with a reply.
     pub guardrails: Option<String>,
+    /// Optional embedding model (.safetensors directory or alias) to attach at startup.
+    pub embedding_model: Option<String>,
+    /// Optional Hugging Face mirror endpoint (e.g. https://hf-mirror.com).
+    pub hf_endpoint: Option<String>,
+    /// Deployment-wide default system prompt for requests that carry no system or
+    /// developer message of their own (turbospark-server --system).
+    pub default_system: Option<String>,
+    /// Default reasoning effort when a request omits reasoning_effort
+    /// (turbospark-server --reasoning).
+    pub default_reasoning: Option<String>,
 }
 
 /// What `ts_server_info_json` returns.

@@ -1442,6 +1442,26 @@ so going through `make` recompiles the whole app every single time. Use
     script may log it, which is a trace a user who asked for a chat that
     leaves no trace has not consented to.
 
+54. **COMPACTION MAKES THE PROMPT DISAGREE WITH THE TRANSCRIPT BY EXACTLY
+    THE BOUNDARY, AND THE GHOST HALF OF THAT STATE IS CONTENT.**
+    (`docs/SWIFT_COMPACTION.md`, added 2026-09-06.) Context compaction
+    summarizes rows at or before `AppChat.compactedMessageCount` and never
+    deletes them, so there are exactly TWO assembly points that skip the
+    boundary and inject the summary -- `buildAppendOnlyHistory` and
+    `updateTokenEstimate`, through the one shared helper
+    `insertingSummaryInjection`. A THIRD place that renders the transcript
+    as a prompt (a subagent arm, a replay tool) and skips neither will send
+    a history the meter says cannot fit, and nothing errors: the skip is a
+    `continue`, silence is the failure mode. Read state through
+    `compactionState(chatID:)` and write it through `setStoredCompaction`:
+    for a ghost chat the summary and the boundary live sealed in the vault
+    (gotcha 53's rule -- a summary is conversation content, and a write to
+    the row fields leaks it to `chats_archive.json`), and only those two
+    helpers know which half applies. And the feature is FAIL-OPEN by
+    design: every compaction failure falls through to the window fit the
+    turn would have run anyway, so a new error path added to
+    `performCompaction` is a regression, not a robustness win.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments that

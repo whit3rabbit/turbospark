@@ -469,6 +469,10 @@ print("Token IDs: \(tokenIDs)")
 // Decode token IDs back to text:
 let reconstructed = try await session.detokenize(tokenIDs, skipSpecialTokens: false)
 assert(reconstructed == "Hello, world!")
+
+// Inspect tokenizer special token IDs:
+let special = session.info.specialTokens
+print("BOS: \(String(describing: special.bosId)), EOS: \(String(describing: special.eosId))")
 ```
 
 Exposes direct access to the model's tokenizer for token visualizers, token chip
@@ -499,6 +503,76 @@ let stream = session.generate(outcome.retained, options: options)
 
 `outcome.hasRoomForGeneration` is true when the fitted prompt leaves headroom
 for generated response tokens.
+
+### Embeddings & vector similarity
+
+```swift
+// Generate normalized vector embeddings for text snippets:
+let embeddings = try await TurboSparkEmbedding.encode(
+    texts: ["What is quantum computing?", "Subatomic particles in superposition."],
+    modelPath: "snowflake-arctic-embed-m"
+)
+
+// Calculate cosine similarity between two vectors:
+let score = TurboSparkEmbedding.cosineSimilarity(embeddings[0], embeddings[1])
+print("Semantic similarity: \(score)")
+// Rank documents by semantic similarity to a query:
+let ranked = try await TurboSparkEmbedding.rank(
+    query: "What is quantum entanglement?",
+    documents: [
+        "Photosynthesis converts light to chemical energy.",
+        "Entangled particle states exhibit correlated measurements.",
+        "Ancient roman aqueducts carried water into cities."
+    ],
+    modelPath: "snowflake-arctic-embed-m"
+)
+for (index, text, score) in ranked {
+    print(String(format: "[%.3f] #%d: %@", score, index, text))
+}
+
+// Single text encoding:
+let vector = try await TurboSparkEmbedding.encode(
+    text: "What is quantum computing?",
+    modelPath: "snowflake-arctic-embed-m"
+)
+
+// Retrieve top-k most similar documents:
+let top2 = try await TurboSparkEmbedding.topK(
+    query: "quantum physics",
+    documents: [
+        "Photosynthesis converts light to chemical energy.",
+        "Entangled particle states exhibit correlated measurements.",
+    ],
+    k: 2,
+    modelPath: "snowflake-arctic-embed-m"
+)
+```
+
+`TurboSparkEmbedding.encode` runs BERT and XLM-RoBERTa encoder models in `.safetensors`
+format with pooled, normalized output vectors. Use this for semantic search,
+retrieval-augmented generation (RAG), and document ranking directly in-process.
+
+### Background daemon inspection & control
+
+```swift
+// Inspect managed background daemon status (`turbospark start/stop/status`):
+let daemon = try TurboSparkDaemon.status()
+if daemon.running {
+    print("Daemon running on port \(daemon.port!) (PID \(daemon.pid!))")
+    print("Endpoint: \(daemon.endpoint!)")
+}
+
+// Start or restart the background daemon:
+try TurboSparkDaemon.start(args: ["--port", "8080", "--model", "gemma4"])
+try TurboSparkDaemon.restart()
+
+// Stop the daemon cleanly:
+try TurboSparkDaemon.stop()
+
+// Connect external terminal coding agents:
+let cmd = TurboSparkAgent.launchCommand(for: "claude", host: "127.0.0.1", port: 8080)
+print("Run in terminal: \(cmd)")
+```
 
 ### Telemetry
 
@@ -563,21 +637,29 @@ is generating through.
 ```swift
 // Start with nothing attached. The socket binds immediately, so you can show
 // and copy the address before the user has picked a model.
-let server = try TurboSparkServer.start(options: ServerOptions(apiKey: "sk-local"))
+var options = ServerOptions(apiKey: "sk-local")
+options.embeddingModel = "~/models/snowflake-arctic-embed-m"
+options.hfEndpoint = "https://hf-mirror.com"
+options.defaultSystem = "You are an expert AI assistant."
+options.defaultReasoning = .medium
+let server = try TurboSparkServer.start(options: options)
 
 let id = try server.attach(session)      // "gemma4.gturbo" -- the install's own name
 print(try server.info().baseURL!)        // http://127.0.0.1:53411
 
 try server.detach(modelId: id)           // stops serving it, releases the engine
 server.stop()                            // stops serving everything
+
+// Attach an embedding model (.safetensors directory or alias) for vector endpoints:
+let embId = try server.attachEmbeddingModel("~/models/snowflake-arctic-embed-m")
 ```
 
 Routes: OpenAI (`/v1/chat/completions`, `/v1/completions`, `/v1/responses`,
-`/v1/models`), Anthropic (`/v1/messages`, `/v1/messages/count_tokens`),
-Ollama (`/api/tags`, `/api/version`, `/api/show`, `/api/chat`,
-`/api/generate`), and `GET /health`. There is no `/v1/embeddings`: this
-engine has no embedding path, and a route that 404s is worse than an absent
-one.
+`/v1/models`, `/v1/embeddings`), Anthropic (`/v1/messages`,
+`/v1/messages/count_tokens`), Ollama (`/api/tags`, `/api/version`, `/api/show`,
+`/api/chat`, `/api/generate`, `/api/embeddings`, `/api/embed`), and `GET /health`.
+Embeddings routes require an attached embedding model (via `attachEmbeddingModel(_:)`
+or `ServerOptions.embeddingModel`).
 
 **Which model serves a request.** An exact `model` id wins. Failing that, if
 exactly ONE model is attached it serves the request whatever name was asked
@@ -612,18 +694,34 @@ restarting it. A host that applies its own repair to a reply it read itself
 covers only that path: every HTTP client of this server bypasses it. See
 `docs/FORGE_GUARDRAILS.md` section 0b.
 
+**Default system prompt and reasoning effort.** `ServerOptions.defaultSystem`
+supplies a deployment-wide system message for requests that carry no system or
+developer message of their own (`turbospark-server --system`).
+`ServerOptions.defaultReasoning` sets the default reasoning effort (.off, .low,
+.medium, .high, .xhigh) applied when a request omits `reasoning_effort`
+(`turbospark-server --reasoning`).
+
 ### Watching it
 
 ```swift
 let batch = server.poll()          // drains; each event is returned once
-for event in batch.events { ... }
+for event in batch.events {
+    switch event {
+    case .generated(let gen):
+        print("gen: \(gen.tokenCount) tok, reused prefix: \(gen.reusedPrefixTokens), evicted: \(gen.sessionSlotEvicted)")
+    default:
+        break
+    }
+}
 if batch.dropped > 0 { /* say so */ }
 ```
 
 Poll on a timer and append what you get. Events are `requestStarted`,
 `requestRouted`, `generated`, `requestFinished`, `modelAttached`,
 `modelDetached`, tied together by a request id, plus an `unknown(kind:)` case
-so a newer engine's event does not fail the whole batch.
+so a newer engine's event does not fail the whole batch. `generated` includes
+KV cache prefix reuse counts (`reusedPrefixTokens`) and slot eviction notices
+(`sessionSlotEvicted`).
 
 `dropped` counts events the engine's ring discarded since your previous poll.
 **Show it.** A console quietly missing rows reads exactly like a server that
@@ -660,8 +758,23 @@ let recs = try TurboSparkCatalog.recommend(context: 4096, loadGuard: .balanced)
 let report = try TurboSparkCatalog.probe(repo: "Qwen/Qwen3-30B-A3B-GGUF",
                                          file: "Qwen3-30B-A3B-Q4_K_M.gguf")
 
+// List GGUF variant files in a Hugging Face repo without downloading headers:
+let variants = try TurboSparkCatalog.variants(repo: "Qwen/Qwen3-30B-A3B-GGUF")
+
+// Cost across context rungs for an installed model (KV cache scaling):
+let ladder = try TurboSparkCatalog.contextLadder(modelPath: "gemma4", loadGuard: .balanced)
+
+// Inspect control vector metadata before opening:
+let cv = try TurboSparkCatalog.controlVectorInfo(path: "/path/to/vector.gguf")
+
 // Delete an installed model to recover disk space:
 try TurboSparkCatalog.delete("gemma4")
+
+// Check if an alias or directory is installed, and resolve canonical path:
+if try TurboSparkCatalog.isInstalled("gemma4") {
+    let path = try TurboSparkCatalog.resolvePath(for: "gemma4")
+    print("Resolved path: \(path ?? "")")
+}
 ```
 
 `probe` returns JSON rather than a struct, because a probe report's shape
@@ -711,6 +824,40 @@ warning above the button.
 **Take the maximum of byte events, not the latest.** Ranged downloads are
 split across connections, so byte progress arrives concurrently and out of
 order. Using the last value makes the bar jump backwards.
+
+### Hugging Face authentication and mirror endpoints
+
+```swift
+// Inspect current token resolution and source:
+if let tokenInfo = TurboSparkCatalog.getHfTokenInfo() {
+    print("HF Token active via \(tokenInfo.source)")
+}
+
+// Validate token with whoami API:
+if let token = try TurboSparkCatalog.getHfToken() {
+    let status = try TurboSparkCatalog.validateHfToken(token)
+    switch status {
+    case .valid(let name, _, _): print("Authenticated as @\(name ?? "user")")
+    case .invalid(let msg): print("Invalid token: \(msg ?? "")")
+    case .rateLimited: print("Rate limited")
+    case .unavailable(let msg): print("Offline: \(msg)")
+    case .missing: print("No token")
+    }
+}
+
+// Set or clear token explicitly (saved to ~/.turbospark/hf_token):
+try TurboSparkCatalog.setHfToken("hf_your_token_here")
+try TurboSparkCatalog.clearHfToken()
+
+// Override Hugging Face download endpoint (e.g., custom mirror or proxy):
+try TurboSparkCatalog.setHfEndpoint("https://hf-mirror.com")
+```
+
+The catalog queries tokens hierarchically: CLI flag -> `$HF_TOKEN` ->
+`~/.turbospark/hf_token` -> standard Hugging Face CLI token cache
+(`~/.cache/huggingface/token`). `getHfTokenInfo()` reports both the token
+and its origin `source`. Setting a custom `hfEndpoint` configures download and
+probe calls to target the specified base mirror URL.
 
 ---
 
@@ -778,15 +925,38 @@ byte callback is *also* called concurrently from worker threads.
 | `ts_session_count_text_tokens(s, text, add_special, out_count)` | evaluates raw text token count |
 | `ts_session_fit_window_json(s, messages, reasoning, max_tokens, out)` | fits conversation into token budget |
 | `ts_generate(s, messages, options, cb, ud, out)` | blocks for the turn |
+| `ts_server_start(s, options_json, out)` | start server; `s` may be NULL, `options_json` configures port, api_key, embedding, hf_endpoint, defaults |
+| `ts_server_attach_session(server, s, out_model_id)` | attach loaded session |
+| `ts_server_attach_embedding_model(server, model_path, out)` | attach embedding model for /v1/embeddings |
+| `ts_server_detach_model(server, model_id)` | detach model from server |
+| `ts_server_stop(server)` | stop server and drop all listeners |
+| `ts_server_info_json(server, out)` | host, port, active model IDs, auth, uptime |
+| `ts_server_poll_events_json(server, max, out)` | drain server event ring buffer |
 | `ts_catalog_json(out)` | every platform |
 | `ts_installed_json(out)` | every platform |
 | `ts_model_delete(alias)` | delete installed model directory and forget row |
 | `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
+| `ts_context_ladder_json(model_path, options_json, out)` | memory cost per context rung for installed model |
+| `ts_repo_variants_json(repo, out)` | list all GGUF variants published by repository |
 | `ts_control_vector_info_json(path, out)` | a `.gguf` control vector's shape: no model, no session, no network |
 | `ts_install_bytes_json(alias, out)` | cost before committing |
 | `ts_install(alias, cb, ud, out)` | blocks for minutes; cannot resume |
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
+| `ts_embedding_encode_json(model_path, texts_json, out)` | standalone batch text embedding generation |
+| `ts_cosine_similarity(a, b, len)` | cosine similarity between two float vectors |
+| `ts_hf_token_get(out)` | read resolved HF token |
+| `ts_hf_token_info_json(out)` | read resolved HF token and origin source |
+| `ts_hf_token_set(token)` | save HF token to ~/.turbospark/hf_token |
+| `ts_hf_token_clear()` | clear stored HF token |
+| `ts_hf_token_validate_json(token, out)` | validate HF token against whoami API |
+| `ts_hf_endpoint_get(out)` | read resolved HF endpoint / mirror URL |
+| `ts_hf_endpoint_set(endpoint)` | set or clear $HF_ENDPOINT mirror override |
+| `ts_model_resolve_path(alias_or_path, out)` | resolve alias or path to canonical install directory |
+| `ts_daemon_status_json(out)` | read background daemon status (running, pid, port, endpoint, logPath) |
+| `ts_daemon_stop()` | stop background daemon if running |
+| `ts_daemon_start(args_json)` | start background server daemon with optional arguments |
+| `ts_daemon_restart(args_json)` | restart background server daemon with optional arguments |
 
 ### A complete C example
 

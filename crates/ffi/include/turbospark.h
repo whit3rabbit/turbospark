@@ -538,6 +538,17 @@ int32_t ts_server_attach_session(const TsServer *server, const TsSession *s,
                                  char **out);
 
 /*
+ * Adds an embedding model to a running server, enabling /v1/embeddings,
+ * /api/embeddings, and /api/embed. model_path may be an install directory
+ * containing config.json, model.safetensors, and tokenizer.json, or a model alias.
+ *
+ * Writes the assigned model id to *out (free with ts_string_free).
+ */
+int32_t ts_server_attach_embedding_model(const TsServer *server,
+                                         const char *model_path,
+                                         char **out);
+
+/*
  * Removes a model from a running server by id, releasing the server's
  * reference to its engine.
  *
@@ -794,6 +805,105 @@ int32_t ts_install(const char *alias, TsInstallCallback cb, void *userdata,
 int32_t ts_install_repo(const char *repo, const char *alias, const char *file,
                         const char *sidecar_repo, TsInstallCallback cb,
                         void *userdata, char **result_json);
+
+/*
+ * Reads the currently resolved Hugging Face token. If a token is found,
+ * writes a newly-allocated string to *out (free with ts_string_free).
+ * If no token is set, sets *out to NULL and returns TS_OK.
+ */
+int32_t ts_hf_token_get(char **out);
+
+/*
+ * Reads the currently resolved Hugging Face token and its source origin.
+ * Writes JSON to *out (free with ts_string_free):
+ *   {"token":"...","source":"..."}
+ * If no token is set, sets *out to NULL and returns TS_OK.
+ */
+int32_t ts_hf_token_info_json(char **out);
+
+/*
+ * Saves a Hugging Face token to the local store (~/.turbospark/hf_token).
+ */
+int32_t ts_hf_token_set(const char *token);
+
+/*
+ * Clears the Hugging Face token from the local store.
+ */
+int32_t ts_hf_token_clear(void);
+
+/*
+ * Validates a Hugging Face token against the whoami-v2 API.
+ * Writes a JSON result to *out (free with ts_string_free):
+ *   {"status":"valid","name":"...","fullname":"...","email":"..."}
+ *   {"status":"invalid","message":"..."}
+ *   {"status":"rate_limited","retry_after_seconds":...}
+ *   {"status":"unavailable","message":"..."}
+ */
+int32_t ts_hf_token_validate_json(const char *token, char **out);
+
+/*
+ * Reads the current Hugging Face mirror base URL into *out (free with ts_string_free).
+ * Returns the default "https://huggingface.co" if unset.
+ */
+int32_t ts_hf_endpoint_get(char **out);
+
+/*
+ * Sets or clears the Hugging Face mirror base URL ($HF_ENDPOINT).
+ * Pass NULL or an empty string to remove the override and reset to default.
+ */
+int32_t ts_hf_endpoint_set(const char *endpoint);
+
+/*
+ * Computes vector embeddings for a JSON array of strings using a local encoder
+ * model (.safetensors directory or alias).
+ *
+ * texts_json is a JSON array of strings: ["text1", "text2"]
+ * Writes a JSON array of float arrays to *out (free with ts_string_free):
+ * [[0.1, ...], [0.2, ...]]
+ */
+int32_t ts_embedding_encode_json(const char *model_path,
+                                 const char *texts_json,
+                                 char **out);
+
+/*
+ * Computes cosine similarity between two float vectors of length `len`.
+ * Returns 0.0 if either pointer is null or len is 0.
+ */
+float ts_cosine_similarity(const float *a, const float *b, size_t len);
+
+/*
+ * Resolves a model alias (e.g. "gemma4") or relative path to its canonical
+ * on-disk install path.
+ *
+ * Writes the path to *out (free with ts_string_free). Returns TS_ERR_OPEN if
+ * the model is not found or directory does not exist.
+ */
+int32_t ts_model_resolve_path(const char *model_or_alias, char **out);
+
+/*
+ * Inspects whether a background turbospark server daemon is running.
+ * Writes a JSON object to *out (free with ts_string_free):
+ *   {"running":true,"pid":1234,"port":8080,"endpoint":"http://127.0.0.1:8080/v1","logPath":"..."}
+ *   or {"running":false}
+ */
+int32_t ts_daemon_status_json(char **out);
+
+/*
+ * Stops the background turbospark server daemon if running.
+ */
+int32_t ts_daemon_stop(void);
+
+/*
+ * Starts the background turbospark server daemon with optional arguments.
+ * args_json is a JSON array of string arguments, e.g. ["--port", "8080", "--model", "gemma4"].
+ * Pass NULL or "[]" for defaults.
+ */
+int32_t ts_daemon_start(const char *args_json);
+
+/*
+ * Stops and restarts the background turbospark server daemon with optional arguments.
+ */
+int32_t ts_daemon_restart(const char *args_json);
 
 #ifdef __cplusplus
 }

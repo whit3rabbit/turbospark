@@ -298,3 +298,146 @@ pub unsafe extern "C" fn ts_install_repo(
         strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
+
+/// Reads the currently resolved Hugging Face token. If a token is found,
+/// writes a newly-allocated string to `*out` (free with `ts_string_free`).
+/// If no token is set, sets `*out` to NULL and returns `TS_OK`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_hf_token_get(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "output pointer must not be null".to_string(),
+            ));
+        }
+        if let Some(token) = catalog::resolve_hf_token(None) {
+            strings::emit(&token, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+        } else {
+            *out = std::ptr::null_mut();
+            Ok(())
+        }
+    })
+}
+
+/// Reads the currently resolved Hugging Face token and its source origin.
+/// If a token is found, writes JSON to `*out` (free with `ts_string_free`):
+///   {"token": "...", "source": "..."}
+/// If no token is set, sets `*out` to NULL and returns `TS_OK`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_hf_token_info_json(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "output pointer must not be null".to_string(),
+            ));
+        }
+        if let Some((token, source)) = catalog::resolve_hf_token_with_source(None) {
+            let json = serde_json::json!({
+                "token": token,
+                "source": source.label(),
+            });
+            let text =
+                serde_json::to_string(&json).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+            strings::emit(&text, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+        } else {
+            *out = std::ptr::null_mut();
+            Ok(())
+        }
+    })
+}
+
+/// Saves a Hugging Face token to the local store (~/.turbospark/hf_token).
+#[no_mangle]
+pub unsafe extern "C" fn ts_hf_token_set(token: *const c_char) -> c_int {
+    guard_result(|| {
+        let token =
+            strings::required(token, "token").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let store =
+            catalog::Store::default_store().map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        store
+            .set_hf_token(token)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Clears the Hugging Face token from the local store.
+#[no_mangle]
+pub unsafe extern "C" fn ts_hf_token_clear() -> c_int {
+    guard_result(|| {
+        let store =
+            catalog::Store::default_store().map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        store
+            .clear_hf_token()
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Validates a Hugging Face token against the whoami-v2 API.
+#[no_mangle]
+pub unsafe extern "C" fn ts_hf_token_validate_json(
+    token: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let token =
+            strings::required(token, "token").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let status = catalog::validate_hf_token(token);
+        let json = serde_json::to_string(&status).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Reads the current Hugging Face mirror base URL into `*out`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_hf_endpoint_get(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        let endpoint =
+            std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
+        strings::emit(&endpoint, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Sets or clears the Hugging Face mirror base URL ($HF_ENDPOINT).
+/// Passing NULL or an empty string removes the override, resetting to default.
+#[no_mangle]
+pub unsafe extern "C" fn ts_hf_endpoint_set(endpoint: *const c_char) -> c_int {
+    guard_result(|| {
+        let ep = strings::optional(endpoint, "endpoint")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        match ep {
+            Some(url) if !url.trim().is_empty() => {
+                std::env::set_var("HF_ENDPOINT", url.trim());
+            }
+            _ => {
+                std::env::remove_var("HF_ENDPOINT");
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Resolves a model alias or relative directory path into its canonical on-disk install path.
+/// If the model exists on disk, writes the path string to `*out` (free with `ts_string_free`).
+/// If the model cannot be resolved or does not exist, returns `TS_ERR_OPEN`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_model_resolve_path(
+    model_or_alias: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let arg = strings::required(model_or_alias, "modelOrAlias")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let path = catalog::resolve_model_arg(arg);
+        if path.exists() {
+            let s = path.to_string_lossy().into_owned();
+            strings::emit(&s, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+        } else {
+            Err((
+                abi::TS_ERR_OPEN,
+                format!("model '{arg}' could not be resolved or directory does not exist"),
+            ))
+        }
+    })
+}
