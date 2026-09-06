@@ -230,8 +230,7 @@ fn run_one_turn(
                 images.len()
             ));
         }
-        let dir = session.model_dir.clone();
-        let params = vision::preprocess_params(session, &dir)?;
+        let params = vision::preprocess_params(session)?;
         let prepared = vision::prepare_images(images, &params)?;
         vision::attach(session, &rendered, &prepared, &params)?
     };

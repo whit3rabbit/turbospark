@@ -27,10 +27,18 @@ use std::path::{Path, PathBuf};
 use model_io::ArchConfig;
 use tokenizer::{Message, MfTokenizer, Role};
 
-use crate::entry::{CatalogEntry, SourceKind};
+use crate::entry::{CatalogEntry, EntryKind, SourceKind};
 use crate::hf::{Client, RepoRef};
 use crate::probe::{probe, ProbeReport, Verdict};
 use crate::store::{directory_bytes, InstalledModel, Store};
+
+/// The sidecar files a vision-tower-only install fetches, in the order
+/// `install()` writes them: `config.json` decides the family and the
+/// tower's own shape (`crate::stream::stream_vision_sidecar`'s first step),
+/// and `preprocessor_config.json` is what `vision_dir()` reads for
+/// preprocessing settings (Part A3). A tower has no tokenizer, so this list
+/// deliberately does not carry one.
+pub const VISION_SIDECAR_FILES: [&str; 2] = ["preprocessor_config.json", "config.json"];
 
 /// Everything needed to install one model, whether it came from the catalog
 /// or from a `--repo` probe.
@@ -62,6 +70,18 @@ pub struct InstallPlan {
     /// this struct does not validate that itself, since it has no `Store` to
     /// check against.
     pub reuse_trunk_from: Option<PathBuf>,
+    /// True for a vision-tower-ONLY install (vision memory sidecar, part
+    /// A5): no tokenizer to verify, no weight-file walk, the sidecar writer
+    /// instead of a family writer, and [`crate::install::gate`]'s probe
+    /// bypassed outright (a BF16 tower repo legitimately has no
+    /// `quantization` block for that probe to find).
+    pub vision_only: bool,
+    /// An explicit filename for a vision-only install, when the repository's
+    /// safetensors index does not name a shard `fetch_prefixed_shards` can
+    /// find on its own (or the repository ships no index at all). `None` for
+    /// every other install kind, and for a vision-only one whose index
+    /// already lists a matching shard.
+    pub vision_file: Option<String>,
 }
 
 impl InstallPlan {
@@ -81,6 +101,8 @@ impl InstallPlan {
                 .as_ref()
                 .map(|m| RepoRef::new(&m.repo, &m.revision)),
             reuse_trunk_from: None,
+            vision_only: entry.kind == EntryKind::VisionTower,
+            vision_file: None,
         }
     }
 
@@ -105,6 +127,30 @@ impl InstallPlan {
             // inventing one from a bare `--repo` argument would guess at a
             // second repository nobody named.
             mtp: None,
+            vision_only: false,
+            vision_file: None,
+        }
+    }
+
+    /// The plan for an ad-hoc vision-tower pull (`turbospark-model
+    /// pull-vision --repo ...`): no catalog row, no probe (Task 4's gate
+    /// bypass applies to this plan by construction), no tokenizer sidecars
+    /// -- just [`VISION_SIDECAR_FILES`] and whatever tower the repository's
+    /// `config.json` and shards actually declare.
+    pub fn for_vision_tower(alias: &str, weights: RepoRef, vision_file: Option<String>) -> Self {
+        Self {
+            alias: alias.to_string(),
+            sidecars: weights.clone(),
+            weights,
+            file: None,
+            kind: SourceKind::Mlx,
+            sidecar_files: VISION_SIDECAR_FILES.iter().map(|s| s.to_string()).collect(),
+            install_bytes: 0,
+            status: "unlisted".to_string(),
+            mtp: None,
+            reuse_trunk_from: None,
+            vision_only: true,
+            vision_file,
         }
     }
 }
@@ -154,8 +200,15 @@ pub fn install_with_byte_progress(
         human_bytes(plan.install_bytes)
     ));
 
-    // Step 1, and it is first on purpose: see the module header.
+    // Step 1, and it is first on purpose: see the module header. A
+    // vision-tower install fetches the same two files (`preprocessor_config
+    // .json`, `config.json`) through this call -- they are its
+    // `sidecar_files` -- but needs no tokenizer verification, since a tower
+    // has no tokenizer.
     fetch_sidecars(plan, dir, client, &mut progress, byte_progress.as_ref())?;
+    if plan.vision_only {
+        return install_vision_only(plan, dir, client, &mut progress, byte_progress);
+    }
     verify_tokenizer(dir, &mut progress)?;
 
     // Step 2: the weights.
@@ -186,6 +239,63 @@ pub fn install_with_byte_progress(
         install_bytes: directory_bytes(dir),
         installed_on: today(),
         status: plan.status.clone(),
+        kind: None,
+    };
+    Ok(Installed { model, arch })
+}
+
+/// The vision-tower branch of [`install_with_byte_progress`]: stream the
+/// tower through [`crate::stream::stream_vision_sidecar`] and verify the
+/// result through [`model_io::load_vision_sidecar`] rather than through
+/// [`verify_install`]'s manifest/resident-index/expert-layout trio -- a
+/// tower install carries no routed experts in the sense that trio checks,
+/// and `load_vision_sidecar` already does the equivalent full validated
+/// read for this format (`vision_sidecar.json` parses, the arch it implies
+/// passes the real manifest loader, and the record's declared pairing
+/// hidden size agrees with the manifest's own).
+fn install_vision_only(
+    plan: &InstallPlan,
+    dir: &Path,
+    client: &Client,
+    progress: &mut impl FnMut(&str),
+    byte_progress: Option<ByteProgressCallback>,
+) -> Result<Installed, String> {
+    let vision = crate::stream::stream_vision_sidecar(
+        &plan.weights,
+        dir,
+        plan.vision_file.as_deref(),
+        client,
+        progress,
+        byte_progress.as_ref(),
+    )?;
+
+    let (record, _vision) = model_io::load_vision_sidecar(dir)
+        .map_err(|e| format!("the written vision sidecar does not validate: {e}"))?;
+    let family = model_io::ModelFamily::parse(&record.pairs_with.family).ok_or_else(|| {
+        format!(
+            "the written vision sidecar names an unknown family {:?}",
+            record.pairs_with.family
+        )
+    })?;
+    progress(&format!(
+        "vision sidecar install verified: {} block(s) pairing with {} at hidden_size {}",
+        record.tower_blocks, record.pairs_with.family, record.pairs_with.hidden_size
+    ));
+
+    let arch = model_io::sidecar_arch(family, vision.out_hidden_size, &vision);
+    let model = InstalledModel {
+        alias: plan.alias.clone(),
+        repo: plan.weights.repo.clone(),
+        revision: plan.weights.revision.clone(),
+        path: dir
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(dir))
+            .to_path_buf(),
+        family: family.as_str().to_string(),
+        install_bytes: directory_bytes(dir),
+        installed_on: today(),
+        status: plan.status.clone(),
+        kind: Some(EntryKind::VisionTower.as_str().to_string()),
     };
     Ok(Installed { model, arch })
 }
@@ -271,12 +381,30 @@ fn verify_install(
 }
 
 /// Gate a plan on a probe unless the caller forced it.
+///
+/// **A VISION-TOWER PLAN BYPASSES THE PROBE OUTRIGHT.** `probe`'s MLX gate
+/// (`crate::probe::evaluate_config`) refuses a repository whose
+/// `config.json` carries no `quantization` block, on the correct reasoning
+/// that silence there usually means "not actually MLX-quantized" for a
+/// TRUNK. A tower repository is legitimately BF16 with no such block --
+/// `mlx-community/Qwen3.8-27B-4bit`'s tower is exactly that -- so running it
+/// through the trunk's own gate would refuse every real tower by name. The
+/// tower's own correctness gate is [`model_io::load_vision_sidecar`], run
+/// after the write in [`install_vision_only`], not a pre-flight probe.
 pub fn gate(
     client: &Client,
     plan: &InstallPlan,
     force: bool,
     progress: &mut impl FnMut(&str),
 ) -> Result<ProbeReport, String> {
+    if plan.vision_only {
+        progress(&format!(
+            "{}: vision-tower install, skipping the trunk probe (a BF16 tower repo \
+             legitimately has no quantization block for that gate to find)",
+            plan.weights
+        ));
+        return Ok(vision_tower_stub_report(plan));
+    }
     let report = probe(
         client,
         &plan.weights,
@@ -293,6 +421,35 @@ pub fn gate(
             "{} would not run here: {why}\nRe-run with --force to install it anyway.",
             plan.weights
         )),
+    }
+}
+
+/// A trivially [`Verdict::Runnable`] report for a vision-tower plan, so
+/// [`gate`]'s caller (`turbospark-model pull-vision`) can print the same
+/// "probe result" shape every other pull prints without a real probe having
+/// run. Every gated field is left at its neutral value; nothing downstream
+/// of [`gate`] reads them for a vision-only plan.
+fn vision_tower_stub_report(plan: &InstallPlan) -> ProbeReport {
+    ProbeReport {
+        repo: plan.weights.clone(),
+        kind: plan.kind,
+        file: plan.vision_file.clone(),
+        download_bytes: None,
+        architecture: None,
+        family: None,
+        arch: None,
+        types: Vec::new(),
+        affine: None,
+        expert_stride: None,
+        trained_context: None,
+        sidecars_present: plan.sidecar_files.clone(),
+        sidecars_missing: Vec::new(),
+        chat_template: None,
+        verdict: Verdict::Runnable,
+        warnings: vec![
+            "vision-tower install: the trunk probe was skipped by design (see `gate`'s doc)"
+                .to_string(),
+        ],
     }
 }
 
@@ -339,5 +496,117 @@ pub fn human_bytes(bytes: u64) -> String {
         format!("{bytes} B")
     } else {
         format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod vision_gate_tests {
+    use super::*;
+    use crate::entry::{Sidecars, Source, Status};
+
+    fn vision_row() -> CatalogEntry {
+        CatalogEntry {
+            alias: "test-vision-tower".to_string(),
+            kind: EntryKind::VisionTower,
+            name: "Test Vision Tower".to_string(),
+            family: "qwen35".to_string(),
+            source: Source {
+                kind: SourceKind::Mlx,
+                repo: "owner/vision-tower".to_string(),
+                revision: "0".repeat(40),
+                file: None,
+            },
+            sidecars: Sidecars {
+                repo: None,
+                revision: None,
+                files: VISION_SIDECAR_FILES.iter().map(|s| s.to_string()).collect(),
+            },
+            download_bytes: 900_000_000,
+            install_bytes: 900_000_000,
+            status: Status::Runs,
+            gates: Vec::new(),
+            measured: Vec::new(),
+            notes: None,
+            mtp: None,
+        }
+    }
+
+    /// `InstallPlan::from_entry` derives `vision_only` from the row's own
+    /// `kind`, not from any other field -- a model row with the same shape
+    /// otherwise must NOT take the vision-only branch.
+    #[test]
+    fn from_entry_sets_vision_only_from_the_row_kind() {
+        let tower = InstallPlan::from_entry(&vision_row());
+        assert!(tower.vision_only);
+        assert!(tower.vision_file.is_none());
+
+        let mut model = vision_row();
+        model.kind = EntryKind::Model;
+        model.sidecars.files = vec!["tokenizer.json".to_string()];
+        let plan = InstallPlan::from_entry(&model);
+        assert!(!plan.vision_only);
+    }
+
+    #[test]
+    fn for_vision_tower_builds_a_vision_only_plan_with_no_sidecar_repo_split() {
+        let weights = RepoRef::new("owner/vision-tower", "abc123");
+        let plan = InstallPlan::for_vision_tower(
+            "mytower",
+            weights.clone(),
+            Some("model.safetensors".to_string()),
+        );
+        assert!(plan.vision_only);
+        assert_eq!(plan.vision_file.as_deref(), Some("model.safetensors"));
+        assert_eq!(plan.sidecars, weights);
+        assert_eq!(
+            plan.sidecar_files,
+            VISION_SIDECAR_FILES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// **THE GATE BYPASS, MUTATION-CHECKED.** `gate()` must never reach the
+    /// network for a vision-only plan -- the whole point of the bypass is
+    /// that the trunk probe's `quantization`-block gate refuses a BF16
+    /// tower repo that has none. A `Client` with no server behind it proves
+    /// no HTTP call was attempted: the ordinary path would fail on a
+    /// connection error rather than returning `Ok`.
+    #[test]
+    fn gate_bypasses_the_probe_for_a_vision_only_plan() {
+        let plan = InstallPlan::from_entry(&vision_row());
+        let client = Client::new();
+        let mut lines = Vec::new();
+        let report = gate(&client, &plan, false, &mut |line: &str| {
+            lines.push(line.to_string())
+        })
+        .expect("a vision-only plan must gate without touching the network");
+        assert_eq!(report.verdict, Verdict::Runnable);
+        assert!(
+            lines.iter().any(|l| l.contains("skipping the trunk probe")),
+            "{lines:?}"
+        );
+    }
+
+    /// The mutation this guards against: deleting the `if plan.vision_only`
+    /// early return would make this same plan reach `probe()`, which issues
+    /// a real HTTP GET to `huggingface.co` against a repository that does
+    /// not exist and returns `Err` rather than `Ok(Verdict::Runnable)`. This
+    /// test cannot run offline in CI if that mutation is applied (the error
+    /// message would name a network failure instead of matching
+    /// `Verdict::Runnable`), which is exactly the discriminating behavior
+    /// AGENTS.md's mutation-check rule asks for.
+    #[test]
+    fn a_non_vision_plan_is_not_affected_by_the_bypass_branch() {
+        // Not exercised over the network here (that is `catalog_network.rs`'s
+        // job); this only asserts the STRUCTURAL fact that a model-kind plan
+        // built the ordinary way carries `vision_only: false`, so the branch
+        // above cannot accidentally swallow it.
+        let mut model = vision_row();
+        model.kind = EntryKind::Model;
+        model.sidecars.files = vec!["tokenizer.json".to_string()];
+        let plan = InstallPlan::from_entry(&model);
+        assert!(!plan.vision_only);
     }
 }

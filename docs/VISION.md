@@ -14,6 +14,12 @@ reaches a generated token from the CLI, from both server endpoints, and from
 on. An image prompt also CHUNKS its prefill now, on the CLI and through the
 FFI; the server's image path still takes the sequential loop.
 
+**Updated 2026-09-06**: the tower no longer has to be bundled inside a full
+trunk install to run one. "The vision memory sidecar" section below covers
+the standalone `<alias>.gturbo-vision/` format, `--vision-sidecar`, and
+`pull-vision`, verified end to end on real hardware; its own closing
+subsection names what is still open (B2, B3, Part C, Part D).
+
 **THE FRONT-END GAP WAS THE LAST ONE AND IT WAS INVISIBLE FROM THIS PAGE.**
 Every milestone through M-V9 was true of the engine and of two front ends,
 and a third read "complete" beside them while being unable to send a picture
@@ -176,13 +182,20 @@ The tower opens LAZILY, on the first image. A text-only session on a vision
 install pays none of the above, which is why `arch.vision.is_active()` and not
 `runner.vision.is_none()` is the question "does this install have a tower".
 
-**The lever if the extreme page ever matters is row-tiling the MLP.** The
-largest single allocation in that 1.9 GB is `VisionScratch::h1`, the
-`[patches, 4304]` FP16 intermediate, which is 555 MB at 64,516 patches.
-`fc1 -> gelu -> fc2` is row-independent, so a fixed row tile caps that term at
-the tile's size with identical arithmetic. Attention cannot be tiled the same
-way -- it is bidirectional over the whole page -- so the lever bounds the MLP
-term alone.
+**Row-tiling the MLP (Part B1, landed 2026-09-06) bounds this.** The largest
+single allocation in that 1.9 GB was `VisionScratch::h1`, the
+`[patches, 4304]` FP16 intermediate -- 555 MB at 64,516 patches.
+`fc1 -> gelu -> fc2` is row-independent, so `h1` is now sized at
+`min(seq, VISION_MLP_TILE_ROWS)` (2,048 by default) and the block loop runs
+the same three dispatches once per tile instead of once for the whole page,
+with identical arithmetic -- verified byte-identical at the shipped default
+and under a forced multi-tile override on the synthetic fixture. Tiling is
+unconditional rather than gated on page size: an ordinary 1024x1280 OCR page
+(5,120 patches) already spans several tiles, so the saving applies to it
+too, not only to the 64,516-patch extreme. Attention cannot be tiled the
+same way -- it is bidirectional over the whole page -- so the lever bounds
+the MLP term alone. See "The vision memory sidecar" below for what Part B
+did and did not finish.
 
 ## The second slot is not load-bearing yet
 
@@ -557,6 +570,248 @@ because every test drove `produce` directly, the lengths and counts all
 agreed, and the model answered fluently about a page it had never seen. A
 server dropping the image answers from the question alone and matches none of
 the page's line numbers.
+
+## The vision memory sidecar
+
+Status as of 2026-09-06: Parts A1 through A6 and B1 are done, on top of M-V0
+through M-V9 above. What this closes: every vision-capable install used to
+bundle the tower inside a full trunk, so `~/models/qwen38-27b.gturbo` and
+`~/models/qwen38-27b-vision.gturbo` are two independent 15 GB streams of the
+SAME checkpoint, differing by ~0.9 GiB of tower. A sidecar is the tower
+alone, installed once, attachable to any text-only trunk of the matching
+family and hidden size at runtime.
+
+### The format
+
+`model_io::vision_sidecar` -- a `<alias>.gturbo-vision/` directory:
+
+```text
+<alias>.gturbo-vision/
+  manifest.json               numLayers 0, hiddenSize = the tower's own
+                               out_hidden_size, the 15 vision fields set
+  model_weights.bin           the 9 vision.* resident tensors, FP16
+  packed_experts/layout.json  empty (StreamingGturboWriter's REQUIRED_FILES)
+  packed_vision/              layout.json + blobs.bin, write_packed_vision
+                               verbatim -- unchanged from a combined install
+  preprocessor_config.json    fetched from the source repo
+  config.json                 fetched from the source repo
+  vision_sidecar.json         the compatibility record (below)
+```
+
+**The manifest cannot say "this is a tower, not a model", and that is the
+whole reason `vision_sidecar.json` exists as a separate file.**
+`load_manifest` refuses an unknown `manifest.flags` key, and
+`is_production_arch` keys off `(num_layers, hidden_size)` alone, so there is
+no manifest-native place to stamp a "kind" marker without inventing a flag
+every OTHER loader would then have to ignore. The record carries what the
+manifest structurally cannot:
+
+```json
+{
+  "kind": "vision-tower",
+  "pairsWith": { "family": "qwen35", "hiddenSize": 5120 },
+  "source": {
+    "repo": "mlx-community/Qwen3.8-27B-4bit",
+    "revision": "3e6447f082e89cc7f0bc6e5441afd38dfce760ff",
+    "prefix": "vision_tower.",
+    "file": "model-00001-of-00003.safetensors"
+  },
+  "towerBlocks": 27,
+  "blockStride": 30490624
+}
+```
+
+(the exact record for the real `qwen38-vision-tower` install pulled below --
+`blockStride` matches the per-block stride the combined install already
+writes, per-block-page-rounded, unchanged by this feature).
+
+`sidecar_arch(family, hidden_size, vision)` is the ONE function both the
+writer (`crates/repack::write_vision_sidecar`) and the reader
+(`model_io::load_vision_sidecar`) use to build this degenerate `ArchConfig`
+(`known_architecture(family)` with `num_layers: 0`, `hidden_size` set,
+`full_attention_layer_mask` emptied, `vision` set), so the two sides cannot
+independently drift. `is_sidecar_dir(dir)` is the whole of "is this a
+sidecar" -- true iff `vision_sidecar.json` names `SIDECAR_KIND`.
+
+A `model.visual.*`-prefixed source (an HF-native repo or a standalone
+`vision.safetensors` export) canonicalizes onto the same `vision_tower.*`
+naming the walk already expects (`canonicalize_vision_header`), so
+`read_vision_entries` stays keyed on one prefix. A header carrying BOTH
+spellings at once is refused by name, naming both prefixes -- that shape is
+not a checkpoint this walk has ever seen, and silently preferring one
+spelling would write an install missing half its tower or duplicating roles
+under two names, neither of which fails until a dispatch four layers in.
+
+### Attaching one at runtime
+
+`RealForwardRunner::attach_vision_sidecar(dir)`, called AFTER `open()` and
+BEFORE the tower's own lazy open (which still happens on the first image,
+unchanged): it refuses a trunk that already carries its own tower, a
+double-attach, and a family or hidden-size mismatch against the sidecar's
+`pairsWith` record, naming both sides of whichever mismatch fired. On
+success it sets the runner's own `arch.vision` from the sidecar's, so
+`arch.vision.is_active()` -- the same predicate the lazy-open path already
+reads -- becomes true with no other change to that path.
+
+The tower's two GPU-bound resident reads (`packed_vision/` and the 9
+`vision.*` tensors) bind against the SIDECAR's own `ResidentGpuWeights` /
+`ResidentIndex` pair when one is attached, the trunk's otherwise --
+`VisionTower::open_with_sidecar` shares its block-loop and merger machinery
+with the combined-install `open()` through one private `build()` helper, so
+the only thing that changes per arm is which resident buffer the two
+GPU-encode call sites bind. `readable_resident_dtype`'s name-scoped FP16
+exception (every `vision.`-prefixed tensor, and only those, may be read as
+FP16) applies unchanged to the sidecar's own index -- it is a second index,
+not a bypass of the first one's rule.
+
+`RealForwardRunner::vision_dir()` returns the sidecar directory when one is
+attached, the trunk's own install directory otherwise, and is what every
+`preprocessor_config.json` read (CLI, FFI, server) goes through -- so
+attaching a sidecar before any of those reads happen is the entire
+integration; nothing downstream of that point needed to learn a sidecar
+exists. `vision_is_sidecar()` is a test-only engagement accessor, following
+the mapped-residency precedent: a byte-identity check alone cannot tell "the
+sidecar path ran and matched" from "the sidecar path silently fell through
+to the trunk's own tower", so a synthetic gate needs a text-only trunk
+fixture (which structurally has no tower of its own to fall through to)
+plus this accessor to close the loop.
+
+`MfTokenizer::verify_image_markers(vision_start, image_pad)` renders a
+minimal one-image turn through the checkpoint's own chat template and
+requires both marker ids to resolve and to appear exactly once each -- the
+multiplicity `splice_and_walk` assumes. Called right after attach, so a
+mismatched sidecar/tokenizer pairing (an operator points a Qwen tower at a
+Gemma trunk, say -- which the family check above would also catch, but this
+is the second, independent line of defense against a checkpoint whose
+`config.json` and tokenizer disagree with each other) is refused with named
+ids at attach time, not deep inside the splice on the first real image.
+
+### Ingest: `turbospark-model pull-vision`
+
+`turbospark-model pull-vision <ALIAS>` (an alias already in `models.json`,
+kind `vision-tower`) or `pull-vision --repo R[@rev] --alias NAME [--file F]
+[--out DIR]` (an ad-hoc repo). `catalog::stream::fetch_prefixed_shards`
+generalizes the existing MTP-shard fetcher (index-driven, or an explicit
+`--file` override when the repo's index does not name a vision shard by
+itself); `fetch_mtp_shards` is now a thin wrapper over it, unmoved.
+`stream_vision_sidecar` reads the repo's `config.json`, derives the family
+and hidden size off its text config, calls `repack::parse_vision_config`
+(its first PRODUCTION caller -- previously exercised only by an ignored
+network test), refuses `VisionConfig::NONE` by name, fetches the shard(s),
+canonicalizes the header, and writes through
+`repack::write_vision_sidecar` (also its first production caller).
+
+**A vision-tower row bypasses `catalog::gate` outright.** That gate's MLX
+check refuses a repository whose `config.json` carries no `quantization`
+block, correctly, for a TRUNK -- silence there usually means "not actually
+MLX-quantized". A tower repository is legitimately BF16 with no such block
+(`mlx-community/Qwen3.8-27B-4bit`'s tower is exactly that), so running it
+through the trunk's own gate would refuse every real tower by name. The
+tower's own correctness gate is `model_io::load_vision_sidecar`, run after
+the write, not a pre-flight probe.
+
+`resolve_vision_sidecar(store, family, hidden_size)` finds exactly one
+installed tower pairing with a given shape, reading each candidate's own
+`vision_sidecar.json`, and refuses -- naming the candidates -- rather than
+silently picking between two towers of the same architecture at different
+revisions: per the revision-pin discipline this page already states for the
+parity gate, two different revisions of one architecture's tower are NOT
+interchangeable. **This function has no caller yet**: `--vision-sidecar
+auto` (resolve by family/hidden-size through the catalog rather than an
+explicit path) is unbuilt in every front end. Every `--vision-sidecar` flag
+today takes an explicit path only.
+
+The `qwen38-vision-tower` catalog row: `mlx-community/Qwen3.8-27B-4bit`
+pinned at the same revision (`3e6447f0`) both `qwen38-27b.gturbo` and
+`qwen38-27b-vision.gturbo` were streamed from, `download_bytes`
+921,460,192 -- the exact sum of the 333 `vision_tower.*` tensors' own
+`data_offsets` spans inside that revision's first shard (read off the
+shard's own safetensors header, not the shard's whole published size,
+since `fetch_prefixed_shards`'s per-tensor ranged reads transfer the
+former), matching this page's and `CLAUDE.local.md`'s independently
+recorded ~879 MiB for this exact tower.
+
+### Verified on real hardware
+
+`turbospark-model pull-vision qwen38-vision-tower` landed the tower at
+`~/.turbospark/models/qwen38-vision-tower.gturbo-vision/`, 879 MiB on disk
+(`du -sh`), `vision_sidecar.json` reading exactly the record shown above.
+
+The headline comparison, on the same test page and prompt M-V4/M-V8 already
+use (`~/models/vision-probe-qwen38/imgs/page.png`):
+
+```sh
+# Arm A: sidecar-attached text-only trunk.
+turbospark-check --model ~/models/qwen38-27b.gturbo \
+  --vision-sidecar ~/.turbospark/models/qwen38-vision-tower.gturbo-vision \
+  --messages-file p.json --image page.png --temperature 0 --top-k 1 --max-new 128
+
+# Arm B: the combined install (the reference).
+turbospark-check --model ~/models/qwen38-27b-vision.gturbo \
+  --messages-file p.json --image page.png --temperature 0 --top-k 1 --max-new 128
+```
+
+Arms A and B's stdout are SHA-256-identical past the resolved-request block
+(which differs only in the `model:` path each arm names), reproducing the
+same `8316.48`-line transcription this page's M-V8 section already
+recorded for the combined install. The sampled arm (dropping
+`--temperature 0 --top-k 1`, a fixed `--seed`) is identical too. A
+text-only prompt run on `qwen38-27b.gturbo` with and without
+`--vision-sidecar` attached is also byte-identical, confirming attach
+perturbs nothing when no image ever arrives.
+
+This is the direct, real-weights confirmation of what Part A1's synthetic
+tests could only prove structurally (a sidecar and a combined install write
+byte-identical tower bytes from the same source checkpoint): the two
+install SHAPES really do produce the same model.
+
+**Left open, precisely scoped rather than attempted and abandoned.**
+`crates/runtime/tests/vision_tower_parity.rs` and
+`crates/bench/tests/vision_memory_oracle.rs` both still read only
+`TURBOSPARK_QWEN38_VISION_INSTALL_DIR` (the combined install); neither has a
+sidecar-aware env arm, so the tower's mlx-vlm cosine and the multi-page
+memory ceiling have not been re-measured specifically THROUGH a
+sidecar-attached trunk. Adding one is not a trivial change to either file:
+the parity gate additionally needs a `TURBOSPARK_VISION_DUMP_DIR` reference
+dump and reads the install's arch via `peek_manifest_arch` rather than
+through an opened runner, and the memory oracle's own
+`assert_agrees_with_catalog` is deliberately kept tied to
+`qwen38-27b-vision` (a decision made explicitly when this feature started,
+to keep that install and its frozen rows standing). The CLI comparison
+above is the evidence that a sidecar-attached run reaches the identical
+bytes those two gates already certified; a session that wants the sidecar
+arm measured through those specific instruments should budget it as its
+own pass rather than a follow-on to this one.
+
+### Part B, and C, landed
+
+`VisionScratch`'s per-page buffers were the other memory cost this feature
+had not closed, and all three of B's sub-parts are now built. B1
+(`VISION_MLP_TILE_ROWS`, described in "Memory" above) row-tiles the MLP so
+`h1` never holds more than one tile's rows -- the -555 MB term at the
+64,516-patch extreme this page already named as the lever. B2 aliases the
+five buffers that are never live at once under the serial encoder's
+commit-order guarantee (`normed`/`attn`, `q`/`proj`, `k`/`m1`, the last pair
+equal in byte count by algebraic identity rather than by luck), dropping
+`VisionScratch` from seven physical `seq * hidden` allocations to five. B3
+(`crates/runtime/src/vision/budget.rs`) derives `max_pixels` from the
+memory guard's own budget -- a binary search against `VisionShape::
+scratch_bytes` between the checkpoint's `min_pixels` and its declared
+ceiling -- rather than only from the checkpoint's declared ceiling, so a
+`--load-guard strict` session on a small machine gets a smaller image
+than the checkpoint would otherwise hand it, with the whole subtraction
+shown (`VisionBudgetTooSmall`) when even the floor does not fit.
+
+Part C (`release_vision_tower`, exposed through `ts_session_release_vision`)
+gives an idle session back the two pinned streamer slots (or the
+mapped-residency mapping), the position table, and a sidecar's own
+resident weights and mmap, without forgetting an attached sidecar
+directory or un-declaring the install's vision capability -- the next
+image reopens the tower from wherever it would have opened from before.
+
+Part D (a Qwen3-VL Phase 0 scoping document, `docs/QWEN3VL_PHASE0.md`) is
+the one sub-part that is deliberately documentation only, with no code:
+fact-finding for a future bring-up, not a bring-up.
 
 ## What is not built
 

@@ -83,6 +83,33 @@
    "rstrip": false,
    "normalized": false,
    "special": true
+  },
+  {
+   "id": 248070,
+   "content": "<|vision_start|>",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  },
+  {
+   "id": 248071,
+   "content": "<|image_pad|>",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  },
+  {
+   "id": 248072,
+   "content": "<|vision_end|>",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
   }
  ],
  "normalizer": null,

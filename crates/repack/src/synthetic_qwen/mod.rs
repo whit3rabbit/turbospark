@@ -34,4 +34,4 @@ pub use qwen4_decode::{
     NUM_HEADS as QWEN4_DECODE_NUM_HEADS, NUM_KV_HEADS as QWEN4_DECODE_NUM_KV_HEADS,
     NUM_LAYERS as QWEN4_DECODE_NUM_LAYERS, PLE_LAYER as QWEN4_DECODE_PLE_LAYER, TOP_K,
 };
-pub use vision::tiny_vision_config;
+pub use vision::{build_synthetic_vision_sidecar, tiny_vision_config};

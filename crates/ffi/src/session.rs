@@ -33,7 +33,6 @@
 //! on.
 
 use std::ops::Deref;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -75,13 +74,6 @@ pub struct SessionCore {
     /// what IS cached is everything resolved at open, which a later call
     /// must not re-derive.
     pub(crate) info: SessionInfo,
-    /// The install's directory, RESOLVED.
-    ///
-    /// Never the caller's `--model` argument, which may be a catalog alias
-    /// (`crates/cli` Gotcha 5). Carried because `preprocessor_config.json` is
-    /// read from it per turn that attaches an image, and the pixel budget has
-    /// no default worth falling back to (`crates/vision-io` Gotcha 6).
-    pub(crate) model_dir: PathBuf,
     /// The RESOLVED context window. Read from here and never from a
     /// request: under `auto` the request carries no number, and the KV cache
     /// was allocated at this one.
@@ -101,6 +93,18 @@ pub struct SessionCore {
     /// macOS-only and this struct is not; the human-readable half of the
     /// plan is already carried in `info.speculation`.
     pub(crate) speculation_block: Option<usize>,
+    /// The guard tier this session actually opened under (vision memory
+    /// sidecar Part B3). Carried so a later image's pixel-budget clamp
+    /// resolves against the SAME tier `maxContext` did, never a second,
+    /// possibly different one (Gotcha 12's rule, applied to a third call).
+    pub(crate) load_policy: runtime::LoadPolicy,
+    /// What this install already commits before KV --
+    /// `runtime::committed_bytes(dir)`, the same value `maxContext`
+    /// resolved against.
+    pub(crate) committed_bytes: u64,
+    /// This session's own KV cache at [`Self::max_context`], i.e.
+    /// `ContextPlan::kv_bytes`.
+    pub(crate) kv_bytes: u64,
 }
 
 impl SessionCore {

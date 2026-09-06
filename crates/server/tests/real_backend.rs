@@ -68,6 +68,8 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
         // PINNED at 1 (no pool): this test asserts nothing about session
         // multiplexing.
         1,
+        // PINNED at None: this test carries no vision sidecar.
+        None,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
@@ -222,6 +224,8 @@ async fn real_backend_reuses_kv_across_two_chat_turns() {
         // multi-session pooling. See `real_backend_reuses_kv_across_two_
         // interleaved_conversations` for that.
         1,
+        // PINNED at None: this test carries no vision sidecar.
+        None,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
@@ -345,6 +349,8 @@ async fn real_backend_reuses_kv_across_two_interleaved_conversations() {
         // THE ONE FLAG THIS TEST IS ABOUT: 2, unlike every other test in this
         // file, so the pool holds one live plus one parked session.
         2,
+        // PINNED at None: this test carries no vision sidecar.
+        None,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
@@ -516,6 +522,9 @@ async fn real_backend_reads_an_image_sent_over_both_endpoints() {
         // PINNED at 1 (no pool): this test asserts nothing about session
         // multiplexing.
         1,
+        // PINNED at None: this test exercises a COMBINED vision install
+        // (its tower is the trunk's own), not a sidecar-attached one.
+        None,
     )
     .expect("the vision install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);

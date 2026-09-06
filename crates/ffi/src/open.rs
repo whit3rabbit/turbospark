@@ -250,6 +250,10 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         .map_err(|e| format!("failed to load a tokenizer from {}: {e}", dir.display()))?;
 
     let trained = repack::trained_context_meta::peek(dir);
+    // Bound rather than computed inline: the vision pixel budget (Part B3)
+    // needs the SAME committed-bytes figure `max_context` resolved against,
+    // not a second read of the install.
+    let committed = runtime::committed_bytes(dir);
     let plan = runtime::resolve_max_context(
         match max_context {
             Some(n) => runtime::MaxContext::Fixed(n),
@@ -266,7 +270,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         // from what `turbospark-check` resolves for the same install.
         foundation::runtime_config::DEFAULT_MAX_CONTEXT,
         runtime::physical_memory(),
-        runtime::committed_bytes(dir),
+        committed,
         &load_policy,
     )
     .map_err(|e| e.to_string())?;
@@ -333,6 +337,33 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // working session into a failing one, only a slower-than-necessary one
     // into a faster one.
     runner.set_prefix_reuse(true);
+
+    // Vision memory sidecar (Part A4): attach BEFORE any image is ever
+    // processed and before `vision_info` below reads `has_vision_tower` /
+    // `vision_config` -- both already read whichever tower is current,
+    // trunk's own or sidecar's, with no further change needed.
+    //
+    // `verify_image_markers` catches a mismatched sidecar/tokenizer pairing
+    // HERE, naming the actual ids, rather than letting it surface deep
+    // inside `turbospark_vision_io::splice_and_walk` at the first image a
+    // caller attaches.
+    let vision_sidecar_dir: Option<std::path::PathBuf> = match options.vision_sidecar.as_deref() {
+        Some(path) => {
+            let dir = std::path::PathBuf::from(path);
+            runner
+                .attach_vision_sidecar(&dir)
+                .map_err(|e| format!("visionSidecar {path}: {e}"))?;
+            let vision = runner.vision_config();
+            tokenizer
+                .verify_image_markers(
+                    vision.vision_start_token_id as i32,
+                    vision.image_token_id as i32,
+                )
+                .map_err(|e| format!("visionSidecar {path}: {e}"))?;
+            Some(dir)
+        }
+        None => None,
+    };
 
     // **RESOLVED AS THOUGH EVERY TURN WERE DETERMINISTIC, which is the one
     // place this binding follows the SERVER rather than the CLI.** On the
@@ -427,7 +458,13 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
                 runtime::SpeculationPlan::Enabled { .. } => None,
             },
         },
-        vision: vision_info(&runner, dir),
+        vision: vision_info(
+            &runner,
+            vision_sidecar_dir.as_deref(),
+            load_policy.guard,
+            committed,
+            plan.kv_bytes,
+        ),
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
@@ -443,11 +480,13 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         engine: Mutex::new(Engine::Real(Box::new(runner))),
         tokenizer,
         cancel: Arc::new(AtomicBool::new(false)),
-        model_dir: dir.to_path_buf(),
         max_context: plan.resolved,
         rate,
         speculation_block,
         info,
+        load_policy,
+        committed_bytes: committed,
+        kv_bytes: plan.kv_bytes,
     }))
 }
 
@@ -460,21 +499,49 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
 /// checks, in the same order, so the gate and the refusal cannot disagree --
 /// a detection probe must not be able to pass where its own resolver fails
 /// (AGENTS.md Gotcha 52).
-fn vision_info(runner: &runtime::RealForwardRunner, dir: &Path) -> crate::wire::VisionInfo {
+///
+/// `sidecar_dir` is THIS session's own record of whether `visionSidecar` was
+/// given and attached successfully, not a re-derivation from the runner:
+/// `RealForwardRunner::vision_is_sidecar()` answers `None` until the tower
+/// has actually been opened (lazily, on the first image), so it cannot tell
+/// "install" from "sidecar" at OPEN time, which is when this struct is built.
+fn vision_info(
+    runner: &runtime::RealForwardRunner,
+    sidecar_dir: Option<&Path>,
+    guard: model_io::LoadGuard,
+    committed: u64,
+    kv_bytes: u64,
+) -> crate::wire::VisionInfo {
     if !runner.has_vision_tower() {
         return crate::wire::VisionInfo::default();
     }
     let image_token_id = runner.vision_config().image_token_id as i32;
-    match crate::vision::preprocess_params(runner, dir) {
-        Ok(_) => crate::wire::VisionInfo {
+    let (source, sidecar_path) = match sidecar_dir {
+        Some(dir) => (Some("sidecar".to_string()), Some(dir.display().to_string())),
+        None => (Some("install".to_string()), None),
+    };
+    match crate::vision::preprocess_params(
+        runner,
+        guard,
+        runtime::physical_memory(),
+        committed,
+        kv_bytes,
+    ) {
+        Ok(params) => crate::wire::VisionInfo {
             active: true,
             image_token_id: Some(image_token_id),
             reason: None,
+            source,
+            sidecar_path,
+            max_pixels: Some(params.max_pixels),
         },
         Err(reason) => crate::wire::VisionInfo {
             active: false,
             image_token_id: None,
             reason: Some(reason),
+            source,
+            sidecar_path,
+            max_pixels: None,
         },
     }
 }

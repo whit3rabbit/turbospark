@@ -34,6 +34,33 @@ fn an_empty_api_key_is_refused() {
     assert!(err.contains("--api-key"), "{err}");
 }
 
+// --- vision sidecar (vision memory sidecar, Part A4) -----------------------
+
+#[test]
+fn vision_sidecar_defaults_to_none() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert_eq!(d.vision_sidecar, None);
+}
+
+/// The path stays an OPAQUE string here, exactly as `--steering`'s does:
+/// this binary reads no directory itself, so a missing or malformed sidecar
+/// is `RealChatModel::open`'s error to report, not a parse failure.
+#[test]
+fn a_vision_sidecar_path_is_not_validated_by_the_parser() {
+    let d = parse(&[
+        "--model",
+        "/tmp/m",
+        "--vision-sidecar",
+        "/does/not/exist.gturbo-vision",
+    ])
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        d.vision_sidecar.as_deref(),
+        Some("/does/not/exist.gturbo-vision")
+    );
+}
+
 /// `--model` reaches the catalog store, so one install serves this
 /// binary and `turbospark-check` under one alias.
 ///

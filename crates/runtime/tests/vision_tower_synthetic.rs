@@ -383,6 +383,25 @@ fn embedding_f32(rows: &[u16]) -> Vec<f32> {
         .collect()
 }
 
+/// [`image`] at an arbitrary grid, for the row-tiling cases below that need a
+/// second `seq` distinct from the fixture's default 4x4/16-patch page.
+///
+/// `gh` and `gw` must each be a multiple of the fixture's merge size (2), the
+/// same constraint [`image`]'s fixed 4x4 already satisfies.
+fn image_with_grid(params: &PreprocessParams, gh: usize, gw: usize) -> PreprocessedImage {
+    let grid = GridThw::new(1, gh, gw);
+    let dim = params.patch_dim();
+    let patch_rows: Vec<f32> = (0..grid.patches() * dim)
+        .map(|i| ((i as f32) * 0.0173).sin() * 0.8)
+        .collect();
+    PreprocessedImage {
+        merged_tokens: grid.merged_tokens(params.merge_size),
+        patch_rows,
+        grid,
+        resized: (gh * params.patch_size, gw * params.patch_size),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cases
 // ---------------------------------------------------------------------------
@@ -700,4 +719,108 @@ fn the_role_and_prefix_tables_match_the_writers() {
         writer, written,
         "the roles the walk writes are not the roles this crate resolves"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Row-tiling the MLP (Part B1)
+// ---------------------------------------------------------------------------
+
+/// Row-tiling `fc1 -> gelu -> fc2` must not change the tower's output.
+///
+/// The fixture's page is 16 patches; a tile of 4 forces FOUR loop iterations
+/// where the shipped default (2,048) takes exactly one, so this is the
+/// multi-tile arm the extreme real page (64,516 patches, 32 tiles at the
+/// default) exercises in miniature. `set_vision_mlp_tile_rows` mutates the
+/// tower IN PLACE, so the same runner and the same install bytes back both
+/// runs -- only the tile size differs between them.
+#[test]
+fn row_tiling_the_mlp_does_not_change_the_towers_output() {
+    let (dir, arch) = build();
+    let p = params();
+    let img = image(&p);
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("open");
+
+    let baseline = runner
+        .encode_image(&img, &p)
+        .expect("baseline (untiled)")
+        .rows;
+    runner.set_vision_mlp_tile_rows(4);
+    let tiled = runner.encode_image(&img, &p).expect("tiled").rows;
+
+    assert_eq!(
+        baseline, tiled,
+        "tiling the MLP into 4-row chunks changed the tower's output; fc1 -> gelu -> fc2 is \
+         row-independent and must produce identical bytes at any tile size"
+    );
+}
+
+/// The scratch-bytes prediction and the real allocation agree at two
+/// different page sizes, one smaller than its tile and one spanning several.
+///
+/// `vision_scratch_bytes_for` and `vision_last_scratch_bytes` are two
+/// independent numbers (Gotcha 25's residency case, one level up): the first
+/// is what a caller budgeting a page would compute and the second is what the
+/// allocator actually asked for, so a formula that drifted from the
+/// allocation reddens here rather than understating a budget silently. Both
+/// read `VisionTower::mlp_tile_rows` at call time, so the equality holds
+/// under an override too, not only at the shipped default.
+#[test]
+fn scratch_bytes_matches_the_allocation_at_two_seq_values() {
+    let (dir, arch) = build();
+    let p = params();
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("open");
+
+    // Case 1: the fixture's default 16-patch page against the SHIPPED
+    // default tile (2,048) -- seq is far smaller than the tile, one
+    // iteration.
+    let small = image(&p);
+    runner.encode_image(&small, &p).expect("small page");
+    let seq = small.grid.patches();
+    assert_eq!(
+        runner.vision_last_scratch_bytes(),
+        runner.vision_scratch_bytes_for(seq),
+        "scratch_bytes disagrees with the real allocation at seq={seq}, default tile"
+    );
+
+    // Case 2: the SAME 16-patch page, now several tiles wide relative to an
+    // overridden tile of 4 (4 tiles). Confirms the formula tracks an
+    // overridden tile, not just the shipped constant.
+    runner.set_vision_mlp_tile_rows(4);
+    runner.encode_image(&small, &p).expect("small page, tiled");
+    assert_eq!(
+        runner.vision_last_scratch_bytes(),
+        runner.vision_scratch_bytes_for(seq),
+        "scratch_bytes disagrees with the real allocation at seq={seq}, tile=4"
+    );
+    // And the tiled allocation must actually be SMALLER than the untiled
+    // one's h1 term would have been at this seq -- otherwise the override
+    // reached nothing and this case would pass by accident.
+    let v = tiny_vision_config();
+    let untiled_h1 = 2 * seq * v.intermediate_size as usize;
+    let tiled_h1 = 2 * 4 * v.intermediate_size as usize;
+    assert!(
+        tiled_h1 < untiled_h1,
+        "the tile override must shrink h1 below the untiled size for this case to mean anything"
+    );
+
+    // Case 3: a LARGER page (32 patches) against the shipped default tile
+    // (2,048) -- a second, genuinely different seq, still smaller than the
+    // tile.
+    let large = image_with_grid(&p, 4, 8);
+    let mut runner2 = RealForwardRunner::open(&dir, arch_for_grid()).expect("open second runner");
+    let seq2 = large.grid.patches();
+    runner2.encode_image(&large, &p).expect("large page");
+    assert_eq!(
+        runner2.vision_last_scratch_bytes(),
+        runner2.vision_scratch_bytes_for(seq2),
+        "scratch_bytes disagrees with the real allocation at seq={seq2}, default tile"
+    );
+}
+
+/// Same fixture as [`build`], for the second runner
+/// [`scratch_bytes_matches_the_allocation_at_two_seq_values`] opens against a
+/// fresh directory.
+fn arch_for_grid() -> model_io::ArchConfig {
+    let (_, arch) = build();
+    arch
 }

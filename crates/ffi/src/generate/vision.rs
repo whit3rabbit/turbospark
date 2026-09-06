@@ -36,7 +36,13 @@ pub(crate) fn attach_images(
             session.info.model_path
         ));
     }
-    let params = crate::vision::preprocess_params(runner, &session.model_dir)?;
+    let params = crate::vision::preprocess_params(
+        runner,
+        session.load_policy.guard,
+        runtime::physical_memory(),
+        session.committed_bytes,
+        session.kv_bytes,
+    )?;
     let images = crate::vision::prepare(parts, &params)?;
     crate::vision::attach(runner.as_mut(), rendered, &images, &params)
 }
@@ -65,3 +71,29 @@ pub(crate) fn clear_vision(engine: &mut Engine) {
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn clear_vision(_engine: &mut Engine) {}
+
+/// Frees the vision tower's open resources on this session (vision memory
+/// sidecar, Part C; `runtime::RealForwardRunner::release_vision_tower`).
+///
+/// Refused the same way [`attach_images`] refuses an image: a SCRIPTED
+/// session has no tower to release, and there is no engine at all off
+/// macOS. Neither refusal is a lie about capability -- a caller that wants
+/// to know whether releasing did anything meaningful already has
+/// `has_vision_tower`/`vision_dir` to ask first.
+///
+/// Idempotent on a session whose tower is already closed, or whose install
+/// declares no tower at all: `release_vision_tower` is `self.vision = None`,
+/// which is a no-op when it is `None` already.
+#[cfg(target_os = "macos")]
+pub(crate) fn release_vision(engine: &mut Engine) -> Result<(), String> {
+    let Engine::Real(runner) = engine else {
+        return Err(SCRIPTED_HAS_NO_TOWER.to_string());
+    };
+    runner.release_vision_tower();
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn release_vision(_engine: &mut Engine) -> Result<(), String> {
+    Err("the engine is macOS-only, so no vision tower can run here".to_string())
+}

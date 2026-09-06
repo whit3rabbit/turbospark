@@ -15,12 +15,16 @@
 //! and is caught by construction rather than by an assertion someone has to
 //! remember to write.
 
-use model_io::VisionConfig;
+use model_io::{ModelFamily, VisionConfig};
 
 use super::dense::HIDDEN;
 use super::dense_tensors::f16_vector;
-use crate::gemma4_checkpoint::{VISION_BLOCK_ROLES, VISION_PREFIX};
-use crate::synthetic_real::Tensor;
+use crate::gemma4_checkpoint::{
+    read_vision_entries, write_vision_sidecar, Gemma4Shards, VISION_BLOCK_ROLES, VISION_PREFIX,
+};
+use crate::ranged_download::MemoryRangeSource;
+use crate::safetensors_header::{parse_header, DEFAULT_MAX_HEADER_BYTES};
+use crate::synthetic_real::{assemble_safetensors, Tensor};
 
 /// Blocks in the toy tower. TWO rather than one, because a single-block tower
 /// cannot tell a per-block stride from a whole-file size, and cannot catch a
@@ -200,4 +204,69 @@ fn f16_matrix(name: &str, rows: usize, cols: usize, seed: u64) -> Tensor {
         shape: vec![rows as u64, cols as u64],
         bytes: flat.bytes,
     }
+}
+
+/// A SIDECAR-ONLY fixture (vision memory sidecar, part A1): the tower alone,
+/// written through [`write_vision_sidecar`] rather than baked into a full
+/// dense install.
+///
+/// **Built from the SAME [`vision_tower_tensors`] the combined-install
+/// fixture uses**, which is the load-bearing property of the whole sidecar
+/// design and not an implementation convenience: it is what lets a test
+/// assert `packed_vision/blobs.bin` and the nine resident tensor byte ranges
+/// are byte-IDENTICAL between "tower baked into a full install"
+/// (`build_synthetic_qwen_gdn_dense_install_with_vision`) and "tower alone
+/// in a sidecar" (this function), by construction rather than by two
+/// builders happening to agree.
+///
+/// Also drops a placeholder `preprocessor_config.json` into `dir`, so
+/// `model_io::load_vision_sidecar` can be exercised end to end in tests
+/// without a real download -- fetching the real file from the source
+/// repository is catalog ingest, a later part of this feature, not this
+/// fixture's job.
+///
+/// Returns `Result` rather than a bare `VisionConfig`: every write in this
+/// walk (the packed blocks, the resident index, the manifest, the sidecar
+/// record) can fail, and every sibling fixture builder in this module
+/// propagates that instead of panicking.
+pub fn build_synthetic_vision_sidecar(
+    dir: &std::path::Path,
+    model_id: &str,
+) -> Result<VisionConfig, Box<dyn std::error::Error>> {
+    let vision = tiny_vision_config();
+    let ts = vision_tower_tensors();
+    let vision_bases: Vec<&str> = ts.iter().map(|t| t.name.as_str()).collect();
+
+    let blob = assemble_safetensors(&ts);
+    let source = MemoryRangeSource::new(&blob);
+    let header = parse_header(&blob, DEFAULT_MAX_HEADER_BYTES)?;
+    let shards = Gemma4Shards::single(&header, &source);
+
+    let read = read_vision_entries(&shards, &vision_bases, &vision)?;
+
+    let family = ModelFamily::QwenGdnDense;
+    let record = model_io::SidecarRecord {
+        kind: model_io::SIDECAR_KIND.to_string(),
+        pairs_with: model_io::PairsWith {
+            family: family.as_str().to_string(),
+            hidden_size: vision.out_hidden_size,
+        },
+        source: model_io::SidecarSource {
+            repo: "test/vision-sidecar-fixture".to_string(),
+            revision: "0".repeat(40),
+            prefix: VISION_PREFIX.to_string(),
+            file: "model.safetensors".to_string(),
+        },
+        tower_blocks: vision.depth,
+        block_stride: read.block_stride,
+    };
+
+    write_vision_sidecar(dir, family, &vision, model_id, &read, record)?;
+
+    // Not a real download (that's catalog ingest, a later part); just enough
+    // for `model_io::load_vision_sidecar` to find the file the format
+    // requires.
+    std::fs::write(dir.join("preprocessor_config.json"), b"{}")?;
+
+    Ok(vision)
 }

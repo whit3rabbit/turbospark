@@ -421,6 +421,17 @@ pub struct InvocationRequest {
     /// The explicit decode rate cap in tokens per second, or `None` to
     /// take whatever the resolved profile carries.
     pub max_tokens_per_sec: Option<f64>,
+    /// Path to a standalone vision-tower sidecar install to attach to a
+    /// text-only trunk (vision memory sidecar, Part A4), or `None` to use
+    /// the trunk's own tower (if any).
+    ///
+    /// An opaque string, like `steering` and `images` above: this crate is
+    /// pure and reads no directory, so resolving and attaching it is the
+    /// front end's job. **`"auto"` is not special here and is read as a
+    /// literal path** -- catalog-based sidecar resolution is a later part,
+    /// not yet built, so this crate deliberately does not reserve the
+    /// keyword ahead of it.
+    pub vision_sidecar: Option<String>,
     /// How hard the model is asked to think, rendered into the prompt by the
     /// checkpoint's own chat template.
     pub reasoning: ReasoningEffort,

@@ -473,3 +473,46 @@ fn no_image_flag_leaves_the_list_empty() {
     assert!(request.images.is_empty());
     assert!(!request.image_batch);
 }
+
+// --- vision sidecar (vision memory sidecar, Part A4) -----------------------
+
+#[test]
+fn vision_sidecar_defaults_to_none() {
+    let req = expect_success(parse(&tok(&["--model", "m.bin", "--prompt", "hi"])));
+    assert_eq!(req.vision_sidecar, None);
+}
+
+/// The path stays an OPAQUE string here, exactly as `--steering`'s does: this
+/// crate is pure and reads no directory, so a missing or malformed sidecar
+/// is the front end's error to report, not a parse failure.
+#[test]
+fn a_vision_sidecar_path_is_not_validated_by_the_parser() {
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m.bin",
+        "--prompt",
+        "hi",
+        "--vision-sidecar",
+        "/does/not/exist.gturbo-vision",
+    ])));
+    assert_eq!(
+        req.vision_sidecar.as_deref(),
+        Some("/does/not/exist.gturbo-vision")
+    );
+}
+
+/// `"auto"` is NOT a keyword this part resolves -- catalog-based sidecar
+/// resolution is a later part -- so it must round-trip as an ordinary,
+/// literal path rather than being special-cased or rejected.
+#[test]
+fn the_literal_value_auto_is_read_as_a_path_not_a_keyword() {
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m.bin",
+        "--prompt",
+        "hi",
+        "--vision-sidecar",
+        "auto",
+    ])));
+    assert_eq!(req.vision_sidecar.as_deref(), Some("auto"));
+}

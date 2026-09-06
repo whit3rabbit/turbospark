@@ -49,11 +49,14 @@ pub(crate) struct PreparedImage {
 /// `in_channels`) is cross-checked against the install's own `arch.vision`,
 /// because the two files could disagree and the tower would then refuse at a
 /// shape check far from the config that caused it.
-pub(crate) fn preprocess_params(
-    session: &Session,
-    model_dir: &std::path::Path,
-) -> Result<PreprocessParams, String> {
-    let path = model_dir.join("preprocessor_config.json");
+///
+/// Reads `session.runner.vision_dir()` rather than the session's own model
+/// directory, so a trunk with an attached vision SIDECAR (vision memory
+/// sidecar, Part A3) finds `preprocessor_config.json` beside the sidecar's
+/// `manifest.json` rather than the trunk's own install, which for a
+/// text-only trunk has no such file at all.
+pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, String> {
+    let path = session.runner.vision_dir().join("preprocessor_config.json");
     let json = std::fs::read_to_string(&path).map_err(|e| {
         format!(
             "{}: {e}\n  this install declares no image preprocessing config; re-stream it with \
@@ -61,7 +64,7 @@ pub(crate) fn preprocess_params(
             path.display()
         )
     })?;
-    let params = PreprocessParams::from_preprocessor_config_json(&json)
+    let mut params = PreprocessParams::from_preprocessor_config_json(&json)
         .map_err(|e| format!("{}: {e}", path.display()))?;
 
     let vision = session.runner.vision_config();
@@ -88,6 +91,33 @@ pub(crate) fn preprocess_params(
             params.temporal_patch_size,
             vision.temporal_patch_size,
         ));
+    }
+
+    // Vision memory sidecar (Part B3): clamp the checkpoint's own declared
+    // `max_pixels` ceiling to what THIS session's `--load-guard` tier can
+    // actually afford, on top of the KV cache and resident weights it
+    // already committed at open -- neither of which `params.max_pixels`
+    // alone has any way to see. The SAME tier `--max-context` resolved
+    // against, never a second one (`crates/ffi/CLAUDE.md` Gotcha 12's rule).
+    let declared_max_pixels = params.max_pixels;
+    let budget = session
+        .runner
+        .resolve_vision_pixel_budget(
+            declared_max_pixels,
+            params.min_pixels,
+            session.load_policy.guard,
+            runtime::physical_memory(),
+            session.committed_bytes,
+            session.kv_bytes,
+        )
+        .map_err(|e| e.to_string())?;
+    if budget.clamped {
+        params.max_pixels = budget.resolved_max_pixels;
+        eprintln!(
+            "vision: max_pixels {declared_max_pixels} -> {} (memory budget, {})",
+            budget.resolved_max_pixels,
+            session.load_policy.guard.as_str(),
+        );
     }
     Ok(params)
 }

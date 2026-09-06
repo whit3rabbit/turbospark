@@ -83,6 +83,24 @@ impl RealForwardRunner {
         self.vision.as_ref().map(|v| v.is_mapped_residency())
     }
 
+    /// Overrides the vision tower's MLP row tile (Part B1,
+    /// `crate::vision::scratch::VISION_MLP_TILE_ROWS` by default) after it
+    /// has opened, so a test can force several loop iterations on a page far
+    /// smaller than any real one would need tiling for -- e.g. a 16-patch
+    /// synthetic fixture at a tile of 4, which is otherwise always a single
+    /// iteration under the shipped default.
+    ///
+    /// No-op if no image has been encoded yet: the tower opens lazily on the
+    /// first [`Self::encode_image`] call, so there is nothing here to
+    /// override before that. Call `encode_image` once first to open it, then
+    /// this, then `encode_image` again to see the tiled arm.
+    #[doc(hidden)]
+    pub fn set_vision_mlp_tile_rows(&mut self, tile_rows: usize) {
+        if let Some(vision) = self.vision.as_mut() {
+            vision.mlp_tile_rows = tile_rows;
+        }
+    }
+
     /// Run one preprocessed image through the vision tower (ROADMAP M-V4).
     ///
     /// Returns the `[merged_tokens, out_hidden_size]` FP16 rows the trunk's
@@ -203,15 +221,145 @@ impl RealForwardRunner {
             ));
         }
         if self.vision.is_none() {
-            self.vision = Some(crate::vision::VisionTower::open(
-                &self.install_dir,
-                &self.context,
-                &self.weights,
-                &self.index,
-                &self.arch,
-            )?);
+            self.vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => {
+                    crate::vision::VisionTower::open_with_sidecar(dir, &self.context, &self.arch)?
+                }
+                None => crate::vision::VisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
         }
         Ok(())
+    }
+
+    /// Attach a standalone vision sidecar directory (vision memory sidecar,
+    /// Part A2) to an already-open, text-only trunk, so the NEXT image
+    /// processed on this session opens its tower from `dir` instead of
+    /// refusing for lack of one.
+    ///
+    /// Call this once, before the first image -- there is no supported way
+    /// to detach or replace a sidecar once attached, matching the tower's
+    /// own "opens once, lazily" contract. Does NOT open the tower itself:
+    /// that still happens lazily on the first [`Self::encode_image`] call,
+    /// for the same reason a combined install's tower does (a text-only
+    /// session on a sidecar-attached trunk still pays nothing for it until
+    /// an image actually arrives).
+    ///
+    /// Four refusals, checked in this order:
+    /// - a sidecar is already attached to this session (double-attach, or
+    ///   attach after the tower has already opened from an earlier attach --
+    ///   both leave [`Self::vision_dir`]'s backing field `Some`, which is
+    ///   what this checks);
+    /// - the trunk's OWN install already declares a vision tower (attaching
+    ///   a second one would mean two towers for one session);
+    /// - `dir` does not validate as a sidecar (`model_io::load_vision_sidecar`
+    ///   surfaces the reason: missing record, unknown family, a manifest
+    ///   that fails structural validation, or a record/manifest hidden-size
+    ///   disagreement internal to the sidecar itself);
+    /// - the sidecar's declared pairing (`family`, `hidden_size`) does not
+    ///   match this trunk's.
+    ///
+    /// On success, `self.arch.vision` becomes the sidecar's `VisionConfig`,
+    /// so [`Self::has_vision_tower`] and [`Self::vision_config`] read exactly
+    /// as they would for a combined install from this point on.
+    pub fn attach_vision_sidecar(&mut self, dir: &Path) -> Result<(), RealForwardError> {
+        if let Some(existing) = &self.vision_sidecar_dir {
+            return Err(RealForwardError::Unsupported(format!(
+                "a vision sidecar is already attached at {} for this session; attach happens \
+                 once, before the first image is encoded",
+                existing.display()
+            )));
+        }
+        if self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(format!(
+                "this session's own trunk install ({}) already declares a vision tower; \
+                 attaching a sidecar at {} would be a second tower for one session, which is \
+                 not supported",
+                self.install_dir.display(),
+                dir.display()
+            )));
+        }
+        let (record, vision) =
+            model_io::load_vision_sidecar(dir).map_err(RealForwardError::Model)?;
+        let trunk_family = self.arch.family.as_str();
+        if record.pairs_with.family != trunk_family {
+            return Err(RealForwardError::Unsupported(format!(
+                "vision sidecar at {} pairs with family {:?}, but this session's trunk is {:?}",
+                dir.display(),
+                record.pairs_with.family,
+                trunk_family
+            )));
+        }
+        if record.pairs_with.hidden_size != self.arch.hidden_size {
+            return Err(RealForwardError::Unsupported(format!(
+                "vision sidecar at {} pairs with hidden_size {}, but this session's trunk is {}",
+                dir.display(),
+                record.pairs_with.hidden_size,
+                self.arch.hidden_size
+            )));
+        }
+        self.vision_sidecar_dir = Some(dir.to_path_buf());
+        self.arch.vision = vision;
+        Ok(())
+    }
+
+    /// The directory a first image would open its tower from: the attached
+    /// sidecar's directory, or this session's own install directory when
+    /// none is attached (a combined install, or a text-only trunk that will
+    /// refuse the image outright).
+    ///
+    /// The ONE place a later caller (CLI/FFI/server) should read to find
+    /// `preprocessor_config.json`, so it never has to ask separately whether
+    /// a sidecar is attached.
+    pub fn vision_dir(&self) -> &Path {
+        self.vision_sidecar_dir
+            .as_deref()
+            .unwrap_or(&self.install_dir)
+    }
+
+    /// Whether the tower currently open (if any) is sidecar-backed.
+    ///
+    /// `None` before any image is processed / no tower open, matching
+    /// [`Self::vision_residency_is_mapped`]'s own precedent: a byte-identity
+    /// check between a sidecar-backed run and a combined-install run cannot
+    /// on its own tell "the sidecar path ran and produced this" apart from
+    /// "the sidecar path silently fell through to the trunk's own tower".
+    pub fn vision_is_sidecar(&self) -> Option<bool> {
+        self.vision.as_ref().map(|v| v.is_sidecar())
+    }
+
+    /// Free the vision tower's open resources, without forgetting a sidecar
+    /// attachment (vision memory sidecar, Part C).
+    ///
+    /// Once opened -- lazily, on the first image a session ever processes --
+    /// a tower stays open and pinned for the runner's whole life:
+    /// [`crate::vision::VISION_SLOTS`] streamer slots (or the mapped-residency
+    /// arm's whole-tower mapping), a 10.6 MB host `pos_table`, and, for a
+    /// sidecar, a second `ResidentGpuWeights`/mmap pair of its own. A session
+    /// that will never see another image -- a GUI where the user attached one
+    /// file and moved on, a server whose next hundred requests are all text --
+    /// has had no way to give any of that back. This is that way.
+    ///
+    /// Sets [`Self::vision`] to `None`, which frees everything the tower owns
+    /// through ordinary `Drop`: the slot buffers (or the mapped buffer and its
+    /// mapping), the position table, and the sidecar's own weights and mmap
+    /// when one is attached. Nothing else moves. [`Self::has_vision_tower`]
+    /// still reads `arch.vision.is_active()`, which this does not touch, so
+    /// the install's declared capability survives release exactly as it
+    /// survives never having been opened. [`Self::vision_dir`]'s backing
+    /// `vision_sidecar_dir` is untouched too -- releasing forgets the OPEN
+    /// RESOURCES, never the ATTACHMENT -- so the next [`Self::encode_image`]
+    /// reopens the tower exactly as the first one did, from the attached
+    /// sidecar if there is one or from this install if not
+    /// (`open_vision_tower` reads only `vision_sidecar_dir` and `arch.vision`,
+    /// neither of which this method reaches).
+    pub fn release_vision_tower(&mut self) {
+        self.vision = None;
     }
 
     /// Whether [`crate::producer::ChunkedPrefillRunner::prefill_chunk`] would

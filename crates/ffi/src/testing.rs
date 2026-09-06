@@ -49,10 +49,6 @@ pub fn session_for_testing_named(
             runtime::ScriptedLogitProducer::new(steps),
         ))),
         cancel: Arc::new(AtomicBool::new(false)),
-        // No install behind a scripted session, so nothing can read a
-        // preprocessor config off it -- which is the same state an install
-        // with no vision tower is in, and the refusal names it either way.
-        model_dir: std::path::PathBuf::new(),
         max_context,
         rate: runtime::RateControl::default(),
         // A scripted producer replays logits and implements no drafter, so
@@ -122,5 +118,13 @@ pub fn session_for_testing_named(
             },
         },
         tokenizer,
+        // A scripted producer has no install to budget against and no
+        // tower to attach a pixel ceiling for -- `LoadPolicy::default()`
+        // and zero committed/KV bytes are the same "absence of a
+        // capability" answer `vision: wire::VisionInfo::default()` above
+        // already gives.
+        load_policy: runtime::LoadPolicy::default(),
+        committed_bytes: 0,
+        kv_bytes: 0,
     })
 }

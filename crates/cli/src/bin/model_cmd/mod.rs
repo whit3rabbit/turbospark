@@ -1,4 +1,4 @@
-//! The seven subcommands, each a print of something `turbospark-catalog`
+//! The eight subcommands, each a print of something `turbospark-catalog`
 //! computed.
 //!
 //! **Nothing here decides anything.** The catalog crate resolves rows, the
@@ -31,9 +31,10 @@ pub fn list(catalog: &Catalog, store: &Store, filter: Option<&str>) {
     }
     let width = rows.iter().map(|e| e.alias.len()).max().unwrap_or(5).max(5);
     println!(
-        "  {:<width$}  {:<9}  {:>9}  MODEL",
+        "  {:<width$}  {:<9}  {:<12}  {:>9}  MODEL",
         "ALIAS",
         "STATUS",
+        "KIND",
         "DOWNLOAD",
         width = width
     );
@@ -44,9 +45,10 @@ pub fn list(catalog: &Catalog, store: &Store, filter: Option<&str>) {
             " "
         };
         println!(
-            "{mark} {:<width$}  {:<9}  {:>9}  {}",
+            "{mark} {:<width$}  {:<9}  {:<12}  {:>9}  {}",
             entry.alias,
             entry.status.as_str(),
+            entry.kind.as_str(),
             human_bytes(entry.download_bytes),
             entry.name,
             width = width
@@ -211,6 +213,138 @@ pub fn pull(
     Ok(())
 }
 
+/// Install a curated vision-tower row, or an ad-hoc `--repo` naming one
+/// directly (vision memory sidecar, part A5). Mirrors [`pull`], with two
+/// differences: the default install directory carries the `-vision` suffix
+/// (`Store::vision_install_path`), and the printed hint pairs the tower with
+/// a trunk (`--vision-sidecar`) rather than opening it as a session.
+pub fn pull_vision(
+    catalog: &Catalog,
+    store: &Store,
+    client: &Client,
+    positionals: &[String],
+    options: &Options,
+) -> Result<(), Error> {
+    let plan = resolve_vision_plan(catalog, positionals, options)?;
+    let dir = match &options.out {
+        Some(out) => std::path::PathBuf::from(out),
+        None => store.vision_install_path(&plan.alias),
+    };
+    if dir.join("manifest.json").is_file() {
+        return Err(Error::Failed(format!(
+            "{} already holds an install. Remove it first, or pass --out.",
+            dir.display()
+        )));
+    }
+
+    let pb = progress::byte_progress_bar(plan.install_bytes);
+    let pb_for_msg = pb.clone();
+    let mut progress = move |stage: &str| {
+        pb_for_msg.set_message(stage.to_string());
+        pb_for_msg.println(format!("[pull-vision] {stage}"));
+    };
+    let report = catalog::gate(client, &plan, options.force, &mut progress).map_err(|e| {
+        pb.finish_and_clear();
+        Error::Failed(e)
+    })?;
+    pb.suspend(|| {
+        render::report(&report);
+    });
+
+    let pb_for_bytes = pb.clone();
+    let byte_callback = std::sync::Arc::new(move |bytes: u64| {
+        pb_for_bytes.inc(bytes);
+    });
+
+    let installed = catalog::install_with_byte_progress(
+        &plan,
+        &dir,
+        client,
+        &mut progress,
+        Some(byte_callback),
+    )
+    .map_err(|e| {
+        pb.finish_and_clear();
+        Error::Failed(e)
+    })?;
+    catalog::record(store, &installed).map_err(Error::Failed)?;
+    pb.finish_and_clear();
+
+    println!(
+        "\ninstalled vision tower {} ({}) to {}",
+        installed.model.alias,
+        human_bytes(installed.model.install_bytes),
+        installed.model.path.display()
+    );
+    println!(
+        "pair it with a trunk: turbospark-check --model <trunk-alias-or-path> \
+         --vision-sidecar {}",
+        installed.model.path.display()
+    );
+    Ok(())
+}
+
+/// Turn `pull-vision`'s two argument forms into one plan.
+///
+/// Same shape as [`resolve_plan`], with two differences: an alias must name
+/// a [`catalog::EntryKind::VisionTower`] row (a model row is refused by
+/// name, pointing at `pull` instead), and the `--repo` form builds an
+/// [`InstallPlan`] directly rather than probing first --
+/// [`catalog::install::gate`]'s bypass is what makes that safe.
+fn resolve_vision_plan(
+    catalog: &Catalog,
+    positionals: &[String],
+    options: &Options,
+) -> Result<InstallPlan, Error> {
+    let repo_flag = positionals
+        .iter()
+        .find_map(|p| p.strip_prefix("--repo=").map(str::to_string));
+    let aliases: Vec<&String> = positionals
+        .iter()
+        .filter(|p| !p.starts_with("--repo="))
+        .collect();
+
+    match (repo_flag, aliases.len()) {
+        (Some(_), n) if n > 0 => Err(Error::Usage(
+            "pull-vision takes either an alias or --repo, not both".to_string(),
+        )),
+        (Some(repo), _) => {
+            let alias = options.alias.clone().ok_or_else(|| {
+                Error::Usage(
+                    "--repo needs --alias <name>, which is what the install will be \
+                     called locally"
+                        .to_string(),
+                )
+            })?;
+            let weights = RepoRef::parse(&repo).map_err(Error::Usage)?;
+            Ok(InstallPlan::for_vision_tower(
+                &alias,
+                weights,
+                options.file.clone(),
+            ))
+        }
+        (None, 1) => {
+            let alias = aliases[0];
+            let entry = catalog
+                .get(alias)
+                .ok_or_else(|| Error::Failed(unknown_alias(catalog, alias)))?;
+            if entry.kind != catalog::EntryKind::VisionTower {
+                return Err(Error::Failed(format!(
+                    "{alias} is a model row, not a vision-tower row. \
+                     `turbospark-model pull {alias}` installs it."
+                )));
+            }
+            Ok(InstallPlan::from_entry(entry))
+        }
+        (None, 0) => Err(Error::Usage(
+            "pull-vision needs <ALIAS> or --repo <REPO> --alias <NAME>".to_string(),
+        )),
+        (None, n) => Err(Error::Usage(format!(
+            "pull-vision takes one alias, got {n}"
+        ))),
+    }
+}
+
 /// Turn `pull`'s two argument forms into one plan.
 fn resolve_plan(
     catalog: &Catalog,
@@ -335,7 +469,15 @@ pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Resul
     // count beside a curated row ranked at another is not one table.
     const SLOT_POLICY: model_io::ExpertCacheSlots = model_io::ExpertCacheSlots::Auto;
 
-    let entries: Vec<&catalog::CatalogEntry> = catalog.entries().collect();
+    // A vision-tower row is not a fit candidate (no tokenizer, cannot be
+    // opened as a session on its own), so it is filtered out of both arms
+    // below -- `recommend_catalog` already does the same filter for the
+    // offline arm, but this arm builds its own rows directly and would
+    // otherwise rank a tower beside the trunks it attaches to.
+    let entries: Vec<&catalog::CatalogEntry> = catalog
+        .entries()
+        .filter(|e| e.kind == catalog::EntryKind::Model)
+        .collect();
     let mut rows: Vec<catalog::Recommendation> = if options.probe {
         let pb = progress::count_progress_bar(entries.len() as u64, "probing curated models...");
         let results = entries

@@ -30,6 +30,7 @@ fn row(alias: &str, path: &std::path::Path) -> InstalledModel {
         install_bytes: 123,
         installed_on: "2026-08-15".to_string(),
         status: "runs".to_string(),
+        kind: None,
     }
 }
 

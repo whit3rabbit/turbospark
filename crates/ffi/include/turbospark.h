@@ -185,6 +185,9 @@ void ts_string_free(char *s);
  *   steeringLayers    "START:END" | null (0-based inclusive layer range)
  *   steeringTarget    number | null (for clamp mode, default 0.0)
  *   steeringGate      number | null (activation threshold >= 0, default 0.0)
+ *   visionSidecar     string | null (path to a standalone vision-tower
+ *                       sidecar install to attach to a text-only trunk).
+ *                       null means use the trunk's own tower, if it has one.
  *
  * Opening is expensive: it maps gigabytes and compiles Metal pipelines.
  * Open once and keep the handle.
@@ -210,6 +213,34 @@ void ts_session_close(TsSession *s);
  */
 void ts_session_cancel(const TsSession *s);
 
+/*
+ * Frees the vision tower's open resources on this session (vision memory
+ * sidecar): the streamer slots or mapped-residency buffer, the position
+ * table, and -- when a sidecar is attached -- its own separate resident
+ * weights and mapping. A session that will never see another image can give
+ * all of that back without closing the whole session.
+ *
+ * Takes the SAME engine lock a generation turn holds for its whole
+ * duration, so it must not be called concurrently with ts_generate() on the
+ * same session (both already serialize through that lock; this simply
+ * queues behind an in-flight turn rather than racing it).
+ *
+ * Does NOT forget an attached visionSidecar directory and does NOT change
+ * ts_session_info_json()'s "vision" block, which is resolved once at open
+ * from the install's own declaration -- releasing frees OPEN RESOURCES,
+ * never the declared CAPABILITY or the sidecar ATTACHMENT. The next image
+ * sent through ts_generate() reopens the tower exactly as the first one
+ * did, from the attached sidecar if there is one or from this install if
+ * not.
+ *
+ * Returns TS_OK if resources were freed (or there were none to free --
+ * releasing a session whose tower is already closed, or whose install
+ * declares no vision tower at all, is a harmless no-op). Returns
+ * TS_ERR_UNSUPPORTED on a session that has no tower to release in the first
+ * place: a scripted test session, or any session on a non-macOS build.
+ */
+int32_t ts_session_release_vision(const TsSession *s);
+
 /* ---- introspection ---- */
 
 /*
@@ -222,7 +253,8 @@ void ts_session_cancel(const TsSession *s);
  *                   "summary" },
  *     "toolCalling": { "native", "reason" },
  *     "speculation": { "block", "drafter", "reason" },
- *     "vision": { "active", "imageTokenId", "reason" },
+ *     "vision": { "active", "imageTokenId", "reason", "source",
+ *                 "sidecarPath" },
  *     "specialTokens": { "bosId", "eosId", "padId", "endOfTurnId",
  *                       "stopTokenIds", "thinkStartId", "thinkEndId" } }
  *
@@ -283,6 +315,15 @@ void ts_session_cancel(const TsSession *s);
  * no default worth falling back to, so an install streamed without that
  * sidecar reports active false with the reason in vision.reason. reason is
  * non-null exactly in that case, which is the only one a caller can act on.
+ *
+ * vision.source is "install" when this session's tower (if any) comes from
+ * the trunk's own directory, or "sidecar" when visionSidecar attached a
+ * standalone tower instead (vision memory sidecar). It is null exactly when
+ * no tower is present at all, i.e. the same case that leaves imageTokenId
+ * null; when a tower IS present it is set on both the active and the
+ * refused branches, so a host can say WHICH tower failed to serve an image.
+ * vision.sidecarPath is the attached directory, present only when source is
+ * "sidecar".
  *
  * A NON-NULL BLOCK IS A STATEMENT ABOUT THE SESSION, NOT THE NEXT TURN.
  * Acceptance is argmax(target) == proposal, exact only at temperature 0, so

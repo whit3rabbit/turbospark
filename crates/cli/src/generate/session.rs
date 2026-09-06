@@ -12,12 +12,6 @@ use tokenizer::MfTokenizer;
 /// the validated sampling configuration. Opened once per process, reused by
 /// every turn of an interactive chat.
 pub(crate) struct Session {
-    /// The RESOLVED install directory, kept because `--image` reads the
-    /// checkpoint's own `preprocessor_config.json` out of it.
-    ///
-    /// Resolved rather than `request.model`: that may be a catalog ALIAS, and
-    /// re-resolving it downstream is how the two come apart (Gotcha 5).
-    pub(crate) model_dir: std::path::PathBuf,
     pub(crate) tokenizer: MfTokenizer,
     pub(crate) runner: RealForwardRunner,
     pub(crate) shaping: ShapingConfig,
@@ -36,6 +30,18 @@ pub(crate) struct Session {
     /// Whether this session drafts ahead, resolved once at open against the
     /// install and the sampling settings. See [`resolve_speculation`].
     pub(crate) speculation: SpeculationPlan,
+    /// The guard tier this session actually opened under (vision memory
+    /// sidecar Part B3). Carried so a later `--image`'s pixel-budget clamp
+    /// resolves against the SAME tier `--max-context` did, never a second,
+    /// possibly different one (`crates/ffi/CLAUDE.md` Gotcha 12's rule).
+    pub(crate) load_policy: runtime::LoadPolicy,
+    /// What this install already commits before KV -- `runtime::
+    /// committed_bytes(model_dir)`, the same value `--max-context`
+    /// resolved against.
+    pub(crate) committed_bytes: u64,
+    /// This session's own KV cache at [`Self::max_context`], i.e.
+    /// `ContextPlan::kv_bytes`.
+    pub(crate) kv_bytes: u64,
 }
 
 pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, String> {
@@ -75,6 +81,10 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         guard: map_load_guard(request.load_guard),
         min_auto_context: request.min_auto_context,
     };
+    // Bound rather than computed inline: the vision pixel budget (Part B3)
+    // needs the SAME committed-bytes figure `--max-context` resolved
+    // against, not a second read of the install.
+    let committed = runtime::committed_bytes(model_dir);
     let plan = runtime::resolve_max_context(
         match request.max_context {
             invocation::MaxContext::Auto => runtime::MaxContext::Auto,
@@ -84,7 +94,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         trained,
         invocation::request::DEFAULT_MAX_CONTEXT,
         runtime::physical_memory(),
-        runtime::committed_bytes(model_dir),
+        committed,
         &load_policy,
     )
     .map_err(|e| e.to_string())?;
@@ -123,7 +133,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let asked = map_speculation(request.speculation);
     let choice = resolve_drafter(map_drafter(request.speculative_drafter), model_dir);
     let steering = resolve_steering(request)?;
-    let runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+    let mut runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
         model_dir,
         arch,
         plan.resolved as usize,
@@ -151,6 +161,34 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         install_has_dflash: _,
         note: drafter_note,
     } = choice;
+
+    // Vision memory sidecar (Part A4): attach BEFORE anything reads
+    // `preprocessor_config.json`, and before this session's first `--image`
+    // can reach `RealForwardRunner::open_vision_tower`'s no-tower refusal.
+    // Part A3 already routes every such read through `runner.vision_dir()`,
+    // so attaching here is enough to make the rest of the vision pipeline
+    // pick up the sidecar with no further change.
+    //
+    // `verify_image_markers` catches a mismatched sidecar/tokenizer pairing
+    // HERE, naming the actual ids, rather than letting it surface deep
+    // inside `turbospark_vision_io::splice_and_walk` at the first image a
+    // caller attaches.
+    if let Some(path) = request.vision_sidecar.as_deref() {
+        let dir = std::path::Path::new(path);
+        runner
+            .attach_vision_sidecar(dir)
+            .map_err(|e| format!("--vision-sidecar {path}: {e}"))?;
+        let vision = runner.vision_config();
+        tokenizer
+            .verify_image_markers(
+                vision.vision_start_token_id as i32,
+                vision.image_token_id as i32,
+            )
+            .map_err(|e| format!("--vision-sidecar {path}: {e}"))?;
+        if !request.quiet {
+            eprintln!("vision: sidecar {}", dir.display());
+        }
+    }
 
     // Report the RESOLVED slot count, not the request. Under `auto` the
     // request carries no number, and this one is a property of the machine
@@ -236,13 +274,15 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let rate = runtime::rate_control_for(profile, request.max_tokens_per_sec);
 
     Ok(Session {
-        model_dir: model_dir.to_path_buf(),
         tokenizer,
         runner,
         shaping,
         speculation,
         rate,
         max_context: plan.resolved,
+        load_policy,
+        committed_bytes: committed,
+        kv_bytes: plan.kv_bytes,
     })
 }
 

@@ -156,22 +156,10 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
     // refused an image as though it carried no tower. Found by M-V4's parity
     // gate on the first real run; nothing else asks this function about a
     // component the peeker was never taught.
-    arch.vision = model_io::VisionConfig {
-        depth: m.vision_depth.unwrap_or(0),
-        hidden_size: m.vision_hidden_size.unwrap_or(0),
-        intermediate_size: m.vision_intermediate_size.unwrap_or(0),
-        num_heads: m.vision_num_heads.unwrap_or(0),
-        patch_size: m.vision_patch_size.unwrap_or(0),
-        temporal_patch_size: m.vision_temporal_patch_size.unwrap_or(0),
-        in_channels: m.vision_in_channels.unwrap_or(0),
-        spatial_merge_size: m.vision_spatial_merge_size.unwrap_or(0),
-        num_position_embeddings: m.vision_num_position_embeddings.unwrap_or(0),
-        out_hidden_size: m.vision_out_hidden_size.unwrap_or(0),
-        mrope_section: m.vision_mrope_section.unwrap_or([0, 0, 0]),
-        vision_start_token_id: m.vision_start_token_id.unwrap_or(0),
-        vision_end_token_id: m.vision_end_token_id.unwrap_or(0),
-        image_token_id: m.vision_image_token_id.unwrap_or(0),
-        video_token_id: m.vision_video_token_id.unwrap_or(0),
-    };
+    //
+    // `ManifestArch::vision_config()` is the SAME `unwrap_or(0)` resolution
+    // `arch_validation` applies inline, codified once so this reader and the
+    // loader cannot drift apart a second time.
+    arch.vision = m.vision_config();
     Ok(arch)
 }

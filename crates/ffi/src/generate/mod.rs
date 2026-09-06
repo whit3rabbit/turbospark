@@ -29,7 +29,7 @@ pub const TS_EVENT_FINISH: i32 = 4;
 pub(crate) use prompt::{
     count_text_tokens, count_tokens, detokenize, fit_window, render_prompt, tokenize,
 };
-pub(crate) use vision::SCRIPTED_HAS_NO_TOWER;
+pub(crate) use vision::{release_vision, SCRIPTED_HAS_NO_TOWER};
 
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;

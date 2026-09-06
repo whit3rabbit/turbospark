@@ -32,6 +32,11 @@ COMMANDS:
     recommend                   what this machine should run, ranked
     pull <ALIAS>                install a curated model
     pull --repo <REPO>[@REV]    install any repo the probe accepts
+    pull-vision <ALIAS>         install a curated vision-tower sidecar
+    pull-vision --repo <REPO>[@REV] --alias <NAME>
+                                install any repo's vision tower directly,
+                                skipping the trunk probe (a tower has no
+                                quantization block for it to check)
     path <ALIAS>                print an install directory, for scripts
     rm <ALIAS>                  delete an install
     auth [TOKEN]                manage Hugging Face credentials: print status,
@@ -40,7 +45,10 @@ COMMANDS:
 OPTIONS:
     --out <DIR>                 install here instead of the default store
     --alias <NAME>              name a --repo pull (required for one)
-    --file <NAME.gguf>          pick one file where a repo offers several
+    --file <NAME.gguf>          pick one file where a repo offers several,
+                                or (with `pull-vision`) an explicit filename
+                                for a repo whose shard index does not name
+                                the vision tower's shard on its own
     --sidecar-repo <REPO>[@REV] take tokenizer files from another repo. A GGUF
                                 carries llama.cpp's tokenizer, not an HF
                                 tokenizer.json, so a GGUF pull needs this
@@ -212,6 +220,10 @@ fn run(args: &[String]) -> Result<(), Error> {
                 "hf-token",
             ])?;
             model_cmd::pull(&catalog, &store, &client, &positionals, &options)
+        }
+        "pull-vision" => {
+            options.reject_unused(&["out", "alias", "file", "force", "hf-token"])?;
+            model_cmd::pull_vision(&catalog, &store, &client, &positionals, &options)
         }
         "path" => {
             options.reject_unused(&[])?;

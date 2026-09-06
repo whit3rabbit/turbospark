@@ -331,6 +331,83 @@ impl MfTokenizer {
         out
     }
 
+    /// Confirms `vision_start` and `image_pad` (a `VisionConfig`'s
+    /// `vision_start_token_id` / `image_token_id`, as read off a trunk or an
+    /// attached sidecar) are USABLE markers for THIS tokenizer, before the
+    /// first image is ever processed (vision memory sidecar, Part A4).
+    ///
+    /// Both ids are meaningless unless they resolve to real tokens in this
+    /// tokenizer's vocabulary and the checkpoint's own chat template actually
+    /// places exactly one of each around a single image. Without this check
+    /// both failures surface instead inside
+    /// `turbospark_vision_io::splice_and_walk`, at the FIRST image a caller
+    /// attaches, as a bare `PlaceholderMismatch` far from the id pairing that
+    /// caused it -- surfacing the same question here, at attach time, is
+    /// strictly earlier and names the actual ids.
+    ///
+    /// Two checks, in order:
+    /// - `vision_start` and `image_pad` are DISTINCT and each resolves to a
+    ///   real token (`id_to_token` is `Some`), the same reverse-lookup
+    ///   `dialect::resolve::special_token_id` already uses to confirm a
+    ///   resolved id names what it claims to;
+    /// - a minimal `[Image, Text]` user turn, rendered through
+    ///   [`Self::apply_chat_template`] and re-encoded, contains EXACTLY ONE
+    ///   `vision_start` and EXACTLY ONE `image_pad`. That is the multiplicity
+    ///   `turbospark_vision_io::splice_and_walk` assumes for a single image:
+    ///   it counts `vision_start`-followed-by-`image_pad` PAIRS to size its
+    ///   walk and only expands the placeholder to the image's own
+    ///   merged-token count afterwards, so the RENDERED prompt (before that
+    ///   expansion) must carry exactly one of each per image.
+    ///
+    /// A checkpoint with no installed template (every synthetic fixture,
+    /// plus a malformed real install) fails here rather than at the first
+    /// image, through the same [`TokenizerError::InvalidChatTemplate`]
+    /// [`Self::apply_chat_template`] itself would raise.
+    pub fn verify_image_markers(
+        &self,
+        vision_start: i32,
+        image_pad: i32,
+    ) -> Result<(), TokenizerError> {
+        if vision_start == image_pad {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "vision_start and image_pad are both token id {vision_start}; a vision config \
+                 must name two distinct markers"
+            )));
+        }
+        for (name, id) in [("vision_start", vision_start), ("image_pad", image_pad)] {
+            if self.id_to_token(id).is_none() {
+                return Err(TokenizerError::InvalidVisionMarkers(format!(
+                    "{name} token id {id} does not resolve to a token in this tokenizer's \
+                     vocabulary"
+                )));
+            }
+        }
+
+        let probe = [Message::with_parts(
+            Role::User,
+            vec![
+                ContentPart::Image,
+                ContentPart::Text("describe this image".to_string()),
+            ],
+        )];
+        let rendered = self.apply_chat_template(&probe).map_err(|e| {
+            TokenizerError::InvalidVisionMarkers(format!(
+                "could not render a minimal one-image turn to verify vision markers: {e}"
+            ))
+        })?;
+        let ids = self.encode(&rendered, true);
+        let starts = ids.iter().filter(|&&id| id == vision_start).count();
+        let pads = ids.iter().filter(|&&id| id == image_pad).count();
+        if starts != 1 || pads != 1 {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "this checkpoint's chat template renders {starts} occurrence(s) of vision_start \
+                 ({vision_start}) and {pads} of image_pad ({image_pad}) for one image; \
+                 splice_and_walk needs exactly one of each"
+            )));
+        }
+        Ok(())
+    }
+
     /// Full DeepSeek-V4 tool-chat render: tool schemas join the system
     /// message as a `## Tools` section, `tool` results merge into
     /// `<User>` turns as `<tool_result>` blocks, and historical tool calls

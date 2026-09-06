@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+use crate::arch_config::VisionConfig;
+
 /// File size and SHA-256 entry in manifest.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ManifestFileEntry {
@@ -253,6 +255,41 @@ pub struct ManifestArch {
     pub vision_image_token_id: Option<i64>,
     #[serde(default)]
     pub vision_video_token_id: Option<i64>,
+}
+
+impl ManifestArch {
+    /// Resolves the fifteen `vision*` fields into a [`VisionConfig`], the
+    /// same way `arch_validation::validate_arch` resolves each of them:
+    /// `.unwrap_or(0)` (or the equivalent empty triple), never a baseline's
+    /// value. An absent field means the install declares no tower, and
+    /// another family's answer about ITS tower is not evidence (AGENTS.md
+    /// Gotcha 24) -- which is why this does NOT take a baseline to fall
+    /// back to, unlike every other family-extension field on this struct.
+    ///
+    /// The one place both the manifest LOADER (`arch_validation`, inline)
+    /// and a READER of an already-loaded manifest (`crates/repack`'s
+    /// `manifest_peek`, and `model_io::vision_sidecar`) resolve this, so the
+    /// two cannot drift the way they did once already (`crates/repack`
+    /// Gotcha 18).
+    pub fn vision_config(&self) -> VisionConfig {
+        VisionConfig {
+            depth: self.vision_depth.unwrap_or(0),
+            hidden_size: self.vision_hidden_size.unwrap_or(0),
+            intermediate_size: self.vision_intermediate_size.unwrap_or(0),
+            num_heads: self.vision_num_heads.unwrap_or(0),
+            patch_size: self.vision_patch_size.unwrap_or(0),
+            temporal_patch_size: self.vision_temporal_patch_size.unwrap_or(0),
+            in_channels: self.vision_in_channels.unwrap_or(0),
+            spatial_merge_size: self.vision_spatial_merge_size.unwrap_or(0),
+            num_position_embeddings: self.vision_num_position_embeddings.unwrap_or(0),
+            out_hidden_size: self.vision_out_hidden_size.unwrap_or(0),
+            mrope_section: self.vision_mrope_section.unwrap_or([0, 0, 0]),
+            vision_start_token_id: self.vision_start_token_id.unwrap_or(0),
+            vision_end_token_id: self.vision_end_token_id.unwrap_or(0),
+            image_token_id: self.vision_image_token_id.unwrap_or(0),
+            video_token_id: self.vision_video_token_id.unwrap_or(0),
+        }
+    }
 }
 
 /// Quantization parameters for a model component slot in `manifest.json`.
