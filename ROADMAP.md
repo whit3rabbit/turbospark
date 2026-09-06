@@ -6,10 +6,11 @@ The forward-looking roadmap and task tracker for this engine, last reconciled ag
 
 ## Current Status (2026-09-05)
 
-- **Test Suite**: **2,017 tests declared workspace-wide, of which 1,880 run under the standing gate and 137 are `#[ignore]`d** (the checkpoint downloads, the memory oracles, the quality gates, the sensitivity proof, the cross-engine dumps, and offline benchmarks). Re-derived 2026-09-05 on macOS with `cargo test --workspace -- --list` and `--list --ignored`. **Note `--list` ALREADY INCLUDES the ignored ones**, so the arithmetic is `declared - ignored = under gate`, not a sum; checked by intersecting the two lists rather than assumed. The prior figure on this line (1,758 / 1,627 / 131) was from 2026-08-30 and had rotted by ~260 across three feature clusters. This repo's own house rule is not to trust a prose test count without re-deriving it. Full workspace suite, strict formatting, clippy and the cross-target check all green.
+- **Test Suite**: **2,090 tests declared workspace-wide, of which 1,953 run under the standing gate and 137 are `#[ignore]`d** (the checkpoint downloads, the memory oracles, the quality gates, the sensitivity proof, the cross-engine dumps, and offline benchmarks). Re-derived 2026-09-06 on macOS with `cargo test --workspace -- --list` and `--list --ignored`. **Note `--list` ALREADY INCLUDES the ignored ones**, so the arithmetic is `declared - ignored = under gate`, not a sum; checked by intersecting the two lists rather than assumed. The prior figure on this line (2,017 / 1,880 / 137) was from 2026-09-05 and had grown by 73, entirely offline/synthetic, from the vision memory sidecar work (section 11); the ignored count is unmoved, since none of that work's tests needed a real install to run. This repo's own house rule is not to trust a prose test count without re-deriving it. Full workspace suite, strict formatting, clippy and the cross-target check all green.
 - **Architectures**: **8** `ModelFamily` variants running across **20** curated catalog rows (`gemma4`, `qwenGdnMoe`, `llama`, `qwen3moe`, `gptOss`, `museGlimmer`, `qwenGdnDense`, `qwen4Exp`). A ninth variant, `deepseekV4Flash`, is declared and scaffolded only (section 5). This line read 7 and 17 until 2026-09-05: `qwen4Exp` had been running on real hardware since 2026-09-04 and was missing from its own count.
 - **Recent Landings**:
   - **Vision (`qwen3_5`), M-V0 through M-V9**: an image reaches a generated token from the COMMAND LINE and from BOTH server endpoints. The tower agrees with mlx-vlm at its own FP16 floor, this port builds the spliced prompt byte-identically to the reference processor, and `--image` / `--image-batch` transcribe a real page. M-V9 landed 2026-08-29 (multi-page memory oracle, the last two NaN-safe parity guards, FP16 overflow capture). See `docs/VISION.md`'s "What is not built" section for the full record; nothing is open there now.
+  - **Vision Memory Sidecar, Parts A1-A6 and B1 (2026-09-06)**: the tower no longer has to be bundled inside a full trunk install to run. A `<alias>.gturbo-vision/` sidecar directory carries the tower alone (a degenerate zero-layer `manifest.json` plus a `vision_sidecar.json` record naming which family and hidden size it pairs with, since the manifest itself cannot carry a "this is a tower, not a model" marker), `RealForwardRunner::attach_vision_sidecar(dir)` binds one to an already-open text-only trunk at runtime, and `turbospark-model pull-vision` fetches one straight from a repo without ever streaming that repo's 14+ GB trunk. **The headline claim is verified on real hardware, not merely by the synthetic gate that motivated it**: `~/models/qwen38-27b.gturbo` (text-only, no tower) with the pulled `qwen38-vision-tower.gturbo-vision` sidecar (879 MiB, pulled for real from `mlx-community/Qwen3.8-27B-4bit`) attached produces byte-for-byte identical transcription of a real OCR page against the combined `qwen38-27b-vision.gturbo` install, on BOTH the greedy arm and a fixed-seed sampled arm (SHA-256-compared stdout), and attaching a sidecar perturbs no text-only output. `--vision-sidecar <PATH>` reaches `turbospark-check`, `turbospark-server`, and the FFI's `OpenOptions`; catalog gating (`catalog::gate`) is bypassed for a tower row, since a BF16 tower repo legitimately carries no `quantization` block for that gate to find. B1 (row-tiled MLP scratch, `VISION_MLP_TILE_ROWS`) landed the same session, bounding `VisionScratch::h1` at a fixed row tile instead of a whole page's worth -- identical arithmetic, verified byte-identical at the shipped default and under a forced multi-tile override. **Two things left open, not attempted this pass**: B2 (aliasing `VisionScratch`'s dead buffers to shrink the seven-buffer set), B3 (a memory-budget-derived `max_pixels` cap), Part C (releasing an open tower's slots/mapping), and Part D (scoping a Qwen3-VL bring-up, doc only) are UNBUILT; and `crates/runtime/tests/vision_tower_parity.rs` / `crates/bench/tests/vision_memory_oracle.rs` have no sidecar-aware env arm yet, so the tower's mlx-vlm cosine and the multi-page memory ceiling have not been re-measured specifically THROUGH a sidecar (the CLI byte-identity comparison above is the evidence that a sidecar run reaches the identical bytes those two gates already certified). See `docs/VISION.md`'s new "The vision memory sidecar" section for the full design and the exact measured numbers.
   - **Batch INT4 GEMM Row Blocking (`dequant_int4_batch.rs` & `dequant_int4_mma.metal`)**: Row-blocked dispatch wired for M-row batch GEMMs with optimal tile dispatch (`R=1, 2, 4`), register limit queries, and crossover points documented in `docs/BATCHED_PREFILL.md` and `docs/BENCHMARKS.md`.
   - **Reasoning Effort & Thinking Token Protocol**: Multi-dialect support for `--reasoning` / `reasoning_effort` across CLI and server (`off`, `low`, `medium`, `high`, `xhigh`), ChatML/Gemma thinking extraction, and Swift UI integration.
   - **Expert Disk I/O & Bypass Telemetry**: Disk I/O tracking and cache-bypass telemetry in `crates/streaming` (`TURBOSPARK_PILOT_PROBE` validation and pread streamer metrics).
@@ -357,6 +358,51 @@ feature's disk cost:
   (`real_backend_reads_an_image_sent_over_both_endpoints`, which asserts the
   transcription carries the page's own line numbers). **M-V9 is the third: an
   oracle that asserts a memory shape cannot see whether the pages were read.**
+- **Vision Memory Sidecar (Parts A1-A6, B1; landed 2026-09-06, on top of M-V0
+  through M-V9).** The tower's install SHAPE was the remaining cost: every
+  vision-capable install duplicated the 14+ GB text trunk just to carry
+  ~0.9 GiB of tower, which is why `~/models/qwen38-27b.gturbo` and
+  `~/models/qwen38-27b-vision.gturbo` are two independent 15 GB copies of one
+  checkpoint. Part A builds a standalone `<alias>.gturbo-vision/` sidecar
+  format (`model_io::vision_sidecar`, a degenerate zero-layer manifest plus a
+  `vision_sidecar.json` record, since the manifest cannot itself carry a
+  "this is a tower, not a model" marker), a runtime attach point
+  (`RealForwardRunner::attach_vision_sidecar`, called after `open()` and
+  before any image, so a text-only session still opens the tower lazily and
+  pays nothing until the first image), `--vision-sidecar <PATH>` across
+  `turbospark-check`/`turbospark-server`/the FFI's `OpenOptions`, and
+  `turbospark-model pull-vision` to fetch one directly (bypassing
+  `catalog::gate`'s MLX quantization check, which a legitimately-BF16 tower
+  repo would otherwise fail). Part B starts on the tower's OWN memory
+  footprint: B1 (row-tiled `fc1 -> gelu -> fc2`, `VISION_MLP_TILE_ROWS`)
+  landed, capping `VisionScratch::h1` at one tile's rows instead of a whole
+  page's with identical arithmetic; B2 (aliasing `VisionScratch`'s dead
+  buffers), B3 (a memory-budget-derived `max_pixels`), Part C (releasing an
+  open tower's slots) and Part D (a Qwen3-VL bring-up scoping doc) are
+  UNBUILT.
+  **Verified on real hardware, not synthetic fixtures alone**: a
+  freshly-`pull-vision`ed tower (879 MiB, `mlx-community/Qwen3.8-27B-4bit`,
+  the SAME pinned revision `3e6447f0` both existing installs were streamed
+  from) attached to the text-only `qwen38-27b.gturbo` produces byte-for-byte
+  identical transcription of the real test page against the combined
+  `qwen38-27b-vision.gturbo` install, on both the greedy arm and a
+  fixed-seed sampled arm (SHA-256-compared stdout past the resolved-request
+  block), and attaching the sidecar moves no byte of a text-only run either.
+  This is the direct, real-weights confirmation of what Part A1's synthetic
+  tests could only prove structurally (the sidecar and the combined install
+  write byte-identical tower bytes from the same source checkpoint).
+  **Left open**: `crates/runtime/tests/vision_tower_parity.rs` and
+  `crates/bench/tests/vision_memory_oracle.rs` have no sidecar-aware arm, so
+  the tower's mlx-vlm cosine and the multi-page memory ceiling have not been
+  re-measured specifically THROUGH a sidecar-attached trunk -- adding one
+  needs care around each file's existing calibrated assertions (the memory
+  oracle's `assert_agrees_with_catalog` in particular stays keyed to
+  `qwen38-27b-vision`, a deliberate choice to keep that install and its
+  frozen rows). `--vision-sidecar auto` (catalog-based resolution by family
+  and hidden size, via `catalog::resolve_vision_sidecar`, built in A5 but
+  wired to no front end) is also unbuilt; every front end today takes an
+  explicit path only. See `docs/VISION.md`'s new "The vision memory
+  sidecar" section for the design and the exact measured numbers.
 
 ---
 
@@ -447,3 +493,4 @@ Every new feature or model bring-up requires:
 - **Swift Shell, Hook Contract and Settings Stores (2026-09-05)**: real background shell execution with per-chat scoped ids, shell execution extracted out of the tool registry with cwd persistence and output shaping, five documented divergences from the Claude Code hook contract, the server API key moved to the login Keychain, and appearance settings moved off `UserDefaults`. ~42 new tests. `docs/SWIFT_TOOLS.md` is the home.
 - **Chunked Prefill Becomes Measurable (2026-09-05)**: `turbospark-bench --prefill-chunk off|auto|N` (default OFF) plus a `seq|chunked` arm pair in `scripts/power.sh`. Before this the bench reached only `run_raw_completion` and `run_raw_completion_speculative`, so every throughput and power row ever taken through either tool measured the sequential prefill path regardless of the env seams -- which is why the Prefill Energy Capture row read BLOCKED. Only `TURBOSPARK_PREFILL_CHUNK` needed wiring; the other two seams are read inside the runtime's chunk drivers and needed a header echo. Default-OFF verified by measurement, not argument: pre- and post-change release binaries agree on the stop reason, prompt-token and new-token counts on the real Gemma 4 install, with two pre-change runs agreeing with each other to make the comparison mean something.
 - **Worktree Consolidation (2026-09-02)**: merged four development worktrees back into `main` -- the two feature branches above, plus the uncommitted `gpt-oss` phase-2 `top_k` specialization and `crates/ffi` prefix-reuse work that had been sitting unstaged directly on `main`. Two worktrees (`qwen3-8-mtp-support`, `roadmap-next-items`) carried no unique commits past what `origin/main` already had and were removed. Full workspace build/fmt/clippy green post-merge.
+- **Vision Memory Sidecar, Parts A1-A6 and B1 (2026-09-06)**: a standalone `<alias>.gturbo-vision/` install format for the vision tower ALONE, so a text-only trunk can gain vision without re-streaming or duplicating its 14+ GB. `model_io::vision_sidecar` (the on-disk format: a degenerate zero-layer manifest plus a `vision_sidecar.json` record naming the pairing family and hidden size, since the manifest cannot itself say "tower, not model"), `RealForwardRunner::attach_vision_sidecar` (runtime binding, called after `open()` and before the tower's lazy first-image open, so a text-only session is unaffected), `--vision-sidecar <PATH>` across `turbospark-check`/`turbospark-server`/the FFI, `MfTokenizer::verify_image_markers` (catches a mismatched sidecar/tokenizer pairing at attach time by name, rather than deep inside `splice_and_walk` on the first real image), and `turbospark-model pull-vision` (a generalized `fetch_prefixed_shards` off the existing MTP-shard fetcher, `catalog::gate` bypassed for a tower row since a BF16 tower repo legitimately carries no quantization block, `resolve_vision_sidecar` to find an installed tower by family and hidden size with no silent pick between two candidates). B1 (`VISION_MLP_TILE_ROWS`, row-tiling the MLP's `fc1 -> gelu -> fc2` so `VisionScratch::h1` never holds more than one tile's rows) landed the same session; B2 (buffer aliasing), B3 (a memory-budget-derived pixel cap), Part C (tower release) and Part D (a Qwen3-VL scoping doc) did not. **Verified end to end on real hardware**: `turbospark-model pull-vision qwen38-vision-tower` fetched a real 879 MiB tower from `mlx-community/Qwen3.8-27B-4bit` at the same pinned revision (`3e6447f0`) both existing vision installs were streamed from, and attaching it to the text-only `qwen38-27b.gturbo` produced byte-for-byte identical transcription of the real OCR test page against the combined `qwen38-27b-vision.gturbo` install -- greedy AND a fixed-seed sampled arm, SHA-256-compared -- with text-only generation unperturbed by the attach either way. 73 new tests, all offline/synthetic; the two real-model vision gates (`vision_tower_parity`, `vision_memory_oracle`) have no sidecar-aware arm yet. `docs/VISION.md`'s "The vision memory sidecar" section is the design record; section 11 above tracks what remains.

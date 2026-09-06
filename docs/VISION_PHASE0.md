@@ -25,6 +25,15 @@ are identical; the two differ only in the trunk's quantization, consistent
 with `crates/model-io/CLAUDE.md`'s existing note that both share one
 baseline.
 
+**The `mlx-community/Qwen3.8-27B-4bit` tower is now ALSO installable on its
+own**, at the same pinned revision (`3e6447f0`) this page's every reading
+was taken against, via `turbospark-model pull-vision` -- a standalone
+`<alias>.gturbo-vision/` directory rather than bundled inside the full
+trunk. This is a repackaging of the exact bytes this page already
+describes, not a new checkpoint fact: nothing below changes. See
+`docs/VISION.md`'s "The vision memory sidecar" section for the format, the
+attach mechanism, and the real-hardware byte-identity verification.
+
 ## 0. What M-V3 measured against these facts (2026-08-27)
 
 Everything in this document was read off headers and reference source. The
