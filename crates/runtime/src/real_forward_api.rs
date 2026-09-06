@@ -203,15 +203,116 @@ impl RealForwardRunner {
             ));
         }
         if self.vision.is_none() {
-            self.vision = Some(crate::vision::VisionTower::open(
-                &self.install_dir,
-                &self.context,
-                &self.weights,
-                &self.index,
-                &self.arch,
-            )?);
+            self.vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => {
+                    crate::vision::VisionTower::open_with_sidecar(dir, &self.context, &self.arch)?
+                }
+                None => crate::vision::VisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
         }
         Ok(())
+    }
+
+    /// Attach a standalone vision sidecar directory (vision memory sidecar,
+    /// Part A2) to an already-open, text-only trunk, so the NEXT image
+    /// processed on this session opens its tower from `dir` instead of
+    /// refusing for lack of one.
+    ///
+    /// Call this once, before the first image -- there is no supported way
+    /// to detach or replace a sidecar once attached, matching the tower's
+    /// own "opens once, lazily" contract. Does NOT open the tower itself:
+    /// that still happens lazily on the first [`Self::encode_image`] call,
+    /// for the same reason a combined install's tower does (a text-only
+    /// session on a sidecar-attached trunk still pays nothing for it until
+    /// an image actually arrives).
+    ///
+    /// Four refusals, checked in this order:
+    /// - a sidecar is already attached to this session (double-attach, or
+    ///   attach after the tower has already opened from an earlier attach --
+    ///   both leave [`Self::vision_dir`]'s backing field `Some`, which is
+    ///   what this checks);
+    /// - the trunk's OWN install already declares a vision tower (attaching
+    ///   a second one would mean two towers for one session);
+    /// - `dir` does not validate as a sidecar (`model_io::load_vision_sidecar`
+    ///   surfaces the reason: missing record, unknown family, a manifest
+    ///   that fails structural validation, or a record/manifest hidden-size
+    ///   disagreement internal to the sidecar itself);
+    /// - the sidecar's declared pairing (`family`, `hidden_size`) does not
+    ///   match this trunk's.
+    ///
+    /// On success, `self.arch.vision` becomes the sidecar's `VisionConfig`,
+    /// so [`Self::has_vision_tower`] and [`Self::vision_config`] read exactly
+    /// as they would for a combined install from this point on.
+    pub fn attach_vision_sidecar(&mut self, dir: &Path) -> Result<(), RealForwardError> {
+        if let Some(existing) = &self.vision_sidecar_dir {
+            return Err(RealForwardError::Unsupported(format!(
+                "a vision sidecar is already attached at {} for this session; attach happens \
+                 once, before the first image is encoded",
+                existing.display()
+            )));
+        }
+        if self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(format!(
+                "this session's own trunk install ({}) already declares a vision tower; \
+                 attaching a sidecar at {} would be a second tower for one session, which is \
+                 not supported",
+                self.install_dir.display(),
+                dir.display()
+            )));
+        }
+        let (record, vision) =
+            model_io::load_vision_sidecar(dir).map_err(RealForwardError::Model)?;
+        let trunk_family = self.arch.family.as_str();
+        if record.pairs_with.family != trunk_family {
+            return Err(RealForwardError::Unsupported(format!(
+                "vision sidecar at {} pairs with family {:?}, but this session's trunk is {:?}",
+                dir.display(),
+                record.pairs_with.family,
+                trunk_family
+            )));
+        }
+        if record.pairs_with.hidden_size != self.arch.hidden_size {
+            return Err(RealForwardError::Unsupported(format!(
+                "vision sidecar at {} pairs with hidden_size {}, but this session's trunk is {}",
+                dir.display(),
+                record.pairs_with.hidden_size,
+                self.arch.hidden_size
+            )));
+        }
+        self.vision_sidecar_dir = Some(dir.to_path_buf());
+        self.arch.vision = vision;
+        Ok(())
+    }
+
+    /// The directory a first image would open its tower from: the attached
+    /// sidecar's directory, or this session's own install directory when
+    /// none is attached (a combined install, or a text-only trunk that will
+    /// refuse the image outright).
+    ///
+    /// The ONE place a later caller (CLI/FFI/server) should read to find
+    /// `preprocessor_config.json`, so it never has to ask separately whether
+    /// a sidecar is attached.
+    pub fn vision_dir(&self) -> &Path {
+        self.vision_sidecar_dir
+            .as_deref()
+            .unwrap_or(&self.install_dir)
+    }
+
+    /// Whether the tower currently open (if any) is sidecar-backed.
+    ///
+    /// `None` before any image is processed / no tower open, matching
+    /// [`Self::vision_residency_is_mapped`]'s own precedent: a byte-identity
+    /// check between a sidecar-backed run and a combined-install run cannot
+    /// on its own tell "the sidecar path ran and produced this" apart from
+    /// "the sidecar path silently fell through to the trunk's own tower".
+    pub fn vision_is_sidecar(&self) -> Option<bool> {
+        self.vision.as_ref().map(|v| v.is_sidecar())
     }
 
     /// Whether [`crate::producer::ChunkedPrefillRunner::prefill_chunk`] would

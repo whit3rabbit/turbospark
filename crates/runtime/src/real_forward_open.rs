@@ -21,6 +21,20 @@ impl RealForwardRunner {
         steering: crate::steering::SteeringPolicy,
         session_slots: usize,
     ) -> Result<Self, RealForwardError> {
+        // A vision sidecar directory (vision memory sidecar, Part A2) is not
+        // a model install -- it declares `numLayers: 0` and has no trunk
+        // tensors at all, so letting it fall through to the checks below
+        // would fail deep inside family-state construction with a
+        // `MissingTensor` error naming some trunk tensor, which reads as a
+        // corrupted install rather than as "wrong kind of directory". Caught
+        // first, before anything else here even looks at `dir`.
+        if model_io::is_sidecar_dir(dir) {
+            return Err(RealForwardError::Unsupported(format!(
+                "{} is a vision sidecar directory, not a model install; open the trunk install \
+                 and call RealForwardRunner::attach_vision_sidecar instead",
+                dir.display()
+            )));
+        }
         if expert_cache_slots == ExpertCacheSlots::Fixed(0) {
             return Err(RealForwardError::Unsupported(
                 "expert_cache_slots must be positive".to_string(),
@@ -173,6 +187,7 @@ impl RealForwardRunner {
             steering: None,
             install_dir: dir.to_path_buf(),
             vision: None,
+            vision_sidecar_dir: None,
             prompt_vision: None,
             skip_head: false,
         };

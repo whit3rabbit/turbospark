@@ -166,16 +166,99 @@ pub struct VisionTower {
     /// engine that shipped before this existed (`overflow.rs`'s module
     /// doc).
     overflow: Option<overflow::VisionOverflowCapture>,
+    /// The sidecar's OWN resident weights (vision memory sidecar, Part A2),
+    /// `Some` only when this tower was opened via [`Self::open_with_sidecar`]
+    /// against a standalone sidecar directory rather than baked into the
+    /// trunk's own install.
+    ///
+    /// Independent of `slot_buffers`/`streamer` above: `ResidentGpuWeights`
+    /// owns its `ResidentBuffer` mapping internally (see `crates/gpu`'s
+    /// `resident_metal.rs` module doc), so there is no separate mapping this
+    /// field must be declared ahead of to keep alive -- it is a
+    /// self-contained unit, kept here only because nothing else in a
+    /// standalone-sidecar session holds a reference to it once `open_inner`
+    /// returns (the trunk case borrows the RUNNER's `weights` field at every
+    /// call site instead).
+    sidecar_weights: Option<gpu::ResidentGpuWeights>,
 }
 
 impl VisionTower {
-    /// Open the tower against an install that declares one.
+    /// Open the tower against an install that declares one, using the
+    /// TRUNK's own resident weights and index (a combined install).
     ///
     /// Called lazily, on the first image: `arch.vision` is read by nothing
     /// else in this crate, and opening at `RealForwardRunner::open` would
     /// charge every text-only session on a vision install ~58 MiB of pinned
     /// slots plus the layout parse for a component it never touches.
     pub(crate) fn open(
+        dir: &Path,
+        context: &gpu::MetalContext,
+        weights: &gpu::ResidentGpuWeights,
+        index: &ResidentIndex,
+        arch: &ArchConfig,
+    ) -> Result<Self, RealForwardError> {
+        Self::build(dir, context, weights, index, arch)
+    }
+
+    /// Open the tower against a standalone SIDECAR directory (vision memory
+    /// sidecar, Part A2) rather than the trunk's own install.
+    ///
+    /// Opens the sidecar directory's OWN `model_weights.bin` -- its own
+    /// resident index and its own zero-copy `ResidentGpuWeights` mapping,
+    /// entirely separate from the trunk runner's `weights`/`index` fields --
+    /// and keeps that mapping alive in [`Self::sidecar_weights`] for the
+    /// tower's whole life, since nothing else holds a reference to it.
+    /// `packed_vision/` and the nine resident tensors are then read out of
+    /// `sidecar_dir` exactly as [`Self::open`] reads them out of a combined
+    /// install's own directory -- same [`Self::build`] body, different
+    /// directory and different weights/index pair.
+    ///
+    /// The dtype backstop (`readable_resident_dtype`'s NAME-SCOPED FP16
+    /// exception, AGENTS.md Gotcha 24) is re-run here on the sidecar's own
+    /// resident index for the same reason `RealForwardRunner::open_inner`
+    /// runs it on a trunk's: every entry under a sidecar built by
+    /// `crates/repack`'s `write_vision_sidecar` is `vision.`-prefixed by
+    /// construction, so this should never fire on a well-formed sidecar, but
+    /// a hand-edited or corrupted one is exactly the case a backstop exists
+    /// for.
+    pub(crate) fn open_with_sidecar(
+        sidecar_dir: &Path,
+        context: &gpu::MetalContext,
+        arch: &ArchConfig,
+    ) -> Result<Self, RealForwardError> {
+        let index = model_io::load_resident_index(&sidecar_dir.join("model_weights.bin"))
+            .map_err(RealForwardError::Model)?;
+        if let Some(entry) = index
+            .entries
+            .values()
+            .find(|e| !crate::real_forward_layout::readable_resident_dtype(&e.name, e.dtype))
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "vision sidecar tensor {} carries resident dtype {}, which no reader in this \
+                 crate honours; a well-formed sidecar carries only `vision.`-prefixed FP16 \
+                 tensors",
+                entry.name, entry.dtype
+            )));
+        }
+        let buffer = model_io::ResidentBuffer::map(
+            &sidecar_dir.join("model_weights.bin"),
+            index.header.index_size,
+            index.header.resident_size,
+        )
+        .map_err(RealForwardError::Model)?;
+        let weights = gpu::ResidentGpuWeights::wrap(context.device(), buffer)
+            .map_err(RealForwardError::Gpu)?;
+        let mut tower = Self::build(sidecar_dir, context, &weights, &index, arch)?;
+        tower.sidecar_weights = Some(weights);
+        Ok(tower)
+    }
+
+    /// The shared body of [`Self::open`] and [`Self::open_with_sidecar`]:
+    /// everything that does not depend on WHERE the resident weights came
+    /// from. `sidecar_weights` starts `None` here; `open_with_sidecar` fills
+    /// it in after this returns, once its own local `weights` (borrowed for
+    /// this call) is free to be moved into the built tower.
+    fn build(
         dir: &Path,
         context: &gpu::MetalContext,
         weights: &gpu::ResidentGpuWeights,
@@ -313,7 +396,23 @@ impl VisionTower {
             slot_bytes,
             last_scratch_bytes: 0,
             overflow: overflow::VisionOverflowCapture::from_env(),
+            sidecar_weights: None,
         })
+    }
+
+    /// Whether this tower was opened against a standalone sidecar directory
+    /// ([`Self::open_with_sidecar`]) rather than baked into the trunk's own
+    /// install ([`Self::open`]).
+    ///
+    /// Test-only proof of engagement, the same shape as
+    /// [`Self::is_mapped_residency`]'s own doc: a byte-identity check
+    /// between a sidecar-backed run and a combined-install run cannot on its
+    /// own distinguish "the sidecar path ran and produced the same output"
+    /// from "the sidecar path silently fell through to the trunk's own
+    /// (nonexistent, on a text-only trunk) tower" -- both would trivially
+    /// agree in the second case if the trunk happened to have one too.
+    pub(crate) fn is_sidecar(&self) -> bool {
+        self.sidecar_weights.is_some()
     }
 
     /// Whether this tower opened under `TURBOSPARK_VISION_RESIDENCY=mapped`.
@@ -389,6 +488,19 @@ impl VisionTower {
         params: &PreprocessParams,
         mut capture: Option<VisionStages>,
     ) -> Result<(VisionEmbedding, Option<VisionStages>), RealForwardError> {
+        // `weights` (the parameter) is the RUNNER's own trunk buffer,
+        // `&self.weights`, passed in unconditionally by every call site in
+        // `real_forward_api.rs` whether or not a sidecar is attached.
+        // `self.sidecar_weights.as_ref().unwrap_or(weights)` picks the right
+        // one, inline, at each of the two places below that actually bind a
+        // resident buffer (patch embed, merger) -- a DIRECT field
+        // projection rather than a `&self`-taking helper method, which
+        // matters here: a helper would borrow the whole `self` for as long
+        // as its result is alive, conflicting with the block loop's
+        // `&mut self.streamer`/`self.mapped_buffer` accesses in between,
+        // where a direct `self.sidecar_weights` projection is a normal
+        // disjoint field borrow the compiler can interleave with those.
+        //
         // The caller preprocessed with SOME parameters and the tower was
         // built from the install's. If they disagree the patch rows are the
         // wrong width or the merge windows the wrong size, and both produce
@@ -438,7 +550,14 @@ impl VisionTower {
             self.last_scratch_bytes = s.bytes;
 
             let pass = context.begin_pass();
-            stages::encode_patch_embed(context, &pass, weights, &self.resident, &s, &self.shape)?;
+            stages::encode_patch_embed(
+                context,
+                &pass,
+                self.sidecar_weights.as_ref().unwrap_or(weights),
+                &self.resident,
+                &s,
+                &self.shape,
+            )?;
             pass.commit_and_wait();
             let wide = seq * self.shape.hidden;
             if let Some(c) = capture.as_mut() {
@@ -518,7 +637,14 @@ impl VisionTower {
             }
 
             let pass = context.begin_pass();
-            stages::encode_merger(context, &pass, weights, &self.resident, &s, &self.shape)?;
+            stages::encode_merger(
+                context,
+                &pass,
+                self.sidecar_weights.as_ref().unwrap_or(weights),
+                &self.resident,
+                &s,
+                &self.shape,
+            )?;
             pass.commit_and_wait();
 
             let count = s.merged * self.shape.out_hidden;
