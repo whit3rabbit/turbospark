@@ -500,5 +500,24 @@ final class ToolPermissionsTests: XCTestCase {
             XCTFail("Private host fetch must force .ask even when web=.allow, got \(privateDecision)")
         }
     }
+
+    func testPermissionPresetsAndFullAccessExecution() {
+        XCTAssertEqual(AppPermissionMode.ask.label, "Ask for approval")
+        XCTAssertEqual(AppPermissionMode.auto.label, "Approve for me")
+        XCTAssertEqual(AppPermissionMode.permissive.label, "Run automatically")
+        XCTAssertEqual(AppPermissionMode.fullAccess.label, "Full access")
+
+        for mode in AppPermissionMode.allCases {
+            let preset = AppProjectPermissions.preset(for: mode)
+            XCTAssertEqual(preset.mode, mode)
+        }
+
+        // Under fullAccess mode, even a mutating tool call is allowed without prompting
+        let fullAccessProject = AppProject(name: "FullAccessProj", permissions: .fullAccess)
+        let termCall = AppToolCall(name: "Terminal", arguments: ["command": "rm -rf test.tmp"], category: .terminal)
+        let decision = AppToolPermissionEngine.evaluate(call: termCall, project: fullAccessProject)
+        XCTAssertEqual(decision, .allow)
+    }
 }
+
 

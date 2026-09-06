@@ -60,6 +60,34 @@ The two callers differ on purpose:
 | Nesting | n/a | `subagentDepth` bounds `agent` calling `agent` |
 | `chatID` | the turn's chat | threaded through, so a checklist lands on the right chat |
 
+Hook output contract, and where this client deliberately differs from
+Claude Code (https://code.claude.com/docs/en/hooks):
+
+- `continue: false` (with optional `stopReason`) ENDS the turn and shows
+  the reason to the user, on every event. It is not the block path: a
+  Stop hook's `decision: "block"` or exit 2 feeds its reason to the MODEL
+  and re-enters the loop (capped at 8); a prevent-continuation verdict
+  never consumes one of those re-entries.
+- Plain-text stdout on exit 0 is advisory only and never reaches the
+  model (Claude Code feeds it to the model on some events). This is also
+  why `suppressOutput` has nothing to suppress here; the field is parsed
+  and carried for a future surface that prints hook stdout.
+- The legacy `decision` field maps onto the permission ladder on
+  `PreToolUse`/`PermissionRequest` (`approve` allows, `block` denies)
+  and blocks the action on events that carry no permission decision.
+- `PermissionDenied` fires when the permission engine denies a call and
+  when the user refuses one at the approval card. Its
+  `hookSpecificOutput.retry` is parsed but NOT acted on: automatically
+  re-running a call a human just refused is not a decision this app
+  makes on a hook's word.
+- `prompt` and `agent` hook types load but are never evaluated. Discovery
+  says so in `discoveryDiagnostics`, the hooks pane badges the row, and a
+  dispatch produces a visible non-blocking outcome. An `agent` entry maps
+  to the unevaluated type rather than to `command`, which would run the
+  prompt text as a shell command.
+- `SubagentStart`/`SubagentStop` wrap every `SubagentRunner.run` exit;
+  they are notification-grade and cannot block the run.
+
 ## 2. Where a tool name has to appear
 
 The vocabulary is several hand-maintained lists that describe one thing, and
@@ -97,23 +125,55 @@ absolute and `~` paths and compares the resolved target against the resolved
 root with symlinks followed on both sides. `AppToolSandbox.validateWritePath`
 adds a write-path allow and deny list. `run_command` takes no path and a
 shell leaves the root by its own means, so for it the permission gate is the
-whole story (Gotcha 11).
+whole story (Gotcha 11). The one piece of shell state that persists is the
+working directory: `ShellCwdTracker` records where each command ended via a
+`pwd -P` capture appended to every command, starts the next call there, and
+RESETS to the project root with a note when a command ends outside the root,
+so a `cd /tmp` cannot silently widen every later call.
 
 **Every read is bounded before it happens.** `AppFileReadLimits` caps a
 single read at 16 MiB and checks the size before loading. `searchCode` stops
 at 5,000 files, 64 MiB, or 40 matches. `compactOutput` keeps 25 head and 65
 tail lines of anything over 120. `ProcessExecutor` (internal, not public)
-carries a timeout and an output cap.
+carries a timeout and an output cap, and `ShellOutputFormatting.compact`
+bounds what the MODEL sees from one shell command at 30,000 characters (head
+20K and tail 8K around a marker, applied after ANSI stripping).
 
 The app is unsandboxed. Nothing here is a sandbox, and `AppToolSandbox` is a
 path and domain policy rather than one.
 
 **A failure throws, so `isError` follows.** A non-zero exit from
-`run_command` throws with the combined output (state#81). A stale file under
+`run_command` throws with the combined output (state#81), and a TIMEOUT
+throws the same way with whatever output the command produced -- a timeout is
+work that did not finish, never a success string. The exceptions are the
+benign exit codes (`ShellOutputFormatting.benignExitNote`): grep/rg 1 is
+"No matches found", diff 1 is "Files differ", test/[ 1 is "Condition
+evaluated to false", and each returns as a non-error with the note appended,
+because those are commands ANSWERING rather than failing. A stale file under
 `edit_file` throws because `FileSnapshotStore` saw it change since the last
-read. A `CancellationError` is caught separately and reaches the model as
+read. A
+`CancellationError` is caught separately and reaches the model as
 "Stopped by the user before it finished. Do not retry" rather than as
 `Error: cancelled` (state#64).
+
+**The shell runs merged, bounded, and with the hang-prevention environment.**
+`ShellCommandRunner` passes `mergeStreams: true` to `ProcessExecutor`, so
+stdout and stderr interleave in arrival order instead of arriving as a
+stdout block followed by a stderr block; hooks keep the streams separate
+because their verdict JSON parses per stream. The child environment inherits
+the app's own plus `GIT_EDITOR=true`, `GIT_PAGER=cat`, `PAGER=cat`,
+`TERM=dumb` and `NO_COLOR=1`, so a messageless `git commit` fails fast
+instead of hanging on an invisible editor.
+
+**Background execution is real.** `run_in_background: true` hands the
+command to `BackgroundShellManager` and returns an id (`bg_N`) immediately:
+no timeout applies, the output accumulates in the same 1 MB capped buffer
+design, and `BashOutput` (`task_id`, optional `wait_seconds` up to 120)
+polls or waits for a snapshot while `KillShell` terminates via the
+SIGTERM-then-SIGKILL ladder. Ids are scoped to the launching conversation,
+so a subagent or an unrelated chat can neither read another turn's output
+nor kill another turn's process, and there is a ceiling of 20 concurrently
+running shells.
 
 **No fabricated success (T5).** The `default` arm throws for a name it does
 not implement, and `AppToolCatalog` filters every advertised list through
@@ -135,7 +195,7 @@ five files adding a tool touches.
 | Path | What is in it |
 |---|---|
 | `Tools/Registry/AppToolRegistry.swift` | `execute`: the rooted refusal, the `switch`, `executeMcpCall` |
-| `Tools/Registry/AppToolRegistry+Handlers.swift` | the file and shell handlers: `resolveSecurePath`, `listDirectory`, `readFile`, `writeFile`, `editFile`, `searchCode`, `runCommand`, plus `AppFileReadLimits` and `compactOutput` |
+| `Tools/Registry/AppToolRegistry+Handlers.swift` | the file handlers: `resolveSecurePath`, `listDirectory`, `readFile`, `writeFile`, `editFile`, `searchCode`, plus `AppFileReadLimits` and `compactOutput` (the shell handler lives in `Tools/Terminal/ShellCommandRunner.swift`) |
 | `Tools/Registry/AppToolRegistry+Vocabulary.swift` | `supportedToolNames`, `workspaceRootedToolNames`, `isImplemented`, `standardTools` |
 | `Tools/Registry/AppToolTypes.swift` | `AppToolCategory`, `AppToolCall`, `AppToolResult`, `AppToolDefinition` |
 | `Tools/Registry/AppToolCatalog.swift` | the eight `OpenAITool` collections, `allTools`, `tools(for:)`, `category(for:)`, `systemPromptAddendum` |
@@ -151,7 +211,7 @@ five files adding a tool touches.
 | `Tools/Custom/` | `CustomToolDefinition`, `CustomToolParser`, `CustomToolManager` (scopes and directories), `CustomToolExecutor` |
 | `Tools/MCP/` | `McpClientEngine` (stdio and SSE), `McpServerSpec`, `McpTools` (resource tool schemas), `McpResourceExecutor`, `ProjectMcpDetector` |
 | `Tools/File/` | `FileReadWriteTools`, `FileSearchTools`, `ApplyPatchTool` (schemas), `NotebookEditExecutor`, `SnipExecutor`, `SendUserFileExecutor`, `ApplyPatchExecutor`, `FileSnapshotStore` |
-| `Tools/Terminal/` | `TerminalTools` (schema only), `TerminalCommandClassifier` (the auto-approve allowlist, and `isCollapsible` which is presentation only) |
+| `Tools/Terminal/` | `TerminalTools` (schemas: `Bash`, `BashOutput`, `KillShell`), `ShellCommandRunner` (the execution path: wrapping, timeout clamp, output shaping, background handoff), `BackgroundShellManager` (the background registry), `ShellCwdTracker`, `ShellOutputFormatting`, `TerminalCommandClassifier` (the auto-approve allowlist, and `isCollapsible` which is presentation only) |
 | `Tools/Web/` | `WebTools` (schemas), `WebSearchExecutor` (Exa, Parallel, Brave, SearXNG), `WebFetchExecutor` |
 | `Tools/Tasks/` | `AgentTools`, `TaskItemTools` (schemas), `TaskManager`, `TodoWriteExecutor` |
 | `Tools/Planning/` | `PlanningInteractiveTools`, `PlanningInteractiveExecutors` (interactive questionnaires, plan mode, findings, skills/goals), `SkillTool` (schemas) |

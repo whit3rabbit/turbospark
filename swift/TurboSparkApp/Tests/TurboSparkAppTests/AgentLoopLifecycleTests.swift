@@ -259,8 +259,8 @@ final class AgentLoopLifecycleTests: XCTestCase {
                 "echo '{\"decision\":\"block\",\"reason\":\"step cap reached and Stop was asked\"}'",
             sourceType: .custom
         )
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let call = AppToolCall(name: "run_command", arguments: ["command": "ls"], category: .terminal)
         appModel.pendingToolCall = call
@@ -303,8 +303,8 @@ final class AgentLoopLifecycleTests: XCTestCase {
                 "echo '{\"decision\":\"block\",\"reason\":\"approve reached the step cap\"}'",
             sourceType: .custom
         )
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let call = AppToolCall(name: "list_directory", arguments: ["path": "."], category: .fileRead)
         appModel.pendingToolCall = call

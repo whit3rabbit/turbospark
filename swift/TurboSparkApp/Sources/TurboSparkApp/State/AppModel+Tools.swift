@@ -83,12 +83,34 @@ extension AppModel {
         let toolsPrompt = AppToolRegistry.systemPromptAddendum(for: agentType)
         sections.append(toolsPrompt)
 
+        let activeMcpServers = (globalMcpServers + (project.mcpServers)).filter { $0.isEnabled }
+            + PluginManager.shared.pluginMcpServers(projectURL: project.rootDirectoryURL)
+        if !activeMcpServers.isEmpty {
+            var mcpLines: [String] = ["## Connected MCP Servers"]
+            mcpLines.append("The following Model Context Protocol (MCP) servers are active and can be called via `call_mcp_tool` or `mcp__<server>__<tool>`:")
+            for s in activeMcpServers {
+                let typeName: String
+                switch s.transport {
+                case .stdio: typeName = "stdio"
+                case .sse: typeName = "sse"
+                }
+                let desc = (s.serverDescription?.isEmpty ?? true) ? "" : ": \(s.serverDescription!)"
+                mcpLines.append("- `\(s.name)` (\(typeName))\(desc)")
+            }
+            sections.append(mcpLines.joined(separator: "\n"))
+        }
+
         let skills = effectiveSkills
         if !skills.isEmpty {
             var skillLines: [String] = ["## Available Skills"]
             skillLines.append("The following specialized skills are available in the workspace. You can load any of them using the `skill` tool:")
             for s in skills {
-                let scopeTag = s.scope.isProjectScope ? "[Project]" : "[User]"
+                let scopeTag: String
+                switch s.scope {
+                case .projectLocal: scopeTag = "[Project]"
+                case .plugin: scopeTag = "[Plugin]"
+                default: scopeTag = "[User]"
+                }
                 skillLines.append("- `\(s.name)` \(scopeTag): \(s.skillDescription)")
             }
             sections.append(skillLines.joined(separator: "\n"))
@@ -281,6 +303,13 @@ extension AppModel {
             }
             _ = await self.dispatchNotification(
                 message: "Tool call '\(call.name)' was denied by the user.",
+                chatID: chatID, project: project)
+            // Claude Code's `PermissionDenied` contract: configured hooks
+            // hear the refusal with the tool fields, not just the prose
+            // notification above.
+            _ = await self.dispatchPermissionDenied(
+                toolName: call.name, toolArguments: call.arguments,
+                reason: "Denied by the user at the approval card.",
                 chatID: chatID, project: project)
             await self.continueOrStop(afterStep: originStep, chatID: chatID, project: project)
         }

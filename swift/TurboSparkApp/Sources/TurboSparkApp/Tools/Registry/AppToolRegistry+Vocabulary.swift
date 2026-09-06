@@ -87,6 +87,7 @@ extension AppToolRegistry {
         "apply_patch", "applypatch",
         "search_code", "grep", "search",
         "run_command", "bash", "shell", "exec", "terminal",
+        "bashoutput", "bash_output", "killshell", "kill_shell",
         "websearch", "web_search", "search_web",
         "webfetch", "web_fetch", "fetch_url", "read_url_content",
         "skill",

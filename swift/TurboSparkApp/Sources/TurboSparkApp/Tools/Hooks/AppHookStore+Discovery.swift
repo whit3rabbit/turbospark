@@ -21,7 +21,8 @@ extension AppHookStore {
         }
 
         // 4. Discover Plugin Hooks
-        loaded.append(contentsOf: discoverPluginHooks(diagnostics: &diagnostics))
+        loaded.append(contentsOf: discoverPluginHooks(
+            projectDirectory: projectDirectory, diagnostics: &diagnostics))
 
         self.hooks = loaded
         self.didRefreshAtLeastOnce = true
@@ -80,13 +81,21 @@ extension AppHookStore {
             case .plugin:
                 groupKey = "plugin_\(hook.pluginName ?? "generic")"
                 if groups[groupKey] == nil {
+                    // Option specs come from the plugin's own `userConfig`
+                    // manifest, not a guess: this used to return hardcoded
+                    // demo specs keyed on the plugin's NAME, so a real
+                    // option panel could not exist.
+                    let specs = lastLoadedPlugins
+                        .first { $0.name.lowercased() == (hook.pluginName ?? "").lowercased() }?
+                        .manifest.userConfig
+                        .map(\.optionSpec) ?? []
                     groups[groupKey] = AppHookSourceGroup(
                         id: groupKey,
                         title: hook.pluginName ?? "Plugin",
                         subtitle: "Plugin hooks and options",
                         sourceType: .plugin,
                         pluginName: hook.pluginName,
-                        optionSpecs: defaultOptionSpecs(for: hook.pluginName)
+                        optionSpecs: specs
                     )
                 }
             }
@@ -130,11 +139,20 @@ extension AppHookStore {
         var results: [AppHookCommand] = []
         let home = fileManager.homeDirectoryForCurrentUser
 
-        let candidates = [
-            home.appendingPathComponent(".turbospark/hooks.json"),
-            home.appendingPathComponent(".turbospark/settings.json"),
-            home.appendingPathComponent(".claude/settings.json")
-        ]
+        let candidates: [URL]
+        if UserProfileStore.isDefault {
+            candidates = [
+                home.appendingPathComponent(".turbospark/hooks.json"),
+                home.appendingPathComponent(".turbospark/settings.json"),
+                home.appendingPathComponent(".claude/settings.json")
+            ]
+        } else {
+            // A non-default profile owns its user-scope hook config inside
+            // its own folder and reads no shared tree. Only the dedicated
+            // hooks.json is scanned there: the profile's settings.json is
+            // the app's own settings store, not a hook source.
+            candidates = [AppStorageRoot.file("hooks.json")]
+        }
         for fileURL in candidates where fileManager.fileExists(atPath: fileURL.path) {
             results.append(contentsOf: parseHooksFile(at: fileURL, sourceType: .userConfig, diagnostics: &diagnostics))
         }
@@ -144,10 +162,15 @@ extension AppHookStore {
         // app also honors a global one defensively -- same `.localConfig`
         // source as the project-scoped file below, since both are "local,
         // not shared" by the same rule.
-        let localCandidates = [
-            home.appendingPathComponent(".turbospark/settings.local.json"),
-            home.appendingPathComponent(".claude/settings.local.json")
-        ]
+        let localCandidates: [URL]
+        if UserProfileStore.isDefault {
+            localCandidates = [
+                home.appendingPathComponent(".turbospark/settings.local.json"),
+                home.appendingPathComponent(".claude/settings.local.json")
+            ]
+        } else {
+            localCandidates = []
+        }
         for fileURL in localCandidates where fileManager.fileExists(atPath: fileURL.path) {
             results.append(contentsOf: parseHooksFile(at: fileURL, sourceType: .localConfig, diagnostics: &diagnostics))
         }
@@ -180,27 +203,42 @@ extension AppHookStore {
         return results
     }
 
-    private func discoverPluginHooks(diagnostics: inout [String]) -> [AppHookCommand] {
+    /// Enumerates ENABLED plugins through `PluginManager` and parses their
+    /// hooks: the conventional `hooks/hooks.json` (or a bare `hooks.json`
+    /// from the pre-plugin stub era), the manifest's declared `./file.json`
+    /// paths, and the manifest's inline hooks schema.
+    private func discoverPluginHooks(
+        projectDirectory: String?, diagnostics: inout [String]
+    ) -> [AppHookCommand] {
         var results: [AppHookCommand] = []
-        let home = fileManager.homeDirectoryForCurrentUser
+        let projectURL = projectDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let plugins: [LoadedPlugin]
+        if let pluginProvider {
+            plugins = pluginProvider(projectDirectory)
+        } else {
+            plugins = PluginManager.shared.enabledPlugins(projectURL: projectURL)
+        }
+        lastLoadedPlugins = plugins
 
-        let pluginDirs = [
-            home.appendingPathComponent(".turbospark/plugins"),
-            home.appendingPathComponent(".claude/plugins")
-        ]
-
-        for dir in pluginDirs where fileManager.fileExists(atPath: dir.path) {
-            if let contents = try? fileManager.contentsOfDirectory(atPath: dir.path) {
-                for pluginName in contents where !pluginName.hasPrefix(".") {
-                    let pluginPath = dir.appendingPathComponent(pluginName)
-                    let hookCandidates = [
-                        pluginPath.appendingPathComponent("hooks/hooks.json"),
-                        pluginPath.appendingPathComponent("hooks.json")
-                    ]
-                    for candidate in hookCandidates where fileManager.fileExists(atPath: candidate.path) {
-                        results.append(contentsOf: parseHooksFile(at: candidate, sourceType: .plugin, pluginName: pluginName, diagnostics: &diagnostics))
-                    }
-                }
+        for plugin in plugins {
+            var candidates: [URL] = [
+                plugin.directoryURL.appendingPathComponent("hooks/hooks.json"),
+                plugin.directoryURL.appendingPathComponent("hooks.json")
+            ]
+            for relative in plugin.manifest.hookFilePaths {
+                candidates.append(plugin.directoryURL.appendingPathComponent(relative))
+            }
+            var seenPaths = Set<String>()
+            for candidate in candidates where fileManager.fileExists(atPath: candidate.path) {
+                guard seenPaths.insert(candidate.standardizedFileURL.path).inserted else { continue }
+                results.append(contentsOf: parseHooksFile(
+                    at: candidate, sourceType: .plugin, pluginName: plugin.name,
+                    diagnostics: &diagnostics))
+            }
+            if let inline = plugin.manifest.inlineHooksJSON {
+                results.append(contentsOf: parseHooksData(
+                    inline, sourceType: .plugin, sourcePath: plugin.directoryURL.path,
+                    pluginName: plugin.name, diagnostics: &diagnostics))
             }
         }
         return results
@@ -213,8 +251,22 @@ extension AppHookStore {
         diagnostics: inout [String]
     ) -> [AppHookCommand] {
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
+        return parseHooksData(
+            data, sourceType: sourceType, sourcePath: fileURL.path,
+            pluginName: pluginName, diagnostics: &diagnostics)
+    }
+
+    /// The data-level form, shared by config files and a plugin manifest's
+    /// inline hooks schema (which has no file behind it).
+    func parseHooksData(
+        _ data: Data,
+        sourceType: AppHookSourceType,
+        sourcePath: String,
+        pluginName: String?,
+        diagnostics: inout [String]
+    ) -> [AppHookCommand] {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            diagnostics.append("Could not parse \(fileURL.path) as JSON.")
+            diagnostics.append("Could not parse \(sourcePath) as JSON.")
             return []
         }
 
@@ -229,10 +281,16 @@ extension AppHookStore {
                 let matcherPattern = mObj["matcher"] as? String
                 guard let hookCommands = mObj["hooks"] as? [[String: Any]] else { continue }
                 for hObj in hookCommands {
-                    if let cmd = parseHookObject(hObj, event: event, matcher: matcherPattern, sourceType: sourceType, sourcePath: fileURL.path, pluginName: pluginName) {
+                    if let cmd = parseHookObject(hObj, event: event, matcher: matcherPattern, sourceType: sourceType, sourcePath: sourcePath, pluginName: pluginName) {
                         results.append(cmd)
+                        // A prompt hook LOADS but is never evaluated; say so
+                        // at discovery rather than letting it silently
+                        // no-op at dispatch time.
+                        if cmd.type == .prompt {
+                            diagnostics.append("\"\(cmd.name)\" in \(sourcePath) is a prompt hook, which this client does not evaluate; it is skipped at dispatch.")
+                        }
                     } else {
-                        diagnostics.append("Dropped an unparseable \(event.rawValue) hook entry in \(fileURL.path) (missing or empty command).")
+                        diagnostics.append("Dropped an unparseable \(event.rawValue) hook entry in \(sourcePath) (missing or empty command).")
                     }
                 }
             }
@@ -247,14 +305,17 @@ extension AppHookStore {
         sourceType: AppHookSourceType,
         sourcePath: String,
         pluginName: String?
-    ) -> AppHookCommand? {
-        // Claude Code omits `type` for a command hook; default to `.command`
+    ) -> AppHookCommand? {        // Claude Code omits `type` for a command hook; default to `.command`
         // rather than dropping the entry, matching Gotcha 39's rule (a
         // missing optional key is a claim about what silence means, and here
         // it means "the common case").
         let hookType: AppHookType
         if let typeStr = dict["type"] as? String {
-            hookType = AppHookType(rawValue: typeStr) ?? .command
+            // "agent" is Claude Code's LLM-evaluator sibling of "prompt".
+            // Falling through to the `.command` default here would run the
+            // agent's PROMPT TEXT as a shell command, so it maps to the
+            // other unevaluated type instead.
+            hookType = AppHookType(rawValue: typeStr) ?? (typeStr == "agent" ? .prompt : .command)
         } else {
             hookType = .command
         }
@@ -294,21 +355,5 @@ extension AppHookStore {
             sourcePath: sourcePath,
             pluginName: pluginName
         )
-    }
-
-    private func defaultOptionSpecs(for pluginName: String?) -> [AppHookOptionSpec] {
-        guard let pluginName else { return [] }
-        if pluginName.contains("forge") {
-            return [
-                AppHookOptionSpec(key: "api_key", type: .string, title: "API Key", description: "Forge authentication token", isSensitive: true),
-                AppHookOptionSpec(key: "strict_mode", type: .boolean, title: "Strict Mode", description: "Enforce strict lint checks", defaultValue: "true")
-            ]
-        } else if pluginName.contains("secret") {
-            return [
-                AppHookOptionSpec(key: "scan_depth", type: .number, title: "Scan Depth", description: "Maximum directory depth to scan", defaultValue: "5"),
-                AppHookOptionSpec(key: "mask_findings", type: .boolean, title: "Mask Findings", description: "Redact found secret tokens in logs", defaultValue: "true")
-            ]
-        }
-        return []
     }
 }

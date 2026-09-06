@@ -14,6 +14,14 @@ public struct AppHookVerdict: Sendable {
     public var updatedInput: [String: String]?
     public var additionalContext: String?
     public var systemMessages: [String]
+    /// `continue: false` from any hook's JSON output -- Claude Code's
+    /// "prevent continuation". The turn ENDS and
+    /// `continuationStopReason` is shown to the USER. Deliberately
+    /// distinct from `isBlocked`, which feeds its reason to the MODEL and
+    /// (on Stop) re-enters the loop; a prevent-continuation verdict must
+    /// never consume one of those re-entries.
+    public var preventContinuation: Bool
+    public var continuationStopReason: String?
 
     public init(
         permissionDecision: AppHookPermissionBehavior? = nil,
@@ -23,7 +31,9 @@ public struct AppHookVerdict: Sendable {
         feedbackMessage: String? = nil,
         updatedInput: [String: String]? = nil,
         additionalContext: String? = nil,
-        systemMessages: [String] = []
+        systemMessages: [String] = [],
+        preventContinuation: Bool = false,
+        continuationStopReason: String? = nil
     ) {
         self.permissionDecision = permissionDecision
         self.permissionReason = permissionReason
@@ -33,6 +43,8 @@ public struct AppHookVerdict: Sendable {
         self.updatedInput = updatedInput
         self.additionalContext = additionalContext
         self.systemMessages = systemMessages
+        self.preventContinuation = preventContinuation
+        self.continuationStopReason = continuationStopReason
     }
 
     public static let passthrough = AppHookVerdict()
@@ -102,6 +114,16 @@ public enum AppHookDecisionAggregator {
                 for (k, v) in response.updatedInput ?? [:] { updatedInput[k] = v }
                 for (k, v) in response.hookSpecificOutput?.updatedInput ?? [:] { updatedInput[k] = v }
 
+                // `continue: false` ends the turn no matter which event it
+                // arrived on; the first hook's stopReason is the one shown.
+                if !response.continueGeneration {
+                    verdict.preventContinuation = true
+                    if verdict.continuationStopReason == nil,
+                       let sr = response.stopReason, !sr.isEmpty {
+                        verdict.continuationStopReason = sr
+                    }
+                }
+
                 if let permission = response.hookSpecificOutput?.permissionDecision {
                     let behavior: AppHookPermissionBehavior?
                     switch permission.lowercased() {
@@ -116,9 +138,32 @@ public enum AppHookDecisionAggregator {
                     }
                 }
 
-                if response.decision == "block", !isPermissionEvent, !verdict.isBlocked {
-                    verdict.isBlocked = true
-                    verdict.blockReason = response.reason ?? "Blocked by hook."
+                // Legacy global `decision` field, kept for hooks written
+                // against the pre-`hookSpecificOutput` shape: "approve"
+                // allows the call, "block" denies it. On permission events
+                // both fold into the deny>ask>allow ladder; on events that
+                // carry no permission decision only "block" means anything
+                // (it blocks the action, as it always has here).
+                if let decision = response.decision?.lowercased() {
+                    if isPermissionEvent {
+                        switch decision {
+                        case "block":
+                            if rank(.deny) > rank(verdict.permissionDecision) {
+                                verdict.permissionDecision = .deny
+                                verdict.permissionReason = response.reason
+                            }
+                        case "approve":
+                            if rank(.allow) > rank(verdict.permissionDecision) {
+                                verdict.permissionDecision = .allow
+                                verdict.permissionReason = response.reason
+                            }
+                        default:
+                            break
+                        }
+                    } else if decision == "block", !verdict.isBlocked {
+                        verdict.isBlocked = true
+                        verdict.blockReason = response.reason ?? "Blocked by hook."
+                    }
                 }
             }
         }

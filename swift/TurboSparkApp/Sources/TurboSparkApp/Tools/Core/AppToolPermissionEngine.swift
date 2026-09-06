@@ -93,13 +93,11 @@ public enum AppToolPermissionEngine {
         call: AppToolCall,
         project: AppProject?,
         sessionApproved: Bool = false,
+        fallbackMode: AppPermissionMode? = nil,
         globalServers: [McpServerConfig] = GlobalMcpFileStore.load().servers
     ) -> ToolPermissionDecision {
-        // No project selected: fall back to the same guarded default a fresh
-        // project would get, never to the wide-open `.auto` permission set
-        // (fileWrite/terminal/mcp all `.allow`). A plain chat with no project
-        // must still ask before running shell commands or writing files.
-        let permissions = project?.permissions ?? .standard
+        // No project selected: fall back to the guarded default or chosen fallback mode.
+        let permissions = project?.permissions ?? AppProjectPermissions.preset(for: fallbackMode ?? .auto)
         let category = call.category
         let risk = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
 
@@ -109,6 +107,11 @@ public enum AppToolPermissionEngine {
                 return .allow
             }
             return .deny(reason: "Tool execution is denied in Strict Read-Only mode.")
+        }
+
+        // Full Access Mode: Unrestricted execution without approval prompts.
+        if permissions.mode == .fullAccess {
+            return .allow
         }
 
         // 2. Granular Category Permission Check (Explicit Deny wins, and a

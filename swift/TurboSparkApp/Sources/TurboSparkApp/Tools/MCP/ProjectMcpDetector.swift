@@ -67,7 +67,15 @@ public enum ProjectMcpDetector {
     /// Parses a JSON configuration file into a list of McpServerConfig items.
     public static func parseConfigFile(at url: URL, rootURL: URL?) -> [McpServerConfig] {
         guard let data = try? Data(contentsOf: url) else { return [] }
+        return parseConfigData(data, sourcePath: url.path, sourceLabel: url.lastPathComponent, rootURL: rootURL)
+    }
 
+    /// The data-level form of `parseConfigFile`, for configs that came from
+    /// somewhere other than a file -- a plugin manifest's inline
+    /// `mcpServers` record, wrapped in `{"mcpServers": ...}` by its caller.
+    public static func parseConfigData(
+        _ data: Data, sourcePath: String, sourceLabel: String, rootURL: URL?
+    ) -> [McpServerConfig] {
         // Sanitize trailing commas / comments if possible before parsing JSON
         let sanitizedData = sanitizeJsonComments(data)
 
@@ -120,8 +128,8 @@ public enum ProjectMcpDetector {
                     transport: .stdio(command: firstCmd, args: allArgs, env: expandedEnv),
                     isEnabled: isEnabled,
                     autoApprove: autoApprove,
-                    sourcePath: url.path,
-                    serverDescription: "Imported from \(url.lastPathComponent)"
+                    sourcePath: sourcePath,
+                    serverDescription: "Imported from \(sourceLabel)"
                 )
                 configs.append(spec)
             }
@@ -135,8 +143,8 @@ public enum ProjectMcpDetector {
                     transport: .stdio(command: command, args: expandedArgs, env: expandedEnv),
                     isEnabled: isEnabled,
                     autoApprove: autoApprove,
-                    sourcePath: url.path,
-                    serverDescription: "Imported from \(url.lastPathComponent)"
+                    sourcePath: sourcePath,
+                    serverDescription: "Imported from \(sourceLabel)"
                 )
                 configs.append(spec)
             }
@@ -150,8 +158,8 @@ public enum ProjectMcpDetector {
                     transport: .sse(url: sseURL, headers: headers),
                     isEnabled: isEnabled,
                     autoApprove: autoApprove,
-                    sourcePath: url.path,
-                    serverDescription: "Imported from \(url.lastPathComponent)"
+                    sourcePath: sourcePath,
+                    serverDescription: "Imported from \(sourceLabel)"
                 )
                 configs.append(spec)
             }

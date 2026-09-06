@@ -139,7 +139,23 @@ public enum AppToolRegistry {
                     throw NSError(domain: "TurboSparkTool", code: 4, userInfo: [NSLocalizedDescriptionKey: "Missing 'command' argument."])
                 }
                 let timeoutMs = Int(call.arguments["timeout"] ?? "")
-                output = try await runCommand(command: command, rootURL: rootURL, timeoutMs: timeoutMs)
+                // Tolerant boolean: the flattened argument dictionary carries
+                // JSON booleans as strings.
+                let runInBackground = ["true", "1", "yes"]
+                    .contains(call.arguments["run_in_background"]?.lowercased() ?? "")
+                let commandDescription = call.arguments["description"]
+                output = try await ShellCommandRunner.run(
+                    command: command, rootURL: rootURL, timeoutMs: timeoutMs,
+                    runInBackground: runInBackground, description: commandDescription,
+                    chatID: chatID)
+
+            case "bashoutput", "bash_output":
+                output = try await ShellCommandRunner.backgroundOutput(
+                    arguments: call.arguments, chatID: chatID)
+
+            case "killshell", "kill_shell":
+                output = try ShellCommandRunner.killBackground(
+                    arguments: call.arguments, chatID: chatID)
 
             case "websearch", "web_search", "search_web":
                 guard let query = call.arguments["query"] ?? call.arguments["q"] ?? call.arguments["search_query"] else {
@@ -397,12 +413,18 @@ public enum AppToolRegistry {
         // name. Precedence is the opposite of the skills rule on purpose:
         // there, a project overriding a user skill is the FEATURE; here the
         // thing being overridden is a command the user chose to trust.
+        //
+        // Plugin servers are appended last and need no slot in that
+        // precedence: their names are namespaced `plugin:<plugin>:<server>`,
+        // which no user or project config can collide with.
         let globalServers = GlobalMcpFileStore.load().servers
         let projectServers = project?.mcpServers ?? []
-        let allServers = globalServers + projectServers
+        let pluginServers = PluginManager.shared.pluginMcpServers(
+            projectURL: project?.rootDirectoryURL)
+        let allServers = globalServers + projectServers + pluginServers
 
         guard let matchedServer = allServers.first(where: { $0.name.lowercased() == serverName.lowercased() }) else {
-            throw NSError(domain: "TurboSparkTool", code: 7, userInfo: [NSLocalizedDescriptionKey: "MCP server '\(serverName)' not found in project or global configurations."])
+            throw NSError(domain: "TurboSparkTool", code: 7, userInfo: [NSLocalizedDescriptionKey: "MCP server '\(serverName)' not found in project, global, or plugin configurations."])
         }
 
         guard matchedServer.isEnabled else {

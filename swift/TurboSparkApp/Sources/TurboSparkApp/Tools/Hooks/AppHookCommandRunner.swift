@@ -15,6 +15,8 @@ extension AppHookExecutionEngine {
         source: String?,
         reason: String?,
         stopHookActive: Bool?,
+        agentID: String?,
+        agentType: String?,
         startTime: Date
     ) async -> AppHookExecutionResult {
         // **A PROJECTLESS HOOK HAS NO WORKING DIRECTORY, AND THERE IS NO
@@ -39,7 +41,9 @@ extension AppHookExecutionEngine {
             prompt: prompt,
             source: source,
             reason: reason,
-            stopHookActive: stopHookActive
+            stopHookActive: stopHookActive,
+            agentID: agentID,
+            agentType: agentType
         )
 
         guard let payloadData = try? JSONSerialization.data(withJSONObject: payloadDict, options: []) else {
@@ -99,6 +103,28 @@ extension AppHookExecutionEngine {
                 of: "${CLAUDE_PROJECT_DIR}", with: Self.shellQuoted(cwd))
         }
 
+        // Plugin variables: the install root and the persistent data dir,
+        // resolved from the plugin this hook came from. Quoted for the same
+        // reason as ${CLAUDE_PROJECT_DIR} (state#60), and ALSO placed in the
+        // environment below -- a path is safer by env than by ARGV, and
+        // scripts that receive the hook through a wrapper need the variable
+        // even when the command string never mentions it.
+        var pluginRootPath: String?
+        var pluginDataPath: String?
+        if let pluginName = hook.pluginName {
+            let projectURL = (workingDirectory?.isEmpty == false)
+                ? URL(fileURLWithPath: workingDirectory!, isDirectory: true) : nil
+            if let plugin = PluginManager.shared.findPlugin(named: pluginName, projectURL: projectURL) {
+                pluginRootPath = plugin.directoryURL.path
+                pluginDataPath = PluginManager.shared.dataDirectory(for: plugin).path
+                commandText = commandText
+                    .replacingOccurrences(
+                        of: "${CLAUDE_PLUGIN_ROOT}", with: Self.shellQuoted(pluginRootPath!))
+                    .replacingOccurrences(
+                        of: "${CLAUDE_PLUGIN_DATA}", with: Self.shellQuoted(pluginDataPath!))
+            }
+        }
+
         let executableURL: URL
         let arguments: [String]
         switch hook.shell {
@@ -130,6 +156,14 @@ extension AppHookExecutionEngine {
         if let workingDirectory {
             env["TURBOSPARK_PROJECT_DIR"] = workingDirectory
             env["CLAUDE_PROJECT_DIR"] = workingDirectory
+        }
+        if let pluginRootPath {
+            env["CLAUDE_PLUGIN_ROOT"] = pluginRootPath
+            env["TURBOSPARK_PLUGIN_ROOT"] = pluginRootPath
+        }
+        if let pluginDataPath {
+            env["CLAUDE_PLUGIN_DATA"] = pluginDataPath
+            env["TURBOSPARK_PLUGIN_DATA"] = pluginDataPath
         }
 
         // Every option reaches the hook by ENVIRONMENT, sensitive ones
@@ -239,6 +273,8 @@ extension AppHookExecutionEngine {
         source: String?,
         reason: String?,
         stopHookActive: Bool?,
+        agentID: String?,
+        agentType: String?,
         startTime: Date
     ) async -> AppHookExecutionResult {
         guard let url = URL(string: hook.command) else {
@@ -270,7 +306,9 @@ extension AppHookExecutionEngine {
             prompt: prompt,
             source: source,
             reason: reason,
-            stopHookActive: stopHookActive
+            stopHookActive: stopHookActive,
+            agentID: agentID,
+            agentType: agentType
         )
         request.httpBody = try? JSONSerialization.data(withJSONObject: payloadDict, options: [])
 

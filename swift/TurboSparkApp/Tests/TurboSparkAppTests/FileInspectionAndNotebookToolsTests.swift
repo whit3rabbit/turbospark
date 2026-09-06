@@ -1,6 +1,16 @@
 import XCTest
 @testable import TurboSparkApp
 
+private final class StateBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: T
+    init(_ value: T) { self._value = value }
+    var value: T {
+        get { lock.lock(); defer { lock.unlock() }; return _value }
+        set { lock.lock(); defer { lock.unlock() }; _value = newValue }
+    }
+}
+
 final class FileInspectionAndNotebookToolsTests: XCTestCase {
     private func makeProject() throws -> (AppProject, URL) {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -200,9 +210,9 @@ final class FileInspectionAndNotebookToolsTests: XCTestCase {
         let (project, dir) = try makeProject()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        var presentedURL: URL?
+        let presentedURL = StateBox<URL?>(nil)
         SendUserFileExecutor.onFileSent = { _, url, _ in
-            presentedURL = url
+            presentedURL.value = url
         }
         defer { SendUserFileExecutor.onFileSent = nil }
 
@@ -217,7 +227,7 @@ final class FileInspectionAndNotebookToolsTests: XCTestCase {
             )
             let result = await AppToolRegistry.execute(call: call, in: project)
             XCTAssertFalse(result.isError, "Alias \(alias) should succeed: \(result.output)")
-            XCTAssertEqual(presentedURL?.lastPathComponent, "report.pdf")
+            XCTAssertEqual(presentedURL.value?.lastPathComponent, "report.pdf")
         }
 
         // Missing file

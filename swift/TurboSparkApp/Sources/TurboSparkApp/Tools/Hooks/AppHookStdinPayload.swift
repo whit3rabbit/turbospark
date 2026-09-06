@@ -25,7 +25,9 @@ enum AppHookStdinPayload {
         prompt: String? = nil,
         source: String? = nil,
         reason: String? = nil,
-        stopHookActive: Bool? = nil
+        stopHookActive: Bool? = nil,
+        agentID: String? = nil,
+        agentType: String? = nil
     ) -> [String: Any] {
         var payload: [String: Any] = [
             "session_id": sessionID,
@@ -36,9 +38,12 @@ enum AppHookStdinPayload {
         ]
 
         switch event {
-        case .preToolUse, .permissionRequest:
+        case .preToolUse, .permissionRequest, .permissionDenied:
             payload["tool_name"] = toolName ?? ""
             payload["tool_input"] = toolArguments ?? [:]
+            if event == .permissionDenied {
+                payload["reason"] = reason ?? ""
+            }
 
         case .postToolUse, .postToolUseFailure:
             payload["tool_name"] = toolName ?? ""
@@ -60,6 +65,18 @@ enum AppHookStdinPayload {
 
         case .stop:
             payload["stop_hook_active"] = stopHookActive ?? false
+
+        case .subagentStart:
+            payload["agent_id"] = agentID ?? sessionID
+            payload["agent_type"] = agentType ?? ""
+
+        case .subagentStop:
+            payload["stop_hook_active"] = stopHookActive ?? false
+            payload["agent_id"] = agentID ?? sessionID
+            payload["agent_type"] = agentType ?? ""
+            // This app has no per-agent transcript; the shared archive is
+            // what `transcript_path` already points at.
+            payload["agent_transcript_path"] = transcriptPath
 
         case .notification:
             payload["message"] = reason ?? ""

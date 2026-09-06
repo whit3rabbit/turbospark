@@ -68,7 +68,7 @@ final class FabricatedToolSuccessTests: XCTestCase {
     func testImplementedToolNamesAreStillAdvertised() {
         let advertisedNames = Set(AppToolCatalog.allTools.map { $0.function.name.lowercased() })
         for implemented in [
-            "bash", "fileread", "filewrite", "fileedit", "grep", "glob", "apply_patch",
+            "bash", "bashoutput", "killshell", "fileread", "filewrite", "fileedit", "grep", "glob", "apply_patch",
             "skill", "agent", "todowrite", "webfetch", "websearch",
             "askuserquestion", "enterplanmode", "exitplanmode", "reportfindings",
             "proposeskills", "proposegoal", "sendfeedback", "notebookedit",

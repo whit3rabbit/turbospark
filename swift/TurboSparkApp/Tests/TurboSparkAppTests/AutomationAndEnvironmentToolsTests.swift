@@ -49,12 +49,15 @@ final class AutomationAndEnvironmentToolsTests: XCTestCase {
         let (project, dir) = try makeProject()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        var dispatchedTitle: String?
-        var dispatchedMessage: String?
+        final class DispatchedBox: @unchecked Sendable {
+            var title: String?
+            var message: String?
+        }
+        let box = DispatchedBox()
 
         PushNotificationExecutor.onNotificationPushed = { title, msg in
-            dispatchedTitle = title
-            dispatchedMessage = msg
+            box.title = title
+            box.message = msg
         }
         defer { PushNotificationExecutor.onNotificationPushed = nil }
 
@@ -69,8 +72,8 @@ final class AutomationAndEnvironmentToolsTests: XCTestCase {
             )
             let result = await AppToolRegistry.execute(call: call, in: project)
             XCTAssertFalse(result.isError, "Alias \(alias) should succeed: \(result.output)")
-            XCTAssertEqual(dispatchedTitle, "Build Finished")
-            XCTAssertEqual(dispatchedMessage, "All assets packaged cleanly")
+            XCTAssertEqual(box.title, "Build Finished")
+            XCTAssertEqual(box.message, "All assets packaged cleanly")
         }
     }
 

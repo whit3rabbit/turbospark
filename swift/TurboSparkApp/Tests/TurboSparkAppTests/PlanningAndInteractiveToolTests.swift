@@ -1,6 +1,16 @@
 import XCTest
 @testable import TurboSparkApp
 
+private final class StateBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: T
+    init(_ value: T) { self._value = value }
+    var value: T {
+        get { lock.lock(); defer { lock.unlock() }; return _value }
+        set { lock.lock(); defer { lock.unlock() }; _value = newValue }
+    }
+}
+
 final class PlanningAndInteractiveToolTests: XCTestCase {
     private func makeProject() throws -> (AppProject, URL) {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -15,9 +25,9 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
         let (project, dir) = try makeProject()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        var receivedQuestions: [UserQuestionItem]?
+        let receivedQuestions = StateBox<[UserQuestionItem]?>(nil)
         AskUserQuestionExecutor.onQuestionsAsked = { _, items in
-            receivedQuestions = items
+            receivedQuestions.value = items
         }
         defer { AskUserQuestionExecutor.onQuestionsAsked = nil }
 
@@ -33,9 +43,9 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
             )
             let result = await AppToolRegistry.execute(call: call, in: project)
             XCTAssertFalse(result.isError, "Alias \(alias) should succeed: \(result.output)")
-            XCTAssertEqual(receivedQuestions?.first?.question, "Which architecture do you prefer?")
-            XCTAssertEqual(receivedQuestions?.first?.options.count, 3)
-            XCTAssertEqual(receivedQuestions?.first?.multiSelect, false)
+            XCTAssertEqual(receivedQuestions.value?.first?.question, "Which architecture do you prefer?")
+            XCTAssertEqual(receivedQuestions.value?.first?.options.count, 3)
+            XCTAssertEqual(receivedQuestions.value?.first?.multiSelect, false)
             XCTAssertTrue(result.output.contains("Option 1"))
         }
     }
@@ -44,9 +54,9 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
         let (project, dir) = try makeProject()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        var isMulti: Bool?
+        let isMulti = StateBox<Bool?>(nil)
         AskUserQuestionExecutor.onQuestionsAsked = { _, items in
-            isMulti = items.first?.multiSelect
+            isMulti.value = items.first?.multiSelect
         }
         defer { AskUserQuestionExecutor.onQuestionsAsked = nil }
 
@@ -61,7 +71,7 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
         )
         let result = await AppToolRegistry.execute(call: call, in: project)
         XCTAssertFalse(result.isError)
-        XCTAssertEqual(isMulti, true)
+        XCTAssertEqual(isMulti.value, true)
         XCTAssertTrue(result.output.contains("Select features"))
 
         let missingCall = AppToolCall(
@@ -79,9 +89,9 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
         let (project, dir) = try makeProject()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        var planState: (active: Bool, plan: String?)?
+        let planState = StateBox<(active: Bool, plan: String?)?>(nil)
         PlanModeExecutor.onPlanModeChanged = { _, active, plan in
-            planState = (active, plan)
+            planState.value = (active, plan)
         }
         defer { PlanModeExecutor.onPlanModeChanged = nil }
 
@@ -94,7 +104,7 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
             )
             let enterResult = await AppToolRegistry.execute(call: enterCall, in: project)
             XCTAssertFalse(enterResult.isError, "Alias \(alias) should enter plan mode")
-            XCTAssertEqual(planState?.active, true)
+            XCTAssertEqual(planState.value?.active, true)
         }
 
         // Exit plan mode
@@ -106,8 +116,8 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
             )
             let exitResult = await AppToolRegistry.execute(call: exitCall, in: project)
             XCTAssertFalse(exitResult.isError, "Alias \(alias) should exit plan mode")
-            XCTAssertEqual(planState?.active, false)
-            XCTAssertEqual(planState?.plan, "Step 1: Done\nStep 2: Done")
+            XCTAssertEqual(planState.value?.active, false)
+            XCTAssertEqual(planState.value?.plan, "Step 1: Done\nStep 2: Done")
         }
     }
 

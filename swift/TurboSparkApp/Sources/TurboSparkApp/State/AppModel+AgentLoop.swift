@@ -35,6 +35,18 @@ extension AppModel {
         let wasActive = stopHookReentryCount > 0
         let verdict = await evaluateStop(
             stopHookActive: wasActive, chatID: chatID, project: project)
+        // `continue: false` from a Stop hook's JSON output ends the turn and
+        // shows the reason to the USER. It is deliberately NOT the
+        // block-and-continue path below (that one feeds its reason to the
+        // MODEL as the next user turn), so it must not consume one of the
+        // 8 re-entries.
+        if verdict.preventContinuation {
+            stopHookReentryCount = 0
+            if let reason = verdict.continuationStopReason, !reason.isEmpty {
+                showToast("Turn stopped by hook: \(reason)", style: .warning)
+            }
+            return false
+        }
         guard verdict.isBlocked, stopHookReentryCount < 8, !isCancellationPending else {
             stopHookReentryCount = 0
             return false
@@ -126,6 +138,22 @@ extension AppModel {
         }
         let cmd = call.arguments["command"] ?? call.arguments["cmd"]
 
+        // `continue: false` from a PreToolUse hook's JSON: the call does not
+        // run AND the turn ends here with the reason shown to the user --
+        // stronger than `.deny`, which records the refusal and lets the
+        // loop carry on.
+        if hookDecision.preventContinuation {
+            let reason = hookDecision.continuationStopReason
+                ?? hookDecision.reason
+                ?? "A PreToolUse hook stopped the turn."
+            await self.recordDeniedCall(
+                call, extra: extra, reason: reason, fullContent: fullContent,
+                reasoning: reasoning, chatID: chatID, currentStep: currentStep,
+                project: project, continuesLoop: false)
+            showToast("Turn stopped by hook: \(reason)", style: .warning)
+            return
+        }
+
         if hookDecision.behavior == .deny {
             let reason = hookDecision.reason ?? "Blocked by PreToolUse hook"
             let deniedResult = AppToolResult(
@@ -161,10 +189,16 @@ extension AppModel {
         let decisionProject = project
         let decision = AppToolPermissionEngine.evaluate(
             call: call, project: decisionProject, sessionApproved: sessionApproved,
+            fallbackMode: self.activePermissionMode,
             globalServers: self.globalMcpServers)
 
         // The engine's refusal wins over a hook that merely asked (state#78).
         if case .deny(let reason) = decision {
+            // The engine itself denied the call: that is a `PermissionDenied`
+            // in Claude Code's contract, so configured hooks hear about it.
+            await self.dispatchPermissionDenied(
+                toolName: call.name, toolArguments: call.arguments, reason: reason,
+                chatID: chatID, project: decisionProject)
             await self.recordDeniedCall(
                 call, extra: extra, reason: reason, fullContent: fullContent,
                 reasoning: reasoning, chatID: chatID, currentStep: currentStep,
@@ -220,6 +254,20 @@ extension AppModel {
             let permVerdict = await self.evaluatePermissionRequest(
                 toolName: call.name, toolArguments: call.arguments, chatID: chatID,
                 project: decisionProject)
+
+            // `continue: false` resolves the card the way a deny would, and
+            // additionally ends the turn rather than letting the loop carry
+            // on -- the same treatment the PreToolUse verdict gets.
+            if permVerdict.preventContinuation {
+                let reason = permVerdict.continuationStopReason
+                    ?? "A PermissionRequest hook stopped the turn."
+                await self.recordDeniedCall(
+                    call, extra: extra, reason: reason, fullContent: fullContent,
+                    reasoning: reasoning, chatID: chatID, currentStep: currentStep,
+                    project: decisionProject, continuesLoop: false)
+                showToast("Turn stopped by hook: \(reason)", style: .warning)
+                return
+            }
 
             if permVerdict.permissionDecision == .allow {
                 await self.runApprovedCall(call, extra: extra, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
@@ -303,12 +351,26 @@ extension AppModel {
             self.persistChats()
         }
 
+        // `continue: false` from a PostToolUse hook: the result above is
+        // recorded, but the loop does not go on to the next model step --
+        // the turn ends here with the reason shown to the user.
+        if postVerdict.preventContinuation {
+            if let reason = postVerdict.continuationStopReason, !reason.isEmpty {
+                showToast("Turn stopped by hook: \(reason)", style: .warning)
+            }
+            return
+        }
+
         await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
     }
 
     /// Records a denied call (permission engine or `PermissionRequest` hook)
     /// and continues the loop.
-    private func recordDeniedCall(_ call: AppToolCall, extra: (calls: [AppToolCall], results: [AppToolResult]) = ([], []), reason: String, fullContent: String, reasoning: String, chatID: UUID, currentStep: Int, project: AppProject?) async {
+    ///
+    /// `continuesLoop: false` is the prevent-continuation shape: the refusal
+    /// is still recorded, but the caller ends the turn instead, so no
+    /// `continueOrStop` runs.
+    private func recordDeniedCall(_ call: AppToolCall, extra: (calls: [AppToolCall], results: [AppToolResult]) = ([], []), reason: String, fullContent: String, reasoning: String, chatID: UUID, currentStep: Int, project: AppProject?, continuesLoop: Bool = true) async {
         let deniedResult = AppToolResult(
             callID: call.id,
             output: "Tool execution denied: \(reason)",
@@ -329,6 +391,7 @@ extension AppModel {
             self.chats[idx].updatedAt = Date()
             self.persistChats()
         }
+        guard continuesLoop else { return }
         await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
     }
 

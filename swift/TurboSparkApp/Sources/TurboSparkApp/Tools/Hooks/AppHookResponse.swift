@@ -32,6 +32,11 @@ public struct AppHookSpecificOutput: Sendable {
 public struct AppHookResponse: Sendable {
     public var continueGeneration: Bool
     public var stopReason: String?
+    /// Honored by construction: this client never echoes plain-text hook
+    /// stdout to the model or the transcript (unlike Claude Code, which
+    /// feeds it to the model on some events), so there is nothing for a
+    /// `suppressOutput: true` to hold back. The flag is still parsed so a
+    /// future surface that prints hook stdout has the field to read.
     public var suppressOutput: Bool
     public var systemMessage: String?
     public var decision: String?
@@ -68,7 +73,10 @@ public struct AppHookResponse: Sendable {
 public enum AppHookOutcome: Sendable {
     /// Exit 0 with a JSON object on stdout.
     case structured(AppHookResponse)
-    /// Exit 0 with non-JSON stdout: advisory only, never blocking.
+    /// Exit 0 with non-JSON stdout: advisory only, never blocking. This
+    /// client deliberately does NOT feed it to the model (Claude Code does
+    /// for some events), which is also why `suppressOutput` has nothing to
+    /// suppress here.
     case plainText(String)
     /// The event blocked (see `AppHookResponseParser.blockingExitTwoEvents`),
     /// with the reason to show.

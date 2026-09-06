@@ -52,6 +52,15 @@ enum ProcessExecutor {
         var stderr: String
         var exitCode: Int32
         var timedOut: Bool
+        /// Set only when the run asked for merged streams: stdout and stderr
+        /// interleaved in arrival order, the shared buffer's text. `stdout`
+        /// and `stderr` are both empty in that mode.
+        var mergedOutput: String?
+
+        var combinedText: String {
+            if let mergedOutput { return mergedOutput }
+            return [stdout, stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
     }
 
     static let defaultOutputCapBytes = 1_000_000
@@ -60,6 +69,14 @@ enum ProcessExecutor {
     /// Runs `executableURL` to completion (or until `timeoutSeconds` elapses),
     /// draining stdout/stderr concurrently so neither the process nor the
     /// caller can block on a full pipe buffer.
+    ///
+    /// `mergeStreams` appends BOTH pipes into one shared capped buffer, so
+    /// the text interleaves in arrival order the way a terminal would show
+    /// it, instead of a stdout block followed by a stderr block whose
+    /// relative order is unrecoverable. Arrival order is the child's write
+    /// order as the kernel delivered it, which is the honest ordering there
+    /// is. The shell tool runs merged; hook runners keep the two streams
+    /// apart because their verdict JSON parses per stream.
     static func run(
         executableURL: URL,
         arguments: [String],
@@ -67,7 +84,8 @@ enum ProcessExecutor {
         environment: [String: String]? = nil,
         stdin inputData: Data? = nil,
         timeoutSeconds: TimeInterval,
-        outputCapBytes: Int = defaultOutputCapBytes
+        outputCapBytes: Int = defaultOutputCapBytes,
+        mergeStreams: Bool = false
     ) async throws -> Output {
         let process = Process()
         process.executableURL = executableURL
@@ -83,7 +101,7 @@ enum ProcessExecutor {
         process.standardInput = stdinPipe
 
         let stdoutBuffer = CappedOutputBuffer(capBytes: outputCapBytes)
-        let stderrBuffer = CappedOutputBuffer(capBytes: outputCapBytes)
+        let stderrBuffer = mergeStreams ? stdoutBuffer : CappedOutputBuffer(capBytes: outputCapBytes)
 
         // **ONE READER PER PIPE, AND THE CALLER WAITS FOR IT** (state#66).
         //
@@ -174,15 +192,21 @@ enum ProcessExecutor {
         // waiting forever there would park this task for the life of the
         // process. Two seconds is long past when a dead child's buffered
         // output has arrived.
-        _ = readers.wait(timeout: .now() + 2.0)
+        await waitForReaders(readers, timeoutSeconds: 2.0)
 
         let exitCode = process.isRunning ? -1 : process.terminationStatus
         if cancelled { throw CancellationError() }
+        if mergeStreams {
+            return Output(
+                stdout: "", stderr: "", exitCode: exitCode, timedOut: timedOut,
+                mergedOutput: stdoutBuffer.text)
+        }
         return Output(
             stdout: stdoutBuffer.text,
             stderr: stderrBuffer.text,
             exitCode: exitCode,
-            timedOut: timedOut
+            timedOut: timedOut,
+            mergedOutput: nil
         )
     }
 
@@ -208,6 +232,39 @@ enum ProcessExecutor {
             while process.isRunning && Date() < hardDeadline {
                 usleep(50_000)
             }
+        }
+    }
+
+    /// Asynchronously waits for `group` to complete, or until `timeoutSeconds`
+    /// elapses, without blocking the cooperative thread pool.
+    private static func waitForReaders(_ group: DispatchGroup, timeoutSeconds: Double) async {
+        await withCheckedContinuation { continuation in
+            let lock = NSLock()
+            var resumed = false
+            var timeoutWorkItem: DispatchWorkItem?
+
+            let resumeOnce = {
+                lock.lock()
+                defer { lock.unlock() }
+                if !resumed {
+                    resumed = true
+                    timeoutWorkItem?.cancel()
+                    continuation.resume()
+                }
+            }
+
+            let workItem = DispatchWorkItem {
+                resumeOnce()
+            }
+            timeoutWorkItem = workItem
+
+            group.notify(queue: DispatchQueue.global(qos: .utility)) {
+                resumeOnce()
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + timeoutSeconds,
+                execute: workItem
+            )
         }
     }
 

@@ -54,12 +54,10 @@ public final class AgentManager: @unchecked Sendable {
 
     // MARK: - Standard Directories
 
+    /// Standard user agents directory: `~/.turbospark/agents` for the Default
+    /// profile, inside that profile's own folder for anyone else.
     public var defaultUserAgentsDirectory: URL {
-        let home = fileManager.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".turbospark", isDirectory: true)
-            .appendingPathComponent("agents", isDirectory: true)
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        UserProfileStore.userScopeSubdirectory("agents")
     }
 
     public var knownUserAgentRoots: [(agent: AgentSourceAgent, relativePath: String)] {
@@ -101,7 +99,9 @@ public final class AgentManager: @unchecked Sendable {
             }
         }
 
-        if includeExternalAgents {
+        // Same isolation rule as skills: the cross-agent roots are shared
+        // home-directory trees a non-default profile does not read.
+        if includeExternalAgents, UserProfileStore.isDefault {
             let home = fileManager.homeDirectoryForCurrentUser
             for (sourceAgent, relPath) in knownUserAgentRoots where sourceAgent != .turboSpark {
                 let dirURL = home.appendingPathComponent(relPath, isDirectory: true)
@@ -312,6 +312,16 @@ public final class AgentManager: @unchecked Sendable {
                 }
             }
         }
+
+        // 4. Plugin agents, last. Their names are namespaced (`plugin:name`),
+        // so they cannot collide with any of the above and there is no
+        // precedence question -- the colon IS the namespace. An installed
+        // plugin never overrides what the user or a project defined.
+        let pluginAgents = PluginManager.shared.pluginAgents(projectURL: projectURL)
+        for agent in pluginAgents {
+            map[agent.name.lowercased()] = agent
+        }
+
         return AgentResolution(
             agents: map.values.sorted { $0.name < $1.name },
             constrainedProjectNames: constrained,

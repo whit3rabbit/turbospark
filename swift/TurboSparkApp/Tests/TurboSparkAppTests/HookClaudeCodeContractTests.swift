@@ -342,6 +342,279 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertTrue(store.discoveryDiagnostics.contains { $0.contains("PreToolUse") })
     }
 
+    // MARK: - continue: false (prevent continuation)
+
+    /// Tests that `continue: false` in a hook's JSON output aggregates into
+    /// `preventContinuation`, carrying the FIRST hook's stopReason, and is
+    /// not a block (whose reason would go to the model rather than the user).
+    func testAggregatorContinueFalseSetsPreventContinuationWithFirstStopReason() {
+        let results = [
+            resultWith(.structured(AppHookResponse(continueGeneration: false, stopReason: "enough")), event: .stop),
+            resultWith(.structured(AppHookResponse(continueGeneration: false, stopReason: "second")), event: .stop)
+        ]
+        let verdict = AppHookDecisionAggregator.aggregate(results, event: .stop)
+        XCTAssertTrue(verdict.preventContinuation)
+        XCTAssertEqual(verdict.continuationStopReason, "enough")
+        XCTAssertFalse(verdict.isBlocked, "continue:false ends the turn for the user; it does not feed the model a block reason")
+    }
+
+    /// Tests that an absent or true `continue` field never sets preventContinuation.
+    func testAggregatorContinueTrueOrAbsentKeepsPreventContinuationFalse() {
+        for response in [AppHookResponse(), AppHookResponse(continueGeneration: true, stopReason: "unused")] {
+            let verdict = AppHookDecisionAggregator.aggregate(
+                [resultWith(.structured(response), event: .userPromptSubmit)], event: .userPromptSubmit)
+            XCTAssertFalse(verdict.preventContinuation)
+            XCTAssertNil(verdict.continuationStopReason)
+        }
+    }
+
+    /// Tests that a Stop hook sending `continue: false` ends the turn
+    /// WITHOUT re-entering it: no user turn appended, no re-entry consumed.
+    @MainActor
+    func testStopHookContinueFalseEndsTurnWithoutReentry() async {
+        let store = await AppHookStore.shared
+        // `saveCustomHooks` is skipped before the first refresh, so make the
+        // hook durable (and visible to AppModel.init's own refresh) even
+        // when this test runs without the rest of the suite.
+        await store.refresh(projectDirectory: nil)
+        let hook = AppHookCommand(
+            name: "Hard Stop",
+            event: .stop,
+            type: .command,
+            command: #"echo '{"continue":false,"stopReason":"work is done"}'"#,
+            sourceType: .custom)
+        await store.addCustomHook(hook)
+        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+
+        let appModel = AppModel()
+        let chat = AppChat(title: "Stop continue false")
+        appModel.chats = [chat]
+        appModel.selectedChatID = chat.id
+
+        let reentered = await appModel.dispatchStopAndContinueIfBlocked(
+            chatID: chat.id, resumeStep: 0, project: nil)
+        XCTAssertFalse(reentered, "continue:false must end the turn, not re-enter it")
+        XCTAssertTrue(appModel.chats[0].messages.isEmpty, "no user turn may be appended by a prevent-continuation Stop hook")
+        // The stopReason is shown to the USER (Claude Code's contract). This
+        // is what distinguishes the prevent-continuation branch from merely
+        // "not blocked": both return false, only one surfaces the reason.
+        XCTAssertEqual(appModel.activeToast?.message, "Turn stopped by hook: work is done")
+    }
+
+    /// Tests that a UserPromptSubmit hook's `continue: false` carries the
+    /// stopReason through the app-level evaluation.
+    @MainActor
+    func testUserPromptSubmitContinueFalseCarriesStopReason() async {
+        let store = await AppHookStore.shared
+        // `saveCustomHooks` is skipped before the first refresh, so make the
+        // hook durable (and visible to AppModel.init's own refresh) even
+        // when this test runs without the rest of the suite.
+        await store.refresh(projectDirectory: nil)
+        let hook = AppHookCommand(
+            name: "Refuse Prompt",
+            event: .userPromptSubmit,
+            type: .command,
+            command: #"echo '{"continue":false,"stopReason":"prompt refused"}'"#,
+            sourceType: .custom)
+        await store.addCustomHook(hook)
+        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+
+        let appModel = AppModel()
+        let verdict = await appModel.evaluateUserPromptSubmit(
+            prompt: "hi", chatID: appModel.selectedChatID, project: nil)
+        XCTAssertTrue(verdict.preventContinuation)
+        XCTAssertEqual(verdict.continuationStopReason, "prompt refused")
+    }
+
+    /// Tests that a PreToolUse hook's `continue: false` reaches the
+    /// PreToolUse decision the agent loop acts on.
+    func testPreToolUseContinueFalseCarriesPreventContinuation() async {
+        let store = await AppHookStore.shared
+        // `saveCustomHooks` is skipped before the first refresh, so make the
+        // hook durable (and visible to AppModel.init's own refresh) even
+        // when this test runs without the rest of the suite.
+        await store.refresh(projectDirectory: nil)
+        let hook = AppHookCommand(
+            name: "Nope",
+            event: .preToolUse,
+            type: .command,
+            command: #"echo '{"continue":false,"stopReason":"not this"}'"#,
+            matcher: "read_file",
+            sourceType: .custom)
+        await store.addCustomHook(hook)
+        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+
+        let decision = await AppHookExecutionEngine.shared.evaluatePreToolUse(
+            sessionID: UUID().uuidString, toolName: "read_file", toolArguments: ["path": "x"])
+        XCTAssertTrue(decision.preventContinuation)
+        XCTAssertEqual(decision.continuationStopReason, "not this")
+    }
+
+    // MARK: - Legacy decision field on permission events
+
+    /// Tests that the legacy `decision: "approve"` maps onto allow for
+    /// PreToolUse, with its reason.
+    func testAggregatorLegacyApproveDecisionAllowsOnPermissionEvents() {
+        let results = [resultWith(.structured(AppHookResponse(decision: "approve", reason: "safe here")))]
+        let verdict = AppHookDecisionAggregator.aggregate(results, event: .preToolUse)
+        XCTAssertEqual(verdict.permissionDecision, .allow)
+        XCTAssertEqual(verdict.permissionReason, "safe here")
+    }
+
+    /// Tests that the legacy `decision: "block"` DENIES on a permission
+    /// event (it used to be ignored there) rather than blocking a turn.
+    func testAggregatorLegacyBlockDecisionDeniesOnPermissionEvents() {
+        let results = [resultWith(.structured(AppHookResponse(decision: "block", reason: "not safe")))]
+        let verdict = AppHookDecisionAggregator.aggregate(results, event: .preToolUse)
+        XCTAssertEqual(verdict.permissionDecision, .deny)
+        XCTAssertEqual(verdict.permissionReason, "not safe")
+        XCTAssertFalse(verdict.isBlocked, "a permission event denies the call; it has no turn to block")
+    }
+
+    /// Tests that `decision: "block"` still blocks the turn on events that
+    /// carry no permission decision (Stop).
+    func testAggregatorLegacyBlockDecisionStillBlocksNonPermissionEvents() {
+        let results = [resultWith(.structured(AppHookResponse(decision: "block", reason: "keep going")), event: .stop)]
+        let verdict = AppHookDecisionAggregator.aggregate(results, event: .stop)
+        XCTAssertTrue(verdict.isBlocked)
+        XCTAssertEqual(verdict.blockReason, "keep going")
+    }
+
+    // MARK: - PermissionDenied event
+
+    /// Tests that the PermissionDenied stdin payload carries the tool
+    /// fields plus the denial reason.
+    func testStdinPayloadCarriesToolFieldsAndReasonForPermissionDenied() {
+        let payload = AppHookStdinPayload.build(
+            event: .permissionDenied,
+            sessionID: "s1",
+            transcriptPath: "/tmp/t.json",
+            cwd: "/tmp",
+            toolName: "run_command",
+            toolArguments: ["command": "rm -rf /"],
+            reason: "Denied by the user"
+        )
+        XCTAssertEqual(payload["hook_event_name"] as? String, "PermissionDenied")
+        XCTAssertEqual(payload["tool_name"] as? String, "run_command")
+        XCTAssertEqual(payload["reason"] as? String, "Denied by the user")
+        XCTAssertNil(payload["prompt"])
+    }
+
+    /// Tests that a configured PermissionDenied hook actually runs when a
+    /// denial is dispatched.
+    @MainActor
+    func testPermissionDeniedDispatchReachesConfiguredHooks() async {
+        let store = await AppHookStore.shared
+        // `saveCustomHooks` is skipped before the first refresh, so make the
+        // hook durable (and visible to AppModel.init's own refresh) even
+        // when this test runs without the rest of the suite.
+        await store.refresh(projectDirectory: nil)
+        let hook = AppHookCommand(
+            name: "Deny Auditor",
+            event: .permissionDenied,
+            type: .command,
+            command: #"echo '{"systemMessage":"denial recorded"}'"#,
+            sourceType: .custom)
+        await store.addCustomHook(hook)
+        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+
+        let appModel = AppModel()
+        let results = await appModel.dispatchPermissionDenied(
+            toolName: "run_command", toolArguments: ["command": "ls"], reason: "test",
+            chatID: appModel.selectedChatID, project: nil)
+        XCTAssertEqual(results.count, 1)
+        guard case .structured(let response) = results[0].outcome else {
+            return XCTFail("expected a structured outcome from the PermissionDenied hook")
+        }
+        XCTAssertEqual(response.systemMessage, "denial recorded")
+    }
+
+    // MARK: - SubagentStart / SubagentStop
+
+    /// Tests that the subagent lifecycle payloads carry agent_id/agent_type,
+    /// and SubagentStop adds stop_hook_active and the transcript path.
+    func testStdinPayloadCarriesAgentFieldsForSubagentEvents() {
+        let start = AppHookStdinPayload.build(
+            event: .subagentStart, sessionID: "s1", transcriptPath: "/tmp/t.json", cwd: "/tmp",
+            agentID: "run-1", agentType: "explore")
+        XCTAssertEqual(start["hook_event_name"] as? String, "SubagentStart")
+        XCTAssertEqual(start["agent_id"] as? String, "run-1")
+        XCTAssertEqual(start["agent_type"] as? String, "explore")
+
+        let stop = AppHookStdinPayload.build(
+            event: .subagentStop, sessionID: "s1", transcriptPath: "/tmp/t.json", cwd: "/tmp",
+            stopHookActive: false, agentID: "run-1", agentType: "explore")
+        XCTAssertEqual(stop["hook_event_name"] as? String, "SubagentStop")
+        XCTAssertEqual(stop["stop_hook_active"] as? Bool, false)
+        XCTAssertEqual(stop["agent_id"] as? String, "run-1")
+        XCTAssertEqual(stop["agent_transcript_path"] as? String, "/tmp/t.json")
+    }
+
+    // MARK: - Prompt hooks fail loudly
+
+    /// Tests that a discovered prompt hook is diagnosed at discovery, and
+    /// Claude Code's `agent` type maps to prompt (never to command, which
+    /// would run the prompt text as a shell command).
+    @MainActor
+    func testPromptHookDiscoveryIsDiagnosedAndAgentTypeMapsToPrompt() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let claudeDir = tempDir.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let settings: [String: Any] = [
+            "hooks": [
+                "Stop": [
+                    ["hooks": [
+                        ["type": "prompt", "prompt": "check the diff"],
+                        ["type": "agent", "prompt": "verify the build"]
+                    ]]
+                ]
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: settings)
+            .write(to: claudeDir.appendingPathComponent("settings.json"))
+
+        let store = await AppHookStore.shared
+        store.refresh(projectDirectory: tempDir.path)
+        defer { store.refresh(projectDirectory: nil) }
+
+        let projectHooks = store.hooks.filter { $0.sourcePath?.hasPrefix(tempDir.path) == true }
+        XCTAssertEqual(projectHooks.filter { $0.type == .prompt }.count, 2,
+                       "prompt and agent both load as the unevaluated prompt type")
+        XCTAssertFalse(projectHooks.contains { $0.type == .command },
+                       "an agent hook must never fall through to a shell command")
+        XCTAssertTrue(store.discoveryDiagnostics.contains { $0.contains("does not evaluate") })
+    }
+
+    /// Tests that running a prompt hook produces a visible non-blocking
+    /// outcome rather than the anonymous no-op it used to be.
+    @MainActor
+    func testPromptHookRunSurfacesNonBlockingOutcome() async {
+        let store = await AppHookStore.shared
+        // `saveCustomHooks` is skipped before the first refresh, so make the
+        // hook durable (and visible to AppModel.init's own refresh) even
+        // when this test runs without the rest of the suite.
+        await store.refresh(projectDirectory: nil)
+        let hook = AppHookCommand(
+            name: "LLM Check",
+            event: .postToolUse,
+            type: .prompt,
+            command: "verify the output",
+            sourceType: .custom)
+        await store.addCustomHook(hook)
+        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+
+        let results = await AppHookExecutionEngine.shared.dispatch(
+            event: .postToolUse, sessionID: UUID().uuidString, toolName: "read_file",
+            toolArguments: ["path": "x"], toolOutput: "y", toolDurationSeconds: 0.01, isError: false)
+        XCTAssertEqual(results.count, 1)
+        guard case .nonBlockingError(let message) = results[0].outcome else {
+            return XCTFail("expected a visible non-blocking outcome for an unevaluated prompt hook")
+        }
+        XCTAssertTrue(message.contains("prompt hook"), "the outcome must name why nothing ran")
+    }
+
     // MARK: - Source group ordering
 
     /// Tests that source groups are ordered with local config preceding custom hooks.

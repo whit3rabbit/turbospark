@@ -10,6 +10,8 @@ enum AppHookToolNameAliases {
     /// Claude Code name -> this app's canonical (lowercased) tool name(s).
     private static let claudeCodeToApp: [String: [String]] = [
         "bash": ["run_command", "bash", "shell", "exec", "terminal"],
+        "bashoutput": ["bashoutput", "bash_output"],
+        "killshell": ["killshell", "kill_shell"],
         "write": ["write_file", "save_file", "filewrite", "write"],
         "edit": ["edit_file", "fileedit", "edit"],
         "read": ["read_file", "view_file", "cat", "fileread", "read"],

@@ -5,12 +5,20 @@ public enum AppAgentScope: String, Codable, CaseIterable, Sendable {
     case builtIn
     case userGlobal
     case project
+    /// Contributed by an installed plugin. Plugin agents are namespaced
+    /// (`plugin:name`) and never escalate: `permissionMode`, `hooks` and
+    /// `mcpServers` frontmatter are ignored, per Claude Code's own
+    /// third-party trust boundary.
+    case plugin
+
+    public var id: String { rawValue }
 
     public var label: String {
         switch self {
         case .builtIn: return "Built-in"
         case .userGlobal: return "User"
         case .project: return "Project"
+        case .plugin: return "Plugin"
         }
     }
 

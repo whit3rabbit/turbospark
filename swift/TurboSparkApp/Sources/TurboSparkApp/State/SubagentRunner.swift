@@ -105,7 +105,15 @@ public enum SubagentRunner {
         return sections.joined(separator: "\n\n")
     }
 
-    /// Executes an isolated subagent run to completion.
+    /// Executes an isolated subagent run to completion, wrapped in the
+    /// `SubagentStart` / `SubagentStop` lifecycle hooks. Notification-grade
+    /// events: matching hooks run and their feedback is ignored, because a
+    /// subagent has no interaction surface to resolve a block with (the same
+    /// reason `.ask` denies on its tool path).
+    ///
+    /// The wrapper exists because `run`'s body exits early from five places
+    /// (depth, no session, cancellation, context overflow, generation error);
+    /// dispatching around it is the only shape that covers every one.
     /// - Parameter chatID: the conversation this run belongs to, threaded to
     ///   `AppToolRegistry.execute` (state#47). Without it `TodoWrite`'s
     ///   callback falls back to `selectedChatID` on the main actor,
@@ -115,6 +123,45 @@ public enum SubagentRunner {
     ///   `agent` tool call from inside a subagent used to nest without any
     ///   bound at all, each level free to spawn its own.
     public static func run(
+        agent: AppAgentDefinition,
+        taskPrompt: String,
+        session: TurboSparkSession?,
+        project: AppProject?,
+        chatID: UUID? = nil,
+        depth: Int = 0,
+        maxTurnsOverride: Int? = nil,
+        userSystemPrompt: String = ""
+    ) async -> SubagentRunResult {
+        let sessionID = chatID?.uuidString ?? "subagent"
+        let runID = UUID().uuidString
+        let workingDirectory = project?.rootDirectoryPath
+        // The engine directly, exactly like `observation`: the hook store is
+        // not rebound here (state#67 -- it follows the parent turn's
+        // project, and this type has no AppModel to rebind it with).
+        _ = await AppHookExecutionEngine.shared.dispatch(
+            event: .subagentStart,
+            sessionID: sessionID,
+            workingDirectory: workingDirectory,
+            agentID: runID,
+            agentType: agent.name)
+
+        let result = await runBody(
+            agent: agent, taskPrompt: taskPrompt, session: session, project: project,
+            chatID: chatID, depth: depth, maxTurnsOverride: maxTurnsOverride,
+            userSystemPrompt: userSystemPrompt)
+
+        _ = await AppHookExecutionEngine.shared.dispatch(
+            event: .subagentStop,
+            sessionID: sessionID,
+            workingDirectory: workingDirectory,
+            stopHookActive: false,
+            agentID: runID,
+            agentType: agent.name)
+        return result
+    }
+
+    /// The run itself, without the lifecycle dispatch (see `run`).
+    private static func runBody(
         agent: AppAgentDefinition,
         taskPrompt: String,
         session: TurboSparkSession?,

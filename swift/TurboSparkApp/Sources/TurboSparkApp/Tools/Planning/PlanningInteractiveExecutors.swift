@@ -205,7 +205,10 @@ public enum ProposeSkillsExecutor {
         let scopeLabel: String
         if isUserScope {
             skillsDir = SkillManager.shared.defaultUserSkillsDirectory
-            scopeLabel = "user scope (~/.turbospark/skills/)"
+            // The Default profile's user scope is the shared
+            // ~/.turbospark/skills; another profile's is inside its own
+            // folder, so the label reports the actual directory.
+            scopeLabel = "user scope (\(skillsDir.path)/)"
         } else {
             guard let root = projectRootURL else {
                 throw NSError(domain: "TurboSparkTool", code: 32, userInfo: [NSLocalizedDescriptionKey: "Project root required for project-scoped skill."])

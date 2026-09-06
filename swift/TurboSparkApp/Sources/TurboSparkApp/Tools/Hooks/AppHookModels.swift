@@ -13,6 +13,9 @@ public enum AppHookEvent: String, Codable, CaseIterable, Identifiable, Sendable 
     case userPromptSubmit = "UserPromptSubmit"
     case stop = "Stop"
     case permissionRequest = "PermissionRequest"
+    case permissionDenied = "PermissionDenied"
+    case subagentStart = "SubagentStart"
+    case subagentStop = "SubagentStop"
     case notification = "Notification"
 
     public var id: String { rawValue }
@@ -37,6 +40,12 @@ public enum AppHookEvent: String, Codable, CaseIterable, Identifiable, Sendable 
             return "When generation turn finishes"
         case .permissionRequest:
             return "When a permission prompt is triggered"
+        case .permissionDenied:
+            return "When a tool call is denied (by the user or by permissions)"
+        case .subagentStart:
+            return "When a subagent run starts"
+        case .subagentStop:
+            return "When a subagent run finishes"
         case .notification:
             return "When an agent notification is dispatched"
         }
@@ -60,6 +69,12 @@ public enum AppHookEvent: String, Codable, CaseIterable, Identifiable, Sendable 
             return "flag.checkered"
         case .permissionRequest:
             return "lock.shield"
+        case .permissionDenied:
+            return "hand.raised.slash"
+        case .subagentStart:
+            return "person.badge.shield.checkmark"
+        case .subagentStop:
+            return "person.badge.minus"
         case .notification:
             return "bell"
         }
@@ -314,19 +329,29 @@ public struct AppHookPreToolUseDecision: Sendable {
     /// Extra context a hook attached, folded beside the tool result rather
     /// than into the permission reason.
     public var additionalContext: String?
+    /// `continue: false` from a PreToolUse hook's JSON: the call does not
+    /// run AND the turn ends, with `continuationStopReason` shown to the
+    /// user. Stronger than `.deny`, which records the refusal and lets the
+    /// loop continue.
+    public var preventContinuation: Bool
+    public var continuationStopReason: String?
 
     public init(
         behavior: AppHookPermissionBehavior = .passthrough,
         reason: String? = nil,
         blockedByHookName: String? = nil,
         updatedInput: [String: String]? = nil,
-        additionalContext: String? = nil
+        additionalContext: String? = nil,
+        preventContinuation: Bool = false,
+        continuationStopReason: String? = nil
     ) {
         self.behavior = behavior
         self.reason = reason
         self.blockedByHookName = blockedByHookName
         self.updatedInput = updatedInput
         self.additionalContext = additionalContext
+        self.preventContinuation = preventContinuation
+        self.continuationStopReason = continuationStopReason
     }
 }
 

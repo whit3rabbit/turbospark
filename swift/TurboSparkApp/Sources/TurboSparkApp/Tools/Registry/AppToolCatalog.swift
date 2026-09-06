@@ -118,7 +118,7 @@ public enum AppToolCatalog {
         switch name {
         case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "apply_patch", "applypatch", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills":
             return .fileWrite
-        case "bash", "run_command", "repl", "shell", "exec", "terminal", "enterworktree", "enter_worktree", "exitworktree", "exit_worktree":
+        case "bash", "run_command", "repl", "shell", "exec", "terminal", "bashoutput", "bash_output", "killshell", "kill_shell", "enterworktree", "enter_worktree", "exitworktree", "exit_worktree":
             return .terminal
         case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content":
             return .web

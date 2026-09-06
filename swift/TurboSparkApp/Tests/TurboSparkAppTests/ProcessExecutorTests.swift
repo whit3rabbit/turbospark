@@ -183,7 +183,28 @@ final class RunCommandToolTests: XCTestCase {
         )
         let result = await AppToolRegistry.execute(call: call, in: temporaryProject())
         XCTAssertFalse(result.isError)
-        XCTAssertGreaterThan(result.output.count, 190_000)
+        // The model-facing cap bounds what a runaway command spends of the
+        // context window: head and tail kept, the middle replaced by a
+        // marker. The whole stream no longer reaches the model (it used to,
+        // all 200KB of it).
+        XCTAssertLessThanOrEqual(result.output.count, 31_000)
+        XCTAssertTrue(result.output.contains("chars truncated"), result.output)
+    }
+
+    /// The head/tail shape is the point of the compaction: build failures
+    /// summarize at the END of their output, so a head-only cut hides
+    /// exactly the lines that explain the failure.
+    func testLargeOutputKeepsHeadAndTailAroundTheMarker() async throws {
+        let call = AppToolCall(
+            name: "run_command",
+            arguments: ["command": "printf 'HEADSTART\\n'; yes x | head -n 25000; printf 'TAILMARK\\n'"],
+            category: .terminal
+        )
+        let result = await AppToolRegistry.execute(call: call, in: temporaryProject())
+        XCTAssertFalse(result.isError)
+        XCTAssertTrue(result.output.contains("HEADSTART"), result.output)
+        XCTAssertTrue(result.output.contains("TAILMARK"), result.output)
+        XCTAssertTrue(result.output.contains("chars truncated"), result.output)
     }
 
     func testRunCommandHonorsAModelSuppliedTimeout() async throws {
@@ -197,5 +218,137 @@ final class RunCommandToolTests: XCTestCase {
         let elapsed = Date().timeIntervalSince(start)
         XCTAssertLessThan(elapsed, 5.0, "A 300ms timeout argument must be honored, not the 120s default.")
         XCTAssertTrue(result.output.contains("timed out"))
+        // A timeout is work that did not finish, so it must not read as a
+        // success the model can build on.
+        XCTAssertTrue(result.isError, "A timed-out command must report isError, got: \(result.output)")
+    }
+
+    /// The whole point of merged streams: relative order between stdout and
+    /// stderr survives, where the old two-buffer join could not preserve it.
+    func testInterleavedOutputPreservesArrivalOrder() async throws {
+        let call = AppToolCall(
+            name: "run_command",
+            arguments: [
+                "command": "printf 'a1\\n'; sleep 0.1; printf 'e1\\n' >&2; "
+                    + "sleep 0.1; printf 'a2\\n'; sleep 0.1; printf 'e2\\n' >&2"
+            ],
+            category: .terminal
+        )
+        let result = await AppToolRegistry.execute(call: call, in: temporaryProject())
+        XCTAssertFalse(result.isError)
+        let ranges = ["a1", "e1", "a2", "e2"].map { result.output.range(of: $0) }
+        XCTAssertNotNil(ranges[0]); XCTAssertNotNil(ranges[1])
+        XCTAssertNotNil(ranges[2]); XCTAssertNotNil(ranges[3])
+        let positions = ranges.map { $0!.lowerBound }
+        XCTAssertEqual(positions, positions.sorted(), "lines must appear in the order they were written")
+    }
+
+    func testANSIEscapeSequencesAreStripped() async throws {
+        let call = AppToolCall(
+            name: "run_command",
+            arguments: ["command": "printf '\\033[31mred-text\\033[0m plain\\n'"],
+            category: .terminal
+        )
+        let result = await AppToolRegistry.execute(call: call, in: temporaryProject())
+        XCTAssertFalse(result.isError)
+        XCTAssertTrue(result.output.contains("red-text plain"))
+        XCTAssertFalse(result.output.contains("\u{1B}"), "escape bytes must not reach the model")
+    }
+
+    func testShellEnvironmentPreventsEditorAndPagerHangs() async throws {
+        let call = AppToolCall(
+            name: "run_command",
+            arguments: ["command": "printf '%s\\n' \"$GIT_EDITOR\" \"$GIT_PAGER\" \"$PAGER\""],
+            category: .terminal
+        )
+        let result = await AppToolRegistry.execute(call: call, in: temporaryProject())
+        XCTAssertFalse(result.isError)
+        let lines = result.output.split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines, ["true", "cat", "cat"], result.output)
+    }
+
+    func testModelTimeoutIsClampedToTheMaximum() {
+        XCTAssertEqual(ShellCommandRunner.clampedTimeoutSeconds(timeoutMs: nil), 120)
+        XCTAssertEqual(ShellCommandRunner.clampedTimeoutSeconds(timeoutMs: 300), 0.3)
+        XCTAssertEqual(
+            ShellCommandRunner.clampedTimeoutSeconds(timeoutMs: 3_600_000), 600,
+            "an hour, in milliseconds, must clamp to the 600s ceiling")
+    }
+
+    /// grep exit 1 is the command ANSWERING ("nothing matched"). Reporting
+    /// it as an error invited the model to retry a question already
+    /// answered.
+    func testGrepNoMatchIsReportedAsAnAnswerNotAnError() async throws {
+        let project = temporaryProject()
+        let rootURL = try XCTUnwrap(project.rootDirectoryURL)
+        try "apple\nbanana\n".write(
+            to: rootURL.appendingPathComponent("fruit.txt"),
+            atomically: true, encoding: .utf8)
+        let call = AppToolCall(
+            name: "run_command",
+            arguments: ["command": "grep zebra fruit.txt"],
+            category: .terminal
+        )
+        let result = await AppToolRegistry.execute(call: call, in: project)
+        XCTAssertFalse(result.isError, "grep exit 1 means no matches: an answer, not a failure")
+        XCTAssertTrue(result.output.contains("No matches found"), result.output)
+    }
+
+    func testWorkingDirectoryPersistsBetweenCalls() async throws {
+        ShellCwdTracker.shared.resetForTests()
+        defer { ShellCwdTracker.shared.resetForTests() }
+        let project = temporaryProject()
+
+        func run(_ command: String) async -> AppToolResult {
+            await AppToolRegistry.execute(
+                call: AppToolCall(name: "run_command", arguments: ["command": command], category: .terminal),
+                in: project)
+        }
+
+        // The tool's own `pwd -P` spelling of the root is the baseline:
+        // resolving the root path through a URL API here resolves symlinks
+        // differently (/var vs /private/var) and tests the wrong thing.
+        let rootPwd = await run("pwd")
+        XCTAssertFalse(rootPwd.isError, rootPwd.output)
+        let physicalRoot = rootPwd.output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let cd = await run("mkdir -p sub && cd sub")
+        XCTAssertFalse(cd.isError, cd.output)
+
+        let subPwd = await run("pwd")
+        XCTAssertFalse(subPwd.isError, subPwd.output)
+        XCTAssertEqual(
+            subPwd.output.trimmingCharacters(in: .whitespacesAndNewlines),
+            physicalRoot + "/sub",
+            "the next call must start where the previous one left off")
+    }
+
+    func testLeavingTheProjectResetsTheWorkingDirectory() async throws {
+        ShellCwdTracker.shared.resetForTests()
+        defer { ShellCwdTracker.shared.resetForTests() }
+        let project = temporaryProject()
+
+        func run(_ command: String) async -> AppToolResult {
+            await AppToolRegistry.execute(
+                call: AppToolCall(name: "run_command", arguments: ["command": command], category: .terminal),
+                in: project)
+        }
+
+        let rootPwd = await run("pwd")
+        XCTAssertFalse(rootPwd.isError, rootPwd.output)
+        let physicalRoot = rootPwd.output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let escape = await run("cd /tmp")
+        XCTAssertFalse(escape.isError, escape.output)
+        XCTAssertTrue(
+            escape.output.contains("Shell cwd was reset"),
+            "the model must be told its cd did not stick: \(escape.output)")
+
+        let checkPwd = await run("pwd")
+        XCTAssertFalse(checkPwd.isError, checkPwd.output)
+        XCTAssertEqual(
+            checkPwd.output.trimmingCharacters(in: .whitespacesAndNewlines),
+            physicalRoot,
+            "the next call must run at the project root again")
     }
 }

@@ -27,7 +27,9 @@ public final class AppHookExecutionEngine: Sendable {
         prompt: String? = nil,
         source: String? = nil,
         reason: String? = nil,
-        stopHookActive: Bool? = nil
+        stopHookActive: Bool? = nil,
+        agentID: String? = nil,
+        agentType: String? = nil
     ) async -> [AppHookExecutionResult] {
         let store = await AppHookStore.shared
         let allHooks = await store.hooks
@@ -60,7 +62,9 @@ public final class AppHookExecutionEngine: Sendable {
                         prompt: prompt,
                         source: source,
                         reason: reason,
-                        stopHookActive: stopHookActive
+                        stopHookActive: stopHookActive,
+                        agentID: agentID,
+                        agentType: agentType
                     )
                 }
             } else {
@@ -82,7 +86,9 @@ public final class AppHookExecutionEngine: Sendable {
                     prompt: prompt,
                     source: source,
                     reason: reason,
-                    stopHookActive: stopHookActive
+                    stopHookActive: stopHookActive,
+                    agentID: agentID,
+                    agentType: agentType
                 )
                 results.append(result)
             }
@@ -111,7 +117,9 @@ public final class AppHookExecutionEngine: Sendable {
             behavior: verdict.permissionDecision ?? .allow,
             reason: verdict.permissionReason,
             updatedInput: verdict.updatedInput,
-            additionalContext: verdict.additionalContext
+            additionalContext: verdict.additionalContext,
+            preventContinuation: verdict.preventContinuation,
+            continuationStopReason: verdict.continuationStopReason
         )
     }
 
@@ -130,7 +138,9 @@ public final class AppHookExecutionEngine: Sendable {
         prompt: String?,
         source: String?,
         reason: String?,
-        stopHookActive: Bool?
+        stopHookActive: Bool?,
+        agentID: String? = nil,
+        agentType: String? = nil
     ) async -> AppHookExecutionResult {
         let start = Date()
 
@@ -150,6 +160,8 @@ public final class AppHookExecutionEngine: Sendable {
                 source: source,
                 reason: reason,
                 stopHookActive: stopHookActive,
+                agentID: agentID,
+                agentType: agentType,
                 startTime: start
             )
         case .http:
@@ -165,12 +177,17 @@ public final class AppHookExecutionEngine: Sendable {
                 source: source,
                 reason: reason,
                 stopHookActive: stopHookActive,
+                agentID: agentID,
+                agentType: agentType,
                 startTime: start
             )
         case .prompt:
-            // Out of scope for now (root task: "prompt"/"agent" hook types
-            // are not evaluated): a `nil` outcome makes this a no-op in
-            // `AppHookDecisionAggregator` rather than fabricating a verdict.
+            // Out of scope (root task: "prompt"/"agent" hook types are not
+            // evaluated), but a CONFIGURED hook that does nothing is a
+            // misconfiguration the user has to be able to see. This is a
+            // visible non-blocking outcome rather than the anonymous no-op
+            // it used to be; discovery flags the same limitation when the
+            // entry is parsed.
             return AppHookExecutionResult(
                 hookID: hook.id,
                 hookName: hook.name,
@@ -178,7 +195,8 @@ public final class AppHookExecutionEngine: Sendable {
                 exitCode: 0,
                 stdout: "Prompt hook type is not evaluated by this client.",
                 stderr: "",
-                durationSeconds: Date().timeIntervalSince(start)
+                durationSeconds: Date().timeIntervalSince(start),
+                outcome: .nonBlockingError("\(hook.name) is a prompt hook, which this client does not evaluate.")
             )
         }
     }

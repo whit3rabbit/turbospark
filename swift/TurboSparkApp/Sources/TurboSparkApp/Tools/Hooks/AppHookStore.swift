@@ -30,6 +30,16 @@ public final class AppHookStore: ObservableObject {
     /// Any mutation before the first refresh therefore truncated the file.
     public internal(set) var didRefreshAtLeastOnce = false
 
+    /// The plugins hook discovery last saw, kept so `recomputeSourceGroups`
+    /// can derive each plugin group's `optionSpecs` from the plugin's own
+    /// `userConfig` manifest instead of guessing.
+    public internal(set) var lastLoadedPlugins: [LoadedPlugin] = []
+
+    /// Injectable plugin source for tests. When set, hook discovery reads
+    /// enabled plugins from here instead of `PluginManager.shared`, whose
+    /// default roots point at the real home directory.
+    var pluginProvider: ((String?) -> [LoadedPlugin])?
+
     let fileManager = FileManager.default
 
     public init() {

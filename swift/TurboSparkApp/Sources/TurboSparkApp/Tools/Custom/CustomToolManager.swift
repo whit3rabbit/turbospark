@@ -16,12 +16,12 @@ public final class CustomToolManager: @unchecked Sendable {
         AppStorageRoot.subdirectory("tools")
     }
 
-    /// User home directory tools path (~/.turbospark/tools).
+    /// User home directory tools path: `~/.turbospark/tools` for the Default
+    /// profile, inside that profile's own folder for anyone else. For a
+    /// non-default profile this is the SAME directory as
+    /// `globalToolsDirectory`, which `reloadGlobalTools` de-duplicates.
     public var userHomeToolsDirectory: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".turbospark/tools", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        UserProfileStore.userScopeSubdirectory("tools")
     }
 
     /// Scans and reloads global custom tools from Application Support and ~/.turbospark/tools.
@@ -32,8 +32,15 @@ public final class CustomToolManager: @unchecked Sendable {
         var toolsByName: [String: CustomToolDefinition] = [:]
         let fm = FileManager.default
 
-        // Scan Application Support first
-        for dir in [globalToolsDirectory, userHomeToolsDirectory] {
+        // Scan Application Support first. For a non-default profile both
+        // directories are the profile's own `tools/` folder, so scanning
+        // twice would only re-parse the same files.
+        var dirs = [globalToolsDirectory]
+        if userHomeToolsDirectory.standardizedFileURL.path
+            != dirs[0].standardizedFileURL.path {
+            dirs.append(userHomeToolsDirectory)
+        }
+        for dir in dirs {
             guard fm.fileExists(atPath: dir.path) else { continue }
             if let enumerator = fm.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) {
                 for case let fileURL as URL in enumerator {
@@ -96,6 +103,8 @@ public final class CustomToolManager: @unchecked Sendable {
             targetDir = globalToolsDirectory
         case .projectLocal(let projectPath):
             targetDir = URL(fileURLWithPath: projectPath).appendingPathComponent(".turbospark/tools", isDirectory: true)
+        case .plugin:
+            throw NSError(domain: "TurboSparkCustomTool", code: 3, userInfo: [NSLocalizedDescriptionKey: "A custom tool cannot be saved into plugin scope."])
         }
 
         try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)

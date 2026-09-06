@@ -43,7 +43,9 @@ extension AppModel {
         prompt: String? = nil,
         source: String? = nil,
         reason: String? = nil,
-        stopHookActive: Bool? = nil
+        stopHookActive: Bool? = nil,
+        agentID: String? = nil,
+        agentType: String? = nil
     ) async -> [AppHookExecutionResult] {
         let sessionID = chatID.uuidString
         let projectDir = project?.rootDirectoryPath
@@ -61,7 +63,9 @@ extension AppModel {
             prompt: prompt,
             source: source,
             reason: reason,
-            stopHookActive: stopHookActive
+            stopHookActive: stopHookActive,
+            agentID: agentID,
+            agentType: agentType
         )
     }
 
@@ -188,5 +192,42 @@ extension AppModel {
     ) async -> [AppHookExecutionResult] {
         await dispatchLifecycleHook(
             event: .notification, chatID: chatID, project: project, reason: message)
+    }
+
+    /// Dispatches `PermissionDenied` when a tool call is refused, whether
+    /// by the user at the approval card or by the permission engine. The
+    /// standard non-blocking table applies to its output; a hook's
+    /// `hookSpecificOutput.retry` is parsed but deliberately NOT acted on:
+    /// automatically re-running a call a human just refused is not a
+    /// decision this app makes on a hook's word.
+    @discardableResult
+    public func dispatchPermissionDenied(
+        toolName: String,
+        toolArguments: [String: String],
+        reason: String,
+        chatID: UUID,
+        project: AppProject?
+    ) async -> [AppHookExecutionResult] {
+        await dispatchLifecycleHook(
+            event: .permissionDenied, chatID: chatID, project: project,
+            toolName: toolName, toolArguments: toolArguments, reason: reason)
+    }
+
+    /// Dispatches `SubagentStart` / `SubagentStop`. Notification-grade:
+    /// matching hooks run and any feedback is logged, but neither event can
+    /// block the subagent, which has no interaction surface to resolve a
+    /// block with.
+    @discardableResult
+    public func dispatchSubagentLifecycle(
+        event: AppHookEvent,
+        chatID: UUID,
+        project: AppProject?,
+        agentID: String,
+        agentType: String,
+        stopHookActive: Bool? = nil
+    ) async -> [AppHookExecutionResult] {
+        await dispatchLifecycleHook(
+            event: event, chatID: chatID, project: project,
+            stopHookActive: stopHookActive, agentID: agentID, agentType: agentType)
     }
 }
