@@ -160,6 +160,15 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
             system.chars().count()
         );
     }
+    if let Some(ref ssd) = args.paged_ssd_cache_dir {
+        eprintln!("  paged SSD cache dir: {}", ssd.display());
+    }
+    if let Some(ref hot) = args.hot_cache_max_size {
+        eprintln!("  hot cache max size: {hot}");
+    }
+    if let Some(ref mcp) = args.mcp_config {
+        eprintln!("  mcp config: {}", mcp.display());
+    }
     Ok(Arc::new(model))
 }
 
@@ -168,6 +177,64 @@ fn open_real_model(_args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatM
     Err("--model needs macOS and a Metal device; only the scripted \
          <tokenizer-dir> mode is available on this platform"
         .to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn open_real_encoder_model(
+    model_arg: &str,
+) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
+    let dir = catalog::resolve_model_arg(model_arg);
+    if dir.as_os_str() == model_arg {
+        eprintln!("opening embedding model {} ...", model_arg);
+    } else {
+        eprintln!(
+            "opening embedding model {} ({}) ...",
+            model_arg,
+            dir.display()
+        );
+    }
+    let model =
+        turbospark_server::RealEncoderModel::open(&dir)?.with_model_id(model_arg.to_string());
+    eprintln!("embedding model open ({model_arg})");
+    Ok(Arc::new(model))
+}
+
+#[cfg(target_os = "macos")]
+fn open_models_registry(
+    parsed: &ModelArgs,
+) -> Result<Arc<dyn turbospark_server::registry::ModelRegistry>, String> {
+    let has_model = !parsed.model.is_empty();
+
+    match (has_model, &parsed.embedding_model) {
+        (true, Some(emb_arg)) => {
+            let chat_model = open_real_model(parsed)?;
+            let emb_model = open_real_encoder_model(emb_arg)?;
+            Ok(Arc::new(turbospark_server::registry::StaticRegistry::new(
+                vec![chat_model, emb_model],
+            )))
+        }
+        (true, None) => {
+            let dir = catalog::resolve_model_arg(&parsed.model);
+            if !dir.join("manifest.json").exists() && dir.join("config.json").exists() {
+                let emb_model = open_real_encoder_model(&parsed.model)?;
+                Ok(Arc::new(turbospark_server::registry::SingleModel::new(
+                    emb_model,
+                )))
+            } else {
+                let chat_model = open_real_model(parsed)?;
+                Ok(Arc::new(turbospark_server::registry::SingleModel::new(
+                    chat_model,
+                )))
+            }
+        }
+        (false, Some(emb_arg)) => {
+            let emb_model = open_real_encoder_model(emb_arg)?;
+            Ok(Arc::new(turbospark_server::registry::SingleModel::new(
+                emb_model,
+            )))
+        }
+        (false, None) => Err("neither --model nor --embedding-model was provided".to_string()),
+    }
 }
 
 fn open_scripted(tokenizer_dir: &str) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
@@ -192,7 +259,7 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
 
-    let (model, port, bind, api_key) = match parse_model_args(&args) {
+    let (registry, port, bind, api_key) = match parse_model_args(&args) {
         Err(e) => {
             eprintln!("{e}");
             return std::process::ExitCode::from(2);
@@ -209,12 +276,18 @@ async fn main() -> std::process::ExitCode {
                 }
             };
             let api_key = parsed.api_key.clone();
-            match open_real_model(&parsed) {
-                Ok(m) => (m, parsed.port, host, api_key),
+            #[cfg(target_os = "macos")]
+            match open_models_registry(&parsed) {
+                Ok(reg) => (reg, parsed.port, host, api_key),
                 Err(e) => {
                     eprintln!("{e}");
                     return std::process::ExitCode::from(2);
                 }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                eprintln!("--model is supported on macOS only; use the scripted mode: turbospark-server <tokenizer-dir> [port]");
+                return std::process::ExitCode::from(2);
             }
         }
         // `--api-key` is `--model` mode only, matching `--bind`: the
@@ -224,7 +297,13 @@ async fn main() -> std::process::ExitCode {
         Ok(None) => {
             let port: u16 = args.get(1).and_then(|p| p.parse().ok()).unwrap_or(8080);
             match open_scripted(&args[0]) {
-                Ok(m) => (m, port, "127.0.0.1".to_string(), None),
+                Ok(m) => (
+                    Arc::new(turbospark_server::registry::SingleModel::new(m))
+                        as Arc<dyn turbospark_server::registry::ModelRegistry>,
+                    port,
+                    "127.0.0.1".to_string(),
+                    None,
+                ),
                 Err(e) => {
                     eprintln!("{e}");
                     return std::process::ExitCode::from(1);
@@ -244,7 +323,7 @@ async fn main() -> std::process::ExitCode {
         .or_else(|| std::env::var("TURBOSPARK_API_KEY").ok())
         .filter(|k| !k.is_empty());
     let router = turbospark_server::build_router_with_options(
-        model,
+        registry,
         turbospark_server::RouterOptions {
             api_key: api_key.clone(),
             // The standalone binary records nothing. Events exist for a host

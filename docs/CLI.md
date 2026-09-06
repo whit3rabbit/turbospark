@@ -1,29 +1,93 @@
 # CLI reference
 
-Three primary user binaries, plus a benchmark harness:
+The primary command-line interface is the unified `turbospark` binary, alongside three specialized standalone binaries and a benchmark harness:
 
-- `turbospark-check` -- run generation once against an install: a raw prompt, a
-  rendered chat conversation, or an interactive REPL. See
-  [`crates/cli/CLAUDE.md`](../crates/cli/CLAUDE.md) for how it is wired.
-- `turbospark-model` -- find, inspect, and install models into the
-  `~/.turbospark` store. See [`docs/MODELS.md`](MODELS.md) for the catalog
-  concept this drives.
-- `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server over
-  one open install. See [`crates/server/CLAUDE.md`](../crates/server/CLAUDE.md).
-- `turbospark-bench` -- throughput and memory benchmark harness replicating the
-  frozen community protocol. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
+- `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
+- `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/CLAUDE.md`](../crates/cli/CLAUDE.md).
+- `turbospark-model` -- find, inspect, and install models into the `~/.turbospark` store. See [`docs/MODELS.md`](MODELS.md).
+- `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/CLAUDE.md`](../crates/server/CLAUDE.md).
+- `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
-`--help` on `turbospark-check`, `turbospark-model` (`--help`, `-h`, `help`),
-and `turbospark-server` (`--help`, `-h`) prints its flag list and exits;
-`--version` on `turbospark-check`, `turbospark-model` (`--version`, `-V`, `version`),
-and `turbospark-server` (`--version`, `-V`) prints the workspace version.
-Both short-circuit before `--model` is read, so neither needs a real
-install on disk. Note `turbospark-check`'s flat parser recognizes the long forms
-`--help` and `--version` only.
+`--help` and `--version` are available globally across all binaries.
 
-This page documents every flag. It does not repeat the *why* behind a
-default or a caveat where a dedicated page already carries that -- follow the
-links inline rather than expecting the full story here.
+This page documents every flag and command.
+
+## `turbospark` (unified CLI)
+
+```sh
+turbospark <command> [flags...]
+```
+
+Inspired by oMLX and Unsloth workflows, `turbospark` provides a single unified tool:
+
+### Commands
+
+| Category | Command | Description |
+| --- | --- | --- |
+| **Run & Chat** | `turbospark run <model> [prompt]` | Run interactive chat REPL (if prompt omitted) or single-turn prompt completion. Accepts flags like `--temperature`, `--max-new`, etc. |
+| **Server (Foreground)** | `turbospark serve [options]` | Run OpenAI & Anthropic HTTP server in foreground (supports `--model-dir`, `--memory-guard`, etc.) |
+| **Server (Daemon)** | `turbospark start [options]` | Start managed background server daemon (`~/.turbospark/run/server.pid`, logs to `~/.turbospark/logs/server.log`) |
+| | `turbospark stop` | Stop running background server daemon |
+| | `turbospark restart [options]` | Restart background server daemon |
+| | `turbospark status` | Inspect background daemon status, port, endpoint, and health check |
+| **Agents** | `turbospark start <agent>` | Connect coding agent (`claude`, `codex`, `opencode`, `hermes`, `openclaw`, `dsh`) to local server |
+| **Models** | `turbospark list` | List catalog models, marking installed ones (`--filter TEXT`) |
+| | `turbospark pull <alias\|--repo>` | Install model into store |
+| | `turbospark info <alias>` | Inspect model details and gate targets |
+| | `turbospark rm <alias>` | Remove installed model |
+| | `turbospark probe <repo>` | Inspect remote Hugging Face headers without downloading |
+| | `turbospark recommend` | Rank catalog models by fit for current hardware |
+| | `turbospark auth [token]` | Inspect, set, or clear Hugging Face credentials |
+| | `turbospark path <alias>` | Print install directory |
+| **Bench** | `turbospark bench [options]` | Run benchmark harness |
+
+### oMLX compatibility
+
+TurboSpark provides argument and lifecycle compatibility with oMLX:
+
+```sh
+# Managed background server
+turbospark start
+turbospark stop
+turbospark restart
+turbospark status
+
+# Serve models with default settings or auto-discovery from a directory
+turbospark serve --model-dir ~/models
+
+# Memory guard tier at startup (safe maps to balanced tier)
+turbospark serve --model-dir ~/models --memory-guard safe
+
+# Custom memory guard ceiling in GB
+turbospark serve --model-dir ~/models --memory-guard-gb 48
+
+# Concurrency control (maps to session slots)
+turbospark serve --model-dir ~/models --max-concurrent-requests 16
+
+# Hugging Face mirror endpoint (e.g. for restricted regions)
+turbospark serve --model-dir ~/models --hf-endpoint https://hf-mirror.com
+
+# API key authentication
+turbospark serve --model-dir ~/models --api-key your-secret-key
+
+# Extended cache and MCP configuration options
+turbospark serve --model-dir ~/models --paged-ssd-cache-dir ~/.omlx/cache --hot-cache-max-size 20% --mcp-config mcp.json
+```
+
+### Unsloth compatibility
+
+```sh
+# Quick interactive chat
+turbospark run gemma4
+
+# Quick one-shot prompt
+turbospark run gemma4 "Explain quantum physics in three sentences"
+
+# Connect coding agents to local server (Unsloth Start style)
+turbospark start claude
+turbospark start codex
+turbospark start opencode
+```
 
 ## `turbospark-check`
 
@@ -185,11 +249,12 @@ turbospark-model <command> [flags...]
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
 | `recommend` | none | `--context N`, `--budget BYTES`, `--load-guard TIER`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--load-guard` MUST match what the session will open with, since the ranking and the loader's refusal share one memory budget; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
-| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
+| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force`, `--hf-token TOKEN` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
 | `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
 | `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
+| `auth` | `[TOKEN]` | `--clear`, `--status`, `--hf-token TOKEN`, `--set TOKEN` | inspects, saves, or clears Hugging Face credentials in `~/.turbospark/hf_token` |
 
-Global options: `--help` / `-h` / `help`, `--version` / `-V` / `version`.
+Global options: `--help` / `-h` / `help`, `--version` / `-V` / `version`. `--hf-token <TOKEN>` can also be passed to `probe` and `pull` as an explicit override.
 
 Flags not accepted by the given command are rejected rather than silently ignored.
 
@@ -213,12 +278,21 @@ while a generation is in flight. `/v1/responses` is stateless: it refuses
 
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |
-| `--model` | path or alias | required | same resolution as `turbospark-check`'s |
+| `--model` | path or alias | optional | same resolution as `turbospark-check`'s; auto-resolved from `--model-dir` or store if omitted |
+| `--model-dir` | path | none | directory containing `.gturbo` models; enables auto-discovery (omlx compatibility) |
 | `--port` | u16 | `8080` | listen port |
 | `--max-context` | integer, or `auto` | `auto` | same semantics as `turbospark-check`'s |
 | `--load-guard` | `off\|relaxed\|balanced\|strict`, or a size | `relaxed` | same as `turbospark-check`'s, resolved once at startup |
+| `--memory-guard` | `safe\|balanced\|strict\|relaxed\|off` | unset | alias for `--load-guard`; `safe` maps to `balanced` (omlx compatibility) |
+| `--memory-guard-gb` | integer | unset | set custom memory guard ceiling in gigabytes (omlx compatibility) |
 | `--min-auto-context` | non-negative integer | `0` | same as `turbospark-check`'s |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | same semantics as `turbospark-check`'s |
+| `--session-slots` | positive integer | `1` | concurrent conversation KV states maintained in pool |
+| `--max-concurrent-requests` | positive integer | `1` | alias for `--session-slots` (omlx compatibility) |
+| `--hf-endpoint` | url | unset, `$HF_ENDPOINT` | Hugging Face mirror endpoint (e.g. `https://hf-mirror.com`) |
+| `--paged-ssd-cache-dir` | path | none | tiered KV SSD cache directory hint (omlx compatibility) |
+| `--hot-cache-max-size` | string | none | in-memory hot cache size hint, e.g. `20%` (omlx compatibility) |
+| `--mcp-config` | path | none | MCP tools configuration file path (omlx compatibility) |
 | `--bind` | `loopback\|tailnet` | `loopback` | `tailnet` binds this machine's Tailscale IPv4 address; there is no authentication and no TLS either way -- the Tailnet ACL is the only access control under `tailnet`, unless `--api-key` is also given |
 | `--api-key` | string | unset, `$TURBOSPARK_API_KEY` | require this key, as `x-api-key: <key>` or `Authorization: Bearer <key>`, on every route except `GET /health`; see [Bearer/x-api-key auth](#bearerx-api-key-auth) |
 | `--power-profile` | `performance\|balanced\|efficiency` | unset | same as `turbospark-check`'s |

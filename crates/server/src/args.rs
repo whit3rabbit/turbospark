@@ -1,17 +1,5 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
-                       relaxed (default), balanced, strict, or a byte ceiling on
-                       what the engine ALLOCATES. relaxed is what shipped before
-                       this flag and what every published memory figure was
-                       measured under; see docs/LOAD_GUARD.md
-  --min-auto-context   refuse to open when --max-context auto resolves below this
-                       many tokens (default 0, no floor). Says nothing about an
-                       explicit --max-context
-  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default on). A request continues from the\n                       previous request's KV cache wherever the prompts agree,\n                       instead of re-prefilling the whole transcript. Helps\n                       only when consecutive requests are the same\n                       conversation -- unrelated interleaved requests each\n                       discard the other's reusable prefix -- and raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on\n                       (the default), since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --system             default system prompt for requests that carry no system\n                       or developer message of their own. Repeatable; repeats\n                       join with a newline. A request that sends its own system\n                       message is left exactly as it arrived\n  --system-file        read the same default system prompt from a file, for a\n                       prompt too long to sit on a command line. Mutually\n                       exclusive with --system\n  --api-key            require this key on every request except GET /health,
-                       as `Authorization: Bearer <key>` or `x-api-key: <key>`.
-                       Falls back to $TURBOSPARK_API_KEY when absent (keeps
-                       the key out of `ps`); with neither, the server has no
-                       auth at all, same as before this flag existed\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --help               print this text and exit\n  --version            print the version and exit";
+pub const USAGE: &str = "usage: turbospark-server [--model <install-dir|alias>] [--embedding-model <install-dir|alias>] [--model-dir PATH] [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--memory-guard TIER] [--memory-guard-gb N] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--max-concurrent-requests N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--hf-endpoint URL] [--paged-ssd-cache-dir PATH] [--hot-cache-max-size SIZE] [--mcp-config PATH] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --embedding-model    path to an embedding model (.safetensors directory) or alias\n                       to serve for /v1/embeddings alongside generation\n  --model-dir          directory containing .gturbo models (omlx compatibility)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,\n                       relaxed (default), balanced, strict, or a byte ceiling on\n                       what the engine ALLOCATES. relaxed is what shipped before\n                       this flag and what every published memory figure was\n                       measured under; see docs/LOAD_GUARD.md\n  --memory-guard       alias for --load-guard: safe (balanced), balanced, strict,\n                       relaxed, off (omlx compatibility)\n  --memory-guard-gb    set custom memory guard ceiling in gigabytes (omlx compatibility)\n  --min-auto-context   refuse to open when --max-context auto resolves below this\n                       many tokens (default 0, no floor). Says nothing about an\n                       explicit --max-context\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default on). A request continues from the\n                       previous request's KV cache wherever the prompts agree,\n                       instead of re-prefilling the whole transcript. Helps\n                       only when consecutive requests are the same\n                       conversation -- unrelated interleaved requests each\n                       discard the other's reusable prefix -- and raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on\n                       (the default), since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --max-concurrent-requests alias for --session-slots (omlx compatibility)\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --system             default system prompt for requests that carry no system\n                       or developer message of their own. Repeatable; repeats\n                       join with a newline. A request that sends its own system\n                       message is left exactly as it arrived\n  --system-file        read the same default system prompt from a file, for a\n                       prompt too long to sit on a command line. Mutually\n                       exclusive with --system\n  --api-key            require this key on every request except GET /health,\n                       as `Authorization: Bearer <key>` or `x-api-key: <key>`.\n                       Falls back to $TURBOSPARK_API_KEY when absent (keeps\n                       the key out of `ps`); with neither, the server has no\n                       auth at all, same as before this flag existed\n  --hf-endpoint        Hugging Face mirror endpoint (e.g. https://hf-mirror.com)\n  --paged-ssd-cache-dir tiered KV SSD cache directory (omlx compatibility)\n  --hot-cache-max-size in-memory hot cache size (e.g. 20%) (omlx compatibility)\n  --mcp-config         path to MCP tools configuration file (omlx compatibility)\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --help               print this text and exit\n  --version            print the version and exit";
 
 pub use crate::bind::BindMode;
 
@@ -19,6 +7,8 @@ pub use crate::bind::BindMode;
 #[derive(Debug)]
 pub struct ModelArgs {
     pub model: String,
+    pub embedding_model: Option<String>,
+    pub model_dir: Option<std::path::PathBuf>,
     pub port: u16,
     /// `None` is `auto`, which is also the default -- resolved against the
     /// checkpoint's trained context and this machine's memory at open.
@@ -63,48 +53,26 @@ pub struct ModelArgs {
     pub guardrails: turbospark_server::GuardrailConfig,
     /// Continue a request from the previous request's KV cache wherever the
     /// prompts agree, instead of re-prefilling the whole transcript.
-    /// Process-level for the reason `guardrails` is: there is one runner per
-    /// process, so there is nothing per-request to vary, and a per-request
-    /// field would let a caller opt its own traffic in or out of a policy
-    /// this deployment chose. Default true: this is the one server-side flag
-    /// in this file that defaults to enabling an optimization rather than a
-    /// safety net, because the mechanism is provably lossless (a mismatched
-    /// prompt always falls back to a full re-prefill; see
-    /// `crates/runtime/CLAUDE.md` Gotcha 30) and its only cost is a raised
-    /// idle-memory floor, not a peak or a correctness risk.
     pub prefix_reuse: bool,
     /// How many distinct conversations one runner may keep reusable KV/
     /// recurrent state for at once (`crate::session_pool` /
-    /// `--session-slots`). Default 1 (no pool): unlike `prefix_reuse`, a
-    /// parked slot is real COMMITTED memory from the moment it is
-    /// allocated at open, not merely a floor that rises with use, so it
-    /// belongs with `expert_cache_slots`'s explicit-opt-in shape rather
-    /// than `prefix_reuse`'s safe-default-on one. No `auto`: there is no
-    /// principled heuristic for expected concurrent-conversation count the
-    /// way `--expert-cache-slots auto` has a measured throughput/footprint
-    /// trade to resolve from machine size alone.
+    /// `--session-slots`). Default 1.
     pub session_slots: u32,
     /// Default reasoning effort for requests that do not specify reasoning_effort.
     pub reasoning: tokenizer::ReasoningEffort,
     /// Default system prompt for requests that carry no system or developer
-    /// message of their own. Process-level for `reasoning`'s reason: there is
-    /// one runner per process, so there is nothing per-request to vary.
-    ///
-    /// THE CALLER WINS, and that is a hard requirement rather than a taste.
-    /// Three of the five fallback chat renderers refuse a system message that
-    /// is not at index 0 (`chat_template/{chatml,gemma,deepseek}.rs` all raise
-    /// "system message must be first"), so prepending a second system turn
-    /// beside the caller's would fail the render outright on those dialects
-    /// instead of merely reading oddly.
+    /// message of their own.
     pub default_system: Option<String>,
-    /// The `--api-key` flag's OWN value, or `None` if absent. Deliberately
-    /// NOT resolved against `$TURBOSPARK_API_KEY` here: this parser reads
-    /// only `args`, matching `power_profile`'s split (`None` here,
-    /// resolved against the OS at `open_real_model`) so a test asserting
-    /// what a given argv parses to is not at the mercy of whatever the test
-    /// process's environment happens to carry. `main` applies the env
-    /// fallback once, after parsing.
+    /// The `--api-key` flag's OWN value, or `None` if absent.
     pub api_key: Option<String>,
+    /// Hugging Face mirror endpoint override, if set.
+    pub hf_endpoint: Option<String>,
+    /// Tiered KV cache SSD directory (omlx compatibility).
+    pub paged_ssd_cache_dir: Option<std::path::PathBuf>,
+    /// In-memory hot cache size hint (omlx compatibility).
+    pub hot_cache_max_size: Option<String>,
+    /// MCP configuration path (omlx compatibility).
+    pub mcp_config: Option<std::path::PathBuf>,
 }
 
 /// Parses the `--model` mode's flags. Returns `Ok(None)` when the first
@@ -124,6 +92,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
     }
     let mut parsed = ModelArgs {
         model: String::new(),
+        embedding_model: None,
         port: 8080,
         max_context: None,
         expert_cache_slots: None,
@@ -140,6 +109,11 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         reasoning: tokenizer::ReasoningEffort::Off,
         default_system: None,
         api_key: None,
+        model_dir: None,
+        hf_endpoint: None,
+        paged_ssd_cache_dir: None,
+        hot_cache_max_size: None,
+        mcp_config: None,
     };
     // Held aside because `--steering-layers` may be given BEFORE or AFTER
     // `--steering`, and the restriction has to survive either order: the
@@ -170,6 +144,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         let number = || value.parse::<u32>().map_err(|e| format!("{flag}: {e}"));
         match flag {
             "--model" => parsed.model = value.clone(),
+            "--embedding-model" => parsed.embedding_model = Some(value.clone()),
             "--port" => parsed.port = value.parse::<u16>().map_err(|e| format!("--port: {e}"))?,
             "--max-context" => {
                 parsed.max_context = if value == "auto" {
@@ -387,12 +362,98 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 }
                 parsed.api_key = Some(value.clone());
             }
+            "--model-dir" => {
+                parsed.model_dir = Some(std::path::PathBuf::from(value));
+            }
+            "--memory-guard" => {
+                let tier = if value == "safe" {
+                    "balanced"
+                } else {
+                    value.as_str()
+                };
+                parsed.load_policy.guard = match runtime::LoadGuard::parse(tier) {
+                    Some(g) => g,
+                    None => {
+                        return Err(format!(
+                            "--memory-guard must be safe, balanced, relaxed, strict, or off, not {value}"
+                        ))
+                    }
+                };
+            }
+            "--memory-guard-gb" => {
+                let gb = value
+                    .parse::<u64>()
+                    .map_err(|e| format!("--memory-guard-gb: {e}"))?;
+                if gb == 0 {
+                    return Err("--memory-guard-gb must be greater than 0".to_string());
+                }
+                parsed.load_policy.guard = runtime::LoadGuard::Custom {
+                    max_counted_bytes: gb * 1024 * 1024 * 1024,
+                };
+            }
+            "--max-concurrent-requests" => {
+                let n = number()?;
+                if n == 0 {
+                    return Err("--max-concurrent-requests must be at least 1, not 0".to_string());
+                }
+                parsed.session_slots = n;
+            }
+            "--hf-endpoint" => {
+                std::env::set_var("HF_ENDPOINT", value);
+                parsed.hf_endpoint = Some(value.clone());
+            }
+            "--paged-ssd-cache-dir" => {
+                parsed.paged_ssd_cache_dir = Some(std::path::PathBuf::from(value));
+            }
+            "--hot-cache-max-size" => {
+                parsed.hot_cache_max_size = Some(value.clone());
+            }
+            "--mcp-config" => {
+                parsed.mcp_config = Some(std::path::PathBuf::from(value));
+            }
             other => return Err(format!("unknown option {other}\n{USAGE}")),
         }
         i += 2;
     }
     if parsed.model.is_empty() {
-        return Err(format!("--model needs a value\n{USAGE}"));
+        if let Some(ref dir) = parsed.model_dir {
+            if dir.join("manifest.json").exists() {
+                parsed.model = dir.display().to_string();
+            } else if dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    let mut found = Vec::new();
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir()
+                            && (path.extension().is_some_and(|e| e == "gturbo")
+                                || path.join("manifest.json").exists())
+                        {
+                            found.push(path);
+                        }
+                    }
+                    found.sort();
+                    if let Some(first) = found.into_iter().next() {
+                        parsed.model = first.display().to_string();
+                    }
+                }
+            }
+            if parsed.model.is_empty() {
+                return Err(format!(
+                    "no .gturbo model found in --model-dir {}\n{USAGE}",
+                    dir.display()
+                ));
+            }
+        } else {
+            return Err(format!("--model needs a value\n{USAGE}"));
+        }
+    } else if let Some(ref dir) = parsed.model_dir {
+        let direct = dir.join(&parsed.model);
+        let with_ext = dir.join(format!("{}.gturbo", parsed.model));
+        if direct.exists() {
+            parsed.model = direct.display().to_string();
+        } else if with_ext.exists() {
+            parsed.model = with_ext.display().to_string();
+        }
     }
     // NAMING BOTH IS REFUSED RATHER THAN RESOLVED. They are two spellings of
     // one setting, so a command line carrying both says two things, and

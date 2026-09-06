@@ -627,3 +627,65 @@ fn the_usage_text_documents_both_system_flags() {
     );
     assert!(super::args::USAGE.contains("--system-file"));
 }
+
+#[test]
+fn omlx_compatibility_memory_guard_flags() {
+    let safe_args = parse(&["--model", "/tmp/m", "--memory-guard", "safe"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(safe_args.load_policy.guard, runtime::LoadGuard::Balanced);
+
+    let gb_args = parse(&["--model", "/tmp/m", "--memory-guard-gb", "48"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        gb_args.load_policy.guard,
+        runtime::LoadGuard::Custom {
+            max_counted_bytes: 48 * 1024 * 1024 * 1024
+        }
+    );
+}
+
+#[test]
+fn omlx_compatibility_extended_flags() {
+    let args = parse(&[
+        "--model",
+        "/tmp/m",
+        "--max-concurrent-requests",
+        "16",
+        "--hf-endpoint",
+        "https://hf-mirror.com",
+        "--paged-ssd-cache-dir",
+        "/tmp/omlx-cache",
+        "--hot-cache-max-size",
+        "20%",
+        "--mcp-config",
+        "/tmp/mcp.json",
+    ])
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(args.session_slots, 16);
+    assert_eq!(args.hf_endpoint.as_deref(), Some("https://hf-mirror.com"));
+    assert_eq!(
+        args.paged_ssd_cache_dir,
+        Some(PathBuf::from("/tmp/omlx-cache"))
+    );
+    assert_eq!(args.hot_cache_max_size.as_deref(), Some("20%"));
+    assert_eq!(args.mcp_config, Some(PathBuf::from("/tmp/mcp.json")));
+}
+
+#[test]
+fn model_dir_auto_discovery() {
+    let tmp = std::env::temp_dir().join(format!("turbospark-test-model-dir-{}", line!()));
+    let model_folder = tmp.join("test-model.gturbo");
+    std::fs::create_dir_all(&model_folder).unwrap();
+    std::fs::write(model_folder.join("manifest.json"), "{}").unwrap();
+
+    let args = parse(&["--model-dir", tmp.to_str().unwrap()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(args.model, model_folder.display().to_string());
+
+    std::fs::remove_dir_all(&tmp).ok();
+}

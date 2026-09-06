@@ -9,6 +9,10 @@ publish.workspace = true
 description = "The turbospark-check process entry point: reads argv, calls the invocation crate, applies its exit-status/stream-routing decisions, and prints the resolved request."
 
 [[bin]]
+name = "turbospark"
+path = "src/bin/turbospark.rs"
+
+[[bin]]
 name = "turbospark-check"
 path = "src/main.rs"
 
@@ -20,6 +24,7 @@ name = "turbospark-model"
 path = "src/bin/model.rs"
 
 [dependencies]
+libc = "0.2"
 invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.1.0" }
 catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.1.0" }
 runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.1.0" }
