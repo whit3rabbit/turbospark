@@ -84,7 +84,10 @@ extension AppModel {
         // this one -- the model answers about an image it was never shown,
         // which is `AppChatMessage.imagePaths`'s own documented hazard
         // arriving in the other prompt shape.
-        if let task = Self.taskMessage(in: chats[chatIndex]) {
+        // Vault-aware: a ghost chat's transcript is decrypted here, so the
+        // bounded prompt sees the same conversation the append-only one does.
+        let transcript = turnMessages(for: chats[chatIndex].id)
+        if let task = Self.taskMessage(in: transcript) {
             history.append(
                 ChatMessage(
                     role: .user,
@@ -92,7 +95,7 @@ extension AppModel {
                     images: task.imagePaths.map(ChatImage.path)))
         }
 
-        let state = chats[chatIndex].skillState ?? AppSkillState()
+        let state = storedSkillState(chatIndex: chatIndex) ?? AppSkillState()
         var latest = "CURRENT STATE:\n\(state.rendered)"
 
         if let observation = latestObservation(chatIndex: chatIndex) {
@@ -113,8 +116,8 @@ extension AppModel {
         // FRONT and this walks from the BACK, so the pair was quadratic in
         // the message count -- on the one prompt shape whose entire purpose
         // is to be O(1) in step count, and reached once per turn.
-        let taskID = Self.taskMessage(in: chats[chatIndex])?.id
-        for message in chats[chatIndex].messages.reversed() {
+        let taskID = Self.taskMessage(in: turnMessages(for: chats[chatIndex].id))?.id
+        for message in turnMessages(for: chats[chatIndex].id).reversed() {
             if let result = message.toolResults.last {
                 let tag = result.isError ? "tool_error" : "tool_response"
                 let call = message.toolCalls.last.map { "\($0.name)\n" } ?? ""
@@ -139,9 +142,11 @@ extension AppModel {
     ///
     /// The FIRST user turn rather than the last: later user turns in an agent
     /// run are guardrail nudges. One definition, because two spellings of it
-    /// disagree on a turn that carries only a picture (state#58).
-    static func taskMessage(in chat: AppChat) -> AppChatMessage? {
-        chat.messages.first {
+    /// disagree on a turn that carries only a picture (state#58). Takes the
+    /// messages rather than the chat so a ghost chat's decrypted transcript
+    /// can be passed in.
+    static func taskMessage(in messages: [AppChatMessage]) -> AppChatMessage? {
+        messages.first {
             $0.role == .user && (!$0.content.isEmpty || !$0.imagePaths.isEmpty)
         }
     }
@@ -192,7 +197,7 @@ extension AppModel {
         // this is what the prompt carries on every step. Rejected like any
         // other invalid patch -- one step's bookkeeping lost, with a reason
         // the model can act on.
-        var candidate = chats[chatIndex].skillState ?? AppSkillState()
+        var candidate = storedSkillState(chatIndex: chatIndex) ?? AppSkillState()
         candidate.apply(patch: patch)
         let renderedBytes = candidate.rendered.utf8.count
         guard renderedBytes <= AppSkillStatePatch.maxRenderedBytes else {
@@ -202,7 +207,7 @@ extension AppModel {
             return stripped
         }
         skillStateLastError = nil
-        chats[chatIndex].skillState = candidate
+        setStoredSkillState(chatIndex: chatIndex, candidate)
         return stripped
     }
 
@@ -219,8 +224,14 @@ extension AppModel {
     /// the state describes one run rather than one conversation.
     public func resetSkillState() {
         guard let idx = selectedChatIndex else { return }
-        chats[idx].skillState = nil
+        setStoredSkillState(chatIndex: idx, nil)
         skillStateLastError = nil
-        persistChats()
+        // Ghost chats never reach disk, and `setStoredSkillState` already
+        // re-seals the vault above; persisting here would rewrite the whole
+        // (filtered) archive for a change that is purely in-memory, exactly
+        // what `promptText`'s setter and `updateTodos` already avoid.
+        if !chats[idx].isGhost {
+            persistChats()
+        }
     }
 }

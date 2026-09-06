@@ -152,7 +152,7 @@ public struct AppSettingsView: View {
         case .appearance:
             AppearanceSettingsPaneView()
         case .general:
-            GeneralSettingsPaneView()
+            GeneralSettingsPaneView(model: model)
         case .profiles:
             ProfilesSettingsPaneView(model: model)
         case .shortcuts:

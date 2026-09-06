@@ -357,7 +357,9 @@ struct ChatSidebarView: View {
     }
 
     private var historyChats: [AppChat] {
-        sortedChats.filter { !$0.messages.isEmpty }
+        // Vault-aware: a ghost chat's transcript lives encrypted off its row,
+        // so the emptiness check goes through the model, which decrypts.
+        sortedChats.filter { model.chatHasTranscript($0) }
     }
 
     private var sortedChats: [AppChat] {

@@ -80,6 +80,7 @@ extension AppModel {
         self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
         self.modelReasoningDefaults = settings.modelReasoningDefaults
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
+        self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
         // The pinned port is a plain preference; the server API key is a
         // credential and comes from the Keychain instead (ServerKeychain).
         self.serverPinnedPort = settings.serverPinnedPort
@@ -148,6 +149,7 @@ extension AppModel {
             guardrailsMode: guardrailsMode.rawValue,
             modelReasoningDefaults: modelReasoningDefaults,
             interactionMode: interactionMode.rawValue,
+            alwaysStartInGhostMode: alwaysStartInGhostMode,
             serverPinnedPort: serverPinnedPort,
             defaultSystemPrompt: defaultSystemPrompt,
             enabledPlugins: pluginEnableState
@@ -180,12 +182,42 @@ extension AppModel {
         }
     }
 
+    /// The chats that may reach disk: ghost chats live only in memory.
+    var archivableChats: [AppChat] {
+        chats.filter { !$0.isGhost }
+    }
+
+    /// Archive construction shared by the immediate and debounced writers.
+    ///
+    /// **THIS FILTER IS THE WHOLE GHOST GUARANTEE.** Every one of the ~30
+    /// save sites funnels through `persistChats()` or `persistChatsDebounced()`
+    /// below, and these are the only two places an `AppChatArchive` is built,
+    /// so excluding `isGhost` rows here excludes them from disk -- quit,
+    /// crash, profile switch and all. A selection pointing at a ghost (or at
+    /// nothing archivable) is rewritten to the newest archivable chat, so
+    /// the file never names a chat it does not contain; `loadChats()` would
+    /// repair a stale id anyway, but a file that references an absent row is
+    /// its own trap.
+    func makeChatArchive() -> AppChatArchive {
+        let archivable = archivableChats
+        assert(
+            chats.allSatisfy { chat in
+                !chat.isGhost || (chat.messages.isEmpty && chat.todos.isEmpty
+                    && chat.draft.isEmpty && chat.contextSummary == nil
+                    && chat.skillState == nil)
+            },
+            "ghost chat carrying plaintext conversation content on its row")
+        let selection = archivable.contains(where: { $0.id == selectedChatID })
+            ? selectedChatID
+            : (archivable.first?.id ?? selectedChatID)
+        return AppChatArchive(selectedChatID: selection, chats: archivable)
+    }
+
     /// Persists all conversation threads and active selection to disk.
     public func persistChats() {
         chatPersistDebounceTask?.cancel()
         chatPersistDebounceTask = nil
-        let archive = AppChatArchive(selectedChatID: selectedChatID, chats: chats)
-        AppChatFileStore.save(archive)
+        AppChatFileStore.save(makeChatArchive())
         surfaceStorageIssues()
     }
 
@@ -235,8 +267,7 @@ extension AppModel {
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled, let self else { return }
             self.chatPersistDebounceTask = nil
-            let archive = AppChatArchive(selectedChatID: self.selectedChatID, chats: self.chats)
-            AppChatFileStore.save(archive)
+            AppChatFileStore.save(self.makeChatArchive())
             // **THE DEBOUNCED WRITE REPORTS TOO** (state#103). state#42 gave
             // `lastWriteError` a reader and put it on `persistChats()`; this
             // is the path a DRAFT takes, and a disk that has gone read-only
@@ -335,6 +366,11 @@ extension AppModel {
         // as it gains content; this is the backstop for a path that set it
         // some other way.
         materializeDraftChatIfNeeded()
+
+        // Ghost chats die with the process anyway (nothing persisted them),
+        // so this drops the sealed payloads and replaces the vault key; the
+        // filtered persist below could not write them if it tried.
+        ghostVault.wipeAll()
 
         // Both force the pending debounces through rather than waiting on
         // them, so the last keystroke and the last setting reach disk.

@@ -50,7 +50,7 @@ extension AppModel {
 
     /// Whether there is any conversation history or live output to display.
     public var hasOutputTranscript: Bool {
-        !selectedChat.messages.isEmpty || !outputText.isEmpty || !outputReasoningText.isEmpty
+        !selectedTurnMessages.isEmpty || !outputText.isEmpty || !outputReasoningText.isEmpty
     }
 
     /// Rough token count of everything that would be sent on the next turn.
@@ -60,7 +60,7 @@ extension AppModel {
     /// budget: the real window fit is decided by `fitConversationWindow` on the
     /// engine side against the real tokenizer.
     public var estimatedContextTokens: Int {
-        let transcriptCharacters = selectedChat.messages.reduce(0) { $0 + $1.content.count }
+        let transcriptCharacters = selectedTurnMessages.reduce(0) { $0 + $1.content.count }
         let attachmentCharacters = promptAttachments.reduce(0) { $0 + $1.characterCount }
         return transcriptCharacters / 4 + attachmentCharacters / 4 + estimatedPromptTokens
     }
@@ -83,13 +83,13 @@ extension AppModel {
         if !outputText.isEmpty {
             return outputText
         }
-        return selectedChat.messages.last(where: { $0.role == .assistant })?.content ?? ""
+        return selectedTurnMessages.last(where: { $0.role == .assistant })?.content ?? ""
     }
 
     /// Full plain text transcript of the active chat conversation.
     public var outputConversationPlainText: String {
         var transcriptLines: [String] = []
-        for message in selectedChat.messages {
+        for message in selectedTurnMessages {
             let label = message.role == .user ? "You" : "Assistant"
             transcriptLines.append("\(label):\n\(message.content)")
         }
@@ -101,6 +101,6 @@ extension AppModel {
 
     /// History messages in the active chat conversation.
     public var transcriptBaseMessages: [AppChatMessage] {
-        selectedChat.messages
+        selectedTurnMessages
     }
 }

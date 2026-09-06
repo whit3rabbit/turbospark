@@ -23,7 +23,15 @@ struct ChatSidebarChatRowView: View {
                 model.selectChat(id: chat.id)
             } label: {
                 HStack(spacing: 8) {
-                    if isSelected && model.isRunning {
+                    if chat.isGhost {
+                        // Ghost badge INSTEAD of the bubble icon, not beside
+                        // it: the icon is what marks the row temporary, and
+                        // doubling it would just spend sidebar width.
+                        Image(systemName: "ghost")
+                            .font(theme.ui(points: 11))
+                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .accessibilityHidden(true)
+                    } else if isSelected && model.isRunning {
                         TaskProgressFlameIcon(size: 13)
                     } else {
                         Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")

@@ -95,7 +95,7 @@ private struct ChatTranscriptView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
-                    ForEach(model.selectedChat.messages) { message in
+                    ForEach(model.selectedTurnMessages) { message in
                         MessageRowView(model: model, message: message)
                     }
 

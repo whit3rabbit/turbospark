@@ -53,10 +53,8 @@ extension AppModel {
         }
         stopHookReentryCount += 1
         let reason = verdict.blockReason ?? "A Stop hook requested the turn continue."
-        if let idx = chats.firstIndex(where: { $0.id == chatID }) {
-            chats[idx].messages.append(AppChatMessage(role: .user, content: reason))
-            chats[idx].updatedAt = Date()
-            persistChats()
+        mutateTurnMessages(for: chatID) {
+            $0.append(AppChatMessage(role: .user, content: reason))
         }
         continueAgentLoop(step: resumeStep, chatID: chatID)
         return true
@@ -164,8 +162,8 @@ extension AppModel {
             )
             var deniedCall = call
             deniedCall.status = .denied
-            if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
-                self.chats[idx].messages.append(AppChatMessage(
+            mutateTurnMessages(for: chatID) {
+                $0.append(AppChatMessage(
                     role: .assistant,
                     content: fullContent,
                     reasoning: reasoning,
@@ -173,8 +171,6 @@ extension AppModel {
                     toolCalls: [deniedCall] + extra.calls,
                     toolResults: [deniedResult] + extra.results
                 ))
-                self.chats[idx].updatedAt = Date()
-                self.persistChats()
             }
             await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
             return
@@ -231,8 +227,8 @@ extension AppModel {
             self.pendingToolCallChatID = chatID
             self.pendingToolCallStep = currentStep
             self.pendingToolCallProject = project
-            if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
-                self.chats[idx].messages.append(AppChatMessage(
+            mutateTurnMessages(for: chatID) {
+                $0.append(AppChatMessage(
                     role: .assistant,
                     content: fullContent,
                     reasoning: reasoning,
@@ -240,8 +236,6 @@ extension AppModel {
                     toolCalls: [pending] + extra.calls,
                     toolResults: extra.results
                 ))
-                self.chats[idx].updatedAt = Date()
-                self.persistChats()
             }
             return
         }
@@ -282,8 +276,8 @@ extension AppModel {
                 self.pendingToolCallChatID = chatID
                 self.pendingToolCallStep = currentStep
                 self.pendingToolCallProject = decisionProject
-                if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
-                    self.chats[idx].messages.append(AppChatMessage(
+                mutateTurnMessages(for: chatID) {
+                    $0.append(AppChatMessage(
                         role: .assistant,
                         content: fullContent,
                         reasoning: reasoning,
@@ -291,8 +285,6 @@ extension AppModel {
                         toolCalls: [pending] + extra.calls,
                         toolResults: extra.results
                     ))
-                    self.chats[idx].updatedAt = Date()
-                    self.persistChats()
                 }
             }
 
@@ -338,8 +330,8 @@ extension AppModel {
             toolResult.output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
         }
 
-        if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
-            self.chats[idx].messages.append(AppChatMessage(
+        mutateTurnMessages(for: chatID) {
+            $0.append(AppChatMessage(
                 role: .assistant,
                 content: fullContent,
                 reasoning: reasoning,
@@ -347,8 +339,6 @@ extension AppModel {
                 toolCalls: [runningCall] + extra.calls,
                 toolResults: [toolResult] + extra.results
             ))
-            self.chats[idx].updatedAt = Date()
-            self.persistChats()
         }
 
         // `continue: false` from a PostToolUse hook: the result above is
@@ -379,8 +369,8 @@ extension AppModel {
         )
         var deniedCall = call
         deniedCall.status = .denied
-        if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
-            self.chats[idx].messages.append(AppChatMessage(
+        mutateTurnMessages(for: chatID) {
+            $0.append(AppChatMessage(
                 role: .assistant,
                 content: fullContent,
                 reasoning: reasoning,
@@ -388,8 +378,6 @@ extension AppModel {
                 toolCalls: [deniedCall] + extra.calls,
                 toolResults: [deniedResult] + extra.results
             ))
-            self.chats[idx].updatedAt = Date()
-            self.persistChats()
         }
         guard continuesLoop else { return }
         await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)

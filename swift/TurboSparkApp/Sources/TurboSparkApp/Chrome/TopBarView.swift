@@ -14,6 +14,7 @@ struct TopBarView: View {
     let toggleInspector: () -> Void
 
     @ScaledMetric private var buttonSize: CGFloat = 26
+    @State private var confirmingEndGhost = false
 
     var body: some View {
         // The model loader sits beside the settings toggle it feeds (the
@@ -35,6 +36,7 @@ struct TopBarView: View {
             HStack(spacing: 8) {
                 ModelLoaderControl(model: model)
                 inspectorToggle
+                ghostButton
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -108,6 +110,54 @@ struct TopBarView: View {
         .accessibilityLabel(presentation.title)
         .accessibilityHint(presentation.help)
         .accessibilityValue(presentation.accessibilityValue)
+    }
+
+    /// Ghost Mode: start a temporary chat, or end the one being viewed.
+    ///
+    /// Occupies the top-right corner itself, trailing the inspector toggle.
+    /// Ending a conversation that has content asks first, because the loss
+    /// is the feature's whole point and an accidental click must not spend
+    /// it.
+    private var ghostButton: some View {
+        Button {
+            if model.isInGhostChat {
+                if model.ghostChatHasContent {
+                    confirmingEndGhost = true
+                } else {
+                    model.endGhostChat()
+                }
+            } else {
+                model.enterGhostChat()
+            }
+        } label: {
+            Image(systemName: "ghost")
+                .font(theme.ui(points: 13, weight: .medium))
+                .frame(width: buttonSize, height: buttonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(model.isInGhostChat ? TurboSparkTheme.accentColor : Color.secondary)
+        .help(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
+        .accessibilityLabel(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
+        .accessibilityHint(
+            model.isInGhostChat
+                ? "Discards the temporary conversation. It is never saved."
+                : "Starts a temporary chat that lives only in memory and is never saved.")
+        .accessibilityAddTraits(model.isInGhostChat ? [.isButton, .isSelected] : .isButton)
+        .confirmationDialog(
+            "End temporary chat?", isPresented: $confirmingEndGhost,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Temporary Chat", role: .destructive) {
+                model.endGhostChat()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This conversation exists only in memory and cannot be recovered "
+                    + "once discarded."
+            )
+        }
     }
 
     private func gitPill(worktree: WorktreeModel) -> some View {

@@ -2,11 +2,17 @@ import Foundation
 
 extension AppModel {
     /// Filtered list of chats according to the active project selection.
+    ///
+    /// Excludes ghost chats: they are session-scoped and entered through a
+    /// dedicated action (`enterGhostChat()`), never through ordinary project
+    /// or chat navigation. `selectProject` and `orderedChats` both read this,
+    /// so a stray ghost row in here can surface as either landing back in
+    /// Ghost Mode on a plain project switch, or Cmd+[/Cmd+] cycling into it.
     public var filteredChats: [AppChat] {
         guard let projectID = selectedProjectID else {
-            return chats
+            return chats.filter { !$0.isGhost }
         }
-        return chats.filter { $0.projectID == projectID }
+        return chats.filter { $0.projectID == projectID && !$0.isGhost }
     }
 
     /// The project a chat belongs to, or nil.
@@ -132,9 +138,14 @@ extension AppModel {
         reloadAgents()
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
 
-        // If the currently selected chat doesn't belong to the newly selected project, switch selection
-        if let id {
-            let matching = chats.filter { $0.projectID == id }
+        // If the currently selected chat doesn't belong to the newly selected project, switch selection.
+        // `filteredChats` already excludes ghosts and, since `selectedProjectID`
+        // was just set to `id` above, is exactly this project's chat list --
+        // switching to a project a ghost chat happens to be stamped with must
+        // not silently reselect it (the same rule `deleteChat`'s sibling
+        // selection follows).
+        if id != nil {
+            let matching = filteredChats
             if let first = matching.first {
                 selectChat(id: first.id)
             } else {

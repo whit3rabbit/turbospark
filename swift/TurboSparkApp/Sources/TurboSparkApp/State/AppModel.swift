@@ -104,6 +104,8 @@ public final class AppModel: ObservableObject {
 
     /// Current UI interaction mode (Chat vs Projects / Coding).
     @Published public var interactionMode: AppInteractionMode = .chat
+    /// Whether the app opens a temporary (Ghost Mode) chat on launch.
+    @Published public var alwaysStartInGhostMode: Bool = false
 
     // Project and Agent State
     /// All configured codebase projects.
@@ -223,6 +225,12 @@ public final class AppModel: ObservableObject {
     /// it carries anything worth losing, after which every existing path
     /// (publication, the debounce, the flush) applies to it unchanged.
     var activeDraftChat = AppChat()
+    /// AES-GCM vault holding the conversation contents of every ghost chat.
+    ///
+    /// A ghost row in `chats` keeps its messages, todos, draft, context
+    /// summary and skill state EMPTY; they are sealed in here under a
+    /// per-launch key. See `GhostChatVault` and `AppModel+Ghost.swift`.
+    var ghostVault = GhostChatVault()
 
     // Live Generation State
     /// Whether token generation is currently running.
@@ -421,6 +429,11 @@ public final class AppModel: ObservableObject {
         loadProfiles()
         loadProjects()
         loadChats()
+        // Ghost Mode opt-in, AFTER `loadChats`: the restored archive is
+        // already in place and the temporary chat sits on top of it, selected.
+        if alwaysStartInGhostMode {
+            enterGhostChat()
+        }
         loadGlobalMcpServers()
         reloadSkills()
         reloadAgents()

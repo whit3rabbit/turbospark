@@ -26,6 +26,19 @@ struct PromptComposerView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             PromptComposerEditor(model: model, promptFocused: $promptFocused)
+            if model.isInGhostChat {
+                // Under the text box, before sending: the one place the user
+                // is certain to look as they compose. Persistent rather than
+                // first-send-only, so a return to the chat re-warns too.
+                HStack(spacing: 4) {
+                    Image(systemName: "ghost")
+                        .accessibilityHidden(true)
+                    Text("Temporary chat: this conversation can't be recovered.")
+                }
+                .font(theme.ui(points: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+            }
             PromptComposerFooter(
                 model: model,
                 showingPromptTips: $showingPromptTips,

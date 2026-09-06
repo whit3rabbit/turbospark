@@ -142,6 +142,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var modelReasoningDefaults: [String: String]
     /// Last-used primary interaction mode ("chat" or "projects").
     public var interactionMode: String
+    /// Whether the app opens a temporary (Ghost Mode) chat on launch.
+    public var alwaysStartInGhostMode: Bool
     /// Port the in-process server pins to, 0 = first free port. Persisted
     /// because the field had a settings UI that reset every launch; the
     /// server API key deliberately does NOT live here (see
@@ -203,6 +205,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         guardrailsMode: String = "select",
         modelReasoningDefaults: [String: String] = [:],
         interactionMode: String = "chat",
+        alwaysStartInGhostMode: Bool = false,
         serverPinnedPort: UInt16 = 0,
         defaultSystemPrompt: String = "",
         enabledPlugins: [String: Bool] = [:]
@@ -246,6 +249,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = minAutoContextTokens
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
+        self.alwaysStartInGhostMode = alwaysStartInGhostMode
         self.serverPinnedPort = serverPinnedPort
         self.defaultSystemPrompt = defaultSystemPrompt
         self.enabledPlugins = enabledPlugins
@@ -306,6 +310,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = c.decodeLenient(UInt32.self, forKey: .minAutoContextTokens, fallback: 0)
         self.modelReasoningDefaults = c.decodeLenient([String: String].self, forKey: .modelReasoningDefaults, fallback: [:])
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
+        self.alwaysStartInGhostMode = c.decodeLenient(
+            Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
         self.serverPinnedPort = c.decodeLenient(UInt16.self, forKey: .serverPinnedPort, fallback: 0)
         self.defaultSystemPrompt = c.decodeLenient(
             String.self, forKey: .defaultSystemPrompt, fallback: "")

@@ -35,7 +35,7 @@ extension AppModel {
         generationEpoch += 1
         let myEpoch = generationEpoch
 
-        outputPromptText = chats[chatIndex].messages.last(where: { $0.role == .user })?.content ?? ""
+        outputPromptText = turnMessages(for: chatID).last(where: { $0.role == .user })?.content ?? ""
         outputText = ""
         outputReasoningText = ""
         generating = true
@@ -240,19 +240,17 @@ extension AppModel {
                             case .retry(let nudge):
                                 let maxSteps = turnProject?.maxAutonomousSteps ?? 5
                                 if step + 1 < maxSteps && !nudge.isEmpty {
-                                    if let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
-                                        self.chats[idx].messages.append(AppChatMessage(
+                                    self.mutateTurnMessages(for: turnChatID) { messages in
+                                        messages.append(AppChatMessage(
                                             role: .assistant,
                                             content: generatedContent,
                                             reasoning: generatedReasoning,
                                             stopReason: "guardrail_retry"
                                         ))
-                                        self.chats[idx].messages.append(AppChatMessage(
+                                        messages.append(AppChatMessage(
                                             role: .user,
                                             content: nudge
                                         ))
-                                        self.chats[idx].updatedAt = Date()
-                                        self.persistChats()
                                     }
                                     self.outputText = ""
                                     self.outputReasoningText = ""
@@ -294,15 +292,13 @@ extension AppModel {
     }
 
     private func finishProseTurn(content: String, reasoning: String, result: GenerationResult, chatID: UUID, step: Int, project: AppProject?) async {
-        if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
-            self.chats[idx].messages.append(AppChatMessage(
+        self.mutateTurnMessages(for: chatID) { messages in
+            messages.append(AppChatMessage(
                 role: .assistant,
                 content: content,
                 reasoning: reasoning,
                 stopReason: result.stopReason.rawValue
             ))
-            self.chats[idx].updatedAt = Date()
-            self.persistChats()
         }
         _ = await self.dispatchStopAndContinueIfBlocked(
             chatID: chatID, resumeStep: step + 1, project: project)

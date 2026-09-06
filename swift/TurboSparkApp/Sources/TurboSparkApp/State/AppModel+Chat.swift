@@ -32,7 +32,11 @@ extension AppModel {
 
     /// Active task checklist for the currently selected chat.
     public var currentTodos: [TodoItem] {
-        selectedChat.todos
+        // Ghost chats keep todos in the vault; their row fields are always
+        // empty (see AppModel+Ghost.swift).
+        selectedChat.isGhost
+            ? ghostVault.payload(for: selectedChatID).todos
+            : selectedChat.todos
     }
 
     /// Present continuous description of the active `in_progress` task, if any.
@@ -46,9 +50,15 @@ extension AppModel {
     /// Updates the checklist items for a given chat and persists the change.
     public func updateTodos(for chatID: UUID, todos: [TodoItem]) {
         if let index = chats.firstIndex(where: { $0.id == chatID }) {
-            chats[index].todos = todos
-            chats[index].updatedAt = Date()
-            persistChats()
+            if chats[index].isGhost {
+                // Sealed in the vault; the row bump inside is what repaints
+                // the checklist UI. Nothing reaches disk.
+                mutateGhostPayload(for: chatID) { $0.todos = todos }
+            } else {
+                chats[index].todos = todos
+                chats[index].updatedAt = Date()
+                persistChats()
+            }
         } else if activeDraftChat.id == chatID {
             activeDraftChat.todos = todos
             activeDraftChat.updatedAt = Date()
@@ -57,10 +67,25 @@ extension AppModel {
     }
 
     /// Draft prompt text for the currently selected chat.
+    ///
+    /// A ghost chat's draft is sealed in the vault like its messages, and
+    /// its setter deliberately skips `persistChatsDebounced()`: the archive
+    /// filter would exclude the row anyway, and skipping keeps a keystroke
+    /// in Ghost Mode from rewriting every real chat to disk.
     public var promptText: String {
-        get { selectedChat.draft }
+        get {
+            if selectedChat.isGhost {
+                return ghostVault.payload(for: selectedChatID).draft
+            }
+            return selectedChat.draft
+        }
         set {
             if let index = selectedChatIndex {
+                if chats[index].isGhost {
+                    mutateGhostPayload(for: selectedChatID) { $0.draft = newValue }
+                    updateTokenEstimate()
+                    return
+                }
                 chats[index].draft = newValue
                 chats[index].updatedAt = Date()
                 // Debounced: this is one keystroke, and the store rewrites
@@ -124,8 +149,12 @@ extension AppModel {
         guard !generating, !submitting, pendingToolCall == nil else { return selectedChatID }
         activeSection = .chat
         let assignedProjectID = projectID ?? selectedProjectID
-        // If current chat is already empty and matches the target project, reset and stay on it
-        if selectedChat.messages.isEmpty && selectedChat.draft.isEmpty && selectedChat.draftAttachments.isEmpty && selectedChat.projectID == assignedProjectID {
+        // If current chat is already empty and matches the target project, reset and stay on it.
+        // **NEVER "REUSE" A GHOST CHAT** for a plain New Chat: its row fields
+        // are empty by design (the content is vaulted), so the emptiness
+        // check alone would reset and keep the user in Ghost Mode after
+        // they explicitly asked for a persisted chat.
+        if !selectedChat.isGhost && selectedChat.messages.isEmpty && selectedChat.draft.isEmpty && selectedChat.draftAttachments.isEmpty && selectedChat.projectID == assignedProjectID {
             outputText = ""
             outputReasoningText = ""
             outputPromptText = ""
@@ -211,6 +240,14 @@ extension AppModel {
             // exactly the stale value the helper exists to prevent.
             clearPendingToolCall()
         }
+        // A ghost row's content lives only in the vault (`AppModel+Ghost.swift`),
+        // never on this row, so removing the row alone leaves its sealed
+        // ciphertext behind in memory for the rest of the process. Wiped
+        // here rather than relying on every deletion path (the sidebar's
+        // Delete action included) to call `endGhostChat()` instead.
+        if chats[index].isGhost {
+            ghostVault.wipe(for: id)
+        }
         chats.remove(at: index)
         if chats.isEmpty {
             selectedChatID = UUID()
@@ -219,8 +256,10 @@ extension AppModel {
             // was picked out of the UNFILTERED list, so deleting the last
             // chat under project A selected a project-B conversation the
             // sidebar does not even show -- the shape `selectProject`
-            // already gets right.
-            let siblings = chats.filter { $0.projectID == selectedProjectID }
+            // already gets right. Ghost chats are excluded too: ending a
+            // normal chat must not silently drop the user into the
+            // temporary one.
+            let siblings = chats.filter { $0.projectID == selectedProjectID && !$0.isGhost }
             if let replacement = siblings.first {
                 selectedChatID = replacement.id
             } else if selectedProjectID == nil {
@@ -260,11 +299,22 @@ extension AppModel {
         let clearedChatID = selectedChatID
         let clearedProject = project(forChat: clearedChatID)
         if let index = selectedChatIndex {
-            chats[index].messages.removeAll()
-            chats[index].contextSummary = nil
-            chats[index].skillState = nil
-            chats[index].todos = []
-            chats[index].updatedAt = Date()
+            if chats[index].isGhost {
+                // The row fields are placeholders; the vault holds the
+                // conversation, so that is what Clear empties.
+                mutateGhostPayload(for: chats[index].id) {
+                    $0.messages.removeAll()
+                    $0.todos = []
+                    $0.contextSummary = nil
+                    $0.skillState = nil
+                }
+            } else {
+                chats[index].messages.removeAll()
+                chats[index].contextSummary = nil
+                chats[index].skillState = nil
+                chats[index].todos = []
+                chats[index].updatedAt = Date()
+            }
         }
         skillStateLastError = nil
         if pendingToolCallChatID == clearedChatID {

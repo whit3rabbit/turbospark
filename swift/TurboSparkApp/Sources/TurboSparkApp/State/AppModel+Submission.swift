@@ -103,8 +103,17 @@ extension AppModel {
                 if !self.generating { self.isCancellationPending = false }
             }
             self.stopHookReentryCount = 0
-            let verdict = await self.evaluateUserPromptSubmit(
-                prompt: fullUserContent, chatID: submissionChatID, project: submissionProject)
+            // **GHOST MODE DISPATCHES NO `UserPromptSubmit` HOOK.** The hook
+            // receives the full prompt text, and a hook script is free to
+            // log it -- a user who asked for a conversation that leaves no
+            // trace has not consented to that. The empty verdict is the
+            // "every hook allowed it" answer, so the turn simply proceeds.
+            let submissionIsGhost =
+                self.chats.first(where: { $0.id == submissionChatID })?.isGhost ?? false
+            let verdict = submissionIsGhost
+                ? AppHookVerdict()
+                : await self.evaluateUserPromptSubmit(
+                    prompt: fullUserContent, chatID: submissionChatID, project: submissionProject)
             guard !Task.isCancelled else { return }
             // `continue: false` from a hook's JSON output refuses the prompt
             // outright. Like a block, nothing is appended and the draft is
@@ -161,8 +170,14 @@ extension AppModel {
                 }
             }
 
-            // Clear draft & attachments
-            self.chats[chatIndex].draft = ""
+            // Clear draft & attachments. The ghost draft is vaulted, so the
+            // clear is too; attachments stay on the row (paths only, and
+            // the row is never persisted anyway).
+            if self.chats[chatIndex].isGhost {
+                self.mutateGhostPayload(for: submissionChatID) { $0.draft = "" }
+            } else {
+                self.chats[chatIndex].draft = ""
+            }
             self.chats[chatIndex].draftAttachments = []
             self.chats[chatIndex].updatedAt = Date()
 
@@ -171,18 +186,26 @@ extension AppModel {
                 contentForModel += "\n\n<hook_context>\n\(context)\n</hook_context>"
             }
 
-            // Append user turn
+            // Auto-title from the draft -- REAL chats only. A ghost chat
+            // keeps its fixed title: the title is derived from the prompt,
+            // and the row's title field is as in-memory as everything else,
+            // but a stable "Temporary Chat" is what the sidebar promises.
+            if !self.chats[chatIndex].isGhost,
+                (self.chats[chatIndex].title == "New Chat" || self.chats[chatIndex].title.isEmpty),
+                !userDraft.isEmpty {
+                self.chats[chatIndex].title = String(userDraft.prefix(40)).replacingOccurrences(of: "\n", with: " ")
+            }
+
+            // Append user turn. Ghost chats seal the message into the vault
+            // instead of the row; the ordinary path persists inside the
+            // helper, exactly once, as before.
             let userMessage = AppChatMessage(
                 role: .user,
                 content: contentForModel,
                 imagePaths: promptImages.compactMap {
                     if case .path(let p) = $0 { return p } else { return nil }
                 })
-            self.chats[chatIndex].messages.append(userMessage)
-            if (self.chats[chatIndex].title == "New Chat" || self.chats[chatIndex].title.isEmpty) && !userDraft.isEmpty {
-                self.chats[chatIndex].title = String(userDraft.prefix(40)).replacingOccurrences(of: "\n", with: " ")
-            }
-            self.persistChats()
+            self.mutateTurnMessages(for: submissionChatID) { $0.append(userMessage) }
 
             self.executeGenerationTurn(step: 0, chatID: submissionChatID)
         }

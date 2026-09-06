@@ -1417,6 +1417,31 @@ so going through `make` recompiles the whole app every single time. Use
     reads the legacy keys only when the file is absent and removes them only
     after the first successful save.
 
+53. **GHOST MODE (TEMPORARY CHATS) HAS TWO LAYERS, AND ONLY THE FIRST IS A
+    GUARANTEE.** Added 2026-09-05. A ghost chat (`AppChat.isGhost`) lives
+    only in memory: BOTH archive-construction points (`makeChatArchive` in
+    `AppModel+Persistence.swift`, reached by `persistChats` and
+    `persistChatsDebounced` and therefore by all ~30 save sites) filter
+    `isGhost` rows, so quit, crash and profile switch all leave nothing on
+    disk. That filter is the guarantee; the second layer, `GhostChatVault`
+    (AES-GCM under a per-launch key), is defense in depth, and a ghost
+    row's `messages`, `todos`, `draft`, `contextSummary` and `skillState`
+    are ALWAYS empty -- the content is sealed in the vault and moves only
+    through `mutateTurnMessages(for:_:)` / `mutateGhostPayload(for:_:)` /
+    the `turnMessages(for:)`-family accessors in `AppModel+Ghost.swift`.
+
+    Three things a future change must not break. **A ghost row stays
+    empty**: any new code that appends to `chats[i].messages` directly
+    writes plaintext a transcript reading the vault will never see (the
+    debug assert in `makeChatArchive` catches it at the next persist; route
+    the write through `mutateTurnMessages` instead). **An emptiness check
+    on a ghost row is a lie by design** -- `createChat`'s reuse branch
+    excludes ghosts for exactly this reason, and the sidebar's history
+    filter goes through `chatHasTranscript`. **Ghost turns dispatch no
+    `UserPromptSubmit` hook**: the hook receives the prompt text and a hook
+    script may log it, which is a trace a user who asked for a chat that
+    leaves no trace has not consented to.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments that

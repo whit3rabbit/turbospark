@@ -281,6 +281,15 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     public var createdAt: Date
     /// Timestamp when the chat was last modified.
     public var updatedAt: Date
+    /// Temporary (Ghost Mode) chat marker.
+    ///
+    /// A ghost chat lives only in memory: the persist path filters `isGhost`
+    /// rows out of every `AppChatArchive` it builds, so nothing about one
+    /// ever reaches `chats_archive.json` -- not on quit, not on a profile
+    /// switch, not on a crash. Its conversation contents (messages, todos,
+    /// draft, skill state) do not even sit on the row; they live
+    /// AES-GCM-sealed in `GhostChatVault` and those row fields stay empty.
+    public var isGhost: Bool
 
     /// Creates a new chat session.
     public init(
@@ -295,7 +304,8 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         systemPrompt: String? = nil,
         skillState: AppSkillState? = nil,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        isGhost: Bool = false
     ) {
         self.id = id
         self.projectID = projectID
@@ -309,6 +319,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.skillState = skillState
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.isGhost = isGhost
     }
 
     /// Tolerant decode, for the reason given on `AppChatMessage.init(from:)`:
@@ -328,6 +339,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         skillState = try container.decodeIfPresent(AppSkillState.self, forKey: .skillState)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        isGhost = try container.decodeIfPresent(Bool.self, forKey: .isGhost) ?? false
     }
 
     /// Single-line preview text for sidebar display.

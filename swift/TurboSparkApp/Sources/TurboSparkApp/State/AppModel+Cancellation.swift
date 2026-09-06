@@ -27,15 +27,13 @@ extension AppModel {
         let targetID = chatID ?? selectedChatID
         let targetProject = turnProject(chatID: targetID)
         if !outputText.isEmpty || !outputReasoningText.isEmpty {
-            if let idx = chats.firstIndex(where: { $0.id == targetID }) {
-                chats[idx].messages.append(AppChatMessage(
+            mutateTurnMessages(for: targetID) {
+                $0.append(AppChatMessage(
                     role: .assistant,
                     content: outputText,
                     reasoning: outputReasoningText,
                     stopReason: reason
                 ))
-                chats[idx].updatedAt = Date()
-                persistChats()
             }
             outputText = ""
             outputReasoningText = ""

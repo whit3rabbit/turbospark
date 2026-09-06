@@ -168,7 +168,11 @@ extension AppModel {
         }
 
         // Clear composer draft
-        chats[chatIndex].draft = ""
+        if chats[chatIndex].isGhost {
+            mutateGhostPayload(for: submissionChatID) { $0.draft = "" }
+        } else {
+            chats[chatIndex].draft = ""
+        }
         chats[chatIndex].draftAttachments = []
         chats[chatIndex].updatedAt = Date()
 
@@ -177,8 +181,7 @@ extension AppModel {
             role: .user,
             content: "[Agent: \(agent.displayName)] \(prompt)"
         )
-        chats[chatIndex].messages.append(userTurn)
-        persistChats()
+        mutateTurnMessages(for: submissionChatID) { $0.append(userTurn) }
 
         // Captured before the run, like every other turn: a subagent run is
         // seconds to minutes of work and the user is free to click away.
@@ -228,11 +231,7 @@ extension AppModel {
                 stopReason: result.status
             )
 
-            if let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
-                self.chats[idx].messages.append(assistantTurn)
-                self.chats[idx].updatedAt = Date()
-                self.persistChats()
-            }
+            self.mutateTurnMessages(for: turnChatID) { $0.append(assistantTurn) }
         }
     }
 }

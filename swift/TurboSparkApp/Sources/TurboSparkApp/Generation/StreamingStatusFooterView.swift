@@ -86,7 +86,7 @@ public struct StreamingStatusFooterView: View {
         if !model.outputReasoningText.isEmpty && model.outputText.isEmpty {
             return "Thinking..."
         }
-        if model.selectedChat.messages.last?.toolCalls.contains(where: { $0.status == .running }) == true {
+        if model.selectedTurnMessages.last?.toolCalls.contains(where: { $0.status == .running }) == true {
             return "Running tools..."
         }
         if model.isRunning {

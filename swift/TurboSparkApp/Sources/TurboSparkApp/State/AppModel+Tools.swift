@@ -325,9 +325,10 @@ extension AppModel {
     /// the two together.
     public func appendToolExecutionTurn(call: AppToolCall, result: AppToolResult, chatID: UUID? = nil) {
         let targetID = chatID ?? selectedChatID
-        guard let chatIndex = chats.firstIndex(where: { $0.id == targetID }) else { return }
+        guard chats.contains(where: { $0.id == targetID }) else { return }
 
-        if let msgIndex = chats[chatIndex].messages.lastIndex(where: { msg in
+        let existingMessages = turnMessages(for: targetID)
+        if let msgIndex = existingMessages.lastIndex(where: { msg in
             msg.toolCalls.contains(where: { $0.id == call.id })
         }) {
             // **REPLACE THIS CALL'S ENTRY, NOT THE WHOLE LIST** (state#37). A
@@ -335,12 +336,14 @@ extension AppModel {
             // records the rest as refused on the same message; assigning
             // `[call]` here erased those, so the model was never told what
             // happened to them and reissued them on the next step.
-            let others = chats[chatIndex].messages[msgIndex].toolCalls.filter { $0.id != call.id }
-            let otherResults = chats[chatIndex].messages[msgIndex].toolResults.filter {
-                $0.callID != call.id
+            mutateTurnMessages(for: targetID) { messages in
+                let others = messages[msgIndex].toolCalls.filter { $0.id != call.id }
+                let otherResults = messages[msgIndex].toolResults.filter {
+                    $0.callID != call.id
+                }
+                messages[msgIndex].toolCalls = [call] + others
+                messages[msgIndex].toolResults = [result] + otherResults
             }
-            chats[chatIndex].messages[msgIndex].toolCalls = [call] + others
-            chats[chatIndex].messages[msgIndex].toolResults = [result] + otherResults
         } else {
             let turn = AppChatMessage(
                 role: .assistant,
@@ -350,10 +353,8 @@ extension AppModel {
                 toolCalls: [call],
                 toolResults: [result]
             )
-            chats[chatIndex].messages.append(turn)
+            mutateTurnMessages(for: targetID) { $0.append(turn) }
         }
-        chats[chatIndex].updatedAt = Date()
-        persistChats()
         worktree?.refresh()
     }
 }

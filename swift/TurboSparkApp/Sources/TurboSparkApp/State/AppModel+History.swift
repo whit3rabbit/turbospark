@@ -27,7 +27,9 @@ extension AppModel {
             history.append(ChatMessage(role: .system, content: systemContent))
         }
 
-        for msg in chats[chatIndex].messages {
+        // Vault-aware: a ghost chat's decrypted transcript is what the model
+        // gets, exactly as a normal chat's row is.
+        for msg in turnMessages(for: chats[chatIndex].id) {
             // **AN IMAGE-ONLY TURN HAS NO TEXT AND IS STILL A TURN.** This
             // guard predates images and would drop one entirely, leaving the
             // model to answer a question whose picture was never sent -- the
@@ -129,7 +131,7 @@ extension AppModel {
         if !systemContent.isEmpty {
             history.append(ChatMessage(role: .system, content: systemContent))
         }
-        history += selectedChat.messages.compactMap { msg -> ChatMessage? in
+        history += selectedTurnMessages.compactMap { msg -> ChatMessage? in
             guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { return nil }
             return ChatMessage(
                 role: msg.role,

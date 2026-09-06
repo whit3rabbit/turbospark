@@ -116,6 +116,10 @@ struct TurboSparkApp: App {
                     .keyboardShortcut("n", modifiers: .command)
                     .disabled(model.isRunning)
 
+                Button("New Temporary Chat") { model.enterGhostChat() }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(model.isRunning)
+
                 Button("Previous Chat") { model.selectPreviousChat() }
                     .keyboardShortcut("[", modifiers: .command)
                     .disabled(model.isRunning || model.orderedChats.isEmpty)
