@@ -95,6 +95,14 @@ private struct ChatTranscriptView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
+                    // The compaction divider sits above the boundary rows,
+                    // which are a PREFIX of the transcript.
+                    let compaction = model.selectedCompactionState
+                    if compaction.boundary > 0 {
+                        CompactionDividerView(
+                            summary: compaction.summary ?? "",
+                            summarizedRows: compaction.boundary)
+                    }
                     ForEach(model.selectedTurnMessages) { message in
                         MessageRowView(model: model, message: message)
                     }
@@ -304,6 +312,52 @@ private struct ActiveStreamingRowView: View {
         } else {
             "Generating response..."
         }
+    }
+}
+
+/// The line marking where compaction summarized the transcript's prefix.
+///
+/// The rows below it are exactly the ones the prompt no longer carries; the
+/// summary that replaced them expands in place. A disclosure rather than a
+/// toast because a summary a user can never read is a summary they cannot
+/// correct.
+private struct CompactionDividerView: View {
+    @Environment(\.appTheme) private var theme
+    let summary: String
+    let summarizedRows: Int
+
+    @State private var isExpanded: Bool = false
+
+    var body: some View {
+        DisclosureGroup(
+            isExpanded: $isExpanded
+        ) {
+            Text(summary)
+                .font(theme.code(.small))
+                .foregroundStyle(theme.metadataForeground)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.primary.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .textSelection(.enabled)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "rectangle.compress.vertical")
+                    .font(.caption2)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .accessibilityHidden(true)
+                Text(
+                    summarizedRows == 1
+                        ? "Earlier message compacted into a summary"
+                        : "\(summarizedRows) earlier messages compacted into a summary"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(theme.metadataForeground)
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityLabel("Earlier conversation compacted into a summary")
+        .accessibilityHint("Expands to show the summary the model sees instead of those messages")
     }
 }
 

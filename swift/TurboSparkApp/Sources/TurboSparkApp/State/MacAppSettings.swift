@@ -144,6 +144,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var interactionMode: String
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
+    /// Whether older turns are summarized automatically as the prompt
+    /// approaches the context window (context compaction).
+    public var autoCompact: Bool
+    /// How many trailing message rows stay verbatim after a compaction.
+    public var compactionKeepRecentTurns: Int
     /// Port the in-process server pins to, 0 = first free port. Persisted
     /// because the field had a settings UI that reset every launch; the
     /// server API key deliberately does NOT live here (see
@@ -164,6 +169,16 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// only for its interop plugins and only when neither this nor a
     /// project's map answers.
     public var enabledPlugins: [String: Bool]
+    /// Whether to display the menu bar status extra icon in macOS menu bar.
+    public var showMenuBarItem: Bool
+    /// Whether the server automatically starts when the app launches.
+    public var serverAutoStartOnLaunch: Bool
+    /// Whether the server keeps running in the background when the main window is closed.
+    public var keepServerRunningInBackground: Bool
+    /// Optional embedding model (.safetensors directory or alias) served for vector endpoints.
+    public var serverEmbeddingModel: String
+    /// Hugging Face mirror endpoint override ($HF_ENDPOINT), e.g. https://hf-mirror.com.
+    public var hfEndpoint: String
 
     public init(
         contextTokens: Int = 0,
@@ -206,9 +221,16 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         modelReasoningDefaults: [String: String] = [:],
         interactionMode: String = "chat",
         alwaysStartInGhostMode: Bool = false,
+        autoCompact: Bool = true,
+        compactionKeepRecentTurns: Int = 2,
         serverPinnedPort: UInt16 = 0,
         defaultSystemPrompt: String = "",
-        enabledPlugins: [String: Bool] = [:]
+        enabledPlugins: [String: Bool] = [:],
+        showMenuBarItem: Bool = true,
+        serverAutoStartOnLaunch: Bool = false,
+        keepServerRunningInBackground: Bool = true,
+        serverEmbeddingModel: String = "",
+        hfEndpoint: String = ""
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -250,9 +272,16 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
+        self.autoCompact = autoCompact
+        self.compactionKeepRecentTurns = compactionKeepRecentTurns
         self.serverPinnedPort = serverPinnedPort
         self.defaultSystemPrompt = defaultSystemPrompt
         self.enabledPlugins = enabledPlugins
+        self.showMenuBarItem = showMenuBarItem
+        self.serverAutoStartOnLaunch = serverAutoStartOnLaunch
+        self.keepServerRunningInBackground = keepServerRunningInBackground
+        self.serverEmbeddingModel = serverEmbeddingModel
+        self.hfEndpoint = hfEndpoint
     }
 
     /// Tolerant of a wrong TYPE as well as an absent key (state#59).
@@ -312,11 +341,24 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
+        self.autoCompact = c.decodeLenient(Bool.self, forKey: .autoCompact, fallback: true)
+        self.compactionKeepRecentTurns = c.decodeLenient(
+            Int.self, forKey: .compactionKeepRecentTurns, fallback: 2)
         self.serverPinnedPort = c.decodeLenient(UInt16.self, forKey: .serverPinnedPort, fallback: 0)
         self.defaultSystemPrompt = c.decodeLenient(
             String.self, forKey: .defaultSystemPrompt, fallback: "")
         self.enabledPlugins = c.decodeLenient(
             [String: Bool].self, forKey: .enabledPlugins, fallback: [:])
+        self.showMenuBarItem = c.decodeLenient(
+            Bool.self, forKey: .showMenuBarItem, fallback: true)
+        self.serverAutoStartOnLaunch = c.decodeLenient(
+            Bool.self, forKey: .serverAutoStartOnLaunch, fallback: false)
+        self.keepServerRunningInBackground = c.decodeLenient(
+            Bool.self, forKey: .keepServerRunningInBackground, fallback: true)
+        self.serverEmbeddingModel = c.decodeLenient(
+            String.self, forKey: .serverEmbeddingModel, fallback: "")
+        self.hfEndpoint = c.decodeLenient(
+            String.self, forKey: .hfEndpoint, fallback: "")
     }
 }
 

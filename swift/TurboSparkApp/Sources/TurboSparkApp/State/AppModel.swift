@@ -70,6 +70,10 @@ public final class AppModel: ObservableObject {
     /// when something ELSE holds the number -- a config file, a shell
     /// profile, a teammate's notes -- and then a changing port is the bug.
     @Published public var serverPinnedPort: UInt16 = 0
+    /// Optional embedding model (.safetensors directory or alias) attached to the server.
+    @Published public var serverEmbeddingModelInput: String = ""
+    /// Hugging Face mirror endpoint override ($HF_ENDPOINT), e.g. https://hf-mirror.com.
+    @Published public var hfEndpointInput: String = ""
     /// What the running server last reported: bound host and port, attached
     /// models, auth state, uptime.
     ///
@@ -101,11 +105,26 @@ public final class AppModel: ObservableObject {
     /// nothing draws it, and republishing on every tick would re-render the
     /// pane for a timer identity nobody reads.
     var serverPollTimer: Timer?
+    /// Whether to display the menu bar status extra icon in macOS menu bar.
+    @Published public var showMenuBarItem: Bool = true
+    /// Whether the server automatically starts when the app launches.
+    @Published public var serverAutoStartOnLaunch: Bool = false
+    /// Whether the server keeps running in the background when the main window is closed.
+    @Published public var keepServerRunningInBackground: Bool = true
 
     /// Current UI interaction mode (Chat vs Projects / Coding).
     @Published public var interactionMode: AppInteractionMode = .chat
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     @Published public var alwaysStartInGhostMode: Bool = false
+    /// Whether older turns are summarized automatically as the prompt
+    /// approaches the context window (context compaction).
+    @Published public var autoCompactEnabled: Bool = true
+    /// Trailing message rows that stay verbatim after a compaction.
+    @Published public var compactionKeepRecentTurns: Int = 2
+    /// Whether a compaction summarizer is running right now, auto or manual.
+    /// What the status bar's "Compacting conversation" state keys on; set and
+    /// cleared by `performCompaction` around the generate loop.
+    @Published public var isCompacting: Bool = false
 
     // Project and Agent State
     /// All configured codebase projects.
@@ -116,6 +135,10 @@ public final class AppModel: ObservableObject {
     @Published public var worktree: WorktreeModel? = nil
     /// Global application-level MCP server configurations.
     @Published public var globalMcpServers: [McpServerConfig] = []
+    /// MCP servers detected in the selected project's config files that are
+    /// awaiting an approve/reject decision (`AppModel+Mcp`). Drives the
+    /// project approval sheet.
+    @Published public var pendingMcpApprovals: [PendingMcpServerApproval] = []
     /// Global / rootless chat permission mode (defaults to .auto / Approve for me).
     @Published public var activePermissionMode: AppPermissionMode = .auto
     /// Web search tool toggle state in the chat bar.
@@ -528,5 +551,17 @@ public final class AppModel: ObservableObject {
     /// Dismisses the active toast notification immediately.
     public func dismissToast() {
         activeToast = nil
+    }
+
+    /// Brings the application to the foreground and presents the main window,
+    /// optionally navigating to a specific application section.
+    public func showMainWindow(navigatingTo section: AppNavigationSection? = nil) {
+        if let section {
+            activeSection = section
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 }

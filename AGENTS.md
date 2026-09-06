@@ -48,9 +48,11 @@ read the page before proposing the thing it refutes.
 | `docs/SWIFT_SKILLS.md` | Swift skills: architecture, scopes, file layout, and marketplace integration | changing skills, discovery, or marketplace |
 | `docs/SWIFT_PLUGINS.md` | Swift plugins ported from Claude Code: manifest, contributions, enable cascade, marketplace, the two deviations | touching anything under the plugin system, or quoting a plugin rule |
 | `docs/SWIFT_PROFILES.md` | user profiles: the registry, the Default-user contract, shared versus per-profile storage, save-and-relaunch switching | adding a store, or touching `AppStorageRoot`, `UserProfileStore`, or a `~/.turbospark` path in the app |
+| `docs/SWIFT_COMPACTION.md` | context compaction: the threshold, the summarizer, the boundary, the ghost rule, the fail-open policy | touching `AppChatCompaction`, the prompt-assembly boundary skip, or quoting an auto-compact threshold |
 | `docs/STREAMING.md` | the token streaming pipeline: the push-callback primitive, `TurnSplitter`, the per-consumer adapters, the FFI event kinds | adding a generation consumer, touching the split/decode wiring, or proposing an engine-side iterator or async stream |
 | `docs/PERMISSION_GATE.md` | the local command classifier, its corpora, and a measured negative | touching `.auto`, or quoting a hazard score |
 | `docs/RELEASE.md` | release checklist, versioning, tags, rot guards | cutting a release |
+| `docs/TOOL_CALLING.md` | the three tool-call implementations (native decoder, rescue tier, Swift), per-family coverage, the special-token wrinkle | touching tool-call parsing, or adding a dialect or rescue format |
 
 Two standing rules come out of those pages rather than from any one crate.
 **Cost an optimization by the terms it does NOT touch**: one kernel fix was

@@ -100,6 +100,10 @@ extension AppModel {
         reloadSkills()
         reloadAgents()
         AppHookStore.shared.refresh(projectDirectory: project.rootDirectoryPath)
+        // Warm the MCP tool cache and surface any config-declared servers
+        // awaiting approval for the project just created.
+        refreshMcpToolCatalog(for: project)
+        detectProjectMcpServers(for: project)
 
         // Create initial chat for this project
         createChat(projectID: project.id)
@@ -137,6 +141,10 @@ extension AppModel {
         reloadSkills()
         reloadAgents()
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
+        // Warm the MCP tool cache and surface any config-declared servers
+        // awaiting approval for the newly selected project.
+        refreshMcpToolCatalog(for: selectedProject)
+        detectProjectMcpServers()
 
         // If the currently selected chat doesn't belong to the newly selected project, switch selection.
         // `filteredChats` already excludes ghosts and, since `selectedProjectID`

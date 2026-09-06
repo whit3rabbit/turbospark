@@ -121,7 +121,107 @@ public enum ForgeGuardrailsEngine {
 
         if !results.isEmpty { return results }
 
-        // Pattern 2: Mistral style `[TOOL_CALLS] [{...}]`
+        // Pattern 1b: GLM pairs -- a function name directly followed by flat
+        // `<arg_key>K</arg_key>` / `<arg_value>V</arg_value>` runs. The
+        // `<tool_call>` wrapper the template teaches is deliberately NOT in
+        // the pattern: where it is ordinary text it is noise, and where a
+        // vocabulary carries it as a special token it never survives to the
+        // rescue at all, so the pair markup is the only signature present in
+        // both cases. The allowlist is what stops a stray word before
+        // `<arg_key>` from becoming a tool name.
+        let glmCallPattern = "([a-zA-Z0-9_\\-]{1,64})\\s*((?:<arg_key>[\\s\\S]*?</arg_key>\\s*<arg_value>[\\s\\S]*?</arg_value>\\s*)+)"
+        let glmPairPattern = "<arg_key>([\\s\\S]*?)</arg_key>\\s*<arg_value>([\\s\\S]*?)</arg_value>"
+        if let callRegex = try? NSRegularExpression(pattern: glmCallPattern, options: []),
+           let pairRegex = try? NSRegularExpression(pattern: glmPairPattern, options: []) {
+            let nsString = text as NSString
+            for match in callRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length)) {
+                guard match.numberOfRanges >= 3 else { continue }
+                let name = nsString.substring(with: match.range(at: 1))
+                guard isToolNameAllowed(name, in: availableToolNames) else { continue }
+                let pairsText = nsString.substring(with: match.range(at: 2))
+                var args: [String: String] = [:]
+                let pairsNSString = pairsText as NSString
+                for pair in pairRegex.matches(in: pairsText, options: [], range: NSRange(location: 0, length: pairsNSString.length)) {
+                    guard pair.numberOfRanges >= 3 else { continue }
+                    let key = pairsNSString.substring(with: pair.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let value = pairsNSString.substring(with: pair.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !key.isEmpty { args[key] = value }
+                }
+                let category = AppToolRegistry.category(for: name)
+                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args)
+                results.append(AppToolCall(
+                    name: name,
+                    arguments: args,
+                    rawInvocation: nsString.substring(with: match.range(at: 0)),
+                    status: .pendingApproval,
+                    category: category,
+                    riskAssessment: risk
+                ))
+            }
+        }
+
+        if !results.isEmpty { return results }
+
+        // Pattern 1c: Kimi K2 section tags -- there is NO name tag, only the
+        // id `functions.NAME:IDX` Moonshot's own tool_call_guidance.md
+        // documents (and vLLM's kimi_tool_parser implements), so the name is
+        // recovered from the id. A documented-anomaly id (a bare `call_...`
+        // string) yields that prefix as the name, which the allowlist then
+        // refuses: an opaque id states no name, and inventing one would be
+        // worse than the refusal.
+        let kimiPattern = "<\\|tool_call_begin\\|>\\s*([\\w.:\\-]+)\\s*<\\|tool_call_argument_begin\\|>([\\s\\S]*?)<\\|tool_call_end\\|>"
+        if let kimiRegex = try? NSRegularExpression(pattern: kimiPattern, options: []) {
+            let nsString = text as NSString
+            for match in kimiRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length)) {
+                guard match.numberOfRanges >= 3 else { continue }
+                let id = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = id.hasPrefix("functions.")
+                    ? String(id.dropFirst("functions.".count).split(separator: ":").first ?? "")
+                    : String(id.split(separator: ":").first ?? "")
+                guard isToolNameAllowed(name, in: availableToolNames) else { continue }
+                let body = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                let args = body.isEmpty ? [:] : parseArgumentsString(body)
+                let category = AppToolRegistry.category(for: name)
+                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args)
+                results.append(AppToolCall(
+                    name: name,
+                    arguments: args,
+                    rawInvocation: nsString.substring(with: match.range(at: 0)),
+                    status: .pendingApproval,
+                    category: category,
+                    riskAssessment: risk
+                ))
+            }
+        }
+
+        if !results.isEmpty { return results }
+
+        // Pattern 1d: Gemma 4 DSL -- `call:NAME{k:v,...}` (with unquoted or quoted keys and values).
+        // The `<|tool_call>` wrapper the template teaches is stripped on normal decode, but
+        // may arrive if emitted as text.
+        let gemmaPattern = "(?:<\\|tool_call>)?\\s*call:([a-zA-Z0-9_\\-]+)\\s*(\\{[\\s\\S]*?\\})\\s*(?:<tool_call\\|>|\\n|$)"
+        if let gemmaRegex = try? NSRegularExpression(pattern: gemmaPattern, options: []) {
+            let nsString = text as NSString
+            for match in gemmaRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length)) {
+                guard match.numberOfRanges >= 3 else { continue }
+                let name = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard isToolNameAllowed(name, in: availableToolNames) else { continue }
+                let body = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                let args = parseGemmaArguments(body)
+                let category = AppToolRegistry.category(for: name)
+                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args)
+                results.append(AppToolCall(
+                    name: name,
+                    arguments: args,
+                    rawInvocation: nsString.substring(with: match.range(at: 0)),
+                    status: .pendingApproval,
+                    category: category,
+                    riskAssessment: risk
+                ))
+            }
+        }
+
+        if !results.isEmpty { return results }
         if text.contains("[TOOL_CALLS]") {
             let mistralPattern = "\\[TOOL_CALLS\\]\\s*(\\[[\\s\\S]*?\\]|\\{[\\s\\S]*?\\})"
             if let regex = try? NSRegularExpression(pattern: mistralPattern, options: []),
@@ -148,6 +248,32 @@ public enum ForgeGuardrailsEngine {
         }
 
         if !results.isEmpty { return results }
+
+        // Pattern 3b: Longcat -- a plain `{"name", "arguments"}` JSON object
+        // inside `<longcat_tool_call>` tags. The Rust server needs no code
+        // for this shape (forge's JSON scan reads balanced braces anywhere in
+        // the text); Pattern 4 below requires the WHOLE text to parse as
+        // JSON, so here the wrapper has to be stripped before that same
+        // parse can see the object.
+        let longcatPattern = "<longcat_tool_call>\\s*([\\s\\S]*?)\\s*</longcat_tool_call>"
+        if let longcatRegex = try? NSRegularExpression(pattern: longcatPattern, options: []),
+           let match = longcatRegex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)) {
+            let inner = (text as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let parsed = parseJsonCalls(inner, availableToolNames: availableToolNames) {
+                // The raw invocation is the whole tagged block, so
+                // `sanitizeProse` removes the wrapper along with the call.
+                return parsed.map { call in
+                    AppToolCall(
+                        name: call.name,
+                        arguments: call.arguments,
+                        rawInvocation: (text as NSString).substring(with: match.range(at: 0)),
+                        status: call.status,
+                        category: call.category,
+                        riskAssessment: call.riskAssessment
+                    )
+                }
+            }
+        }
 
         // Pattern 4: Bare JSON object anywhere in text
         if let parsed = parseJsonCalls(text.trimmingCharacters(in: .whitespacesAndNewlines), availableToolNames: availableToolNames) {
@@ -215,7 +341,20 @@ public enum ForgeGuardrailsEngine {
                 cleaned = cleaned.replacingOccurrences(of: call.rawInvocation, with: "")
             }
         }
-        cleaned = cleaned.replacingOccurrences(of: "[TOOL_CALLS]", with: "")
+        let extraMarkers = [
+            "[TOOL_CALLS]",
+            "<minimax:tool_call>",
+            "</minimax:tool_call>",
+            "<|tool_calls_section_begin|>",
+            "<|tool_calls_section_end|>",
+            "<|tool_call>",
+            "<tool_call|>",
+            "<tool_call>",
+            "</tool_call>",
+        ]
+        for marker in extraMarkers {
+            cleaned = cleaned.replacingOccurrences(of: marker, with: "")
+        }
         let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // If the remaining text is essentially an empty container or bare punctuation, return empty string
@@ -228,12 +367,80 @@ public enum ForgeGuardrailsEngine {
     // MARK: - Private JSON Parsing Helpers
 
     private static func parseArgumentsString(_ string: String) -> [String: String] {
+        // invoke/parameter XML bodies (the Anthropic/Claude shape MiniMax
+        // speaks): `<parameter name="key">value</parameter>` pairs are the
+        // arguments, and without this extraction the body reached the
+        // line-based fallback below, which mangles a tag at the first colon.
+        let paramPattern = "<parameter\\s+name=\"([\\s\\S]*?)\"\\s*>([\\s\\S]*?)</parameter>"
+        if let regex = try? NSRegularExpression(pattern: paramPattern, options: []) {
+            let nsString = string as NSString
+            let matches = regex.matches(in: string, options: [], range: NSRange(location: 0, length: nsString.length))
+            if !matches.isEmpty {
+                var args: [String: String] = [:]
+                for match in matches {
+                    guard match.numberOfRanges >= 3 else { continue }
+                    let key = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let value = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !key.isEmpty { args[key] = value }
+                }
+                return args
+            }
+        }
+
+        // Qwen ChatML parameter XML bodies: `<parameter=key>value</parameter>`
+        let qwenParamPattern = "<parameter=([a-zA-Z0-9_\\-]+)>([\\s\\S]*?)</parameter>"
+        if let regex = try? NSRegularExpression(pattern: qwenParamPattern, options: []) {
+            let nsString = string as NSString
+            let matches = regex.matches(in: string, options: [], range: NSRange(location: 0, length: nsString.length))
+            if !matches.isEmpty {
+                var args: [String: String] = [:]
+                for match in matches {
+                    guard match.numberOfRanges >= 3 else { continue }
+                    let key = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let value = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !key.isEmpty { args[key] = value }
+                }
+                return args
+            }
+        }
+
         guard let data = string.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             // Attempt key-value extraction if not standard JSON
             return extractKeyValuePairs(from: string)
         }
         return flattenJsonToDict(json)
+    }
+
+    private static func parseGemmaArguments(_ string: String) -> [String: String] {
+        if let data = string.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return flattenJsonToDict(json)
+        }
+        // Match key: value pairs where key may be unquoted and value may be quoted string or literal
+        let pairPattern = "([a-zA-Z0-9_\\-.$]+)\\s*:\\s*(?:\"([^\"]*)\"|'([^']*)'|([^,}]+))"
+        guard let regex = try? NSRegularExpression(pattern: pairPattern, options: []) else {
+            return extractKeyValuePairs(from: string)
+        }
+        let nsString = string as NSString
+        let matches = regex.matches(in: string, options: [], range: NSRange(location: 0, length: nsString.length))
+        var args: [String: String] = [:]
+        for match in matches {
+            guard match.numberOfRanges >= 5 else { continue }
+            let key = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let value: String
+            if match.range(at: 2).location != NSNotFound {
+                value = nsString.substring(with: match.range(at: 2))
+            } else if match.range(at: 3).location != NSNotFound {
+                value = nsString.substring(with: match.range(at: 3))
+            } else if match.range(at: 4).location != NSNotFound {
+                value = nsString.substring(with: match.range(at: 4)).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                value = ""
+            }
+            if !key.isEmpty { args[key] = value }
+        }
+        return args.isEmpty ? extractKeyValuePairs(from: string) : args
     }
 
     private static func parseJsonCalls(_ string: String, availableToolNames: Set<String>) -> [AppToolCall]? {

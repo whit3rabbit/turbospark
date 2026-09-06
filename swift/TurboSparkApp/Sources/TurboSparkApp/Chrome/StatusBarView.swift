@@ -223,19 +223,62 @@ struct StatusBarView: View {
     }
 
     private func contextReadout(_ fraction: Double) -> some View {
-        HStack(spacing: 6) {
+        let hint = compactionHint(fraction)
+        return HStack(spacing: 6) {
             Image(systemName: "text.alignleft")
                 .font(theme.ui(points: 10))
                 .accessibilityHidden(true)
-            MeterBar(fraction: fraction, tint: fraction > 0.9 ? .orange : TurboSparkTheme.accentColor)
+            MeterBar(fraction: fraction, tint: hint?.urgent == true ? .orange : TurboSparkTheme.accentColor)
                 .frame(width: 38)
-            Text("\(model.estimatedContextTokens.formatted(.number.notation(.compactName))) / \(model.resolvedContextTokens.formatted(.number.notation(.compactName)))")
-                .monospacedDigit()
+            Text(
+                hint?.text
+                    ?? "\(model.estimatedContextTokens.formatted(.number.notation(.compactName))) / \(model.resolvedContextTokens.formatted(.number.notation(.compactName)))"
+            )
+            .monospacedDigit()
         }
-        .help("Estimated conversation length against the loaded context window")
+        .help(hint?.help ?? "Estimated conversation length against the loaded context window")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Context used")
-        .accessibilityValue("\(model.estimatedContextTokens) of \(model.resolvedContextTokens) tokens")
+        .accessibilityValue(
+            hint?.text ?? "\(model.estimatedContextTokens) of \(model.resolvedContextTokens) tokens")
+    }
+
+    /// One line of readout text for the context meter while compaction is
+    /// relevant, or nil when the plain used/limit numbers should show.
+    private struct CompactionHint {
+        let text: String
+        let help: String
+        let urgent: Bool
+    }
+
+    /// Claude Code's "% until auto-compact" readout. The trigger mirrors
+    /// `AppChatCompaction`: four fifths of the USABLE window (context minus
+    /// the reply reservation), which is why the arithmetic runs through the
+    /// same constants rather than restating a fraction. Hidden until the
+    /// meter is within 40 points of the trigger; while the summarizer runs
+    /// it names the state instead of a number.
+    private func compactionHint(_ fraction: Double) -> CompactionHint? {
+        guard model.session != nil else { return nil }
+        if model.isCompacting {
+            return CompactionHint(
+                text: "Compacting conversation",
+                help: "Summarizing older turns so the conversation keeps fitting the window",
+                urgent: true)
+        }
+        guard model.autoCompactEnabled else { return nil }
+        let limit = Double(model.resolvedContextTokens)
+        let usable = limit - Double(max(1, model.maxNewTokens))
+        guard limit > 0, usable > 0 else { return nil }
+        let trigger =
+            usable * Double(AppChatCompaction.triggerNumerator)
+            / Double(AppChatCompaction.triggerDenominator)
+        let used = fraction * limit
+        let percentLeft = Int(((trigger - used) / trigger * 100).rounded())
+        guard percentLeft <= 40 else { return nil }
+        return CompactionHint(
+            text: "\(max(0, percentLeft))% until auto-compact",
+            help: "Older turns are summarized automatically once this reaches 0%",
+            urgent: percentLeft <= 15)
     }
 
     // MARK: - Throughput

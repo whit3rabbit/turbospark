@@ -102,6 +102,14 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
     public var mcp: AppToolPermission
     /// Permission for background workflow and cron automation.
     public var automation: AppToolPermission
+    /// Persisted MCP ALLOW rules in `mcp__server` / `mcp__server__tool`
+    /// syntax (`docs/SWIFT_TOOLS.md`). A matching call skips the ask prompt
+    /// but never the high-risk gate.
+    public var mcpAllowRules: [String]
+    /// Persisted MCP DENY rules in the same syntax. A matching call is
+    /// refused outright, ahead of every other gate including session
+    /// approvals, and its tools are stripped from the advertised list.
+    public var mcpDenyRules: [String]
 
     public init(
         mode: AppPermissionMode = .auto,
@@ -110,7 +118,9 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         terminal: AppToolPermission = .ask,
         web: AppToolPermission = .allow,
         mcp: AppToolPermission = .ask,
-        automation: AppToolPermission = .ask
+        automation: AppToolPermission = .ask,
+        mcpAllowRules: [String] = [],
+        mcpDenyRules: [String] = []
     ) {
         self.mode = mode
         self.fileRead = fileRead
@@ -119,6 +129,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         self.web = web
         self.mcp = mcp
         self.automation = automation
+        self.mcpAllowRules = mcpAllowRules
+        self.mcpDenyRules = mcpDenyRules
     }
 
     public init(from decoder: Decoder) throws {
@@ -130,6 +142,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         self.web = try container.decodeIfPresent(AppToolPermission.self, forKey: .web) ?? .allow
         self.mcp = try container.decodeIfPresent(AppToolPermission.self, forKey: .mcp) ?? .ask
         self.automation = try container.decodeIfPresent(AppToolPermission.self, forKey: .automation) ?? .ask
+        self.mcpAllowRules = try container.decodeIfPresent([String].self, forKey: .mcpAllowRules) ?? []
+        self.mcpDenyRules = try container.decodeIfPresent([String].self, forKey: .mcpDenyRules) ?? []
     }
 
     /// Auto configuration: smart risk-gated execution (Unsloth Studio default).
@@ -341,6 +355,18 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     /// (`docs/SWIFT_PLUGINS.md`). Overrides the user setting: a project may
     /// turn off a plugin it does not trust without turning it off everywhere.
     public var enabledPlugins: [String: Bool]
+    /// MCP servers from the project's own config files the user has
+    /// APPROVED. A name here (or covered by `approveAllProjectMcpServers`)
+    /// imports without re-prompting when the config re-declares it.
+    public var approvedMcpJsonServers: [String]
+    /// MCP servers from the project's config files the user has REJECTED.
+    /// A rejected name is never auto-imported and never re-prompted; the
+    /// project MCP sheet remains the place to change one's mind.
+    public var rejectedMcpJsonServers: [String]
+    /// Approve every current and FUTURE server declared by this project's
+    /// config files without prompting (the reference implementation's
+    /// `enableAllProjectMcpServers`).
+    public var approveAllProjectMcpServers: Bool
     /// Timestamp when the project was created.
     public var createdAt: Date
     /// Timestamp when the project was last updated.
@@ -359,6 +385,9 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         forgeGuardrailsEnabled: Bool? = nil,
         skillStateEnabled: Bool = false,
         enabledPlugins: [String: Bool] = [:],
+        approvedMcpJsonServers: [String] = [],
+        rejectedMcpJsonServers: [String] = [],
+        approveAllProjectMcpServers: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -374,6 +403,9 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.forgeGuardrailsEnabled = forgeGuardrailsEnabled
         self.skillStateEnabled = skillStateEnabled
         self.enabledPlugins = enabledPlugins
+        self.approvedMcpJsonServers = approvedMcpJsonServers
+        self.rejectedMcpJsonServers = rejectedMcpJsonServers
+        self.approveAllProjectMcpServers = approveAllProjectMcpServers
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -382,6 +414,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         case id, name, rootDirectoryPath, agentType, rulePreference, customInstructions
         case permissions, maxAutonomousSteps, mcpServers, forgeGuardrailsEnabled
         case skillStateEnabled, enabledPlugins, createdAt, updatedAt
+        case approvedMcpJsonServers, rejectedMcpJsonServers, approveAllProjectMcpServers
     }
 
     public init(from decoder: Decoder) throws {
@@ -405,6 +438,9 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.forgeGuardrailsEnabled = try container.decodeIfPresent(Bool.self, forKey: .forgeGuardrailsEnabled)
         self.skillStateEnabled = try container.decodeIfPresent(Bool.self, forKey: .skillStateEnabled) ?? false
         self.enabledPlugins = try container.decodeIfPresent([String: Bool].self, forKey: .enabledPlugins) ?? [:]
+        self.approvedMcpJsonServers = try container.decodeIfPresent([String].self, forKey: .approvedMcpJsonServers) ?? []
+        self.rejectedMcpJsonServers = try container.decodeIfPresent([String].self, forKey: .rejectedMcpJsonServers) ?? []
+        self.approveAllProjectMcpServers = try container.decodeIfPresent(Bool.self, forKey: .approveAllProjectMcpServers) ?? false
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }

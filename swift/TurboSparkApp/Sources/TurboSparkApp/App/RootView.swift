@@ -61,6 +61,17 @@ struct RootView: View {
             ToastOverlayView(model: model)
                 .padding(.top, AppChromeLayout.topBarHeight + 10)
         }
+        .sheet(isPresented: Binding(
+            get: { !model.pendingMcpApprovals.isEmpty },
+            // Dismissing the sheet DEFERS rather than rejects: undecided
+            // names are simply absent from the registries, so the next
+            // project selection detects them again. Only an explicit
+            // Reject records the decision.
+            set: { presented in
+                if !presented { model.pendingMcpApprovals.removeAll() }
+            })) {
+            ProjectMcpApprovalSheet(model: model)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             isChatSidebarVisible.toggle()
         }

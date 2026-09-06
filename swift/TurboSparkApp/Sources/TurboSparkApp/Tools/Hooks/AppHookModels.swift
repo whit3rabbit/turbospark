@@ -17,6 +17,7 @@ public enum AppHookEvent: String, Codable, CaseIterable, Identifiable, Sendable 
     case subagentStart = "SubagentStart"
     case subagentStop = "SubagentStop"
     case notification = "Notification"
+    case preCompact = "PreCompact"
 
     public var id: String { rawValue }
 
@@ -48,6 +49,8 @@ public enum AppHookEvent: String, Codable, CaseIterable, Identifiable, Sendable 
             return "When a subagent run finishes"
         case .notification:
             return "When an agent notification is dispatched"
+        case .preCompact:
+            return "Before the conversation is compacted into a summary"
         }
     }
 
@@ -77,6 +80,8 @@ public enum AppHookEvent: String, Codable, CaseIterable, Identifiable, Sendable 
             return "person.badge.minus"
         case .notification:
             return "bell"
+        case .preCompact:
+            return "rectangle.compress.vertical"
         }
     }
 }

@@ -235,6 +235,9 @@ extension AppModel {
             } else {
                 showToast("Loaded \(model.alias)", style: .success)
             }
+            if self.server != nil {
+                self.attachChatSession()
+            }
         } catch {
             let msg = "Failed to load model: \(error.localizedDescription)"
             self.error = msg

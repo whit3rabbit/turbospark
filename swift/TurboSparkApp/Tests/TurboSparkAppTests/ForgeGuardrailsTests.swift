@@ -110,6 +110,96 @@ final class ForgeGuardrailsTests: XCTestCase {
         XCTAssertEqual(rescued[0].arguments["path"], "crates/server")
     }
 
+    // MARK: - Extra Dialect Rescue (GLM / MiniMax / Kimi K2 / Longcat)
+    //
+    // Mirrors of the Rust fixtures in crates/server/src/guardrails/tests.rs,
+    // kept side by side so the two implementations can be checked for parity
+    // by eye. None of these four families is installed on this machine;
+    // every fixture is the markup the family's own published chat template
+    // teaches.
+
+    func testRescueGlmArgKeyPairs() {
+        let text = "<tool_call>get_weather\n<arg_key>city</arg_key>\n<arg_value>Oslo</arg_value>\n<arg_key>days</arg_key>\n<arg_value>3</arg_value>\n</tool_call>"
+        let available: Set<String> = ["get_weather", "read_file"]
+        let rescued = ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: available)
+
+        XCTAssertEqual(rescued.count, 1)
+        XCTAssertEqual(rescued[0].name, "get_weather")
+        XCTAssertEqual(rescued[0].arguments["city"], "Oslo")
+        XCTAssertEqual(rescued[0].arguments["days"], "3")
+    }
+
+    func testRescueGlmPairsWithWrapperStripped() {
+        // The shape that reaches the rescue when a GLM vocabulary loads
+        // under a dialect whose decoder swallows the `<tool_call>` special
+        // tokens: name and pairs only.
+        let text = "get_weather\n<arg_key>city</arg_key>\n<arg_value>Oslo</arg_value>\n"
+        let rescued = ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: ["get_weather"])
+
+        XCTAssertEqual(rescued.count, 1)
+        XCTAssertEqual(rescued[0].name, "get_weather")
+        XCTAssertEqual(rescued[0].arguments["city"], "Oslo")
+    }
+
+    func testRescueGlmRejectsAToolOutsideTheAllowlist() {
+        let text = "<tool_call>delete_everything\n<arg_key>city</arg_key>\n<arg_value>Oslo</arg_value>\n</tool_call>"
+        XCTAssertTrue(ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: ["get_weather"]).isEmpty)
+    }
+
+    func testRescueMinimaxInvokeBlock() {
+        let text = "<minimax:tool_call>\n<invoke name=\"get_weather\">\n<parameter name=\"city\">Oslo</parameter>\n</invoke>\n</minimax:tool_call>"
+        let rescued = ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: ["get_weather"])
+
+        XCTAssertEqual(rescued.count, 1)
+        XCTAssertEqual(rescued[0].name, "get_weather")
+        XCTAssertEqual(rescued[0].arguments["city"], "Oslo")
+    }
+
+    func testRescueKimiK2SectionId() {
+        let text = "<|tool_calls_section_begin|><|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>{\"city\": \"Oslo\"}<|tool_call_end|><|tool_calls_section_end|>"
+        let rescued = ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: ["get_weather"])
+
+        XCTAssertEqual(rescued.count, 1)
+        XCTAssertEqual(rescued[0].name, "get_weather")
+        XCTAssertEqual(rescued[0].arguments["city"], "Oslo")
+    }
+
+    func testRescueKimiAnomalyIdRescuesNothing() {
+        // Moonshot's documented anomaly: an opaque `call_...` id carries no
+        // name, so nothing may be rescued from it.
+        let text = "<|tool_calls_section_begin|><|tool_call_begin|>call_59adf5614cfe4f4b8a71be54<|tool_call_argument_begin|>{\"city\": \"Oslo\"}<|tool_call_end|><|tool_calls_section_end|>"
+        XCTAssertTrue(ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: ["get_weather"]).isEmpty)
+    }
+
+    func testRescueLongcatTaggedJson() {
+        let text = "<longcat_tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Oslo\"}}\n</longcat_tool_call>"
+        let rescued = ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: ["get_weather"])
+
+        XCTAssertEqual(rescued.count, 1)
+        XCTAssertEqual(rescued[0].name, "get_weather")
+        XCTAssertEqual(rescued[0].arguments["city"], "Oslo")
+    }
+
+    func testRescueGemmaDsl() {
+        let text = "call:get_weather{city: \"Oslo\", days: 3}"
+        let rescued = ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: ["get_weather"])
+
+        XCTAssertEqual(rescued.count, 1)
+        XCTAssertEqual(rescued[0].name, "get_weather")
+        XCTAssertEqual(rescued[0].arguments["city"], "Oslo")
+        XCTAssertEqual(rescued[0].arguments["days"], "3")
+    }
+
+    func testRescueQwenXmlParameters() {
+        let text = "<function=get_weather>\n<parameter=city>Oslo</parameter>\n<parameter=days>3</parameter>\n</function>"
+        let rescued = ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: ["get_weather"])
+
+        XCTAssertEqual(rescued.count, 1)
+        XCTAssertEqual(rescued[0].name, "get_weather")
+        XCTAssertEqual(rescued[0].arguments["city"], "Oslo")
+        XCTAssertEqual(rescued[0].arguments["days"], "3")
+    }
+
     // MARK: - Allowlist Enforcement (T6)
 
     func testRescueXmlFunctionDialectRejectsAToolOutsideTheAllowlist() {
@@ -268,5 +358,19 @@ final class ForgeGuardrailsTests: XCTestCase {
         let mixed = "I will read the file now:\n\(raw)\nPlease wait."
         let sanitizedMixed = ForgeGuardrailsEngine.sanitizeProse(text: mixed, rescuedCalls: [call])
         XCTAssertEqual(sanitizedMixed, "I will read the file now:\n\nPlease wait.")
+    }
+
+    func testProseSanitizationWithWrappers() {
+        let text = "<|tool_calls_section_begin|><function=read_file>{\"path\": \"src/main.rs\"}</function><|tool_calls_section_end|>"
+        let call = AppToolCall(
+            name: "read_file",
+            arguments: ["path": "src/main.rs"],
+            rawInvocation: "<function=read_file>{\"path\": \"src/main.rs\"}</function>",
+            status: .pendingApproval,
+            category: .fileRead,
+            riskAssessment: ToolRiskAssessment(level: .low, category: .fileRead, reasons: ["Read"])
+        )
+        let sanitized = ForgeGuardrailsEngine.sanitizeProse(text: text, rescuedCalls: [call])
+        XCTAssertEqual(sanitized, "")
     }
 }

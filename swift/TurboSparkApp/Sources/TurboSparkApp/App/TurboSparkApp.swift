@@ -12,7 +12,23 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        let settings = MacAppSettingsFileStore.load()
+        if settings.keepServerRunningInBackground || settings.showMenuBarItem {
+            return false
+        }
+        return true
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            for window in sender.windows {
+                if window.canBecomeMain {
+                    window.makeKeyAndOrderFront(self)
+                    return true
+                }
+            }
+        }
+        return true
     }
 
     /// The authoritative quit hook. `RootView`'s own
@@ -228,6 +244,14 @@ struct TurboSparkApp: App {
                 .dynamicTypeSize(appearanceManager.textSize.dynamicTypeSize)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
+        }
+
+        MenuBarExtra(
+            "TurboSpark",
+            systemImage: model.server != nil ? "bolt.fill" : "bolt",
+            isInserted: $model.showMenuBarItem
+        ) {
+            ServerMenuBarView(model: model)
         }
     }
 }

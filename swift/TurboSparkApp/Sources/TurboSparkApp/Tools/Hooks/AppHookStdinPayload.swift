@@ -80,6 +80,13 @@ enum AppHookStdinPayload {
 
         case .notification:
             payload["message"] = reason ?? ""
+
+        case .preCompact:
+            // Claude Code's `trigger` ("manual" | "auto"), carried in the
+            // same field `dispatchLifecycleHook(source:)` fills for
+            // `SessionStart`. Deliberately content-free: no transcript text
+            // reaches the hook, so a ghost chat's privacy rule holds.
+            payload["trigger"] = source ?? "auto"
         }
 
         return payload

@@ -82,23 +82,25 @@ extension AppModel {
         var targetAgentName: String?
         var taskPrompt: String = ""
 
-        switch command {
-        case "explore":
-            targetAgentName = "explore"
-            taskPrompt = rest
-        case "plan":
-            targetAgentName = "plan"
-            taskPrompt = rest
-        case "review", "reviewer":
-            targetAgentName = "reviewer"
-            taskPrompt = rest
-        case "agent":
-            let subParts = rest.components(separatedBy: " ")
-            if let first = subParts.first, !first.isEmpty {
-                targetAgentName = first
-                taskPrompt = subParts.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        // The command names and their fixed agents live in the shared
+        // `BuiltInSlashCommand` table, which the menu and the popup read too.
+        // A table row the parser lost (or a case this dispatch never
+        // recorded) reddens the registry drift test rather than offering a
+        // command that falls through as prose.
+        if let builtin = BuiltInSlashCommand.matching(command) {
+            if let fixed = builtin.fixedAgentName {
+                targetAgentName = fixed
+                taskPrompt = rest
+            } else {
+                // `/agent <name> <task>`: the target is the command's own
+                // first argument.
+                let subParts = rest.components(separatedBy: " ")
+                if let first = subParts.first, !first.isEmpty {
+                    targetAgentName = first
+                    taskPrompt = subParts.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                }
             }
-        default:
+        } else {
             // `findAnyAgent`, so a bare `/name` naming a SWITCHED-OFF agent is
             // recognized here and refused by name below, rather than falling
             // through as "not a command" and being sent to the model as prose

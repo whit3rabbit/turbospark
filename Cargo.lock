@@ -2009,6 +2009,7 @@ name = "turbospark-cli"
 version = "0.1.0"
 dependencies = [
  "indicatif",
+ "libc",
  "serde_json",
  "turbospark-catalog",
  "turbospark-invocation",
@@ -2046,6 +2047,7 @@ dependencies = [
  "tokio",
  "turbospark-bench",
  "turbospark-catalog",
+ "turbospark-compute",
  "turbospark-core",
  "turbospark-model-io",
  "turbospark-repack",
@@ -2133,6 +2135,7 @@ dependencies = [
  "axum",
  "forge-guardrails",
  "futures",
+ "regex-lite",
  "reqwest",
  "serde",
  "serde_json",

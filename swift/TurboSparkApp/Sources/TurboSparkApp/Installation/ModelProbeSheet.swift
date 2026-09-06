@@ -83,11 +83,30 @@ struct ModelProbeSheet: View {
                     .padding(.vertical, 8)
                 }
                 if let err = probeError {
-                    Text(err)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .padding(10)
-                        .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(err)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+
+                        if err.contains("401") || err.contains("403") || err.contains("gated") || err.localizedCaseInsensitiveContains("unauthorized") || err.localizedCaseInsensitiveContains("forbidden") {
+                            HStack(spacing: 6) {
+                                Image(systemName: "key.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                                Text("This repository may require Hugging Face authentication.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Button("Open Settings") {
+                                    model.openSettings(tab: .general)
+                                }
+                                .buttonStyle(.link)
+                                .font(.caption2)
+                            }
+                            .padding(.top, 2)
+                        }
+                    }
+                    .padding(10)
+                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 }
                 if let report {
                     ProbeReportCardView(report: report)

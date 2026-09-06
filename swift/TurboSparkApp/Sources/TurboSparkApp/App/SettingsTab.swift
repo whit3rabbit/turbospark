@@ -50,7 +50,7 @@ extension AppSettingsView {
         public var keywords: [String] {
             switch self {
             case .general:
-                return ["language", "locale", "localization", "keyboard", "readability", "text size"]
+                return ["language", "locale", "localization", "keyboard", "readability", "text size", "hugging face", "hf", "token", "auth", "api key"]
             case .profiles:
                 return ["profiles", "users", "accounts", "switch user", "multi user"]
             case .appearance:
@@ -60,7 +60,7 @@ extension AppSettingsView {
             case .permissions:
                 return ["files", "privacy", "access", "filesystem", "security"]
             case .models:
-                return ["storage", "lm studio", "downloads", "folders", "cache", "context"]
+                return ["storage", "lm studio", "downloads", "folders", "cache", "context", "hugging face", "hf", "token", "auth"]
             case .engine:
                 return ["system prompt", "temperature", "tokens", "sampling", "guardrails", "speculation", "server", "reasoning"]
             case .safety:

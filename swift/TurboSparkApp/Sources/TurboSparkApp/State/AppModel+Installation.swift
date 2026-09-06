@@ -267,9 +267,12 @@ extension AppModel {
                 self.installStageText = "Stopped watching install"
             } catch {
                 guard self.installEpoch == myEpoch else { return }
-                self.error = error.localizedDescription
-                self.installStageText = nil
-                self.showToast("Installation failed: \(error.localizedDescription)", style: .error, duration: 5.0)
+                let desc = error.localizedDescription
+                if desc.contains("401") || desc.contains("403") || desc.contains("gated") || desc.localizedCaseInsensitiveContains("unauthorized") {
+                    self.showToast("Installation failed: Authentication required. Check your Hugging Face API token in Settings.", style: .error, duration: 6.0)
+                } else {
+                    self.showToast("Installation failed: \(desc)", style: .error, duration: 5.0)
+                }
             }
             guard self.installEpoch == myEpoch else { return }
             self.installingAlias = nil

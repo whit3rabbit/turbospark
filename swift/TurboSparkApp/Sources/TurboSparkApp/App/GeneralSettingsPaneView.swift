@@ -44,10 +44,51 @@ struct GeneralSettingsPaneView: View {
 
             // Its own computed property: a Section inline in a larger Form
             // expression is the shape that blew the macOS 14 SDK type-checker.
+            menuBarSection
+
             temporaryChatSection
+
+            compactionSection
+
+            hfAuthSection
         }
         .formStyle(.grouped)
         .padding(16)
+    }
+
+    private var menuBarSection: some View {
+        Section("Menu Bar & Server") {
+            Toggle("Show TurboSpark in menu bar", isOn: Binding(
+                get: { model.showMenuBarItem },
+                set: { newValue in
+                    model.showMenuBarItem = newValue
+                    model.persistSettingsDebounced()
+                }))
+            Toggle("Automatically start server on app launch", isOn: Binding(
+                get: { model.serverAutoStartOnLaunch },
+                set: { newValue in
+                    model.serverAutoStartOnLaunch = newValue
+                    model.persistSettingsDebounced()
+                }))
+            Toggle("Keep running in background when window is closed", isOn: Binding(
+                get: { model.keepServerRunningInBackground },
+                set: { newValue in
+                    model.keepServerRunningInBackground = newValue
+                    model.persistSettingsDebounced()
+                }))
+            Text(
+                "When enabled, closing the main window leaves the server and menu bar active. "
+                    + "Use Quit TurboSpark from the menu bar or Command-Q to exit."
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private var hfAuthSection: some View {
+        Section("Hugging Face Authentication") {
+            HfAuthTokenCardView(model: model)
+        }
     }
 
     private var temporaryChatSection: some View {
@@ -65,6 +106,37 @@ struct GeneralSettingsPaneView: View {
             )
             .font(theme.ui(.small))
             .foregroundStyle(.secondary)
+        }
+    }
+
+    private var compactionSection: some View {
+        Section("Context Compaction") {
+            Toggle("Summarize older turns automatically", isOn: Binding(
+                get: { model.autoCompactEnabled },
+                set: { newValue in
+                    model.autoCompactEnabled = newValue
+                    model.persistSettingsDebounced()
+                }))
+            Text(
+                "As the conversation approaches the context window, older messages "
+                    + "are summarized by the model and the newer turns kept verbatim. "
+                    + "The full transcript stays on screen; only the prompt changes. "
+                    + "You can also run /compact at any time."
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.secondary)
+
+            Picker("Keep recent messages verbatim", selection: Binding(
+                get: { model.compactionKeepRecentTurns },
+                set: { newValue in
+                    model.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(newValue)
+                    model.persistSettingsDebounced()
+                })) {
+                ForEach(AppChatCompaction.keepRecentRange, id: \.self) { count in
+                    Text("\(count)").tag(count)
+                }
+            }
+            .pickerStyle(.menu)
         }
     }
 }

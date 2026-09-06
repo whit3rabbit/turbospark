@@ -520,14 +520,38 @@ struct ToolCallCardView: View {
                 .help("Approve this tool call once")
                 .accessibilityLabel("Approve once \(call.name)")
 
-                Button {
-                    model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
-                } label: {
-                    Label("Always Allow", systemImage: "checkmark.circle")
+                if call.category == .mcp,
+                   let target = McpPermissionRule.targetOfCall(name: call.name, arguments: call.arguments) {
+                    // MCP calls can persist the grant on the PROJECT, not
+                    // just this session: the rule the engine matches is
+                    // written with the same parse that reads the call, so
+                    // "this tool" and "this server" mean exactly what the
+                    // evaluation will compare.
+                    Menu {
+                        Button("Always Allow This Tool") {
+                            model.addMcpPermissionRule(serverName: target.server, toolName: target.tool, allow: true)
+                            model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                        }
+                        Button("Always Allow This Server") {
+                            model.addMcpPermissionRule(serverName: target.server, toolName: nil, allow: true)
+                            model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                        }
+                    } label: {
+                        Label("Always Allow", systemImage: "checkmark.seal")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Persist an allow rule for this MCP tool or server in project settings")
+                    .accessibilityLabel("Always allow \(call.name) in project settings")
+                } else {
+                    Button {
+                        model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
+                    } label: {
+                        Label("Always Allow", systemImage: "checkmark.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Always allow this tool and command in this session")
+                    .accessibilityLabel("Always allow \(call.name) in this session")
                 }
-                .buttonStyle(.bordered)
-                .help("Always allow this tool and command in this session")
-                .accessibilityLabel("Always allow \(call.name) in this session")
 
                 Button("Deny", role: .cancel) {
                     model.denyPendingToolCall(id: call.id)
