@@ -29,6 +29,22 @@ live network).
   still installable, since the store writes are per directory. Adding a real
   cancel means threading a cancellation flag through `catalog::install`'s
   streaming walk, which nothing has needed enough to pay for.
+- **The CLI and the FFI streaming paths do not call `finish` on the turn
+  decoder, where the server does.** `runtime::TurnSplitter::finish` exists
+  and is wired on the server path only.
+
+  **ON THOSE TWO PATHS IT IS PROVABLY INERT TODAY, and both of its jobs
+  need a non-empty tool allowlist that neither has.** A Harmony call is
+  emitted from `finish` only once the decoder has ENTERED its tool state,
+  which is gated on `allowed_tools.contains(name)`
+  (`structured_decoder/harmony.rs`), so `close_harmony_tool` takes its
+  `None` arm. The withheld tail is `held_text`, written by nothing but
+  `consume_deepseek`, and `TurnSplitter::new` builds a decoder for DeepSeek
+  only when `!tools.is_empty()`. So this is a missing SYMMETRY rather than
+  dropped output: adopting it would emit nothing until a tools surface
+  exists, and it becomes load-bearing on the same day one does -- which is
+  the day to add it, with real-model eyes, rather than now. Read that
+  ordering out of `docs/STREAMING.md` before assuming either direction.
 - **This port has a quality harness; the Swift original has none.** Not a
   deviation from a behavior, an addition on an axis Swift publishes
   nothing for: no perplexity, no KL divergence, no golden output. So no
@@ -1123,7 +1139,7 @@ live network).
   silenced by `--quiet`. Proven end to end (real compiled-binary
   invocation, real `.gturbo` install, real generated output) for every mode
   by `crates/cli/tests/real_generation.rs`. What's still not wired: the
-  tool-calling path beyond what `ChannelSplit` decodes, and -- since it
+  tool-calling path beyond what its `runtime::TurnSplitter` decodes, and -- since it
   inherits `RealForwardRunner`'s own scope -- the layer kinds that runner
   rejects. **Two items this sentence used to list have since landed and are
   recorded where they were done rather than here**: chunked prefill

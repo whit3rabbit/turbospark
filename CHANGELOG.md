@@ -57,6 +57,21 @@ when this file gets updated relative to the version bump and the tag.
   turn is running.
 
 ### Added
+- `swift/TurboSparkApp`: user profiles. Each user gets a folder under
+  `~/Library/Application Support/TurboSpark/profiles/<id>/` holding its own
+  settings, chats, projects, global MCP servers, model favorites, appearance,
+  hooks, custom tools, skills, agents, plugins and marketplace installs, all
+  routed by redirecting the one `AppStorageRoot` seam plus a new
+  `UserProfileStore.userScopeSubdirectory` for the content outside it. The
+  Default user is the machine's existing setup rather than a folder: its
+  stores stay at the root and its user-scope content stays in the shared
+  `~/.turbospark` tree with its cross-agent roots, so nothing migrates.
+  Non-default profiles are fully self-contained and read no shared or
+  cross-agent tree. No passwords; switching is a save-and-relaunch
+  (`AppModel.switchToProfile`), because every store hangs off a cached
+  `static let` root. Deletion moves the folder to the Trash. Launch
+  overrides: `-TurboSparkProfile <id>` and `TURBOSPARK_PROFILE`.
+  `docs/SWIFT_PROFILES.md`.
 - `crates/runtime`: chunked prefill for the `qwen4_exp` family
   (`families/qwen4/prefill.rs`), the seventh `ChunkedPrefillRunner` and the
   same "step 1" shape as the other six -- the existing per-token kernels
@@ -89,6 +104,29 @@ when this file gets updated relative to the version bump and the tag.
   measured through `scripts/power.sh` at all before this.
 - `scripts/power.sh`: a `seq|chunked` arm pair on the prefill axis,
   exclusive of every other arm.
+- `crates/runtime`: `TurnSplitter` and `TurnEvent`, one home for the
+  structured streaming pipeline that decides whether a turn goes through
+  `StructuredAssistantDecoder` and splits its events into content,
+  reasoning, and parsed tool calls. The wiring had three drifting copies
+  (`crates/cli/src/generate/format.rs::ChannelSplit`, a byte-identical
+  `ChannelSplit` in `crates/ffi` documented as ported from it, and the
+  inline `needs_decoder` block in `crates/server/src/handler/exec.rs`);
+  all three consumers now wrap their own decode loop with the shared
+  splitter, behavior-preserving.
+- `crates/ffi`: two new `ts_generate` event kinds, `TS_EVENT_TOOL` (a
+  parsed call as `{"id","name","arguments"}` JSON) and `TS_EVENT_FINISH`
+  (fired once, last, on every successful turn, with the stop reason and
+  token counts), plus a `toolCalls` array in `result_json`. Hosts ignore
+  unknown kinds, so this is not a version break. No `GenerateOptions`
+  field offers tools yet, so `TOOL` cannot fire today; the pipeline is
+  wired so growing the binding to offer tools is an options change.
+- `swift/TurboSpark`: `GenerationEvent` gains `.toolCall` and `.stopped`
+  cases mapped from the new kinds; `TurboSparkApp` consumers updated.
+- `docs/STREAMING.md`: the streaming architecture -- the push-callback
+  primitive and why the engine has no iterator/async facade, the channel
+  adapter and its no-backpressure policy, cancellation semantics, the
+  empty-delta and `finish` traps, the wire-format and FFI-event tables.
+
 - `qwen4_exp` (Qwen3.8-Flash-Next) runs its QSA (query-sparse attention)
   indexer above `indexer_budget` instead of refusing context past 2,048
   tokens: every token projects and caches the indexer key and pools newly

@@ -46,6 +46,9 @@ read the page before proposing the thing it refutes.
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `docs/SWIFT_TOOLS.md` | Swift native tool implementation: execution, containment, adding new tools | implementing or changing tools in TurboSparkApp |
 | `docs/SWIFT_SKILLS.md` | Swift skills: architecture, scopes, file layout, and marketplace integration | changing skills, discovery, or marketplace |
+| `docs/SWIFT_PLUGINS.md` | Swift plugins ported from Claude Code: manifest, contributions, enable cascade, marketplace, the two deviations | touching anything under the plugin system, or quoting a plugin rule |
+| `docs/SWIFT_PROFILES.md` | user profiles: the registry, the Default-user contract, shared versus per-profile storage, save-and-relaunch switching | adding a store, or touching `AppStorageRoot`, `UserProfileStore`, or a `~/.turbospark` path in the app |
+| `docs/STREAMING.md` | the token streaming pipeline: the push-callback primitive, `TurnSplitter`, the per-consumer adapters, the FFI event kinds | adding a generation consumer, touching the split/decode wiring, or proposing an engine-side iterator or async stream |
 | `docs/PERMISSION_GATE.md` | the local command classifier, its corpora, and a measured negative | touching `.auto`, or quoting a hazard score |
 | `docs/RELEASE.md` | release checklist, versioning, tags, rot guards | cutting a release |
 
@@ -1565,7 +1568,8 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     emitted Harmony's `analysis` channel as `Reasoning` and DISCARDED ChatML's
     `<think>` body and Gemma's labelled thought channel -- correct while no
     knob could turn those on, and wrong the moment one could. Both now emit
-    `Reasoning`, and both callers (`ChannelSplit`, `needs_decoder`) build a
+    `Reasoning`, and the shared `runtime::TurnSplitter` (which replaced the
+    three per-consumer copies of that decision on 2026-09-05) builds a
     decoder for those dialects when a level was asked for. Skipping it is not
     cosmetic: measured on the real Gemma 4 install, the first `--reasoning
     low` run printed a bare `thought` (the channel LABEL, as prose), then the
@@ -1846,7 +1850,6 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     thing it claims to check) hiding behind a correct-sounding name. When a
     threshold is `>=`, a test at exactly the threshold is on the WRONG side
     of it.
-
 
 65. **WHEN A REFERENCE KERNEL DIFFERS ON SEVERAL AXES AT ONCE, CHANGING ONE
     IS NOT A CONTROLLED EXPERIMENT -- IT IS A THIRD, WORSE KERNEL.**
