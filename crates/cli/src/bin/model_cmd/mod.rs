@@ -7,6 +7,7 @@
 //! with `turbospark-invocation`, and it is what lets the verdict logic be
 //! tested without a terminal.
 
+mod auth;
 mod progress;
 mod render;
 
@@ -14,6 +15,7 @@ use catalog::{Catalog, Client, InstallPlan, RepoRef, Store, Verdict};
 
 use crate::{Error, Options};
 
+pub use auth::auth;
 pub use render::human_bytes;
 
 /// Curated rows, marking which are installed.
@@ -148,7 +150,7 @@ pub fn pull(
     positionals: &[String],
     options: &Options,
 ) -> Result<(), Error> {
-    let mut plan = resolve_plan(catalog, positionals, options)?;
+    let mut plan = resolve_plan(catalog, client, positionals, options)?;
     if let Some(alias) = &options.reuse_trunk_from {
         plan.reuse_trunk_from = Some(resolve_reuse_trunk_from(store, &plan, alias)?);
     }
@@ -212,6 +214,7 @@ pub fn pull(
 /// Turn `pull`'s two argument forms into one plan.
 fn resolve_plan(
     catalog: &Catalog,
+    client: &Client,
     positionals: &[String],
     options: &Options,
 ) -> Result<InstallPlan, Error> {
@@ -240,10 +243,8 @@ fn resolve_plan(
                 Some(text) => RepoRef::parse(text).map_err(Error::Usage)?,
                 None => weights.clone(),
             };
-            let client = Client::new();
-            let report =
-                catalog::probe(&client, &weights, options.file.as_deref(), Some(&sidecars))
-                    .map_err(Error::Failed)?;
+            let report = catalog::probe(client, &weights, options.file.as_deref(), Some(&sidecars))
+                .map_err(Error::Failed)?;
             Ok(InstallPlan::from_probe(&alias, &report, sidecars))
         }
         (None, 1) => {

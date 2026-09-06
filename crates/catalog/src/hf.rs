@@ -20,6 +20,14 @@
 
 use serde::Deserialize;
 
+/// The base URL for Hugging Face endpoints: `$HF_ENDPOINT`, defaulting to `https://huggingface.co`.
+pub fn hf_endpoint() -> String {
+    std::env::var("HF_ENDPOINT")
+        .unwrap_or_else(|_| "https://huggingface.co".to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
 /// A repository coordinate: `owner/name` at a revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoRef {
@@ -56,16 +64,21 @@ impl RepoRef {
     /// The `resolve` URL for one file in this repository.
     pub fn file_url(&self, path: &str) -> String {
         format!(
-            "https://huggingface.co/{}/resolve/{}/{}",
-            self.repo, self.revision, path
+            "{}/{}/resolve/{}/{}",
+            hf_endpoint(),
+            self.repo,
+            self.revision,
+            path
         )
     }
 
     /// The API URL for this repository's metadata, including `siblings`.
     pub fn api_url(&self) -> String {
         format!(
-            "https://huggingface.co/api/models/{}/revision/{}",
-            self.repo, self.revision
+            "{}/api/models/{}/revision/{}",
+            hf_endpoint(),
+            self.repo,
+            self.revision
         )
     }
 
@@ -156,17 +169,25 @@ impl Default for Client {
 }
 
 impl Client {
-    /// Creates a new Hugging Face HTTP client, reading `HF_TOKEN` from the environment if present.
+    /// Creates a new Hugging Face HTTP client, resolving an authentication
+    /// token from flags, environment, store, or system cache.
     pub fn new() -> Self {
+        Self::with_token(None)
+    }
+
+    /// Creates a new Hugging Face HTTP client with an optional explicit token override.
+    pub fn with_token(explicit_token: Option<String>) -> Self {
         let inner = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .expect("blocking HTTP client");
-        let token = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"]
-            .iter()
-            .find_map(|k| std::env::var(k).ok())
-            .filter(|t| !t.trim().is_empty());
+        let token = crate::auth::resolve_hf_token(explicit_token.as_deref());
         Self { inner, token }
+    }
+
+    /// The resolved authentication token, if any.
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
     }
 
     /// Whether a token was found, so `probe` can say "no HF_TOKEN is set"
@@ -307,8 +328,9 @@ impl Client {
     /// sidecar repository comes back in the same request.
     pub fn popular_gguf_repos(&self, limit: usize) -> Result<Vec<PopularRepo>, String> {
         let url = format!(
-            "https://huggingface.co/api/models?filter=gguf&pipeline_tag=text-generation\
-             &sort=downloads&direction=-1&cardData=true&limit={limit}"
+            "{}/api/models?filter=gguf&pipeline_tag=text-generation\
+             &sort=downloads&direction=-1&cardData=true&limit={limit}",
+            hf_endpoint()
         );
         let body = self.get(&url)?;
         let listed: Vec<ListedModel> = serde_json::from_slice(&body)

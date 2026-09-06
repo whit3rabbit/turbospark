@@ -93,6 +93,49 @@ impl Store {
         self.root.join("installed.json")
     }
 
+    /// Where the stored Hugging Face token lives.
+    pub fn hf_token_path(&self) -> PathBuf {
+        self.root.join("hf_token")
+    }
+
+    /// Read the stored Hugging Face token, if present and non-empty.
+    pub fn get_hf_token(&self) -> Option<String> {
+        let path = self.hf_token_path();
+        std::fs::read_to_string(&path)
+            .ok()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+    }
+
+    /// Write the Hugging Face token to this store's `hf_token` file.
+    pub fn set_hf_token(&self, token: &str) -> Result<(), String> {
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            return self.clear_hf_token();
+        }
+        std::fs::create_dir_all(&self.root)
+            .map_err(|e| format!("creating store directory {}: {e}", self.root.display()))?;
+        let path = self.hf_token_path();
+        std::fs::write(&path, format!("{trimmed}\n"))
+            .map_err(|e| format!("writing Hugging Face token to {}: {e}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+
+    /// Delete the stored Hugging Face token file.
+    pub fn clear_hf_token(&self) -> Result<(), String> {
+        let path = self.hf_token_path();
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("removing token file {}: {e}", path.display()))?;
+        }
+        Ok(())
+    }
+
     /// Every recorded install whose directory still exists, alias order.
     ///
     /// A missing or unreadable record is an EMPTY list rather than an error:

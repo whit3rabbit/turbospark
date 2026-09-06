@@ -10,6 +10,7 @@ use crate::install::InstallPlan;
 pub(crate) fn stream_gguf(
     plan: &InstallPlan,
     dir: &Path,
+    client: &Client,
     progress: &mut impl FnMut(&str),
     byte_progress: Option<&ByteProgressCallback>,
 ) -> Result<ArchConfig, String> {
@@ -21,7 +22,8 @@ pub(crate) fn stream_gguf(
     let source = match byte_progress {
         Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
         None => HttpRangeSource::new(url),
-    };
+    }
+    .with_optional_token(client.token());
     let header = repack::fetch_gguf_header(&source)
         .map_err(|e| format!("reading the GGUF header of {file}: {e}"))?;
     let model_id = plan.weights.repo.clone();
@@ -163,6 +165,7 @@ pub(crate) fn stream_mlx(
                 Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
                 None => HttpRangeSource::new(url),
             }
+            .with_optional_token(client.token())
         })
         .collect();
     let mut headers = sources
@@ -284,7 +287,8 @@ fn fetch_mtp_shards(
         let source = match byte_progress {
             Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
             None => HttpRangeSource::new(url),
-        };
+        }
+        .with_optional_token(client.token());
         let mut header = repack::fetch_safetensors_header(&source)
             .map_err(|e| format!("{mtp}/{shard_name} header: {e}"))?;
         header

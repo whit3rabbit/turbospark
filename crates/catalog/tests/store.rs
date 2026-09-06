@@ -139,3 +139,53 @@ fn directory_bytes_sums_a_tree() {
     std::fs::write(root.join("packed_experts").join("b.bin"), vec![0u8; 250]).unwrap();
     assert_eq!(turbospark_catalog::directory_bytes(&root), 350);
 }
+
+#[test]
+fn hf_token_storage_and_lifecycle() {
+    let root = temp_root("hf-token");
+    let store = Store::new(&root);
+
+    // Initial state: none
+    assert!(store.get_hf_token().is_none());
+
+    // Save token
+    store.set_hf_token("hf_test_secret_token_12345").unwrap();
+    assert_eq!(
+        store.get_hf_token().as_deref(),
+        Some("hf_test_secret_token_12345")
+    );
+
+    // File permissions on Unix should be 0600
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(store.hf_token_path())
+            .unwrap()
+            .permissions();
+        assert_eq!(perms.mode() & 0o777, 0o600);
+    }
+
+    // Overwrite with trimmed whitespace
+    store.set_hf_token("  hf_updated_token  ").unwrap();
+    assert_eq!(store.get_hf_token().as_deref(), Some("hf_updated_token"));
+
+    // Setting empty clears it
+    store.set_hf_token("   ").unwrap();
+    assert!(store.get_hf_token().is_none());
+
+    // Clear explicitly
+    store.set_hf_token("hf_token_to_clear").unwrap();
+    assert!(store.get_hf_token().is_some());
+    store.clear_hf_token().unwrap();
+    assert!(store.get_hf_token().is_none());
+}
+
+#[test]
+fn hf_token_resolution_order() {
+    use turbospark_catalog::{resolve_hf_token_with_source, HfTokenSource};
+
+    // Explicit argument wins over anything
+    let (tok, src) = resolve_hf_token_with_source(Some("hf_explicit_arg")).unwrap();
+    assert_eq!(tok, "hf_explicit_arg");
+    assert_eq!(src, HfTokenSource::Explicit);
+}

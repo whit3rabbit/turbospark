@@ -29,6 +29,9 @@ public struct ModelsSettingsPaneView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                // Hugging Face Authentication API token
+                HfAuthTokenCardView(model: model)
+
                 // Section 1: TurboSpark Primary Storage
                 turboSparkStorageSection
 

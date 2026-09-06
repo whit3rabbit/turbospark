@@ -20,6 +20,7 @@
 
 #![forbid(unsafe_code)]
 
+mod auth;
 mod catalog;
 mod entry;
 mod hf;
@@ -29,9 +30,13 @@ mod recommend;
 mod store;
 mod stream;
 
+pub use auth::{
+    resolve_hf_token, resolve_hf_token_with_source, validate_hf_token, HfTokenSource,
+    HfTokenValidationStatus,
+};
 pub use catalog::{Catalog, SCHEMA_VERSION};
 pub use entry::{CatalogEntry, Measured, MtpSource, Sidecars, Source, SourceKind, Status};
-pub use hf::{Client, PopularRepo, RepoFile, RepoRef};
+pub use hf::{hf_endpoint, Client, PopularRepo, RepoFile, RepoRef};
 pub use install::{
     gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,
     InstallPlan, Installed,

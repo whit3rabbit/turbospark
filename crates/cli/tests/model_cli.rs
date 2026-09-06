@@ -321,3 +321,30 @@ fn a_bare_discover_does_not_swallow_the_next_flag() {
         "the flag parsed as a flag rather than eating --filter: {stderr}"
     );
 }
+
+#[test]
+fn auth_status_runs_cleanly() {
+    let (code, stdout, _) = run(&["auth"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("Hugging Face token") || stdout.contains("No Hugging Face token found"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn auth_clear_succeeds() {
+    let (code, stdout, _) = run(&["auth", "--clear"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("token cleared"), "{stdout}");
+}
+
+#[test]
+fn auth_rejects_unused_flags() {
+    let (code, _, stderr) = run(&["auth", "--context", "4096"]);
+    assert_eq!(code, 2);
+    assert!(
+        stderr.contains("--context does not apply to this command"),
+        "{stderr}"
+    );
+}

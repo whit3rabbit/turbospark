@@ -23,6 +23,7 @@ pub struct HttpRangeSource {
     url: String,
     client: reqwest::blocking::Client,
     on_bytes: Option<ByteProgressCallback>,
+    token: Option<String>,
 }
 
 impl HttpRangeSource {
@@ -47,6 +48,7 @@ impl HttpRangeSource {
             url: url.into(),
             client,
             on_bytes: None,
+            token: None,
         }
     }
 
@@ -60,7 +62,20 @@ impl HttpRangeSource {
             url: url.into(),
             client,
             on_bytes: Some(on_bytes),
+            token: None,
         }
+    }
+
+    /// Attach a bearer authentication token for gated repositories.
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+
+    /// Attach an optional bearer authentication token for gated repositories.
+    pub fn with_optional_token(mut self, token: Option<impl Into<String>>) -> Self {
+        self.token = token.map(|t| t.into());
+        self
     }
 
     /// One `Range` GET, no retry, written straight into `dst`. Length is
@@ -73,13 +88,14 @@ impl HttpRangeSource {
         dst: &mut [u8],
     ) -> Result<(), DownloadError> {
         let end_inclusive = end_exclusive.saturating_sub(1);
-        let response = self
-            .client
-            .get(&self.url)
-            .header(
-                reqwest::header::RANGE,
-                format!("bytes={start}-{end_inclusive}"),
-            )
+        let mut request = self.client.get(&self.url).header(
+            reqwest::header::RANGE,
+            format!("bytes={start}-{end_inclusive}"),
+        );
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(token);
+        }
+        let response = request
             .send()
             .map_err(|e| DownloadError::Request(e.to_string()))?;
         if response.status().as_u16() != 206 {

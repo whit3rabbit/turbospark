@@ -161,7 +161,7 @@ pub fn install_with_byte_progress(
     // Step 2: the weights.
     let arch = match plan.kind {
         SourceKind::Gguf => {
-            crate::stream::stream_gguf(plan, dir, &mut progress, byte_progress.as_ref())?
+            crate::stream::stream_gguf(plan, dir, client, &mut progress, byte_progress.as_ref())?
         }
         SourceKind::Mlx => {
             crate::stream::stream_mlx(plan, dir, client, &mut progress, byte_progress.as_ref())?

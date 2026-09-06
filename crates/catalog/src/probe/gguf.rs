@@ -21,7 +21,7 @@ pub(super) fn probe_gguf(
     file: &str,
 ) -> Result<ProbeReport, String> {
     let url = repo.file_url(file);
-    let source = repack::HttpRangeSource::new(&url);
+    let source = repack::HttpRangeSource::new(&url).with_optional_token(client.token());
     let header = repack::fetch_gguf_header(&source).map_err(|e| {
         format!("reading the GGUF header of {file}: {e}. A split GGUF puts its whole header in shard 1; point at that shard.")
     })?;

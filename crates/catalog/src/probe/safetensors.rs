@@ -22,7 +22,7 @@ pub(super) fn probe_safetensors(
 
     let mut report = evaluate_config(&config_text, repo, (shard_bytes > 0).then_some(shard_bytes))?;
     if let Some(arch) = &report.arch {
-        report.expert_stride = mlx_expert_stride(repo, files, arch);
+        report.expert_stride = mlx_expert_stride(client.token(), repo, files, arch);
     }
     Ok(report)
 }
@@ -188,12 +188,17 @@ pub fn evaluate_config(
 /// here: it means the model is dense, or that its experts live somewhere this
 /// probe does not look, and either way the answer is "no stride reported"
 /// rather than a wrong number.
-fn mlx_expert_stride(repo: &RepoRef, files: &[String], arch: &ArchConfig) -> Option<u64> {
+fn mlx_expert_stride(
+    token: Option<&str>,
+    repo: &RepoRef,
+    files: &[String],
+    arch: &ArchConfig,
+) -> Option<u64> {
     if arch.num_experts <= 0 {
         return None;
     }
     let first = files.iter().find(|f| f.ends_with(".safetensors"))?;
-    let source = repack::HttpRangeSource::new(repo.file_url(first));
+    let source = repack::HttpRangeSource::new(repo.file_url(first)).with_optional_token(token);
     let header = repack::fetch_safetensors_header(&source).ok()?;
     let mut total = 0u64;
     for (name, info) in &header.tensors {
