@@ -24,6 +24,8 @@ public struct ServerRequestRecord: Identifiable, Equatable, Sendable {
     public var prefillSeconds: Double?
     public var decodeSeconds: Double?
     public var stopReason: String?
+    public var reusedPrefixTokens: UInt32?
+    public var sessionSlotEvicted: Bool?
     /// How many generations this request ran. Two means the tool-call
     /// guardrails re-asked, which is real work worth seeing rather than a
     /// duplicate row.
@@ -141,7 +143,10 @@ public struct ServerMetricsStore: Equatable {
                 $0.stream = stream
             }
 
-        case let .generated(id, model, promptTokens, newTokens, prefill, decode, stopReason):
+        case let .generated(
+            id, model, promptTokens, newTokens, prefill, decode, stopReason, reusedPrefixTokens,
+            sessionSlotEvicted
+        ):
             update(id) {
                 $0.servedModel = model
                 $0.generations += 1
@@ -155,6 +160,10 @@ public struct ServerMetricsStore: Equatable {
                 $0.prefillSeconds = ($0.prefillSeconds ?? 0) + prefill
                 $0.decodeSeconds = ($0.decodeSeconds ?? 0) + decode
                 $0.stopReason = stopReason
+                $0.reusedPrefixTokens = ($0.reusedPrefixTokens ?? 0) + reusedPrefixTokens
+                if sessionSlotEvicted {
+                    $0.sessionSlotEvicted = true
+                }
             }
 
         case let .requestFinished(id, status, durationMs):
@@ -230,6 +239,64 @@ public struct ServerMetricsStore: Equatable {
 
     public var totalRequests: Int { records.filter(\.isFinished).count }
     public var totalErrors: Int { records.filter(\.isError).count }
+
+    /// Total tokens processed (prompt prefill + decode new tokens) across all
+    /// completed requests in the window.
+    public var totalTokensProcessed: UInt64 {
+        records.reduce(into: UInt64(0)) { total, record in
+            if record.isFinished {
+                total += UInt64(record.promptTokens ?? 0) + UInt64(record.newTokens ?? 0)
+            }
+        }
+    }
+
+    /// Total prompt tokens prefilled across completed requests in the window.
+    public var totalPromptTokens: UInt64 {
+        records.reduce(into: UInt64(0)) { total, record in
+            if record.isFinished {
+                total += UInt64(record.promptTokens ?? 0)
+            }
+        }
+    }
+
+    /// Total decode new tokens produced across completed requests in the window.
+    public var totalNewTokens: UInt64 {
+        records.reduce(into: UInt64(0)) { total, record in
+            if record.isFinished {
+                total += UInt64(record.newTokens ?? 0)
+            }
+        }
+    }
+
+    /// Total prefix tokens continued from prior KV cache states without re-prefilling.
+    public var totalReusedPrefixTokens: UInt64 {
+        records.reduce(into: UInt64(0)) { total, record in
+            if record.isFinished {
+                total += UInt64(record.reusedPrefixTokens ?? 0)
+            }
+        }
+    }
+
+    /// Number of completed requests where an existing session KV state was evicted from the pool.
+    public var totalSessionSlotEvictions: Int {
+        records.filter { $0.isFinished && $0.sessionSlotEvicted == true }.count
+    }
+
+    /// Tokens prefilled per second across every completed generation in the
+    /// window, weighted by prompt tokens rather than averaged over requests.
+    public var aggregatePromptTokensPerSecond: Double? {
+        var tokens = 0.0
+        var seconds = 0.0
+        for record in records {
+            guard let promptTokens = record.promptTokens, let prefill = record.prefillSeconds else {
+                continue
+            }
+            tokens += Double(promptTokens)
+            seconds += prefill
+        }
+        guard seconds > 0, tokens > 0 else { return nil }
+        return tokens / seconds
+    }
 
     /// Tokens decoded per second across every completed generation in the
     /// window, weighted by tokens rather than averaged over requests.

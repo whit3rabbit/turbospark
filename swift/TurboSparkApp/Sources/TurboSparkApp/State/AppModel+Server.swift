@@ -138,10 +138,17 @@ extension AppModel {
         Task {
             defer { serverBusy = false }
             do {
+                let emb = serverEmbeddingModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                let ep = hfEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                let sys = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
                 let options = ServerOptions(
                     port: serverPinnedPort,
                     apiKey: Self.serverAPIKey(from: serverAPIKeyInput),
-                    guardrails: Self.serverGuardrails(from: guardrailsMode)
+                    guardrails: Self.serverGuardrails(from: guardrailsMode),
+                    embeddingModel: emb.isEmpty ? nil : emb,
+                    hfEndpoint: ep.isEmpty ? nil : ep,
+                    defaultSystem: sys.isEmpty ? nil : sys,
+                    defaultReasoning: reasoning
                 )
                 let started = try TurboSparkServer.start(options: options)
                 // Recorded from the OPTIONS the start actually used, so the

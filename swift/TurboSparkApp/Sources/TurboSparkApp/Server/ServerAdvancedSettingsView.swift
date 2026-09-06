@@ -1,4 +1,5 @@
 import SwiftUI
+import TurboSpark
 
 /// The knobs a person only reaches for once they know they need them.
 ///
@@ -66,6 +67,71 @@ struct ServerAdvancedSettingsView: View {
                 }
             }
 
+            field(
+                "Embedding model",
+                help: "Path or alias to an encoder model (e.g. snowflake-arctic-embed-m) to enable /v1/embeddings."
+            ) {
+                TextField("snowflake-arctic-embed-m or /path/to/encoder", text: $model.serverEmbeddingModelInput)
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .frame(width: 280)
+                    .disabled(isRunning)
+                    .onChange(of: model.serverEmbeddingModelInput) { _, _ in
+                        model.persistSettingsDebounced()
+                    }
+            }
+
+            field(
+                "HF mirror endpoint",
+                help: "Base URL for Hugging Face downloads ($HF_ENDPOINT), e.g. https://hf-mirror.com for restricted regions."
+            ) {
+                TextField("https://huggingface.co", text: $model.hfEndpointInput)
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .frame(width: 280)
+                    .disabled(isRunning)
+                    .onChange(of: model.hfEndpointInput) { _, _ in
+                        model.persistSettingsDebounced()
+                    }
+            }
+
+            field(
+                "Memory guard tier",
+                help: "Model load memory reservation tier (safe/balanced, strict, relaxed, off), matching CLI --memory-guard."
+            ) {
+                Picker("", selection: $model.runtimeOptions.loadGuard) {
+                    Text("Safe / Balanced").tag(AppLoadGuardOption.balanced)
+                    Text("Relaxed (Default)").tag(AppLoadGuardOption.relaxed)
+                    Text("Strict").tag(AppLoadGuardOption.strict)
+                    Text("Off").tag(AppLoadGuardOption.off)
+                }
+                .pickerStyle(.menu)
+                .frame(width: 200)
+                .disabled(isRunning)
+                .onChange(of: model.runtimeOptions.loadGuard) { _, _ in
+                    model.persistSettingsDebounced()
+                }
+            }
+
+            field(
+                "Default reasoning effort",
+                help: "Default reasoning effort for incoming requests that do not specify reasoning_effort, matching CLI --reasoning."
+            ) {
+                Picker("", selection: $model.reasoning) {
+                    Text("Off (Fastest)").tag(GenerateOptions.Reasoning.off)
+                    Text("Low").tag(GenerateOptions.Reasoning.low)
+                    Text("Medium (Balanced)").tag(GenerateOptions.Reasoning.medium)
+                    Text("High").tag(GenerateOptions.Reasoning.high)
+                    Text("Extra High (Max Thorough)").tag(GenerateOptions.Reasoning.xhigh)
+                }
+                .pickerStyle(.menu)
+                .frame(width: 220)
+                .disabled(isRunning)
+                .onChange(of: model.reasoning) { _, _ in
+                    model.persistSettingsDebounced()
+                }
+            }
+
             Divider()
 
             VStack(alignment: .leading, spacing: 4) {
@@ -76,7 +142,7 @@ struct ServerAdvancedSettingsView: View {
                 // cheaper than the search.
                 bullet("Binds loopback only. There is no setting here to serve the network.")
                 bullet("Serves one turn at a time per model. Concurrent requests queue.")
-                bullet("Has no embeddings endpoint, because this engine has no embedding path.")
+                bullet("Serves text embeddings when an embedding model is attached.")
                 bullet("Logs requests, never their bodies. Your prompts stay out of the console.")
             }
         }

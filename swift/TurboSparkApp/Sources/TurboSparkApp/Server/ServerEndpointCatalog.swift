@@ -2,12 +2,9 @@ import Foundation
 
 /// The routes this server actually serves, and how to call them.
 ///
-/// **ONLY IMPLEMENTED ROUTES APPEAR HERE.** There is no `/v1/embeddings` row:
-/// this engine has no embedding path at all, and a listed endpoint that 404s
-/// is worse than an absent one -- a user reads the list as a capability
-/// statement and would go and build against it. Same rule as
-/// `swift/CLAUDE.md` Gotcha 23's Probe button: check that the work exists
-/// before adding the control that claims it.
+/// **ONLY IMPLEMENTED ROUTES APPEAR HERE.** Routes are kept in sync with
+/// `turbospark_server::build_router_with_options`. A user reads the list as a
+/// capability statement and would build against it.
 ///
 /// Pure and free of SwiftUI so the list and the snippets can be tested
 /// against the router's own route table.
@@ -83,6 +80,9 @@ public enum ServerEndpointCatalog {
             method: "POST", path: "/v1/responses", family: .openAI,
             summary: "The Responses API, item-shaped.", streams: true),
         ServerEndpoint(
+            method: "POST", path: "/v1/embeddings", family: .openAI,
+            summary: "Vector embeddings for text strings.", streams: false),
+        ServerEndpoint(
             method: "POST", path: "/v1/messages", family: .anthropic,
             summary: "Messages, with tools, thinking and images.", streams: true),
         ServerEndpoint(
@@ -105,6 +105,12 @@ public enum ServerEndpointCatalog {
         ServerEndpoint(
             method: "POST", path: "/api/generate", family: .ollama,
             summary: "Raw prompt, through the model's own template.", streams: true),
+        ServerEndpoint(
+            method: "POST", path: "/api/embeddings", family: .ollama,
+            summary: "Vector embedding for one prompt.", streams: false),
+        ServerEndpoint(
+            method: "POST", path: "/api/embed", family: .ollama,
+            summary: "Batch vector embeddings.", streams: false),
     ]
 
     public static func endpoints(for family: ServerAPIFamily) -> [ServerEndpoint] {

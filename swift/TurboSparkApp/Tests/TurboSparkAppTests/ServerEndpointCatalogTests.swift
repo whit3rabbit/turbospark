@@ -19,6 +19,7 @@ final class ServerEndpointCatalogTests: XCTestCase {
         "POST /v1/chat/completions",
         "POST /v1/completions",
         "POST /v1/responses",
+        "POST /v1/embeddings",
         "POST /v1/messages",
         "POST /v1/messages/count_tokens",
         "GET /v1/models",
@@ -28,6 +29,8 @@ final class ServerEndpointCatalogTests: XCTestCase {
         "POST /api/show",
         "POST /api/chat",
         "POST /api/generate",
+        "POST /api/embeddings",
+        "POST /api/embed",
     ]
 
     func testTheCatalogMatchesTheRoutersOwnRoutes() {
@@ -38,14 +41,13 @@ final class ServerEndpointCatalogTests: XCTestCase {
                 + "\(catalog.symmetricDifference(routerRoutes).sorted())")
     }
 
-    /// **NO EMBEDDINGS ROW, AND THE ABSENCE IS DELIBERATE.** This engine has
-    /// no embedding path at all, so listing one would be a capability claim
-    /// a reader could act on. Stated as a test so a later session adding it
-    /// out of symmetry has to come past this line.
-    func testNoEndpointIsAdvertisedThatTheEngineCannotServe() {
-        XCTAssertFalse(
-            ServerEndpointCatalog.all.contains { $0.path.contains("embeddings") },
-            "this engine has no embedding path; a listed route that 404s is worse than none")
+    /// Every advertised endpoint is part of the router's registered routes.
+    func testEveryAdvertisedEndpointMatchesRouter() {
+        for endpoint in ServerEndpointCatalog.all {
+            XCTAssertTrue(
+                routerRoutes.contains(endpoint.id),
+                "advertised route \(endpoint.id) is not registered in the router")
+        }
     }
 
     func testEveryFamilyHasAtLeastOneRoute() {
