@@ -82,6 +82,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     // check.
     let mut steering_target_explicit = false;
     let mut steering_gate_explicit = false;
+    let mut vision_sidecar: Option<String> = None;
     let mut prefill_chunk = PrefillChunk::default();
     let mut power_profile: Option<PowerProfile> = None;
     let mut max_tokens_per_sec: Option<f64> = None;
@@ -277,6 +278,12 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 Some(level) => reasoning = level,
                 None => return invalid("--reasoning", value),
             },
+            // The path stays an OPAQUE string, like `--steering`'s: this
+            // crate is pure and reads no directory, so resolving and
+            // attaching it is the front end's job. `"auto"` is read as a
+            // literal path rather than a keyword -- catalog-based
+            // resolution is a later part, not yet built here.
+            "--vision-sidecar" => vision_sidecar = Some(value.to_string()),
             other => unreachable!("value-taking option {other} not handled"),
         }
 
@@ -412,6 +419,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         prefill_chunk,
         power_profile,
         max_tokens_per_sec,
+        vision_sidecar,
         reasoning,
         quiet,
     })

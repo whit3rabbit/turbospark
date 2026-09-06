@@ -8,6 +8,13 @@ pub enum TokenizerError {
     MissingSpecialToken(String),
     InvalidChatTemplate(String),
     UnsupportedForDialect(String),
+    /// A caller-supplied pair of vision marker ids (`vision_start`,
+    /// `image_pad`, from a `VisionConfig`) does not hold up against THIS
+    /// tokenizer: either id fails to resolve to a real token, the two
+    /// collide, or the checkpoint's own chat template does not place exactly
+    /// one of each around a single image. See
+    /// [`crate::MfTokenizer::verify_image_markers`].
+    InvalidVisionMarkers(String),
 }
 
 impl fmt::Display for TokenizerError {
@@ -23,6 +30,9 @@ impl fmt::Display for TokenizerError {
                 f,
                 "operation is not supported for this tokenizer's chat dialect: {operation}"
             ),
+            TokenizerError::InvalidVisionMarkers(detail) => {
+                write!(f, "invalid vision marker ids: {detail}")
+            }
         }
     }
 }

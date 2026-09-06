@@ -117,7 +117,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let asked = map_speculation(request.speculation);
     let choice = resolve_drafter(map_drafter(request.speculative_drafter), model_dir);
     let steering = resolve_steering(request)?;
-    let runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+    let mut runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
         model_dir,
         arch,
         plan.resolved as usize,
@@ -145,6 +145,34 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         install_has_dflash: _,
         note: drafter_note,
     } = choice;
+
+    // Vision memory sidecar (Part A4): attach BEFORE anything reads
+    // `preprocessor_config.json`, and before this session's first `--image`
+    // can reach `RealForwardRunner::open_vision_tower`'s no-tower refusal.
+    // Part A3 already routes every such read through `runner.vision_dir()`,
+    // so attaching here is enough to make the rest of the vision pipeline
+    // pick up the sidecar with no further change.
+    //
+    // `verify_image_markers` catches a mismatched sidecar/tokenizer pairing
+    // HERE, naming the actual ids, rather than letting it surface deep
+    // inside `turbospark_vision_io::splice_and_walk` at the first image a
+    // caller attaches.
+    if let Some(path) = request.vision_sidecar.as_deref() {
+        let dir = std::path::Path::new(path);
+        runner
+            .attach_vision_sidecar(dir)
+            .map_err(|e| format!("--vision-sidecar {path}: {e}"))?;
+        let vision = runner.vision_config();
+        tokenizer
+            .verify_image_markers(
+                vision.vision_start_token_id as i32,
+                vision.image_token_id as i32,
+            )
+            .map_err(|e| format!("--vision-sidecar {path}: {e}"))?;
+        if !request.quiet {
+            eprintln!("vision: sidecar {}", dir.display());
+        }
+    }
 
     // Report the RESOLVED slot count, not the request. Under `auto` the
     // request carries no number, and this one is a property of the machine

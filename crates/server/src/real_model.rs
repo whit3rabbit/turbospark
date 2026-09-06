@@ -92,6 +92,7 @@ impl RealChatModel {
         default_system: Option<String>,
         prefix_reuse: bool,
         session_slots: u32,
+        vision_sidecar: Option<&Path>,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         let context = runtime::resolve_max_context(
@@ -207,6 +208,34 @@ impl RealChatModel {
         // constant: two checkpoints can share a dialect and pad differently.
         let vocab_size = runner.vocab_size();
         let expert_cache_slots = runner.expert_cache_slots();
+        // Vision memory sidecar (Part A4): attach BEFORE computing
+        // `preprocess_params` below -- Part A3 already routes that read
+        // through `runner.vision_dir()` for exactly this sequence, so
+        // attaching here is enough to make the rest of the pipeline pick up
+        // the sidecar with no further change.
+        //
+        // `verify_image_markers` catches a mismatched sidecar/tokenizer
+        // pairing HERE, naming the actual ids, rather than letting it
+        // surface deep inside `turbospark_vision_io::splice_and_walk` at the
+        // first image a client sends.
+        if let Some(dir) = vision_sidecar {
+            runner
+                .attach_vision_sidecar(dir)
+                .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
+            let vision = runner.vision_config();
+            tokenizer
+                .verify_image_markers(
+                    vision.vision_start_token_id as i32,
+                    vision.image_token_id as i32,
+                )
+                .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
+            // Print only when a sidecar was actually attached: most servers
+            // run with none, and the guardrails/prefix-reuse lines' "always
+            // print" shape exists for a fixed toggle every deployment sets
+            // one way or the other, not for a flag whose default has
+            // nothing to report.
+            eprintln!("vision: sidecar {}", dir.display());
+        }
         // Read from `runner.vision_dir()` rather than `model_dir` directly,
         // so a later `--vision-sidecar` attach (vision memory sidecar, Part
         // A4) finds `preprocessor_config.json` beside the sidecar's own

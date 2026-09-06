@@ -185,6 +185,9 @@ void ts_string_free(char *s);
  *   steeringLayers    "START:END" | null (0-based inclusive layer range)
  *   steeringTarget    number | null (for clamp mode, default 0.0)
  *   steeringGate      number | null (activation threshold >= 0, default 0.0)
+ *   visionSidecar     string | null (path to a standalone vision-tower
+ *                       sidecar install to attach to a text-only trunk).
+ *                       null means use the trunk's own tower, if it has one.
  *
  * Opening is expensive: it maps gigabytes and compiles Metal pipelines.
  * Open once and keep the handle.
@@ -222,7 +225,8 @@ void ts_session_cancel(const TsSession *s);
  *                   "summary" },
  *     "toolCalling": { "native", "reason" },
  *     "speculation": { "block", "drafter", "reason" },
- *     "vision": { "active", "imageTokenId", "reason" },
+ *     "vision": { "active", "imageTokenId", "reason", "source",
+ *                 "sidecarPath" },
  *     "specialTokens": { "bosId", "eosId", "padId", "endOfTurnId",
  *                       "stopTokenIds", "thinkStartId", "thinkEndId" } }
  *
@@ -283,6 +287,15 @@ void ts_session_cancel(const TsSession *s);
  * no default worth falling back to, so an install streamed without that
  * sidecar reports active false with the reason in vision.reason. reason is
  * non-null exactly in that case, which is the only one a caller can act on.
+ *
+ * vision.source is "install" when this session's tower (if any) comes from
+ * the trunk's own directory, or "sidecar" when visionSidecar attached a
+ * standalone tower instead (vision memory sidecar). It is null exactly when
+ * no tower is present at all, i.e. the same case that leaves imageTokenId
+ * null; when a tower IS present it is set on both the active and the
+ * refused branches, so a host can say WHICH tower failed to serve an image.
+ * vision.sidecarPath is the attached directory, present only when source is
+ * "sidecar".
  *
  * A NON-NULL BLOCK IS A STATEMENT ABOUT THE SESSION, NOT THE NEXT TURN.
  * Acceptance is argmax(target) == proposal, exact only at temperature 0, so

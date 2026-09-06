@@ -168,6 +168,10 @@ pub struct OpenOptions {
     pub steering_target: Option<f64>,
     /// Minimum activation magnitude to fire the edit (default 0.0).
     pub steering_gate: Option<f64>,
+    /// Path to a standalone vision-tower sidecar install to attach to a
+    /// text-only trunk (vision memory sidecar, Part A4). Absent or `null`
+    /// means use the trunk's own tower, if it has one.
+    pub vision_sidecar: Option<String>,
 }
 
 /// What a session resolved about directional steering, once, at open.
@@ -298,6 +302,14 @@ pub struct VisionInfo {
     /// restated by a host, for `SessionInfo`'s standing reason.
     pub image_token_id: Option<i32>,
     pub reason: Option<String>,
+    /// `"install"` when this session's tower (if any) comes from the trunk's
+    /// own directory, `"sidecar"` when a `visionSidecar` option attached a
+    /// standalone tower install instead (vision memory sidecar, Part A4).
+    /// Null exactly when `active` is false and no tower is present at all --
+    /// the same case that leaves `imageTokenId` null.
+    pub source: Option<String>,
+    /// The sidecar directory, present only when `source` is `"sidecar"`.
+    pub sidecar_path: Option<String>,
 }
 
 /// One piece of a multimodal message's content, in prompt order.

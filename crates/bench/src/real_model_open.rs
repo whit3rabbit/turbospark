@@ -130,6 +130,38 @@ pub fn open_model_runner_with_context(
     open_with_arch(model_dir, arch, slots, max_context)
 }
 
+/// [`open_model_runner_with_context`] plus attaching a standalone vision
+/// sidecar to the opened (text-only) trunk (vision memory sidecar, Part A4).
+///
+/// This is what Part A6's real-install gate uses to compare a
+/// sidecar-attached text-only trunk against the combined
+/// `qwen38-27b-vision.gturbo` install: the two must agree on vision output
+/// byte for byte, which needs a trunk opened exactly the way every other
+/// gate in this crate opens one (same `open_model_runner_with_context`
+/// path) with the sidecar attached on top, rather than a bespoke open.
+///
+/// The attach happens AFTER open, matching
+/// `RealForwardRunner::attach_vision_sidecar`'s own contract ("call this
+/// once, before the first image -- there is no supported way to detach or
+/// replace a sidecar once attached"). No image is processed here and no
+/// tokenizer marker check runs: that is `MfTokenizer::verify_image_markers`'s
+/// job, which a caller reaches through the returned tokenizer if it wants
+/// that check ahead of an image, the same as any other opener in this crate
+/// leaves shaping and sampling decisions to its caller.
+pub fn open_model_runner_with_context_and_vision_sidecar(
+    model_dir: &Path,
+    slots: usize,
+    max_context: u32,
+    vision_sidecar: &Path,
+) -> Result<(RealForwardRunner, MfTokenizer), String> {
+    let arch = repack::peek_manifest_arch(model_dir)?;
+    let (mut runner, tokenizer) = open_with_arch(model_dir, arch, slots, max_context)?;
+    runner
+        .attach_vision_sidecar(vision_sidecar)
+        .map_err(|e| format!("{}: {e}", vision_sidecar.display()))?;
+    Ok((runner, tokenizer))
+}
+
 /// The body both entry points share, taking an already-peeked `ArchConfig`
 /// so [`open_model_runner_for_protocol`] reads `manifest.json` once.
 pub(crate) fn open_with_arch(

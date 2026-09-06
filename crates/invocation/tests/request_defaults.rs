@@ -56,6 +56,9 @@ fn documented_defaults_are_applied() {
     // bytes every release before the flag rendered, which is what keeps
     // `crates/bench`'s frozen digests where they are.
     assert_eq!(req.reasoning, ReasoningEffort::Off);
+    // No sidecar unless one is named: a text-only session on a text-only
+    // trunk pays nothing for this feature.
+    assert_eq!(req.vision_sidecar, None);
 }
 
 #[test]

@@ -238,6 +238,14 @@ pub const OPTIONS: &[OptionDecl] = &[
                      (default 0.0, meaning always)",
     },
     OptionDecl {
+        flag: "--vision-sidecar",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "path to a standalone vision-tower sidecar install to attach to a \
+                     text-only trunk (default: none; the trunk's own tower, if any, is used)",
+    },
+    OptionDecl {
         flag: "--reasoning",
         takes_value: true,
         is_required: false,

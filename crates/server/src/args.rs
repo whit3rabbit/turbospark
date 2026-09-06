@@ -1,5 +1,5 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
+pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F] [--vision-sidecar PATH]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
                        relaxed (default), balanced, strict, or a byte ceiling on
                        what the engine ALLOCATES. relaxed is what shipped before
                        this flag and what every published memory figure was
@@ -11,7 +11,7 @@ pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [-
                        as `Authorization: Bearer <key>` or `x-api-key: <key>`.
                        Falls back to $TURBOSPARK_API_KEY when absent (keeps
                        the key out of `ps`); with neither, the server has no
-                       auth at all, same as before this flag existed\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --help               print this text and exit\n  --version            print the version and exit";
+                       auth at all, same as before this flag existed\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --vision-sidecar     path to a standalone vision-tower sidecar install to attach to a\n                       text-only trunk (default: none; the trunk's own tower, if any, is\n                       used)\n  --help               print this text and exit\n  --version            print the version and exit";
 
 pub use crate::bind::BindMode;
 
@@ -97,6 +97,12 @@ pub struct ModelArgs {
     /// beside the caller's would fail the render outright on those dialects
     /// instead of merely reading oddly.
     pub default_system: Option<String>,
+    /// Path to a standalone vision-tower sidecar install to attach to a
+    /// text-only trunk (vision memory sidecar, Part A4), or `None` to use
+    /// the trunk's own tower (if any). An opaque string, like `steering`
+    /// above: this binary reads no directory itself, so resolving and
+    /// attaching it is `RealChatModel::open`'s job.
+    pub vision_sidecar: Option<String>,
     /// The `--api-key` flag's OWN value, or `None` if absent. Deliberately
     /// NOT resolved against `$TURBOSPARK_API_KEY` here: this parser reads
     /// only `args`, matching `power_profile`'s split (`None` here,
@@ -139,6 +145,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         steering: runtime::SteeringPolicy::off(),
         reasoning: tokenizer::ReasoningEffort::Off,
         default_system: None,
+        vision_sidecar: None,
         api_key: None,
     };
     // Held aside because `--steering-layers` may be given BEFORE or AFTER
@@ -378,6 +385,10 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 }
                 system_file = Some(value.clone());
             }
+            // The path stays an OPAQUE string, exactly as `--steering`'s
+            // does: this binary reads no directory itself, so resolving and
+            // attaching it is `RealChatModel::open`'s job.
+            "--vision-sidecar" => parsed.vision_sidecar = Some(value.clone()),
             "--api-key" => {
                 if value.is_empty() {
                     return Err(

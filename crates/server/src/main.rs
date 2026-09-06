@@ -67,6 +67,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.default_system.clone(),
         args.prefix_reuse,
         args.session_slots,
+        args.vision_sidecar.as_deref().map(std::path::Path::new),
     )?;
     // Both sized figures are the RESOLVED ones, never `args`: under `auto`
     // the request carries no number, and each has to be readable beside any
