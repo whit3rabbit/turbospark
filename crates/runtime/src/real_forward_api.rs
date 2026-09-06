@@ -83,6 +83,24 @@ impl RealForwardRunner {
         self.vision.as_ref().map(|v| v.is_mapped_residency())
     }
 
+    /// Overrides the vision tower's MLP row tile (Part B1,
+    /// `crate::vision::scratch::VISION_MLP_TILE_ROWS` by default) after it
+    /// has opened, so a test can force several loop iterations on a page far
+    /// smaller than any real one would need tiling for -- e.g. a 16-patch
+    /// synthetic fixture at a tile of 4, which is otherwise always a single
+    /// iteration under the shipped default.
+    ///
+    /// No-op if no image has been encoded yet: the tower opens lazily on the
+    /// first [`Self::encode_image`] call, so there is nothing here to
+    /// override before that. Call `encode_image` once first to open it, then
+    /// this, then `encode_image` again to see the tiled arm.
+    #[doc(hidden)]
+    pub fn set_vision_mlp_tile_rows(&mut self, tile_rows: usize) {
+        if let Some(vision) = self.vision.as_mut() {
+            vision.mlp_tile_rows = tile_rows;
+        }
+    }
+
     /// Run one preprocessed image through the vision tower (ROADMAP M-V4).
     ///
     /// Returns the `[merged_tokens, out_hidden_size]` FP16 rows the trunk's

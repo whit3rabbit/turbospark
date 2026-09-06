@@ -10,13 +10,18 @@
 //! residency is `2 x block_stride` of pinned slots plus one page's scratch,
 //! and the scratch goes away between pages.
 //!
-//! At the real widths that is about 152 MB for a 5,120-patch page and about
-//! 1.9 GB for the 64,516-patch extreme. **The lever if the extreme page ever
-//! matters is row-tiling the MLP**: `fc1 -> gelu -> fc2` is row-independent,
-//! so a fixed row tile caps [`VisionScratch::h1`] (the 555 MB term at that
-//! size) with identical arithmetic. Attention cannot be tiled the same way --
-//! it is bidirectional over the whole page -- so that lever bounds the MLP
-//! term alone and nothing else.
+//! At the real widths that was about 152 MB for a 5,120-patch page and about
+//! 1.9 GB for the 64,516-patch extreme, before [`VISION_MLP_TILE_ROWS`]
+//! (Part B1): `fc1 -> gelu -> fc2` is row-independent, so a fixed row tile
+//! caps [`VisionScratch::h1`] (the 555 MB term at the extreme page) with
+//! identical arithmetic -- the loop runs the same three dispatches once per
+//! tile instead of once for the whole page. Attention cannot be tiled the
+//! same way -- it is bidirectional over the whole page -- so that lever
+//! bounds the MLP term alone and nothing else. The tiling is unconditional
+//! rather than gated on page size: an ordinary 1024x1280 OCR page is 5,120
+//! patches, already more than one [`VISION_MLP_TILE_ROWS`]-row tile, so the
+//! byte saving and the loop both apply to it too, not only to the extreme
+//! case that motivated the lever.
 //!
 //! # What is reused and what is not
 //!
@@ -53,7 +58,10 @@ pub(crate) struct VisionScratch {
     /// A sublayer's output before its residual add, `[seq, hidden]`. Serves
     /// the attention projection and the MLP's `fc2`.
     pub(crate) proj: gpu::MetalBuffer,
-    /// The MLP's hidden activation, `[seq, intermediate]`.
+    /// The MLP's hidden activation, `[min(seq, tile_rows), intermediate]`
+    /// (Part B1's row tiling; see [`VISION_MLP_TILE_ROWS`]) -- one tile's
+    /// worth, reused across every tile of the page rather than sized for the
+    /// whole thing.
     pub(crate) h1: gpu::MetalBuffer,
     /// Rope frequency rows, `[seq, head_dim / 2]` FP16, one row per patch
     /// shared by every head.
@@ -79,8 +87,48 @@ fn fp16(elems: usize) -> u64 {
     (elems as u64) * 2
 }
 
+/// Row tile for the MLP's `fc1 -> gelu -> fc2` (`crate::vision::block`'s
+/// "--- MLP half ---" loop). `fc1 -> gelu -> fc2` is row-independent, so a
+/// fixed tile caps [`VisionScratch::h1`] at
+/// `min(seq, VISION_MLP_TILE_ROWS) * intermediate` elements regardless of
+/// how many patches the page has, with identical arithmetic to running
+/// every row at once.
+///
+/// Named exactly this because [`scratch_bytes`] and the tiling loop in
+/// `block.rs` both reference it, and the two must never drift apart about
+/// what "the tile" means.
+pub(crate) const VISION_MLP_TILE_ROWS: usize = 2048;
+
+/// Bytes one page of `seq` patches costs in scratch, at a given MLP row
+/// tile.
+///
+/// The single formula both [`VisionScratch::allocate`] (which actually
+/// allocates at this size) and `VisionTower::scratch_bytes` (which predicts
+/// it for a caller sizing a page budget, and which passes its own current
+/// [`VisionTower::mlp_tile_rows`] here) call, so the two can never
+/// independently drift -- only whether either one is applied at all, which
+/// is exactly the failure mode `VisionTower::scratch_bytes`'s own doc comment
+/// exists to let a gate assert against.
+///
+/// [`VisionTower::mlp_tile_rows`]: super::VisionTower
+pub(crate) fn scratch_bytes(shape: &VisionShape, seq: usize, tile: usize) -> u64 {
+    let h = shape.hidden;
+    let merged = seq / shape.patches_per_token();
+    let h1_rows = tile.min(seq);
+    fp16(seq * shape.patch_dim)
+        + fp16(seq * (shape.head_dim / 2))
+        + fp16(seq * h)
+        // x, normed, q, k, v, attn, proj.
+        + fp16(seq * h) * 7
+        + fp16(h1_rows * shape.intermediate)
+        + fp16(merged * shape.merger_input())
+        + fp16(merged * shape.out_hidden)
+}
+
 impl VisionScratch {
-    /// Allocate for a page of `seq` patches.
+    /// Allocate for a page of `seq` patches, with the MLP's hidden
+    /// activation capped at `min(seq, tile_rows)` rows (Part B1's row
+    /// tiling; see [`VISION_MLP_TILE_ROWS`]).
     ///
     /// `rows`, `freqs` and `pos` are uploaded WITH data because all three are
     /// host-computed per image; the rest are output buffers.
@@ -88,6 +136,7 @@ impl VisionScratch {
         context: &gpu::MetalContext,
         shape: &VisionShape,
         seq: usize,
+        tile_rows: usize,
         rows: &[half::f16],
         freqs: &[half::f16],
         pos: &[half::f16],
@@ -129,14 +178,8 @@ impl VisionScratch {
         }
 
         let wide = fp16(seq * h);
-        let bytes = fp16(rows.len())
-            + fp16(freqs.len())
-            + fp16(pos.len())
-            // x, normed, q, k, v, attn, proj.
-            + wide * 7
-            + fp16(seq * shape.intermediate)
-            + fp16(merged * m)
-            + fp16(merged * shape.out_hidden);
+        let h1_rows = tile_rows.min(seq);
+        let bytes = scratch_bytes(shape, seq, tile_rows);
 
         Ok(Self {
             rows: context.new_buffer_with_data(rows),
@@ -147,7 +190,7 @@ impl VisionScratch {
             v: context.new_output_buffer(wide),
             attn: context.new_output_buffer(wide),
             proj: context.new_output_buffer(wide),
-            h1: context.new_output_buffer(fp16(seq * shape.intermediate)),
+            h1: context.new_output_buffer(fp16(h1_rows * shape.intermediate)),
             freqs: context.new_buffer_with_data(freqs),
             pos: context.new_buffer_with_data(pos),
             m1: context.new_output_buffer(fp16(merged * m)),

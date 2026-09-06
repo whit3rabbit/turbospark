@@ -180,6 +180,13 @@ pub struct VisionTower {
     /// returns (the trunk case borrows the RUNNER's `weights` field at every
     /// call site instead).
     sidecar_weights: Option<gpu::ResidentGpuWeights>,
+    /// The MLP's row tile (Part B1), `scratch::VISION_MLP_TILE_ROWS` at open
+    /// and overridable afterward by the `#[doc(hidden)]` test knob
+    /// `RealForwardRunner::set_vision_mlp_tile_rows` -- a per-RUNNER-session
+    /// value rather than a global constant read at the call site, so a test
+    /// can force several loop iterations on a page far smaller than any real
+    /// one would need tiling for.
+    pub(crate) mlp_tile_rows: usize,
 }
 
 impl VisionTower {
@@ -397,6 +404,7 @@ impl VisionTower {
             last_scratch_bytes: 0,
             overflow: overflow::VisionOverflowCapture::from_env(),
             sidecar_weights: None,
+            mlp_tile_rows: scratch::VISION_MLP_TILE_ROWS,
         })
     }
 
@@ -546,7 +554,15 @@ impl VisionTower {
         let pos = stages::pos_embed_rows(&self.pos_table, &table, &self.shape)?;
 
         gpu::autorelease_pool(|| {
-            let s = VisionScratch::allocate(context, &self.shape, seq, &rows, &freqs, &pos)?;
+            let s = VisionScratch::allocate(
+                context,
+                &self.shape,
+                seq,
+                self.mlp_tile_rows,
+                &rows,
+                &freqs,
+                &pos,
+            )?;
             self.last_scratch_bytes = s.bytes;
 
             let pass = context.begin_pass();
@@ -584,6 +600,7 @@ impl VisionTower {
                         &self.blocks[n],
                         &s,
                         &self.shape,
+                        self.mlp_tile_rows,
                     )?;
                 } else {
                     let slot = n % VISION_SLOTS;
@@ -604,6 +621,7 @@ impl VisionTower {
                         &self.blocks[n],
                         &s,
                         &self.shape,
+                        self.mlp_tile_rows,
                     )?;
                 }
                 // The mapped arm has no pread step and no per-block
@@ -668,18 +686,15 @@ impl VisionTower {
     /// it.
     ///
     /// Exposed so the memory gate can assert the formula rather than
-    /// restating it, which is the shape that rots.
+    /// restating it, which is the shape that rots. Calls
+    /// [`scratch::scratch_bytes`] with THIS tower's own current
+    /// [`Self::mlp_tile_rows`] (`scratch::VISION_MLP_TILE_ROWS` unless a test
+    /// has overridden it) rather than restating the formula here a second
+    /// time -- the exact shape [`VisionScratch::allocate`] itself now uses,
+    /// so a caller sizing a page budget and the real allocator can never
+    /// independently drift, whichever tile is in effect.
     pub(crate) fn scratch_bytes(&self, seq: usize) -> u64 {
-        let h = self.shape.hidden as u64;
-        let seq64 = seq as u64;
-        let merged = seq64 / self.shape.patches_per_token() as u64;
-        2 * (seq64 * self.shape.patch_dim as u64
-            + seq64 * (self.shape.head_dim / 2) as u64
-            + seq64 * h
-            + seq64 * h * 7
-            + seq64 * self.shape.intermediate as u64
-            + merged * self.shape.merger_input() as u64
-            + merged * self.shape.out_hidden as u64)
+        scratch::scratch_bytes(&self.shape, seq, self.mlp_tile_rows)
     }
 }
 

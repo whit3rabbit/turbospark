@@ -51,6 +51,18 @@ use crate::vision::weights::{BlockRoles, Role};
 /// `base + roles.at(role)`: `roles.at()` is always relative to the start of
 /// this one block's own blob, and `base` places that blob within whichever
 /// buffer `slot` is.
+///
+/// `tile_rows` is the MLP's row tile (Part B1, `scratch::VISION_MLP_TILE_ROWS`
+/// by default): `fc1 -> gelu -> fc2` is row-independent, so the MLP half runs
+/// in `ceil(seq / tile_rows)` iterations over `s.h1`, which is sized for one
+/// tile rather than the whole page. Every dispatch in every iteration still
+/// goes through this same `pass` -- no new command buffer, no commit mid-loop
+/// -- so tile `t+1`'s `fc1` write to `s.h1` is issued on the same encoder
+/// strictly after tile `t`'s `fc2` read of it, which is what makes reusing
+/// one small buffer across tiles safe (`crates/gpu/CLAUDE.md` Gotcha 8's
+/// commit-order guarantee, applied one grain finer than the block loop
+/// already relies on it).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_block(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
@@ -59,6 +71,7 @@ pub(crate) fn encode_block(
     roles: &BlockRoles,
     s: &VisionScratch,
     shape: &VisionShape,
+    tile_rows: usize,
 ) -> Result<(), RealForwardError> {
     let seq = s.seq as u32;
     let hidden = shape.hidden as u32;
@@ -160,43 +173,58 @@ pub(crate) fn encode_block(
     )
     .map_err(gpu_err)?;
 
-    gpu::encode_vision_matmul(
-        context,
-        pass,
-        (&s.normed, 0),
-        (slot, base + roles.at(Role::Fc1W)),
-        Some((slot, base + roles.at(Role::Fc1B))),
-        (&s.h1, 0),
-        seq,
-        hidden,
-        inter,
-    )
-    .map_err(gpu_err)?;
+    // Row-tiled (Part B1): `fc1 -> gelu -> fc2` is row-independent, so
+    // looping over fixed-size row tiles of `s.normed`/`s.proj` through the
+    // ONE tile-sized `s.h1` buffer is identical arithmetic to running every
+    // row through a page-sized `h1` at once. An ordinary page (5,120 patches
+    // at the default 2,048-row tile) still takes 3 iterations here, which is
+    // intentional -- see the module doc.
+    let tile = tile_rows.max(1);
+    let mut t0 = 0usize;
+    while t0 < s.seq {
+        let rows = tile.min(s.seq - t0);
+        let row_off = (t0 * shape.hidden * 2) as u64;
 
-    // TANH here, ERF in the merger. `nn.GELU(approx="tanh")` is what the
-    // reference's `MLP` constructs; its `PatchMerger` constructs a bare
-    // `nn.GELU()`.
-    gpu::encode_vision_gelu(
-        context,
-        pass,
-        (&s.h1, 0),
-        (s.seq * shape.intermediate) as u32,
-        gpu::GeluKind::Tanh,
-    )
-    .map_err(gpu_err)?;
+        gpu::encode_vision_matmul(
+            context,
+            pass,
+            (&s.normed, row_off),
+            (slot, base + roles.at(Role::Fc1W)),
+            Some((slot, base + roles.at(Role::Fc1B))),
+            (&s.h1, 0),
+            rows as u32,
+            hidden,
+            inter,
+        )
+        .map_err(gpu_err)?;
 
-    gpu::encode_vision_matmul(
-        context,
-        pass,
-        (&s.h1, 0),
-        (slot, base + roles.at(Role::Fc2W)),
-        Some((slot, base + roles.at(Role::Fc2B))),
-        (&s.proj, 0),
-        seq,
-        inter,
-        hidden,
-    )
-    .map_err(gpu_err)?;
+        // TANH here, ERF in the merger. `nn.GELU(approx="tanh")` is what the
+        // reference's `MLP` constructs; its `PatchMerger` constructs a bare
+        // `nn.GELU()`.
+        gpu::encode_vision_gelu(
+            context,
+            pass,
+            (&s.h1, 0),
+            (rows * shape.intermediate) as u32,
+            gpu::GeluKind::Tanh,
+        )
+        .map_err(gpu_err)?;
+
+        gpu::encode_vision_matmul(
+            context,
+            pass,
+            (&s.h1, 0),
+            (slot, base + roles.at(Role::Fc2W)),
+            Some((slot, base + roles.at(Role::Fc2B))),
+            (&s.proj, row_off),
+            rows as u32,
+            inter,
+            hidden,
+        )
+        .map_err(gpu_err)?;
+
+        t0 += rows;
+    }
 
     gpu::encode_vision_residual_add(context, pass, (&s.x, 0), (&s.proj, 0), wide)
         .map_err(gpu_err)?;
