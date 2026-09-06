@@ -38,6 +38,48 @@
 //! `crates/gpu/tests/vision_block_parity.rs` established) and each writes a
 //! contiguous `[seq, hidden]` the rope and attention kernels can read
 //! directly.
+//!
+//! # Buffer aliasing (Part B2)
+//!
+//! `attn`, `proj` and `m1` are ALIASES rather than separate allocations --
+//! `metal::Buffer::clone()` retains the same underlying `MTLBuffer`, so
+//! `s.attn`, `s.proj` and `s.m1` are each a second Rust handle onto bytes
+//! `s.normed`, `s.q` and `s.k` already own. This is sound under the SAME
+//! commit-order guarantee `crate::vision::mod`'s block loop already states
+//! for the two streamer slots (`crates/gpu/CLAUDE.md` Gotcha 8: dispatches on
+//! one command buffer execute in commit order), applied at a finer grain --
+//! every read of an aliased buffer under its old name is dispatched, in this
+//! pass, strictly before the next write under its new name:
+//!
+//! - **`attn` aliases `normed`.** `normed`'s three reads (the qkv matmuls)
+//!   all happen before `attn` is first written (the attention kernel);
+//!   `attn`'s one read (the output projection) happens before `normed` is
+//!   next written (block N's `norm2`, or the merger's own norm after the
+//!   last block).
+//! - **`proj` aliases `q`.** `q`'s last read (the attention kernel) happens
+//!   before `proj` is first written (the output projection); `proj` is then
+//!   read (the first residual add) and overwritten (the MLP's `fc2`) and
+//!   read again (the second residual add) entirely within the SAME block,
+//!   before the next block's `q` write.
+//! - **`m1` aliases `k`.** `k` is read by every block's rope-and-attention
+//!   pair and never touched by the merger; `m1` is written and read ONLY by
+//!   the merger, which runs once, after the last block. The two are also the
+//!   SAME byte count for any valid page: `merged * merger_input ==
+//!   (seq / merge^2) * (hidden * merge^2) == seq * hidden`, an algebraic
+//!   identity rather than a coincidence of one shape, since `allocate`
+//!   already refuses a `seq` that is not a whole number of merge windows.
+//!
+//! `v` is NOT aliased: it has no dead point before the block loop ends (every
+//! block's attention kernel reads it), so there is no free buffer to fold it
+//! into. Five physical wide (`seq * hidden`) allocations remain: `x`,
+//! `normed`(+`attn`), `q`(+`proj`), `k`(+`m1`), `v` -- against seven before
+//! this change, before counting `m1`'s own separate allocation as an eighth
+//! it no longer needs.
+//!
+//! This rests on the SERIAL encoder: a future prefetch or overlap arm that
+//! lets two blocks' dispatches interleave on different command buffers would
+//! have to un-alias first, since the ordering argument above assumes one
+//! command buffer's dispatches never race another's.
 
 use crate::real_forward_types::RealForwardError;
 use crate::vision::shape::VisionShape;
@@ -53,10 +95,12 @@ pub(crate) struct VisionScratch {
     pub(crate) q: gpu::MetalBuffer,
     pub(crate) k: gpu::MetalBuffer,
     pub(crate) v: gpu::MetalBuffer,
-    /// Attention output, `[seq, hidden]`.
+    /// Attention output, `[seq, hidden]`. ALIASES `normed` (Part B2, see the
+    /// module doc) -- not a separate allocation.
     pub(crate) attn: gpu::MetalBuffer,
     /// A sublayer's output before its residual add, `[seq, hidden]`. Serves
-    /// the attention projection and the MLP's `fc2`.
+    /// the attention projection and the MLP's `fc2`. ALIASES `q` (Part B2)
+    /// -- not a separate allocation.
     pub(crate) proj: gpu::MetalBuffer,
     /// The MLP's hidden activation, `[min(seq, tile_rows), intermediate]`
     /// (Part B1's row tiling; see [`VISION_MLP_TILE_ROWS`]) -- one tile's
@@ -70,7 +114,9 @@ pub(crate) struct VisionScratch {
     /// patch embedding. Uploaded rather than gathered: see
     /// `stages::pos_embed_rows`.
     pub(crate) pos: gpu::MetalBuffer,
-    /// The merger's hidden activation, `[merged, merger_input]`.
+    /// The merger's hidden activation, `[merged, merger_input]`. ALIASES `k`
+    /// (Part B2) -- not a separate allocation; the two are the same byte
+    /// count for any valid page (see the module doc).
     pub(crate) m1: gpu::MetalBuffer,
     /// The tower's output, `[merged, out_hidden]`.
     pub(crate) out: gpu::MetalBuffer,
@@ -118,10 +164,12 @@ pub(crate) fn scratch_bytes(shape: &VisionShape, seq: usize, tile: usize) -> u64
     fp16(seq * shape.patch_dim)
         + fp16(seq * (shape.head_dim / 2))
         + fp16(seq * h)
-        // x, normed, q, k, v, attn, proj.
-        + fp16(seq * h) * 7
+        // x, normed(+attn), q(+proj), k(+m1), v -- five physical allocations
+        // (Part B2's buffer aliasing; see the module doc). `m1`'s own term is
+        // gone because it is `k`'s buffer under another name, never a
+        // separate allocation, and the two are always the same byte count.
+        + fp16(seq * h) * 5
         + fp16(h1_rows * shape.intermediate)
-        + fp16(merged * shape.merger_input())
         + fp16(merged * shape.out_hidden)
 }
 
@@ -181,19 +229,39 @@ impl VisionScratch {
         let h1_rows = tile_rows.min(seq);
         let bytes = scratch_bytes(shape, seq, tile_rows);
 
+        // Part B2: `attn`, `proj` and `m1` are ALIASES (`Buffer::clone()`
+        // retains the same underlying `MTLBuffer`), never separate
+        // allocations -- see the module doc for why this is safe under the
+        // serial encoder's commit order. `m1`'s alleged shape,
+        // `[merged, merger_input]`, is `merged * m` elements, which the
+        // module doc proves algebraically equal to `seq * h` for any valid
+        // page, so aliasing `k`'s `wide`-sized buffer under that name loses
+        // no capacity.
+        debug_assert_eq!(
+            merged * m,
+            seq * h,
+            "m1 and k must be the same element count for this alias to be sound"
+        );
+        let normed = context.new_output_buffer(wide);
+        let q = context.new_output_buffer(wide);
+        let k = context.new_output_buffer(wide);
+        let attn = normed.clone();
+        let proj = q.clone();
+        let m1 = k.clone();
+
         Ok(Self {
             rows: context.new_buffer_with_data(rows),
             x: context.new_output_buffer(wide),
-            normed: context.new_output_buffer(wide),
-            q: context.new_output_buffer(wide),
-            k: context.new_output_buffer(wide),
+            normed,
+            q,
+            k,
             v: context.new_output_buffer(wide),
-            attn: context.new_output_buffer(wide),
-            proj: context.new_output_buffer(wide),
+            attn,
+            proj,
             h1: context.new_output_buffer(fp16(h1_rows * shape.intermediate)),
             freqs: context.new_buffer_with_data(freqs),
             pos: context.new_buffer_with_data(pos),
-            m1: context.new_output_buffer(fp16(merged * m)),
+            m1,
             out: context.new_output_buffer(fp16(merged * shape.out_hidden)),
             seq,
             merged,
