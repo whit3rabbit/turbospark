@@ -299,22 +299,24 @@ extension AppModel {
         let clearedChatID = selectedChatID
         let clearedProject = project(forChat: clearedChatID)
         if let index = selectedChatIndex {
-            if chats[index].isGhost {
-                // The row fields are placeholders; the vault holds the
-                // conversation, so that is what Clear empties.
-                mutateGhostPayload(for: chats[index].id) {
-                    $0.messages.removeAll()
-                    $0.todos = []
-                    $0.contextSummary = nil
-                    $0.skillState = nil
+                if chats[index].isGhost {
+                    // The row fields are placeholders; the vault holds the
+                    // conversation, so that is what Clear empties.
+                    mutateGhostPayload(for: chats[index].id) {
+                        $0.messages.removeAll()
+                        $0.todos = []
+                        $0.contextSummary = nil
+                        $0.compactedMessageCount = 0
+                        $0.skillState = nil
+                    }
+                } else {
+                    chats[index].messages.removeAll()
+                    chats[index].contextSummary = nil
+                    chats[index].compactedMessageCount = 0
+                    chats[index].skillState = nil
+                    chats[index].todos = []
+                    chats[index].updatedAt = Date()
                 }
-            } else {
-                chats[index].messages.removeAll()
-                chats[index].contextSummary = nil
-                chats[index].skillState = nil
-                chats[index].todos = []
-                chats[index].updatedAt = Date()
-            }
         }
         skillStateLastError = nil
         if pendingToolCallChatID == clearedChatID {
@@ -339,6 +341,20 @@ extension AppModel {
             error = "Cannot attach files while generating."
             return
         }
+        appendPromptAttachmentDuringSubmission(attachment, toChatID: chatID)
+    }
+
+    /// The tail of `addPromptAttachment` WITHOUT the interactive guard.
+    ///
+    /// The guard on the public entry exists to refuse a user clicking
+    /// attach mid-turn. `MentionResolver` is not that caller: it runs inside
+    /// the very submission it is resolving, where `submitting` is true by
+    /// construction. Keep the guard on the public path -- lifting it would
+    /// let the plus menu append onto a chat mid-generation again.
+    func appendPromptAttachmentDuringSubmission(
+        _ attachment: AppPromptAttachment,
+        toChatID chatID: UUID?
+    ) {
         let targetID = chatID ?? selectedChatID
         if let index = chats.firstIndex(where: { $0.id == targetID }) {
             chats[index].draftAttachments.append(attachment)

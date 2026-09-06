@@ -13,6 +13,10 @@ public struct GhostChatPayload: Codable, Equatable {
     public var todos: [TodoItem]
     /// Optional context summary or metadata.
     public var contextSummary: String?
+    /// Leading message rows the summary replaces in the prompt. Same meaning
+    /// as `AppChat.compactedMessageCount`; the vault is per-launch, so this
+    /// needs no tolerant decode.
+    public var compactedMessageCount: Int
     /// Bounded execution state, when the project runs in SKILL.state mode.
     public var skillState: AppSkillState?
     /// Uncommitted draft prompt text.
@@ -22,12 +26,14 @@ public struct GhostChatPayload: Codable, Equatable {
         messages: [AppChatMessage] = [],
         todos: [TodoItem] = [],
         contextSummary: String? = nil,
+        compactedMessageCount: Int = 0,
         skillState: AppSkillState? = nil,
         draft: String = ""
     ) {
         self.messages = messages
         self.todos = todos
         self.contextSummary = contextSummary
+        self.compactedMessageCount = compactedMessageCount
         self.skillState = skillState
         self.draft = draft
     }

@@ -264,8 +264,18 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     public var messages: [AppChatMessage]
     /// Active task checklist for this session.
     public var todos: [TodoItem]
-    /// Optional context summary or metadata.
+    /// Summary of the conversation's older turns, written by compaction.
+    ///
+    /// Long unwritten: compaction did not exist, so this stayed nil and the
+    /// only reader was `clearOutput`. It now carries the structured summary
+    /// `AppChatCompaction` produces; `compactedMessageCount` says which rows
+    /// it covers.
     public var contextSummary: String?
+    /// How many leading `messages` rows the summary in `contextSummary`
+    /// replaces in the prompt. The rows stay in the transcript and on disk;
+    /// only history assembly skips them, so the transcript and the prompt can
+    /// disagree by exactly this prefix. 0 = nothing compacted.
+    public var compactedMessageCount: Int
     /// System prompt for THIS conversation, overriding the app-wide default.
     ///
     /// `nil` means "use the default" and an empty string means the same, so a
@@ -301,6 +311,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         messages: [AppChatMessage] = [],
         todos: [TodoItem] = [],
         contextSummary: String? = nil,
+        compactedMessageCount: Int = 0,
         systemPrompt: String? = nil,
         skillState: AppSkillState? = nil,
         createdAt: Date = Date(),
@@ -315,6 +326,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.messages = messages
         self.todos = todos
         self.contextSummary = contextSummary
+        self.compactedMessageCount = compactedMessageCount
         self.systemPrompt = systemPrompt
         self.skillState = skillState
         self.createdAt = createdAt
@@ -336,6 +348,15 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         messages = try container.decodeLossyArray(AppChatMessage.self, forKey: .messages)
         todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos) ?? []
         contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
+        compactedMessageCount = try container.decodeIfPresent(
+            Int.self, forKey: .compactedMessageCount) ?? 0
+        // **THIS LINE WAS MISSING, AND THE FAILURE WAS THE ONE THIS DECODER
+        // EXISTS TO PREVENT.** Every other optional field was read with
+        // `decodeIfPresent` except this one, so the synthesized ENCODER wrote
+        // `systemPrompt` to the archive and the decoder never read it back: a
+        // per-chat system prompt survived until relaunch and then silently
+        // reverted to the app-wide default.
+        systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
         skillState = try container.decodeIfPresent(AppSkillState.self, forKey: .skillState)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()

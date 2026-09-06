@@ -81,15 +81,30 @@ extension AppModel {
         self.modelReasoningDefaults = settings.modelReasoningDefaults
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
+        self.autoCompactEnabled = settings.autoCompact
+        self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
+            settings.compactionKeepRecentTurns)
         // The pinned port is a plain preference; the server API key is a
         // credential and comes from the Keychain instead (ServerKeychain).
         self.serverPinnedPort = settings.serverPinnedPort
         self.serverAPIKeyInput = ServerKeychain.loadKey() ?? ""
+        self.serverEmbeddingModelInput = settings.serverEmbeddingModel
+        self.hfEndpointInput = settings.hfEndpoint
+        if !settings.hfEndpoint.isEmpty {
+            try? TurboSparkCatalog.setHfEndpoint(settings.hfEndpoint)
+        }
+        self.showMenuBarItem = settings.showMenuBarItem
+        self.serverAutoStartOnLaunch = settings.serverAutoStartOnLaunch
+        self.keepServerRunningInBackground = settings.keepServerRunningInBackground
         // `ToolRiskClassifier` is a static surface reached from the agent loop
         // with no AppModel in hand, so the flag lives on the gate rather than
         // being threaded through `assessTerminalCommand`. Set it here, once,
         // where settings are already being applied.
         CommandGate.vetoEnabled = settings.commandAdvisoryVeto
+
+        if settings.serverAutoStartOnLaunch && server == nil {
+            startServer()
+        }
     }
 
     /// Persists after a short quiet period, collapsing a burst of mutations
@@ -150,9 +165,16 @@ extension AppModel {
             modelReasoningDefaults: modelReasoningDefaults,
             interactionMode: interactionMode.rawValue,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
+            autoCompact: autoCompactEnabled,
+            compactionKeepRecentTurns: compactionKeepRecentTurns,
             serverPinnedPort: serverPinnedPort,
             defaultSystemPrompt: defaultSystemPrompt,
-            enabledPlugins: pluginEnableState
+            enabledPlugins: pluginEnableState,
+            showMenuBarItem: showMenuBarItem,
+            serverAutoStartOnLaunch: serverAutoStartOnLaunch,
+            keepServerRunningInBackground: keepServerRunningInBackground,
+            serverEmbeddingModel: serverEmbeddingModelInput,
+            hfEndpoint: hfEndpointInput
         )
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not

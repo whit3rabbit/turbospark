@@ -91,6 +91,31 @@ extension AppModel {
 
         runTask = Task {
             do {
+                // **AUTO-COMPACTION, BEFORE THE FIT.** Near the window the
+                // choice used to be the no-room error below or `fitWindow`'s
+                // silent drop of older turns; summarizing them first is the
+                // path that keeps the conversation going. The bounded
+                // SKILL.state path is excluded: its prompt is O(1) in step
+                // count and never needs it. On any failure this falls
+                // through to the unchanged fit below, so compaction adds no
+                // new way for a turn to die.
+                var turnHistory = rawHistory
+                if !usesSkillState {
+                    let compacted = await self.runAutoCompactionIfNeeded(
+                        chatID: turnChatID, project: turnProject, rawHistory: rawHistory,
+                        maxContext: session.info.maxContext,
+                        reservedForNew: requestedNewTokens, reasoning: self.reasoning)
+                    if compacted {
+                        // The boundary moved; assemble again from it rather
+                        // than reuse a history built against the old one.
+                        // By ID, not the captured index: the array can have
+                        // changed while the summarizer ran.
+                        guard let refreshed = self.chats.firstIndex(where: { $0.id == turnChatID })
+                        else { return }
+                        turnHistory = self.buildAppendOnlyHistory(
+                            chatIndex: refreshed, project: turnProject)
+                    }
+                }
                 // **THE PROMPT BUDGET IS THE WINDOW MINUS WHAT GENERATION
                 // NEEDS** (state#36). This called `fitWindow` at its default
                 // bound, which is the whole `maxContext` -- so a history that
@@ -103,7 +128,7 @@ extension AppModel {
                     ? session.info.maxContext - requestedNewTokens
                     : session.info.maxContext
                 let fitted = try await session.fitWindow(
-                    rawHistory, maxTokens: promptBudget, reasoning: self.reasoning)
+                    turnHistory, maxTokens: promptBudget, reasoning: self.reasoning)
                 guard fitted.hasRoomForGeneration else {
                     self.error =
                         "This conversation no longer fits: \(fitted.measuredTokens) prompt tokens "

@@ -18,6 +18,19 @@ extension AppModel {
     /// asserted without a Metal device and a 13 GB install -- and both of the
     /// defects this function carries (state#31, state#32) are silent, so
     /// there was nothing to notice either.
+    /// The ONE place the compaction summary enters a prompt: immediately
+    /// after the system message, or at the front when there is none. Both
+    /// builders below call this, so the prompt and the token estimate cannot
+    /// describe different summaries.
+    func insertingSummaryInjection(
+        _ history: [ChatMessage], summary: String?
+    ) -> [ChatMessage] {
+        guard let summary, !summary.isEmpty else { return history }
+        let injection = AppChatCompaction.injectionMessage(summary)
+        let at = history.firstIndex { $0.role != .system } ?? history.count
+        return history[..<at] + [injection] + history[at...]
+    }
+
     func buildAppendOnlyHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {
         var history: [ChatMessage] = []
         let systemContent = buildSystemPrompt(
@@ -29,7 +42,12 @@ extension AppModel {
 
         // Vault-aware: a ghost chat's decrypted transcript is what the model
         // gets, exactly as a normal chat's row is.
-        for msg in turnMessages(for: chats[chatIndex].id) {
+        let chatID = chats[chatIndex].id
+        let compaction = compactionState(chatID: chatID)
+        for (rowIndex, msg) in turnMessages(for: chatID).enumerated() {
+            // Rows the summary replaces never reach the prompt. They stay in
+            // the transcript and on disk; only this assembly skips them.
+            if rowIndex < compaction.boundary { continue }
             // **AN IMAGE-ONLY TURN HAS NO TEXT AND IS STILL A TURN.** This
             // guard predates images and would drop one entirely, leaving the
             // model to answer a question whose picture was never sent -- the
@@ -78,7 +96,7 @@ extension AppModel {
                     ChatMessage(role: .tool, content: "<\(tag)>\n\(res.output)\n</\(tag)>"))
             }
         }
-        return history
+        return insertingSummaryInjection(history, summary: compaction.summary)
     }
 
     /// The note appended to a turn that did not finish, or nil for one that
@@ -131,13 +149,21 @@ extension AppModel {
         if !systemContent.isEmpty {
             history.append(ChatMessage(role: .system, content: systemContent))
         }
-        history += selectedTurnMessages.compactMap { msg -> ChatMessage? in
-            guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { return nil }
-            return ChatMessage(
-                role: msg.role,
-                content: msg.content,
-                images: msg.imagePaths.map(ChatImage.path))
+        // Same boundary skip and same injection the prompt builder applies
+        // (both through `insertingSummaryInjection`), so the meter prices
+        // the prompt that would actually be sent rather than the
+        // uncompacted one.
+        let compaction = compactionState(chatID: selectedChatID)
+        for (rowIndex, msg) in selectedTurnMessages.enumerated() {
+            if rowIndex < compaction.boundary { continue }
+            guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { continue }
+            history.append(
+                ChatMessage(
+                    role: msg.role,
+                    content: msg.content,
+                    images: msg.imagePaths.map(ChatImage.path)))
         }
+        history = insertingSummaryInjection(history, summary: compaction.summary)
         if !promptText.isEmpty {
             history.append(ChatMessage(role: .user, content: promptText))
         }
