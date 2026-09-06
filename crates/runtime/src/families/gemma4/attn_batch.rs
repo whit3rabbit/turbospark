@@ -40,6 +40,18 @@ impl RealForwardRunner {
         base: u64,
         m: usize,
     ) -> Result<(), RealForwardError> {
+        // `TURBOSPARK_BATCHED_GEMV` writes K/V straight into the cache slot
+        // via an M-row GEMM, bypassing `kv_write::kv_write_target`'s
+        // staging fork entirely -- wiring `--kv-bits` into this path is a
+        // named follow-up (`docs/TRUBOQUANT.md`), not yet done, so a
+        // quantized layer is refused by name here rather than silently
+        // writing raw FP16 bytes into a buffer TurboQuant has sized for
+        // packed words.
+        if self.kv.layer_quant(layer).is_some() {
+            return Err(RealForwardError::Unsupported(
+                "--kv-bits is not yet supported with TURBOSPARK_BATCHED_GEMV".to_string(),
+            ));
+        }
         let arch = self.arch.clone();
         let hidden = arch.hidden_size as usize;
         let num_heads = arch.num_heads as u32;

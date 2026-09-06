@@ -31,7 +31,16 @@ use crate::synthetic_real::{
 
 const HIDDEN: usize = 64;
 const NUM_HEADS: usize = 4;
-const HEAD_DIM: usize = 16;
+// 32 rather than the smaller round number a synthetic fixture would
+// otherwise pick: `--kv-bits`'s TurboQuant codec requires a head_dim that
+// is a power of two in 32..=512 (`model_io::rht_supported`), and this
+// fixture is what `real_forward_llama_kv_quant.rs` opens with quantization
+// on. No existing test in this family asserts a frozen digest or a
+// specific head_dim (per this file's own doc: weights are untrained, so
+// only token counts and structural invariants are ever checked), which is
+// what makes widening it here safe -- confirmed by re-running the full
+// existing llama/qwen3moe suite after this change, not assumed.
+const HEAD_DIM: usize = 32;
 const NUM_KV_HEADS: usize = 2;
 /// Per-expert FFN width. The real Mixtral publishes ONE
 /// `feed_forward_length` and has no shared expert, so `intermediate_size`

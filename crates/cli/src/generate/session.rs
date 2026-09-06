@@ -133,7 +133,8 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let asked = map_speculation(request.speculation);
     let choice = resolve_drafter(map_drafter(request.speculative_drafter), model_dir);
     let steering = resolve_steering(request)?;
-    let mut runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+    let kv_quant = map_kv_bits(request.kv_bits);
+    let mut runner = RealForwardRunner::open_with_kv_quant(
         model_dir,
         arch,
         plan.resolved as usize,
@@ -143,8 +144,19 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         },
         runtime::draft_policies(&choice, asked),
         steering,
+        1,
+        kv_quant,
     )
     .map_err(|e| e.to_string())?;
+    // Reported only when NOT off, matching `--load-guard`'s convention
+    // (Gotcha in this crate's CLAUDE.md): this flag does not RESOLVE against
+    // the machine the way `--expert-cache-slots`/`--max-context` do, so
+    // there is no suggestion to surface on the common (off) path, and the
+    // common line stays exactly what every release before this flag existed
+    // printed.
+    if !request.quiet && kv_quant.is_on() {
+        eprintln!("kv-bits: {}", kv_quant.label());
+    }
     // Reported beside the resolved slot count, for that field's reason: an
     // edit applied to every token has to be readable next to any number
     // taken from the run.
@@ -408,6 +420,21 @@ fn map_load_guard(guard: invocation::LoadGuard) -> runtime::LoadGuard {
         invocation::LoadGuard::Custom(bytes) => runtime::LoadGuard::Custom {
             max_counted_bytes: bytes,
         },
+    }
+}
+
+/// The pure parser's mirror onto `model_io::KvQuant` (re-exported as
+/// `runtime::KvQuant`), the same one-place mapping every other duplicated
+/// enum in this file gets. Both sides accept exactly `off|2|3|3.5|4`, pinned
+/// against each other by construction rather than by a shared dependency:
+/// `invocation` may not depend on `model_io` (AGENTS.md `--expert-cache-slots`
+/// precedent), so the four TurboQuant widths are spelled twice.
+fn map_kv_bits(bits: invocation::KvBits) -> runtime::KvQuant {
+    match bits {
+        invocation::KvBits::Off => runtime::KvQuant::Off,
+        invocation::KvBits::TurboQuant { k_bits, v_bits } => {
+            runtime::KvQuant::TurboQuant { k_bits, v_bits }
+        }
     }
 }
 

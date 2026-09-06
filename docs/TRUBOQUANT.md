@@ -1,10 +1,120 @@
-# TurboQuant-MLX and KV-Cache Quantization (Assessed, Not Adopted)
+# TurboQuant KV-Cache Quantization
 
-The question this page answers: should this engine adopt KV-cache
-quantization in the shape of `sharpner/turboquant-mlx`
+**Status (2026-09-06): built and shipped as `--kv-bits off|2|3|3.5|4`,
+default OFF.** This page used to be titled "Assessed, Not Adopted" and
+conclude that KV quantization did not pay on this engine. That verdict is
+reversed -- see "The reversal" below for what changed and why the original
+reasoning (kept intact further down) was answering a different question
+than the one that mattered. The short version: "does this help today" was
+the wrong test for an opt-in flag that costs every other caller nothing.
+
+The rest of this page is in two parts. **The reversal and what was built**
+describes the shipped feature: the codec, the kernels, the per-layer
+policy, the flag surface, and what is still owed. **The original
+assessment (2026-08-15)** is kept below it unedited except for this
+banner, because it is the record of why the decision needed reversing
+rather than defaulting to on, and its negative findings (the QJL residual,
+the sub-4-bit quality cliff, the head-dimension sensitivity) are still
+true and still worth citing on their own terms.
+
+## The reversal
+
+The 2026-08-15 assessment read `sharpner/turboquant-mlx`
 (https://github.com/sharpner/turboquant-mlx), a proof of concept of
-Google's 2025 TurboQuant paper on Apple Silicon, and if not, are any of
-its ideas worth taking anyway?
+Google's 2025 TurboQuant paper, against this port's own memory and
+throughput profile and concluded: KV is not the dominant memory term for
+any family near a ceiling, attention is a single-digit share of decode at
+this port's 4-8K contexts, and the one thing that makes turboquant-mlx
+fast (MLX's fused `quantized_matmul`) is exactly the kernel this port
+would have had to write itself with no equivalent to borrow. All true, and
+all beside the point once the feature is opt-in: those are arguments for
+defaulting `--kv-bits` OFF, which it is, not for refusing to build it. A
+caller who wants a smaller KV cache at a stated quality cost -- a longer
+context on a memory-constrained machine, or a deliberate memory/quality
+trade this repo has no standing to make on someone else's behalf -- had no
+way to ask for one before this landed.
+
+**What was built goes further than the assessment's own recommendation.**
+Item 2 under "Ideas worth taking" said: if this is ever built, 4-bit
+affine is the only point worth building, skip fractional rates, skip
+Lloyd-Max, skip 2-bit. What actually shipped is mlx-vlm's real
+`_TurboQuantMSECodec` (`mlx_vlm/turboquant.py`) ported whole --
+`crates/compute::kv_quant` is a portable CPU reference for it, checked
+bit-identical against mlx-vlm's own printed sign vectors and packed words
+(`crates/compute/tests/kv_quant.rs`) -- which is the paper-correct
+Lloyd-Max path (their "V3"), not the affine one ("V2") the assessment
+called safe. Per K or V row: divide by its own norm (stored separately),
+apply a Randomized Hadamard Transform with a FIXED +/-1 sign vector (one
+per K or V for the whole model, mlx-vlm's own `KEY_SEED`/`VALUE_SEED`
+defaults of 0/1 -- not baked into the Q/K projections at repack time the
+way the assessment's "rotation stage" predicted, so no `crates/repack` or
+install-format change was needed at all), then quantize each rotated
+coordinate against a 1-D Lloyd-Max codebook fit to the sphere-marginal
+density a coordinate of a random rotated unit vector in `dim` dimensions
+follows. Widths are `off`, `2`, `3`, `3.5` (K3/V4, mlx-vlm's own split for
+its one fractional rate), and `4`.
+
+**And the hard part the assessment named -- a real fused dequant inside
+the attention kernel -- exists now.** `crates/gpu/src/shaders/attention_tq.metal`
+reads packed rows directly in the QK^T and AV passes;
+`crates/gpu/src/shaders/kv_quantize_tq.metal` is the write-side quantizer.
+Both are parity-tested against the CPU reference
+(`crates/gpu/tests/attention_tq_parity.rs`,
+`crates/gpu/tests/kv_quantize_parity.rs`).
+
+**Layer eligibility is mlx-vlm's own policy, not this port's invention.**
+`crates/model-io::kv_quant::layer_is_quantized` mirrors
+`should_quantize_kv_layer` exactly: every layer quantizes when the stack
+is two layers deep or fewer, otherwise every layer but the last does
+(mlx-vlm's own measurement that the last full-attention layer is
+quantization-sensitive on Gemma-class models). Sliding-window and linear
+(gated-DeltaNet) layers are never candidates regardless of position --
+callers gate on the mask value first. A head_dim outside `32..=512` or not
+a power of two REFUSES `--kv-bits` at open by name (`rht_supported`)
+rather than silently falling back to a slower path nothing here
+implements; mlx-vlm's own dense-rotation-matrix fallback for other widths
+was deliberately not ported.
+
+**Wired into every family and the whole stack, off by default
+everywhere.** `families/{gemma4,qwen,qwen4,llama,gptoss,museglimmer}/attn.rs`
+all dispatch the quantized path when `--kv-bits` is on (`qwen` covers both
+the dense and MoE halves of that architecture). The flag threads through
+`crates/invocation` (`KvBits`, the 5-place rule), `crates/cli`
+(`turbospark-check --kv-bits`), `crates/server` (same flag, resolved once
+at process open like `--speculative` and `--steering`), `crates/ffi`
+(`kvBits` wire option, `SessionInfo.kvBits` reporting what was resolved),
+and the Swift binding (`OpenOptions.KvBits`). `crates/bench` reaches it
+ONLY through a separate, more-parameterized opener
+(`open_model_runner_for_protocol_speculative_kv_quant`) that the plain
+protocol opener calls with `KvQuant::Off` explicitly -- the same
+structural guard `DraftPolicies` and `SteeringPolicy` already use so a new
+axis cannot reach a frozen memory-oracle or quality-gate row by accident
+(AGENTS.md Gotcha 35, `crates/bench/CLAUDE.md` Gotchas 4-5). Every family's
+real-forward test suite gained a `real_forward_<family>_kv_quant.rs`
+fixture-level suite.
+
+**What is still owed.** `crates/bench/tests/kv_quant_probe.rs` is the
+real-install measurement probe (peak footprint delta and perplexity delta
+per width, against `TURBOSPARK_KV_QUANT_INSTALL_DIR`) -- written and
+compiling, not yet run against real hardware. The standard real-model
+smoke (`AGENTS.md`'s greedy-then-sampled pair, with `--kv-bits` set) is
+also owed on an actual install; nothing in this repository's sandboxed
+development environment can run either. Until both have run once per
+family, treat every width above `off` as implemented-and-untested rather
+than verified.
+
+## The original assessment (2026-08-15)
+
+Kept for the record: this is what made KV quantization look like a bad
+trade before it was reframed as an opt-in flag rather than a default. Its
+factual claims about turboquant-mlx's own measurements, and about this
+port's memory and throughput profile as they stood in 2026-08-15, are
+unedited below.
+
+The question this page originally answered: should this engine adopt
+KV-cache quantization in the shape of `sharpner/turboquant-mlx`, a proof
+of concept of Google's 2025 TurboQuant paper on Apple Silicon, and if not,
+are any of its ideas worth taking anyway?
 
 The answer, assessed 2026-08-15 by reading their README against this port's
 own recorded measurements (no code was run and nothing here is a new
@@ -102,9 +212,10 @@ And one about cost: **V3, the path with no fused kernel, runs at ~16%
 of fp16.** That is the price of software dequant in the SDPA hot path,
 and it is the floor this port would start from without kernel work.
 
-## What implementing it here would take
+## What implementing it here would take (2026-08-15 estimate; see "The reversal" above for what actually landed)
 
-This port's KV cache is FP16 end to end. `crates/gpu/src/kv_cache.rs`
+This port's KV cache was FP16 end to end at the time of this estimate.
+`crates/gpu/src/kv_cache.rs`
 allocates one K and one V Metal buffer per layer at construction (linear
 for full-attention layers, a `sliding_window + 128` ring for SWA layers
 under `fp16_ring_enabled`), the host memcpys one token's row per layer
@@ -145,9 +256,10 @@ attention kernel alone is harder than a GEMV port: it has the ring, GQA,
 split-KV combine, and sinks axes to preserve). That cost is not the
 reason to decline, but it sets the bar the benefit has to clear.
 
-## Whether it pays here
+## Whether it pays here, as a DEFAULT (2026-08-15 analysis; still the reason `--kv-bits` defaults OFF)
 
-It does not, today, on either axis.
+It does not, today, on either axis -- which is an argument for the flag
+defaulting off, not for refusing to offer it. See "The reversal" above.
 
 **Memory.** Where KV actually sits in this port's measured footprints
 (all numbers from the recorded oracle rows and their accounting in
@@ -202,7 +314,14 @@ Knowledge, mostly. In order of value:
 2. **If KV quantization is ever built, 4-bit affine is the only point
    worth building.** The 3-bit and below cliff is steep on D=128 and
    their V3 codebook path shows the kernel cost of fancier schemes.
-   Skip fractional rates, skip Lloyd-Max, skip 2-bit.
+   Skip fractional rates, skip Lloyd-Max, skip 2-bit. **OVERRIDDEN
+   2026-09-06**: what shipped is the full Lloyd-Max V3 path at all five
+   widths including 2-bit, because a real fused kernel closed the cost gap
+   this item was reacting to, and every width below `off` is opt-in rather
+   than a default anyone pays for unasked. The quality-cliff finding
+   itself is not disputed -- a caller choosing 2-bit is choosing that cliff
+   with eyes open, which is a different thing from this port choosing it
+   for them.
 3. **Gemma is the pilot family.** Its head dims (256 SWA / 512 full) sit
    in the regime their data says is most quantization-tolerant: their
    D=256 model was the one where quantized KV matched or beat fp16.
@@ -223,23 +342,34 @@ step=256 growth trick solves a problem this port's
 allocate-once-at-construction design does not have), ring buffers,
 `MADV_DONTNEED` on reset, fused Metal attention.
 
-## What would change the answer
+## What would have changed the 2026-08-15 answer (now moot; kept for the reasoning)
 
-Named so the next reader does not re-derive this page:
+This section asked what would justify building the feature at all. That
+question is answered -- it is built, opt-in, default off. What is left of
+it is a note on when `--kv-bits` might be worth DEFAULTING to something
+other than off, which nothing here proposes today:
 
 - **Long-context support landing.** If the protocol context ever moves
   to 32K+, KV becomes the growing term for every family (it is the only
-  per-token term on dense families, per Gotcha 40's accounting) and 4-bit
-  affine KV with a fused dequant attention kernel becomes the design to
-  reach for. V2-shaped: affine, 4-bit, optional baked rotation, no QJL,
-  nothing below 4 bits. Pilot on Gemma per item 3 above.
+  per-token term on dense families, per Gotcha 40's accounting), and a
+  case could be made for resolving `--kv-bits auto` to 4-bit on the
+  families closest to a ceiling. Nothing here proposes that default change
+  today; it would need its own quality-gate sign-off per family.
 - **A memory ceiling actually binding.** Today no install is refused for
   KV. If a family arrives whose KV at its own protocol window does not
-  fit beside its slot cache, this trades kernel work for admission.
+  fit beside its slot cache, `--kv-bits` is already the tool to reach for.
 - **An attention-bound profile.** If a future dispatch ranking shows
   `attention_decode_partial` dominating cb1 (it grows with context, and
-  today it is third), halving its bytes read becomes a throughput lever
-  rather than a memory one.
+  today it is third), the shipped kernel is already the throughput lever;
+  nothing further needs building.
 
-None of those are on the roadmap. Until one is, this page is the
-decision: read, learned from, not adopted.
+## Real-model verification owed
+
+Everything above the codec's own unit and parity tests is fixture-level.
+Before quoting a memory or quality number for any `--kv-bits` width on a
+real install: run `crates/bench/tests/kv_quant_probe.rs`
+(`TURBOSPARK_KV_QUANT_INSTALL_DIR=<install> cargo test -p turbospark-bench
+--test kv_quant_probe --release -- --ignored --nocapture`) and the
+standard greedy-then-sampled real-model smoke from `AGENTS.md` with
+`--kv-bits` set, per family. Neither has been run from this sandboxed
+development environment, which has no real model installs.

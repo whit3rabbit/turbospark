@@ -86,6 +86,7 @@ fn print_resolved_request(request: &InvocationRequest) {
         request.max_tokens_per_sec
     );
     let _ = writeln!(out, "  reasoning: {:?}", request.reasoning);
+    let _ = writeln!(out, "  kv_bits: {:?}", request.kv_bits);
     let _ = writeln!(out, "  quiet: {}", request.quiet);
     let _ = writeln!(
         out,

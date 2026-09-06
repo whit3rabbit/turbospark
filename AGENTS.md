@@ -37,7 +37,7 @@ read the page before proposing the thing it refutes.
 | `docs/LOAD_GUARD.md` | the memory guardrail tiers, the AutoFit floor, the pressure watcher | changing what a session may commit |
 | `docs/DFLASH2.md` | the DFlash2 block drafter: architecture, state, verify | touching that drafter |
 | `docs/OBLITERATION.md` | live directional steering, with measurement | changing steering |
-| `docs/TRUBOQUANT.md` | sub-4-bit and ternary quantization layout | adding a width |
+| `docs/TRUBOQUANT.md` | TurboQuant KV-cache quantization: the assessment, and the `--kv-bits` feature built on it | touching KV quantization, or quoting the assessment it reversed |
 | `docs/VISION.md` | the vision PIPELINE: injection, mRoPE dispatch, the four gates, the cross-engine rows | touching anything an image passes through |
 | `docs/VISION_PHASE0.md` | the vision CHECKPOINT: tensors, mRoPE semantics, activation magnitudes, the INT4 decision | reading a tower fact off the checkpoint |
 | `docs/QWEN4_PHASE0.md` | `qwen4_exp` (Qwen3.8-Flash-Next) Phase 0 fact-finding: config, tensor layout, two independent references cross-checked | reading a `qwen4_exp` fact, or continuing that bring-up |

@@ -70,6 +70,10 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
         1,
         // PINNED at None: this test carries no vision sidecar.
         None,
+        // PINNED OFF, for the same reason speculation and steering above are:
+        // this is a numerics-adjacent axis and a test asserting plain output
+        // must not be able to acquire quantization by default.
+        runtime::KvQuant::Off,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
@@ -226,6 +230,8 @@ async fn real_backend_reuses_kv_across_two_chat_turns() {
         1,
         // PINNED at None: this test carries no vision sidecar.
         None,
+        // PINNED OFF: this test asserts nothing about kv-bits.
+        runtime::KvQuant::Off,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
@@ -351,6 +357,8 @@ async fn real_backend_reuses_kv_across_two_interleaved_conversations() {
         2,
         // PINNED at None: this test carries no vision sidecar.
         None,
+        // PINNED OFF: this test asserts nothing about kv-bits.
+        runtime::KvQuant::Off,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
@@ -525,6 +533,8 @@ async fn real_backend_reads_an_image_sent_over_both_endpoints() {
         // PINNED at None: this test exercises a COMBINED vision install
         // (its tower is the trunk's own), not a sidecar-attached one.
         None,
+        // PINNED OFF: this test asserts nothing about kv-bits.
+        runtime::KvQuant::Off,
     )
     .expect("the vision install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);

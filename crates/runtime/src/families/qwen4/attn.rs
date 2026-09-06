@@ -12,6 +12,7 @@ use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::qwen4::state::RealQwen4State;
 use crate::families::qwen4::{layer_tensor, RMS_EPS};
+use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
 use crate::real_forward_utils::{entry, norm_view, resident_matrix};
@@ -267,8 +268,8 @@ pub(crate) fn encode_full_attention_block(
     }
 
     // --- Attention proper: projections, norms, RoPE, KV write.
-    let (k_buf, k_off) = kv.k_slot(layer, position);
-    let (v_buf, v_off) = kv.v_slot(layer, position);
+    let (k_buf, k_off) = kv_write_target(kv, scratch, KvHalf::K, layer, position);
+    let (v_buf, v_off) = kv_write_target(kv, scratch, KvHalf::V, layer, position);
     encode_gemv_any(
         context,
         pass,
@@ -291,8 +292,8 @@ pub(crate) fn encode_full_attention_block(
     )
     .map_err(gpu_err)?;
     for (suffix, out) in [
-        ("k_proj.weight", (k_buf, k_off as u64)),
-        ("v_proj.weight", (v_buf, v_off as u64)),
+        ("k_proj.weight", (k_buf, k_off)),
+        ("v_proj.weight", (v_buf, v_off)),
     ] {
         encode_gemv_any(
             context,
@@ -309,7 +310,7 @@ pub(crate) fn encode_full_attention_block(
 
     for (suffix, data, heads) in [
         ("q_norm.weight", (&scratch.q, 0u64), num_heads),
-        ("k_norm.weight", (k_buf, k_off as u64), num_kv),
+        ("k_norm.weight", (k_buf, k_off), num_kv),
     ] {
         let weight = norm_view(weights, index, &name(suffix), head_dim as usize)?;
         gpu::encode_rms_norm_bf16w_perhead_centered(
@@ -318,10 +319,7 @@ pub(crate) fn encode_full_attention_block(
         .map_err(gpu_err)?;
     }
 
-    for (data, heads) in [
-        ((&scratch.q, 0u64), num_heads),
-        ((k_buf, k_off as u64), num_kv),
-    ] {
+    for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
         gpu::encode_rope_neox_subdim(
             context,
             pass,
@@ -334,6 +332,15 @@ pub(crate) fn encode_full_attention_block(
         )
         .map_err(gpu_err)?;
     }
+
+    // On a TurboQuant-quantized layer, quantize the staging row into the
+    // real cache slot now that it is normed and RoPE'd -- a no-op on an
+    // FP16 layer (`crate::kv_write`'s doc). Placed before block selection
+    // since both the dense and the indexed attention kernels below read
+    // from the committed cache slot, never from the staging row.
+    encode_kv_commit(
+        context, pass, kv, scratch, layer, position, head_dim, num_kv,
+    )?;
 
     // --- Block selection, above budget only.
     let sparse = complete_blocks > qwen4.idx_block_topk && !qwen4.qsa_force_dense;
@@ -426,31 +433,66 @@ pub(crate) fn encode_full_attention_block(
         let bytes: Vec<u8> = positions.iter().flat_map(|p| p.to_le_bytes()).collect();
         gpu::write_buffer_bytes(&qwen4.qsa_positions, 0, &bytes);
 
-        gpu::encode_attention_decode_indexed(
-            context,
-            pass,
-            (&scratch.q, 0),
-            k_buf,
-            v_buf,
-            (&qwen4.qsa_positions, 0),
-            positions.len() as u32,
-            &scratch.attn,
-            (&scratch.attn_out, 0),
-            head_dim,
-            num_heads,
-            num_kv,
-            arch.attention_scale as f32,
-        )
-        .map_err(gpu_err)?;
+        // TurboQuant fork, matching `crate::kv_write::encode_attention_any`'s
+        // dense-path fork -- kept separate here because the QSA sparse
+        // kernel is a fourth shape (`crate::kv_write`'s doc only covers the
+        // two dense variants) rather than a case that helper can express.
+        match kv.layer_quant(layer) {
+            Some(_) => {
+                let tables = kv
+                    .quant_tables()
+                    .expect("quant_tables is Some whenever a layer's layer_quant is Some");
+                let tq_scratch = scratch
+                    .tq_attn
+                    .as_ref()
+                    .expect("tq_attn is allocated whenever any layer is TurboQuant-quantized");
+                gpu::encode_attention_decode_indexed_tq(
+                    context,
+                    pass,
+                    (&scratch.q, 0),
+                    k_buf,
+                    v_buf,
+                    (&qwen4.qsa_positions, 0),
+                    positions.len() as u32,
+                    tq_scratch,
+                    (&scratch.attn_out, 0),
+                    head_dim,
+                    num_heads,
+                    num_kv,
+                    arch.attention_scale as f32,
+                    tables,
+                )
+                .map_err(gpu_err)?;
+            }
+            None => {
+                gpu::encode_attention_decode_indexed(
+                    context,
+                    pass,
+                    (&scratch.q, 0),
+                    k_buf,
+                    v_buf,
+                    (&qwen4.qsa_positions, 0),
+                    positions.len() as u32,
+                    &scratch.attn,
+                    (&scratch.attn_out, 0),
+                    head_dim,
+                    num_heads,
+                    num_kv,
+                    arch.attention_scale as f32,
+                )
+                .map_err(gpu_err)?;
+            }
+        }
     } else {
-        gpu::encode_attention_decode(
+        encode_attention_any(
             context,
             pass,
             (&scratch.q, 0),
-            k_buf,
-            v_buf,
-            &scratch.attn,
+            kv,
+            scratch,
             (&scratch.attn_out, 0),
+            layer,
+            position,
             head_dim,
             num_heads,
             num_kv,
@@ -459,8 +501,7 @@ pub(crate) fn encode_full_attention_block(
             0,
             arch.attention_scale as f32,
             None,
-        )
-        .map_err(gpu_err)?;
+        )?;
     }
     gpu::encode_sigmoid_gate_mul(
         context,

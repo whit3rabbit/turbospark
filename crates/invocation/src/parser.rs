@@ -8,8 +8,8 @@
 use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
-    ExpertCacheSlots, InvocationRequest, LoadGuard, MaxContext, Mode, PowerProfile, PrefillChunk,
-    ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, SteeringMode,
+    ExpertCacheSlots, InvocationRequest, KvBits, LoadGuard, MaxContext, Mode, PowerProfile,
+    PrefillChunk, ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, SteeringMode,
     ALLOWED_SPECULATION_BLOCKS, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE,
     DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
 };
@@ -87,6 +87,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut power_profile: Option<PowerProfile> = None;
     let mut max_tokens_per_sec: Option<f64> = None;
     let mut reasoning = ReasoningEffort::default();
+    let mut kv_bits = KvBits::default();
     let mut quiet = false;
 
     let mut i = 0;
@@ -284,6 +285,10 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             // literal path rather than a keyword -- catalog-based
             // resolution is a later part, not yet built here.
             "--vision-sidecar" => vision_sidecar = Some(value.to_string()),
+            "--kv-bits" => match KvBits::parse(value) {
+                Some(bits) => kv_bits = bits,
+                None => return invalid("--kv-bits", value),
+            },
             other => unreachable!("value-taking option {other} not handled"),
         }
 
@@ -421,6 +426,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         max_tokens_per_sec,
         vision_sidecar,
         reasoning,
+        kv_bits,
         quiet,
     })
 }

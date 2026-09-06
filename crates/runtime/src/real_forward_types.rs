@@ -1,7 +1,7 @@
 //! Core runtime types, error definitions, phase accounting counters,
 //! and GPU activation scratch allocation for real forward runner execution.
 
-use model_io::ArchConfig;
+use model_io::{ArchConfig, KvQuant};
 
 #[derive(Debug)]
 pub enum RealForwardError {
@@ -179,10 +179,42 @@ pub(crate) struct DecodeScratch {
     pub(crate) routing_w: gpu::MetalBuffer,
     pub(crate) zero_hidden: gpu::MetalBuffer,
     pub(crate) attn: gpu::AttentionScratch,
+    /// TurboQuant-quantized-layer staging: the FP16 row(s) a K/V projection
+    /// lands in before `kv_write::encode_kv_commit` norms/RoPEs it and
+    /// quantizes it into the cache. `None` when `kv_quant` is
+    /// [`KvQuant::Off`] -- so a run that never opts in allocates none of
+    /// it, matching every other feature-gated scratch field in this struct.
+    pub(crate) kv_stage: Option<KvStage>,
+    /// The TurboQuant decode attention pass's own scratch
+    /// (`gpu::TqAttentionScratch`), sized for the widest FULL-attention
+    /// head_dim -- the only layers TurboQuant ever quantizes. `None` under
+    /// [`KvQuant::Off`], for the reason [`Self::kv_stage`] is.
+    pub(crate) tq_attn: Option<gpu::TqAttentionScratch>,
+}
+
+/// Staging buffers for one quantized layer's K and V projection, one row
+/// wide (sequential decode only; chunked/batched prefill under `--kv-bits`
+/// is not wired yet -- see `docs/TRUBOQUANT.md`'s follow-ups). Sized for
+/// `MAX_PREFILL_BATCH` rows even though only row 0 is used today, so
+/// widening the write path to more than one row at a time later is a
+/// dispatch-count change rather than a buffer-resize one.
+pub(crate) struct KvStage {
+    pub(crate) k: gpu::MetalBuffer,
+    pub(crate) v: gpu::MetalBuffer,
+}
+
+impl KvStage {
+    fn new(context: &gpu::MetalContext, kv_dim: u64) -> Self {
+        let bytes = (MAX_PREFILL_BATCH as u64 * kv_dim).max(1) * 2;
+        Self {
+            k: context.new_output_buffer(bytes),
+            v: context.new_output_buffer(bytes),
+        }
+    }
 }
 
 impl DecodeScratch {
-    pub(crate) fn new(context: &gpu::MetalContext, arch: &ArchConfig) -> Self {
+    pub(crate) fn new(context: &gpu::MetalContext, arch: &ArchConfig, kv_quant: KvQuant) -> Self {
         let hidden = arch.hidden_size as u64;
         // Mixed-attention architectures (real Gemma 4) project different
         // head dims on SWA vs full layers; size Q/attention scratch for
@@ -192,6 +224,9 @@ impl DecodeScratch {
         let inter = arch.intermediate_size.max(arch.moe_intermediate_size) as u64;
         let vocab = arch.vocab_size as u64;
         let halfs = |n: u64| context.new_output_buffer(n.max(1) * 2);
+        // TurboQuant only ever quantizes FULL-attention layers, so staging
+        // is sized off that width alone even on a mixed-attention model.
+        let full_kv_dim = (arch.num_full_kv_heads * arch.full_head_dim) as u64;
         Self {
             x: halfs(hidden * MAX_PREFILL_BATCH as u64),
             normed: halfs(hidden),
@@ -234,6 +269,14 @@ impl DecodeScratch {
                 buffer
             },
             attn: gpu::AttentionScratch::new(context, arch.num_heads as u32, max_head_dim as u32),
+            kv_stage: kv_quant.is_on().then(|| KvStage::new(context, full_kv_dim)),
+            tq_attn: kv_quant.is_on().then(|| {
+                gpu::TqAttentionScratch::new(
+                    context,
+                    arch.num_heads as u32,
+                    arch.full_head_dim as u32,
+                )
+            }),
         }
     }
 }

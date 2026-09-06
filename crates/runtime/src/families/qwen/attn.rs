@@ -3,6 +3,7 @@
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::qwen::{layer_tensor, prefixed_layer_tensor, RealQwenState, RMS_EPS};
+use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::DecodeScratch;
@@ -219,8 +220,8 @@ pub(crate) fn encode_full_attention_block(
     let kv_dim = (num_kv * head_dim) as usize;
     let name = |suffix: &str| prefixed_layer_tensor(prefix, layer, &format!("self_attn.{suffix}"));
 
-    let (k_buf, k_off) = kv.k_slot(layer, position);
-    let (v_buf, v_off) = kv.v_slot(layer, position);
+    let (k_buf, k_off) = kv_write_target(kv, scratch, KvHalf::K, layer, position);
+    let (v_buf, v_off) = kv_write_target(kv, scratch, KvHalf::V, layer, position);
     encode_gemv_any(
         context,
         pass,
@@ -243,8 +244,8 @@ pub(crate) fn encode_full_attention_block(
     )
     .map_err(gpu_err)?;
     for (suffix, out) in [
-        ("k_proj.weight", (k_buf, k_off as u64)),
-        ("v_proj.weight", (v_buf, v_off as u64)),
+        ("k_proj.weight", (k_buf, k_off)),
+        ("v_proj.weight", (v_buf, v_off)),
     ] {
         encode_gemv_any(
             context,
@@ -266,7 +267,7 @@ pub(crate) fn encode_full_attention_block(
     };
     for (suffix, data, heads) in [
         ("q_norm.weight", (&scratch.q, 0u64), num_heads),
-        ("k_norm.weight", (k_buf, k_off as u64), num_kv),
+        ("k_norm.weight", (k_buf, k_off), num_kv),
     ] {
         let weight = norm_view(weights, index, &name(suffix), head_dim as usize)?;
         encode_qk_norm(context, pass, data, weight, data, heads, head_dim, RMS_EPS)
@@ -308,10 +309,7 @@ pub(crate) fn encode_full_attention_block(
         RopePosition::Triple(t, _, _) => t as u32,
     };
     let section = arch.vision.mrope_section;
-    for (data, heads) in [
-        ((&scratch.q, 0u64), num_heads),
-        ((k_buf, k_off as u64), num_kv),
-    ] {
+    for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
         match mrope {
             Some(positions) => gpu::encode_rope_mrope_interleaved(
                 context,
@@ -339,14 +337,22 @@ pub(crate) fn encode_full_attention_block(
         }
     }
 
-    gpu::encode_attention_decode(
+    // On a TurboQuant-quantized layer, quantize the staging row into the
+    // real cache slot now that it is normed and RoPE'd -- a no-op on an
+    // FP16 layer (`crate::kv_write`'s doc).
+    encode_kv_commit(
+        context, pass, kv, scratch, layer, position, head_dim, num_kv,
+    )?;
+
+    encode_attention_any(
         context,
         pass,
         (&scratch.q, 0),
-        k_buf,
-        v_buf,
-        &scratch.attn,
+        kv,
+        scratch,
         (&scratch.attn_out, 0),
+        layer,
+        position,
         head_dim,
         num_heads,
         num_kv,
@@ -355,8 +361,7 @@ pub(crate) fn encode_full_attention_block(
         0,
         arch.attention_scale as f32,
         None,
-    )
-    .map_err(gpu_err)?;
+    )?;
     gpu::encode_sigmoid_gate_mul(
         context,
         pass,

@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use tokenizer::MfTokenizer;
 
 use crate::session::{Engine, Session, SessionCore};
-use crate::wire::{load_guard, sized, OpenOptions, SessionInfo, SpeculationInfo};
+use crate::wire::{kv_bits, load_guard, sized, OpenOptions, SessionInfo, SpeculationInfo};
 
 /// Maps the wire spelling of a power profile.
 fn power_profile(name: &str) -> Result<runtime::PowerProfile, String> {
@@ -218,6 +218,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         .as_deref()
         .map(power_profile)
         .transpose()?;
+    let kv_quant = kv_bits(&options.kv_bits)?;
 
     if options.steering.is_none()
         && (requested_steering_mode.is_some()
@@ -310,13 +311,15 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // front ends disagree, which is why that module left `crates/cli` when
     // the server needed it.
     let choice = runtime::resolve_drafter(requested_drafter, dir);
-    let mut runner = runtime::RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+    let mut runner = runtime::RealForwardRunner::open_with_kv_quant(
         dir,
         arch,
         plan.resolved as usize,
         expert_cache_slots,
         runtime::draft_policies(&choice, asked),
         steering_policy.clone(),
+        1,
+        kv_quant,
     )
     .map_err(|e| e.to_string())?;
     // **THE ONE PLACE THIS FILE DELIBERATELY DOES NOT MIRROR
@@ -465,6 +468,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             committed,
             plan.kv_bytes,
         ),
+        kv_bits: kv_quant.label(),
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),

@@ -5,8 +5,8 @@
 
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 use turbospark_invocation::{
-    parse, ExpertCacheSlots, InvocationRequest, MaxContext, Mode, ParseOutcome, PowerProfile,
-    PrefillChunk, ReasoningEffort, Speculation,
+    parse, ExpertCacheSlots, InvocationRequest, KvBits, MaxContext, Mode, ParseOutcome,
+    PowerProfile, PrefillChunk, ReasoningEffort, Speculation,
 };
 
 fn tok(items: &[&str]) -> Vec<String> {
@@ -235,6 +235,76 @@ fn reasoning_levels_translate_to_their_validated_values() {
     // boolean everywhere upstream, and is not one here.
     assert!(matches!(
         parse(&tok(&["--model", "m", "--chat", "--reasoning", "true"])),
+        ParseOutcome::Failure(_)
+    ));
+}
+
+/// Every documented `--kv-bits` spelling round-trips into the right
+/// key/value width pair, and an out-of-set spelling is a typed failure
+/// rather than a silent fallback to `Off` -- a caller asking for a width
+/// this crate does not recognize should not measure the unquantized engine
+/// and believe it asked for something else.
+#[test]
+fn kv_bits_spellings_translate_to_their_validated_widths() {
+    let req = expect_success(parse(&tok(&["--model", "m", "--chat"])));
+    assert_eq!(
+        req.kv_bits,
+        KvBits::Off,
+        "the default must be the value that renders what every earlier release rendered"
+    );
+
+    for (spelling, expected) in [
+        ("off", KvBits::Off),
+        (
+            "2",
+            KvBits::TurboQuant {
+                k_bits: 2,
+                v_bits: 2,
+            },
+        ),
+        (
+            "3",
+            KvBits::TurboQuant {
+                k_bits: 3,
+                v_bits: 3,
+            },
+        ),
+        (
+            "3.5",
+            KvBits::TurboQuant {
+                k_bits: 3,
+                v_bits: 4,
+            },
+        ),
+        (
+            "4",
+            KvBits::TurboQuant {
+                k_bits: 4,
+                v_bits: 4,
+            },
+        ),
+    ] {
+        let req = expect_success(parse(&tok(&[
+            "--model",
+            "m",
+            "--chat",
+            "--kv-bits",
+            spelling,
+        ])));
+        assert_eq!(
+            req.kv_bits, expected,
+            "spelling {spelling} must map to {expected:?}"
+        );
+    }
+
+    assert!(matches!(
+        parse(&tok(&["--model", "m", "--chat", "--kv-bits", "5"])),
+        ParseOutcome::Failure(_)
+    ));
+    // `2.5` is not one of mlx-vlm's fractional widths -- only `3.5` (K3/V4)
+    // is defined -- so it must not silently floor or round to a neighbor.
+    assert!(matches!(
+        parse(&tok(&["--model", "m", "--chat", "--kv-bits", "2.5"])),
         ParseOutcome::Failure(_)
     ));
 }
