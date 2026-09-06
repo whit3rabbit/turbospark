@@ -287,3 +287,273 @@ fn a_tool_offered_without_a_schema_is_skipped_rather_than_refused() {
     let gen = generated("", vec![call("ping", "{}")]);
     assert_eq!(verdict_for(&request, &gen), Verdict::Accept);
 }
+
+// ---------------------------------------------------------------------------
+// The extra rescue formats (`guardrails/extra_formats.rs`): GLM, the
+// invoke/parameter shape, Kimi K2, and Longcat. Every fixture below is the
+// markup the family's own published chat template teaches, hand-built here
+// because none of the four is installed on this machine -- these are
+// RESCUE-tier formats, tested at the only place they run: [`inspect`].
+// ---------------------------------------------------------------------------
+
+fn object_field<'a>(value: &'a JsonValue, key: &str) -> Option<&'a JsonValue> {
+    match value {
+        JsonValue::Object(map) => map.get(key),
+        _ => None,
+    }
+}
+
+/// The same GLM call with the wrapper STRIPPED -- the shape that actually
+/// reaches the rescue when a GLM vocabulary loads under a dialect this
+/// engine knows: the `<tool_call>` pair is special, the detokenizer
+/// renders it to nothing, the native decoder fails the span, and the
+/// released body is all that is left. The pair markup is what this
+/// strategy keys on, so the rescue still fires.
+#[test]
+fn a_glm_body_with_the_wrapper_stripped_is_still_rescued() {
+    let request = weather_request(None);
+    let gen = generated(
+        "get_weather\n<arg_key>city</arg_key>\n<arg_value>Oslo</arg_value>\n",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected a wrapperless GLM rescue, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(calls[0].name, "get_weather");
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::String("Oslo".to_string()))
+    );
+}
+
+/// GLM-4.6's shape: the function name inline after the opening tag, then
+/// flat `arg_key`/`arg_value` pairs. Values coerce the way the native Qwen
+/// parser's do, so `3` arrives as an integer and `Oslo` as a string.
+#[test]
+fn a_glm_call_with_arg_key_pairs_is_rescued() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<tool_call>get_weather\n<arg_key>city</arg_key>\n<arg_value>Oslo</arg_value>\n\
+         <arg_key>days</arg_key>\n<arg_value>3</arg_value>\n</tool_call>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected a GLM rescue, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "get_weather");
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::String("Oslo".to_string()))
+    );
+    assert_eq!(
+        object_field(&calls[0].arguments, "days"),
+        Some(&JsonValue::Integer(3))
+    );
+}
+
+/// Multiple GLM blocks are multiple calls, each rescued with its own
+/// arguments.
+#[test]
+fn two_glm_blocks_are_two_calls() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<tool_call>get_weather\n<arg_key>city</arg_key>\n<arg_value>Oslo</arg_value>\n</tool_call>\n\
+         <tool_call>get_weather\n<arg_key>city</arg_key>\n<arg_value>Cairo</arg_value>\n</tool_call>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected two rescues, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(calls.len(), 2);
+    assert!(calls[0].arguments_json.contains("Oslo"));
+    assert!(calls[1].arguments_json.contains("Cairo"));
+}
+
+/// MiniMax-M2's shape: the Anthropic/Claude invoke form, here inside its
+/// `<minimax:tool_call>` wrapper. The wrapper is not what the strategy
+/// matches -- the invoke blocks are -- so this also covers a model that
+/// drops its own wrapper.
+#[test]
+fn a_minimax_invoke_block_is_rescued() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<minimax:tool_call>\n<invoke name=\"get_weather\">\n\
+         <parameter name=\"city\">Oslo</parameter>\n</invoke>\n</minimax:tool_call>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected an invoke rescue, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "get_weather");
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::String("Oslo".to_string()))
+    );
+}
+
+/// The same invoke shape with no wrapper at all, which is the generic
+/// half of the strategy's claim.
+#[test]
+fn an_unwrapped_invoke_block_is_rescued_too() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<invoke name=\"get_weather\"><parameter name=\"city\">Oslo</parameter></invoke>",
+        vec![],
+    );
+    assert!(matches!(verdict_for(&request, &gen), Verdict::Rescued(_)));
+}
+
+/// Kimi K2's shape: no name tag anywhere, only the id
+/// `functions.NAME:IDX` Moonshot's own guidance documents. The name is
+/// recovered from the id; the arguments are the JSON body.
+#[test]
+fn a_kimi_k2_call_is_rescued_with_the_name_recovered_from_its_id() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<|tool_calls_section_begin|><|tool_call_begin|>functions.get_weather:0\
+         <|tool_call_argument_begin|>{\"city\": \"Oslo\", \"days\": 3}<|tool_call_end|>\
+         <|tool_calls_section_end|>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected a Kimi rescue, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "get_weather");
+    assert_eq!(
+        object_field(&calls[0].arguments, "days"),
+        Some(&JsonValue::Integer(3))
+    );
+}
+
+/// Moonshot's documented anomaly: the model sometimes emits an opaque
+/// `call_...` id instead of `functions.NAME:IDX`. There is no name in such
+/// an id, so no call is rescued -- which under `auto` is prose, not a
+/// retry. Inventing a name there would be worse than the refusal.
+#[test]
+fn a_kimi_anomaly_id_rescues_nothing() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<|tool_calls_section_begin|><|tool_call_begin|>call_59adf5614cfe4f4b8a71be54\
+         <|tool_call_argument_begin|>{\"city\": \"Oslo\"}<|tool_call_end|>\
+         <|tool_calls_section_end|>",
+        vec![],
+    );
+    assert_eq!(verdict_for(&request, &gen), Verdict::Accept);
+}
+
+/// Longcat needs NO new code: its `{"name", "arguments"}` JSON inside the
+/// `<longcat_tool_call>` wrapper is exactly what forge's JSON scan reads,
+/// because that scan finds balanced braces anywhere in the text. This test
+/// pins the zero-code claim so it stays measured rather than assumed.
+#[test]
+fn a_longcat_call_is_rescued_by_forges_existing_json_scan() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<longcat_tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Oslo\"}}\n</longcat_tool_call>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected a Longcat rescue, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(calls[0].name, "get_weather");
+    assert!(calls[0].arguments_json.contains("Oslo"));
+}
+
+/// A rescued GLM call still goes through the schema check, and a call with
+/// a missing required argument is re-asked rather than sent: the rescue
+/// tier feeds the SAME validation the native tier gets.
+#[test]
+fn a_rescued_glm_call_with_a_missing_required_field_is_retried() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<tool_call>get_weather\n<arg_key>days</arg_key>\n<arg_value>3</arg_value>\n</tool_call>",
+        vec![],
+    );
+    let Verdict::Retry(nudge) = verdict_for(&request, &gen) else {
+        panic!("expected a retry, got {:?}", verdict_for(&request, &gen));
+    };
+    assert!(nudge.contains("city"), "nudge was {nudge:?}");
+}
+
+/// Markup naming a tool the request never offered rescues nothing, in this
+/// tier exactly as in forge's: allowlist membership is the one gate every
+/// strategy shares.
+#[test]
+fn glm_markup_for_an_unoffered_tool_is_not_rescued() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<tool_call>delete_everything\n<arg_key>city</arg_key>\n<arg_value>Oslo</arg_value>\n</tool_call>",
+        vec![],
+    );
+    assert_eq!(verdict_for(&request, &gen), Verdict::Accept);
+}
+
+/// Gemma DSL shape: `call:NAME{key:value,...}`.
+#[test]
+fn a_gemma_call_is_rescued() {
+    let request = weather_request(None);
+    let gen = generated("call:get_weather{city: \"Oslo\", days: 3}", vec![]);
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected a Gemma rescue, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "get_weather");
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::String("Oslo".to_string()))
+    );
+    assert_eq!(
+        object_field(&calls[0].arguments, "days"),
+        Some(&JsonValue::Integer(3))
+    );
+}
+
+/// Qwen ChatML parameter XML: `<function=NAME><parameter=KEY>VALUE</parameter>...</function>`.
+#[test]
+fn a_qwen_xml_parameter_call_is_rescued() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<function=get_weather>\n<parameter=city>Oslo</parameter>\n<parameter=days>3</parameter>\n</function>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected a Qwen XML rescue, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "get_weather");
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::String("Oslo".to_string()))
+    );
+    assert_eq!(
+        object_field(&calls[0].arguments, "days"),
+        Some(&JsonValue::Integer(3))
+    );
+}

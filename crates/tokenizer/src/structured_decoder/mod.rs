@@ -53,6 +53,12 @@ pub struct StructuredAssistantDecoder<'a> {
     muse: MuseState,
     label: String,
     tool_tokens: Option<Vec<i32>>,
+    /// The buffered body of the span the decoder gave up on, held as token
+    /// ids and decoded only when [`Self::take_failed_span_text`] asks. Every
+    /// other route out of a tool span (a parsed call, a clean close) empties
+    /// `tool_tokens` into the parser; this is what happens to those tokens
+    /// on the one route that used to drop them instead.
+    failed_span_tokens: Option<Vec<i32>>,
     held_text: String,
     dsml_text: Option<String>,
     emitted_calls: usize,
@@ -166,6 +172,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
             muse: muse_state_for(tokenizer, prompt_ids),
             label: String::new(),
             tool_tokens: None,
+            failed_span_tokens: None,
             held_text: String::new(),
             dsml_text: None,
             emitted_calls: 0,
@@ -176,6 +183,25 @@ impl<'a> StructuredAssistantDecoder<'a> {
     /// Returns true if at least one tool call has been parsed and emitted.
     pub fn has_tool_calls(&self) -> bool {
         self.emitted_calls > 0
+    }
+
+    /// Releases the decoded body of the tool span the decoder failed on, if
+    /// it was holding one.
+    ///
+    /// A parser error inside a tool span is permanent (`consume` answers
+    /// `Err` for every later token), and the bytes the span had already
+    /// buffered are NOT parser output -- they are ordinary model output the
+    /// span framing happened to swallow. A consumer that degrades to raw
+    /// text on an error should release this beside the erroring event, or a
+    /// pre-3.5 Qwen writing bare JSON inside `<tool_call>` / `</tool_call>`
+    /// loses the call twice over: the decoder refuses it AND the text the
+    /// server's rescue layer would parse it out of never reaches
+    /// `generated.text`. `None` when the error came from somewhere with no
+    /// buffered span (a stray end token, a failed `finish`).
+    pub fn take_failed_span_text(&mut self) -> Option<String> {
+        let tokens = self.failed_span_tokens.take()?;
+        let text = self.tokenizer.decode(&tokens, false);
+        (!text.is_empty()).then_some(text)
     }
 
     /// Consumes flushed text snippet during stream decoding.
@@ -233,7 +259,10 @@ impl<'a> StructuredAssistantDecoder<'a> {
             return Ok(Vec::new());
         }
         if token_id == self.tokenizer.tool_call_start_id {
-            if self.tool_tokens.is_some() {
+            if let Some(tokens) = self.tool_tokens.take() {
+                // A second start inside an open span abandons the first one;
+                // what it had buffered is still model output.
+                self.failed_span_tokens = Some(tokens);
                 self.failed = true;
                 return Err(ToolCallParserError::Malformed);
             }
@@ -262,6 +291,10 @@ impl<'a> StructuredAssistantDecoder<'a> {
                     return Ok(vec![StructuredAssistantEvent::ToolCall(call)]);
                 }
                 Err(e) => {
+                    // The span's body was decoded for this parse and is what
+                    // the caller most wants back: release it beside the
+                    // error rather than drop it with the failed attempt.
+                    self.failed_span_tokens = Some(tokens);
                     self.failed = true;
                     return Err(e);
                 }
@@ -279,6 +312,9 @@ impl<'a> StructuredAssistantDecoder<'a> {
         if let Some(tokens) = &mut self.tool_tokens {
             tokens.push(token_id);
             if tokens.len() * 4 > crate::tool_call::MAXIMUM_BYTES {
+                if self.failed_span_tokens.is_none() {
+                    self.failed_span_tokens = Some(tokens.clone());
+                }
                 self.failed = true;
                 return Err(ToolCallParserError::Oversized);
             }

@@ -81,6 +81,70 @@ fn tool_call_span_buffers_until_end_token() {
     assert!(decoder.has_tool_calls());
 }
 
+/// A span whose body the native parser refuses keeps the body reachable.
+///
+/// This is the pre-3.5 Qwen shape: bare JSON inside the same
+/// `<tool_call>` / `</tool_call>` special-token pair, which the 3.5+ XML
+/// parser declines. The parse error itself is correct and permanent -- what
+/// must not happen is the body vanishing with it, because the raw text is
+/// what the server's rescue layer parses the call back out of. Before
+/// `take_failed_span_text` existed, the buffered tokens were dropped at the
+/// error site and a rescued call was impossible: the turn degraded to raw
+/// text around an empty hole exactly the width of the markup.
+#[test]
+fn a_failed_span_keeps_its_body_reachable() {
+    let tok = load();
+    let allowed: HashSet<String> = ["f".to_string()].into_iter().collect();
+    let mut decoder = StructuredAssistantDecoder::new(&tok, allowed, || "call_1".to_string(), &[]);
+
+    let body = r#"{"name": "f", "arguments": {"x": "1"}}"#;
+    let ids = tok.encode(body, false);
+    decoder.consume(tok.tool_call_start_id, "").unwrap();
+    for &id in &ids {
+        // The span buffers; nothing is emitted and nothing fails yet.
+        decoder.consume(id, "").unwrap();
+    }
+    let err = decoder
+        .consume(tok.tool_call_end_id, "")
+        .expect_err("bare JSON is not the 3.5 XML grammar");
+    let _ = err;
+
+    assert!(!decoder.has_tool_calls());
+    assert_eq!(
+        decoder.take_failed_span_text().as_deref(),
+        Some(body),
+        "the abandoned span body must survive the failed parse"
+    );
+    // Take is once-only: the second ask has nothing to release.
+    assert_eq!(decoder.take_failed_span_text(), None);
+}
+
+/// The control for the test above: a span that PARSES has no failed body to
+/// release, and neither has an error raised where no span was open.
+#[test]
+fn a_parsed_span_and_a_stray_end_token_leave_no_failed_body() {
+    let tok = load();
+    let allowed: HashSet<String> = ["f".to_string()].into_iter().collect();
+    let mut parsed =
+        StructuredAssistantDecoder::new(&tok, allowed.clone(), || "call_1".to_string(), &[]);
+    let ids = tok.encode(
+        "\n<function=f>\n<parameter=x>\n1\n</parameter>\n</function>\n",
+        false,
+    );
+    parsed.consume(tok.tool_call_start_id, "").unwrap();
+    for &id in &ids {
+        parsed.consume(id, "").unwrap();
+    }
+    parsed.consume(tok.tool_call_end_id, "").unwrap();
+    assert!(parsed.has_tool_calls());
+    assert_eq!(parsed.take_failed_span_text(), None);
+
+    let mut stray = StructuredAssistantDecoder::new(&tok, allowed, || "call_2".to_string(), &[]);
+    let err = stray.consume(tok.tool_call_end_id, "");
+    assert!(err.is_err(), "a close with no open span is an error");
+    assert_eq!(stray.take_failed_span_text(), None);
+}
+
 /// GEMMA'S LABELLED THOUGHT CHANNEL is reasoning too, and the label itself
 /// is not.
 ///

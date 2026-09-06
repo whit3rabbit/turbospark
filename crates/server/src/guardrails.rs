@@ -39,6 +39,8 @@ use tokenizer::{JsonValue, ParsedToolCall, ReasoningEffort};
 use crate::cancel::Cancel;
 use crate::handler::{plan, run_full, tool_names, AppState, GenError, Generated};
 
+mod extra_formats;
+
 /// Which guardrails run, and how many times a bad turn may be re-asked.
 ///
 /// Process-level, resolved once at startup and read off [`crate::ChatModel`],
@@ -193,12 +195,24 @@ pub(crate) fn inspect(
     // needs the schema check more than a cleanly parsed call does, not less.
     // Caught by `an_invalid_call_is_retried_and_the_second_answer_wins`, which
     // saw a call with empty arguments rescued straight onto the wire.
+    //
+    // **THE LOCAL FORMATS RUN BEFORE FORGE'S OWN STRATEGIES, and forge still
+    // runs when they miss.** `extra_formats::rescue` knows the four dialects
+    // forge does not (GLM, the invoke/parameter shape MiniMax speaks, Kimi
+    // K2, and nothing for Longcat, which forge's JSON scan already covers);
+    // forge's four strategies keep everything else, so bare JSON and
+    // Mistral's `[TOOL_CALLS]` take exactly the path they always did.
     let rescued = if generated.calls.is_empty() && config.rescue {
-        rescue_tool_call(&generated.text, &names)
-            .iter()
-            .enumerate()
-            .filter_map(|(i, c)| from_forge_call(c, i))
-            .collect()
+        let local = extra_formats::rescue(&generated.text, &names);
+        if local.is_empty() {
+            rescue_tool_call(&generated.text, &names)
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| from_forge_call(c, i))
+                .collect()
+        } else {
+            local
+        }
     } else {
         Vec::new()
     };

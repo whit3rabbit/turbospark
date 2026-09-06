@@ -415,5 +415,8 @@ repair layer. Full list in `DEVIATIONS.md`.
   the traps above stated as rules.
 - `crates/server/CLAUDE.md` Gotchas 7, 8, 12, 14 -- the underlying tool-call
   path this layer sits on.
+- `docs/TOOL_CALLING.md` -- the per-family coverage table across all three
+  implementations, and the rescue strategies added beside this crate
+  (`guardrails/extra_formats.rs`).
 - `DEVIATIONS.md` -- scope, and what the tool path drops.
 - `git show b3b3b30` -- the full rationale for every decision on this page.

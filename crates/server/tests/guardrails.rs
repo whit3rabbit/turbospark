@@ -59,6 +59,14 @@ impl FixedTurn {
         emit.push(tok.end_of_turn_id);
         Self { emit, cursor: 0 }
     }
+
+    /// A turn given as raw token ids, for scripts that must carry special
+    /// tokens the markup lives in -- `new` can only ever produce them if
+    /// `encode` happens to map the literal, which is not a thing to lean on.
+    fn from_ids(tok: &MfTokenizer, mut emit: Vec<i32>) -> Self {
+        emit.push(tok.end_of_turn_id);
+        Self { emit, cursor: 0 }
+    }
 }
 
 impl LogitProducer for FixedTurn {
@@ -130,6 +138,9 @@ struct TwoTurnModel {
     tokenizer: MfTokenizer,
     first: String,
     second: String,
+    /// The first turn as raw ids, set by [`Self::with_first_ids`]; when
+    /// present it replaces `first` in the produced sequence.
+    first_ids: Option<Vec<i32>>,
     calls: AtomicUsize,
     guardrails: GuardrailConfig,
 }
@@ -139,6 +150,23 @@ impl TwoTurnModel {
         Self {
             tokenizer,
             first: first.to_string(),
+            second: second.to_string(),
+            first_ids: None,
+            calls: AtomicUsize::new(0),
+            guardrails,
+        }
+    }
+
+    fn with_first_ids(
+        tokenizer: MfTokenizer,
+        first_ids: Vec<i32>,
+        second: &str,
+        guardrails: GuardrailConfig,
+    ) -> Self {
+        Self {
+            first_ids: Some(first_ids),
+            tokenizer,
+            first: String::new(),
             second: second.to_string(),
             calls: AtomicUsize::new(0),
             guardrails,
@@ -166,13 +194,16 @@ impl ChatModel for TwoTurnModel {
         &self,
         f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
     ) -> Result<RawDecodeResult, RuntimeError> {
-        let text = if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            &self.first
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            let mut producer = match &self.first_ids {
+                Some(ids) => FixedTurn::from_ids(&self.tokenizer, ids.clone()),
+                None => FixedTurn::new(&self.tokenizer, &self.first),
+            };
+            f(&mut producer)
         } else {
-            &self.second
-        };
-        let mut producer = FixedTurn::new(&self.tokenizer, text);
-        f(&mut producer)
+            let mut producer = FixedTurn::new(&self.tokenizer, &self.second);
+            f(&mut producer)
+        }
     }
 }
 
@@ -429,4 +460,93 @@ async fn a_tool_request_streams_the_buffered_frames_in_order() {
     // reading there.
     assert!(tool_at < finish_at, "call must precede the finish: {text}");
     assert!(text.contains("[DONE]"), "{text}");
+}
+
+/// **THE DEGRADED-SPAN REGRESSION: bare JSON inside ChatML's
+/// `<tool_call>` / `</tool_call>` special-token pair** -- the shape a
+/// pre-3.5 Qwen emits, which the native 3.5+ XML parser refuses. The turn
+/// must still complete, the span's body must survive the failed parse, and
+/// the rescue layer must recover the call onto the wire. Before the failed
+/// span body was released, this test's markup reached `generated.text`
+/// with a hole exactly where the JSON was and no rescue was possible: the
+/// call was lost twice over, once to the parser and once to the rescue.
+#[tokio::test]
+async fn a_malformed_chatml_tool_span_is_rescued_onto_the_wire() {
+    let tok = load_tokenizer();
+    let mut emit = tok.encode(" Sure, checking the weather. ", false);
+    emit.push(tok.tool_call_start_id);
+    emit.extend(tok.encode(BARE_JSON_CALL, false));
+    emit.push(tok.tool_call_end_id);
+    let model = TwoTurnModel::with_first_ids(tok, emit, BARE_JSON_CALL, GuardrailConfig::default());
+    let base = serve(Arc::new(model)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&weather_body(false))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "a failed span parse is not a failed request"
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+
+    let calls = tool_calls_of(&body);
+    assert_eq!(calls.len(), 1, "{body}");
+    assert_eq!(calls[0]["function"]["name"], "get_weather", "{body}");
+    assert!(
+        calls[0]["function"]["arguments"]
+            .as_str()
+            .unwrap()
+            .contains("Oslo"),
+        "{body}"
+    );
+    // The failed span's markup must not ALSO reach the client as prose.
+    let content = body["choices"][0]["message"]["content"].as_str();
+    assert!(
+        content.is_none_or(|c| !c.contains("get_weather")),
+        "span markup leaked as content: {body}"
+    );
+}
+
+/// A GLM-format call reaches the wire as a `tool_calls` entry through the
+/// SAME end-to-end path, which is what says `extra_formats` is wired into
+/// [`inspect`] and not merely unit-tested beside it. The ChatML fixture's
+/// decoder passes GLM markup through as ordinary text (its special tokens
+/// are not GLM's), so the only thing standing between the markup and the
+/// wire is the rescue.
+#[tokio::test]
+async fn a_glm_format_call_is_rescued_onto_the_wire() {
+    let tok = load_tokenizer();
+    let glm_call = "<tool_call>get_weather\n<arg_key>city</arg_key>\n\
+                    <arg_value>Oslo</arg_value>\n</tool_call>";
+    let model = TwoTurnModel::new(tok, glm_call, glm_call, GuardrailConfig::default());
+    let base = serve(Arc::new(model)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&weather_body(false))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+
+    let calls = tool_calls_of(&body);
+    assert_eq!(calls.len(), 1, "{body}");
+    assert_eq!(calls[0]["function"]["name"], "get_weather", "{body}");
+    assert!(
+        calls[0]["function"]["arguments"]
+            .as_str()
+            .unwrap()
+            .contains("Oslo"),
+        "{body}"
+    );
+    let content = body["choices"][0]["message"]["content"].as_str();
+    assert!(
+        content.is_none_or(|c| !c.contains("<arg_key>")),
+        "GLM markup leaked as content: {body}"
+    );
 }

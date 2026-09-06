@@ -26,6 +26,7 @@ pub use json_value::JsonValue;
 pub use reasoning::{ReasoningEffort, ReasoningSupport};
 pub use stop_matcher::StreamingStopMatcher;
 pub use structured_decoder::{StructuredAssistantDecoder, StructuredAssistantEvent};
+pub use tokenizers::Tokenizer;
 pub use tool_call::{
     DeepseekToolCallParser, GemmaToolCallParser, ParsedToolCall, QwenToolCallParser,
 };

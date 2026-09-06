@@ -11,7 +11,10 @@ impl<'a> StructuredAssistantDecoder<'a> {
         delta: &str,
     ) -> Result<Vec<StructuredAssistantEvent>, ToolCallParserError> {
         if token_id == self.tokenizer.tool_call_start_id {
-            if self.tool_tokens.is_some() {
+            if let Some(tokens) = self.tool_tokens.take() {
+                // A second start inside an open span abandons the first one;
+                // what it had buffered is still model output.
+                self.failed_span_tokens = Some(tokens);
                 self.failed = true;
                 return Err(ToolCallParserError::Malformed);
             }
@@ -40,6 +43,13 @@ impl<'a> StructuredAssistantDecoder<'a> {
                     return Ok(vec![StructuredAssistantEvent::ToolCall(call)]);
                 }
                 Err(e) => {
+                    // The span's body was decoded for this parse and is what
+                    // the caller most wants back: release it beside the
+                    // error rather than drop it with the failed attempt.
+                    // This is the pre-3.5 Qwen case: bare JSON inside the
+                    // same special-token pair, refused here and recoverable
+                    // by the server's rescue layer only if the text survives.
+                    self.failed_span_tokens = Some(tokens);
                     self.failed = true;
                     return Err(e);
                 }
@@ -48,6 +58,9 @@ impl<'a> StructuredAssistantDecoder<'a> {
         if let Some(tokens) = &mut self.tool_tokens {
             tokens.push(token_id);
             if tokens.len() * 4 > crate::tool_call::MAXIMUM_BYTES {
+                if self.failed_span_tokens.is_none() {
+                    self.failed_span_tokens = Some(tokens.clone());
+                }
                 self.failed = true;
                 return Err(ToolCallParserError::Oversized);
             }
