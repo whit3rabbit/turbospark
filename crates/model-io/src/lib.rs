@@ -24,6 +24,7 @@ mod resident_buffer;
 mod resident_index;
 mod sha256;
 mod steering_set;
+mod vision_sidecar;
 
 pub use arch_baselines::{
     all_known_architectures, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, gpt_oss_20b,
@@ -75,6 +76,10 @@ pub use resident_index::{
 };
 pub use sha256::{hash_data, hash_file, verify_file};
 pub use steering_set::{LayerDirection, SteeringSet};
+pub use vision_sidecar::{
+    is_sidecar_dir, load as load_vision_sidecar, sidecar_arch, PairsWith, SidecarRecord,
+    SidecarSource, SIDECAR_KIND, SIDECAR_RECORD_FILE,
+};
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

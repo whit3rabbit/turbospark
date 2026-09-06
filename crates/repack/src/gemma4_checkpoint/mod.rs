@@ -22,8 +22,8 @@ mod shards;
 mod vision;
 
 pub use classify::{
-    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
-    VISION_INSTALL_PREFIX, VISION_PREFIX,
+    canonicalize_vision_header, classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX,
+    MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
@@ -461,6 +461,52 @@ pub fn graft_qwen_gdn_dense_mtp_head(
     writer.set_quant(manifest_quant_for(quant, arch.family, false));
     writer.finish(arch, model_id, &resident_bytes)?;
     progress("install written (reused trunk, no routed experts)");
+    Ok(())
+}
+
+/// Writes a vision-tower SIDECAR install (vision memory sidecar, part A1):
+/// `<alias>.gturbo-vision/`, carrying only the tower's bytes -- no text
+/// trunk, no routed experts, `numLayers: 0`. `read` is a tower already
+/// ingested by [`vision::read_vision_entries`] (the sidecar's tensor names
+/// are the SAME `vision_tower.*`-prefixed ones a combined install reads, so
+/// nothing about that function changes for this caller); this is the disk
+/// SEQUENCE alone, in the order `build_manifest_json` requires: the packed
+/// blocks first, because it hashes `packed_vision/` by reading the file back
+/// off disk, then the resident nine, then the manifest itself.
+///
+/// `record` is the caller's [`model_io::SidecarRecord`] (provenance and the
+/// declared trunk pairing) -- built by the caller, because this function has
+/// no way to know which repository, revision or source prefix the tower came
+/// from. It is written LAST, once every file the manifest's hashes depend on
+/// is already on disk, though nothing here reads it back.
+///
+/// Fetching `preprocessor_config.json` into `out_dir` is NOT this function's
+/// job (that is catalog ingest, a later part of this feature): a caller that
+/// wants a directory [`model_io::load_vision_sidecar`] can open has to drop
+/// that file in alongside these before anything reads the sidecar back.
+pub fn write_vision_sidecar(
+    out_dir: &Path,
+    family: ModelFamily,
+    vision: &model_io::VisionConfig,
+    model_id: &str,
+    read: &VisionRead,
+    record: model_io::SidecarRecord,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !vision.is_active() {
+        return Err(Box::new(Gemma4Error::Config(
+            "write_vision_sidecar needs an active VisionConfig; VisionConfig::NONE is not a \
+             tower to write a sidecar for"
+                .to_string(),
+        )));
+    }
+    crate::gturbo_writer::write_packed_vision(out_dir, &read.blocks, read.block_stride)?;
+
+    let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&read.entries);
+    let arch = model_io::sidecar_arch(family, vision.out_hidden_size, vision);
+    let writer = crate::gturbo_writer::StreamingGturboWriter::new(out_dir, 0, 0)?;
+    writer.finish(&arch, model_id, &resident_bytes)?;
+
+    record.write(out_dir)?;
     Ok(())
 }
 

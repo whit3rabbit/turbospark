@@ -2,6 +2,8 @@
 
 use model_io::ModelFamily;
 
+use crate::safetensors_header::SafetensorsHeader;
+
 /// Classification bucket for a Gemma 4 source checkpoint tensor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Gemma4Bucket {
@@ -88,6 +90,59 @@ pub const VISION_PREFIX: &str = "vision_tower.";
 /// (`ClassifiedNames::vision_bases`), and a distinct namespace makes the
 /// separation visible to every later reader of the index.
 pub const VISION_INSTALL_PREFIX: &str = "vision.";
+
+/// The HF-native spelling of [`VISION_PREFIX`], as an HF-native repository or
+/// a standalone `vision.safetensors` export keeps the module path intact
+/// (`model.visual.blocks.0.norm1.weight` rather than
+/// `vision_tower.blocks.0.norm1.weight`). Every checkpoint this walk has
+/// actually read is an MLX conversion under [`VISION_PREFIX`], so this second
+/// spelling exists for the vision SIDECAR path (which reads an HF-native
+/// repository directly, with no MLX conversion step in between) rather than
+/// for anything the combined-install walk has needed so far.
+pub const VISION_SOURCE_PREFIXES: [&str; 2] = [VISION_PREFIX, "model.visual."];
+
+/// Renames every `model.visual.*` tensor in `header` onto [`VISION_PREFIX`]'s
+/// naming, in place, so [`super::vision::read_vision_entries`] -- which is
+/// keyed on [`VISION_PREFIX`] alone -- never has to know a second spelling
+/// exists. A no-op on a header that carries only the canonical prefix
+/// already, which is every checkpoint this walk has read so far.
+///
+/// Refuses, NAMING BOTH PREFIXES, a header that carries tensors under both
+/// spellings at once. That header is not a checkpoint this walk has ever
+/// seen: it reads either as two different towers accidentally concatenated,
+/// or as a file already partway through some other tool's rename, and
+/// silently preferring one prefix over the other would produce an install
+/// that is missing half a tower or duplicates roles under two names, neither
+/// of which fails until a dispatch four layers in.
+pub fn canonicalize_vision_header(
+    header: &mut SafetensorsHeader,
+) -> Result<(), super::config::Gemma4Error> {
+    const HF_PREFIX: &str = "model.visual.";
+    let has_canonical = header.tensors.keys().any(|k| k.starts_with(VISION_PREFIX));
+    let has_hf = header.tensors.keys().any(|k| k.starts_with(HF_PREFIX));
+    if has_canonical && has_hf {
+        return Err(super::config::Gemma4Error::Config(format!(
+            "checkpoint carries vision tensors under both {VISION_PREFIX:?} and \
+             {HF_PREFIX:?}; refusing an ambiguous or already-mixed source"
+        )));
+    }
+    if !has_hf {
+        return Ok(());
+    }
+    let mut renamed = std::collections::BTreeMap::new();
+    for (name, info) in std::mem::take(&mut header.tensors) {
+        match name.strip_prefix(HF_PREFIX) {
+            Some(tail) => {
+                renamed.insert(format!("{VISION_PREFIX}{tail}"), info);
+            }
+            None => {
+                renamed.insert(name, info);
+            }
+        }
+    }
+    header.tensors = renamed;
+    Ok(())
+}
 
 /// The prefix a DFlash2 drafter's tensors carry once they reach a walk.
 ///
