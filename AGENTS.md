@@ -1898,6 +1898,22 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     the verdict had to change for it to become misleading, only the arrival
     of a reference measured at a different tile.
 
+    **THE PRESCRIPTION WAS FOLLOWED AND THE COMBINED CHANGE STILL LOST, WHICH
+    CLOSES THIS ENTRY'S OWN LOOP.** 2026-09-05: four SIMD groups and
+    `FC_MMA_STAGE_X` moved TOGETHER, as this gotcha said they had to. The
+    re-tile is worse than the narrow tile at every width up to 32 and reads
+    2.10x the exact kernel at M=16 (`ROADMAP.md` Do Not Revisit 16). Two
+    things worth carrying past the verdict. **"Measure them together" is
+    necessary and not sufficient**: the combined arm can still lose, and when
+    it does it retires the whole cluster rather than one lever -- staging
+    lost INSIDE the wide shape too, which refutes entry 13's reversal
+    condition directly rather than leaving it open. And **the mechanism the
+    combination was supposed to fix turned out not to be the cost at all**:
+    with the dequant deleted on both tiles the floors are identical, so the
+    threadgroup width the header had narrowed to was never the term. A
+    correct experimental design can sit on top of a wrong diagnosis, and only
+    the measurement separates them.
+
 66. **AN INSTRUMENT THAT SERIALIZES WHAT IT MEASURES CANNOT PRICE A HOT
     PATH, AND THE COST DOES NOT FALL WITH THE INPUT.**
     `TURBOSPARK_DISPATCH_PROFILE=1` is the only surface in this repo that

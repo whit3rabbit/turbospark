@@ -140,9 +140,10 @@ pub use dequant_2bit_gemv::{
 };
 #[cfg(target_os = "macos")]
 pub use dequant_int4_batch::{
-    best_row_block, dequant_int4_gemm_pipeline_limits, encode_dequant_int4_gemm_mma_resident,
-    encode_dequant_int4_gemm_mma_resident_skip_dequant,
-    encode_dequant_int4_gemm_mma_resident_staged, encode_dequant_int4_gemm_resident,
+    best_row_block, dequant_int4_gemm_mma_pipeline_limits, dequant_int4_gemm_pipeline_limits,
+    encode_dequant_int4_gemm_mma_resident, encode_dequant_int4_gemm_mma_resident_skip_dequant,
+    encode_dequant_int4_gemm_mma_resident_staged, encode_dequant_int4_gemm_mma_resident_wide,
+    encode_dequant_int4_gemm_mma_resident_wide_skip_dequant, encode_dequant_int4_gemm_resident,
     encode_dequant_int4_gemm_resident_blocked, GemmPipelineLimits, GEMM_THREADS_PER_GROUP,
     MAX_BATCH_ROWS, MAX_GEMM_ROW_BLOCK, MMA_MAX_BATCH_ROWS,
 };

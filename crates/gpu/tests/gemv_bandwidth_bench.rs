@@ -651,6 +651,60 @@ impl MatrixPool {
 
     /// The matrix kernel with the DEQUANT DELETED (`FC_MMA_SKIP_DEQUANT`).
     /// Output is meaningless; the time is the matrix path's cost alone.
+    /// The FOUR-SIMD-GROUP re-tile (ROADMAP PF-02 Step 7).
+    ///
+    /// `stage_x` stays a parameter so staging can still be priced WITHIN the
+    /// wide shape, which is Do Not Revisit 13's own named reversal condition
+    /// -- that entry closed staging as a lever ALONE and said it could only
+    /// be re-opened as part of a four-SIMD-group re-tile.
+    fn time_gemm_mma_wide(
+        &self,
+        context: &mut MetalContext,
+        groups: usize,
+        batch: usize,
+        stage_x: bool,
+    ) -> f64 {
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            for group in 0..groups {
+                turbospark_gpu::encode_dequant_int4_gemm_mma_resident_wide(
+                    context,
+                    &pass,
+                    &self.matrix(group),
+                    (&self.x_batch, 0),
+                    (&self.y_batch, 0),
+                    batch,
+                    stage_x,
+                )
+                .unwrap();
+            }
+            pass.commit_and_wait_with_gpu_time()
+        })
+    }
+
+    fn time_gemm_mma_wide_no_dequant(
+        &self,
+        context: &mut MetalContext,
+        groups: usize,
+        batch: usize,
+    ) -> f64 {
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            for group in 0..groups {
+                turbospark_gpu::encode_dequant_int4_gemm_mma_resident_wide_skip_dequant(
+                    context,
+                    &pass,
+                    &self.matrix(group),
+                    (&self.x_batch, 0),
+                    (&self.y_batch, 0),
+                    batch,
+                )
+                .unwrap();
+            }
+            pass.commit_and_wait_with_gpu_time()
+        })
+    }
+
     fn time_gemm_mma_no_dequant(
         &self,
         context: &mut MetalContext,
@@ -910,14 +964,41 @@ fn c_of_m_at_qwen38_shapes() {
 /// against a sequential decode (AGENTS.md Gotcha 27), so the question is
 /// not whether it is faster but whether it is faster ENOUGH to buy that.
 ///
-/// Both arms are timed in one process against the same matrices, so the
-/// third column is a within-session ratio and is the number to read.
+/// Every arm is timed in one process against the same matrices, so the ratio
+/// columns are within-session and are the numbers to read. Never read them
+/// against the frozen tables in `dequant_int4_mma.metal`'s header: absolute
+/// GiB/s moves with clocks and power state (Gotchas 20, 22, 28), which is why
+/// the narrow arms stay here as CONTROLS rather than being replaced.
+///
+/// **SINCE 2026-09-05 THIS IS ALSO ROADMAP PF-02 STEP 7'S GATE, AND THE GATE
+/// IS THE LAST COLUMN (`wide/exact`), NOT THE `matrix/exact` ONE.** Step 7 is
+/// the four-SIMD-group re-tile: the last untried lever on this kernel after
+/// Do Not Revisit 13 closed staging alone and 14 closed `kMmaTile` by
+/// arithmetic and the dequant loader by deletion. It is measured WITH
+/// `FC_MMA_STAGE_X` on, because those two entries concluded the sub-levers
+/// are not independent -- staging is a consequence of the wider threadgroup,
+/// and measuring it alone was the wrong experiment (AGENTS.md Gotcha 65).
+///
+/// The `wide-plain` column is reported beside it for one reason only: it is
+/// Do Not Revisit 13's own stated reversal condition, which said staging
+/// could be re-opened as part of a re-tile and never alone. It is not a gate.
+///
+/// **THE OCCUPANCY STORY IS NOT AVAILABLE AS AN EXPLANATION HERE, MEASURED.**
+/// `dequant_int4_mma_parity.rs`'s pipeline-limits case reads the wide arm at
+/// 88 bytes of threadgroup memory per thread against the narrow STAGED arm's
+/// 296 -- but the narrow arm in this table runs UN-staged at 40, because the
+/// compiler eliminates `x_tile` when the constant is false. So the wide arm
+/// uses more threadgroup memory per thread than the control it is being
+/// timed against, and if it wins, occupancy is not why.
 #[test]
-#[ignore = "benchmark: needs a real Metal device, reports rather than asserts"]
+#[ignore = "benchmark: needs a real Metal device on AC, reports rather than asserts"]
 fn c_of_m_matrix_against_exact_at_qwen38_shapes() {
     let mut context = MetalContext::new().expect("Metal device");
 
-    println!("\nshape                    M    exact   matrix   matrix/exact");
+    println!(
+        "\nshape                    M    exact   matrix  wide-plain  wide+stageX  \
+         matrix/exact  wide/exact"
+    );
     for (label, rows, cols) in QWEN38_SHAPES {
         if rows > 32768 {
             continue;
@@ -939,26 +1020,57 @@ fn c_of_m_matrix_against_exact_at_qwen38_shapes() {
             } else {
                 None
             };
+            // Interleaved arm by arm within the width, each after its own
+            // discarded warmup, so no arm systematically holds the cold slot.
             pool.time_gemm_mma(&mut context, groups, batch);
             let mma = pool.time_gemm_mma(&mut context, groups, batch) / (groups * batch) as f64;
+            pool.time_gemm_mma_wide(&mut context, groups, batch, false);
+            let wide_plain = pool.time_gemm_mma_wide(&mut context, groups, batch, false)
+                / (groups * batch) as f64;
+            pool.time_gemm_mma_wide(&mut context, groups, batch, true);
+            let wide = pool.time_gemm_mma_wide(&mut context, groups, batch, true)
+                / (groups * batch) as f64;
             match exact {
                 Some(e) => println!(
-                    "{label}  {batch:>3}   {:>5.2}x   {:>5.2}x   {:>8.2}x",
+                    "{label}  {batch:>3}   {:>5.2}x   {:>5.2}x   {:>8.2}x   {:>9.2}x   \
+                     {:>10.2}x  {:>9.2}x",
                     e / sequential,
                     mma / sequential,
-                    mma / e
+                    wide_plain / sequential,
+                    wide / sequential,
+                    mma / e,
+                    wide / e
                 ),
                 None => println!(
-                    "{label}  {batch:>3}       --   {:>5.2}x         --  (past the SIMD cap)",
-                    mma / sequential
+                    "{label}  {batch:>3}       --   {:>5.2}x   {:>8.2}x   {:>9.2}x   \
+                     {:>10}  {:>9}  (past the SIMD cap)",
+                    mma / sequential,
+                    wide_plain / sequential,
+                    wide / sequential,
+                    "--",
+                    "--"
                 ),
             }
         }
     }
     println!(
-        "\nThe third column is what matters. Below 1.00 the matrix kernel is\n\
-         faster and the question is whether the margin buys giving up a\n\
-         provably-lossless verify; at or above 1.00 there is nothing to buy.\n"
+        "\nTHE LAST COLUMN IS ROADMAP PF-02 STEP 7'S GATE: `wide/exact` below\n\
+         1.00 means the four-SIMD-group re-tile beats the exact kernel at that\n\
+         width. `matrix/exact` beside it is the narrow control and answers the\n\
+         older question (does the narrow tile buy giving up a provably-lossless\n\
+         verify). Both are within-session ratios; neither is comparable to a\n\
+         frozen table from another day.\n\
+         \n\
+         If `wide/exact` does not go below 1.00 at any width, the lever is\n\
+         CLOSED rather than inconclusive: with Do Not Revisit 13, 14 and this,\n\
+         all four levers named in 14 are measured and the dead-end verdict\n\
+         stops being scoped to one tile. Write it down in that entry's own\n\
+         form -- mechanism, table, explicit reversal condition -- and delete\n\
+         `ROADMAP.md`'s `the only untried lever` wording in every place it\n\
+         appears, which is more than one.\n\
+         \n\
+         Whatever it measures, this kernel stays PREFILL-ONLY: it is no more\n\
+         bit-exact against the GEMV than the narrow tile (Gotcha 27).\n"
     );
 }
 
@@ -1150,7 +1262,10 @@ fn c_of_m_matrix_staged_against_unstaged() {
 fn c_of_m_matrix_with_and_without_the_dequant() {
     let mut context = MetalContext::new().expect("Metal device");
 
-    println!("\nshape                    M   exact     mma   mma-no-dequant   nodq/mma");
+    println!(
+        "\nshape                    M   exact     mma   mma-no-dequant   nodq/mma   \
+         wide   wide-no-dequant   nodq/wide"
+    );
     for (label, rows, cols) in QWEN38_SHAPES {
         if rows > 32768 {
             continue;
@@ -1175,25 +1290,48 @@ fn c_of_m_matrix_with_and_without_the_dequant() {
             };
             pool.time_gemm_mma(&mut context, groups, batch);
             pool.time_gemm_mma_no_dequant(&mut context, groups, batch);
+            // UN-STAGED, matching `mma`/`mma-no-dequant` beside it. Both wide
+            // columns must sit on the same staging setting as each other AND as
+            // the narrow pair, or `nodq/wide` conflates deleting the dequant
+            // with deleting the staging and is not comparable to `nodq/mma` at
+            // all. The first cut of this bench got that wrong. Staging is priced
+            // in the gate bench, which reports `wide-plain` and `wide+stageX`
+            // side by side.
+            pool.time_gemm_mma_wide(&mut context, groups, batch, false);
+            pool.time_gemm_mma_wide_no_dequant(&mut context, groups, batch);
             let full = pool.time_gemm_mma(&mut context, groups, batch) / (groups * batch) as f64;
             let nodq = pool.time_gemm_mma_no_dequant(&mut context, groups, batch)
+                / (groups * batch) as f64;
+            let wide = pool.time_gemm_mma_wide(&mut context, groups, batch, false)
+                / (groups * batch) as f64;
+            let wide_nodq = pool.time_gemm_mma_wide_no_dequant(&mut context, groups, batch)
                 / (groups * batch) as f64;
             let exact_col = match exact {
                 Some(e) => format!("{:>5.2}x", e / sequential),
                 None => "    --".to_string(),
             };
             println!(
-                "{label}  {batch:>3}  {exact_col}  {:>6.2}x  {:>13.2}x  {:>9.2}",
+                "{label}  {batch:>3}  {exact_col}  {:>6.2}x  {:>13.2}x  {:>9.2}  \
+                 {:>5.2}x  {:>13.2}x  {:>9.2}",
                 full / sequential,
                 nodq / sequential,
-                nodq / full
+                nodq / full,
+                wide / sequential,
+                wide_nodq / sequential,
+                wide_nodq / wide
             );
         }
     }
     println!(
-        "\nLast column: the fraction of this kernel's time that is NOT the\n\
-         dequant. Near 1.00 the matrix path is the whole cost and the loader\n\
-         is not worth fixing; near 0 the dequant is, and the threadgroup\n\
-         width is the wrong lever.\n"
+        "\n`nodq/mma` and `nodq/wide`: the fraction of each tile's time that is\n\
+         NOT the dequant. Near 1.00 the matrix path is the whole cost and the\n\
+         loader is not worth fixing; near 0 the dequant is, and the threadgroup\n\
+         width is the wrong lever.\n\
+         \n\
+         THE WIDE COLUMNS ARE WHY THIS BENCH GAINED THEM: the narrow tile's\n\
+         answer (36% dequant at M=2, 11% at M=64) is a property of 32 lanes\n\
+         carrying the unpack, not of the algorithm, so it does not transfer to\n\
+         a tile that spreads the same work over 128. This is the first thing\n\
+         to read if the re-tile lands between the exact kernel and 1.00.\n"
     );
 }

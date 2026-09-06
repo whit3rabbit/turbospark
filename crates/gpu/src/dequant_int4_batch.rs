@@ -365,6 +365,33 @@ pub const MMA_MAX_BATCH_ROWS: usize = 64;
 /// One SIMD group per threadgroup; see the shader's header for why.
 const MMA_THREADS_PER_GROUP: u64 = 32;
 
+/// The re-tiled arm's threadgroup: FOUR SIMD groups (ROADMAP PF-02 Step 7).
+const MMA_WIDE_THREADS_PER_GROUP: u64 = 128;
+/// `WM`: 8-row output tiles per threadgroup in the re-tiled arm.
+///
+/// Must equal the shader's own `kMmaWideRowTiles`, which
+/// `the_host_and_shader_agree_on_the_wide_tile` checks against the source
+/// text rather than trusting.
+const MMA_WIDE_ROW_TILES: usize = 2;
+
+/// Threadgroups for a dispatch of `rows` output rows.
+///
+/// **NAMED, RATHER THAN INLINE, FOR THE REASON `gemm_threadgroups` GIVES.**
+/// Dropping `* MMA_WIDE_ROW_TILES` OVER-dispatches: the surplus threadgroups
+/// compute a `tg_row0` past `M` and return at the kernel's first branch, so
+/// the output stays bit-correct and only the COST moves, by 2x -- on the one
+/// axis whose entire purpose is to be timed. That variant would read as "the
+/// re-tile does not help" and would close the lever on a measurement of the
+/// mistake. Asserted as arithmetic in this module's own tests instead.
+fn mma_threadgroups(rows: usize, wide: bool) -> u64 {
+    let per_group = if wide {
+        MMA_TILE * MMA_WIDE_ROW_TILES
+    } else {
+        MMA_TILE
+    };
+    rows.div_ceil(per_group) as u64
+}
+
 /// The `simdgroup_matrix` form of [`encode_dequant_int4_gemm_resident`].
 ///
 /// **NOT BIT-EXACT AGAINST THE GEMV, and that is inherent rather than a
@@ -418,7 +445,7 @@ pub fn encode_dequant_int4_gemm_mma_resident_skip_dequant(
     y: (&metal::Buffer, u64),
     batch: usize,
 ) -> Result<(), GpuError> {
-    encode_mma(context, pass, w, x, y, batch, false, true)
+    encode_mma(context, pass, w, x, y, batch, false, true, false)
 }
 
 /// The same, with `x` optionally staged through threadgroup memory.
@@ -447,7 +474,103 @@ pub fn encode_dequant_int4_gemm_mma_resident_staged(
     batch: usize,
     stage_x: bool,
 ) -> Result<(), GpuError> {
-    encode_mma(context, pass, w, x, y, batch, stage_x, false)
+    encode_mma(context, pass, w, x, y, batch, stage_x, false, false)
+}
+
+/// The FOUR-SIMD-GROUP re-tile of [`encode_dequant_int4_gemm_mma_resident`]
+/// (ROADMAP PF-02 Step 7).
+///
+/// Same arithmetic, same accumulation grouping, a different threadgroup: 128
+/// threads owning 16 output rows, with `WN` splitting the token tiles between
+/// SIMD groups of one threadgroup rather than between threadgroups. Read the
+/// shader header for why the token axis must not be split across
+/// threadgroups, and for the mechanism this is betting on (bytes per thread
+/// 296 -> 88, per-lane staging cost down 8x, barriers per output row halved).
+///
+/// **`stage_x` IS MEANT TO BE TRUE HERE.** Do Not Revisit 13 measured staging
+/// alone as a 3.3x-to-5.9x loss and concluded that staging is a CONSEQUENCE
+/// of the wider threadgroup rather than a separate lever (AGENTS.md Gotcha
+/// 65). It stays a parameter so the two can still be measured apart WITHIN
+/// the wide shape, which is that entry's own named reversal condition.
+///
+/// **NOT BIT-EXACT AGAINST THE GEMV**, exactly as the narrow arm is not, so
+/// it stays prefill-only whatever it measures (AGENTS.md Gotcha 27). It IS
+/// bit-identical to the narrow arm, which `dequant_int4_mma_parity.rs`
+/// asserts rather than assumes -- K is not split across SIMD groups here, so
+/// no reduction order changes.
+///
+/// Nothing dispatches it. `encode_dequant_int4_gemm_resident` remains the
+/// default and no heuristic selects between any of these.
+pub fn encode_dequant_int4_gemm_mma_resident_wide(
+    context: &mut MetalContext,
+    pass: &crate::context::PassEncoder,
+    w: &Int4ResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    batch: usize,
+    stage_x: bool,
+) -> Result<(), GpuError> {
+    encode_mma(context, pass, w, x, y, batch, stage_x, false, true)
+}
+
+/// The re-tiled arm's [`encode_dequant_int4_gemm_mma_resident_skip_dequant`].
+///
+/// **DIAGNOSTIC ONLY: `y` IS MEANINGLESS.** It exists because the first
+/// question anyone asks of a wide arm landing between 1.00 and the exact
+/// kernel is which half it spends its time in, and the narrow arm's answer
+/// (dequant 36% at M=2, 11% at M=64) is a property of 32 lanes carrying the
+/// unpack rather than of the algorithm. Declaring the constant without
+/// benching and testing it would be worse than not wiring it at all: an
+/// unreachable diagnostic times the unmodified kernel twice and reads as
+/// evidence, which `dequant_int4_mma_parity.rs` asserts against.
+pub fn encode_dequant_int4_gemm_mma_resident_wide_skip_dequant(
+    context: &mut MetalContext,
+    pass: &crate::context::PassEncoder,
+    w: &Int4ResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    batch: usize,
+) -> Result<(), GpuError> {
+    encode_mma(context, pass, w, x, y, batch, false, true, true)
+}
+
+/// [`GemmPipelineLimits`] for a matrix-kernel shape, either tile.
+///
+/// The sibling of [`dequant_int4_gemm_pipeline_limits`], and it answers two
+/// questions that need no clock.
+///
+/// For the WIDE arm, `max_total_threads_per_threadgroup >= 128` is a HARD
+/// PRECONDITION rather than a spill signal: dispatching more threads than the
+/// pipeline permits is invalid, so this must be checked before any timing is
+/// taken. (The caveat recorded on the sibling -- that the field reads 1024
+/// even on impossible configurations, so it cannot PRICE register pressure --
+/// does not apply to a floor.)
+///
+/// For the NARROW arm it answers whether `x_tile` is allocated when
+/// `FC_MMA_STAGE_X` is false. It is declared unconditionally, so if the
+/// compiler does not eliminate it, every number in the shader header's first
+/// table was taken while paying 8 KiB of dead threadgroup memory.
+pub fn dequant_int4_gemm_mma_pipeline_limits(
+    context: &mut MetalContext,
+    rows: usize,
+    cols: usize,
+    batch: usize,
+    stage_x: bool,
+    wide: bool,
+) -> Result<GemmPipelineLimits, GpuError> {
+    let (constants, key) =
+        specialized_constants_mma(rows as u32, cols as u32, batch as u32, stage_x, false);
+    let function = if wide {
+        "dequant_int4_gemm_mma_wide"
+    } else {
+        "dequant_int4_gemm_mma"
+    };
+    let pipeline = context.pipeline(MMA_SOURCE, function, &constants, &key)?;
+    Ok(GemmPipelineLimits {
+        max_total_threads_per_threadgroup: pipeline.max_total_threads_per_threadgroup(),
+        thread_execution_width: pipeline.thread_execution_width(),
+        static_threadgroup_memory_length: pipeline.static_threadgroup_memory_length(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -460,6 +583,7 @@ fn encode_mma(
     batch: usize,
     stage_x: bool,
     skip_dequant: bool,
+    wide: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(w.cols % 64, 0, "N must be a multiple of 64");
     assert!(w.rows > 0);
@@ -473,7 +597,18 @@ fn encode_mma(
     // arm compiled first (crate Gotcha 1), which in an A/B would silently
     // measure one shape twice.
     let (constants, key) = specialized_constants_mma(m, n, b, stage_x, skip_dequant);
-    let pipeline = context.pipeline(MMA_SOURCE, "dequant_int4_gemm_mma", &constants, &key)?;
+    // The kernel NAME is what keys the tile shape, and no key byte is added
+    // for it: `cache_key` is `(source address, function name, constants key)`,
+    // so a distinct name is a distinct bucket by construction (crate Gotcha
+    // 1). A function constant would have been the other option and is refused
+    // in the shader's own header -- it would force the narrow arm to declare
+    // the wide arm's threadgroup arrays, moving the control.
+    let function = if wide {
+        "dequant_int4_gemm_mma_wide"
+    } else {
+        "dequant_int4_gemm_mma"
+    };
+    let pipeline = context.pipeline(MMA_SOURCE, function, &constants, &key)?;
     pass.encode_threadgroups(
         &pipeline,
         &[
@@ -484,8 +619,12 @@ fn encode_mma(
             (y.0, 4, y.1),
         ],
         &[(u32_bytes(&m), 5), (u32_bytes(&n), 6), (u32_bytes(&b), 7)],
-        w.rows.div_ceil(MMA_TILE) as u64,
-        MMA_THREADS_PER_GROUP,
+        mma_threadgroups(w.rows, wide),
+        if wide {
+            MMA_WIDE_THREADS_PER_GROUP
+        } else {
+            MMA_THREADS_PER_GROUP
+        },
     );
     Ok(())
 }
@@ -554,6 +693,107 @@ mod tests {
         assert!(SOURCE.contains(&format!(
             "constant constexpr uint kMaxRowBlock = {MAX_GEMM_ROW_BLOCK};"
         )));
+    }
+
+    /// The same claim for the matrix kernel's two tiles, and here it carries
+    /// the DISPATCH as well as an array bound: `mma_threadgroups` divides by
+    /// `MMA_TILE * MMA_WIDE_ROW_TILES`, so a host value disagreeing with the
+    /// shader's `kMmaWideRowTiles` leaves rows unwritten or over-dispatches.
+    ///
+    /// **IT ALSO COVERS THE ONE MUTATION NO PARITY TEST CAN SEE.** Changing
+    /// the wide kernel's `t += kMmaWideColGroups` to `t += 1` makes both `wn`
+    /// siblings compute EVERY token tile and write IDENTICAL bits to the same
+    /// `y` elements: output-correct, twice the matrix work, invisible to
+    /// every parity case in `dequant_int4_mma_parity.rs`. That is the same
+    /// worst shape `gemm_threadgroups` documents -- a bug that reads as "the
+    /// re-tile does not help" -- and there is no output-observable guard for
+    /// it, so the stride is pinned as source text here.
+    ///
+    /// **MEASURED 2026-09-05 rather than assumed, and the blind spot is
+    /// NARROWER than it looks.** The stride is COUPLED to the accumulator
+    /// size (`acc[kMmaWideAccTiles]` is sized to the phase count), so a
+    /// one-line `t += 1` in the MMA loop alone desynchronizes `u` from the
+    /// copy-out's own `u` and reddens both wide-vs-narrow parity cases. Only
+    /// the COORDINATED three-edit variant -- widen `acc` to
+    /// `kMmaMaxColTiles`, and widen BOTH loops -- is genuinely bit-correct,
+    /// and that one survives all ten parity cases. So the guard is
+    /// load-bearing for a deliberate rewrite rather than for a slip.
+    ///
+    /// Both variants were checked against this test AFTER it was fixed, and
+    /// it catches both.
+    #[test]
+    fn the_host_and_shader_agree_on_the_wide_tile() {
+        assert!(MMA_SOURCE.contains(&format!(
+            "constant constexpr uint kMmaWideRowTiles   = {MMA_WIDE_ROW_TILES};"
+        )));
+        assert!(MMA_SOURCE.contains(&format!("constant constexpr uint kMmaTile = {MMA_TILE};")));
+        // COUNTED, NOT `contains`. The phase stride appears TWICE -- once in
+        // the MMA loop and once in the copy-out -- and the first draft of
+        // this guard used `contains`, so a mutation changing ONE of them left
+        // the other for it to find and the guard passed. Presence is not
+        // uniqueness (AGENTS.md's own rule), landing in the guard written to
+        // enforce it.
+        assert_eq!(
+            MMA_SOURCE
+                .matches("for (uint t = wn; t < col_tiles; t += kMmaWideColGroups, ++u) {")
+                .count(),
+            2,
+            "the wide kernel's two token-tile loops are not both on the phase \
+             stride: both `wn` halves would compute every tile, write identical \
+             bits, and cost 2x -- which no parity case can see"
+        );
+    }
+
+    /// Every row covered, and NO threadgroup launched that has no row to do,
+    /// for both matrix tiles.
+    ///
+    /// The second half is the one a parity test cannot see, and on this axis
+    /// it is worse than on `gemm_threadgroups`': an over-dispatch here is
+    /// bit-correct and 2x too expensive on the exact kernel whose whole
+    /// purpose is to be timed against the narrow tile, so it would read as
+    /// "the re-tile does not help".
+    ///
+    /// Mutation-checked: dropping `* MMA_WIDE_ROW_TILES` from
+    /// `mma_threadgroups` reddens the surplus assertion on the wide arm and
+    /// leaves the coverage one green, and leaves every GPU case in
+    /// `dequant_int4_mma_parity.rs` green as well.
+    #[test]
+    fn a_wide_dispatch_covers_every_row_and_launches_no_idle_threadgroup() {
+        for wide in [false, true] {
+            let per_group = if wide {
+                MMA_TILE * MMA_WIDE_ROW_TILES
+            } else {
+                MMA_TILE
+            };
+            for rows in [
+                1,
+                7,
+                per_group - 1,
+                per_group,
+                per_group + 1,
+                72,
+                136,
+                1024,
+                5120,
+                12288,
+                17408,
+            ] {
+                let groups = mma_threadgroups(rows, wide) as usize;
+                assert!(
+                    groups * per_group >= rows,
+                    "rows {rows} wide {wide}: {groups} groups cover only {} rows",
+                    groups * per_group
+                );
+                assert!(
+                    groups.saturating_sub(1) * per_group < rows,
+                    "rows {rows} wide {wide}: {groups} groups, but {} would already \
+                     cover them. The surplus returns at the kernel's first branch, \
+                     so the output is correct and the dispatch costs too much -- \
+                     which would read as `the re-tile does not help`",
+                    groups - 1
+                );
+            }
+        }
     }
 }
 

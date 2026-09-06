@@ -282,9 +282,12 @@ found to be scoped to one tile -- `kMmaTile = 8` with ONE SIMD group -- and
 its stated mechanism ("dequant work independent of B") is refuted by
 arithmetic and by deletion. MLX's `qmm_t_impl` is the same algorithm at
 128 threads with `BM` 32-128 and reaches `c` 0.145 where this reads 0.52.
-Three of the four candidate levers are now measured dead ends
-(`ROADMAP.md` "Do Not Revisit" 13-14); the fourth, the matrix path itself,
-is untried. None of that reopens the speculation question.
+**All four candidate levers are now measured dead ends**
+(`ROADMAP.md` "Do Not Revisit" 13, 14 and 16). The fourth, the matrix path
+itself, was built as a four-SIMD-group re-tile on 2026-09-05 and LOST: with
+the dequant deleted on both tiles at the same staging setting the floors are
+identical (0.48 at M=64 either way), so the threadgroup width was not the
+cost. None of that reopens the speculation question.
 The kernel and its bench are kept precisely so it is not re-proposed; the
 tolerance-based parity test beside it (`dequant_int4_mma_parity.rs`) also
 documents what the reassociation would have cost, 0.09% of the output range.

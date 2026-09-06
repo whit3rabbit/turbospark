@@ -91,7 +91,21 @@
 // consequence of the wider threadgroup rather than a separate lever, and
 // trying it alone was the wrong experiment. The remaining deltas -- four
 // SIMD groups, and a wider `kMmaTile` -- have to move TOGETHER or not at
-// all, and neither has been tried.
+// all.
+//
+// **`kMmaTile` WAS THEN REFUTED BY ARITHMETIC (below), AND THE FOUR-SIMD-GROUP
+// FORM WAS BUILT 2026-09-05 as `dequant_int4_gemm_mma_wide` at the bottom of
+// this file** (ROADMAP PF-02 Step 7). It is correct, bit-identical to this
+// kernel, and **MEASURED A LOSS on 2026-09-05** -- the table at the very
+// bottom of this file is the record, and it closes the scoping paragraph
+// above rather than extending it. Its gate was
+// `gemv_bandwidth_bench.rs::c_of_m_matrix_against_exact_at_qwen38_shapes`'s
+// `wide/exact` column below 1.00 and the best cell is 2.10x. Read that
+// kernel's
+// own header for the tiling and for the one thing the design settled on the
+// way: `WN` splits token tiles between SIMD groups of ONE threadgroup rather
+// than between threadgroups, because splitting `B` across threadgroups would
+// multiply the `N / B` dequant-per-output term this kernel does not lose on.
 //
 // **AND THE DEQUANT-AMORTIZATION STORY IS REFUTED BY ARITHMETIC, which is
 // worth stating because it was this file's own explanation and it was the
@@ -380,3 +394,284 @@ kernel void dequant_int4_gemm_mma(
         simdgroup_barrier(mem_flags::mem_threadgroup);
     }
 }
+
+// ---------------------------------------------------------------------------
+// THE FOUR-SIMD-GROUP RE-TILE (ROADMAP PF-02 Step 7).
+//
+// The last untried lever on this kernel. Do Not Revisit 13 closed staging `x`
+// alone (3.3x to 5.9x loss) and 14 closed `kMmaTile` by arithmetic and the
+// dequant loader by deletion; both end at the same sentence, that what remains
+// is the matrix path itself -- ONE SIMD group per threadgroup, two barriers
+// per 64-element K block, eight accumulators owned by 32 lanes. AGENTS.md
+// Gotcha 65 is written about this kernel punishing one-variable A/Bs, so the
+// remaining deltas move together: four SIMD groups AND `FC_MMA_STAGE_X` on.
+//
+// **IT IS A SEPARATE KERNEL RATHER THAN A FUNCTION CONSTANT ON THE ONE ABOVE,
+// AND THAT IS THE MEASUREMENT'S REQUIREMENT RATHER THAN STYLE.** MSL
+// threadgroup arrays need a compile-time bound and a function constant is not
+// one (`dequant_int4_batch.metal` says so in its own words), so a single
+// kernel serving both shapes would have to declare `w_tile` and `y_tile` at
+// the WIDE sizes for both arms. That grows the narrow arm's static
+// threadgroup allocation from 9,472 to ~11,264 bytes on a kernel whose
+// occupancy is plausibly threadgroup-memory-bound -- i.e. it would move the
+// CONTROL, which is the one thing an A/B cannot afford. A distinct name is a
+// distinct pipeline-cache bucket by construction (crate Gotcha 1), and both
+// kernels compile out of this one source string, so they still interleave
+// pair by pair in ONE process, which is the only way this machine reads a
+// difference at all (AGENTS.md Gotchas 22, 28).
+//
+// **`WN` SPLITS TOKEN TILES BETWEEN SIMD GROUPS OF ONE THREADGROUP, NEVER
+// BETWEEN THREADGROUPS, AND THE ARITHMETIC ABOVE IS WHY.** The obvious
+// reading of MLX's `WM = WN = 2` is to split the token axis across
+// threadgroups the way `qmm_t_impl` splits `BM`. That is wrong here. Dequant
+// per output is `N / B` in this kernel because one threadgroup covers EVERY
+// token, against MLX's `K / BM` -- the same number at the same width, as the
+// header records, and the one term this kernel does not lose on. Splitting
+// `B` across threadgroups would make each token block re-dequantize the same
+// weights, multiplying exactly that term. So the token axis stays entirely
+// inside one threadgroup at every `B`, and `wn` selects a STRIDED SUBSET of
+// the token tiles.
+//
+// What the re-tile actually changes, and the mechanism it is betting on:
+//
+//   | | narrow | wide 2x2 |
+//   |---|---|---|
+//   | threads          |  32 | 128 |
+//   | output rows / tg |   8 |  16 |
+//   | token tiles / tg | all | all |
+//   | accumulators/sg  |   8 |   4 |
+//   | threadgroup mem  | 9,472 B | 11,264 B |
+//   | **bytes/thread** | **296** | **88** |
+//   | barriers / row   |  20 |  10 |
+//
+// Bytes per thread falls 3.4x, per-lane staging cost falls 8x (half the
+// traffic per output row over four times the lanes -- the exact term Do Not
+// Revisit 13 measured at 3.3x to 5.9x when 32 lanes had to carry it), and the
+// barrier count per output row halves while each rendezvous widens ~4x.
+// Whether that trade pays is a measurement and not an argument;
+// `gemv_bandwidth_bench.rs` holds it.
+//
+// **K IS NEVER SPLIT ACROSS SIMD GROUPS, which is what makes this arm
+// BIT-IDENTICAL to the narrow one rather than merely close.** For any output
+// tile the `simdgroup_multiply_accumulate` sequence is `n0` ascending then
+// `kt` 0..7 over identical fragments in both shapes; what changes is which
+// SIMD group owns the accumulator and where the operands were staged, and
+// neither is arithmetic. `dequant_int4_mma_parity.rs` asserts it on
+// `to_bits`. A future variant that DID split K would need a cross-simdgroup
+// reduction and would have to demote that claim to a tolerance at the same
+// commit.
+//
+// The bit-exactness objection to the whole kernel is UNCHANGED: this arm is
+// no more exact against the GEMV than the narrow one, so it stays
+// PREFILL-ONLY whatever it measures (AGENTS.md Gotcha 27).
+constant constexpr uint kMmaWideRowTiles   = 2;   // WM
+constant constexpr uint kMmaWideColGroups  = 2;   // WN
+constant constexpr uint kMmaWideSimdGroups = kMmaWideRowTiles * kMmaWideColGroups;
+constant constexpr uint kMmaWideThreads    = kMmaWideSimdGroups * 32u;
+constant constexpr uint kMmaWideRows       = kMmaWideRowTiles * kMmaTile;
+// Ceiling, so an odd `col_tiles` gives the `wn = 0` groups the extra tile.
+constant constexpr uint kMmaWideAccTiles =
+    (kMmaMaxColTiles + kMmaWideColGroups - 1u) / kMmaWideColGroups;
+static_assert(kMmaWideThreads % 32u == 0u, "a threadgroup is whole SIMD groups");
+static_assert((kMmaWideRows * kMmaK) % kMmaWideThreads == 0u,
+              "the weight tile must divide evenly over the threadgroup");
+
+kernel void dequant_int4_gemm_mma_wide(
+    device const uint8_t* W      [[buffer(0)]],
+    device const bfloat*  scales [[buffer(1)]],
+    device const bfloat*  biases [[buffer(2)]],
+    device const half*    x      [[buffer(3)]],
+    device half*          y      [[buffer(4)]],
+    constant uint&        M      [[buffer(5)]],
+    constant uint&        N      [[buffer(6)]],
+    constant uint&        B      [[buffer(7)]],
+    uint                  tg_idx [[threadgroup_position_in_grid]],
+    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
+    uint                  lane   [[thread_index_in_simdgroup]]
+) {
+    // **THE ONLY EARLY RETURN IN THIS KERNEL, AND IT IS UNIFORM OVER ALL 128
+    // THREADS.** Every thread below reaches both barriers on every iteration
+    // of the `n0` loop regardless of how much work it has, because a barrier
+    // some threads skip is divergent participation, which Metal leaves
+    // undefined and which presents as a hang rather than a wrong number. In
+    // particular a threadgroup whose SECOND row tile is entirely past `M`
+    // must not let its `wm = 1` groups return: they zero-fill their share of
+    // the weight tile and predicate on `m < M` at copy-out, exactly as the
+    // narrow kernel already does for its own rows past `M`.
+    const uint tg_row0 = tg_idx * kMmaWideRows;
+    if (tg_row0 >= M) return;
+
+    const uint wm   = sg_idx / kMmaWideColGroups;   // which 8-row output tile
+    const uint wn   = sg_idx % kMmaWideColGroups;   // which token-tile phase
+    const uint tid  = sg_idx * 32u + lane;          // 0..127
+    const uint row0 = tg_row0 + wm * kMmaTile;      // this group's first row
+
+    const uint n_groups  = N / kGroupSize;
+    const uint row_bytes = N / 2;
+    const uint col_tiles = (B + kMmaTile - 1u) / kMmaTile;
+
+    threadgroup half w_tile[kMmaWideRows * kMmaK];
+    // One 8x8 slice per SIMD group rather than one shared tile. Sharing would
+    // be a straight clobber (four groups `simdgroup_store` into the same 64
+    // floats), and the barrier that would fix it has to sit inside the `t`
+    // loop, whose trip count differs across groups at an odd `col_tiles` --
+    // divergent participation again. 768 extra bytes removes the whole class.
+    threadgroup float y_tile[kMmaWideSimdGroups * kMmaTile * kMmaTile];
+    threadgroup half x_tile[kMmaMaxColTiles * kMmaTile * kMmaK];
+
+    simdgroup_float8x8 acc[kMmaWideAccTiles];
+    for (uint t = 0; t < kMmaWideAccTiles; ++t) {
+        acc[t] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    }
+
+    constexpr uint wide_per_lane = (kMmaWideRows * kMmaK) / kMmaWideThreads;
+
+    for (uint n0 = 0; n0 < N; n0 += kMmaK) {
+        // All 128 lanes fill BOTH row tiles, so a `wn` sibling reads rows its
+        // partner wrote. `tg_row0`, never `row0`.
+        for (uint slot = 0; slot < wide_per_lane; ++slot) {
+            const uint e = tid * wide_per_lane + slot;
+            const uint m = e / kMmaK;
+            const uint k = e % kMmaK;
+            const uint row = tg_row0 + m;
+            half value = 0.0h;
+            if (mma_skip_dequant()) {
+                value = half(0.5h);
+            } else if (row < M) {
+                const uint n = n0 + k;
+                const uint8_t byte = W[uint(row) * row_bytes + (n >> 1)];
+                const uint q = (n & 1u) ? uint(byte >> 4) : uint(byte & 0x0Fu);
+                const uint g = n / kGroupSize;
+                const float s = float(scales[uint(row) * n_groups + g]);
+                const float b = float(biases[uint(row) * n_groups + g]);
+                value = half(fma(float(q), s, b));
+            }
+            w_tile[e] = value;
+        }
+        // The IDENTICAL address set the narrow arm stages, split 128 ways
+        // instead of 32. That identity is what keeps the two comparable.
+        if (mma_stage_x()) {
+            const uint staged = col_tiles * kMmaTile * kMmaK;
+            for (uint e = tid; e < staged; e += kMmaWideThreads) {
+                const uint b = e / kMmaK;
+                const uint k = e % kMmaK;
+                x_tile[e] = x[b * N + n0 + k];
+            }
+        }
+        // RAW across SIMD groups: simd scope is provably insufficient here,
+        // where it was sufficient for the narrow kernel.
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        // NO BARRIER INSIDE EITHER LOOP BELOW. Nothing writes threadgroup
+        // memory in them, so one would be pure rendezvous cost -- 8x the
+        // count, which is the shape the SIMD kernel's header measured as
+        // costing more than the staging saves -- and the inner one would
+        // additionally be divergent at an odd `col_tiles`.
+        for (uint kt = 0; kt < kMmaKTiles; ++kt) {
+            simdgroup_half8x8 w_mat;
+            simdgroup_load(w_mat,
+                           w_tile + wm * kMmaTile * kMmaK + kt * kMmaTile,
+                           kMmaK);
+            uint u = 0;
+            for (uint t = wn; t < col_tiles; t += kMmaWideColGroups, ++u) {
+                simdgroup_half8x8 x_mat;
+                if (mma_stage_x()) {
+                    simdgroup_load(x_mat,
+                                   x_tile + uint(t) * kMmaTile * kMmaK
+                                          + kt * kMmaTile,
+                                   kMmaK,
+                                   ulong2(0, 0),
+                                   true);
+                } else {
+                    simdgroup_load(x_mat,
+                                   x + uint(t) * kMmaTile * N + n0 + kt * kMmaTile,
+                                   N,
+                                   ulong2(0, 0),
+                                   true);
+                }
+                simdgroup_multiply_accumulate(acc[u], w_mat, x_mat, acc[u]);
+            }
+        }
+        // WAR, not RAW: without it a fast SIMD group starts overwriting the
+        // next block's `w_tile` while a slow one is still loading this one.
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Each group owns its slice, so simd scope is sufficient again here.
+    threadgroup float* my_y = y_tile + sg_idx * (kMmaTile * kMmaTile);
+    uint u = 0;
+    for (uint t = wn; t < col_tiles; t += kMmaWideColGroups, ++u) {
+        simdgroup_store(acc[u], my_y, kMmaTile, ulong2(0, 0), true);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint e = lane; e < kMmaTile * kMmaTile; e += 32u) {
+            const uint b = t * kMmaTile + e / kMmaTile;
+            const uint m = row0 + e % kMmaTile;
+            if (b < B && m < M) {
+                y[b * M + m] = half(my_y[e]);
+            }
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// **STEP 7 IS MEASURED AND IT IS A LOSS. 2026-09-05, AC, one process,
+// arms interleaved width by width after a discarded warmup each.**
+//
+// `c(M)` on gate/up 17408x5120; the other five shapes agree to within 0.03
+// and the whole table reproduced across two runs to within 0.02 a cell:
+//
+//   M    exact   narrow   wide-plain   wide+stageX   wide/exact
+//   2     0.51    3.66       4.33         5.10         10.01x
+//   4     0.31    1.83       2.18         2.57          8.22x
+//   8     0.44    0.92       1.08         1.25          2.83x
+//   16    0.39    0.67       0.74         0.81          2.10x
+//   32      --    0.56       0.59         0.68             --
+//   64      --    0.54       0.52         0.60             --
+//
+// **THE GATE WAS `wide/exact` BELOW 1.00 AND THE BEST CELL IS 2.10x.** The
+// re-tile is also worse than the NARROW matrix tile at every width up to 32.
+// At M=64 wide-plain edges it 0.52 to 0.54, which is 4% -- inside the band
+// this bench can resolve, past the exact kernel's cap so it buys nothing, and
+// not a result.
+//
+// **THREE THINGS IT SETTLES, AND TWO OF THEM REFUTE A CLAIM MADE ABOVE.**
+//
+// 1. **Staging `x` STILL LOSES INSIDE THE WIDE SHAPE.** `wide+stageX` is
+//    worse than `wide-plain` in every cell of every shape, and worst where
+//    `N` is largest (`down` 5120x17408 reads 1.17 against 0.76 at M=16,
+//    because staging cost scales with the reduction length). Do Not Revisit
+//    13's stated reversal condition was "only as part of a four-SIMD-group
+//    re-tile, never alone". That condition has now been tested and does not
+//    hold: 128 lanes doing the staging is still slower than letting Apple's
+//    tile load read `x` transposed from device. The MLX comparison that
+//    motivated it was reasoning about a kernel with a `BM` of 32 to 128 to
+//    amortize over, and this kernel keeps every token in one threadgroup by
+//    design (see the wide kernel's own header), so it never had that.
+//
+// 2. **FOUR SIMD GROUPS DOES NOT MOVE THE MATRIX PATH, which is the term
+//    this header identified as the only one left.** With the dequant deleted
+//    on BOTH tiles at the same staging setting
+//    (`c_of_m_matrix_with_and_without_the_dequant`, whose wide columns are
+//    un-staged for exactly this comparison), the two floors are the SAME:
+//    0.48 narrow and 0.48 wide at M=64, 0.48 and 0.51 at M=32, 0.52 and 0.59
+//    at M=16. The wide tile is never faster and is slightly slower at the
+//    widths that matter. So the "one SIMD group per threadgroup" diagnosis
+//    was wrong: the cost is not the threadgroup's width.
+//
+// 3. **AND SPREADING THE UNPACK OVER 128 LANES DID NOT MAKE IT RELATIVELY
+//    CHEAPER EITHER.** `nodq/wide` tracks `nodq/mma` within a few points at
+//    every width (0.69 against 0.65 at M=2, 0.92 against 0.88 at M=64), so
+//    the dequant holds the same SHARE of a four-times-wider threadgroup.
+//
+// **WITH 13, 14 AND THIS, ALL FOUR LEVERS ARE MEASURED AND THE DEAD-END
+// VERDICT IS NO LONGER SCOPED TO ONE TILE.** The scoping paragraph above
+// ("this tile loses, not matrix hardware loses") was the honest reading in
+// 2026-08-29 and is now closed: staging, `kMmaTile`, the dequant loader and
+// the threadgroup width have each been eliminated, three by measurement and
+// one by arithmetic. What is left is what this header said at the start and
+// is the reversal condition: **weights already in a `simdgroup_load`able
+// format**, not a better tiling. Nothing about a re-tile reaches that.
+//
+// The wide kernel is KEPT, exactly as constants 110 and 111 are kept: a
+// deleted dead end gets re-proposed. Nothing dispatches it.
