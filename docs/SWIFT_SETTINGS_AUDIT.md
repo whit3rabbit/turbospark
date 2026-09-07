@@ -269,7 +269,7 @@ stop sequences from the user's live settings, extracted out of
 `executeGenerationTurn` so both callers share it rather than drifting the
 way `SubagentRunner`'s system-prompt assembler already had (`swift/CLAUDE.md`
 Gotcha 46). `SubagentRunner.run`/`runBody` take a `samplingOptions:
-GenerateOptions` parameter now; the two `AppModel`-context call sites
+GenerateOptions` parameter now. The two `AppModel`-context call sites
 (`AppModel+Subagents.swift`, `AppModel+Agents.swift`) pass
 `samplingOptions()` directly, and the two `AppToolRegistry` call sites (the
 `agent` tool, the skill-invokes-agent path) read it through a new
@@ -286,7 +286,7 @@ provider.
 
 Done 2026-09-06 (`LanguageDetector`, was rank 2): `currentKeyboardLanguage()`,
 `detectTextLanguage(_:)` and `isRTL(languageCode:)` had zero production
-callers (each reached only from its own test) and are deleted; each reads
+callers (each reached only from its own test) and are deleted. Each reads
 like a scaffold for a feature -- auto-selecting the app language from the
 keyboard, flipping text direction per message -- that was never wired to a
 call site. `currentKeyboardLayoutName()` stays: `GeneralSettingsPaneView`
