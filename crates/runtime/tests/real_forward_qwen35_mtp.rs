@@ -766,6 +766,20 @@ fn a_rewound_head_and_a_rolled_back_trunk_redraft_the_same_logits() {
 /// which the retaining path refreshes with an explicit copy of the last
 /// kept row.
 ///
+/// TWO PARTIAL SHAPES, because they break differently. `keep == 2` accepts
+/// the first proposal and rejects the second. `keep == 1` rejects the
+/// first -- the most common partial outcome -- and is the only shape that
+/// reads the row-0 stash: `produce_batched`'s trailing copy clobbers row 0
+/// whenever the block is wider than one, so a single kept row cannot be
+/// rebuilt from any other row. Its feed is also TWO rows against the
+/// THREE-row scratch, so the tape's recorded stride differs from the
+/// scratch capacity -- the shrink `speculative.rs`'s `round_block` produces
+/// near a budget. The fixture alternates linear and full layers, so the
+/// replay walks two slots, and the trunk pass after the rollback is what
+/// actually reads the state that replay wrote: a replay using the
+/// capacity-sized stride lands slot 1 on bytes nobody recorded, and it is
+/// the `after` digest, never the draft, that moves.
+///
 /// INT4, like the batched-parity test below: the batched GEMM exists at 4
 /// bits alone, so the verify this round is built on cannot run on the 1-bit
 /// fixture the rest of this file uses.
@@ -777,7 +791,7 @@ fn the_draft_after_a_retaining_rollback_matches_the_reverify_shape() {
         .expect("a 4-bit dense install with a head builds");
     let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("manifest peeks");
 
-    fn draft_after_rollback(runner: &mut RealForwardRunner, retain: bool) -> String {
+    fn draft_after_rollback(runner: &mut RealForwardRunner, retain: bool, keep: usize) -> String {
         let vocab = VOCAB as usize;
         runner.reset();
         let mut row = vec![f16::from_f32(0.0); vocab];
@@ -803,25 +817,32 @@ fn the_draft_after_a_retaining_rollback_matches_the_reverify_shape() {
         let a1 = argmax(&learn[vocab..2 * vocab]);
         runner.rollback(&point);
 
-        // The real feed: one accepted proposal, one rejected, so the round
-        // is partial and keep_rows == 2.
-        let rejected = ((a1 as usize + 1) % vocab) as i32;
-        let feed = [token, a0, rejected];
-        let mut batch = vec![f16::from_f32(0.0); 3 * vocab];
+        // The real feed, crafted to the keep. keep == 2 accepts the first
+        // proposal and rejects the second; keep == 1 rejects the first, so
+        // its feed is two rows and the round is partial at one kept row.
+        let (feed, feed_rows) = if keep == 2 {
+            let rejected = ((a1 as usize + 1) % vocab) as i32;
+            (vec![token, a0, rejected], 3usize)
+        } else {
+            let rejected = ((a0 as usize + 1) % vocab) as i32;
+            (vec![token, rejected], 2usize)
+        };
+        let mut batch = vec![f16::from_f32(0.0); feed_rows * vocab];
         let point = runner.checkpoint();
         runner.verify(&feed, base, &mut batch).expect("verify");
         assert_eq!(
             argmax(&batch[0..vocab]),
             a0,
-            "the crafted first proposal must be accepted"
+            "the crafted round must agree with the learned row"
         );
-        assert_ne!(
-            argmax(&batch[vocab..2 * vocab]),
-            rejected,
-            "the crafted second proposal must be rejected"
-        );
+        if keep == 2 {
+            assert_ne!(
+                argmax(&batch[vocab..2 * vocab]),
+                feed[2],
+                "the crafted second proposal must be rejected"
+            );
+        }
 
-        let keep = 2usize;
         if retain {
             runner
                 .rollback_retaining(&point, keep)
@@ -843,14 +864,28 @@ fn the_draft_after_a_retaining_rollback_matches_the_reverify_shape() {
         runner
             .mtp_draft_step(bonus, base - 1, &mut draft)
             .expect("draft");
-        digest(&draft)
+        // The draft reads the head and `h_t` but NOT the trunk's recurrent
+        // state; the first trunk pass after the rollback does. Digesting
+        // both is what makes the replay's GDN half observable here at all --
+        // without it, a replay that read the tape at the wrong stride would
+        // corrupt the trunk silently and this test would stay green.
+        let mut after = vec![f16::from_f32(0.0); vocab];
+        runner
+            .produce(bonus, base + keep, &mut after)
+            .expect("produce after the rollback");
+        format!("{}:{}", digest(&draft), digest(&after))
     }
 
-    let mut legacy = open_at_depth(&dir, peeked.clone()).expect("open");
-    let a = draft_after_rollback(&mut legacy, false);
-    let mut retained = open_at_depth(&dir, peeked).expect("open");
-    let b = draft_after_rollback(&mut retained, true);
-    assert_eq!(a, b, "the draft after the two rollback shapes diverged");
+    for keep in [2usize, 1] {
+        let mut legacy = open_at_depth(&dir, peeked.clone()).expect("open");
+        let a = draft_after_rollback(&mut legacy, false, keep);
+        let mut retained = open_at_depth(&dir, peeked.clone()).expect("open");
+        let b = draft_after_rollback(&mut retained, true, keep);
+        assert_eq!(
+            a, b,
+            "keep {keep}: the draft after the two rollback shapes diverged"
+        );
+    }
 }
 
 /// The headless-prefill gate's REASON, as a discriminating pair: the MTP

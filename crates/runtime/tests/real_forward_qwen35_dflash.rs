@@ -375,6 +375,36 @@ fn retaining_rollback_matches_rollback_plus_reverify() {
     );
 }
 
+/// The same identity at a SHRUNK round: opened at block 3 (the scratch is
+/// `block + 1` = 4 rows) but fed 3, which is what `speculative.rs`'s
+/// `round_block` shrink produces near the token budget or the context
+/// limit. The tape's recorded stride is then the 3 rows the pass actually
+/// fed, not the scratch's 4-row capacity, so a replay that used the
+/// capacity would read every linear layer past slot 0 from the wrong byte
+/// offset -- silent recurrent-state corruption the losslessness gate cannot
+/// see, because the committed stream is identical and only the drafter's
+/// next-round state moves. Every test above feeds at full scratch width and
+/// would survive that bug; this one does not.
+#[test]
+fn retaining_rollback_matches_at_a_shrunk_round() {
+    let dir = build();
+    let mut legacy = open(&dir, 3);
+    let (feed_a, _, bonus_a, kept_a, after_a) = run_partial_round(&mut legacy, false);
+    let mut retained = open(&dir, 3);
+    let (feed_b, _, bonus_b, kept_b, after_b) = run_partial_round(&mut retained, true);
+
+    assert_eq!(feed_a, feed_b, "the arms must run the same round");
+    assert_eq!(bonus_a, bonus_b, "the bonus must not move");
+    assert_eq!(
+        kept_a, kept_b,
+        "the kept rows' logits differ from what the re-verify rebuilt"
+    );
+    assert_eq!(
+        after_a, after_b,
+        "the state after the two rollback shapes diverged at a shrunk round"
+    );
+}
+
 /// A tape describes exactly one verify. A retaining rollback with no verify
 /// behind it, and one whose tape a later produce consumed, are both REFUSED
 /// by name rather than served from stale state.

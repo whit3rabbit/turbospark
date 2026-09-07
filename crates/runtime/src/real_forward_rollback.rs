@@ -96,18 +96,36 @@ impl RealForwardRunner {
     /// Errors, rather than degrading, when there is no tape for this
     /// checkpoint: the caller's alternative is a full re-verify, and
     /// silently doing the expensive thing is how a broken fast path hides.
+    ///
+    /// Every fallible check runs before anything is mutated, and the
+    /// replay -- the one fallible step that remains -- runs BEFORE the KV
+    /// cursor moves: a refusal leaves the runner untouched, and a replay
+    /// failure leaves cursor and tape intact with the recurrent state at
+    /// the checkpoint the call was restoring anyway, so a retry re-restores
+    /// from the same snapshot and replays the same recorded inputs.
     pub fn rollback_retaining(
         &mut self,
         point: &RollbackPoint,
         keep_rows: usize,
     ) -> Result<(), String> {
-        let tape = self.batched_tape.ok_or_else(|| {
+        let tape = *self.batched_tape.as_ref().ok_or_else(|| {
             "retaining rollback needs a verify tape; the last trunk pass was not a batched verify"
                 .to_string()
         })?;
         assert!(
             point.position <= self.kv.position(),
             "rollback target is ahead of the cursor"
+        );
+        // The rewind below subtracts the rejected tail from the cursor, so
+        // the tape's row count has to BE the rows the KV gained since the
+        // pass started. Every trunk advance site clears the tape
+        // (`real_forward_traits.rs`), so this holds by construction; the
+        // assert is what turns a future pass that forgets to clear into a
+        // loud stop rather than a rewind by a count nobody recorded.
+        assert_eq!(
+            self.kv.position(),
+            tape.start_position + tape.rows,
+            "the verify tape's row count does not match the KV cursor"
         );
         if tape.start_position != point.position {
             return Err(format!(
@@ -125,12 +143,23 @@ impl RealForwardRunner {
             "retaining rollback needs a GDN snapshot; this install has no recurrent state"
                 .to_string()
         })?;
-        // KV: the kept rows are the correct ones -- this pass wrote them at
-        // the positions they occupy -- so only the rejected tail rewinds.
-        self.kv.rewind_by(tape.rows - keep_rows);
-        self.kv_prefix.rewind_to(point.position + keep_rows);
-        // Recurrent state: back to the block start, then forward again over
-        // only the kept rows' recorded inputs.
+        // `keep_rows == 1` restores row 0 from the stash `produce_batched`
+        // left (see the copy below), and that stash exists exactly when the
+        // clobber it undoes happened: a verify of more than one row. A
+        // one-row tape never clobbered row 0, so there the stash is
+        // legitimately absent; at more rows its absence means the pairing
+        // record is gone and the rebuild below would silently leave the
+        // wrong residual for the drafter to read.
+        if keep_rows == 1 && tape.rows > 1 && self.batched_tape_row0.is_none() {
+            return Err(
+                "the verify tape is missing its row-0 stash, so the kept row's residual \
+                 cannot be restored"
+                    .to_string(),
+            );
+        }
+        // Recurrent state first, then the replay over the tape -- both
+        // before the KV cursor moves, because the replay is the one
+        // fallible step left and it reads neither the cursor nor the cache.
         {
             let qwen = self
                 .real_qwen
@@ -152,18 +181,26 @@ impl RealForwardRunner {
                 )
             }
         };
-        let arch = self.arch.clone();
-        let (context, weights, index, scratch) =
-            (&mut self.context, &self.weights, &self.index, &self.scratch);
+        let (context, weights, index, scratch, arch) = (
+            &mut self.context,
+            &self.weights,
+            &self.index,
+            &self.scratch,
+            &self.arch,
+        );
         gpu::autorelease_pool(|| {
             let pass = context.begin_pass_labeled("gdn tape replay");
             crate::families::qwen::replay_linear_state_batched(
-                context, &pass, weights, index, &arch, qwen, batched, keep_rows, tape.rows,
+                context, &pass, weights, index, arch, qwen, batched, keep_rows, tape.rows,
             )?;
             pass.commit_and_wait();
             Ok(())
         })
         .map_err(|e: crate::real_forward_types::RealForwardError| e.to_string())?;
+        // KV: the kept rows are the correct ones -- this pass wrote them at
+        // the positions they occupy -- so only the rejected tail rewinds.
+        self.kv.rewind_by(tape.rows - keep_rows);
+        self.kv_prefix.rewind_to(point.position + keep_rows);
         // The last kept row's residual goes to scratch row 0, which is where
         // the step-wise drafter reads `h_t` -- the same contract the pass
         // itself serves at batch > 1 (`produce_batched`'s trailing copy),

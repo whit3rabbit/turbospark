@@ -246,11 +246,18 @@ pub(crate) fn encode_linear_block_batched(
     // conv tail update and the delta rule below never rewrite them, so the
     // copies can sit anywhere after the projections; they sit here so the
     // pass keeps one ordering for every layer. `z` is not copied -- see
-    // `BatchedVerifyTape`'s note.
+    // `BatchedVerifyTape`'s note. The stride below is THIS pass's `batch`,
+    // which is exactly what `replay_linear_state_batched`'s `recorded_batch`
+    // names: change either site and the other reads every slot past 0 from
+    // the wrong offset.
     if let Some(tape) = batched.verify_tape.as_ref() {
+        let slot = tape_slot.ok_or_else(|| {
+            RealForwardError::Unsupported(
+                "a tape-carrying scratch must be driven with a tape slot".to_string(),
+            )
+        })?;
         // The general strided-row copy; dflash-named because the drafter's
         // aux capture was its first caller.
-        let slot = tape_slot.expect("a tape-carrying scratch must be driven with a slot");
         let off = |dim: usize| (slot * batch * dim * 2) as u64;
         let (rows, w_qkv, w_heads) = (batch as u32, qkv_dim as u32, v_heads as u32);
         gpu::encode_dflash_copy_rows(
