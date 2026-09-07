@@ -422,16 +422,142 @@ final class SkillSystemTests: XCTestCase {
             )
         ]
 
-        // Under limit (default 8000 chars)
+        // Under limit (default 8000 chars at 200k tokens: 200000 * 4 * 1%)
         let formattedUnder = manager.formatSkillsWithinBudget(normalSkills, contextWindowTokens: 200_000)
-        XCTAssertTrue(formattedUnder.contains("- alpha: Alpha description"))
-        XCTAssertTrue(formattedUnder.contains("- beta: Beta description"))
+        XCTAssertTrue(formattedUnder.contains("- alpha [User]: Alpha description"))
+        XCTAssertTrue(formattedUnder.contains("- beta [Bundled]: Beta description"))
 
         // Extremely squeezed budget (tokens: 25 -> 25 * 4 * 0.01 = 1 character budget)
         let formattedSqueezed = manager.formatSkillsWithinBudget(normalSkills, contextWindowTokens: 25)
         // Bundled skill preserves description, non-bundled is reduced to name only
-        XCTAssertTrue(formattedSqueezed.contains("- beta: Beta description"))
+        XCTAssertTrue(formattedSqueezed.contains("- beta [Bundled]: Beta description"))
         XCTAssertTrue(formattedSqueezed.contains("- alpha"))
+    }
+
+    func testWhenToUseParsesSerializesAndAppearsInListings() {
+        let raw = """
+        ---
+        name: deploy-staging
+        description: Deploys the current branch to staging.
+        when_to_use: Use when the user asks to deploy or push to staging
+        ---
+        Deploy steps here.
+        """
+        let skill = SkillParser.parseContent(rawText: raw, scope: .userGlobal)
+        XCTAssertEqual(skill.manifest.whenToUse, "Use when the user asks to deploy or push to staging")
+
+        // Round trip through the serializer.
+        let reParsed = SkillParser.parseContent(
+            rawText: SkillParser.serializeSkill(skill), scope: .userGlobal)
+        XCTAssertEqual(reParsed.manifest.whenToUse, "Use when the user asks to deploy or push to staging")
+
+        // The listing carries it, Claude Code style, appended to the description.
+        let formatted = SkillManager.shared.formatSkillsWithinBudget([skill], contextWindowTokens: 200_000)
+        XCTAssertTrue(
+            formatted.contains("- deploy-staging [User]: Deploys the current branch to staging. - Use when the user asks to deploy or push to staging"),
+            "listing was: \(formatted)")
+    }
+
+    func testClaudeCodeArgumentSpellingsSubstitute() {
+        let manager = SkillManager()
+        let template = "Run $0 against $ARGUMENTS[1] with everything: $ARGUMENTS"
+        let substituted = manager.substituteArguments(
+            content: template,
+            arguments: ["arguments": "deploy \"prod us\" --dry-run"])
+
+        // Quoted spans stay whole; the bare form is the raw string; the
+        // indexed forms index the split.
+        XCTAssertEqual(substituted, "Run deploy against prod us with everything: deploy \"prod us\" --dry-run")
+    }
+
+    func testRawArgumentsAppendWhenBodyHasNoPlaceholder() {
+        let manager = SkillManager()
+        let substituted = manager.substituteArguments(
+            content: "Do the standard review workflow.",
+            arguments: ["args": "focus on the parser"])
+
+        XCTAssertTrue(substituted.hasSuffix("\n\nARGUMENTS: focus on the parser"))
+
+        // A body that DID carry a placeholder (any supported kind) gets no
+        // duplicate append, even when the placeholder is an unfilled one.
+        let withPlaceholder = manager.substituteArguments(
+            content: "Work in ${SKILL_DIR}.",
+            arguments: ["args": "focus on the parser"])
+        XCTAssertFalse(withPlaceholder.contains("ARGUMENTS:"))
+    }
+
+    func testListingExcludesBlockedAndUnactivatedConditionalSkills() {
+        let manager = SkillManager.shared
+        let skills = [
+            AppSkill(
+                manifest: SkillManifest(name: "open", description: "Plain skill"),
+                content: "c",
+                sourceURL: tempDirURL.appendingPathComponent("open.md"),
+                scope: .userGlobal),
+            AppSkill(
+                manifest: SkillManifest(name: "off", description: "User disabled"),
+                content: "c",
+                sourceURL: tempDirURL.appendingPathComponent("off.md"),
+                scope: .userGlobal,
+                isEnabled: false),
+            AppSkill(
+                manifest: SkillManifest(name: "modelblocked", description: "Model may not call",
+                    disableModelInvocation: true),
+                content: "c",
+                sourceURL: tempDirURL.appendingPathComponent("modelblocked.md"),
+                scope: .userGlobal),
+            AppSkill(
+                manifest: SkillManifest(name: "conditional", description: "Needs a touch",
+                    paths: ["**/*.swift"]),
+                content: "c",
+                sourceURL: tempDirURL.appendingPathComponent("conditional.md"),
+                scope: .userGlobal),
+        ]
+
+        // Not activated: the conditional skill is withheld with the blocked ones.
+        let before = manager.formatSkillsWithinBudget(
+            skills, contextWindowTokens: 200_000, activatedSkillNames: [])
+        XCTAssertTrue(before.contains("- open [User]: Plain skill"))
+        XCTAssertFalse(before.contains("- off"))
+        XCTAssertFalse(before.contains("- modelblocked"))
+        XCTAssertFalse(before.contains("- conditional"))
+
+        // Activated (the same set the session records on a matching touch):
+        // the conditional skill joins the listing.
+        let after = manager.formatSkillsWithinBudget(
+            skills, contextWindowTokens: 200_000, activatedSkillNames: ["conditional"])
+        XCTAssertTrue(after.contains("- conditional [User]: Needs a touch"))
+    }
+
+    func testForkSkillRoutesThroughTheSubagentPath() async throws {
+        let skillDir = tempDirURL.appendingPathComponent(".turbospark/skills/forked-job", isDirectory: true)
+        try FileManager.default.createDirectory(at: skillDir, withIntermediateDirectories: true)
+        try """
+        ---
+        name: forked-job
+        description: Runs isolated from the main conversation.
+        context: fork
+        ---
+        Isolated body ${input} for the subagent.
+        """.write(to: skillDir.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+
+        // No session installed: SubagentRunner fails fast, which is the
+        // observable that PROVES the fork route ran -- an inline expansion
+        // would have returned the body as a successful result.
+        let savedSession = AppToolRegistry.activeSessionProvider
+        let savedPrompt = AppToolRegistry.userSystemPromptProvider
+        AppToolRegistry.activeSessionProvider = nil
+        AppToolRegistry.userSystemPromptProvider = nil
+        defer {
+            AppToolRegistry.activeSessionProvider = savedSession
+            AppToolRegistry.userSystemPromptProvider = savedPrompt
+        }
+
+        let project = AppProject(name: "TestProject", rootDirectoryPath: tempDirURL.path)
+        let call = AppToolCall(name: "skill", arguments: ["name": "forked-job", "input": "x"])
+        let result = await AppToolRegistry.execute(call: call, in: project)
+        XCTAssertTrue(result.isError, "fork without a session must surface the subagent's failure")
+        XCTAssertTrue(result.output.contains("No active model session"))
     }
 
     func testConditionalSkillActivation() {

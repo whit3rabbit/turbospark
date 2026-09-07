@@ -45,7 +45,7 @@ The skills subsystem is organized into five functional layers:
 |                        Execution & Prompt Budget                        |
 |   * Skill catalog character budget (1% of model context window)         |
 |   * Conditional skill activation: paths frontmatter matching file edits |
-|   * Inline expansion vs Subagent fork (isolated token budget)           |
+|   * Inline expansion vs Subagent fork (isolated context, turn budget)   |
 +-------------------------------------------------------------------------+
 |                            Chat Integration                             |
 |   * Slash and @ autocomplete in the composer (type "/" or "@")          |
@@ -65,9 +65,14 @@ Skills are partitioned into two user-facing scopes:
 1. **User Scope (`SkillScope.userGlobal`)**:
    - Location: `~/.turbospark/skills/<name>/SKILL.md` (canonical).
    - Compatibility roots: also discovers existing skills from other installed
-     agents defined in the agent-config matrix:
-     `~/.claude/skills/`, `~/.agents/skills/`, `~/.cursor/skills/`,
-     `~/.gemini/skills/`, `~/.config/opencode/skills/`, `~/.codex/skills/`.
+     agents. The full list lives in
+     `SkillManager.knownUserAgentSkillRoots`: `~/.claude/skills/`,
+     `~/.gemini/skills/`, `~/.gemini/antigravity/skills/`, `~/.agents/skills/`,
+     `~/.config/opencode/skills/`, `~/.pi/agent/skills/`, `~/.cursor/skills/`,
+     `~/.codeium/windsurf/skills/`, `~/.kilo/skills/`, `~/.crush/skills/`,
+     `~/.cline/skills/`, `~/.forge/skills/`, `~/.qwen/skills/`, and
+     `~/.copilot/skills/`. External roots are scanned for the DEFAULT user
+     profile only.
    - Availability: always visible and executable in any chat session, including
      standalone (projectless) chats.
    - Purpose: general-purpose workflows that follow the developer across all
@@ -75,8 +80,11 @@ Skills are partitioned into two user-facing scopes:
 
 2. **Project Scope (`SkillScope.projectLocal`)**:
    - Location: `<project_root>/.turbospark/skills/<name>/SKILL.md` (canonical).
-   - Compatibility roots: `<project_root>/.claude/skills/`,
-     `<project_root>/.agents/skills/`, `<project_root>/.cursor/skills/`.
+   - Compatibility roots (`SkillManager.knownProjectSkillSubdirectories`):
+     `<project_root>/.claude/skills/`, `.agents/skills/`, `.opencode/skills/`,
+     `.pi/skills/`, `.cursor/skills/`, `.github/skills/`, `.windsurf/skills/`,
+     `.kilo/skills/`, `.crush/skills/`, `.cline/skills/`, `.forge/skills/`,
+     `.qwen/skills/`.
    - Availability: visible and executable only when the respective project is
      selected as the active project.
    - Precedence: when a project skill shares a name with a user skill (compared
@@ -127,6 +135,13 @@ Single-file `.md` skills (e.g. `~/.turbospark/skills/simple.md`) are supported
 as fallback on read, but all new creations and imports standardize on
 `<name>/SKILL.md`.
 
+The invocation NAME is the `name:` frontmatter field, falling back to the
+file (or directory) name when it is absent. Claude Code takes the opposite
+convention -- the DIRECTORY name is canonical there and frontmatter `name:`
+is display-only -- so a skill whose two names differ is invoked by a
+different name in each harness; skills meant to travel should keep them
+equal.
+
 ### C. SKILL.md schema and frontmatter
 
 Every `SKILL.md` starts with a YAML frontmatter block between `---` markers,
@@ -145,9 +160,10 @@ arguments:
   - name: namespace
     description: Target kubernetes namespace
     placeholder: "[namespace]"
-    defaultValue: "staging"
+    default: "staging"
 argument-hint: "[namespace]"
 context: inline                  # "inline" (default) or "fork" (subagent runner)
+agent: deploy-runner             # runner for context: fork (general-purpose if absent)
 paths:                           # Conditional activation glob patterns
   - "deploy/**/*.yaml"
   - "k8s/**"
@@ -256,7 +272,9 @@ Marketplaces publish a manifest describing their skills collection:
      git sparse-checkout set --cone -- <skill_path>
      git checkout HEAD
      ```
-   - Target branch/ref pinning and SHA verification are supported.
+   - Target branch/ref pinning is supported. The installed ledger records
+     the REF, not a resolved commit SHA today (`gitCommitSha` is nil -- see
+     DEVIATIONS.md).
 
 ### C. Installation target selector
 
@@ -271,22 +289,22 @@ select the target scope:
 ### D. Installed skills ledger (`installed_skills.json`)
 
 Installations are recorded in `~/.turbospark/plugins/installed_skills.json`
-supporting multi-scope tracking:
+supporting multi-scope tracking. The file is a JSON object keyed directly by
+skill name, each value a list of per-scope records:
 
 ```json
 {
-  "version": 1,
-  "skills": {
-    "docker-build": [
-      {
-        "scope": "user",
-        "installPath": "/Users/user/.turbospark/skills/docker-build",
-        "version": "1.2.0",
-        "gitCommitSha": "d4e2f1...",
-        "installedAt": "2026-09-04T12:00:00Z"
-      }
-    ]
-  }
+  "docker-build": [
+    {
+      "skillName": "docker-build",
+      "scope": "user",
+      "projectPath": null,
+      "installPath": "/Users/user/.turbospark/skills/docker-build",
+      "version": "1.2.0",
+      "gitCommitSha": null,
+      "installedAt": "2026-09-04T12:00:00Z"
+    }
+  ]
 }
 ```
 
@@ -294,23 +312,35 @@ supporting multi-scope tracking:
 
 ## 5. Execution pipeline and prompt context management
 
-### A. Context character budget (1% rule)
-Exposing full skill instructions at the start of a conversation wastes model
-context tokens. TurboSpark applies Claude Code's prompt budgeting policy:
-- Skills are summarized in the tool catalog: only name and `when_to_use`
-  (or `description`) are exposed initially.
-- The total length of advertised skill summaries is constrained to **1% of the
-  model context window** (e.g. ~8,000 characters for a 200,000 token context).
-- If the count of skills exceeds the budget, non-bundled skills have their
-  descriptions truncated to stay within limits.
+### A. One budgeted listing (the 1% rule)
+Skills are advertised to the model in exactly ONE place: the `skill` tool's
+description inside the system prompt's tool addendum. There is deliberately
+no second `## Available Skills` section beside it -- two surfaces drifted in
+practice, one advertising skills the tool then refused. The listing:
+- renders `- name [User|Project|Plugin|Bundled]: description - when_to_use`;
+- contains only skills the tool would actually run: enabled, not
+  `disable-model-invocation`, and (for `paths` skills) activated -- the same
+  `advertisedSkills` set the executor's not-found message reports;
+- is capped at **1% of the model context window** in characters (8,000 by
+  default; the user's configured context window feeds the budget). Under
+  squeeze, bundled skills keep their descriptions and non-bundled ones
+  truncate; at the extreme the non-bundled entries degrade to names only.
+
+An agent profile without the `skill` tool (`.general`) gets no listing at
+all, which is the honest state: it could not load one.
 
 ### B. Dynamic conditional activation (`paths`)
 Skills that declare a `paths` list in their frontmatter (e.g. `paths: ["**/*.swift"]`)
-are not preloaded. When file tools (`file_read`, `file_edit`, `apply_patch`,
-`grep_search`) access files matching the glob pattern:
+are WITHHELD from the listing until activated. When file tools access files
+matching a pattern (`read_file`, `write_file`, `edit_file`, `list_directory`,
+`glob`):
 1. `SkillManager.matchesPath(skill:filePath:)` evaluates the glob pattern.
-2. Matching conditional skills are dynamically activated for the remaining turns
-   of the conversation.
+2. Matching skills join the advertised listing for the rest of the session
+   (`notePathTouched` records the activation; the set clears on a new
+   session or project change).
+
+Activation gates the LISTING, matching Claude Code; it is not a refusal. A
+model that learns the name by other means can still load the skill.
 
 ### C. Execution modes
 When the model proposes `skill(name: "...", arguments: {...})`:
@@ -327,10 +357,18 @@ When the model proposes `skill(name: "...", arguments: {...})`:
      model in the next generation step.
 
 2. **Fork Mode (`context: fork`)**:
-   - Invokes `SubagentRunner.run` with an isolated conversation context,
-     its own token budget, and specific tool permissions from `allowed-tools`.
-   - The final synthesized result from the subagent is returned to the main
-     conversation without cluttering the primary history.
+   - Runs the skill through the same subagent path the `agent` tool uses
+     (`SubagentRunner.run`): fresh, isolated history and turn budget, the
+     fully substituted body as the task prompt, and the subagent's final
+     answer returned as the tool result. Nesting is depth-capped like any
+     subagent.
+   - `agent:` names the runner, `general-purpose` the fallback; when the
+     named agent does not exist, the task prompt says so.
+   - Both invocation paths honor it: the `skill` tool executor (the MODEL's
+     path) and the user's `/<skill>` slash command, which routes through a
+     named agent task.
+   - `allowed-tools` is parsed but NOT yet granted for the run (see
+     DEVIATIONS.md).
 
 ---
 
@@ -373,8 +411,12 @@ and `ComposerAutocompleteEngine`:
   1. The repeatable goal and ordered steps.
   2. Concrete success criteria for each step.
   3. Necessary tool permission patterns.
-- The user is asked via `AskUserQuestion` whether to save to **User Scope**
-  or **Project Scope**, and the `SKILL.md` is generated and saved to disk.
+- `ProposeSkillsExecutor` takes `proposals` JSON or `name` + `skillMd`,
+  sanitizes the name, and writes `<name>/SKILL.md` to the open project's
+  `.turbospark/skills/` (user scope when no project is open). The choice of
+  scope is the MODEL's to make before calling the executor -- via its own
+  `ask_user_question` call, which is the interactive gate the flow describes;
+  the executor itself writes without a second prompt.
 
 ---
 
@@ -392,6 +434,11 @@ contracts in `https://github.com/whit3rabbit/agent-config/blob/main/docs/support
 | **Gemini CLI** | `~/.gemini/skills/<name>/` | `<root>/.gemini/skills/<name>/` | `SKILL.md` |
 | **OpenCode** | `~/.config/opencode/skills/<name>/`| `<root>/.opencode/skills/<name>/` | `SKILL.md` |
 
-Because TurboSpark discovers across all these locations in both user home and
-project roots, skills installed for Claude Code, Cursor, or OpenClaw are
-automatically discovered and runnable in TurboSpark without manual migration.
+The matrix above describes where each HARNESS looks. TurboSpark's own scan
+lists are `SkillManager.knownUserAgentSkillRoots` and
+`knownProjectSkillSubdirectories` (section 2A), and they are the definitive
+answer -- not every cell above is scanned (OpenClaw's `~/.openclaw/skills/`
+is not one of our user roots, though its `.agents/skills/` project root is).
+Skills installed for Claude Code, Cursor, Gemini, OpenCode, and the other
+covered harnesses are discovered and runnable in TurboSpark without manual
+migration.

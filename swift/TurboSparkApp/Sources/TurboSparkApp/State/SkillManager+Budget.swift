@@ -29,20 +29,57 @@ extension SkillManager {
         return String(trimmed[..<index]) + "..."
     }
 
-    /// Formats active skills into a concise list within the token/character budget.
-    public func formatSkillsWithinBudget(_ skills: [AppSkill], contextWindowTokens: Int? = nil) -> String {
-        // Only include enabled skills that the model is permitted to invoke
-        let eligible = skills.filter {
-            $0.isEnabled && !($0.manifest.disableModelInvocation ?? false)
+    /// The skills the model may see OFFERED: enabled, not
+    /// `disable-model-invocation`, and -- for a skill declaring `paths` --
+    /// activated this session by a matching file touch. Claude Code withholds
+    /// conditional skills from the listing until the model touches a matching
+    /// file; advertising an unactivated one reads as an invitation the tool
+    /// then has no reason to honor.
+    ///
+    /// Every listing surface must resolve eligibility HERE, or two surfaces
+    /// advertise two different sets: one that lists a user-disabled skill
+    /// next to a tool that refuses it is a promise and a refusal in the same
+    /// prompt.
+    public func advertisedSkills(
+        _ skills: [AppSkill],
+        activatedSkillNames: Set<String>? = nil
+    ) -> [AppSkill] {
+        let activated = activatedSkillNames ?? activatedConditionalSkillNames
+        return skills.filter { skill in
+            guard skill.isEnabled else { return false }
+            guard !(skill.manifest.disableModelInvocation ?? false) else { return false }
+            return isSkillEligible(skill, activatedSkillNames: activated)
         }
+    }
+
+    /// One listing entry: `- name [Scope]: description - when_to_use`, the
+    /// description truncated cleanly at `maxLength`.
+    private func listingEntry(_ skill: AppSkill, maxLength: Int) -> String {
+        var text = skill.skillDescription
+        if let whenToUse = skill.manifest.whenToUse,
+            !whenToUse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            text += " - \(whenToUse)"
+        }
+        let desc = truncateDesc(text, maxLength: maxLength)
+        return "- \(skill.name) [\(skill.scope.scopeTag)]: \(desc)"
+    }
+
+    /// Formats active skills into a concise list within the token/character budget.
+    public func formatSkillsWithinBudget(
+        _ skills: [AppSkill],
+        contextWindowTokens: Int? = nil,
+        activatedSkillNames: Set<String>? = nil
+    ) -> String {
+        // The advertised set, not merely the enabled set: conditional skills
+        // stay hidden until activated, exactly as they are everywhere else.
+        let eligible = advertisedSkills(skills, activatedSkillNames: activatedSkillNames)
         guard !eligible.isEmpty else { return "" }
 
         let budget = charBudget(for: contextWindowTokens)
 
         // Try full descriptions first
         let fullEntries = eligible.map { skill -> (skill: AppSkill, entry: String) in
-            let desc = truncateDesc(skill.skillDescription, maxLength: Self.maxListingDescChars)
-            return (skill, "- \(skill.name): \(desc)")
+            (skill, listingEntry(skill, maxLength: Self.maxListingDescChars))
         }
 
         let fullTotal = fullEntries.reduce(0) { $0 + $1.entry.count + 1 }
@@ -93,8 +130,7 @@ extension SkillManager {
             if bundledIndices.contains(idx) {
                 return fullEntries[idx].entry
             }
-            let desc = truncateDesc(skill.skillDescription, maxLength: maxDescLen)
-            return "- \(skill.name): \(desc)"
+            return listingEntry(skill, maxLength: maxDescLen)
         }.joined(separator: "\n")
     }
 

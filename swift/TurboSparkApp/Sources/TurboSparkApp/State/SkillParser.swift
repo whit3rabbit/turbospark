@@ -193,6 +193,7 @@ public enum SkillParser {
     public static func parseFrontmatterYAML(_ yamlText: String) -> SkillManifest {
         var name: String?
         var description: String?
+        var whenToUse: String?
         var allowedTools: [String] = []
         var argumentHint: String?
         var arguments: [SkillArgument] = []
@@ -259,6 +260,8 @@ public enum SkillParser {
                 } else {
                     description = unquote(valueRest)
                 }
+            case "when_to_use", "when-to-use":
+                whenToUse = unquote(valueRest)
             case "allowed-tools", "allowed_tools":
                 if valueRest.hasPrefix("[") && valueRest.hasSuffix("]") {
                     allowedTools = parseInlineArray(valueRest)
@@ -368,6 +371,7 @@ public enum SkillParser {
         return SkillManifest(
             name: name,
             description: description,
+            whenToUse: whenToUse,
             allowedTools: allowedTools,
             argumentHint: argumentHint,
             arguments: arguments,
@@ -435,6 +439,9 @@ public enum SkillParser {
         }
         if let desc = skill.manifest.description, !desc.isEmpty {
             lines.append("description: \(desc)")
+        }
+        if let whenToUse = skill.manifest.whenToUse, !whenToUse.isEmpty {
+            lines.append("when_to_use: \(whenToUse)")
         }
         if !skill.manifest.allowedTools.isEmpty {
             lines.append("allowed-tools:")

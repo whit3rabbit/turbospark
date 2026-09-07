@@ -206,6 +206,43 @@ live network).
   detection (`nestsBeyondLimit` in Swift) falls back to treating an
   over-deep value as a raw string instead of throwing malformed, a minor
   behavioral simplification noted inline in `tool_call/qwen.rs`.
+- **Skills (the Swift app): what is deliberately NOT built, audited
+  2026-09-06 against Claude Code's own implementation.** Landed same day:
+  one budgeted, filtered, scope-tagged skill listing (the `skill` tool's
+  description inside the tool addendum; there is no second system-prompt
+  section), `paths` conditional activation gating that listing,
+  `context: fork` through the subagent path on BOTH the `skill` tool and
+  the user slash command (`agent:` honored, general-purpose fallback),
+  `$ARGUMENTS` / `$ARGUMENTS[n]` / `$0`-`$9` plus the raw-append fallback
+  in argument substitution, `when_to_use` parsing and listing, and the
+  shadowed-skill badge. Deliberately left open:
+  - **`allowed-tools` grants.** Parsed and displayed, but nothing enforces
+    or grants them on any invocation path -- the settings pane states this
+    where its "N tools" chip used to claim it (state#48). A grant needs the
+    permission engine, not the skill executor; Claude Code injects the
+    skill's tools into the turn's allow rules for its duration.
+  - **Per-skill `model` / `effort`.** `model` is parsed with no consumer: a
+    subagent model override needs a second open model, the same refusal the
+    `agent` tool states. `effort` is not parsed at all, there being no
+    effort knob to feed.
+  - **`hooks` frontmatter.** Not parsed; Claude Code registers skill-scoped
+    hooks at invocation time.
+  - **Post-compaction skill re-injection.** Compaction has no skill
+    awareness, so a long skill-driven task loses the invoked body on
+    `/compact` where Claude Code re-injects it under a budget.
+  - **Live watching of skill directories.** The resolution cache
+    invalidates on in-app mutations only; a skill dropped into
+    `~/.claude/skills` mid-session appears on the next explicit reload.
+  - **Braceless named-argument substitution (`$foo`).** Refused by design:
+    skill bodies are full of shell variables and without shell-quoting
+    semantics the named form is indistinguishable from prose; `${foo}` is
+    the unambiguous spelling here. Claude Code substitutes it.
+  - **Inline `` !`cmd` `` execution inside skill bodies.** Not implemented
+    (Claude Code runs commands embedded in the prompt). Deliberate
+    security posture: a skill body is untrusted input from any cloned
+    repository.
+  - **Marketplace commit SHAs.** Installs record `gitCommitSha: nil` and
+    pin the ref only.
 
 ## Phase 5 (model-io, streaming)
 

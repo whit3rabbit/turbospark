@@ -344,7 +344,23 @@ public final class SkillManager: @unchecked Sendable {
 
     // MARK: - Argument Substitution & Execution
 
-    /// Replaces `${arg_name}`, `${SKILL_DIR}`, `${CLAUDE_SKILL_DIR}`, and `${SESSION_ID}` placeholders.
+    /// Replaces `${arg_name}`, `$ARGUMENTS`, `$ARGUMENTS[n]`, positional
+    /// `$0`-`$9`, `${SKILL_DIR}`, `${CLAUDE_SKILL_DIR}`, `${SESSION_ID}`, and
+    /// `${CLAUDE_SESSION_ID}` placeholders.
+    ///
+    /// `$ARGUMENTS` and the positional forms are Claude Code's spellings, and
+    /// a skill discovered from `~/.claude/skills` is expected to use them:
+    /// without them the literal placeholder ships to the model inside an
+    /// otherwise-substituted body. When the body carries NO placeholder of
+    /// any supported kind and raw arguments arrived, the raw string is
+    /// appended the way Claude Code appends it, so the arguments still reach
+    /// the model.
+    ///
+    /// A braceless `$foo` for a DECLARED argument is deliberately not
+    /// substituted: a skill body is full of shell variables (`$HOME`, `$?`,
+    /// `$0` inside a command example), and without shell-quoting semantics
+    /// the braceless named form is indistinguishable from prose. `${foo}` is
+    /// the unambiguous spelling here.
     public func substituteArguments(
         content: String,
         arguments: [String: String] = [:],
@@ -352,6 +368,19 @@ public final class SkillManager: @unchecked Sendable {
         sessionID: String? = nil
     ) -> String {
         var result = content
+
+        let rawArgs = arguments["arguments"] ?? arguments["args"] ?? ""
+        let positionals = SkillManager.splitPositionalArguments(rawArgs)
+
+        // Indexed forms before the bare one: `$ARGUMENTS[0]` contains bare
+        // `$ARGUMENTS` as a substring, so the bare replacement must come
+        // last. Positionals run HIGH to LOW so `$1` cannot eat the prefix of
+        // a literal `$10`.
+        for (index, value) in positionals.prefix(10).enumerated().reversed() {
+            result = result.replacingOccurrences(of: "$ARGUMENTS[\(index)]", with: value)
+            result = result.replacingOccurrences(of: "$\(index)", with: value)
+        }
+        result = result.replacingOccurrences(of: "$ARGUMENTS", with: rawArgs)
 
         for (key, val) in arguments {
             let placeholder = "${\(key)}"
@@ -368,7 +397,53 @@ public final class SkillManager: @unchecked Sendable {
             result = result.replacingOccurrences(of: "${CLAUDE_SESSION_ID}", with: sessionID)
         }
 
+        // The fallback arm reads the ORIGINAL body: a body that asked for
+        // positionals that never arrived did ask, and appending the raw
+        // string on top of an unfilled `$0` would double the arguments in.
+        let hadPlaceholder = content.contains("${")
+            || content.contains("$ARGUMENTS")
+            || SkillManager.containsPositionalPlaceholder(content)
+        if !hadPlaceholder && !rawArgs.isEmpty {
+            result += "\n\nARGUMENTS: \(rawArgs)"
+        }
+
         return result
+    }
+
+    /// Splits a raw argument string on whitespace, keeping quoted spans whole
+    /// and dropping the quote characters (Claude Code parses arguments with
+    /// shell-quote; this is the same shape without a shell). `$1` indexes the
+    /// first element.
+    static func splitPositionalArguments(_ raw: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var quote: Character? = nil
+        for character in raw {
+            if let open = quote {
+                if character == open { quote = nil } else { current.append(character) }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character.isWhitespace {
+                if !current.isEmpty {
+                    parts.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(character)
+            }
+        }
+        if !current.isEmpty { parts.append(current) }
+        return parts
+    }
+
+    /// Whether any `$<digit>` appears in the text (the positional form).
+    static func containsPositionalPlaceholder(_ text: String) -> Bool {
+        var previous: Character? = nil
+        for character in text {
+            if character.isNumber, previous == "$" { return true }
+            previous = character
+        }
+        return false
     }
 
     /// Evaluates glob path patterns to check if a skill matches a given file path.
