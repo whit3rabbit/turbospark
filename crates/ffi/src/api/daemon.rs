@@ -86,6 +86,7 @@ fn acquire_daemon_lock() -> Result<fs::File, String> {
     let path = daemon_lock_path();
     let file = fs::OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(&path)
         .map_err(|e| format!("opening daemon lock {}: {e}", path.display()))?;
