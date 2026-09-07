@@ -346,18 +346,18 @@ public struct HfAuthTokenCardView: View {
     }
 
     private func loadMirrorEndpoint() {
-        let endpoint = model.hfEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        savedMirrorEndpoint = endpoint.isEmpty ? "https://huggingface.co" : endpoint
+        savedMirrorEndpoint = HfEndpointResolution.effectiveEndpoint(from: model.hfEndpointInput)
+            ?? HfEndpointResolution.defaultEndpoint
         mirrorEndpointInput = savedMirrorEndpoint
     }
 
     private func saveMirrorEndpoint() {
-        let trimmed = mirrorEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effective = trimmed.isEmpty ? "https://huggingface.co" : trimmed
+        let effective = HfEndpointResolution.effectiveEndpoint(from: mirrorEndpointInput)
+            ?? HfEndpointResolution.defaultEndpoint
         model.hfEndpointInput = effective
         savedMirrorEndpoint = effective
         do {
-            try TurboSparkCatalog.setHfEndpoint(effective == "https://huggingface.co" ? nil : effective)
+            try TurboSparkCatalog.setHfEndpoint(HfEndpointResolution.effectiveEndpoint(from: effective))
             model.showToast("Mirror endpoint updated", style: .success)
         } catch {
             model.showToast("Failed to set mirror endpoint: \(error.localizedDescription)", style: .error)
@@ -365,9 +365,9 @@ public struct HfAuthTokenCardView: View {
     }
 
     private func resetMirrorEndpoint() {
-        model.hfEndpointInput = "https://huggingface.co"
-        mirrorEndpointInput = "https://huggingface.co"
-        savedMirrorEndpoint = "https://huggingface.co"
+        model.hfEndpointInput = HfEndpointResolution.defaultEndpoint
+        mirrorEndpointInput = HfEndpointResolution.defaultEndpoint
+        savedMirrorEndpoint = HfEndpointResolution.defaultEndpoint
         do {
             try TurboSparkCatalog.setHfEndpoint(nil)
             model.showToast("Mirror endpoint reset to default", style: .info)

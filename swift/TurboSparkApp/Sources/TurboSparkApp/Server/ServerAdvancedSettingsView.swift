@@ -3,9 +3,13 @@ import TurboSpark
 
 /// The knobs a person only reaches for once they know they need them.
 ///
-/// Everything here is read at START time, so the fields are disabled while a
+/// Every field but one is read at START time, so it is disabled while a
 /// server is running rather than silently ignored -- an editable field that
-/// changes nothing is worse than a greyed one that says why.
+/// changes nothing is worse than a greyed one that says why. The HF mirror
+/// endpoint is the exception: it ALSO feeds `TurboSparkCatalog`'s own HF
+/// client, which every install/probe/browse call reads outside server
+/// context entirely, so it stays enabled and applies live
+/// (`HfEndpointResolution`, `docs/SWIFT_SETTINGS_AUDIT.md`).
 struct ServerAdvancedSettingsView: View {
     @ObservedObject var model: AppModel
     @State private var portText: String = ""
@@ -117,9 +121,7 @@ struct ServerAdvancedSettingsView: View {
                         // applied it live -- two editors of the same
                         // setting disagreeing about when it takes effect
                         // (`docs/SWIFT_SETTINGS_AUDIT.md`).
-                        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                        try? TurboSparkCatalog.setHfEndpoint(
-                            trimmed.isEmpty || trimmed == "https://huggingface.co" ? nil : trimmed)
+                        try? TurboSparkCatalog.setHfEndpoint(HfEndpointResolution.effectiveEndpoint(from: newValue))
                     }
             }
 
