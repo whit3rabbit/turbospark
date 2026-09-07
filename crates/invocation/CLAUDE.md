@@ -1,6 +1,6 @@
 # turbospark-invocation
 
-Pure CLI argument parsing, command-line request assembly (`InvocationRequest`), options definition (`OPTIONS`), diagnostics, typed failures (`InvocationFailure`), usage rendering, and outcome routing decisions.
+Pure CLI argument parsing, command-line request assembly (`InvocationRequest`), options definition (`OPTIONS`), diagnostics, typed failures (`ParseFailure`), usage rendering, and outcome routing decisions.
 
 Performs no filesystem, environment, or process I/O.
 
@@ -14,7 +14,7 @@ crates/invocation/
 |   +-- options.rs          # OPTIONS table declaring supported command-line flags
 |   +-- parser.rs           # Pure command-line flag parser and value translator
 |   +-- request.rs          # InvocationRequest struct holding validated parameters
-|   +-- failure.rs          # InvocationFailure enum for typed parse/usage errors
+|   +-- failure.rs          # ParseFailure enum for typed parse/usage errors
 |   +-- diagnostics.rs      # Diagnostic error message formatter
 |   \-- usage.rs            # Command-line usage renderer
 \-- tests/
@@ -37,7 +37,7 @@ crates/invocation/
   between the two spellings in exactly one place per type. A mirror is not a
   duplicate to be tidied away: deleting it would mean depending on
   `turbospark-model-io`, which is what keeps this crate pure.
-- `failure.rs`: `InvocationFailure` enum for typed parse or usage errors.
+- `failure.rs`: `ParseFailure` enum for typed parse or usage errors.
 - `diagnostics.rs`: Formats diagnostic and error messages.
 - `usage.rs`: Renders command-line usage text.
 
@@ -87,10 +87,11 @@ cargo test -p turbospark-invocation
    licenses the sensing default anyway is the resolver's rule that an install
    declaring no trained context resolves to `DEFAULT_MAX_CONTEXT` -- which is
    every install written before that field existed, so nothing already on
-   disk moves. `crates/runtime/src/context_policy.rs` owns it.
+   disk moves. `crates/model-io/src/context_policy.rs` owns it (re-exported
+   from `crates/runtime`, not defined there).
 
-   The consequence for a test: `request_defaults.rs` asserts `ExpertCacheSlots::Auto`, not a number, so the documented default is a POLICY. What that policy resolves to, and the floor guaranteeing it never resolves below the count that used to be hardcoded here, live in `crates/runtime/src/expert_cache_policy.rs`.
+   The consequence for a test: `request_defaults.rs` asserts `ExpertCacheSlots::Auto`, not a number, so the documented default is a POLICY. What that policy resolves to, and the floor guaranteeing it never resolves below the count that used to be hardcoded here, live in `crates/model-io/src/expert_cache_policy.rs` (also re-exported from `crates/runtime`).
 
-3. **Some flags here are parsed, validated, printed and consumed by NOTHING.** `--prefill-chunk` and `--rdadvise` both round-trip through `InvocationRequest` and `main.rs`'s resolved-request block, and no binary reads either one. Grep for `request.<field>` outside `main.rs` before building a new flag, or a `TURBOSPARK_*` seam, for something that may already have a surface -- chunked prefill was wired to an env var in 2026-08-16 and `--prefill-chunk` was found afterwards, in the printed block.
+3. **Some flags here are parsed, validated, printed and consumed by NOTHING.** `--rdadvise` round-trips through `InvocationRequest` and `main.rs`'s resolved-request block, and no binary reads it. Grep for `request.<field>` outside `main.rs` before building a new flag, or a `TURBOSPARK_*` seam, for something that may already have a surface -- chunked prefill was wired to an env var in 2026-08-16 and `--prefill-chunk` was found afterwards, in the printed block, in the same unwired state `--rdadvise` is still in.
 
-   Note an unwired flag can also be UNWIRABLE as written, which is why finding one is not the end of the question: `--prefill-chunk` defaults to `Fixed(DEFAULT_CHUNK_SIZE)` rather than to off, so consuming it turns chunked prefill on by default. Giving it an off state is a new `PrefillChunk` variant plus Gotcha 1's five places, not a one-line read. See `crates/cli/CLAUDE.md` Gotcha 7.
+   `--prefill-chunk` itself is no longer an example of this: it was wired 2026-08-26 (`crates/cli/CLAUDE.md` Gotcha 7). `resolve_chunk_tokens` in `crates/cli/src/generate/mod.rs` reads `request.prefill_chunk.resolved()` and feeds the chunked prefill path only when `session.runner.supports_chunked_prefill()` says the install's family can serve it, else falls back to the sequential path silently -- so finding an unconsumed flag is still not the end of the question, but the resolution here was a capability check rather than a new `PrefillChunk` off-state variant.

@@ -20,7 +20,7 @@ crates/core/
 |   +-- chunk_sizing.rs     # Automatic chunk-size resolution algorithm
 |   +-- prefill.rs          # Prefill chunking primitives and iterator logic
 |   +-- steering.rs         # SteeringMode: the directional-steering edit's four modes
-|   \-- error.rs            # CoreError enum declaration
+|   \-- error.rs            # Error enum declaration
 \-- tests/
     +-- chunk_sizing.rs     # Unit tests for chunk-size resolution
     \-- runtime_config.rs   # Unit tests for RuntimeConfig builder validation
@@ -29,7 +29,7 @@ crates/core/
 ## Key Modules
 
 - `primitives.rs`: Defines workspace-wide primitives including `pub type TokenId = i32` and `LogitValue`.
-- `runtime_config.rs`: Holds system parameters and allowed sets (`ALLOWED_CACHE_SLOTS = [8, 16, 24, 32]`, `ALLOWED_CHUNK_SIZES = [128, 256, 512, 1024, 2048, 4096]`).
+- `runtime_config.rs`: Holds system parameters and allowed sets (`ALLOWED_CACHE_SLOTS = [8, 16, 24, 32, 48, 64, 96, 128]`, `ALLOWED_CHUNK_SIZES = [32, 64, 128, 256, 512, 1024, 2048, 4096]`).
 - `chunk_sizing.rs`: Implements 3-state resolution rule turning input prompt lengths into allowed chunk sizes.
 - `prefill.rs`: Handles splitting long input token sequences into executable prefill chunks.
 - `error.rs`: Central error type for core initialization failures.
@@ -58,11 +58,18 @@ crates/core/
   the one thing both of them name and NEITHER can reach the other:
   `turbospark_compute::steering` is the numerical contract and
   `turbospark_gpu::encode_steer_direction` selects on it, and `crates/gpu`
-  carries `turbospark-compute` as a DEV-dependency only, so an enum declared
-  in `compute` would be unnameable from the dispatch module. Its discriminants
+  carried `turbospark-compute` as a DEV-dependency only when this was
+  written -- TurboQuant's KV-cache quantization (`673341e`) later added it as
+  a real dependency for the unrelated `kv_quant_tables.rs`, so the
+  unnameable-from-the-dispatch-module argument no longer holds structurally,
+  though the enum still lives here and nothing outside `compute` consumes it
+  today. Its discriminants
   are the wire values the MSL kernel's `kSteerMode*` constants switch on, so a
-  reorder here silently swaps two edits that both decode fluently; the three
-  parity cases in `crates/gpu/tests/utility_and_pass.rs` are what catch that
+  reorder here silently swaps two edits that both decode fluently; the four
+  parity cases (`steer_ablate_matches_compute_reference`,
+  `steer_add_matches_compute_reference`, `steer_clamp_matches_compute_reference`,
+  `steer_renorm_matches_compute_reference`) in
+  `crates/gpu/tests/utility_and_pass.rs` are what catch that
   across the boundary, and `steering_mode_codes_are_pinned` catches it on this
   side.
 

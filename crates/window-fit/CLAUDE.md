@@ -10,7 +10,7 @@ crates/window-fit/
 +-- src/
 |   +-- lib.rs              # Library root re-exporting fit_conversation_window and outcomes
 |   +-- fit.rs              # Core fit_conversation_window algorithm
-|   \-- outcome.rs          # FitOutcome and DroppedTurn struct declarations
+|   \-- outcome.rs          # WindowFitOutcome<T> struct declaration
 \-- tests/
     +-- fit_rules.rs        # Unit tests verifying turn preservation and removal ordering rules
     \-- outcome_contract.rs # Unit tests asserting outcome length measurements and bounds contracts
@@ -19,7 +19,7 @@ crates/window-fit/
 ## Key Modules
 
 - `fit.rs`: Core function `fit_conversation_window`.
-- `outcome.rs`: Outcome structures `FitOutcome` and `DroppedTurn`.
+- `outcome.rs`: Outcome structure `WindowFitOutcome<T>`.
 
 ## Development & Test Commands
 

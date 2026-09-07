@@ -8,11 +8,12 @@ need.
 Plain arithmetic on `Vec<f32>`: no Metal, no macOS, no GPU, no model
 install. It builds and tests for a non-macOS target.
 
-Downstream workspace crates import this package via the `vision_io` alias:
+Downstream workspace crates depend on it under its real package name, no
+alias (unlike `foundation`, `compute`, etc.):
 
 ```toml
 [dependencies]
-vision_io = { package = "turbospark-vision-io", path = "../vision-io" }
+turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
 ```
 
 ## What it does

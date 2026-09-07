@@ -24,15 +24,19 @@ crates/runtime/
 |   +-- speculation_policy.rs   # Speculative decoding policy and drafter configuration
 |   +-- speculation_policy_tests.rs # Unit tests for speculative decoding policy
 |   +-- kv_prefix.rs            # What the KV holds, by token id, for cross-turn reuse
+|   +-- kv_write.rs             # TurboQuant-quantized-layer write-path helpers (model_io::KvQuant)
 |   +-- router_hist.rs          # MoE expert activation routing histogram collector
 |   +-- ffn_hist.rs             # Dense FFN neuron activation mass & sparsity collector
 |   +-- resid_capture.rs        # Per-layer residual stream at the last prompt token (steering)
 |   +-- vision/                 # The qwen3_5 vision tower's streamed forward pass (M-V4)
 |   |   +-- mod.rs              # VisionTower, lazy open, the block-loop driver, VisionEmbedding
+|   |   +-- budget.rs           # Clamps the checkpoint's max_pixels to the LoadGuard budget
 |   |   +-- shape.rs            # VisionShape: derived dims and the refusals they justify
 |   |   +-- weights.rs          # The 9 resident tensors and the 12 per-block roles, FP16-checked
 |   |   +-- scratch.rs          # VisionScratch: per-page buffers, sized and dropped per image
 |   |   +-- block.rs            # One block: ln1/qkv/rope/attn/proj/res/ln2/fc1/gelu/fc2/res
+|   |   +-- inject.rs           # Per-image FP16 rows & the (t, h, w) mRoPE triple (M-V5)
+|   |   +-- overflow.rs         # TURBOSPARK_VISION_OVERFLOW FP16 overflow capture (M-V9)
 |   |   \-- stages.rs           # Patch embed, the host-side position blend, the merger
 |   +-- moe_prefill_pipeline.rs # Prefill pipeline for chunked MoE passes
 |   +-- real_forward.rs         # RealForwardRunner struct, constructor, and dispatch
@@ -40,6 +44,7 @@ crates/runtime/
 |   +-- real_forward_open.rs    # RealForwardRunner open_inner implementation
 |   +-- real_forward_rollback.rs# RollbackPoint state capture and rewind methods
 |   +-- real_forward_traits.rs  # LogitProducer, SpeculativeProducer, ChunkedPrefillRunner impls
+|   +-- real_forward_vision_api.rs # Vision subsystem public methods & controls
 |   +-- real_forward_dispatch.rs# Dynamic Metal kernel dispatch helpers
 |   +-- real_forward_dispatch_moe.rs # MoE Phase 1 and Phase 2 dispatch helpers
 |   +-- real_forward_init.rs    # Open-time arch vetting and expert streamer setup
@@ -47,17 +52,23 @@ crates/runtime/
 |   +-- real_forward_types.rs   # RealForwardError, PhaseCounters, DecodeScratch
 |   +-- real_forward_utils.rs   # Type conversions, resident views, and host top-k
 |   +-- real_forward_utils_tests.rs # Unit tests for type conversions and utilities
+|   +-- session_pool.rs         # Bounded pool of parked per-session KV/GDN state (Gotcha 32)
 |   +-- steering.rs             # Directional steering dispatch & runtime layer application
 |   +-- steering_tests.rs       # Unit tests for steering dispatch logic
 |   +-- turn_stream.rs         # TurnSplitter/TurnEvent: the ONE turn-splitting adapter (docs/STREAMING.md)
+|   +-- encoder/                # BERT/XLM-RoBERTa bidirectional encoder runner (embeddings)
+|   |   +-- mod.rs              # Encoder loader & forward pass
+|   |   \-- weights.rs          # Encoder weights container, BF16 and 8-bit affine loaders
 |   +-- families/               # Model-family-specific decode implementations
 |   |   +-- mod.rs              # Re-exports model family submodules
 |   |   +-- gemma4/             # Gemma 4 decode flow
 |   |   |   +-- mod.rs          # Gemma 4 entry point & shared expert branch
 |   |   |   +-- attn.rs         # Attention block & router GEMV pass
+|   |   |   +-- attn_batch.rs   # Batched attention & router pass encoding (prefill)
 |   |   |   +-- moe.rs          # Routed MoE pass encoding
 |   |   |   +-- moe_batch.rs    # Batched routed MoE pass encoding
 |   |   |   +-- prefill.rs      # Gemma 4 chunked prefill encoders
+|   |   |   +-- shared_expert.rs # Shared (dense) MLP expert branch dispatches
 |   |   |   \-- state.rs        # RealGemmaState initialization
 |   |   +-- gptoss/             # `gpt-oss` decode flow (biases, sinks, YaRN, MXFP4 experts)
 |   |   |   +-- mod.rs          # Entry point & layer loop
@@ -71,18 +82,24 @@ crates/runtime/
 |   |   |   +-- attn.rs         # Plain GQA attention block
 |   |   |   +-- dense.rs        # Dense gated FFN (Mistral, Llama 2/3.x)
 |   |   |   +-- moe.rs          # Routed MoE pass (no shared expert)
+|   |   |   +-- moe_prefill.rs  # MoE-half chunked prefill (ChunkedPrefillRunner, 2026-08-27)
 |   |   |   +-- prefill.rs      # Dense-only chunked prefill (ChunkedPrefillRunner, 2026-08-26)
 |   |   |   \-- state.rs        # RealLlamaState & the dense/MoE split
 |   |   +-- museglimmer/        # Dense Muse Glimmer 30B decode flow
 |   |   |   +-- mod.rs          # Entry point & layer loop
 |   |   |   +-- attn.rs         # Dense GQA + attention output gate
+|   |   |   +-- mlp.rs          # Dense MLP block pass encoding
+|   |   |   +-- prefill.rs      # Chunked prefill (ChunkedPrefillRunner, 2026-08-27)
 |   |   |   \-- state.rs        # RealMuseState & norm convention configuration
 |   |   +-- qwen/               # Qwen 3.6 + dense `qwen3_5` decode flow
 |   |   |   +-- mod.rs          # Entry point & DraftPolicies
 |   |   |   +-- produce.rs      # Forward pass token decode (produce_real_qwen)
+|   |   |   +-- prefill.rs      # Dense chunked prefill (ChunkedPrefillRunner, 2026-08-29)
+|   |   |   +-- prefill_layers.rs # Layer encoders for dense chunked prefill
 |   |   |   +-- batched.rs      # The M-ROW forward behind the MTP verify (step 4)
 |   |   |   +-- batched_scratch.rs # Metal scratch buffer allocations for batched verify
 |   |   |   +-- batched_layers.rs # Batched attention, linear, and dense layer encoders
+|   |   |   +-- verify_layers.rs # Layer encoders for the batched verify pass (produce_batched)
 |   |   |   +-- attn.rs         # Gated DeltaNet & gated full attention blocks
 |   |   |   +-- dense.rs        # Dense gated FFN (`qwen3_5`, ROADMAP's 1-bit entry)
 |   |   |   +-- moe.rs          # Shared + routed MoE pass encoding
@@ -116,40 +133,53 @@ crates/runtime/
     +-- cancellation.rs         # Mid-generation cancellation integration tests
     +-- chunked_prefill.rs      # Chunked prefill loop unit tests (scripted producer)
     +-- chunked_prefill_refusal.rs # Chunked prefill capability refusal tests
+    +-- encoder_smoke.rs        # BERT/XLM-RoBERTa encoder runner smoke tests
     +-- gguf_install_refused.rs # Unsupported GGUF installs refused at open tests
     +-- golden_tokens.rs        # Golden token sequence reproducibility tests
     +-- mapped_expert_residency.rs # Mapped expert residency tests (Gemma)
     +-- mapped_expert_residency_gptoss.rs # Mapped expert residency tests (gpt-oss)
     +-- mapped_expert_residency_llama.rs # Mapped expert residency tests (Llama)
     +-- mapped_expert_residency_qwen.rs # Mapped expert residency tests (Qwen)
+    +-- mapped_vision_residency.rs # Vision tower mapped-residency engagement tests
     +-- prefix_reuse_real.rs    # Real install KV prefix reuse tests
     +-- raw_completion.rs       # Raw completion loop integration tests
     +-- real_forward.rs         # RealForwardRunner short-name integration tests
     +-- real_forward_gemma4.rs  # RealForwardRunner Gemma 4 learned-weight tests
     +-- real_forward_gemma4_chunked.rs # The REAL chunk driver, against a non-chunked reference
+    +-- real_forward_gemma4_kv_quant.rs # Gemma 4 TurboQuant KV-cache quantization tests
     +-- real_forward_gemma4_steered.rs # Gemma 4 directional steering integration tests
     +-- real_forward_gptoss.rs  # The gpt-oss flow: perturb each input, require the logits to move
     +-- real_forward_gptoss_chunked.rs # gpt-oss chunked prefill integration tests
+    +-- real_forward_gptoss_kv_quant.rs # gpt-oss TurboQuant KV-cache quantization tests
     +-- real_forward_gptoss_steered.rs # gpt-oss directional steering integration tests
     +-- real_forward_llama.rs   # RealForwardRunner Mixtral-shaped decode tests
     +-- real_forward_llama_dense.rs # The DENSE half of the same architecture
     +-- real_forward_llama_dense_chunked.rs # Dense Llama chunked prefill tests
+    +-- real_forward_llama_kv_quant.rs # llama TurboQuant KV-cache quantization tests
     +-- real_forward_llama_moe_chunked.rs # MoE Llama chunked prefill tests
     +-- real_forward_llama_steered.rs # Llama directional steering integration tests
     +-- real_forward_muse.rs    # Real forward tests for Muse Glimmer flow
     +-- real_forward_museglimmer_chunked.rs # Muse Glimmer chunked prefill tests
+    +-- real_forward_museglimmer_kv_quant.rs # Muse Glimmer TurboQuant KV-cache quantization tests
     +-- real_forward_museglimmer_steered.rs # Muse Glimmer directional steering tests
     +-- real_forward_qwen.rs    # RealForwardRunner Qwen 3.6 decode tests
     +-- real_forward_qwen35.rs  # The DENSE, ONE-BIT half of the same flow
     +-- real_forward_qwen35_batched_onset.rs # Batched verify onset consistency tests
     +-- real_forward_qwen35_chunked.rs # Qwen 3.5 chunked prefill tests
     +-- real_forward_qwen35_dflash.rs # DFlash2 speculative decoding integration tests
+    +-- real_forward_qwen35_kv_quant.rs # Dense qwen3_5 TurboQuant KV-cache quantization tests
     +-- real_forward_qwen35_mtp.rs # MTP speculative decoding integration tests
     +-- real_forward_qwen35_steered_batched.rs # Batched steered forward tests
     +-- real_forward_qwen3moe.rs# The same flow under the Qwen3-MoE family tag
+    +-- real_forward_qwen4.rs   # RealForwardRunner qwen4_exp (Qwen3.8-Flash-Next) decode tests
+    +-- real_forward_qwen4_chunked.rs # qwen4_exp chunked prefill tests (the SEVENTH flow)
+    +-- real_forward_qwen4_kv_quant.rs # qwen4_exp TurboQuant KV-cache quantization tests
     +-- real_forward_qwen_moe_batched.rs # The BATCHED routed verify vs M sequential produce
+    +-- session_pool.rs         # Session-pool swap/park mechanics (Gotcha 32)
     +-- speculative.rs          # Speculative decoding loop integration tests
+    +-- vision_chunked_synthetic.rs # Chunked-driver vs sequential vision injection equivalence
     +-- vision_inject_synthetic.rs # Synthetic vision injection integration tests
+    +-- vision_sidecar_synthetic.rs # Vision memory-sidecar budget clamp tests
     +-- vision_tower_parity.rs  # CPU vs GPU vision tower parity tests
     +-- vision_tower_synthetic.rs # Vision tower forward pass on synthetic tensors
     \-- fixtures/

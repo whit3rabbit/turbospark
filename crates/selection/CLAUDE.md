@@ -1,6 +1,6 @@
 # turbospark-selection
 
-Candidate token selection (`select`, `select_from_logits`) from per-candidate logit vectors under a validated shaping configuration (temperature, top-k, top-p, repetition penalty, seed, step position, distribution guards).
+Candidate token selection (`select`) from per-candidate logit vectors under a validated shaping configuration (temperature, top-k, top-p, repetition penalty, seed, step position, distribution guards).
 
 ## Directory & File Structure
 
@@ -9,8 +9,8 @@ crates/selection/
 +-- Cargo.toml              # Crate manifest
 +-- src/
 |   +-- lib.rs              # Library root
-|   +-- shaping.rs          # Main select and select_from_logits entry points
-|   +-- choose.rs           # Categorical distribution sampling and argmax selection
+|   +-- shaping.rs          # ShapingConfig and SelectionError, validated at construction
+|   +-- choose.rs           # Main select entry point, categorical sampling and argmax selection
 |   +-- penalty.rs          # Frequency and repetition penalty application logic
 |   +-- truncation.rs       # Top-k and top-p (nucleus) candidate truncation
 |   \-- derive.rs           # Derived selection parameters and helper functions
@@ -29,8 +29,8 @@ crates/selection/
 
 ## Key Modules
 
-- `shaping.rs`: Main entry points `select` and `select_from_logits`.
-- `choose.rs`: Categorical sampling from probability distributions.
+- `shaping.rs`: `ShapingConfig` and `SelectionError`, validated at construction.
+- `choose.rs`: Main entry point `select`. Categorical sampling from probability distributions.
 - `penalty.rs`: Repetition penalty application based on token history.
 - `truncation.rs`: Top-k and top-p (nucleus) filtering logic.
 - `derive.rs`: Derived selection parameters and helper functions.

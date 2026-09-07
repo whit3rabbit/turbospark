@@ -1,16 +1,20 @@
 # turbospark-cli
 
-TWO process entry points. `turbospark-check` parses `argv` using
+THREE process entry points. `turbospark-check` parses `argv` using
 `turbospark-invocation`, applies exit status and output stream routing, and
 drives GPU token generation (`RealForwardRunner`) on macOS.
 `turbospark-model` is the catalog and download surface, backed by
-`turbospark-catalog`.
+`turbospark-catalog`. `turbospark` is a unified oMLX/Unsloth-style front end
+that execs the other two (plus `turbospark-server` and `turbospark-bench`,
+found beside its own executable or on `PATH`) and adds
+`run`/`serve`/`start`/`stop`/`restart`/`status`/`bench` plus coding-agent
+connectors (`agent.rs`, `daemon.rs`).
 
 ## Directory & File Structure
 
 ```
 crates/cli/
-+-- Cargo.toml              # Crate manifest, declaring BOTH binaries
++-- Cargo.toml              # Crate manifest, declaring THREE binaries
 +-- src/
 |   +-- main.rs             # turbospark-check process entry point
 |   +-- generate/           # Non-interactive text & chat template generation driver
@@ -19,16 +23,21 @@ crates/cli/
 |   |   +-- format.rs       # Prompt/footer rendering and channel splitting
 |   |   \-- vision.rs       # Image preprocessing and injection mapping for CLI
 |   +-- chat.rs             # Interactive REPL session runner using window-fit
+|   +-- agent.rs            # Coding-agent connectors (claude, codex, opencode, hermes, openclaw, dsh)
+|   +-- daemon.rs           # Background server daemon: start/stop/restart/status
 |   \-- bin/
+|       +-- turbospark.rs   # turbospark: unified front end, execs the peer binaries
 |       +-- model.rs        # turbospark-model: argv, subcommand parse, exit codes
 |       \-- model_cmd/
-|           +-- mod.rs      # The seven subcommands
+|           +-- mod.rs      # The nine subcommands
+|           +-- auth.rs     # auth: Hugging Face token inspect/set/clear
 |           +-- progress.rs # Download progress rendering
 |           \-- render.rs   # Printing. No decisions.
 \-- tests/
     +-- mference_check.rs   # CLI flag parse & exit status integration tests
     +-- real_generation.rs  # End-to-end real generation integration tests
-    \-- model_cli.rs        # turbospark-model argument surface & exit codes
+    +-- model_cli.rs        # turbospark-model argument surface & exit codes
+    \-- turbospark_cli.rs   # turbospark unified-binary argument surface & exit codes
 ```
 
 ## Key Modules
@@ -36,8 +45,11 @@ crates/cli/
 - `main.rs`: Reads command-line arguments, delegates parsing to `turbospark-invocation`, prints resolved requests, and routes execution to generation routines.
 - `generate/`: Coordinates tokenizer loading, chat template rendering, prefill chunking, and GPU decode generation loops. `open_session` resolves `--model` through `catalog::resolve_model_arg` first (see Gotcha 5) and maps the parser's enums onto `runtime`'s. **The speculation POLICY is no longer here**: it moved to `runtime::speculation_policy` when `turbospark-server` needed the same three decisions (see Gotcha 10).
 - `chat.rs`: Interactive REPL loop maintaining user/assistant turn history and applying `fit_conversation_window` to manage context window bounds.
+- `agent.rs`: coding-agent connectors (`is_agent`, `start_agent`) that point an external agent (Claude Code, Codex, OpenCode, Hermes, OpenClaw, DSH) at the local server through env vars (`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`), reading the port from `<TURBOSPARK_HOME>/run/server.meta`.
+- `daemon.rs`: the background server daemon (`start`, `stop`, `restart`, `status`) behind `turbospark start|stop|restart|status`. An `flock`-held lock over `<TURBOSPARK_HOME>/run/daemon.lock` closes the race between two near-simultaneous `start` calls; PID and metadata live in `run/server.pid` and `run/server.meta`.
+- `bin/turbospark.rs`: the unified front end (`turbospark`). Dispatches `run` to `turbospark-check` (mapping a bare model/prompt onto `--model`/`--chat`/`--prompt`), `serve` to `turbospark-server`, `bench` to `turbospark-bench`, the `turbospark-model` verbs straight through, and `start`/`stop`/`restart`/`status` to `daemon.rs` (or to `agent.rs` when `start`'s first argument names a known agent). Finds each peer binary beside its own executable, falling back to `PATH`.
 - `bin/model.rs`: `turbospark-model`'s argv parse and exit-code mapping. **A second binary rather than subcommands on `turbospark-check`, and that is a decision**: `turbospark-invocation` is a pure, flat option parser whose contract is "`--model` is required and exactly one mode flag is set", with a five-place rule for every new flag and a hardcoded option-count assertion. A subcommand grammar does not belong in it, and bending it into one would put a required `--model` in front of a command whose entire job is that there is no model yet. Two exit codes, and a script doing `probe X && pull X` depends on the difference: 2 for a malformed invocation, 1 for a run that was asked for correctly and did not work.
-- `bin/model_cmd/`: the seven subcommands (`list`, `info`, `probe`, `recommend`, `pull`, `path`, `rm`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.
+- `bin/model_cmd/`: the nine subcommands (`list`, `info`, `probe`, `recommend`, `pull`, `pull-vision`, `path`, `rm`, `auth`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.
 
 ## Development & Test Commands
 
@@ -131,9 +143,13 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    caller who never asked for anything. `supports_chunked_prefill()` is the
    SAME predicate `ChunkedPrefillRunner::prefill_chunk`'s own refusal uses
    (`crates/runtime/src/real_forward_api.rs`), so the two can't disagree.
-   Two families serve it today: Gemma 4, and the DENSE half of `llama`
-   (Mistral, Llama 2/3.x, `families/llama/prefill.rs`; ROADMAP.md's PF-02
-   section has the full list of what's still unserved and why).
+   As of 2026-09-05 every family but one serves it: Gemma 4, both halves of
+   `llama` (Mistral/Llama 2-3.x dense and Mixtral/`qwen3moe` MoE),
+   `muse_glimmer`, `gpt-oss`, the dense half of `families/qwen/`, and
+   `qwen4_exp`. The one holdout is the MoE half of `families/qwen/`
+   (`qwenGdnMoe`, e.g. Ornith 35B). `crates/runtime/CLAUDE.md` Gotcha 14 has
+   each family's landing date, and ROADMAP.md's PF-02 section has what's
+   still unserved and why.
 
    Verified end to end on real installs (not just the synthetic parity
    suite): greedy and sampled stdout are md5-IDENTICAL between a
@@ -181,9 +197,10 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    the KV footprint, so no peak or prompt refusal is comparable across runs
    without it.
 
-9. **This crate has TWO binaries and NO lib target, so `tests/*.rs` cannot
+9. **This crate has THREE binaries and NO lib target, so `tests/*.rs` cannot
    reach anything in `src/`.** An integration test may only drive the built
-   binaries as processes (`mference_check.rs`, `model_cli.rs` do). Logic worth
+   binaries as processes (`mference_check.rs`, `model_cli.rs`,
+   `turbospark_cli.rs` do). Logic worth
    unit-testing -- `resolve_speculation`, `map_power_profile` -- takes a
    `#[cfg(test)] mod` inside its own module instead. Adding a lib target to
    avoid that would put every private helper on a public surface.
@@ -202,7 +219,7 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    **THE POLICY LIVES IN `runtime::speculation_policy`, NOT HERE.** It was
    `generate/speculation.rs` until 2026-08-21, when `turbospark-server` needed
    the same three decisions in the same order and could not reach a line of it
-   -- this crate has two binaries and no lib target (Gotcha 9). `open_session`
+   -- this crate has three binaries and no lib target (Gotcha 9). `open_session`
    now maps `invocation::Speculation` / `SpeculativeDrafter` onto the runtime's
    through `map_speculation` / `map_drafter`, the same two-enums-one-mapping
    shape Gotchas 2 and 6 describe, and calls `resolve_drafter`,

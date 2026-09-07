@@ -12,7 +12,7 @@ window_fit = { package = "turbospark-window-fit", path = "../window-fit" }
 ## Key Modules
 
 - `fit.rs`: Core algorithm function `fit_conversation_window`.
-- `outcome.rs`: Outcome metadata structures `FitOutcome` and `DroppedTurn`.
+- `outcome.rs`: Outcome metadata structure `WindowFitOutcome<T>`.
 
 ## Development & Test Commands
 

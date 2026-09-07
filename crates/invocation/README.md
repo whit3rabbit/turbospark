@@ -1,6 +1,6 @@
 # turbospark-invocation
 
-Pure CLI argument parsing, command-line request assembly (`InvocationRequest`), option definitions (`OPTIONS`), diagnostic error formatting, typed failures (`InvocationFailure`), and usage rendering.
+Pure CLI argument parsing, command-line request assembly (`InvocationRequest`), option definitions (`OPTIONS`), diagnostic error formatting, typed failures (`ParseFailure`), and usage rendering.
 
 Performs no filesystem, environment, or process I/O.
 
@@ -16,7 +16,7 @@ invocation = { package = "turbospark-invocation", path = "../invocation" }
 - `options.rs`: Table of supported command-line options (`OPTIONS`).
 - `parser.rs`: Pure command-line flag parser and option value translator.
 - `request.rs`: `InvocationRequest` structure holding validated command parameters.
-- `failure.rs`: `InvocationFailure` enum for typed parse and usage errors.
+- `failure.rs`: `ParseFailure` enum for typed parse and usage errors.
 - `diagnostics.rs`: Formats user-facing diagnostic error messages.
 - `usage.rs`: Renders command-line usage documentation.
 

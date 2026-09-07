@@ -1,6 +1,6 @@
 # turbospark-selection
 
-Candidate token selection (`select`, `select_from_logits`) from candidate logit vectors under shaping configuration (temperature, top-k, top-p, repetition penalty, seed determinism, step position, and distribution guards).
+Candidate token selection (`select`) from candidate logit vectors under shaping configuration (temperature, top-k, top-p, repetition penalty, seed determinism, step position, and distribution guards).
 
 Downstream workspace crates import this package via the `selection` alias:
 
@@ -11,8 +11,8 @@ selection = { package = "turbospark-selection", path = "../selection" }
 
 ## Key Modules
 
-- `shaping.rs`: Main entry points `select` and `select_from_logits`.
-- `choose.rs`: Categorical distribution sampling and argmax selection.
+- `shaping.rs`: `ShapingConfig` and `SelectionError`, validated at construction.
+- `choose.rs`: Main entry point `select`. Categorical distribution sampling and argmax selection.
 - `penalty.rs`: Frequency and repetition penalty application based on token history.
 - `truncation.rs`: Top-k and top-p (nucleus) candidate truncation algorithms.
 - `derive.rs`: Derived selection parameters and helper functions.

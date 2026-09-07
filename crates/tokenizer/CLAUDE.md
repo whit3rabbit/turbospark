@@ -1,6 +1,6 @@
 # turbospark-tokenizer
 
-Tokenizer wrapper around HF `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4, Mistral, Harmony/gpt-oss, Llama-3), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`StreamingDetokenizer`), stop condition matching (`StopMatcher`), tool call DSL parsers, and streaming structured decoder (`StructuredDecoder`).
+Tokenizer wrapper around HF `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4, Mistral, Harmony/gpt-oss, Muse Glimmer, Llama-3), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`MfDetokenizer`), stop condition matching (`StreamingStopMatcher`), tool call DSL parsers, and streaming structured decoder (`StructuredAssistantDecoder`).
 
 ## Safety
 
@@ -28,13 +28,14 @@ crates/tokenizer/
 |   +-- jinja_chat_template.rs      # minijinja + pycompat wrapper rendering the checkpoint's own template
 |   +-- jinja_compat.rs             # Jinja compatibility syntax rewriter
 |   +-- jinja_date.rs               # Standalone pure-ASCII UTC date formatting algorithms
-|   +-- detokenizer.rs              # StreamingDetokenizer for incremental UTF-8 token decoding
-|   +-- stop_matcher.rs             # StopMatcher for evaluating stop sequences and EOS token sets
-|   +-- structured_decoder/         # StructuredDecoder for streaming JSON / structured output
-|   |   +-- mod.rs                  # StructuredDecoder state machine & event types
+|   +-- detokenizer.rs              # MfDetokenizer for incremental UTF-8 token decoding
+|   +-- stop_matcher.rs             # StreamingStopMatcher for evaluating stop sequences and EOS token sets
+|   +-- structured_decoder/         # StructuredAssistantDecoder for streaming JSON / structured output
+|   |   +-- mod.rs                  # StructuredAssistantDecoder state machine & event types
 |   |   +-- chatml.rs               # ChatML thought & tool parsing
 |   |   +-- deepseek.rs             # DeepSeek tool parsing
-|   |   \-- harmony.rs              # Harmony channel & reasoning parser
+|   |   +-- harmony.rs              # Harmony channel & reasoning parser
+|   |   \-- muse.rs                 # Muse Glimmer recipient-frame parser
 |   +-- json_value.rs               # JSON value helper types for tool parameter encoding
 |   +-- reasoning.rs                # Reasoning effort configuration and parameter definitions
 |   +-- error.rs                    # TokenizerError enum definition
@@ -54,13 +55,16 @@ crates/tokenizer/
     +-- llama3_dialect.rs           # Llama-3 dialect resolution & fallback renderer tests
     +-- reasoning_effort.rs         # Reasoning effort parameter parsing and template tests
     +-- structured_decoder.rs       # Streaming structured decoder unit tests
+    +-- tool_call_support.rs        # Links tool_call_support to what each decoder arm can emit
     +-- tool_calls.rs               # Tool call DSL parser unit tests across Gemma/Qwen/DeepSeek
+    +-- vision_markers.rs           # verify_image_markers vision marker id validation tests
     \-- fixtures/                   # Vendored toy tokenizer fixture directories
         +-- ChatMLTokenizer/        # Toy ChatML tokenizer.json fixture
         +-- DeepseekTokenizer/      # Toy DeepSeek tokenizer.json fixture
         +-- GemmaTokenizer/         # Toy Gemma tokenizer.json fixture
         +-- HarmonyTokenizer/       # gpt-oss's special-token NAMES + a minimal Harmony template
         +-- Llama3Tokenizer/        # Llama-3's special-token NAMES, no chat_template (fallback path)
+        +-- MuseGlimmerTokenizer/   # muse_glimmer's special-token NAMES + an embedded template
         +-- ReasoningEffortTokenizer/ # Reasoning effort tokenizer fixture
         \-- ZephyrTokenizer/        # Mistral's token table + an embedded Zephyr template
 ```
@@ -69,10 +73,10 @@ crates/tokenizer/
 
 - `dialect/`: Resolves dialect special tokens and chat formatting rules for supported model families. **`detect_dialect`'s ORDER is load-bearing and its Harmony arm requires THREE markers, not two** -- see Gotcha 6.
 - `chat_template/`: Per-dialect text chat rendering, plus DeepSeek's hand-rolled native tool chat. The FALLBACK for a checkpoint that ships no template (see Gotcha 1).
-- `jinja_chat_template.rs`: Jinja template engine wrapper (`minijinja` + `pycompat`) rendering the checkpoint's own template, for plain text chat as well as tool chat. Carries `parenthesize_conditional_kwargs`, a REMOVABLE minijinja compatibility shim (AGENTS.md Gotcha 53).
-- `detokenizer.rs`: `StreamingDetokenizer` for incremental UTF-8 token decoding.
-- `stop_matcher.rs`: `StopMatcher` for evaluating stop sequences and EOS token sets.
-- `structured_decoder/`: `StructuredDecoder`, splitting generated output into visible content, reasoning (Harmony only, see Gotcha 4) and parsed tool calls.
+- `jinja_chat_template.rs`: Jinja template engine wrapper (`minijinja` + `pycompat`) rendering the checkpoint's own template, for plain text chat as well as tool chat. Calls `jinja_compat::parenthesize_conditional_kwargs`, a REMOVABLE minijinja compatibility shim (AGENTS.md Gotcha 53).
+- `detokenizer.rs`: `MfDetokenizer` for incremental UTF-8 token decoding.
+- `stop_matcher.rs`: `StreamingStopMatcher` for evaluating stop sequences and EOS token sets.
+- `structured_decoder/`: `StructuredAssistantDecoder`, splitting generated output into visible content, reasoning (Harmony, ChatML, Gemma and Muse Glimmer, see Gotcha 4) and parsed tool calls.
 - `tool_call/`: Dialect-specific tool call DSL parsers (Gemma, Qwen, DeepSeek).
 
 ## Development & Test Commands

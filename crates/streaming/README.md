@@ -11,7 +11,7 @@ streaming = { package = "turbospark-streaming", path = "../streaming" }
 
 ## Safety
 
-- Contains `unsafe` code in `rdadvice.rs` for calling macOS `F_RDADVISE` via `fcntl` and in `read_pool.rs` for managing raw pointers across parked worker threads.
+- Contains `unsafe` code in `rdadvice.rs` for calling macOS `F_RDADVISE` via `fcntl`, in `disk_io.rs` for `proc_pid_rusage` and the `F_NOCACHE` `fcntl`, and in `read_pool.rs` for managing raw pointers across parked worker threads.
 
 ## Key Modules
 
@@ -19,6 +19,8 @@ streaming = { package = "turbospark-streaming", path = "../streaming" }
 - `expert_cache.rs`: `ExpertCache` implementing pure LFU/LRU eviction policy.
 - `read_pool.rs`: Process-wide pool of parked reader threads (`run_batch`) for parallel pread of expert weight chunks.
 - `rdadvice.rs`: Platform-gated `F_RDADVISE` kernel hint wrapper (macOS `fcntl`; safe no-op on other operating systems).
+- `mapped_experts.rs`: `MappedExpertLayer`, the routed experts read in place out of an `mmap` per layer instead of `pread`-copied into a pinned slot.
+- `disk_io.rs`: Physical-disk-read accounting (`ExpertIoStats`) and the `F_NOCACHE` seam that forces a disk-bound read, both off by default.
 - `stream_layout.rs`: Expert blob offset and byte layout calculation helpers.
 
 ## Development & Test Commands

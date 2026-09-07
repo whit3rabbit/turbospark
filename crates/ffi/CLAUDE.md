@@ -26,13 +26,20 @@ crates/ffi/
 |   +-- wire.rs             # the JSON shapes (camelCase)
 |   +-- session.rs          # the opaque handle (Session over shared SessionCore); the cancel flag
 |   +-- open.rs             # opening an install (macOS)
+|   +-- open_tests.rs       # unit tests for open.rs (speculation, option mapping)
 |   +-- generate/           # one turn: render, decode, stream, report
 |   |   +-- mod.rs          # turn driver, budget clamp, speculation block, the
 |   |   |                  # TurnSplitter wiring and the TS_EVENT_* kinds
 |   |   +-- prompt.rs       # message decoding, prompt template rendering, tokenization
 |   |   +-- vision.rs       # image attachment and injection lifecycle
 |   |   \-- tests.rs        # unit tests: speculation, wire compatibility, image parts
-|   +-- models.rs           # catalog, probe, install (portable)
+|   +-- models/             # catalog, probe, install (portable)
+|   |   +-- mod.rs          # re-exports; module doc on catalog/store/probe rows
+|   |   +-- catalog.rs      # catalog_json, installed_json, delete, install_bytes
+|   |   +-- control_vector.rs # control_vector_info_json
+|   |   +-- fit.rs          # context_ladder_json, recommend_json
+|   |   +-- install.rs      # install, install_repo
+|   |   \-- probe.rs        # probe_json, repo_variants_json
 |   +-- server.rs           # the in-process HTTP server: background thread, tokio runtime, lifecycle
 |   +-- server_model.rs     # ChatModel adapter over SessionCore, for server.rs
 |   +-- server_registry.rs  # the models a RUNNING server serves, and its event ring
@@ -40,7 +47,10 @@ crates/ffi/
 |   +-- testing.rs          # session_for_testing (scripted testing harness)
 |   +-- vision.rs           # Image data URL decoding & vision token prep
 |   \-- api/                # C ABI entry points (extern "C")
+|       +-- mod.rs          # re-exports every domain module
 |       +-- core.rs         # errors, strings, system telemetry
+|       +-- daemon.rs       # managed background daemon inspection and control
+|       +-- embedding.rs    # standalone embedding encode + cosine similarity
 |       +-- session.rs      # session lifecycle and introspection
 |       +-- generate.rs     # generation, prompt rendering, tokenization, window fit
 |       +-- models.rs       # catalog, recommendations, probe, install

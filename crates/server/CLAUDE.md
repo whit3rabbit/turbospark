@@ -52,7 +52,7 @@ crates/server/
 |   +-- embeddings.rs           # /v1/embeddings + Ollama /api/{embeddings,embed}: encoding format, dimensions, size caps
 |   +-- model.rs                # ChatModel trait and the ScriptedChatModel backend
 |   +-- real_model.rs           # RealChatModel: RealForwardRunner backend (macOS only)
-|   +-- encoder_model.rs        # RealEncoderModel: embedding-only backend over the same runner (macOS only)
+|   +-- encoder_model.rs        # RealEncoderModel: embedding-only backend over a distinct EncoderRunner, not RealForwardRunner (macOS only)
 |   +-- response.rs             # Constructors for the OpenAI response & SSE chunk envelopes
 |   +-- response_tests.rs       # Unit tests for response and chunk serialization
 |   \-- vision.rs               # Image decoding and vision token injection mapping
@@ -90,6 +90,8 @@ crates/server/
 - `ollama.rs`: the Ollama-compatible routes, hand-rolled shapes and NDJSON framing (Gotcha 30).
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
+- `embeddings.rs`: `/v1/embeddings` (OpenAI-shaped) and the Ollama `/api/embeddings`/`/api/embed` routes -- request size caps (`MAX_EMBEDDING_INPUTS`, `MAX_EMBEDDING_BYTES`) and the `dimensions` truncation check against the model's own width.
+- `encoder_model.rs`: `RealEncoderModel`, a `ChatModel` impl over `runtime::encoder::EncoderRunner` -- a distinct encoder-only runner, not `RealForwardRunner` (macOS only).
 - `cancel.rs`: `Cancel` (the `Arc<AtomicBool>` threaded through every async call chain), `CancelOnDrop` (wraps an SSE stream, sets it when axum drops the stream), and `CancelGuard` (sets it if a non-streaming handler's own future is dropped before `.defuse()`) -- the client-disconnect cancellation mechanism (Gotcha 25).
 - `auth.rs`: `require_api_key`, an `axum::middleware::from_fn_with_state` layer applied to a sub-router in `lib.rs::build_router_with_options` -- everything except `GET /health`. Accepts `x-api-key` or `Authorization: Bearer`; compares with a local constant-time byte loop rather than the `subtle` crate (Gotcha 26).
 - `response.rs`: constructors for `anyllm_translate::openai`'s response and SSE chunk envelopes, filling the many fields this server never populates in one place.

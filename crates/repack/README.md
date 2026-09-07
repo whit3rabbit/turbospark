@@ -1,6 +1,6 @@
 # turbospark-repack
 
-Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer.rs`), synthetic model generators (`synthetic_model.rs`), Hugging Face Llama repacker (`hf_checkpoint.rs`), Gemma 4 / Qwen 3.6 checkpoint repackers (`gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
+Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer/`), synthetic model generators (`synthetic_model/`), Hugging Face Llama repacker (`hf_checkpoint.rs`), Gemma 4 / Qwen 3.6 checkpoint repackers (`gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
 
 Downstream workspace crates import this package via the `repack` alias:
 
@@ -16,11 +16,11 @@ repack = { package = "turbospark-repack", path = "../repack" }
 ## Key Modules
 
 - `safetensors_header.rs`: Pure safetensors JSON header parser.
-- `ranged_download.rs`: Ranged HTTP download engine (`RangeSource`).
+- `ranged_download/`: Ranged HTTP download engine (`RangeSource`).
 - `repack.rs`: Quantization repack algorithms converting FP32/BF16 weights to INT4/INT8.
-- `gturbo_writer.rs`: Writes `.gturbo` directory tree and manifest/layout JSON.
+- `gturbo_writer/`: Writes `.gturbo` directory tree and manifest/layout JSON.
 - `resident_writer.rs`: Writes `model_weights.bin` resident tensor blob and binary index.
-- `synthetic_model.rs` / `synthetic_real.rs` / `synthetic_qwen.rs`: Synthetic test model generators.
+- `synthetic_model/` / `synthetic_real.rs` / `synthetic_qwen/`: Synthetic test model generators.
 - `gemma4_checkpoint/`: Gemma 4 and Qwen 3.6 checkpoint converters and streamed expert pipeline builders.
 - `gguf_checkpoint/`: GGUF repack walk, F32 transcoding, and V-head conventions.
 - `qwen36_config.rs`: Qwen 3.6 `config.json` to `ArchConfig` converter (`parse_qwen_gdn_moe_config`).

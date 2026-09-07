@@ -16,10 +16,11 @@ foundation = { package = "turbospark-core", path = "../core" }
 ## Key Modules
 
 - `primitives.rs`: Defines workspace-wide primitive types including `pub type TokenId = i32`, `LogitValue`, and `LogitsView`.
-- `runtime_config.rs`: System parameters and allowed parameter sets (`ALLOWED_CACHE_SLOTS = [8, 16, 24, 32]`, `ALLOWED_CHUNK_SIZES = [128, 256, 512, 1024, 2048, 4096]`).
+- `runtime_config.rs`: System parameters and allowed parameter sets (`ALLOWED_CACHE_SLOTS = [8, 16, 24, 32, 48, 64, 96, 128]`, `ALLOWED_CHUNK_SIZES = [32, 64, 128, 256, 512, 1024, 2048, 4096]`).
 - `chunk_sizing.rs`: Automatic three-state chunk-size resolution algorithm mapping prompt length to concrete allowed chunk size.
 - `prefill.rs`: Prefill chunking primitives and chunk iterator logic for splitting long input token sequences.
-- `error.rs`: Central `CoreError` enum declaration.
+- `steering.rs`: `SteeringMode` (`Ablate`/`Add`/`Clamp`/`Renorm`), the directional-steering edit's four modes, shared by the CPU reference (`turbospark_compute::steering`) and the Metal dispatch (`turbospark_gpu::encode_steer_direction`).
+- `error.rs`: Central `Error` enum declaration.
 
 ## Development & Test Commands
 

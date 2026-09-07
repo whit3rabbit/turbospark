@@ -28,6 +28,7 @@ crates/repack/
 |   |   +-- streaming.rs            # The streamed, layer-at-a-time walk
 |   |   \-- types.rs                # Writer inputs and layout records
 |   +-- resident_writer.rs          # Writes model_weights.bin resident tensor blob and index
+|   +-- resident_reader.rs          # Reads an install's model_weights.bin back (MTP head graft)
 |   +-- synthetic_model/            # Synthetic model generator (build_synthetic_gemma4_install)
 |   |   +-- mod.rs                  # Entry points and re-exports
 |   |   +-- arch.rs                 # The ArchConfig the fixtures declare
@@ -43,7 +44,13 @@ crates/repack/
 |   |   +-- dense_arch.rs           # Architecture definitions and shapes for dense Qwen fixtures
 |   |   +-- dense_tensors.rs        # Synthetic tensor fixture construction helpers for dense Qwen
 |   |   +-- moe.rs                  # MoE Qwen 3.6 generator (+ the `_with_mtp` variant Phase 3 is gated by)
-|   |   \-- qwen4.rs                # `qwen4_exp` n-gram-table fixture, both writer entry points
+|   |   +-- qwen4.rs                # `qwen4_exp` n-gram-table fixture, both writer entry points
+|   |   +-- vision.rs               # A tiny `qwen3_5` vision tower fixture, dimensions mutually indivisible on purpose
+|   |   \-- qwen4_decode/           # Decode-capable tiny `qwen4_exp` install (hyper-connection, GDN/attn, MoE, PLE)
+|   |       +-- mod.rs              # Entry points and re-exports
+|   |       +-- arch.rs             # Architectural constants and config builders
+|   |       +-- ngram.rs            # PLE and n-gram table tensors, group-32 quantization
+|   |       \-- tensors.rs          # Tensor generators for the decode layers
 |   +-- gemma4_checkpoint/          # Gemma 4 / Qwen 3.6 mlx-community safetensors converter & streamer
 |   |   +-- mod.rs                  # Module root and install writer entrypoints
 |   |   +-- classify.rs             # Tensor classification (resident vs routed)
@@ -124,6 +131,7 @@ crates/repack/
     +-- hf_checkpoint.rs            # HF Llama converter unit tests
     +-- hf_checkpoint_network.rs    # Real HF checkpoint download integration test (ignored)
     +-- install_verifier.rs         # Install verifier unit tests
+    +-- mtp_graft.rs                # resident_reader + graft_qwen_gdn_dense_mtp_head: MTP head onto an on-disk install
     +-- mtp_head_network.rs         # The MTP head's inventory off the official BF16 header (ignored)
     +-- mtp_install_fidelity_network.rs # MTP head install fidelity vs official weights (ignored)
     +-- mtp_quantize_network.rs     # Its INT4 round trip against real bytes, by correlation (ignored)
@@ -139,6 +147,11 @@ crates/repack/
     +-- qwen36_checkpoint_network.rs# Real Qwen 3.6 checkpoint download integration test (ignored)
     +-- qwen36_config.rs            # parse_qwen_gdn_moe_config vs the pinned Qwen 3.6 baseline
     +-- qwen38_checkpoint_network.rs# The REAL Qwen3.8-27B INT4 checkpoint, streamed (ignored)
+    +-- qwen4_classify.rs           # classify_for_family vs qwen4_exp's real tensor-name inventory (pattern-complete)
+    +-- qwen4_config.rs             # parse_qwen4_exp_config vs both published qwen4_exp checkpoints
+    +-- qwen4_manifest_roundtrip.rs # qwen4_exp's manifest fields through all three consumers: writer, validator, peeker
+    +-- qwen4_ngram_install.rs      # qwen4_exp's n-gram table through the real repack walk, end to end
+    +-- qwen4_ngram_store.rs        # NgramTableWriter end to end: the interleave, the reader, the refusals
     +-- repack.rs                   # Quantization repack unit tests
     +-- safetensors_header.rs       # Safetensors header parsing unit tests
     +-- synthetic_model.rs          # Synthetic install builder unit tests
@@ -146,7 +159,8 @@ crates/repack/
     +-- synthetic_qwen.rs           # Synthetic Qwen MoE builder unit tests
     +-- synthetic_qwen35.rs         # The dense 1-bit install, end to end through the walk
     +-- synthetic_qwen35_vision.rs  # M-V3 stage 1: the vision tower through both writers, and the BF16->FP16 arm
-    \-- ternary_checkpoint_network.rs# The REAL Ternary-Bonsai-27B 2-bit checkpoint, streamed (ignored)
+    +-- ternary_checkpoint_network.rs# The REAL Ternary-Bonsai-27B 2-bit checkpoint, streamed (ignored)
+    \-- vision_sidecar.rs           # The vision-tower sidecar: a tower installed as its own <alias>.gturbo-vision/ dir
 ```
 
 ## Key Modules

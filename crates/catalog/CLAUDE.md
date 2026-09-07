@@ -21,6 +21,8 @@ crates/catalog/
 |   +-- entry.rs                # CatalogEntry, Source, Sidecars, SourceKind, Status
 |   +-- catalog.rs              # Load embedded + merge a user override, lookup
 |   +-- hf.rs                   # HF API file list, resolve URLs, small-file GET, HF_TOKEN
+|   +-- auth.rs                 # HF_TOKEN resolution (explicit/env/store/cache), whoami-v2 validation
+|   +-- vision.rs               # Resolve an installed vision-tower sidecar by (family, hidden_size)
 |   +-- probe/
 |   |   +-- mod.rs          # Dispatcher and sidecar check
 |   |   +-- types.rs        # Probe verdict and result types
@@ -62,6 +64,11 @@ crates/catalog/
   `Client::file_list` is what makes probing an unknown repository possible at
   all; `content_length` reads `x-linked-size` before `content-length`, because
   a Xet-backed file reports the LFS object's real length in the former.
+- `auth.rs`: resolves an `HF_TOKEN` in priority order (explicit override, then
+  `HF_TOKEN`/`HUGGING_FACE_HUB_TOKEN`, then the store's own `hf_token` file,
+  then the standard `hf`-CLI cache files) and validates one against
+  `whoami-v2`. Read together with Gotcha 12: this is what a caller reaches
+  for before trusting a probe's chat-template verdict on a gated repo.
 - `probe/`: four gates, cheapest first. `mod.rs` owns the report types, the
   GGUF-or-safetensors dispatch and the sidecar check; `gguf.rs` and
   `safetensors.rs` each own one format's gates. In both halves the
@@ -79,6 +86,13 @@ crates/catalog/
 - `install.rs`: the shape every install-writing `crates/repack/tests/*_network.rs` file
   repeat, written once, with the step order inverted (see Gotcha 1).
 - `store.rs`: `Store::resolve`'s ORDER is the load-bearing part; see Gotcha 2.
+- `vision.rs`: `resolve_vision_sidecar` finds the ONE installed vision-tower
+  row pairing with a `(family, hidden_size)`, reading back through
+  `model_io::load_vision_sidecar` for every candidate rather than trusting
+  the store's own `family` string. Zero matches and more than one match are
+  both refused rather than picked between: a revision pin is load-bearing,
+  so nothing here silently disambiguates two installed towers of the same
+  shape.
 
 ## Development & Test Commands
 
@@ -242,14 +256,16 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
     before writing (`json.dumps(json.loads(raw), ...) == raw`), because the
     day it stops being true the diff is the whole table.
 
-12. **A GATED SIDECAR REPO WITHOUT `HF_TOKEN` READS AS "NO CHAT TEMPLATE"
-    RATHER THAN AS AN ERROR.** `fill_template_and_sidecars`'s
-    `tokenizer_config.json` branch is
-    `if let Ok(Some(bytes)) = client.get_optional(...)`, which discards the
-    `Err` arm along with a genuine absence -- `get_optional` correctly
-    returns `Err("GET url: HTTP 401")` for a gated repo with no token, but
-    the pattern match cannot tell that apart from the key being missing, so
-    both print the same "no chat template found in either place" warning.
+12. **A GATED SIDECAR REPO WITHOUT `HF_TOKEN` USED TO READ AS "NO CHAT
+    TEMPLATE" RATHER THAN AS AN ERROR; `probe/mod.rs`'s `resolve_chat_template`
+    now tells the two apart.** `check_sidecars`'s `tokenizer_config.json`
+    branch fetches through `client.get_optional(...)` and hands the `Result`
+    to `resolve_chat_template`, which matches `Some(Err(e))` separately from
+    `Some(Ok(None)) | None` -- `get_optional` correctly returns
+    `Err("GET url: HTTP 401")` for a gated repo with no token, and that arm
+    gets its own warning naming `HF_TOKEN` rather than falling into the
+    generic "no chat template found in either place" line
+    (`an_http_error_gets_its_own_warning_naming_hf_token` in `probe/mod.rs`).
     Measured on `meta-llama/Meta-Llama-3-8B-Instruct` (gated): unauthenticated
     probe reports `template NONE FOUND`; with `HF_TOKEN` set,
     `tokenizer_config.json:chat_template`. Export
