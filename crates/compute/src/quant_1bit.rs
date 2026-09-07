@@ -282,6 +282,7 @@ pub fn embed_lookup_int1(
 /// kernel's lane partials have to be reduced in to match. Mirrors
 /// [`crate::quant::dequant_int4_gemv`].
 pub fn dequant_int1_gemv(weight_rows: &[Int1AffineRow], x: &[f32], n: usize) -> Vec<f32> {
+    assert_eq!(x.len(), n, "x.len() must equal n");
     let mut out = vec![0f32; weight_rows.len()];
     for (r, row) in weight_rows.iter().enumerate() {
         let w = dequantize_int1_affine(row, n);

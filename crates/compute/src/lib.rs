@@ -1,11 +1,14 @@
 //! Destination-selected compute strategy plus CPU reference kernels.
 //!
-//! The kernel modules (`rms_norm`, `wht`, `rope`, `attention`, `quant`,
-//! `quant_1bit`, `quant_2bit`, `quant_gguf`, `quant_gguf_iq`,
-//! `moe`, `gdn`, `gating`, `sampling`, `tolerance`) are the numerical ground truth later GPU
-//! kernels are validated against. Numerics parity with any upstream
-//! implementation is out of scope for `ComputeStrategy` itself; only the
-//! structural contracts of the decode and prefill areas are exercised there.
+//! The kernel modules (`rms_norm`, `wht`, `rope`, `attention`, `encoder`,
+//! `vision`, `gdn`, `ple`, `qsa_indexer`, `hyper_connection`, `gating`,
+//! `quant`, `quant_1bit`, `quant_2bit`, `quant_gguf` (Q4_K, Q5_K, Q6_K,
+//! Q8_0), `quant_gguf_iq`, `quant_gguf_mxfp4`, `kv_quant`,
+//! `kv_quant_attention`, `moe`, `sampling`, `steering`, `tolerance`) are the
+//! numerical ground truth later GPU kernels are validated against. Numerics
+//! parity with any upstream implementation is out of scope for
+//! `ComputeStrategy` itself; only the structural contracts of the decode and
+//! prefill areas are exercised there.
 //!
 //! The `turbospark-core` dependency is brought in under the alias `foundation` to avoid
 //! colliding with the standard library `core` crate in the extern prelude.

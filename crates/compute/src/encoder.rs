@@ -69,6 +69,17 @@ pub fn encoder_embeddings_lookup(
 ) -> Vec<f32> {
     let seq = input_ids.len();
     let hidden = config.hidden_size;
+    if let Some(ids) = token_type_ids {
+        assert_eq!(
+            ids.len(),
+            seq,
+            "token_type_ids.len() must equal input_ids.len()"
+        );
+        assert!(
+            token_type_embeddings.is_some(),
+            "token_type_ids given with no token_type_embeddings table"
+        );
+    }
     let mut out = vec![0.0f32; seq * hidden];
 
     for (pos, &token_id) in input_ids.iter().enumerate() {
@@ -143,6 +154,11 @@ pub fn encoder_block_forward(
 ) -> Vec<f32> {
     let hidden = config.hidden_size;
     let heads = config.num_attention_heads;
+    assert_eq!(x.len(), seq * hidden, "x must be seq * hidden_size");
+    assert!(
+        hidden % heads == 0,
+        "hidden_size must be a multiple of num_attention_heads"
+    );
     let head_dim = config.head_dim();
     let inter_dim = config.intermediate_size;
     let scale = (head_dim as f32).powf(-0.5);

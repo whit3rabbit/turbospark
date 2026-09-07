@@ -76,6 +76,9 @@ pub fn causal_attention_tq(
 
     let group_size = num_q_heads / num_kv_heads;
     let scale = scale.unwrap_or(1.0 / (head_dim as f32).sqrt());
+    if let Some(s) = sinks {
+        assert_eq!(s.len(), num_q_heads, "sinks.len() must equal num_q_heads");
+    }
 
     let mut out = vec![0f32; num_q_heads * head_dim];
 

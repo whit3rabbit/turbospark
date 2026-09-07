@@ -3,10 +3,12 @@
 //! out of scope; these tests check the documented math contracts.
 
 use turbospark_compute::{
-    apply_streamed_routed, bf16_to_f32, causal_attention, dequant_int4_gemv, dequant_int8_gemv,
-    dequantize_int4_affine, dequantize_int8_affine, embed_lookup_int4, embed_lookup_int8,
-    f32_to_bf16, gelu_tanh, logit_softcap_softmax, max_abs_diff, quantize_int4_affine,
-    quantize_int8_affine, rel_error, rms_norm, rope_neox, rope_paired, run_ffn, wht, Int4AffineRow,
+    apply_streamed_routed, bf16_to_f32, bounded_rel_error, causal_attention,
+    causal_attention_with_sinks, dequant_int4_gemv, dequant_int8_gemv, dequantize_int4_affine,
+    dequantize_int8_affine, embed_lookup_int4, embed_lookup_int8, f32_to_bf16, gelu_tanh,
+    logit_softcap_softmax, max_abs_diff, quantize_int4_affine, quantize_int8_affine, rel_error,
+    rms_norm, rope_neox, rope_paired, run_ffn, wht, GdnDims, GdnReference, Int4AffineRow,
+    Int8AffineRow, Tolerance,
 };
 
 #[test]
@@ -263,4 +265,217 @@ fn rel_error_uses_absolute_floor_when_reference_is_all_zero() {
     let r = [0.0f32, 0.0];
     let err = rel_error(&a, &r);
     assert!((err - 1e-7 / 1e-6).abs() < 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// B1: the tolerance helpers must be NaN-sticky, never read a NaN GPU output
+// as a perfect result (AGENTS.md Gotcha 59 at the instrument itself).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn max_abs_diff_is_nan_when_actual_carries_a_nan() {
+    let actual = [f32::NAN, 5.0];
+    let reference = [1.0f32, 2.0];
+    assert!(max_abs_diff(&actual, &reference).is_nan());
+}
+
+#[test]
+// The point of this assertion IS the partial-order quirk: `err < tol` and
+// `!(err < tol)` are not complements once NaN is in play, and that gap is
+// exactly what the fix in B1 closes for a parity test reading this value.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+fn rel_error_is_nan_when_actual_carries_a_nan() {
+    let actual = [f32::NAN, f32::NAN];
+    let reference = [1.0f32, 2.0];
+    let err = rel_error(&actual, &reference);
+    assert!(err.is_nan());
+    // The form every GPU parity test in crates/gpu actually reads: NaN must
+    // fail `err < tol`, not silently pass it because `f32::max` handed a
+    // NaN GPU output back as 0.0.
+    assert!(!(err < Tolerance::FP16_REDUCTION));
+}
+
+#[test]
+fn bounded_rel_error_is_nan_when_actual_carries_a_nan() {
+    let actual = [f32::NAN, 5.0];
+    let reference = [1.0f32, 2.0];
+    assert!(bounded_rel_error(&actual, &reference, 1e-3).is_nan());
+}
+
+#[test]
+fn rel_error_propagates_infinity() {
+    // Pins that +inf already worked before the NaN-sticky fold, so B1's
+    // fix is scoped to NaN and this path is unmoved.
+    let actual = [f32::INFINITY, 5.0];
+    let reference = [1.0f32, 2.0];
+    assert_eq!(rel_error(&actual, &reference), f32::INFINITY);
+}
+
+// ---------------------------------------------------------------------------
+// B2: `f32_to_bf16` must quiet a NaN rather than let the round-half-to-even
+// add carry its mantissa bits into the exponent field.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn f32_to_bf16_quiets_every_nan_pattern() {
+    // 0x7F800001: a NaN whose narrowed high mantissa bits are all zero, so
+    // the unguarded rounding add previously carried into the exponent field
+    // and produced +inf. 0x7FFFFFFF: every mantissa bit set, previously
+    // narrowed to -0.0. f32::NAN: the canonical pattern, which happened to
+    // survive even before this fix.
+    for pattern in [0x7F800001u32, 0x7FFFFFFFu32, f32::NAN.to_bits()] {
+        let x = f32::from_bits(pattern);
+        assert!(x.is_nan(), "fixture {pattern:#010x} must itself be NaN");
+        let bits = f32_to_bf16(x);
+        let back = bf16_to_f32(bits);
+        assert!(
+            back.is_nan(),
+            "pattern {pattern:#010x} -> bf16 {bits:#06x} -> {back}"
+        );
+    }
+}
+
+#[test]
+fn f32_to_bf16_round_trips_infinity_and_negative_zero_exactly() {
+    assert_eq!(bf16_to_f32(f32_to_bf16(f32::INFINITY)), f32::INFINITY);
+    assert_eq!(
+        bf16_to_f32(f32_to_bf16(f32::NEG_INFINITY)),
+        f32::NEG_INFINITY
+    );
+    let neg_zero = bf16_to_f32(f32_to_bf16(-0.0f32));
+    assert_eq!(neg_zero, 0.0);
+    assert!(neg_zero.is_sign_negative());
+}
+
+#[test]
+fn f32_to_bf16_rounds_half_to_even() {
+    // Exactly halfway between BF16(1.0) = 0x3F80 and its next neighbour up:
+    // must round to the EVEN one (0x3F80), not away from zero.
+    let halfway = f32::from_bits(0x3F80_8000);
+    assert_eq!(f32_to_bf16(halfway), 0x3F80);
+}
+
+// ---------------------------------------------------------------------------
+// B3: the affine dequantizers must refuse a ragged width or a scale/bias
+// plane that does not match the group count, rather than silently zeroing
+// the tail or reading past a short plane.
+// ---------------------------------------------------------------------------
+
+#[test]
+#[should_panic(expected = "not a multiple of")]
+fn dequantize_int4_affine_refuses_a_ragged_width() {
+    // packed.len() * 2 == 80 == n, so the shape assert passes; 80 % 64 != 0.
+    let row = Int4AffineRow {
+        packed: vec![0u8; 40],
+        scales: vec![f32_to_bf16(1.0); 2],
+        biases: vec![f32_to_bf16(0.0); 2],
+    };
+    let _ = dequantize_int4_affine(&row, 80);
+}
+
+#[test]
+#[should_panic(expected = "scales.len()")]
+fn dequantize_int4_affine_refuses_a_short_scales_plane() {
+    // n = 128, n_groups = 2, but only one scale is supplied.
+    let row = Int4AffineRow {
+        packed: vec![0u8; 64],
+        scales: vec![f32_to_bf16(1.0); 1],
+        biases: vec![f32_to_bf16(0.0); 2],
+    };
+    let _ = dequantize_int4_affine(&row, 128);
+}
+
+#[test]
+#[should_panic(expected = "not a multiple of")]
+fn dequantize_int8_affine_refuses_a_ragged_width() {
+    let row = Int8AffineRow {
+        packed: vec![0u8; 80],
+        scales: vec![f32_to_bf16(1.0); 2],
+        biases: vec![f32_to_bf16(0.0); 2],
+    };
+    let _ = dequantize_int8_affine(&row, 80);
+}
+
+#[test]
+#[should_panic(expected = "biases.len()")]
+fn dequantize_int8_affine_refuses_a_short_biases_plane() {
+    let row = Int8AffineRow {
+        packed: vec![0u8; 128],
+        scales: vec![f32_to_bf16(1.0); 2],
+        biases: vec![f32_to_bf16(0.0); 1],
+    };
+    let _ = dequantize_int8_affine(&row, 128);
+}
+
+// ---------------------------------------------------------------------------
+// B6 / B8: sinks must be exactly one per query head, and a window must be
+// positive (window == 0 is a nonsensical "attend to nothing" call, not a
+// full-attention request -- that is spelled `None`).
+// ---------------------------------------------------------------------------
+
+#[test]
+#[should_panic(expected = "sinks.len()")]
+fn causal_attention_with_sinks_refuses_wrong_sink_count() {
+    let head_dim = 2;
+    let num_q_heads = 2;
+    let num_kv_heads = 1;
+    let seq_len = 1;
+    let q = vec![0.0f32; num_q_heads * head_dim];
+    let k = vec![0.0f32; seq_len * num_kv_heads * head_dim];
+    let v = vec![0.0f32; seq_len * num_kv_heads * head_dim];
+    let sinks = [0.0f32]; // wrong: one entry per q head (2) is required
+    let _ = causal_attention_with_sinks(
+        &q,
+        &k,
+        &v,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        seq_len,
+        None,
+        None,
+        Some(&sinks),
+    );
+}
+
+#[test]
+#[should_panic(expected = "window must be positive")]
+fn causal_attention_refuses_a_zero_window() {
+    let head_dim = 2;
+    let q = vec![0.0f32; head_dim];
+    let k = vec![0.0f32; head_dim * 3];
+    let v = vec![0.0f32; head_dim * 3];
+    let _ = causal_attention(&q, &k, &v, head_dim, 1, 1, 3, Some(0), None);
+}
+
+// ---------------------------------------------------------------------------
+// B8: GdnReference::new must refuse a degenerate conv kernel or a zero
+// key-head count rather than fail later with an unrelated divide-by-zero
+// or an out-of-bounds index.
+// ---------------------------------------------------------------------------
+
+#[test]
+#[should_panic(expected = "conv_kernel_size must be at least 1")]
+fn gdn_reference_refuses_a_zero_conv_kernel_size() {
+    let dims = GdnDims {
+        num_k_heads: 1,
+        num_v_heads: 1,
+        key_head_dim: 4,
+        value_head_dim: 4,
+        conv_kernel_size: 0,
+    };
+    let _ = GdnReference::new(dims, &[], &[0.0], &[0.0], &[0.0; 4]);
+}
+
+#[test]
+#[should_panic(expected = "num_k_heads must be positive")]
+fn gdn_reference_refuses_zero_k_heads() {
+    let dims = GdnDims {
+        num_k_heads: 0,
+        num_v_heads: 1,
+        key_head_dim: 4,
+        value_head_dim: 4,
+        conv_kernel_size: 4,
+    };
+    let _ = GdnReference::new(dims, &[], &[0.0], &[0.0], &[0.0; 4]);
 }

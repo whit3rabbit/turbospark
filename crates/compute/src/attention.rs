@@ -73,9 +73,18 @@ pub fn causal_attention_with_sinks(
     let group_size = num_q_heads / num_kv_heads;
     let scale = scale.unwrap_or(1.0 / (head_dim as f32).sqrt());
     let kv_start = match window {
-        Some(w) if seq_len > w => seq_len - w,
-        _ => 0,
+        Some(w) => {
+            assert!(
+                w > 0,
+                "window must be positive; use None for full attention"
+            );
+            seq_len.saturating_sub(w)
+        }
+        None => 0,
     };
+    if let Some(s) = sinks {
+        assert_eq!(s.len(), num_q_heads, "sinks.len() must equal num_q_heads");
+    }
 
     let mut out = vec![0f32; num_q_heads * head_dim];
 

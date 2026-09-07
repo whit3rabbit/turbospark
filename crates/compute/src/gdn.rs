@@ -115,6 +115,11 @@ impl GdnReference {
         dt_bias: &[f32],
         norm_w: &[f32],
     ) -> Self {
+        assert!(
+            dims.conv_kernel_size >= 1,
+            "conv_kernel_size must be at least 1"
+        );
+        assert!(dims.num_k_heads > 0, "num_k_heads must be positive");
         assert_eq!(conv_w.len(), dims.qkv_dim() * dims.conv_kernel_size);
         assert_eq!(a_log.len(), dims.num_v_heads);
         assert_eq!(dt_bias.len(), dims.num_v_heads);

@@ -224,6 +224,17 @@ fn the_gemv_is_the_dot_product_of_the_decoded_rows() {
     }
 }
 
+/// A byte run shorter than what `n` needs must be refused by name, the same
+/// way every sibling GGUF decoder's `assert_run` refuses one, rather than
+/// indexing past the end of `blocks` with an unnamed panic.
+#[test]
+#[should_panic(expected = "need")]
+fn dequantize_mxfp4_refuses_a_short_byte_run() {
+    let n = MXFP4_BLOCK_ELEMS * 2; // needs 2 blocks = 34 bytes
+    let short = vec![0u8; MXFP4_BLOCK_BYTES]; // only 1 block's worth
+    let _ = dequantize_mxfp4(&short, n);
+}
+
 /// A partial trailing block is honoured exactly, which a routed-expert row
 /// whose width is not a multiple of 32 needs. gpt-oss's own widths are all
 /// multiples of 32, so this is a contract check rather than a live case --

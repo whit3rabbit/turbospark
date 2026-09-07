@@ -255,6 +255,18 @@ fn the_embedding_lookup_reads_the_right_row_and_scales_it() {
     assert!(peak > 1.0, "the test row is too small to prove the scale");
 }
 
+/// A short `x` must be refused rather than silently truncated by `zip`,
+/// which would return a partial dot product with no indication anything
+/// was dropped.
+#[test]
+#[should_panic(expected = "x.len() must equal n")]
+fn dequant_int1_gemv_refuses_a_short_x() {
+    let row = oracle_row();
+    let n = row.len();
+    let short_x = vec![1.0f32; n - 1];
+    let _ = dequant_int1_gemv(&[row], &short_x, n);
+}
+
 /// A row length that is not a whole number of groups is a caller error, not
 /// a truncation.
 #[test]

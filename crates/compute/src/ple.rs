@@ -86,6 +86,8 @@ pub fn dilated_conv_step(
     k: usize,
     dilation: usize,
 ) -> Vec<f32> {
+    assert!(k >= 1, "k must be at least 1");
+    assert!(dilation >= 1, "dilation must be at least 1");
     assert_eq!(raw.len(), channels, "raw must be one row of `channels`");
     assert_eq!(conv_w.len(), channels * k, "conv_w must be channels * k");
     let history = (k - 1) * dilation;
@@ -167,6 +169,25 @@ pub fn dequant_ngram_row(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod dilated_conv_step_tests {
+    use super::dilated_conv_step;
+
+    #[test]
+    #[should_panic(expected = "k must be at least 1")]
+    fn refuses_a_zero_kernel_width() {
+        let mut tail: Vec<Vec<f32>> = Vec::new();
+        let _ = dilated_conv_step(&mut tail, &[1.0], &[], 1, 0, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "dilation must be at least 1")]
+    fn refuses_a_zero_dilation() {
+        let mut tail: Vec<Vec<f32>> = Vec::new();
+        let _ = dilated_conv_step(&mut tail, &[1.0], &[0.0; 4], 1, 4, 0);
+    }
 }
 
 #[cfg(test)]

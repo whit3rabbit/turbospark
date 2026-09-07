@@ -48,6 +48,7 @@ cargo test -p turbospark-compute
 
 ## Crate Gotchas
 
-1. **BF16 vs FP16**: `crates/compute` uses hand-rolled bit-shift helpers for BF16 (`bf16_to_f32`/`f32_to_bf16`) by leveraging BF16 as the upper 16 bits of FP32. FP16 (binary16) storage elsewhere uses the `half` crate.
+1. **BF16 vs FP16**: `crates/compute` uses hand-rolled bit-shift helpers for BF16 (`bf16_to_f32`/`f32_to_bf16`) by leveraging BF16 as the upper 16 bits of FP32. FP16 (binary16) storage elsewhere uses the `half` crate. `f32_to_bf16` quiets a NaN input explicitly rather than letting the round-half-to-even add carry its mantissa bits into the exponent field: without that guard, a probed `0x7F800001` narrows to `+inf` and `0x7FFFFFFF` to `-0.0`.
 2. **GDN FP16 Rounding Points**: `gdn.rs` rounds to FP16 at four explicit points (`conv_out`, normed q/k slices, raw conv tail rows, and output `y`) to match hardware behavior while keeping recurrence FP32.
 3. **Numerical Ground Truth**: Algorithms in this crate prioritize mathematical reference exactness over maximum CPU vectorization.
+4. **The tolerance helpers are NaN-sticky, and that is load-bearing.** `tolerance.rs`'s `max_abs_diff`, `rel_error` and `bounded_rel_error` fold with a `worst()` helper rather than a bare `f32::max`, because `f32::max(NaN, x)` returns `x`: an all-NaN GPU parity output would otherwise fold down to `0.0` and pass `err < tol` as a perfect result (AGENTS.md Gotcha 59, one level down at the instrument every `crates/gpu` parity test reads through). 14 parity files had no `is_finite` guard anywhere before this was fixed. `+inf` needs no such guard; it already propagates through `f32::max`.

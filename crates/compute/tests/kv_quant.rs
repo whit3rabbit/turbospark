@@ -166,6 +166,58 @@ fn packing_straddles_word_boundary_at_three_bits() {
     assert_eq!(unpack_lsb_first(&packed, 3, 11), indices);
 }
 
+/// An index that does not fit in `bits` corrupts its neighbours silently
+/// (the excess bits OR into the next field), so it must be refused by name
+/// rather than packed.
+#[test]
+#[should_panic(expected = "does not fit")]
+fn pack_lsb_first_refuses_an_out_of_range_index() {
+    let _ = pack_lsb_first(&[0, 1, 4], 2); // 4 needs 3 bits, not 2
+}
+
+/// `bits` above 16 is outside anything this codec's allowed bit widths
+/// (2..4) ever reach, and `1u32 << 32` overflows in `unpack_lsb_first`'s
+/// mask computation.
+#[test]
+#[should_panic(expected = "must be in 1..=16")]
+fn pack_lsb_first_refuses_bits_above_sixteen() {
+    let _ = pack_lsb_first(&[0, 1, 2], 17);
+}
+
+#[test]
+#[should_panic(expected = "must be in 1..=16")]
+fn unpack_lsb_first_refuses_bits_above_sixteen() {
+    let _ = unpack_lsb_first(&[0u32], 17, 1);
+}
+
+/// `causal_attention_tq` sinks must be exactly one per query head, the same
+/// contract [`causal_attention_with_sinks`] enforces.
+#[test]
+#[should_panic(expected = "sinks.len()")]
+fn causal_attention_tq_refuses_wrong_sink_count() {
+    const DIM: usize = 64;
+    let k_tables = TqTables::new(DIM, 3, KEY_SEED);
+    let v_tables = TqTables::new(DIM, 3, VALUE_SEED);
+    let q = vec![0.0f32; DIM * 2]; // 2 query heads
+    let row = quantize_row(&vec![0.0f32; DIM], &k_tables.signs, &k_tables.midpoints, 3);
+    let k_rows = [row.clone()];
+    let v_rows = [row];
+    let sinks = [0.0f32]; // wrong: must have one entry per q head (2)
+    let _ = causal_attention_tq(
+        &q,
+        &k_rows,
+        &v_rows,
+        DIM,
+        2,
+        1,
+        1,
+        None,
+        Some(&sinks),
+        &k_tables,
+        &v_tables,
+    );
+}
+
 #[test]
 fn pack_unpack_round_trips_at_every_width_and_length() {
     let mut state = 999u64;

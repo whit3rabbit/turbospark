@@ -16,9 +16,23 @@ pub fn bf16_to_f32(bits: u16) -> f32 {
 }
 
 /// Narrow an `f32` to a BF16 bit pattern with round-half-to-even.
+///
+/// NaN is handled separately: the round-half-to-even add below can carry a
+/// NaN's mantissa bits into the exponent field, landing on `+inf` or `-0.0`
+/// instead of a narrower NaN (a probed `0x7F800001` narrows to `+inf`, and
+/// `0x7FFFFFFF` to `-0.0`; only the canonical `f32::NAN` bit pattern happens
+/// to survive). A weight that is NaN in a source checkpoint would otherwise
+/// be written to the `.gturbo` narrowing path as a finite value and never be
+/// seen again. Finite and infinite inputs are unaffected by this branch.
 #[inline]
 pub fn f32_to_bf16(x: f32) -> u16 {
     let bits = x.to_bits();
+    if x.is_nan() {
+        // Top 16 bits (sign + exponent + high mantissa) with the quiet bit
+        // forced, so the narrowed value stays a NaN even if the truncated
+        // high mantissa bits were all zero.
+        return ((bits >> 16) | 0x0040) as u16;
+    }
     let lsb = (bits >> 16) & 1;
     let rounding_bias = 0x7FFFu32.wrapping_add(lsb);
     (bits.wrapping_add(rounding_bias) >> 16) as u16
@@ -94,8 +108,14 @@ pub fn quantize_int4_affine(row: &[f32]) -> Int4AffineRow {
 /// Dequantize an [`Int4AffineRow`] to `n` FP32 elements.
 pub fn dequantize_int4_affine(r: &Int4AffineRow, n: usize) -> Vec<f32> {
     assert_eq!(n, r.packed.len() * 2, "n must equal packed.len() * 2");
-    let mut out = vec![0f32; n];
+    assert!(
+        n % GROUP_SIZE == 0,
+        "row length {n} is not a multiple of {GROUP_SIZE}"
+    );
     let n_groups = n / GROUP_SIZE;
+    assert_eq!(r.scales.len(), n_groups, "scales.len() must equal n_groups");
+    assert_eq!(r.biases.len(), n_groups, "biases.len() must equal n_groups");
+    let mut out = vec![0f32; n];
     for g in 0..n_groups {
         let scale = bf16_to_f32(r.scales[g]);
         let bias = bf16_to_f32(r.biases[g]);
@@ -153,8 +173,14 @@ pub fn quantize_int8_affine(row: &[f32]) -> Int8AffineRow {
 /// Dequantize an [`Int8AffineRow`] to `n` FP32 elements.
 pub fn dequantize_int8_affine(r: &Int8AffineRow, n: usize) -> Vec<f32> {
     assert_eq!(n, r.packed.len(), "n must equal packed.len()");
-    let mut out = vec![0f32; n];
+    assert!(
+        n % GROUP_SIZE == 0,
+        "row length {n} is not a multiple of {GROUP_SIZE}"
+    );
     let n_groups = n / GROUP_SIZE;
+    assert_eq!(r.scales.len(), n_groups, "scales.len() must equal n_groups");
+    assert_eq!(r.biases.len(), n_groups, "biases.len() must equal n_groups");
+    let mut out = vec![0f32; n];
     for g in 0..n_groups {
         let scale = bf16_to_f32(r.scales[g]);
         let bias = bf16_to_f32(r.biases[g]);

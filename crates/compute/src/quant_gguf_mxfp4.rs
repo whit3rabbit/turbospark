@@ -112,8 +112,14 @@ pub fn mxfp4_scale(exponent: u8) -> f32 {
 /// whole blocks -- a partial block on disk is not a thing GGUF writes.
 #[must_use]
 pub fn dequantize_mxfp4(blocks: &[u8], n: usize) -> Vec<f32> {
-    let mut out = vec![0.0f32; n];
     let block_count = n.div_ceil(MXFP4_BLOCK_ELEMS);
+    assert!(
+        blocks.len() >= block_count * MXFP4_BLOCK_BYTES,
+        "need {} bytes for {n} elements, got {}",
+        block_count * MXFP4_BLOCK_BYTES,
+        blocks.len()
+    );
+    let mut out = vec![0.0f32; n];
     for b in 0..block_count {
         let base = b * MXFP4_BLOCK_BYTES;
         let d = mxfp4_scale(blocks[base]);

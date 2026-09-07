@@ -285,10 +285,15 @@ pub fn pack_lsb_first(indices: &[u32], bits: u8) -> Vec<u32> {
     if bits == 0 {
         return Vec::new();
     }
+    assert!((1..=16).contains(&bits), "bits {bits} must be in 1..=16");
     let width = packed_words(indices.len(), bits);
     let mut packed = vec![0u32; width];
     let bits_i = bits as i64;
     for (i, &value) in indices.iter().enumerate() {
+        assert!(
+            value >> bits == 0,
+            "index {i} = {value} does not fit {bits} bits"
+        );
         let bit_offset = i as u32 * bits as u32;
         let word_idx = (bit_offset / 32) as usize;
         let offset = bit_offset % 32;
@@ -306,6 +311,7 @@ pub fn unpack_lsb_first(packed: &[u32], bits: u8, length: usize) -> Vec<u32> {
     if bits == 0 {
         return Vec::new();
     }
+    assert!((1..=16).contains(&bits), "bits {bits} must be in 1..=16");
     let mask = (1u32 << bits) - 1;
     let bits_i = bits as i64;
     (0..length)
