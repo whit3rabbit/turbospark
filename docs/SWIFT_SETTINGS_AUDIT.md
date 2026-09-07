@@ -329,6 +329,19 @@ This closes every item this audit ranked. Section 4's "Cleared after
 checking" list and this section's method (5) still apply to whatever the
 next pass finds.
 
+Done 2026-09-06 (server key generate and copy): the API key field in Server
+Advanced gained two buttons beside it. Generate fills the field from
+`ServerAPIKeyGenerator.generate()` (`sk-` plus a lowercased UUID) and is
+disabled while a server runs, with the field it fills, since the key is
+read at start; Copy writes the trimmed effective key
+(`AppModel.serverAPIKey(from:)`, the value the server actually checks) to
+the clipboard and stays enabled while a server runs, because handing the
+live key to a client is its purpose. `ServerAPIKeyGeneratorTests` pins the
+generated shape. The key itself was already end to end -- `--api-key` on
+`turbospark-server`, `TURBOSPARK_API_KEY`, the Keychain store and the
+Engine pane's duplicate field predate this -- so these are affordances on
+an existing setting, not a new one.
+
 Cleared after checking, so nobody re-derives them: the Profiles caption about
 isolation is accurate (skills and agents resolve through
 `UserProfileStore.userScopeSubdirectory`), `/v1/embeddings` is a real route

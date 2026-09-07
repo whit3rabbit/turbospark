@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TurboSpark
 
@@ -14,6 +15,7 @@ struct ServerAdvancedSettingsView: View {
     @ObservedObject var model: AppModel
     @State private var portText: String = ""
     @State private var portError: String? = nil
+    @State private var copiedKey: Bool = false
 
     private var isRunning: Bool { model.server != nil }
 
@@ -29,14 +31,47 @@ struct ServerAdvancedSettingsView: View {
                 "API key",
                 help: "Required on every route except /health, as x-api-key or a Bearer token. Stored in the Keychain, not settings.json."
             ) {
-                SecureField("", text: $model.serverAPIKeyInput)
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .frame(width: 240)
-                    .disabled(isRunning)
-                    .onChange(of: model.serverAPIKeyInput) { _, _ in
-                        model.persistSettingsDebounced()
+                HStack(spacing: 6) {
+                    SecureField("", text: $model.serverAPIKeyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .frame(width: 240)
+                        .disabled(isRunning)
+                        .onChange(of: model.serverAPIKeyInput) { _, _ in
+                            model.persistSettingsDebounced()
+                        }
+
+                    // Generate is disabled with the field it fills, because
+                    // the key is read at START; copy stays live while the
+                    // server runs, since handing the running key to a client
+                    // is the reason to have it on this pane at all.
+                    Button {
+                        model.serverAPIKeyInput = ServerAPIKeyGenerator.generate()
+                    } label: {
+                        Image(systemName: "wand.and.stars")
                     }
+                    .buttonStyle(.borderless)
+                    .disabled(isRunning)
+                    .help("Generate a random key")
+                    .accessibilityLabel("Generate a random API key")
+
+                    Button {
+                        guard let key = AppModel.serverAPIKey(from: model.serverAPIKeyInput) else { return }
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(key, forType: .string)
+                        copiedKey = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            copiedKey = false
+                        }
+                    } label: {
+                        Image(systemName: copiedKey ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(AppModel.serverAPIKey(from: model.serverAPIKeyInput) == nil)
+                    .help("Copy API key to clipboard")
+                    .accessibilityLabel("Copy API key")
+                    .accessibilityValue(copiedKey ? "Copied" : "")
+                }
             }
 
             // **NOT DECORATION.** A loopback socket is reachable by every
