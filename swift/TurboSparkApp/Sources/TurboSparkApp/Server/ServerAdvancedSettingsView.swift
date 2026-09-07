@@ -104,8 +104,22 @@ struct ServerAdvancedSettingsView: View {
                     .labelsHidden()
                     .frame(width: 280)
                     .disabled(isRunning)
-                    .onChange(of: model.hfEndpointInput) { _, _ in
+                    .onChange(of: model.hfEndpointInput) { _, newValue in
                         model.persistSettingsDebounced()
+                        // Unlike this pane's other fields, this ONE also
+                        // feeds a consumer that has nothing to do with
+                        // whether a server is running: `TurboSparkCatalog`'s
+                        // own HF client, which every model install, probe
+                        // and browse call goes through outside the server
+                        // entirely. Persisting alone left that client on the
+                        // stale endpoint until the next app launch, while
+                        // `HfAuthTokenCardView`'s own mirror-endpoint editor
+                        // applied it live -- two editors of the same
+                        // setting disagreeing about when it takes effect
+                        // (`docs/SWIFT_SETTINGS_AUDIT.md`).
+                        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                        try? TurboSparkCatalog.setHfEndpoint(
+                            trimmed.isEmpty || trimmed == "https://huggingface.co" ? nil : trimmed)
                     }
             }
 
