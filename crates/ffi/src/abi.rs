@@ -85,6 +85,18 @@ pub unsafe fn read_last_error(buf: *mut c_char, cap: usize) -> usize {
     })
 }
 
+/// Recovers whatever a caught panic carried, so a message names the failure
+/// rather than only its existence. Shared between [`guard`] and any entry
+/// point whose return type is not a `c_int` status code and so cannot route
+/// through it (`ts_cosine_similarity` is the one today).
+fn panic_detail(payload: Box<dyn std::any::Any + Send>) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".to_string())
+}
+
 /// Runs `body` with panics caught, mapping one to [`TS_ERR_PANIC`].
 ///
 /// Every `extern "C"` function in this crate is a call to this and nothing
@@ -96,18 +108,33 @@ pub fn guard(body: impl FnOnce() -> c_int) -> c_int {
     clear_error();
     match catch_unwind(AssertUnwindSafe(body)) {
         Ok(code) => code,
+        Err(payload) => fail(
+            TS_ERR_PANIC,
+            format!("panic caught at the FFI boundary: {}", panic_detail(payload)),
+        ),
+    }
+}
+
+/// [`guard`] for a body that returns a value rather than a status code.
+/// Catches a panic, records it in the thread's last-error slot exactly as
+/// `guard` does, and returns `on_panic` in its place -- the caller has no
+/// status code to carry [`TS_ERR_PANIC`] through, so the sentinel is the only
+/// signal available, same as the null/zero-length sentinel this crate's
+/// value-returning entry points already use for an invalid argument.
+///
+/// `AssertUnwindSafe` for the same reason `guard`'s is honest: the values
+/// crossing into `body` are raw pointers and borrows the caller already
+/// owns.
+pub fn guard_value<T>(on_panic: T, body: impl FnOnce() -> T) -> T {
+    clear_error();
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(value) => value,
         Err(payload) => {
-            // Recover whatever the panic carried, so the message names the
-            // failure rather than only its existence.
-            let detail = payload
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "non-string panic payload".to_string());
             fail(
                 TS_ERR_PANIC,
-                format!("panic caught at the FFI boundary: {detail}"),
-            )
+                format!("panic caught at the FFI boundary: {}", panic_detail(payload)),
+            );
+            on_panic
         }
     }
 }

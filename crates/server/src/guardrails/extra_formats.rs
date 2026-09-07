@@ -176,18 +176,50 @@ fn parse_qwen_xml(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> 
 }
 
 /// Gemma DSL: `call:NAME{key:value,...}` or `call:NAME{"key":value,...}`.
+///
+/// The JSON-shaped body is found by a hand-rolled balanced-brace scan
+/// rather than by capturing it with the regex alone: `regex_lite` has no
+/// backreferences or recursion, so a lazy `\{[\s\S]*?\}` capture stops at
+/// the FIRST closing brace it sees. For a call whose arguments contain a
+/// nested object (`call:search{"query":"x","filters":{"category":"y"}}`,
+/// a common shape for filters/options rather than an edge case) that
+/// truncates the capture at the INNER object's `}`, producing an
+/// unbalanced fragment that fails to parse -- silently dropping the whole
+/// call, with no rescue and no error.
 fn parse_gemma(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
-    let block = Regex::new(r"call:([A-Za-z0-9_\-]+)\s*(\{[\s\S]*?\})").ok()?;
+    let head = Regex::new(r"call:([A-Za-z0-9_\-]+)\s*\{").ok()?;
     let allowed: std::collections::HashSet<String> =
         available_tools.iter().map(|&s| s.to_string()).collect();
     let parser = tokenizer::GemmaToolCallParser::new();
     let mut calls = Vec::new();
-    for caps in block.captures_iter(text) {
-        let name = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-        if !available_tools.contains(&name) {
+    let mut cursor = 0usize;
+    while cursor <= text.len() {
+        let Some(caps) = head.captures(&text[cursor..]) else {
+            break;
+        };
+        let whole_match = caps.get(0).map(|m| m.as_str()).unwrap_or_default();
+        let name = caps
+            .get(1)
+            .map(|m| m.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let rel_start = caps.get(0).map(|m| m.start()).unwrap_or(0);
+        // `whole_match` ends in the literal `{` the pattern requires, so
+        // its last byte is that brace's own position.
+        let brace_start = cursor + rel_start + whole_match.len() - 1;
+        let Some(brace_len) = balanced_brace_len(&text[brace_start..]) else {
+            // No matching close brace anywhere in the remaining text --
+            // nothing else here can be a complete call either.
+            break;
+        };
+        let body_end = brace_start + brace_len;
+        let match_start = cursor + rel_start;
+        cursor = body_end;
+
+        if !available_tools.contains(&name.as_str()) {
             continue;
         }
-        let matched = caps.get(0).map(|m| m.as_str()).unwrap_or_default();
+        let matched = &text[match_start..body_end];
         if let Ok(parsed) = parser.parse(matched, &allowed, "id") {
             if let JsonValue::Object(map) = parsed.arguments {
                 calls.push(RawCall {
@@ -197,15 +229,48 @@ fn parse_gemma(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
                 continue;
             }
         }
-        let body = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
+        let body = &text[brace_start..body_end];
         if let Some(map) = json_object(body) {
-            calls.push(RawCall {
-                name: name.to_string(),
-                arguments: map,
-            });
+            calls.push(RawCall { name, arguments: map });
         }
     }
     (!calls.is_empty()).then_some(calls)
+}
+
+/// `s` must start with `{`. Returns the byte length of the balanced brace
+/// span starting there (one past the matching `}`), or `None` if the
+/// braces never balance before `s` ends. Tracks JSON string literals (a
+/// `{`/`}` inside a quoted value does not perturb the depth count) and
+/// backslash escapes within them; this needs no opinion on whether a key is
+/// quoted, since the scan only ever looks at brace/quote/backslash bytes.
+fn balanced_brace_len(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, b) in s.bytes().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Shared walk for the two tag-pair shapes: every non-overlapping block

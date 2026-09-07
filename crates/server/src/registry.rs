@@ -163,11 +163,23 @@ pub fn resolve_among(models: &[Arc<dyn ChatModel>], requested: Option<&str>) -> 
     }
 }
 
-/// Resolves `requested` against a slice of attached models for an embedding request.
-/// If `requested` matches an attached model by id, that model is returned.
-/// If `requested` is omitted (None) or is a generic/default embedding model name
-/// (e.g. "text-embedding-ada-002", "text-embedding-3-small", "default", "bge-small", "snowflake-arctic"),
-/// and an attached model supports embeddings, that embedding model is preferred as the default.
+/// Resolves `requested` against a slice of attached models for an embedding
+/// request.
+///
+/// An exact id match always wins. Failing that, when EXACTLY ONE attached
+/// model supports embeddings, it serves the request whatever name was
+/// asked for -- there is no ambiguity to resolve, the same reasoning
+/// [`resolve_among`] already applies to a single attached model, scoped
+/// here to the embedding-capable subset. This one rule is what a caller
+/// asking for a well-known default name (`"text-embedding-3-small"`,
+/// `"bge-small"`, ...) needs; a caller asking for genuine garbage gets the
+/// same answer, because with only one candidate there IS no other answer.
+///
+/// With zero or two-or-more embedding-capable candidates there is no
+/// single answer to default to -- picking one anyway would silently serve
+/// the wrong model's (wrong-dimension) vectors with no error -- so this
+/// defers to [`resolve_among`]'s general policy (single attached model, or
+/// a 404 naming what is there) instead of guessing.
 pub fn resolve_embedding_among(
     models: &[Arc<dyn ChatModel>],
     requested: Option<&str>,
@@ -177,35 +189,14 @@ pub fn resolve_embedding_among(
             if let Some(hit) = models.iter().find(|m| m.model_id() == name) {
                 return Resolution::Model(Arc::clone(hit));
             }
-            // Check if name is a well-known default or generic embedding alias
-            let is_generic_or_default = matches!(
-                name,
-                "default"
-                    | "embedding"
-                    | "embeddings"
-                    | "text-embedding-ada-002"
-                    | "text-embedding-3-small"
-                    | "text-embedding-3-large"
-                    | "bge-small"
-                    | "bge-small-en-v1.5"
-                    | "snowflake-arctic-embed"
-                    | "snowflake-arctic-embed-l-v2.0"
-            );
-            if is_generic_or_default {
-                if let Some(emb) = models.iter().find(|m| m.supports_embeddings()) {
-                    return Resolution::Model(Arc::clone(emb));
-                }
-            }
         }
     }
-
-    // When requested is None or empty:
-    // If any attached model supports embeddings, default to it!
-    if let Some(emb) = models.iter().find(|m| m.supports_embeddings()) {
-        return Resolution::Model(Arc::clone(emb));
+    let mut embedding_models = models.iter().filter(|m| m.supports_embeddings());
+    if let Some(only) = embedding_models.next() {
+        if embedding_models.next().is_none() {
+            return Resolution::Model(Arc::clone(only));
+        }
     }
-
-    // Fall back to general resolution
     resolve_among(models, requested)
 }
 

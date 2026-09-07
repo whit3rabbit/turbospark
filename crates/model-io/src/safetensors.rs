@@ -108,6 +108,14 @@ impl SafetensorsFile {
 
         let start = self.data_start + desc.data_offsets.0;
         let end = self.data_start + desc.data_offsets.1;
+        if desc.data_offsets.0 > desc.data_offsets.1 {
+            return Err(ModelError::IndexCorrupt {
+                detail: format!(
+                    "tensor {name} has a backwards data_offsets range ({}..{})",
+                    desc.data_offsets.0, desc.data_offsets.1
+                ),
+            });
+        }
         if end > self.mmap.len() {
             return Err(ModelError::IndexCorrupt {
                 detail: format!(

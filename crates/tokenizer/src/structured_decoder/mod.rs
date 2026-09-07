@@ -310,14 +310,21 @@ impl<'a> StructuredAssistantDecoder<'a> {
             return Ok(Vec::new());
         }
         if let Some(tokens) = &mut self.tool_tokens {
-            tokens.push(token_id);
-            if tokens.len() * 4 > crate::tool_call::MAXIMUM_BYTES {
+            // Checked BEFORE pushing `token_id`, so the clone below -- the
+            // span body `turn_stream::feed` releases on this error -- never
+            // includes the token that tripped the limit. That token is
+            // ordinary content (not a special/marker token, unlike the
+            // "second start"/parse-error arms above), so `feed` also emits
+            // ITS OWN delta right after releasing the span; including it in
+            // both would print its text twice.
+            if (tokens.len() + 1) * 4 > crate::tool_call::MAXIMUM_BYTES {
                 if self.failed_span_tokens.is_none() {
                     self.failed_span_tokens = Some(tokens.clone());
                 }
                 self.failed = true;
                 return Err(ToolCallParserError::Oversized);
             }
+            tokens.push(token_id);
             return Ok(Vec::new());
         }
         match self.channel {
