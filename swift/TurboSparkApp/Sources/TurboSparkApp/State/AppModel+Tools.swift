@@ -81,10 +81,20 @@ extension AppModel {
         }
 
         let activeMcpServers = AppToolCatalogMcp.visibleServers(global: globalMcpServers, project: project)
+        // The skill listing rides INSIDE the tool addendum, embedded in the
+        // `skill` tool's description. There is deliberately no second
+        // `## Available Skills` section beside it: two surfaces advertised
+        // two sets (one unbudgeted and unfiltered next to a tool that
+        // refused what the other offered). The addendum's list is budgeted,
+        // filtered, and scope-tagged; an agent profile without the `skill`
+        // tool gets no listing, which is the honest state -- it could not
+        // load one.
+        let contextBudget: Int? = maxContextTokens > 0 ? maxContextTokens : nil
         let toolsPrompt = AppToolCatalog.systemPromptAddendum(
             for: agentType,
             mcpServers: activeMcpServers,
-            project: project)
+            project: project,
+            contextTokens: contextBudget)
         sections.append(toolsPrompt)
 
         if !activeMcpServers.isEmpty {
@@ -100,22 +110,6 @@ extension AppModel {
                 mcpLines.append("- `\(s.name)` (\(typeName))\(desc)")
             }
             sections.append(mcpLines.joined(separator: "\n"))
-        }
-
-        let skills = effectiveSkills
-        if !skills.isEmpty {
-            var skillLines: [String] = ["## Available Skills"]
-            skillLines.append("The following specialized skills are available in the workspace. You can load any of them using the `skill` tool:")
-            for s in skills {
-                let scopeTag: String
-                switch s.scope {
-                case .projectLocal: scopeTag = "[Project]"
-                case .plugin: scopeTag = "[Plugin]"
-                default: scopeTag = "[User]"
-                }
-                skillLines.append("- `\(s.name)` \(scopeTag): \(s.skillDescription)")
-            }
-            sections.append(skillLines.joined(separator: "\n"))
         }
 
         return sections.joined(separator: "\n\n")
@@ -213,6 +207,7 @@ extension AppModel {
                     // life of the process. Same pairing that tail uses, and
                     // the same epoch guard.
                     self.isCancellationPending = false
+                    self.drainPendingTaskNotificationsIfIdle(chatID: chatID)
                 }
                 self.toolExecutionTask = nil
             }
@@ -329,6 +324,7 @@ extension AppModel {
                     // life of the process. Same pairing that tail uses, and
                     // the same epoch guard.
                     self.isCancellationPending = false
+                    self.drainPendingTaskNotificationsIfIdle(chatID: chatID)
                 }
                 self.toolExecutionTask = nil
             }

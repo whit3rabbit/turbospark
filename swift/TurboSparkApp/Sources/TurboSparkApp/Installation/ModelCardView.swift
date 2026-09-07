@@ -32,7 +32,7 @@ struct ModelCardView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .center, spacing: 4) {
                         Text(alias)
-                            .font(.system(.body, design: .rounded).weight(.semibold))
+                            .themedFont(.base, weight: .semibold)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
@@ -44,8 +44,8 @@ struct ModelCardView: View {
                             HStack(spacing: 4) {
                                 ProgressView().controlSize(.mini)
                                 if let fraction = downloadFraction {
-                                    Text("\(Int(fraction * 100))%")
-                                        .font(.caption2.monospacedDigit().weight(.medium))
+                                    Text("\(Int(fraction * 100))%", bundle: .module)
+                                        .themedFont(.tiny, weight: .medium).monospacedDigit()
                                         .foregroundStyle(Color.accentColor)
                                 }
                             }
@@ -53,8 +53,8 @@ struct ModelCardView: View {
                             .accessibilityLabel("Downloading")
                             .accessibilityValue(downloadFraction.map { "\(Int($0 * 100)) percent" } ?? "in progress")
                         } else if isActive {
-                            Text("Active")
-                                .font(.caption2.weight(.bold))
+                            Text("Active", bundle: .module)
+                                .themedFont(.tiny, weight: .bold)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1.5)
                                 .background(Color.accentColor.opacity(0.18), in: Capsule())
@@ -62,15 +62,15 @@ struct ModelCardView: View {
                         } else if isInstalled {
                             HStack(spacing: 3) {
                                 Circle().fill(.green).frame(width: 5, height: 5)
-                                Text("Installed")
-                                    .font(.caption2.weight(.medium))
+                                Text("Installed", bundle: .module)
+                                    .themedFont(.tiny, weight: .medium)
                                     .foregroundStyle(.secondary)
                             }
                         }
                     }
 
                     Text(name)
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -78,11 +78,11 @@ struct ModelCardView: View {
                     HStack(spacing: 4) {
                         HStack(spacing: 3) {
                             Image(systemName: visuals.iconSystemName)
-                                .font(.system(size: 8, weight: .semibold))
+                                .themedFont(points: 8, weight: .semibold)
                                 .accessibilityHidden(true)
                             Text(visuals.parameterTag)
                         }
-                        .font(.caption2.weight(.medium))
+                        .themedFont(.tiny, weight: .medium)
                         .lineLimit(1)
                         .fixedSize()
                         .padding(.horizontal, 4)
@@ -91,7 +91,7 @@ struct ModelCardView: View {
                         .foregroundStyle(.secondary)
 
                         Text(visuals.formatLabel)
-                            .font(.caption2.weight(.medium))
+                            .themedFont(.tiny, weight: .medium)
                             .lineLimit(1)
                             .fixedSize()
                             .padding(.horizontal, 4)
@@ -106,7 +106,7 @@ struct ModelCardView: View {
                         Spacer(minLength: 2)
 
                         Text(MetricFormat.storage(downloadBytes))
-                            .font(.caption2.monospacedDigit())
+                            .themedFont(.tiny).monospacedDigit()
                             .lineLimit(1)
                             .fixedSize()
                             .foregroundStyle(.tertiary)
@@ -173,13 +173,13 @@ struct ModelCardView: View {
         switch status {
         case "verified":
             Image(systemName: "checkmark.seal.fill")
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help("Verified: this port has run this row end to end")
                 .accessibilityHidden(true)
         case "caveat":
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(.orange)
                 .help("Runs with a caveat; see the notes in the detail pane")
                 .accessibilityHidden(true)

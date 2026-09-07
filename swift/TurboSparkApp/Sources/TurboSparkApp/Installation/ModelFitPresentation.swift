@@ -111,12 +111,12 @@ struct ModelFitVerdictPill: View {
         HStack(spacing: compact ? 2 : 3) {
             if let icon = p.iconName {
                 Image(systemName: icon)
-                    .font(.system(size: compact ? 7 : 9, weight: .bold))
+                    .themedFont(points: compact ? 7 : 9, weight: .bold)
                     .accessibilityHidden(true)
             }
             Text(compact ? p.compactLabel : p.label)
         }
-        .font(compact ? .caption2.weight(.semibold) : .caption.weight(.bold))
+        .themedFont(compact ? .tiny : .small, weight: compact ? .semibold : .bold)
         .lineLimit(1)
         .fixedSize()
         .padding(.horizontal, compact ? 4 : 8)

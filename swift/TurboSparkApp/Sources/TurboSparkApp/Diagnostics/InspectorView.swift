@@ -28,12 +28,12 @@ struct InspectorView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 13, weight: .semibold))
+                .themedFont(points: 13, weight: .semibold)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help("Model loading, generation, and steering options for the active model")
                 .accessibilityHidden(true)
-            Text("Model Settings")
-                .font(.system(size: 13, weight: .semibold))
+            Text("Model Settings", bundle: .module)
+                .themedFont(points: 13, weight: .semibold)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)

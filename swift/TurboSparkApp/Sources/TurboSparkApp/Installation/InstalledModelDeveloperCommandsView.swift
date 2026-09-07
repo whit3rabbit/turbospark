@@ -18,7 +18,7 @@ struct InstalledModelDeveloperCommandsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Terminal / CLI Commands", systemImage: "terminal")
-                .font(.subheadline.weight(.semibold))
+                .themedFont(.small, weight: .semibold)
 
             cliSnippet(
                 title: "Run CLI REPL Chat",
@@ -36,10 +36,10 @@ struct InstalledModelDeveloperCommandsView: View {
 
     private func cliSnippet(title: String, command: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(title).themedFont(.tiny).foregroundStyle(.secondary)
             HStack {
                 Text(command)
-                    .font(.caption.monospaced())
+                    .themedCode(.small)
                     .lineLimit(1)
                 Spacer()
                 Button {
@@ -48,7 +48,7 @@ struct InstalledModelDeveloperCommandsView: View {
                     onShowToast("Command copied to clipboard")
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .font(.caption)
+                        .themedFont(.small)
                 }
                 .buttonStyle(.plain)
                 .help("Copy command")

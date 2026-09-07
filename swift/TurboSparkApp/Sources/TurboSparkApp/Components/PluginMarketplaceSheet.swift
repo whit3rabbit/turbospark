@@ -28,7 +28,7 @@ struct PluginMarketplaceSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Plugin Marketplaces")
+                Text("Plugin Marketplaces", bundle: .module)
                     .font(theme.ui(.title3, weight: .semibold))
                 Spacer()
                 Button("Done") { dismiss() }
@@ -63,7 +63,7 @@ struct PluginMarketplaceSheet: View {
 
     private var marketplaceList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Sources")
+            Text("Sources", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding([.horizontal, .top], 14)
@@ -99,14 +99,14 @@ struct PluginMarketplaceSheet: View {
 
     private var addMarketplaceForm: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Add marketplace")
+            Text("Add marketplace", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
             TextField("Name (e.g. my-plugins)", text: $newMarketplaceName)
                 .textFieldStyle(.roundedBorder)
             Picker("", selection: $newSourceKind) {
-                Text("GitHub").tag("github")
-                Text("Git URL").tag("git")
-                Text("Directory").tag("directory")
+                Text("GitHub", bundle: .module).tag("github")
+                Text("Git URL", bundle: .module).tag("git")
+                Text("Directory", bundle: .module).tag("directory")
             }
             .labelsHidden()
             .pickerStyle(.segmented)
@@ -206,8 +206,8 @@ struct PluginMarketplaceSheet: View {
                         entryRow(entry)
                     }
                     if entries.isEmpty && !isLoading {
-                        Text("No plugin entries loaded.")
-                            .font(.callout)
+                        Text("No plugin entries loaded.", bundle: .module)
+                            .themedFont(.base)
                             .foregroundStyle(.tertiary)
                             .padding(.top, 30)
                     }
@@ -230,8 +230,8 @@ struct PluginMarketplaceSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     if !entry.strict {
-                        Text("non-strict")
-                            .font(.system(size: 10, weight: .medium))
+                        Text("non-strict", bundle: .module)
+                            .themedFont(points: 10, weight: .medium)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Capsule().fill(Color.orange.opacity(0.15)))

@@ -25,8 +25,8 @@ struct ServerConnectCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if model.server == nil {
-                Text("Start the server and these fill in with its real address.")
-                    .font(.system(size: 11))
+                Text("Start the server and these fill in with its real address.", bundle: .module)
+                    .themedFont(points: 11)
                     .foregroundStyle(.secondary)
             }
 
@@ -41,13 +41,13 @@ struct ServerConnectCardView: View {
             if let snippet = snippets.first(where: { $0.id == selection }) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(snippet.note)
-                        .font(.system(size: 11))
+                        .themedFont(points: 11)
                         .foregroundStyle(.secondary)
 
                     ZStack(alignment: .topTrailing) {
                         ScrollView(.horizontal, showsIndicators: false) {
                             Text(snippet.body)
-                                .font(.system(size: 11, design: .monospaced))
+                                .themedCode(points: 11)
                                 .textSelection(.enabled)
                                 .padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -83,8 +83,8 @@ struct ServerConnectCardView: View {
                 // so the snippets send a dummy rather than omitting the
                 // header -- which produces a confusing client-side failure
                 // instead of a working call.
-                Text("No key is set, so the snippets send a placeholder that is never checked.")
-                    .font(.system(size: 10))
+                Text("No key is set, so the snippets send a placeholder that is never checked.", bundle: .module)
+                    .themedFont(points: 10)
                     .foregroundStyle(.secondary)
             }
 
@@ -106,8 +106,8 @@ private struct ServerEndpointListView: View {
             Divider().padding(.vertical, 4)
 
             HStack {
-                Text("Endpoints")
-                    .font(.system(size: 11, weight: .semibold))
+                Text("Endpoints", bundle: .module)
+                    .themedFont(points: 11, weight: .semibold)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Picker("", selection: $family) {
@@ -121,22 +121,22 @@ private struct ServerEndpointListView: View {
             }
 
             Text(family.blurb)
-                .font(.system(size: 10))
+                .themedFont(points: 10)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(ServerEndpointCatalog.endpoints(for: family)) { endpoint in
                     HStack(spacing: 8) {
                         Text(endpoint.method)
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .themedCode(points: 9, weight: .semibold)
                             .foregroundStyle(.secondary)
                             .frame(width: 34, alignment: .leading)
                         Text(endpoint.path)
-                            .font(.system(size: 11, design: .monospaced))
+                            .themedCode(points: 11)
                             .textSelection(.enabled)
                         if endpoint.streams {
                             Text(family == .ollama ? "NDJSON" : "SSE")
-                                .font(.system(size: 8, weight: .medium))
+                                .themedFont(points: 8, weight: .medium)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
                                 .background(Color.secondary.opacity(0.15), in: Capsule())
@@ -147,7 +147,7 @@ private struct ServerEndpointListView: View {
                         }
                         Spacer(minLength: 8)
                         Text(endpoint.summary)
-                            .font(.system(size: 10))
+                            .themedFont(points: 10)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)

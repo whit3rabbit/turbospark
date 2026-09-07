@@ -10,6 +10,44 @@ import TurboSpark
 /// `AppModel+AgentLoop` takes over once a tool call is parsed out of the
 /// reply.
 extension AppModel {
+    /// The user's sampling preferences (temperature, top-k, top-p,
+    /// repetition penalty, seed, stop sequences), as a fresh `GenerateOptions`
+    /// with everything else at its default.
+    ///
+    /// Split out of `executeGenerationTurn` so `SubagentRunner` -- an `enum`
+    /// with no `AppModel` to read (`swift/CLAUDE.md` Gotcha 46) -- can be
+    /// handed the same values through `AppToolRegistry.subagentSamplingOptionsProvider`
+    /// rather than running every subagent turn at a hardcoded
+    /// `temperature: 0.2` regardless of what the user set
+    /// (`docs/SWIFT_SETTINGS_AUDIT.md`). Deliberately excludes `reasoning`
+    /// and `maxNewTokens`: both callers set those themselves, since a
+    /// subagent's own turn budget is an architectural choice about its tool
+    /// loop rather than a sampling preference.
+    func samplingOptions() -> GenerateOptions {
+        var options = GenerateOptions()
+        options.temperature = temperature
+        if topKEnabled {
+            options.topK = UInt32(topK)
+        }
+        if topPEnabled {
+            options.topP = topP
+        }
+        if repetitionPenaltyEnabled {
+            options.repetitionPenalty = repetitionPenalty
+        }
+        if seedEnabled {
+            options.seed = seed
+        }
+        let customStops = stopSequences
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !customStops.isEmpty {
+            options.stop = customStops
+        }
+        return options
+    }
+
     /// Executes a generation step for the conversation identified by `chatID`.
     ///
     /// **THE CHAT IS AN ARGUMENT, NEVER `selectedChatIndex`** (state#17). A turn's
@@ -58,9 +96,8 @@ extension AppModel {
             ? buildSkillStateHistory(chatIndex: chatIndex, project: turnProject)
             : buildAppendOnlyHistory(chatIndex: chatIndex, project: turnProject)
 
-        var options = GenerateOptions()
+        var options = samplingOptions()
         options.reasoning = reasoning
-        options.temperature = temperature
         // `UInt32(clamping:)`, never `UInt32(_:)`: the plain conversion TRAPS
         // (kills the process, no error, no log) on any value above
         // `UInt32.max`, and this one is loaded straight out of a JSON file a
@@ -69,25 +106,6 @@ extension AppModel {
         // reaches it.
         let requestedNewTokens = UInt32(clamping: max(1, maxNewTokens))
         options.maxNewTokens = requestedNewTokens
-        if topKEnabled {
-            options.topK = UInt32(topK)
-        }
-        if topPEnabled {
-            options.topP = topP
-        }
-        if repetitionPenaltyEnabled {
-            options.repetitionPenalty = repetitionPenalty
-        }
-        if seedEnabled {
-            options.seed = seed
-        }
-        let customStops = stopSequences
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        if !customStops.isEmpty {
-            options.stop = customStops
-        }
 
         runTask = Task {
             do {

@@ -9,9 +9,9 @@ struct PromptExamplesView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Try an example")
+                    Text("Try an example", bundle: .module)
                         .font(theme.ui(points: 13, weight: .semibold))
-                    Text("Choose a prompt, edit it, or write your own.")
+                    Text("Choose a prompt, edit it, or write your own.", bundle: .module)
                         .font(theme.ui(points: 11))
                         .foregroundStyle(.secondary)
                 }

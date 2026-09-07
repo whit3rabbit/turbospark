@@ -28,7 +28,7 @@ public struct SkillEditorSheet: View {
             // Header
             HStack {
                 Text(skillToEdit == nil ? "Create New Skill" : "Edit Skill: \(name)")
-                    .font(.headline)
+                    .themedFont(.base, weight: .semibold)
                 Spacer()
                 Button("Cancel") {
                     dismiss()
@@ -49,18 +49,18 @@ public struct SkillEditorSheet: View {
                     // Name & Scope
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Skill Name")
-                                .font(.caption.weight(.semibold))
+                            Text("Skill Name", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             TextField("e.g. git-workflow, jupyter-skill", text: $name)
                                 .textFieldStyle(.roundedBorder)
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Scope")
-                                .font(.caption.weight(.semibold))
+                            Text("Scope", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             Picker("Scope", selection: $isProjectScope) {
-                                Text("User Scope (~/.turbospark/skills)").tag(false)
-                                Text("Project Scope (.turbospark/skills)").tag(true)
+                                Text("User Scope (~/.turbospark/skills)", bundle: .module).tag(false)
+                                Text("Project Scope (.turbospark/skills)", bundle: .module).tag(true)
                             }
                             .pickerStyle(.segmented)
                             .disabled(model.selectedProject == nil && !isProjectScope)
@@ -69,47 +69,47 @@ public struct SkillEditorSheet: View {
 
                     // Description
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Description")
-                            .font(.caption.weight(.semibold))
+                        Text("Description", bundle: .module)
+                            .themedFont(.small, weight: .semibold)
                         TextField("Brief summary of what this skill does and when to activate it...", text: $descriptionText)
                             .textFieldStyle(.roundedBorder)
                     }
 
                     // Allowed Tools
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Allowed Tools (Comma-separated)")
-                            .font(.caption.weight(.semibold))
+                        Text("Allowed Tools (Comma-separated)", bundle: .module)
+                            .themedFont(.small, weight: .semibold)
                         TextField("e.g. Bash(git:*), Read, write_file, search_code", text: $allowedToolsText)
                             .textFieldStyle(.roundedBorder)
-                        Text("Tool permissions allowed during execution of this skill.")
-                            .font(.caption2)
+                        Text("Tool permissions allowed during execution of this skill.", bundle: .module)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                     }
 
                     // Path Triggers
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Activation Path Triggers (Comma-separated)")
-                            .font(.caption.weight(.semibold))
+                        Text("Activation Path Triggers (Comma-separated)", bundle: .module)
+                            .themedFont(.small, weight: .semibold)
                         TextField("e.g. *.ipynb, src/**/*.ts, Cargo.toml", text: $pathsText)
                             .textFieldStyle(.roundedBorder)
-                        Text("Glob patterns that will trigger activation when editing matching files.")
-                            .font(.caption2)
+                        Text("Glob patterns that will trigger activation when editing matching files.", bundle: .module)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                     }
 
                     // Markdown Content
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text("Instruction Body (Markdown)")
-                                .font(.caption.weight(.semibold))
+                            Text("Instruction Body (Markdown)", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             Spacer()
-                            Text("Supports ${arg_name}, ${SKILL_DIR}, and ${SESSION_ID}")
-                                .font(.caption2)
+                            Text("Supports ${arg_name}, ${SKILL_DIR}, and ${SESSION_ID}", bundle: .module)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.secondary)
                         }
 
                         TextEditor(text: $content)
-                            .font(.system(.body, design: .monospaced))
+                            .themedCode(.base)
                             .frame(minHeight: 200)
                             .padding(4)
                             .background(Color(nsColor: .textBackgroundColor))

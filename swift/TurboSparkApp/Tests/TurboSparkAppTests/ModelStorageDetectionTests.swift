@@ -104,7 +104,6 @@ final class ModelStorageDetectionTests: XCTestCase {
 
     func testSettingsPersistenceRoundtrip() throws {
         let settings = MacAppSettings(
-            modelsDirectory: "/Volumes/FastSSD/turbospark/models",
             enableLMStudioDetection: true,
             lmStudioDirectory: "/Users/testuser/.lmstudio/models",
             customModelDirectories: ["/Volumes/External/models", "/Users/testuser/gguf"]
@@ -113,7 +112,6 @@ final class ModelStorageDetectionTests: XCTestCase {
         let data = try JSONEncoder().encode(settings)
         let decoded = try JSONDecoder().decode(MacAppSettings.self, from: data)
 
-        XCTAssertEqual(decoded.modelsDirectory, "/Volumes/FastSSD/turbospark/models")
         XCTAssertTrue(decoded.enableLMStudioDetection)
         XCTAssertEqual(decoded.lmStudioDirectory, "/Users/testuser/.lmstudio/models")
         XCTAssertEqual(decoded.customModelDirectories, ["/Volumes/External/models", "/Users/testuser/gguf"])

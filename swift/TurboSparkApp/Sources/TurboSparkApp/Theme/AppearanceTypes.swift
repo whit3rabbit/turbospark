@@ -110,6 +110,16 @@ public struct ThemeModeConfig: Codable, Equatable, Sendable {
         self.contrast = contrast
     }
 
+    /// Decodes a config pasted as JSON, or nil when the text is not one.
+    ///
+    /// Pure and separate from the view so the failure case can be tested:
+    /// the view's own fallback used to be "apply a preset", which no test
+    /// could see and no user could tell from a successful import.
+    public static func fromClipboardJSON(_ string: String) -> ThemeModeConfig? {
+        guard let data = string.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(ThemeModeConfig.self, from: data)
+    }
+
     public static let defaultLight = ThemeModeConfig(
         preset: "Codex",
         accentName: "Black",

@@ -90,10 +90,10 @@ public struct SkillsSettingsPaneView: View {
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "wand.and.stars")
-                                .font(.system(size: 36))
+                                .themedFont(points: 36)
                                 .foregroundStyle(.tertiary)
-                            Text("Select a skill to inspect instructions and parameters.")
-                                .font(.callout)
+                            Text("Select a skill to inspect instructions and parameters.", bundle: .module)
+                                .themedFont(.base)
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -125,7 +125,7 @@ public struct SkillsSettingsPaneView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { skill in
-            Text("Are you sure you want to delete '\(skill.name)' from disk? This action cannot be undone.")
+            Text("Are you sure you want to delete '\(skill.name)' from disk? This action cannot be undone.", bundle: .module)
         }
     }
 
@@ -142,11 +142,11 @@ public struct SkillsSettingsPaneView: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                 TextField("Search skills...", text: $searchQuery)
                     .textFieldStyle(.plain)
-                    .font(.callout)
+                    .themedFont(.base)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -202,26 +202,34 @@ public struct SkillsSettingsPaneView: View {
             HStack(spacing: 6) {
                 Image(systemName: "wand.and.stars")
                     .foregroundStyle(skill.isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
-                    .font(.subheadline)
+                    .themedFont(.small)
 
                 Text(skill.name)
-                    .font(.headline)
+                    .themedFont(.base, weight: .semibold)
                     .foregroundStyle(skill.isEnabled ? Color.primary : Color.secondary)
 
                 Spacer()
 
                 // Scope badge
                 scopeBadgeView(scope: skill.scope)
+
+                // Shadowing disclosure (SWIFT_SKILLS.md 3B): a USER skill a
+                // project skill currently overrides by name. Precedence
+                // without the disclosure makes the user skill look broken --
+                // it resolves to nothing while sitting right there, enabled.
+                if isShadowedByProject(skill) {
+                    shadowedBadgeView
+                }
             }
 
             Text(skill.skillDescription)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
 
             HStack(spacing: 8) {
                 Label(skill.agentOrigin.displayName, systemImage: "cpu")
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
 
                 // **NO "N tools" CHIP** (state#48). `allowed-tools` is parsed
@@ -237,8 +245,8 @@ public struct SkillsSettingsPaneView: View {
                 // not a missing line, and is not claimed until it exists.
 
                 if !skill.referenceFiles.isEmpty {
-                    Text("\(skill.referenceFiles.count) files")
-                        .font(.caption2)
+                    Text("\(skill.referenceFiles.count) files", bundle: .module)
+                        .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -247,12 +255,37 @@ public struct SkillsSettingsPaneView: View {
         .contentShape(Rectangle())
     }
 
+    /// Whether a USER-scoped skill's name is currently overridden by a
+    /// project skill (the comparison is the same case-insensitive key the
+    /// precedence merge itself uses).
+    private func isShadowedByProject(_ skill: AppSkill) -> Bool {
+        guard skill.scope.isProjectScope == false else { return false }
+        return model.shadowedUserSkillNames.contains {
+            $0.caseInsensitiveCompare(skill.name) == .orderedSame
+        }
+    }
+
+    private var shadowedBadgeView: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.2.squarepath")
+                .themedFont(points: 8)
+            Text("Shadowed")
+                .themedFont(points: 9, weight: .semibold)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.purple.opacity(0.15))
+        .foregroundStyle(Color.purple)
+        .clipShape(Capsule())
+        .help("A project skill with this name takes precedence while that project is open.")
+    }
+
     private func scopeBadgeView(scope: SkillScope) -> some View {
         HStack(spacing: 3) {
             Image(systemName: scope.badgeIcon)
-                .font(.system(size: 8))
+                .themedFont(points: 8)
             Text(scope.label)
-                .font(.system(size: 9, weight: .semibold))
+                .themedFont(points: 9, weight: .semibold)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -277,17 +310,27 @@ public struct SkillsSettingsPaneView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
                                 Text(skill.name)
-                                    .font(.title2.weight(.bold))
+                                    .themedFont(.title2, weight: .bold)
                                 scopeBadgeView(scope: skill.scope)
                             }
                             Text(skill.skillDescription)
-                                .font(.body)
+                                .themedFont(.base)
                                 .foregroundStyle(.secondary)
                         }
 
                         Spacer()
 
                         HStack(spacing: 8) {
+                            // The list greys a disabled skill and this pane
+                            // had no way to re-enable it; the only toggle was
+                            // in the composer's plus menu.
+                            Toggle("Enabled", isOn: Binding(
+                                get: { skill.isEnabled },
+                                set: { _ in model.toggleSkillEnabled(skill) }
+                            ))
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+
                             Button {
                                 isEditingSkill = true
                             } label: {
@@ -331,41 +374,23 @@ public struct SkillsSettingsPaneView: View {
                         .stroke(TurboSparkTheme.hairlineColor, lineWidth: 1)
                 )
 
-                // Allowed Tools Section
-                if !skill.manifest.allowedTools.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Allowed Tools & Permissions")
-                            .font(.headline)
-                        FlowLayout(spacing: 6, lineSpacing: 6) {
-                            ForEach(skill.manifest.allowedTools, id: \.self) { tool in
-                                HStack(spacing: 4) {
-                                    Image(systemName: "checkmark.shield")
-                                        .font(.caption2)
-                                    Text(tool)
-                                        .font(.caption.monospaced())
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.green.opacity(0.12))
-                                .foregroundStyle(.green)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
-                        }
-                    }
-                }
+                // No "Allowed Tools & Permissions" section. `allowed-tools`
+                // is enforced by nothing (see the row comment on state#48
+                // above); this section rendered the same field with a green
+                // shield, one scroll below the comment saying why not.
 
                 // Path Triggers Section
                 if !skill.manifest.paths.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Activation Path Triggers")
-                            .font(.headline)
+                        Text("Activation Path Triggers", bundle: .module)
+                            .themedFont(.base, weight: .semibold)
                         FlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(skill.manifest.paths, id: \.self) { pathPattern in
                                 HStack(spacing: 4) {
                                     Image(systemName: "arrow.triangle.turn.up.right.diamond")
-                                        .font(.caption2)
+                                        .themedFont(.tiny)
                                     Text(pathPattern)
-                                        .font(.caption.monospaced())
+                                        .themedCode(.small)
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -380,16 +405,16 @@ public struct SkillsSettingsPaneView: View {
                 // Reference Files Section
                 if !skill.referenceFiles.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Directory Reference Files (\(skill.referenceFiles.count))")
-                            .font(.headline)
+                        Text("Directory Reference Files (\(skill.referenceFiles.count))", bundle: .module)
+                            .themedFont(.base, weight: .semibold)
                         VStack(spacing: 4) {
                             ForEach(skill.referenceFiles, id: \.self) { fileName in
                                 HStack(spacing: 6) {
                                     Image(systemName: "doc")
-                                        .font(.caption)
+                                        .themedFont(.small)
                                         .foregroundStyle(.secondary)
                                     Text(fileName)
-                                        .font(.caption.monospaced())
+                                        .themedCode(.small)
                                     Spacer()
                                 }
                                 .padding(.horizontal, 10)
@@ -404,21 +429,21 @@ public struct SkillsSettingsPaneView: View {
                 // Instructions Markdown Content
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Instruction Body (SKILL.md)")
-                            .font(.headline)
+                        Text("Instruction Body (SKILL.md)", bundle: .module)
+                            .themedFont(.base, weight: .semibold)
                         Spacer()
                         Button {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(skill.content, forType: .string)
                         } label: {
                             Label("Copy", systemImage: "doc.on.doc")
-                                .font(.caption)
+                                .themedFont(.small)
                         }
                         .buttonStyle(.borderless)
                     }
 
                     Text(skill.content)
-                        .font(.system(.body, design: .monospaced))
+                        .themedCode(.base)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color(nsColor: .textBackgroundColor))
@@ -436,15 +461,15 @@ public struct SkillsSettingsPaneView: View {
     private func metaItemView(title: String, value: String, icon: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 10))
+                    .themedFont(points: 10)
                     .foregroundStyle(.tertiary)
                 Text(value)
-                    .font(.caption.weight(.medium))
+                    .themedFont(.small, weight: .medium)
                     .lineLimit(1)
             }
         }
@@ -454,14 +479,14 @@ public struct SkillsSettingsPaneView: View {
     private var emptyStateView: some View {
         VStack(spacing: 16) {
             Image(systemName: "wand.and.stars")
-                .font(.system(size: 48))
+                .themedFont(points: 48)
                 .foregroundStyle(.secondary)
 
-            Text("No Skills Installed")
-                .font(.title2.weight(.bold))
+            Text("No Skills Installed", bundle: .module)
+                .themedFont(.title2, weight: .bold)
 
-            Text("Skills allow you to package and inject specialized prompts, workflow instructions, reference scripts, and tool permissions into conversations.")
-                .font(.callout)
+            Text("Skills allow you to package and inject specialized prompts, workflow instructions, reference scripts, and tool permissions into conversations.", bundle: .module)
+                .themedFont(.base)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 440)

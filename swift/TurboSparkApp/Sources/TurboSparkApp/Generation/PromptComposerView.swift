@@ -22,7 +22,7 @@ struct PromptComposerView: View {
             }
             if let documentImportError {
                 Text(documentImportError)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -40,7 +40,7 @@ struct PromptComposerView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "ghost")
                         .accessibilityHidden(true)
-                    Text("Temporary chat: this conversation can't be recovered.")
+                    Text("Temporary chat: this conversation can't be recovered.", bundle: .module)
                 }
                 .font(theme.ui(points: 11, weight: .medium))
                 .foregroundStyle(.secondary)

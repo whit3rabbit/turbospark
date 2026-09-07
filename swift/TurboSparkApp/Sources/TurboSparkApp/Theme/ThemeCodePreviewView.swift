@@ -98,7 +98,7 @@ public struct ThemeCodePreviewView: View {
         valueColor: Color? = nil
     ) -> some View {
         HStack(spacing: 8) {
-            Text("\(number)")
+            Text("\(number)", bundle: .module)
                 .frame(width: 14, alignment: .trailing)
                 .foregroundStyle(Color.secondary.opacity(0.6))
                 .font(codeFont)
@@ -106,9 +106,9 @@ public struct ThemeCodePreviewView: View {
             if let keyword = keyword, let typeName = typeName {
                 HStack(spacing: 4) {
                     Text(keyword).foregroundStyle(Color.purple)
-                    Text("themePreview:").foregroundStyle(isDark ? Color.white : Color.black)
+                    Text("themePreview:", bundle: .module).foregroundStyle(isDark ? Color.white : Color.black)
                     Text(typeName).foregroundStyle(Color.blue)
-                    Text("= {").foregroundStyle(isDark ? Color.white : Color.black)
+                    Text("= {", bundle: .module).foregroundStyle(isDark ? Color.white : Color.black)
                 }
             } else if isProperty {
                 formattedPropertyLine(text: text, valueColor: valueColor)
@@ -138,7 +138,7 @@ public struct ThemeCodePreviewView: View {
                 .frame(width: 3)
 
             HStack(spacing: 6) {
-                Text("\(number)")
+                Text("\(number)", bundle: .module)
                     .frame(width: 14, alignment: .trailing)
                     .foregroundStyle(Color.secondary.opacity(0.7))
 

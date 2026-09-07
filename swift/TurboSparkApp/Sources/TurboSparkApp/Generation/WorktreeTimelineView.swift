@@ -35,14 +35,14 @@ public struct WorktreeTimelineView: View {
     private var emptyTimelineView: some View {
         VStack(spacing: 8) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 28))
+                .themedFont(points: 28)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 40)
-            Text("No Commit History Found")
-                .font(.callout.weight(.medium))
+            Text("No Commit History Found", bundle: .module)
+                .themedFont(.base, weight: .medium)
                 .foregroundStyle(.secondary)
-            Text("Commit your changes to view the project timeline.")
-                .font(.caption)
+            Text("Commit your changes to view the project timeline.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -99,14 +99,14 @@ public struct WorktreeTimelineView: View {
 
                         HStack(spacing: 6) {
                             Text(commit.author)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.secondary)
 
-                            Text("-")
+                            Text("-", bundle: .module)
                                 .foregroundStyle(.tertiary)
 
                             Text(commit.relativeDate)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.tertiary)
                         }
                     }
@@ -135,8 +135,8 @@ public struct WorktreeTimelineView: View {
     private func commitDetailCard(commit: WorktreeCommit) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Files changed in this commit:")
-                    .font(.caption2.weight(.medium))
+                Text("Files changed in this commit:", bundle: .module)
+                    .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.secondary)
 
                 Spacer()
@@ -144,8 +144,8 @@ public struct WorktreeTimelineView: View {
                 if worktree.isLoadingCommitFiles {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Text("\(worktree.selectedCommitFiles.count) files")
-                        .font(.caption2.monospacedDigit())
+                    Text("\(worktree.selectedCommitFiles.count) files", bundle: .module)
+                        .themedFont(.tiny).monospacedDigit()
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -153,14 +153,14 @@ public struct WorktreeTimelineView: View {
             if worktree.isLoadingCommitFiles {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
-                    Text("Loading commit files...")
-                        .font(.caption2)
+                    Text("Loading commit files...", bundle: .module)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
             } else if worktree.selectedCommitFiles.isEmpty {
-                Text("No modified files recorded.")
-                    .font(.caption2)
+                Text("No modified files recorded.", bundle: .module)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
             } else {
                 VStack(spacing: 2) {
@@ -186,7 +186,7 @@ public struct WorktreeTimelineView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: file.status.systemImage)
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(file.status.color)
                     .frame(width: 12)
 
@@ -197,7 +197,7 @@ public struct WorktreeTimelineView: View {
 
                 if !file.directoryPath.isEmpty {
                     Text(file.directoryPath)
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.head)
@@ -208,13 +208,13 @@ public struct WorktreeTimelineView: View {
                 if file.additions > 0 || file.deletions > 0 {
                     HStack(spacing: 3) {
                         if file.additions > 0 {
-                            Text("+\(file.additions)")
-                                .font(.caption2.monospacedDigit())
+                            Text("+\(file.additions)", bundle: .module)
+                                .themedFont(.tiny).monospacedDigit()
                                 .foregroundStyle(.green)
                         }
                         if file.deletions > 0 {
-                            Text("-\(file.deletions)")
-                                .font(.caption2.monospacedDigit())
+                            Text("-\(file.deletions)", bundle: .module)
+                                .themedFont(.tiny).monospacedDigit()
                                 .foregroundStyle(.red)
                         }
                     }

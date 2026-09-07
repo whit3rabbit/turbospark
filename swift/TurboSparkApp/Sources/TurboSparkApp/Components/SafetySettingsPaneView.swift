@@ -68,7 +68,7 @@ public struct SafetySettingsPaneView: View {
                         + "docs/OBLITERATION.md has the measurements, including what happens at "
                         + "full strength."
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
             }
             .padding(.vertical, 2)
@@ -82,7 +82,7 @@ public struct SafetySettingsPaneView: View {
                 .help(model.steeringDisabledReason ?? "Applied at the next model load.")
 
             Picker("Active direction", selection: presetBinding) {
-                Text("None").tag(UUID?.none)
+                Text("None", bundle: .module).tag(UUID?.none)
                 ForEach(model.steeringPresets) { preset in
                     Text(preset.displayName).tag(UUID?.some(preset.id))
                 }
@@ -91,7 +91,7 @@ public struct SafetySettingsPaneView: View {
 
             if let reason = model.steeringDisabledReason {
                 Label(reason, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
 
@@ -105,7 +105,7 @@ public struct SafetySettingsPaneView: View {
                             + "opens.",
                         systemImage: "arrow.clockwise"
                     )
-                    .font(.caption)
+                    .themedFont(.small)
                     Spacer()
                     Button("Reload model") { model.reloadForSteering() }
                         .disabled(model.selected == nil || model.generating || model.opening)
@@ -117,7 +117,7 @@ public struct SafetySettingsPaneView: View {
     private var presetsSection: some View {
         Section("Directions") {
             if model.steeringPresets.isEmpty {
-                Text("No directions registered.")
+                Text("No directions registered.", bundle: .module)
                     .foregroundStyle(.secondary)
             }
             ForEach(model.steeringPresets) { preset in
@@ -149,7 +149,7 @@ public struct SafetySettingsPaneView: View {
     private var statusSection: some View {
         Section("Loaded model") {
             if model.session == nil {
-                Text("No model loaded.").foregroundStyle(.secondary)
+                Text("No model loaded.", bundle: .module).foregroundStyle(.secondary)
             } else if let summary = model.activeSteeringSummary {
                 LabeledContent("Steering", value: summary)
             } else if model.steeringFamilySupported == false {
@@ -196,10 +196,10 @@ struct SteeringPresetRow: View {
                 Button("Delete", action: onDelete).buttonStyle(.link)
             }
             Text(detailLine)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
             Label(compatibility.summary, systemImage: compatibilityIcon)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(compatibility.allowsEnabling ? Color.secondary : Color.red)
         }
         .padding(.vertical, 2)

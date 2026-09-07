@@ -10,16 +10,7 @@ public struct ThemeConfigCardView: View {
     @ObservedObject public var manager: AppearanceManager
 
     @State private var copiedToast = false
-
-    /// Families narrowed to what will actually render on this machine.
-    ///
-    /// These were two array literals, which is how Inter, JetBrains Mono and
-    /// Fira Code came to be on the menu while no font file for any of them
-    /// existed in the tree: `Font.custom` falls back to the system face
-    /// without erroring, so picking one did nothing and read as the setting
-    /// being ignored. `swift/CLAUDE.md` Gotcha 22 is the same rule on the
-    /// model hub -- build the options from what is present.
-    private var installedFamilies: Set<String> { AppFontCatalog.installedFamilies() }
+    @State private var importFailed = false
 
     public init(
         title: String,
@@ -43,7 +34,7 @@ public struct ThemeConfigCardView: View {
                 Spacer()
 
                 HStack(spacing: 8) {
-                    Button("Import") {
+                    Button(importFailed ? "Not a theme" : "Import") {
                         importThemePreset()
                     }
                     .buttonStyle(.plain)
@@ -68,7 +59,7 @@ public struct ThemeConfigCardView: View {
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Text("Aa")
+                            Text("Aa", bundle: .module)
                                 .font(theme.ui(.small, weight: .bold))
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 2)
@@ -109,24 +100,11 @@ public struct ThemeConfigCardView: View {
                 colorRow(label: "Foreground", hexString: $config.foregroundHex)
                 Divider().padding(.leading, 16)
 
-                fontPickerRow(
-                    label: "UI font",
-                    family: $config.uiFontFamily,
-                    weight: $config.uiFontWeight,
-                    isCodeFont: false,
-                    familyOptions: AppFontCatalog.availableUIFamilies(installed: installedFamilies)
-                )
-                Divider().padding(.leading, 16)
-
-                fontPickerRow(
-                    label: "Code font",
-                    family: $config.codeFontFamily,
-                    weight: $config.codeFontWeight,
-                    isCodeFont: true,
-                    familyOptions: AppFontCatalog.availableCodeFamilies(installed: installedFamilies)
-                )
-                Divider().padding(.leading, 16)
-
+                // No font rows here. Fonts are GLOBAL: `AppearanceManager
+                // .setUIFont` / `setCodeFont` write both configs, so a
+                // per-mode font was never representable, and a row on each
+                // card promised an independence the storage refused. The
+                // Preferences card below carries the one set of font controls.
                 translucentSidebarRow
                 Divider().padding(.leading, 16)
 
@@ -143,7 +121,7 @@ public struct ThemeConfigCardView: View {
 
     private var accentRow: some View {
         HStack {
-            Text("Accent")
+            Text("Accent", bundle: .module)
                 .font(theme.ui(.base))
             Spacer()
 
@@ -200,68 +178,9 @@ public struct ThemeConfigCardView: View {
         .padding(.vertical, 8)
     }
 
-    private func fontPickerRow(
-        label: String,
-        family: Binding<String>,
-        weight: Binding<String>,
-        isCodeFont: Bool = false,
-        familyOptions: [String]
-    ) -> some View {
-        HStack {
-            Text(label)
-                .font(theme.ui(.base))
-            Spacer()
-
-            HStack(spacing: 8) {
-                Picker("", selection: Binding(
-                    get: { family.wrappedValue },
-                    set: { newFamily in
-                        family.wrappedValue = newFamily
-                        if isCodeFont {
-                            manager.setCodeFont(family: newFamily)
-                        } else {
-                            manager.setUIFont(family: newFamily)
-                        }
-                    }
-                )) {
-                    ForEach(familyOptions, id: \.self) { fam in
-                        Text(fam)
-                            .font(AppFontDescriptor(family: fam, weight: .regular, size: 13, isCode: isCodeFont).font)
-                            .tag(fam)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-                .labelsHidden()
-
-                Picker("", selection: Binding(
-                    get: { weight.wrappedValue },
-                    set: { newWeight in
-                        weight.wrappedValue = newWeight
-                        if isCodeFont {
-                            manager.setCodeFont(weight: newWeight)
-                        } else {
-                            manager.setUIFont(weight: newWeight)
-                        }
-                    }
-                )) {
-                    Text("Regular").font(AppFontDescriptor(family: family.wrappedValue, weight: .regular, size: 13, isCode: isCodeFont).font).tag("Regular")
-                    Text("Medium").font(AppFontDescriptor(family: family.wrappedValue, weight: .medium, size: 13, isCode: isCodeFont).font).tag("Medium")
-                    Text("Semibold").font(AppFontDescriptor(family: family.wrappedValue, weight: .semibold, size: 13, isCode: isCodeFont).font).tag("Semibold")
-                    Text("Bold").font(AppFontDescriptor(family: family.wrappedValue, weight: .bold, size: 13, isCode: isCodeFont).font).tag("Bold")
-                }
-                .pickerStyle(.menu)
-                .frame(width: 100)
-                .labelsHidden()
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
     private var translucentSidebarRow: some View {
         HStack {
-            Text("Translucent sidebar")
+            Text("Translucent sidebar", bundle: .module)
                 .font(theme.ui(.base))
             Spacer()
 
@@ -276,14 +195,14 @@ public struct ThemeConfigCardView: View {
 
     private var contrastRow: some View {
         HStack(spacing: 16) {
-            Text("Contrast")
+            Text("Contrast", bundle: .module)
                 .font(theme.ui(.base))
             Spacer()
 
             Slider(value: $config.contrast, in: 0...100, step: 1)
                 .frame(width: 160)
 
-            Text("\(Int(config.contrast))%")
+            Text("\(Int(config.contrast))%", bundle: .module)
                 .font(theme.ui(.small).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 36, alignment: .trailing)
@@ -305,15 +224,31 @@ public struct ThemeConfigCardView: View {
         }
     }
 
+    /// Applies a `ThemeModeConfig` from the clipboard, or says why not.
+    ///
+    /// This used to fall through to applying the TurboSpark PRESET whenever
+    /// the clipboard did not decode, so an Import with anything else copied
+    /// silently replaced the user's theme and reported nothing. A miss now
+    /// changes no state and names itself on the button for a moment.
+    ///
+    /// The imported config's font fields are discarded: fonts are global
+    /// (see the note above `translucentSidebarRow`), and writing one mode's
+    /// fonts here would desynchronise the two configs behind the Preferences
+    /// card's back.
     private func importThemePreset() {
-        if let string = NSPasteboard.general.string(forType: .string),
-           let data = string.data(using: .utf8),
-           let imported = try? JSONDecoder().decode(ThemeModeConfig.self, from: data) {
-            config = imported
+        guard let string = NSPasteboard.general.string(forType: .string),
+              var imported = ThemeModeConfig.fromClipboardJSON(string) else {
+            importFailed = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                importFailed = false
+            }
             return
         }
-        if let preset = ThemePreset.presets.first(where: { $0.id == "turbospark" }) {
-            manager.applyPreset(preset, forMode: isDark)
-        }
+        imported.uiFontFamily = config.uiFontFamily
+        imported.uiFontWeight = config.uiFontWeight
+        imported.codeFontFamily = config.codeFontFamily
+        imported.codeFontWeight = config.codeFontWeight
+        config = imported
     }
 }

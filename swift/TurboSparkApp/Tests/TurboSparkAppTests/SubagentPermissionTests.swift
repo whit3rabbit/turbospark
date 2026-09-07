@@ -154,4 +154,15 @@ final class SubagentPermissionTests: XCTestCase {
             result.status, "failed",
             "A run that could not start is not a completed run.")
     }
+
+    func testSubagentNameTriggersDepthRefusal() async throws {
+        let agent = try XCTUnwrap(AgentManager.shared.findAgent(name: "general-purpose"))
+        for name in ["agent", "subagent", "task"] {
+            let call = AppToolCall(name: name, arguments: ["prompt": "hi"], category: .automation)
+            let refused = await SubagentRunner.observation(
+                for: call, agent: agent, project: nil, depth: SubagentRunner.maxSubagentDepth)
+            XCTAssertTrue(refused.content.hasPrefix("<tool_error>"), "Should have prefix <tool_error> for \(name)")
+            XCTAssertTrue(refused.content.contains("Refused: subagents may nest at most"), "Should mention nesting limit for \(name). Got: \(refused.content)")
+        }
+    }
 }

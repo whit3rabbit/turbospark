@@ -45,13 +45,13 @@ public struct ChatSystemPromptSheet: View {
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 TextEditor(text: $text)
-                    .font(.system(.body, design: .monospaced))
+                    .themedCode(.base)
                     .frame(minWidth: 460, minHeight: 220)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.secondary.opacity(0.25)))
                 Text(effectiveSourceDescription)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -67,7 +67,7 @@ public struct ChatSystemPromptSheet: View {
     private var header: some View {
         HStack {
             Label("Chat System Prompt", systemImage: "text.bubble")
-                .font(.headline)
+                .themedFont(.base, weight: .semibold)
             Spacer()
         }
         .padding(16)

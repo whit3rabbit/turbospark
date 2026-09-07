@@ -21,12 +21,12 @@ struct ContextLadderView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label("Memory by context window", systemImage: "arrow.left.and.right")
-                    .font(.caption.weight(.semibold))
+                    .themedFont(.small, weight: .semibold)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let trained = trainedContext {
-                    Text("trained to \(trained.formatted())")
-                        .font(.caption2)
+                    Text("trained to \(trained.formatted())", bundle: .module)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -39,8 +39,8 @@ struct ContextLadderView: View {
                 // Past the trained window WARNS rather than refusing: RoPE
                 // extrapolates rather than failing, and some checkpoints ship
                 // YaRN scaling meant to exceed it.
-                Text("Windows past the trained one still load. Quality beyond it is the checkpoint's business, not this engine's.")
-                    .font(.caption2)
+                Text("Windows past the trained one still load. Quality beyond it is the checkpoint's business, not this engine's.", bundle: .module)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -53,10 +53,10 @@ struct ContextLadderView: View {
         let isCurrent = currentContext == rung.context
         HStack(spacing: 8) {
             Text(rung.context.formatted())
-                .font(.caption.monospacedDigit().weight(isCurrent ? .bold : .regular))
+                .themedFont(.small, weight: isCurrent ? .bold : .regular).monospacedDigit()
                 .frame(width: 68, alignment: .trailing)
             Text(MetricFormat.storage(rung.counted))
-                .font(.caption.monospacedDigit())
+                .themedFont(.small).monospacedDigit()
                 .frame(width: 78, alignment: .trailing)
                 .foregroundStyle(.secondary)
             Circle()
@@ -64,11 +64,11 @@ struct ContextLadderView: View {
                 .frame(width: 7, height: 7)
                 .accessibilityHidden(true)
             Text(p.compactLabel)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(p.color)
             Spacer()
             Text(marker(rung, isCurrent: isCurrent))
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 1)
@@ -106,18 +106,18 @@ struct ThroughputRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Text("Decode")
-                    .font(.caption)
+                Text("Decode", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                 Text(
                     String(
                         format: "%.1f to %.1f tok/s", band.minTokensPerSecond,
                         band.maxTokensPerSecond)
                 )
-                .font(.caption.monospacedDigit())
+                .themedFont(.small).monospacedDigit()
                 if band.measuredOnThisChip {
-                    Text("measured")
-                        .font(.caption2.weight(.semibold))
+                    Text("measured", bundle: .module)
+                        .themedFont(.tiny, weight: .semibold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(Color.green.opacity(0.16), in: Capsule())
@@ -126,8 +126,8 @@ struct ThroughputRowView: View {
                 Spacer()
             }
             if !band.measuredOnThisChip {
-                Text("measured on \(band.chip), not this machine. Rates do not transfer across silicon.")
-                    .font(.caption2)
+                Text("measured on \(band.chip), not this machine. Rates do not transfer across silicon.", bundle: .module)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

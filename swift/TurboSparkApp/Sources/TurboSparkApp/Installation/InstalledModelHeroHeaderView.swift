@@ -19,11 +19,11 @@ struct InstalledModelHeroHeaderView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     Text(installedModel.alias)
-                        .font(.title2.weight(.bold))
+                        .themedFont(.title2, weight: .bold)
                         .lineLimit(2)
 
-                    Text("INSTALLED")
-                        .font(.system(size: 9, weight: .bold))
+                    Text("INSTALLED", bundle: .module)
+                        .themedFont(points: 9, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Color.teal.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
@@ -31,7 +31,7 @@ struct InstalledModelHeroHeaderView: View {
 
                     Button(action: onToggleFavorite) {
                         Image(systemName: isFavorite ? "star.fill" : "star")
-                            .font(.system(size: 14))
+                            .themedFont(points: 14)
                             .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
                     }
                     .buttonStyle(.plain)
@@ -46,28 +46,28 @@ struct InstalledModelHeroHeaderView: View {
                 HStack(spacing: 8) {
                     HStack(spacing: 4) {
                         Image(systemName: visuals.iconSystemName)
-                            .font(.caption2)
+                            .themedFont(.tiny)
                             .foregroundStyle(visuals.accentColor)
                             .accessibilityHidden(true)
                         Text(visuals.family)
                     }
-                    .font(.subheadline)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
 
-                    Text("\u{2022}")
+                    Text("\u{2022}", bundle: .module)
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
 
                     Text(MetricFormat.storage(installedModel.installBytes))
-                        .font(.subheadline.monospacedDigit())
+                        .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.secondary)
 
-                    Text("\u{2022}")
+                    Text("\u{2022}", bundle: .module)
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
 
                     Text(descriptor.storageSource.shortLabel)
-                        .font(.caption.weight(.medium))
+                        .themedFont(.small, weight: .medium)
                         .foregroundStyle(.secondary)
                 }
 
@@ -77,9 +77,9 @@ struct InstalledModelHeroHeaderView: View {
                             HStack(spacing: 3) {
                                 Text(installedModel.repo)
                                 Image(systemName: "arrow.up.right.square")
-                                    .font(.system(size: 9))
+                                    .themedFont(points: 9)
                             }
-                            .font(.caption.monospaced())
+                            .themedCode(.small)
                             .foregroundStyle(Color.accentColor)
                         }
                         .help("Open \(installedModel.repo) on Hugging Face: \(url.absoluteString)")
@@ -88,7 +88,7 @@ struct InstalledModelHeroHeaderView: View {
                         .accessibilityAddTraits(.isLink)
                     } else {
                         Text(installedModel.repo)
-                            .font(.caption.monospaced())
+                            .themedCode(.small)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                     }
@@ -102,8 +102,8 @@ struct InstalledModelHeroHeaderView: View {
         if isCurrentlyLoaded {
             HStack(spacing: 4) {
                 Circle().fill(Color.green).frame(width: 7, height: 7)
-                Text("Loaded in Memory")
-                    .font(.caption2.weight(.bold))
+                Text("Loaded in Memory", bundle: .module)
+                    .themedFont(.tiny, weight: .bold)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
@@ -112,8 +112,8 @@ struct InstalledModelHeroHeaderView: View {
         } else if isCurrentlySelected {
             HStack(spacing: 4) {
                 Circle().fill(Color.accentColor).frame(width: 6, height: 6)
-                Text("Selected")
-                    .font(.caption2.weight(.semibold))
+                Text("Selected", bundle: .module)
+                    .themedFont(.tiny, weight: .semibold)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
@@ -122,8 +122,8 @@ struct InstalledModelHeroHeaderView: View {
         } else {
             HStack(spacing: 4) {
                 Circle().fill(Color.secondary).frame(width: 5, height: 5)
-                Text("Ready to Load")
-                    .font(.caption2.weight(.medium))
+                Text("Ready to Load", bundle: .module)
+                    .themedFont(.tiny, weight: .medium)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)

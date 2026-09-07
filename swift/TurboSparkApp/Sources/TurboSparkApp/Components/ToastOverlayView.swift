@@ -3,7 +3,15 @@ import SwiftUI
 /// Floating notification toast overlay presenting dismissible status, error, or confirmation banners.
 public struct ToastOverlayView: View {
     @ObservedObject var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    /// The app preference over the system one, the same resolution
+    /// `RootView` uses. Reading the environment alone ignored the Reduce
+    /// motion setting entirely (`docs/SWIFT_SETTINGS_AUDIT.md`).
+    private var reduceMotion: Bool {
+        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+    }
     @ScaledMetric private var iconSize: CGFloat = 16
     @ScaledMetric private var dismissButtonSize: CGFloat = 20
 
@@ -32,12 +40,12 @@ public struct ToastOverlayView: View {
     private func toastCard(_ toast: AppToast) -> some View {
         HStack(spacing: 10) {
             Image(systemName: toast.style.systemImage)
-                .font(.system(size: iconSize, weight: .semibold))
+                .themedFont(points: iconSize, weight: .semibold)
                 .foregroundStyle(toast.style.tintColor)
                 .accessibilityHidden(true)
 
             Text(toast.message)
-                .font(.callout.weight(.medium))
+                .themedFont(.base, weight: .medium)
                 .foregroundStyle(.primary)
                 .lineLimit(2)
 
@@ -47,7 +55,7 @@ public struct ToastOverlayView: View {
                 }
             } label: {
                 Image(systemName: "xmark")
-                    .font(.caption2.weight(.bold))
+                    .themedFont(.tiny, weight: .bold)
                     .foregroundStyle(.secondary)
                     .frame(width: dismissButtonSize, height: dismissButtonSize)
                     .contentShape(Circle())

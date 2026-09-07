@@ -18,7 +18,7 @@ struct InstalledModelActionBarView: View {
             if isCurrentlyLoaded {
                 Button(action: onUnload) {
                     Label("Unload", systemImage: "eject.fill")
-                        .font(.system(size: 12, weight: .medium))
+                        .themedFont(points: 12, weight: .medium)
                         .frame(height: 28)
                         .padding(.horizontal, 12)
                 }
@@ -30,7 +30,7 @@ struct InstalledModelActionBarView: View {
             } else {
                 Button(action: onLoad) {
                     Label("Load Model", systemImage: "bolt.fill")
-                        .font(.system(size: 12, weight: .medium))
+                        .themedFont(points: 12, weight: .medium)
                         .frame(height: 28)
                         .padding(.horizontal, 12)
                 }
@@ -42,7 +42,7 @@ struct InstalledModelActionBarView: View {
 
             Button(action: onStartChat) {
                 Label("Start Chat", systemImage: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 12, weight: .medium))
+                    .themedFont(points: 12, weight: .medium)
                     .frame(height: 28)
                     .padding(.horizontal, 12)
             }
@@ -55,7 +55,7 @@ struct InstalledModelActionBarView: View {
                 ModelStorageManager.revealInFinder(path: installedModel.path)
             } label: {
                 Label("Reveal", systemImage: "folder")
-                    .font(.system(size: 12, weight: .medium))
+                    .themedFont(points: 12, weight: .medium)
                     .frame(height: 28)
                     .padding(.horizontal, 10)
             }
@@ -71,7 +71,7 @@ struct InstalledModelActionBarView: View {
 
             Button(role: .destructive, action: onDelete) {
                 Label("Delete", systemImage: "trash")
-                    .font(.system(size: 12, weight: .medium))
+                    .themedFont(points: 12, weight: .medium)
                     .frame(height: 28)
                     .padding(.horizontal, 10)
             }

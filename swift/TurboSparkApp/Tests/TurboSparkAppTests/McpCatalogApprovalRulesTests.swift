@@ -186,7 +186,11 @@ final class McpCatalogApprovalRulesTests: XCTestCase {
 
     func testManuallyAddedServerStillAutoRunsInAutoMode() {
         // No sourcePath: added by hand, not imported from a repo file. The
-        // pre-existing behavior must be unchanged.
+        // pre-existing behavior must be unchanged, once discovery has
+        // actually completed for this server -- an undiscovered server's
+        // first call is deliberately asked about instead (see
+        // `testAnUndiscoveredServersFirstCallAsksInAutoModeEvenWhenNothingElseWould`).
+        McpToolCatalogCache.shared.setTools([makeTool("read", server: "fs")], for: makeServer("fs"))
         let project = makeProject(
             permissions: AppProjectPermissions(mode: .auto, mcp: .allow),
             mcpServers: [makeServer("fs")])
@@ -199,9 +203,36 @@ final class McpCatalogApprovalRulesTests: XCTestCase {
         XCTAssertEqual(decision, .allow)
     }
 
+    /// The gap this closes: a server just approved or enabled has its first
+    /// tool call reach `evaluate` before `McpToolCatalogCache.refreshEnabled`'s
+    /// background discovery Task has ever run, so its destructive/read-only
+    /// annotations are unknown rather than merely absent -- and auto mode's
+    /// own trailing default is the one auto-allow with nothing else standing
+    /// between the call and execution.
+    func testAnUndiscoveredServersFirstCallAsksInAutoModeEvenWhenNothingElseWould() {
+        let project = makeProject(
+            permissions: AppProjectPermissions(mode: .auto, mcp: .allow),
+            mcpServers: [makeServer("fs")])
+
+        let decision = AppToolPermissionEngine.evaluate(
+            call: mcpCall("mcp__fs__read"),
+            project: project,
+            globalServers: [])
+
+        guard case .ask = decision else {
+            return XCTFail("an undiscovered server's first call must ask rather than auto-allow, got \(decision)")
+        }
+    }
+
     func testRepoImportedServerKeepsPermissiveContract() {
         // Permissive is an explicit, stronger choice; it stays gated only
-        // by deny rules and high risk, as its documentation states.
+        // by deny rules, high risk, and (per the annotation-discovery
+        // exception above) a server that has not finished discovery yet.
+        // Populated here since this test's subject is the repo-import
+        // exemption, not the discovery race.
+        McpToolCatalogCache.shared.setTools(
+            [makeTool("read", server: "fs")],
+            for: makeServer("fs", sourcePath: "/tmp/proj/.mcp.json"))
         let project = makeProject(
             permissions: AppProjectPermissions.preset(for: .permissive),
             mcpServers: [makeServer("fs", sourcePath: "/tmp/proj/.mcp.json")])

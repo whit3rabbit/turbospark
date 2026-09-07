@@ -754,10 +754,12 @@ so going through `make` recompiles the whole app every single time. Use
     Three things the pane refuses to state, each already paid for elsewhere
     in this file. A model with no session here shows "attached" rather than
     a zero context and a plausible-looking 16 slots arrived at by ignorance
-    (Gotcha 23). The endpoint list carries no `/v1/embeddings` row, because
-    this engine has no embedding path and a listed route that 404s is a
+    (Gotcha 23). The endpoint list carried no `/v1/embeddings` row while
+    this engine had no embedding path, because a listed route that 404s is a
     capability claim a reader could build against -- pinned by
-    `testNoEndpointIsAdvertisedThatTheEngineCannotServe`. And there is no
+    `testNoEndpointIsAdvertisedThatTheEngineCannotServe`. **The route exists
+    now** (`crates/server/src/embeddings.rs`, behind `--embedding-model`) and
+    the row is listed; the rule is what survives, not the example. And there is no
     time-to-first-token chart: nothing inside a generation can measure one
     (`crates/server/CLAUDE.md` Gotcha 29), so the pane shows prefill, decode
     and the queue, which is the subtraction that answers the question
@@ -1461,6 +1463,65 @@ so going through `make` recompiles the whole app every single time. Use
     design: every compaction failure falls through to the window fit the
     turn would have run anyway, so a new error path added to
     `performCompaction` is a regression, not a robustness win.
+
+55. **A THERMALFORGE HOLD OUTLIVES THIS APP, AND THE QUIT RESTORE IS THE
+    FEATURE'S SAFETY NET, NOT A COURTESY.** (`State/FanController.swift`,
+    added 2026-09-06.) The status bar's fan control talks to the
+    `thermalforge` CLI, which forwards to a root LaunchDaemon over
+    `/tmp/thermalforge.sock`. The watchdog inside ThermalForge covers only
+    its OWN menu bar app, so once this process pins the fans nothing
+    restores them but an explicit `thermalforge auto` -- quit without the
+    restore and the machine sits at full RPM indefinitely. Hence
+    `restoreOnQuitIfNeeded` runs from the app delegate's
+    `applicationWillTerminate` (not a view observer, for gotcha 25's
+    reason) and `keepFansPinnedOnQuit` defaults to FALSE, i.e. restore.
+    Three more facts the implementation rests on. `status` reads the SMC
+    directly and needs NO daemon, so the RPM readout works when control
+    cannot; pinned state is OBSERVABLE, not app-tracked -- `mode` reads
+    "manual" against "auto" in the status JSON, so a hold set from a
+    terminal shows up here and an unpinned-from-terminal shows up too. And
+    the daemon refuses connections for a short window after a restart
+    (observed: "Failed to connect to daemon socket", clearing within a
+    minute), which is why every control command retries once. One more
+    trap found live: an app launched from Finder or the Dock inherits a
+    minimal PATH (/usr/bin:/bin) that never contains a Homebrew prefix, so
+    resolving the binary by PATH alone hides the feature from exactly the
+    users who have it installed -- `locateExecutable` falls back to the
+    known install locations (/usr/local/bin, /opt/homebrew/bin) for that
+    reason, and `scripts/power.sh`'s bare `thermalforge` keeps working
+    only because a shell session has the full PATH.
+
+56. **A SETTING IS DEAD UNTIL ITS ACCESSOR HAS A CALLER OUTSIDE THE PANE
+    THAT EDITS IT, AND THE 2026-09-06 AUDIT FOUND SEVEN THAT WERE NOT.**
+    Gotcha 36's rule ("grep for the accessor, not for the setting") applied
+    to every `MacAppSettings` key, every `AppearanceManager` field and every
+    control in thirteen panes. `docs/SWIFT_SETTINGS_AUDIT.md` is the home for
+    the tables and the open list. What it found, in the order that costs the
+    most to rediscover: `prefillEnabled` round-tripped through
+    `settings.json` with no reader and no `OpenOptions` field to reach;
+    `modelsDirectory` had a "Change..." button that persisted a path nothing
+    installed to; `dockIcon` persisted and rendered with no picker anywhere;
+    `commandAdvisoryVeto` was consumed by `CommandGate` and reachable only by
+    hand-editing the JSON; `reduceMotion` was honoured by one of the three
+    views that animate; per-mode font rows promised an independence the
+    setters refuse; and a Server Advanced picker hardcoded four of five
+    tiers so it rendered BLANK in a state two other panes can set.
+
+    **THE FONT COMPLAINT IS NOT A PIPELINE BUG.** `ResolvedAppTheme` and its
+    injector are correct and reactive. 972 `.font(...)` sites in 81 files
+    never read `\.appTheme` against 232 that do, and the injector's
+    container font is overridden by every one of them. Text Size is scaled
+    by THREE mechanisms that disagree (`AppTextSize.scale` on themed sites,
+    `.dynamicTypeSize` on semantic ones, nothing on `.system(size:)`). The
+    conversion is the audit page's first open item and is deliberately not
+    a one-session change.
+
+    Two rules out of it. **Build a picker's options from the enum**
+    (`ForEach(X.allCases)`), never restate them: a Picker whose selection
+    matches no tag renders blank with no error. And **a `TextField`'s title
+    is a visible label on macOS**, so every field in a row that already
+    draws its own label needs `.labelsHidden()`; Gotcha 23 recorded that on
+    one field and the Engine pane reintroduced it on seven.
 
 ## The `state#N` ledger
 

@@ -55,8 +55,6 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var topPEnabled: Bool
     /// Nucleus top-p cumulative probability threshold.
     public var topP: Double
-    /// Whether batched/chunked prefill optimization is enabled.
-    public var prefillEnabled: Bool
     /// Thinking / reasoning effort level ("off", "low", "medium", "high").
     public var reasoning: String
     /// Maximum number of output tokens generated per turn.
@@ -108,8 +106,6 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// what lets the A/B this feature exists for be one click rather than a
     /// re-typed path.
     public var steeringEnabled: Bool
-    /// Default root directory path for local model installs.
-    public var modelsDirectory: String
     /// Whether auto-discovery of LM Studio model repositories is enabled.
     public var enableLMStudioDetection: Bool
     /// Custom path to LM Studio models folder if not in default location.
@@ -171,6 +167,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var enabledPlugins: [String: Bool]
     /// Whether to display the menu bar status extra icon in macOS menu bar.
     public var showMenuBarItem: Bool
+    /// Whether fans pinned through the status bar's ThermalForge control
+    /// stay pinned when the app quits. Default false, i.e. quitting restores
+    /// the machine's own fan curve: a daemon-set hold survives this
+    /// process's death, so the restore is the safe default, not the pin.
+    public var keepFansPinnedOnQuit: Bool
     /// Whether the server automatically starts when the app launches.
     public var serverAutoStartOnLaunch: Bool
     /// Whether the server keeps running in the background when the main window is closed.
@@ -188,7 +189,6 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         topK: Int = 64,
         topPEnabled: Bool = true,
         topP: Double = 0.95,
-        prefillEnabled: Bool = true,
         reasoning: String = "off",
         maxNewTokens: Int = 2048,
         repetitionPenaltyEnabled: Bool = false,
@@ -212,7 +212,6 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         steeringPresets: [AppSteeringPreset] = [],
         activeSteeringPresetID: String = "",
         steeringEnabled: Bool = false,
-        modelsDirectory: String = "",
         enableLMStudioDetection: Bool = true,
         lmStudioDirectory: String = "",
         customModelDirectories: [String] = [],
@@ -227,6 +226,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         defaultSystemPrompt: String = "",
         enabledPlugins: [String: Bool] = [:],
         showMenuBarItem: Bool = true,
+        keepFansPinnedOnQuit: Bool = false,
         serverAutoStartOnLaunch: Bool = false,
         keepServerRunningInBackground: Bool = true,
         serverEmbeddingModel: String = "",
@@ -239,7 +239,6 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.topK = topK
         self.topPEnabled = topPEnabled
         self.topP = topP
-        self.prefillEnabled = prefillEnabled
         self.reasoning = reasoning
         self.maxNewTokens = maxNewTokens
         self.repetitionPenaltyEnabled = repetitionPenaltyEnabled
@@ -260,7 +259,6 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.steeringPresets = steeringPresets
         self.activeSteeringPresetID = activeSteeringPresetID
         self.steeringEnabled = steeringEnabled
-        self.modelsDirectory = modelsDirectory
         self.enableLMStudioDetection = enableLMStudioDetection
         self.lmStudioDirectory = lmStudioDirectory
         self.customModelDirectories = customModelDirectories
@@ -278,6 +276,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.defaultSystemPrompt = defaultSystemPrompt
         self.enabledPlugins = enabledPlugins
         self.showMenuBarItem = showMenuBarItem
+        self.keepFansPinnedOnQuit = keepFansPinnedOnQuit
         self.serverAutoStartOnLaunch = serverAutoStartOnLaunch
         self.keepServerRunningInBackground = keepServerRunningInBackground
         self.serverEmbeddingModel = serverEmbeddingModel
@@ -301,7 +300,6 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.topK = c.decodeLenient(Int.self, forKey: .topK, fallback: 64)
         self.topPEnabled = c.decodeLenient(Bool.self, forKey: .topPEnabled, fallback: true)
         self.topP = c.decodeLenient(Double.self, forKey: .topP, fallback: 0.95)
-        self.prefillEnabled = c.decodeLenient(Bool.self, forKey: .prefillEnabled, fallback: true)
         self.reasoning = c.decodeLenient(String.self, forKey: .reasoning, fallback: "off")
         self.maxNewTokens = c.decodeLenient(Int.self, forKey: .maxNewTokens, fallback: 2048)
         self.repetitionPenaltyEnabled = c.decodeLenient(Bool.self, forKey: .repetitionPenaltyEnabled, fallback: false)
@@ -328,7 +326,6 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             String.self, forKey: .activeSteeringPresetID, fallback: "")
         self.steeringEnabled = c.decodeLenient(
             Bool.self, forKey: .steeringEnabled, fallback: false)
-        self.modelsDirectory = c.decodeLenient(String.self, forKey: .modelsDirectory, fallback: "")
         self.enableLMStudioDetection = c.decodeLenient(Bool.self, forKey: .enableLMStudioDetection, fallback: true)
         self.lmStudioDirectory = c.decodeLenient(String.self, forKey: .lmStudioDirectory, fallback: "")
         self.customModelDirectories = c.decodeLenient([String].self, forKey: .customModelDirectories, fallback: [])
@@ -351,6 +348,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             [String: Bool].self, forKey: .enabledPlugins, fallback: [:])
         self.showMenuBarItem = c.decodeLenient(
             Bool.self, forKey: .showMenuBarItem, fallback: true)
+        self.keepFansPinnedOnQuit = c.decodeLenient(
+            Bool.self, forKey: .keepFansPinnedOnQuit, fallback: false)
         self.serverAutoStartOnLaunch = c.decodeLenient(
             Bool.self, forKey: .serverAutoStartOnLaunch, fallback: false)
         self.keepServerRunningInBackground = c.decodeLenient(

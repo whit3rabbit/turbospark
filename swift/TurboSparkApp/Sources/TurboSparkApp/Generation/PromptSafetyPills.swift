@@ -30,7 +30,7 @@ struct ForgeGuardrailsPillControl: View {
                         .font(theme.ui(points: 10, weight: .semibold))
                         .foregroundStyle(isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
 
-                    Text("Guardrails \(isEnabled ? "On" : "Off")")
+                    Text("Guardrails \(isEnabled ? "On" : "Off")", bundle: .module)
                         .font(theme.ui(points: 12, weight: .medium))
                         .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
                         .lineLimit(1)

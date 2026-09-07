@@ -17,10 +17,10 @@ struct ProjectMcpDetectionSectionView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Codebase Import & Detection")
-                        .font(.subheadline.weight(.semibold))
-                    Text("Scans project root for .mcp.json, opencode.json, .cursor, .vscode, and .agents configs.")
-                        .font(.caption)
+                    Text("Codebase Import & Detection", bundle: .module)
+                        .themedFont(.small, weight: .semibold)
+                    Text("Scans project root for .mcp.json, opencode.json, .cursor, .vscode, and .agents configs.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -45,8 +45,8 @@ struct ProjectMcpDetectionSectionView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle")
                             .foregroundStyle(.secondary)
-                        Text("No external MCP config files detected in \(root.lastPathComponent).")
-                            .font(.caption)
+                        Text("No external MCP config files detected in \(root.lastPathComponent).", bundle: .module)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
                     }
                     .padding(10)
@@ -61,8 +61,8 @@ struct ProjectMcpDetectionSectionView: View {
                     }
                 }
             } else {
-                Text("Assign a Codebase Root Directory in Project Settings to enable automatic MCP file detection.")
-                    .font(.caption)
+                Text("Assign a Codebase Root Directory in Project Settings to enable automatic MCP file detection.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .padding(8)
                     .background(Color.secondary.opacity(0.06))
@@ -78,9 +78,9 @@ struct ProjectMcpDetectionSectionView: View {
                     .foregroundStyle(TurboSparkTheme.accentColor)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(file.formatLabel)
-                        .font(.caption.weight(.semibold))
+                        .themedFont(.small, weight: .semibold)
                     Text(file.relativePath)
-                        .font(.caption2.monospaced())
+                        .themedCode(.tiny)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -96,17 +96,17 @@ struct ProjectMcpDetectionSectionView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(server.name)
-                                .font(.caption.monospaced().weight(.semibold))
+                                .themedCode(.small, weight: .semibold)
                             Text(server.commandSummary)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
                         Spacer()
                         let alreadyImported = projectServers.contains { $0.name == server.name }
                         if alreadyImported {
-                            Text("Imported")
-                                .font(.caption2.weight(.medium))
+                            Text("Imported", bundle: .module)
+                                .themedFont(.tiny, weight: .medium)
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)

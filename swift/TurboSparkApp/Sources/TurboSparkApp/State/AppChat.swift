@@ -264,6 +264,9 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     public var messages: [AppChatMessage]
     /// Active task checklist for this session.
     public var todos: [TodoItem]
+    /// Files a tool call in this chat produced (`ArtifactRegistrar`), so the
+    /// panel can reopen one after the turn that made it scrolls out of view.
+    public var artifacts: [AppArtifact]
     /// Summary of the conversation's older turns, written by compaction.
     ///
     /// Long unwritten: compaction did not exist, so this stayed nil and the
@@ -310,6 +313,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         draftAttachments: [AppPromptAttachment] = [],
         messages: [AppChatMessage] = [],
         todos: [TodoItem] = [],
+        artifacts: [AppArtifact] = [],
         contextSummary: String? = nil,
         compactedMessageCount: Int = 0,
         systemPrompt: String? = nil,
@@ -325,6 +329,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.draftAttachments = draftAttachments
         self.messages = messages
         self.todos = todos
+        self.artifacts = artifacts
         self.contextSummary = contextSummary
         self.compactedMessageCount = compactedMessageCount
         self.systemPrompt = systemPrompt
@@ -347,6 +352,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
             [AppPromptAttachment].self, forKey: .draftAttachments) ?? []
         messages = try container.decodeLossyArray(AppChatMessage.self, forKey: .messages)
         todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos) ?? []
+        artifacts = try container.decodeLossyArray(AppArtifact.self, forKey: .artifacts)
         contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
         compactedMessageCount = try container.decodeIfPresent(
             Int.self, forKey: .compactedMessageCount) ?? 0

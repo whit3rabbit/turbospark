@@ -50,7 +50,13 @@ extension AppModel {
 
     /// Whether there is any conversation history or live output to display.
     public var hasOutputTranscript: Bool {
-        !selectedTurnMessages.isEmpty || !outputText.isEmpty || !outputReasoningText.isEmpty
+        !selectedTurnMessages.isEmpty
+            || !outputText.isEmpty
+            || !outputReasoningText.isEmpty
+            || isRunning
+            || pendingToolCall != nil
+            || !liveSubagentRuns.isEmpty
+            || backgroundAgentRuns.values.contains { $0.chatID == nil || $0.chatID == selectedChatID }
     }
 
     /// Rough token count of everything that would be sent on the next turn.

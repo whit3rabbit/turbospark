@@ -82,16 +82,16 @@ public struct LocalModelDefaultsSectionView: View {
 
     private var modelDefaultsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Model defaults")
-                .font(.headline)
+            Text("Model defaults", bundle: .module)
+                .themedFont(.base, weight: .semibold)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Minimum AutoFit context length")
-                        .font(.body)
+                    Text("Minimum AutoFit context length", bundle: .module)
+                        .themedFont(.base)
                     Spacer()
                     Text(floorLabel)
-                        .font(.body.monospacedDigit())
+                        .themedFont(.base).monospacedDigit()
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .background(Color.secondary.opacity(0.15))
@@ -105,7 +105,7 @@ public struct LocalModelDefaultsSectionView: View {
                         + "Models that cannot meet this minimum will fail to load. "
                         + "An explicitly chosen context length is not affected."
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
 
                 Slider(
@@ -124,8 +124,8 @@ public struct LocalModelDefaultsSectionView: View {
 
     private var loadGuardSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Model loading guardrails")
-                .font(.headline)
+            Text("Model loading guardrails", bundle: .module)
+                .themedFont(.base, weight: .semibold)
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(
@@ -134,7 +134,7 @@ public struct LocalModelDefaultsSectionView: View {
                         + "Relaxed is the default and is what every published memory "
                         + "figure for this engine was measured under."
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
 
                 ForEach(AppLoadGuardOption.allCases) { option in
@@ -164,10 +164,10 @@ public struct LocalModelDefaultsSectionView: View {
                 .foregroundStyle(model.runtimeOptions.loadGuard == option ? Color.accentColor : .secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(option.menuLabel)
-                        .font(.body)
+                        .themedFont(.base)
                         .foregroundStyle(.primary)
                     Text(option.detailText)
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -181,11 +181,11 @@ public struct LocalModelDefaultsSectionView: View {
     private var customCeiling: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Maximum allocation")
-                    .font(.body)
+                Text("Maximum allocation", bundle: .module)
+                    .themedFont(.base)
                 Spacer()
                 Text(ceilingLabel)
-                    .font(.body.monospacedDigit())
+                    .themedFont(.base).monospacedDigit()
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(Color.secondary.opacity(0.15))
@@ -200,7 +200,7 @@ public struct LocalModelDefaultsSectionView: View {
                     + "the model on disk. Models larger than this can still run by "
                     + "streaming from storage."
             )
-            .font(.caption)
+            .themedFont(.small)
             .foregroundStyle(.secondary)
 
             Slider(

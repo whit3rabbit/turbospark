@@ -171,7 +171,7 @@ struct TopBarView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                    .font(.caption2.weight(.medium))
+                    .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(TurboSparkTheme.accentColor)
 
                 Text(worktree.currentBranch)
@@ -181,13 +181,13 @@ struct TopBarView: View {
                 if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                     HStack(spacing: 2) {
                         if worktree.totalAdditions > 0 {
-                            Text("+\(worktree.totalAdditions)")
-                                .font(.caption2.monospacedDigit().weight(.semibold))
+                            Text("+\(worktree.totalAdditions)", bundle: .module)
+                                .themedFont(.tiny, weight: .semibold).monospacedDigit()
                                 .foregroundStyle(.green)
                         }
                         if worktree.totalDeletions > 0 {
-                            Text("-\(worktree.totalDeletions)")
-                                .font(.caption2.monospacedDigit().weight(.semibold))
+                            Text("-\(worktree.totalDeletions)", bundle: .module)
+                                .themedFont(.tiny, weight: .semibold).monospacedDigit()
                                 .foregroundStyle(.red)
                         }
                     }
@@ -211,7 +211,13 @@ struct TopBarView: View {
 struct GenerationPhaseIndicator: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    /// App preference over system value; see `ToastOverlayView`.
+    private var reduceMotion: Bool {
+        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+    }
 
     var body: some View {
         Group {

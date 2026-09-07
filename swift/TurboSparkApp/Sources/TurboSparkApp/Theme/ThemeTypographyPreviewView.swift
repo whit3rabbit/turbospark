@@ -40,7 +40,7 @@ public struct ThemeTypographyPreviewView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("UI Typography Preview")
+                Text("UI Typography Preview", bundle: .module)
                     .font(uiFont.weight(.semibold))
                     .foregroundStyle(textColor)
 
@@ -55,7 +55,7 @@ public struct ThemeTypographyPreviewView: View {
                         .foregroundStyle(accentColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
 
-                    Text("\(Int(manager.uiFontSize))px")
+                    Text("\(Int(manager.uiFontSize))px", bundle: .module)
                         .font(uiFont)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -74,12 +74,12 @@ public struct ThemeTypographyPreviewView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("The quick brown fox jumps over the lazy dog")
+                Text("The quick brown fox jumps over the lazy dog", bundle: .module)
                     .font(uiFont)
                     .foregroundStyle(textColor)
 
                 HStack(spacing: 12) {
-                    Text("Sample interface text with active styling, contrast and accent colors.")
+                    Text("Sample interface text with active styling, contrast and accent colors.", bundle: .module)
                         .font(manager.uiFont(isDark: isDark, size: manager.uiFontSize * 0.88))
                         .foregroundStyle(.secondary)
 
@@ -89,7 +89,7 @@ public struct ThemeTypographyPreviewView: View {
                         Circle()
                             .fill(accentColor)
                             .frame(width: 8, height: 8)
-                        Text("Active Theme")
+                        Text("Active Theme", bundle: .module)
                             .font(manager.uiFont(isDark: isDark, size: manager.uiFontSize * 0.82, weight: .medium))
                             .foregroundStyle(accentColor)
                     }

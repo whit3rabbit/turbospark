@@ -78,7 +78,7 @@ struct ChatSidebarView: View {
             }
             .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         } message: { _ in
-            Text("Choose a name that identifies this chat.")
+            Text("Choose a name that identifies this chat.", bundle: .module)
         }
         .alert(
             "Delete chat?",
@@ -90,7 +90,7 @@ struct ChatSidebarView: View {
                 model.deleteChat(id: chat.id)
             }
         } message: { chat in
-            Text("\"\(chat.title)\" and its conversation history will be removed.")
+            Text("\"\(chat.title)\" and its conversation history will be removed.", bundle: .module)
         }
     }
 
@@ -188,7 +188,7 @@ struct ChatSidebarView: View {
     private var projectsContent: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Projects")
+                Text("Projects", bundle: .module)
                     .font(theme.ui(points: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
@@ -250,7 +250,7 @@ struct ChatSidebarView: View {
                 .font(theme.ui(points: 10))
                 .foregroundStyle(TurboSparkTheme.accentColor)
 
-            Text("Project: \(project.name)")
+            Text("Project: \(project.name)", bundle: .module)
                 .font(theme.ui(points: 11, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
@@ -261,7 +261,7 @@ struct ChatSidebarView: View {
                 model.selectProject(id: nil)
             } label: {
                 HStack(spacing: 3) {
-                    Text("All")
+                    Text("All", bundle: .module)
                         .font(theme.ui(points: 10))
                     Image(systemName: "xmark")
                         .font(theme.ui(points: 9))
@@ -288,10 +288,10 @@ struct ChatSidebarView: View {
                 Image(systemName: "square.and.pencil")
                     .font(theme.ui(points: 12))
                     .accessibilityHidden(true)
-                Text("New chat")
+                Text("New chat", bundle: .module)
                     .font(theme.ui(points: 12, weight: .medium))
                 Spacer()
-                Text("Cmd+N")
+                Text("Cmd+N", bundle: .module)
                     .font(theme.ui(points: 10))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)

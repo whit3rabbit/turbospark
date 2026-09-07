@@ -60,7 +60,7 @@ public struct ServerMenuBarView: View {
             }
         } else {
             let portStr = model.serverPinnedPort == 0 ? "automatic" : "\(model.serverPinnedPort)"
-            Text("Port: \(portStr)")
+            Text("Port: \(portStr)", bundle: .module)
         }
     }
 
@@ -100,9 +100,9 @@ public struct ServerMenuBarView: View {
     private var statsSubmenu: some View {
         Menu("Serving Stats") {
             let metrics = model.serverMetrics
-            Text("Total Tokens Processed: \(formatNumber(metrics.totalTokensProcessed))")
-            Text("Requests Served: \(metrics.totalRequests)")
-            Text("In Flight: \(metrics.inFlight)")
+            Text("Total Tokens Processed: \(formatNumber(metrics.totalTokensProcessed))", bundle: .module)
+            Text("Requests Served: \(metrics.totalRequests)", bundle: .module)
+            Text("In Flight: \(metrics.inFlight)", bundle: .module)
             if let pp = metrics.aggregatePromptTokensPerSecond {
                 Text(String(format: "Avg PP Speed: %.1f tok/s", pp))
             }
@@ -110,14 +110,14 @@ public struct ServerMenuBarView: View {
                 Text(String(format: "Avg TG Speed: %.1f tok/s", tg))
             }
             if metrics.totalReusedPrefixTokens > 0 {
-                Text("Reused Prefix Tokens: \(formatNumber(metrics.totalReusedPrefixTokens))")
+                Text("Reused Prefix Tokens: \(formatNumber(metrics.totalReusedPrefixTokens))", bundle: .module)
             }
             if metrics.totalSessionSlotEvictions > 0 {
-                Text("Session Slot Evictions: \(metrics.totalSessionSlotEvictions)")
+                Text("Session Slot Evictions: \(metrics.totalSessionSlotEvictions)", bundle: .module)
             }
-            Text("Errors: \(metrics.totalErrors)")
+            Text("Errors: \(metrics.totalErrors)", bundle: .module)
             if isRunning, let info = model.serverInfo {
-                Text("Uptime: \(uptimeText(info.uptimeSeconds))")
+                Text("Uptime: \(uptimeText(info.uptimeSeconds))", bundle: .module)
             }
         }
     }
@@ -128,7 +128,7 @@ public struct ServerMenuBarView: View {
             let port = model.serverPinnedPort == 0 ? (info?.port ?? 8080) : model.serverPinnedPort
             let host = info?.host ?? "127.0.0.1"
 
-            Text("Connect Terminal Agents:")
+            Text("Connect Terminal Agents:", bundle: .module)
 
             Button("Claude Code (claude)") {
                 let cmd = TurboSparkAgent.launchCommand(for: "claude", host: host, port: port)
@@ -176,7 +176,7 @@ public struct ServerMenuBarView: View {
 
             Divider()
 
-            Text("OpenAI Compatible:")
+            Text("OpenAI Compatible:", bundle: .module)
             Button("POST /v1/chat/completions") {
                 copyToClipboard("\(base)/v1/chat/completions")
                 model.showToast("Copied /v1/chat/completions endpoint", style: .info)
@@ -192,7 +192,7 @@ public struct ServerMenuBarView: View {
 
             Divider()
 
-            Text("Anthropic Compatible:")
+            Text("Anthropic Compatible:", bundle: .module)
             Button("POST /v1/messages") {
                 copyToClipboard("\(base)/v1/messages")
                 model.showToast("Copied /v1/messages endpoint", style: .info)
@@ -200,7 +200,7 @@ public struct ServerMenuBarView: View {
 
             Divider()
 
-            Text("Ollama Compatible:")
+            Text("Ollama Compatible:", bundle: .module)
             Button("POST /api/chat") {
                 copyToClipboard("\(base)/api/chat")
                 model.showToast("Copied /api/chat endpoint", style: .info)
@@ -216,7 +216,7 @@ public struct ServerMenuBarView: View {
 
             Divider()
 
-            Text("Service:")
+            Text("Service:", bundle: .module)
             Button("GET /health") {
                 copyToClipboard("\(base)/health")
                 model.showToast("Copied /health endpoint", style: .info)
@@ -228,7 +228,7 @@ public struct ServerMenuBarView: View {
     private var modelsSubmenu: some View {
         Menu("Model") {
             if model.installed.isEmpty {
-                Text("No models installed")
+                Text("No models installed", bundle: .module)
                 Button("Discover Models...") {
                     model.showMainWindow(navigatingTo: .modelHub)
                 }

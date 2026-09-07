@@ -12,7 +12,7 @@ struct ErrorBanner: View {
                         .foregroundStyle(.red)
                         .accessibilityHidden(true)
                     Text(error)
-                        .font(.callout)
+                        .themedFont(.base)
                         .lineLimit(2)
                 }
                 .accessibilityElement(children: .combine)
@@ -25,7 +25,7 @@ struct ErrorBanner: View {
                 } label: {
                     Label("Dismiss error", systemImage: "xmark")
                         .labelStyle(.iconOnly)
-                        .font(.caption.weight(.semibold))
+                        .themedFont(.small, weight: .semibold)
                         .frame(width: 28, height: 28)
                         .contentShape(Circle())
                 }

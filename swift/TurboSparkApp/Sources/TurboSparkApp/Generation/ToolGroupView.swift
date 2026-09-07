@@ -84,32 +84,32 @@ struct ToolGroupView: View {
                     TaskProgressFlameIcon(size: 13)
                 } else if hasFailedTool {
                     Image(systemName: "exclamationmark.circle")
-                        .font(.system(size: 12, weight: .semibold))
+                        .themedFont(points: 12, weight: .semibold)
                         .foregroundStyle(Color.red)
                 } else {
                     Image(systemName: "wrench.and.screwdriver")
-                        .font(.system(size: 12, weight: .semibold))
+                        .themedFont(points: 12, weight: .semibold)
                         .foregroundStyle(TurboSparkTheme.accentColor)
                 }
 
                 Text(groupLabel)
-                    .font(.callout.weight(.medium))
+                    .themedFont(.base, weight: .medium)
                     .foregroundStyle(.primary)
 
                 if hasRunningTool {
-                    Text("running...")
-                        .font(.caption2.weight(.medium))
+                    Text("running...", bundle: .module)
+                        .themedFont(.tiny, weight: .medium)
                         .foregroundStyle(TurboSparkTheme.accentColor)
                 } else if hasPendingApproval {
-                    Text("approval required")
-                        .font(.caption2.weight(.medium))
+                    Text("approval required", bundle: .module)
+                        .themedFont(.tiny, weight: .medium)
                         .foregroundStyle(Color.orange)
                 }
 
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
+                    .themedFont(points: 10, weight: .bold)
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }

@@ -84,8 +84,29 @@ final class SubagentProgressTests: XCTestCase {
         XCTAssertEqual(state.toolRows.count, 2)
         XCTAssertEqual(state.toolRows[0].name, "search_code")
         XCTAssertFalse(state.toolRows[0].isError)
+        XCTAssertFalse(state.toolRows[0].isRunning)
         XCTAssertEqual(state.toolRows[1].name, "read_file")
         XCTAssertTrue(state.toolRows[1].isError)
+        XCTAssertFalse(state.toolRows[1].isRunning)
+    }
+
+    @MainActor
+    func testToolRowTracksRunningStateUntilFinished() {
+        let state = SubagentRunState(id: "k2", mode: .foreground, chatID: nil)
+        state.apply(.toolStarted(name: "grep_search", summary: "\"foo\""))
+        XCTAssertEqual(state.toolRows.count, 1)
+        XCTAssertTrue(state.toolRows[0].isRunning, "Newly started tool must have isRunning == true")
+        XCTAssertFalse(state.toolRows[0].isError)
+
+        state.apply(.toolFinished(name: "grep_search", summary: "\"foo\"", isError: false))
+        XCTAssertEqual(state.toolRows.count, 1)
+        XCTAssertFalse(state.toolRows[0].isRunning, "Finished tool must have isRunning == false")
+
+        // Interrupted/finished run clears isRunning on any running tool
+        state.apply(.toolStarted(name: "bash", summary: "ls"))
+        XCTAssertTrue(state.toolRows.last?.isRunning ?? false)
+        state.apply(.finished(status: "cancelled"))
+        XCTAssertFalse(state.toolRows.last?.isRunning ?? true, "Cancelled run must clear isRunning")
     }
 
     // MARK: - the result trailer

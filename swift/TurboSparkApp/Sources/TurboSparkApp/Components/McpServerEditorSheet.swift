@@ -81,9 +81,9 @@ public struct McpServerEditorSheet: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(existingConfig == nil ? "Add MCP Server" : "Edit MCP Server")
-                    .font(.headline)
-                Text("Configure Model Context Protocol server parameters and execution transport.")
-                    .font(.caption)
+                    .themedFont(.base, weight: .semibold)
+                Text("Configure Model Context Protocol server parameters and execution transport.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -97,20 +97,20 @@ public struct McpServerEditorSheet: View {
 
     private var basicSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Server Identity")
-                .font(.subheadline.weight(.semibold))
+            Text("Server Identity", bundle: .module)
+                .themedFont(.small, weight: .semibold)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Server Name")
-                    .font(.caption)
+                Text("Server Name", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                 TextField("e.g. codebase-memory-mcp", text: $name)
                     .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Description (Optional)")
-                    .font(.caption)
+                Text("Description (Optional)", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                 TextField("e.g. Knowledge graph and symbol search", text: $serverDescription)
                     .textFieldStyle(.roundedBorder)
@@ -120,12 +120,12 @@ public struct McpServerEditorSheet: View {
 
     private var transportSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Transport Type")
-                .font(.subheadline.weight(.semibold))
+            Text("Transport Type", bundle: .module)
+                .themedFont(.small, weight: .semibold)
 
             Picker("Transport", selection: $transportType) {
-                Text("Local Subprocess (Stdio)").tag("stdio")
-                Text("Remote Endpoint (SSE)").tag("sse")
+                Text("Local Subprocess (Stdio)", bundle: .module).tag("stdio")
+                Text("Remote Endpoint (SSE)", bundle: .module).tag("sse")
             }
             .pickerStyle(.segmented)
         }
@@ -149,8 +149,8 @@ public struct McpServerEditorSheet: View {
 
     private var permissionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Execution Settings")
-                .font(.subheadline.weight(.semibold))
+            Text("Execution Settings", bundle: .module)
+                .themedFont(.small, weight: .semibold)
 
             Toggle("Enable Server", isOn: $isEnabled)
             Toggle("Auto-Approve Tools (skip interactive prompt)", isOn: $autoApprove)
@@ -160,8 +160,8 @@ public struct McpServerEditorSheet: View {
     private var testConnectionSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Connection & Discovered Tools")
-                    .font(.subheadline.weight(.semibold))
+                Text("Connection & Discovered Tools", bundle: .module)
+                    .themedFont(.small, weight: .semibold)
                 Spacer()
                 Button {
                     Task { await runConnectionTest() }
@@ -180,7 +180,7 @@ public struct McpServerEditorSheet: View {
 
             if let testResult {
                 Text(testResult)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(testIsError ? .red : .green)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -190,19 +190,19 @@ public struct McpServerEditorSheet: View {
 
             if !discoveredTools.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Discovered Tools (\(discoveredTools.count)):")
-                        .font(.caption.weight(.medium))
+                    Text("Discovered Tools (\(discoveredTools.count)):", bundle: .module)
+                        .themedFont(.small, weight: .medium)
                     ForEach(discoveredTools) { tool in
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: "wrench.fill")
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.secondary)
                                 .padding(.top, 2)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(tool.name)
-                                    .font(.caption.monospaced().weight(.semibold))
+                                    .themedCode(.small, weight: .semibold)
                                 Text(tool.description)
-                                    .font(.caption2)
+                                    .themedFont(.tiny)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                             }
@@ -223,7 +223,7 @@ public struct McpServerEditorSheet: View {
                 .keyboardShortcut(.cancelAction)
             if let validationMessage {
                 Text(validationMessage)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.red)
                     .lineLimit(2)
             }

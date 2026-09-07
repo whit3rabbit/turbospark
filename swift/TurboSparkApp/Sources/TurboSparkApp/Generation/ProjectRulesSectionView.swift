@@ -12,23 +12,23 @@ struct ProjectRulesSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Project Rules & Instructions")
-                    .font(.subheadline.weight(.semibold))
+                Text("Project Rules & Instructions", bundle: .module)
+                    .themedFont(.small, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if !rootDirectoryPath.isEmpty {
                     Button("Detect CLAUDE.md / AGENTS.md") {
                         onAutoDetect()
                     }
-                    .font(.caption)
+                    .themedFont(.small)
                     .buttonStyle(.borderless)
                     .help("Detect project rules from AGENTS.md or CLAUDE.md")
                 }
             }
 
             HStack {
-                Text("Conflict Preference")
-                    .font(.caption)
+                Text("Conflict Preference", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Picker("Conflict Preference", selection: $rulePreference) {
@@ -43,12 +43,12 @@ struct ProjectRulesSectionView: View {
 
             if let rulesAutoDetectedMessage {
                 Text(rulesAutoDetectedMessage)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(TurboSparkTheme.accentColor)
             }
 
             TextEditor(text: $customInstructions)
-                .font(.callout.monospaced())
+                .themedCode(.base)
                 .frame(height: 100)
                 .padding(4)
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))

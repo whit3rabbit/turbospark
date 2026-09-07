@@ -25,16 +25,16 @@ struct ModelRecommendationRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(recommendation.alias)
-                        .font(.callout.weight(.bold))
+                        .themedFont(.base, weight: .bold)
 
                     if isMoE {
                         HStack(spacing: 3) {
                             Image(systemName: "bolt.fill")
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .accessibilityHidden(true)
-                            Text("MoE Streaming")
+                            Text("MoE Streaming", bundle: .module)
                         }
-                        .font(.caption2.weight(.bold))
+                        .themedFont(.tiny, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
                         .background(Color.purple.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
@@ -46,39 +46,39 @@ struct ModelRecommendationRow: View {
                 }
 
                 Text(recommendation.name)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
                 HStack(spacing: 8) {
                     HStack(spacing: 3) {
                         Image(systemName: "memorychip")
-                            .font(.caption2)
+                            .themedFont(.tiny)
                         Text(isMoE ? "RAM: ~\(MetricFormat.storage(recommendation.countedBytes)) (Cache)" : "RAM: ~\(MetricFormat.storage(recommendation.countedBytes))")
                     }
-                    .font(.caption2.weight(.medium))
+                    .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.secondary)
                     .help("Estimated unified memory footprint")
 
-                    Text("-")
-                        .font(.caption2)
+                    Text("-", bundle: .module)
+                        .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
 
                     HStack(spacing: 3) {
                         Image(systemName: "internaldrive")
-                            .font(.caption2)
-                        Text("Disk: \(MetricFormat.storage(recommendation.installBytes))")
+                            .themedFont(.tiny)
+                        Text("Disk: \(MetricFormat.storage(recommendation.installBytes))", bundle: .module)
                     }
-                    .font(.caption2.weight(.medium))
+                    .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.secondary)
                     .help("On-disk installation size")
 
                     if let minRate = recommendation.toksPerSecondMin, let maxRate = recommendation.toksPerSecondMax {
-                        Text("-")
-                            .font(.caption2)
+                        Text("-", bundle: .module)
+                            .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
-                        Text("\(Int(minRate))-\(Int(maxRate)) tok/s")
-                            .font(.caption2.monospacedDigit())
+                        Text("\(Int(minRate))-\(Int(maxRate)) tok/s", bundle: .module)
+                            .themedFont(.tiny).monospacedDigit()
                             .foregroundStyle(TurboSparkTheme.accentColor)
                     }
                 }
@@ -93,9 +93,9 @@ struct ModelRecommendationRow: View {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.down.circle.fill")
                         .accessibilityHidden(true)
-                    Text("Install & Start")
+                    Text("Install & Start", bundle: .module)
                 }
-                .font(.callout.weight(.semibold))
+                .themedFont(.base, weight: .semibold)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
@@ -143,11 +143,11 @@ struct RecommendationVerdictBadge: View {
         case .resident:
             HStack(spacing: 3) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 8, weight: .bold))
+                    .themedFont(points: 8, weight: .bold)
                     .accessibilityHidden(true)
-                Text("Fits Memory")
+                Text("Fits Memory", bundle: .module)
             }
-            .font(.caption2.weight(.semibold))
+            .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
@@ -156,11 +156,11 @@ struct RecommendationVerdictBadge: View {
         case .streams:
             HStack(spacing: 3) {
                 Image(systemName: "bolt.fill")
-                    .font(.system(size: 8, weight: .bold))
+                    .themedFont(points: 8, weight: .bold)
                     .accessibilityHidden(true)
-                Text("Streams Fast")
+                Text("Streams Fast", bundle: .module)
             }
-            .font(.caption2.weight(.semibold))
+            .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(Color.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
@@ -169,10 +169,10 @@ struct RecommendationVerdictBadge: View {
         case .tight:
             HStack(spacing: 3) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 8, weight: .bold))
-                Text("Tight Fit")
+                    .themedFont(points: 8, weight: .bold)
+                Text("Tight Fit", bundle: .module)
             }
-            .font(.caption2.weight(.semibold))
+            .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
@@ -181,10 +181,10 @@ struct RecommendationVerdictBadge: View {
         case .refused:
             HStack(spacing: 3) {
                 Image(systemName: "xmark.octagon.fill")
-                    .font(.system(size: 8, weight: .bold))
-                Text("Too Large")
+                    .themedFont(points: 8, weight: .bold)
+                Text("Too Large", bundle: .module)
             }
-            .font(.caption2.weight(.semibold))
+            .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(Color.red.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))

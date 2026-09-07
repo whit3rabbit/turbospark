@@ -18,7 +18,7 @@ struct ChatSidebarProjectsSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Text("Projects")
+                Text("Projects", bundle: .module)
                     .font(theme.ui(points: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
@@ -61,11 +61,11 @@ struct ChatSidebarProjectsSectionView: View {
                     .font(theme.ui(points: 11))
                     .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                     .accessibilityHidden(true)
-                Text("All Chats")
+                Text("All Chats", bundle: .module)
                     .font(theme.ui(points: 12, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(.primary)
                 Spacer()
-                Text("\(model.chats.count)")
+                Text("\(model.chats.count)", bundle: .module)
                     .font(theme.ui(points: 10))
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("\(model.chats.count) chats")

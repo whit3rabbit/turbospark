@@ -54,8 +54,8 @@ public struct PluginSettingsPaneView: View {
                     if let plugin = selectedPlugin {
                         pluginDetail(plugin)
                     } else {
-                        Text("Select a plugin to inspect its contributions.")
-                            .font(.callout)
+                        Text("Select a plugin to inspect its contributions.", bundle: .module)
+                            .themedFont(.base)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -75,7 +75,7 @@ public struct PluginSettingsPaneView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { plugin in
-            Text("Uninstalls the plugin from user scope and removes its install cache. Hooks it contributed stop immediately.")
+            Text("Uninstalls the plugin from user scope and removes its install cache. Hooks it contributed stop immediately.", bundle: .module)
         }
     }
 
@@ -181,7 +181,7 @@ public struct PluginSettingsPaneView: View {
 
                 if !plugin.manifest.unsupportedNotes.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Not applied by this client")
+                        Text("Not applied by this client", bundle: .module)
                             .font(theme.ui(.base, weight: .semibold))
                         ForEach(plugin.manifest.unsupportedNotes, id: \.self) { note in
                             Label(note, systemImage: "minus.circle")
@@ -224,7 +224,7 @@ public struct PluginSettingsPaneView: View {
             }
         }()
         return Text(text)
-            .font(.system(size: 10, weight: .medium))
+            .themedFont(points: 10, weight: .medium)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.15)))
@@ -234,7 +234,7 @@ public struct PluginSettingsPaneView: View {
     private func contributionSummary(_ plugin: LoadedPlugin) -> some View {
         let counts = PluginContributionCounts(plugin: plugin)
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Contributions")
+            Text("Contributions", bundle: .module)
                 .font(theme.ui(.base, weight: .semibold))
             HStack(spacing: 14) {
                 ContributionCount(label: "Commands", count: counts.commands)
@@ -243,7 +243,7 @@ public struct PluginSettingsPaneView: View {
                 ContributionCount(label: "Hooks", count: counts.hooks)
                 ContributionCount(label: "MCP servers", count: counts.mcpServers)
             }
-            Text("Counts reflect what this client loads from the plugin as installed. Hooks always pass the SHA-256 trust review before they run.")
+            Text("Counts reflect what this client loads from the plugin as installed. Hooks always pass the SHA-256 trust review before they run.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.secondary)
         }
@@ -255,7 +255,7 @@ public struct PluginSettingsPaneView: View {
         return Group {
             if !specs.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Options")
+                    Text("Options", bundle: .module)
                         .font(theme.ui(.base, weight: .semibold))
                     ForEach(specs) { spec in
                         HStack {
@@ -271,7 +271,7 @@ public struct PluginSettingsPaneView: View {
                             optionField(spec: spec, sourceID: sourceID)
                         }
                     }
-                    Text("Values reach the plugin's hooks and MCP servers as CLAUDE_PLUGIN_OPTION_<KEY> environment variables and ${user_config.KEY} substitutions. Sensitive values are masked and never substituted into visible content.")
+                    Text("Values reach the plugin's hooks and MCP servers as CLAUDE_PLUGIN_OPTION_<KEY> environment variables and ${user_config.KEY} substitutions. Sensitive values are masked and never substituted into visible content.", bundle: .module)
                         .font(theme.ui(.small))
                         .foregroundStyle(.secondary)
                 }
@@ -292,10 +292,14 @@ public struct PluginSettingsPaneView: View {
                 .labelsHidden()
         default:
             Group {
+                // The row already draws `spec.title`; on macOS the field's own
+                // title is a visible label too, so it rendered twice.
                 if spec.isSensitive {
                     SecureField(spec.title, text: binding)
+                        .labelsHidden()
                 } else {
                     TextField(spec.title, text: binding)
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 240)
                 }
@@ -308,10 +312,10 @@ public struct PluginSettingsPaneView: View {
         let project = model.selectedProject!
         let resolved = project.enabledPlugins[plugin.id].map { $0 ? "on" : "off" }
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Project override")
+            Text("Project override", bundle: .module)
                 .font(theme.ui(.base, weight: .semibold))
             HStack {
-                Text("For \(project.name):")
+                Text("For \(project.name):", bundle: .module)
                     .font(theme.ui(.base))
                 Spacer()
                 Picker("", selection: Binding(
@@ -327,9 +331,9 @@ public struct PluginSettingsPaneView: View {
                             model.reloadPlugins()
                         }
                     })) {
-                    Text("Inherit user setting").tag("inherit")
-                    Text("Enabled").tag("on")
-                    Text("Disabled").tag("off")
+                    Text("Inherit user setting", bundle: .module).tag("inherit")
+                    Text("Enabled", bundle: .module).tag("on")
+                    Text("Disabled", bundle: .module).tag("off")
                 }
                 .labelsHidden()
                 .frame(width: 200)
@@ -342,13 +346,13 @@ public struct PluginSettingsPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "puzzlepiece.extension")
-                .font(.system(size: 36))
+                .themedFont(points: 36)
                 .foregroundStyle(.tertiary)
-            Text("No plugins installed.")
-                .font(.callout)
+            Text("No plugins installed.", bundle: .module)
+                .themedFont(.base)
                 .foregroundStyle(.secondary)
-            Text("Browse a marketplace, or add a local folder containing .claude-plugin/plugin.json.")
-                .font(.callout)
+            Text("Browse a marketplace, or add a local folder containing .claude-plugin/plugin.json.", bundle: .module)
+                .themedFont(.base)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
             HStack {
@@ -371,9 +375,9 @@ private struct PluginListRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(plugin.name)
-                    .font(.callout.weight(.medium))
-                Text("\(plugin.originKey) - \(plugin.version)")
-                    .font(.caption)
+                    .themedFont(.base, weight: .medium)
+                Text("\(plugin.originKey) - \(plugin.version)", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -391,10 +395,10 @@ private struct ContributionCount: View {
 
     var body: some View {
         VStack(spacing: 2) {
-            Text("\(count)")
-                .font(.system(.title3, design: .rounded, weight: .semibold))
+            Text("\(count)", bundle: .module)
+                .themedFont(.title3, weight: .semibold)
             Text(label)
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
@@ -409,10 +413,10 @@ private struct LabeledRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.callout.weight(.medium))
+                .themedFont(.base, weight: .medium)
                 .frame(width: 80, alignment: .leading)
             Text(value)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             Spacer()

@@ -32,19 +32,19 @@ public struct WorktreeCommitListView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
                     .frame(width: 12)
 
-                Text("All changes")
+                Text("All changes", bundle: .module)
                     .font(theme.ui(points: 12, weight: .semibold))
                     .foregroundStyle(.primary)
 
                 Spacer()
 
                 if !worktree.recentCommits.isEmpty {
-                    Text("\(worktree.recentCommits.count)")
-                        .font(.caption2.monospacedDigit())
+                    Text("\(worktree.recentCommits.count)", bundle: .module)
+                        .themedFont(.tiny).monospacedDigit()
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
@@ -61,8 +61,8 @@ public struct WorktreeCommitListView: View {
     private var commitList: some View {
         Group {
             if worktree.recentCommits.isEmpty {
-                Text("No recent commits found.")
-                    .font(.caption2)
+                Text("No recent commits found.", bundle: .module)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
@@ -103,19 +103,19 @@ public struct WorktreeCommitListView: View {
                         .font(theme.code(.small))
                         .foregroundStyle(.tertiary)
 
-                    Text("-")
+                    Text("-", bundle: .module)
                         .foregroundStyle(.tertiary)
 
                     Text(commit.author)
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
 
-                    Text("-")
+                    Text("-", bundle: .module)
                         .foregroundStyle(.tertiary)
 
                     Text(commit.relativeDate)
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
                 }
             }

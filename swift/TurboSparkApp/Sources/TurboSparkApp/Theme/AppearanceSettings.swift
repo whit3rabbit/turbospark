@@ -95,24 +95,16 @@ public final class AppearanceManager: ObservableObject {
         updateDockIcon()
     }
 
-    /// Resolves whether the active visual environment is dark.
-    public var effectiveIsDark: Bool {
-        switch appearance {
-        case .system:
-            if let match = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) {
-                return match == .darkAqua
-            }
-            return false
-        case .light:
-            return false
-        case .dark:
-            return true
-        }
-    }
+    // The four font accessors read `lightConfig` alone. Fonts are GLOBAL:
+    // `setUIFont` / `setCodeFont` and the setters below are the only writers
+    // and each writes both configs, so the two cannot disagree and either is
+    // the answer. This used to branch on `NSApp.effectiveAppearance`, which
+    // `.preferredColorScheme` does not move (swift/CLAUDE.md Gotcha 36), and
+    // was right only because the invariant held.
 
     /// Global UI font family preference, kept in sync across both light and dark configs.
     public var uiFontFamily: String {
-        get { activeConfig(isDark: effectiveIsDark).uiFontFamily }
+        get { lightConfig.uiFontFamily }
         set {
             lightConfig.uiFontFamily = newValue
             darkConfig.uiFontFamily = newValue
@@ -121,7 +113,7 @@ public final class AppearanceManager: ObservableObject {
 
     /// Global UI font weight preference.
     public var uiFontWeight: String {
-        get { activeConfig(isDark: effectiveIsDark).uiFontWeight }
+        get { lightConfig.uiFontWeight }
         set {
             lightConfig.uiFontWeight = newValue
             darkConfig.uiFontWeight = newValue
@@ -130,7 +122,7 @@ public final class AppearanceManager: ObservableObject {
 
     /// Global code font family preference, kept in sync across both light and dark configs.
     public var codeFontFamily: String {
-        get { activeConfig(isDark: effectiveIsDark).codeFontFamily }
+        get { lightConfig.codeFontFamily }
         set {
             lightConfig.codeFontFamily = newValue
             darkConfig.codeFontFamily = newValue
@@ -139,7 +131,7 @@ public final class AppearanceManager: ObservableObject {
 
     /// Global code font weight preference.
     public var codeFontWeight: String {
-        get { activeConfig(isDark: effectiveIsDark).codeFontWeight }
+        get { lightConfig.codeFontWeight }
         set {
             lightConfig.codeFontWeight = newValue
             darkConfig.codeFontWeight = newValue

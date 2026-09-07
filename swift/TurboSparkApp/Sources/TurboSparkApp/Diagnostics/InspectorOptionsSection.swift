@@ -13,7 +13,7 @@ extension InspectorView {
                 }
             )) {
                 if model.installed.isEmpty {
-                    Text("No models installed").tag("")
+                    Text("No models installed", bundle: .module).tag("")
                 }
                 ForEach(model.installed) { m in
                     let visuals = ModelFamilyVisuals.resolve(alias: m.alias, family: m.family, name: m.alias)
@@ -25,7 +25,7 @@ extension InspectorView {
             LabeledContent("Path") {
                 HStack(spacing: 6) {
                     Text(model.modelPathText)
-                        .font(.caption)
+                        .themedFont(.small)
                         .truncationMode(.middle)
                         .lineLimit(1)
                         .foregroundStyle(.secondary)
@@ -64,18 +64,18 @@ extension InspectorView {
                 let visuals = ModelFamilyVisuals.resolve(alias: selected.alias, family: selected.family, name: selected.alias)
                 LabeledContent("Installed size") {
                     Text(MetricFormat.storage(selected.installBytes))
-                        .font(.caption.monospacedDigit())
+                        .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("Family") {
                     HStack(spacing: 4) {
                         Image(systemName: visuals.iconSystemName)
-                            .font(.caption2)
+                            .themedFont(.tiny)
                             .foregroundStyle(visuals.accentColor)
                             .accessibilityHidden(true)
                         Text(visuals.family)
                     }
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .help("Architecture: \(visuals.family)")
                 }
@@ -157,7 +157,7 @@ extension InspectorView {
                     // Zero is the uncapped sentinel, and a bare "0" next to
                     // "tok/s" reads as a cap of zero tokens per second.
                     Text(rateCapIsUncapped ? "uncapped" : "tok/s")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                 }
@@ -196,7 +196,7 @@ extension InspectorView {
                         ?? "This model's family does not dispatch the steering edit.",
                     systemImage: "exclamationmark.triangle"
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(Color.secondary)
             }
 
@@ -207,11 +207,11 @@ extension InspectorView {
             if model.steeringNeedsReload {
                 HStack {
                     Label("Not applied to the loaded model", systemImage: "arrow.clockwise")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(Color.orange)
                     Spacer()
                     Button("Reload") { model.reloadForSteering() }
-                        .font(.caption)
+                        .themedFont(.small)
                         .disabled(model.selected == nil || model.generating || model.opening)
                 }
             }
@@ -221,7 +221,7 @@ extension InspectorView {
                 set: { model.runtimeOptions.steeringPath = $0.isEmpty ? nil : $0 }
             ))
             .textFieldStyle(.roundedBorder)
-            .font(.caption)
+            .themedFont(.small)
             .accessibilityLabel("Control vector path")
             .accessibilityHint("Path to a GGUF control vector file. Leave blank to disable directional steering.")
 
@@ -299,18 +299,18 @@ extension InspectorView {
             }
 
             if model.session == nil {
-                Text("Load a model to see the reasoning levels its chat template accepts.")
-                    .font(.caption)
+                Text("Load a model to see the reasoning levels its chat template accepts.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             } else if !model.isReasoningSupported {
-                Text("This checkpoint ships no reasoning knob, so a level would change nothing.")
-                    .font(.caption)
+                Text("This checkpoint ships no reasoning knob, so a level would change nothing.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
 
             LabeledContent("Max New Tokens") {
                 Stepper(value: $model.maxNewTokens, in: 64...16384, step: 128) {
-                    Text("\(model.maxNewTokens)").monospacedDigit()
+                    Text("\(model.maxNewTokens)", bundle: .module).monospacedDigit()
                 }
                 .fixedSize()
                 .accessibilityLabel("Max new tokens")
@@ -333,7 +333,7 @@ extension InspectorView {
             if model.topKEnabled {
                 LabeledContent("K value") {
                     Stepper(value: $model.topK, in: 1...256, step: 1) {
-                        Text("\(model.topK)").monospacedDigit()
+                        Text("\(model.topK)", bundle: .module).monospacedDigit()
                     }
                     .fixedSize()
                     .accessibilityLabel("Top-K value")
@@ -385,8 +385,9 @@ extension InspectorView {
 
             LabeledContent("Stop Sequences") {
                 TextField("Comma separated strings", text: $model.stopSequences)
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
-                    .font(.caption)
+                    .themedFont(.small)
                     .accessibilityLabel("Stop sequences")
                     .accessibilityHint("Comma-separated strings that stop generation when produced")
             }
@@ -431,7 +432,7 @@ private struct ContextWindowOptionsView: View {
                             .tag(option.tokens)
                     }
                     Divider()
-                    Text("Custom…").tag(-1)
+                    Text("Custom…", bundle: .module).tag(-1)
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
@@ -456,8 +457,8 @@ private struct ContextWindowOptionsView: View {
                         )
                         .accessibilityLabel("Custom context size")
                         .accessibilityValue("\(model.maxContextTokens) tokens")
-                        Text("\(model.maxContextTokens.formatted())")
-                            .font(.caption.monospacedDigit())
+                        Text("\(model.maxContextTokens.formatted())", bundle: .module)
+                            .themedFont(.small).monospacedDigit()
                             .frame(width: 55, alignment: .trailing)
                     }
                 }

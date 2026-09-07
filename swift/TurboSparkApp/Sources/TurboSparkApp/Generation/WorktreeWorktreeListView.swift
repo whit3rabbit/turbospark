@@ -34,14 +34,14 @@ public struct WorktreeWorktreeListView: View {
 
     private var headerBar: some View {
         HStack {
-            Text("Linked Worktrees")
+            Text("Linked Worktrees", bundle: .module)
                 .font(theme.ui(points: 12, weight: .semibold))
                 .foregroundStyle(.primary)
 
             Spacer()
 
-            Text("\(worktree.worktrees.count) worktrees")
-                .font(.caption2.monospacedDigit())
+            Text("\(worktree.worktrees.count) worktrees", bundle: .module)
+                .themedFont(.tiny).monospacedDigit()
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
@@ -52,14 +52,14 @@ public struct WorktreeWorktreeListView: View {
     private var emptyWorktreesView: some View {
         VStack(spacing: 8) {
             Image(systemName: "folder.badge.gearshape")
-                .font(.system(size: 28))
+                .themedFont(points: 28)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 40)
-            Text("No Additional Worktrees")
-                .font(.callout.weight(.medium))
+            Text("No Additional Worktrees", bundle: .module)
+                .themedFont(.base, weight: .medium)
                 .foregroundStyle(.secondary)
-            Text("This repository only has the primary working directory.")
-                .font(.caption)
+            Text("This repository only has the primary working directory.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -69,7 +69,7 @@ public struct WorktreeWorktreeListView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(TurboSparkTheme.accentColor)
 
                 Text(wt.branch)
@@ -77,8 +77,8 @@ public struct WorktreeWorktreeListView: View {
                     .foregroundStyle(.primary)
 
                 if wt.isCurrent {
-                    Text("Current")
-                        .font(.caption2.weight(.medium))
+                    Text("Current", bundle: .module)
+                        .themedFont(.tiny, weight: .medium)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
@@ -93,7 +93,7 @@ public struct WorktreeWorktreeListView: View {
             }
 
             Text(wt.path)
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -104,8 +104,8 @@ public struct WorktreeWorktreeListView: View {
                     Button {
                         worktree.selectWorktree(path: wt.path)
                     } label: {
-                        Text("Switch to this worktree")
-                            .font(.caption2.weight(.medium))
+                        Text("Switch to this worktree", bundle: .module)
+                            .themedFont(.tiny, weight: .medium)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.mini)

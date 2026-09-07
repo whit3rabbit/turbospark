@@ -53,7 +53,7 @@ struct PromptModelSelectorPill: View {
         Menu {
             Section("Installed Models") {
                 if model.installed.isEmpty {
-                    Text("No models installed")
+                    Text("No models installed", bundle: .module)
                 } else {
                     ForEach(model.installed) { installed in
                         Button {
@@ -126,12 +126,12 @@ struct PromptProjectContextPill: View {
                     if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                         HStack(spacing: 2) {
                             if worktree.totalAdditions > 0 {
-                                Text("+\(worktree.totalAdditions)")
+                                Text("+\(worktree.totalAdditions)", bundle: .module)
                                     .font(theme.ui(points: 10, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.green)
                             }
                             if worktree.totalDeletions > 0 {
-                                Text("-\(worktree.totalDeletions)")
+                                Text("-\(worktree.totalDeletions)", bundle: .module)
                                     .font(theme.ui(points: 10, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.red)
                             }

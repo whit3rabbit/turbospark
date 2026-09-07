@@ -52,7 +52,7 @@ public struct AppearanceSettingsPaneView: View {
     // MARK: - Theme Mode Selector
     private var themeSelectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Theme")
+            Text("Theme", bundle: .module)
                 .font(theme.ui(.large, weight: .semibold))
                 .foregroundStyle(.primary)
 

@@ -58,7 +58,7 @@ struct ProfilesSettingsPaneView: View {
                 additionalProfileRow(profile)
             }
             if model.profiles.isEmpty {
-                Text("Only the Default user exists. Add one below to give it its own settings, chats, and skills.")
+                Text("Only the Default user exists. Add one below to give it its own settings, chats, and skills.", bundle: .module)
                     .font(theme.ui(.small))
                     .foregroundStyle(.secondary)
             }
@@ -102,7 +102,7 @@ struct ProfilesSettingsPaneView: View {
                     Text(name)
                         .font(theme.ui(.base, weight: .medium))
                     if isCurrent {
-                        Text("Current")
+                        Text("Current", bundle: .module)
                             .font(theme.ui(.tiny, weight: .semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -170,7 +170,7 @@ struct ProfilesSettingsPaneView: View {
 
     private func renameSheet(_ profile: UserProfile) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Rename Profile")
+            Text("Rename Profile", bundle: .module)
                 .font(theme.ui(.title3, weight: .semibold))
             TextField("Profile name", text: $renameText)
                 .textFieldStyle(.roundedBorder)

@@ -34,18 +34,18 @@ struct FilePreviewView: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: attachment.symbolName)
-                .font(.system(size: 13))
+                .themedFont(points: 13)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help("\(attachment.formatLabel) file")
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(attachment.fileName)
-                    .font(.system(size: 12, weight: .semibold))
+                    .themedFont(points: 12, weight: .semibold)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(subtitle)
-                    .font(.system(size: 10))
+                    .themedFont(points: 10)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -56,7 +56,7 @@ struct FilePreviewView: View {
                 model.dismissPreview()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .themedFont(points: 10, weight: .semibold)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
@@ -108,7 +108,7 @@ struct FilePreviewView: View {
             Text(attachment.extractedText.isEmpty
                  ? "No text was extracted from this document."
                  : attachment.extractedText)
-                .font(.system(size: 11, design: .monospaced))
+                .themedCode(points: 11)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -136,12 +136,12 @@ struct FilePreviewView: View {
     private var unavailableView: some View {
         VStack(spacing: 8) {
             Image(systemName: "eye.slash")
-                .font(.system(size: 24))
+                .themedFont(points: 24)
                 .foregroundStyle(.quaternary)
-            Text("Preview unavailable")
-                .font(.callout.weight(.medium))
-            Text("The source file is no longer at its original path.")
-                .font(.caption)
+            Text("Preview unavailable", bundle: .module)
+                .themedFont(.base, weight: .medium)
+            Text("The source file is no longer at its original path.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -155,8 +155,8 @@ struct FilePreviewView: View {
         HStack(spacing: 6) {
             if attachment.previewKind != .text {
                 Toggle(isOn: $showsExtractedText) {
-                    Text("Model text")
-                        .font(.system(size: 10, weight: .medium))
+                    Text("Model text", bundle: .module)
+                        .themedFont(points: 10, weight: .medium)
                 }
                 .toggleStyle(.button)
                 .controlSize(.mini)
@@ -210,7 +210,7 @@ struct FilePreviewView: View {
     ) -> some View {
         Button(role: role, action: action) {
             Label(title, systemImage: systemImage)
-                .font(.system(size: 10, weight: .medium))
+                .themedFont(points: 10, weight: .medium)
                 .labelStyle(.iconOnly)
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())

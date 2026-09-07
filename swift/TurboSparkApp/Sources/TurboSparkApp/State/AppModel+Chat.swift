@@ -66,6 +66,38 @@ extension AppModel {
         }
     }
 
+    /// Registers files a tool call produced (`ArtifactRegistrar.onArtifactsProduced`)
+    /// against the chat that produced them and persists the change.
+    ///
+    /// Mirrors `updateTodos(for:todos:)`'s chat-lookup shape. Unlike todos, a
+    /// ghost chat's artifacts are NOT routed through `GhostChatVault`: the
+    /// vault's sealed schema is messages/todos/draft/skillState/contextSummary,
+    /// and extending it is a separate feature. `persistChats()` is still safe
+    /// to call unconditionally -- `makeChatArchive` filters every `isGhost`
+    /// row out of what it writes, whichever chat was just mutated -- so a
+    /// ghost chat's artifacts update stays in memory for the session and
+    /// never reaches `chats_archive.json`, consistent with Gotcha 53's rule.
+    public func registerProducedArtifacts(chatID: UUID?, files: [ArtifactRegistrar.ProducedFile]) {
+        guard let chatID, let index = chats.firstIndex(where: { $0.id == chatID }) else { return }
+        let now = Date()
+        for file in files {
+            let artifact = AppArtifact(
+                chatID: chatID,
+                path: file.url.path,
+                title: file.title?.isEmpty == false ? file.title! : file.url.lastPathComponent,
+                origin: file.origin,
+                toolCallID: file.toolCallID,
+                createdAt: now,
+                updatedAt: now,
+                lastKnownByteSize: (try? FileManager.default.attributesOfItem(atPath: file.url.path)[.size] as? Int),
+                lastKnownModified: (try? FileManager.default.attributesOfItem(atPath: file.url.path)[.modificationDate] as? Date)
+            )
+            AppArtifact.upsert(artifact, into: &chats[index].artifacts)
+        }
+        chats[index].updatedAt = now
+        persistChats()
+    }
+
     /// Draft prompt text for the currently selected chat.
     ///
     /// A ghost chat's draft is sealed in the vault like its messages, and
@@ -194,6 +226,7 @@ extension AppModel {
         outputPromptText = ""
         persistChats()
         updateTokenEstimate()
+        drainPendingTaskNotificationsIfIdle(chatID: id)
     }
 
     public func renameChat(id: UUID, title: String) {

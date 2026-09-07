@@ -18,7 +18,7 @@ struct ToolApprovalDropdown: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: currentMode.systemImage)
-                    .font(.system(size: 11, weight: .semibold))
+                    .themedFont(points: 11, weight: .semibold)
                     .foregroundStyle(Color.secondary)
 
                 Text(currentMode.label)
@@ -27,7 +27,7 @@ struct ToolApprovalDropdown: View {
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .themedFont(points: 8, weight: .bold)
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
@@ -72,7 +72,7 @@ struct ToolApprovalMenuPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("How should tool calls be approved?")
+            Text("How should tool calls be approved?", bundle: .module)
                 .font(theme.ui(points: 11, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 14)
@@ -107,7 +107,7 @@ private struct ToolApprovalOptionRow: View {
         Button(action: onSelect) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: mode.systemImage)
-                    .font(.system(size: 13, weight: .semibold))
+                    .themedFont(points: 13, weight: .semibold)
                     .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                     .frame(width: 20, height: 20)
                     .padding(.top, 1)
@@ -128,7 +128,7 @@ private struct ToolApprovalOptionRow: View {
 
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
+                        .themedFont(points: 11, weight: .bold)
                         .foregroundStyle(Color.primary)
                         .padding(.top, 2)
                 }

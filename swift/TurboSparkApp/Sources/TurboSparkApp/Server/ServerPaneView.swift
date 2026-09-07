@@ -74,7 +74,7 @@ struct ServerPaneView: View {
 
     private func sectionLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .font(.system(size: 12, weight: .semibold))
+            .themedFont(points: 12, weight: .semibold)
             .foregroundStyle(.secondary)
     }
 }

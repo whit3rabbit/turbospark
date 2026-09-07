@@ -197,7 +197,7 @@ struct ModelLoaderControl: View {
     @ViewBuilder
     private var installedModelsSection: some View {
         if model.installed.isEmpty {
-            Text("No models installed yet")
+            Text("No models installed yet", bundle: .module)
         } else {
             Section("Installed") {
                 ForEach(model.installed) { item in
@@ -207,7 +207,7 @@ struct ModelLoaderControl: View {
                         if model.selected?.alias == item.alias {
                             Label("\(item.alias)  (\(item.family))", systemImage: "checkmark")
                         } else {
-                            Text("\(item.alias)  (\(item.family))")
+                            Text("\(item.alias)  (\(item.family))", bundle: .module)
                         }
                     }
                 }

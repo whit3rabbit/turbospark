@@ -38,9 +38,9 @@ struct PromptComposerPlusMenu: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
+                        .themedFont(points: 12, weight: .semibold)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
+                        .themedFont(points: 7, weight: .bold)
                         .foregroundStyle(.secondary)
                 }
                 .frame(height: iconButtonSize)
@@ -128,7 +128,7 @@ struct PromptComposerPlusMenu: View {
             Menu {
                 let allMcpServers = model.globalMcpServers + (model.selectedProject?.mcpServers ?? [])
                 if allMcpServers.isEmpty {
-                    Text("No MCP Servers Configured")
+                    Text("No MCP Servers Configured", bundle: .module)
                 } else {
                     ForEach(allMcpServers) { server in
                         Button {
@@ -167,7 +167,7 @@ struct PromptComposerPlusMenu: View {
             Menu {
                 let managedSkills = model.allManagedSkills
                 if managedSkills.isEmpty {
-                    Text("No Skills Installed")
+                    Text("No Skills Installed", bundle: .module)
                 } else {
                     ForEach(managedSkills) { skill in
                         Menu {

@@ -64,4 +64,89 @@ final class ToolCallDiffFormatterTests: XCTestCase {
         XCTAssertEqual(summary.action, "Searched")
         XCTAssertEqual(summary.target, "\"ToolCallCardView\"")
     }
+
+    func testApplyPatchSummary() {
+        let patch = """
+        --- a/src/main.rs
+        +++ b/src/main.rs
+        @@ -1,3 +1,4 @@
+        -old line
+        +new line 1
+        +new line 2
+         common line
+        """
+        let summary = ToolCallDiffFormatter.summarize(
+            callName: "apply_patch",
+            arguments: ["patch": patch]
+        )
+        XCTAssertEqual(summary.action, "Patched")
+        XCTAssertEqual(summary.target, "main.rs")
+        XCTAssertEqual(summary.additions, 2)
+        XCTAssertEqual(summary.deletions, 1)
+    }
+
+    func testWebFetchSummary() {
+        let summary = ToolCallDiffFormatter.summarize(
+            callName: "web_fetch",
+            arguments: ["url": "https://api.github.com/repos/turbospark/releases"]
+        )
+        XCTAssertEqual(summary.action, "Fetched")
+        XCTAssertTrue(summary.target.contains("api.github.com"))
+    }
+
+    func testListDirectorySummary() {
+        let rootSummary = ToolCallDiffFormatter.summarize(
+            callName: "list_directory",
+            arguments: ["path": "."]
+        )
+        XCTAssertEqual(rootSummary.action, "Listed")
+        XCTAssertEqual(rootSummary.target, "workspace")
+
+        let subSummary = ToolCallDiffFormatter.summarize(
+            callName: "ls",
+            arguments: ["path": "swift/TurboSparkApp"]
+        )
+        XCTAssertEqual(subSummary.action, "Listed")
+        XCTAssertEqual(subSummary.target, "TurboSparkApp")
+    }
+
+    func testSkillSummary() {
+        let summary = ToolCallDiffFormatter.summarize(
+            callName: "skill",
+            arguments: ["name": "refactor-clean"]
+        )
+        XCTAssertEqual(summary.action, "Skill")
+        XCTAssertEqual(summary.target, "refactor-clean")
+    }
+
+    func testMcpToolSummary() {
+        let summary = ToolCallDiffFormatter.summarize(
+            callName: "call_mcp_tool",
+            arguments: ["server": "context7", "toolName": "resolve-library-id"]
+        )
+        XCTAssertEqual(summary.action, "MCP: context7")
+        XCTAssertEqual(summary.target, "resolve-library-id")
+
+        let prefixedSummary = ToolCallDiffFormatter.summarize(
+            callName: "mcp__github__get_issue",
+            arguments: [:]
+        )
+        XCTAssertEqual(prefixedSummary.action, "MCP: github")
+        XCTAssertEqual(prefixedSummary.target, "get_issue")
+    }
+
+    func testEditFileWithStandardKeys() {
+        let summary = ToolCallDiffFormatter.summarize(
+            callName: "edit_file",
+            arguments: [
+                "file_path": "Sources/App.swift",
+                "old_string": "let x = 1\n",
+                "new_string": "let x = 2\nlet y = 3\n"
+            ]
+        )
+        XCTAssertEqual(summary.action, "Edited")
+        XCTAssertEqual(summary.target, "App.swift")
+        XCTAssertEqual(summary.deletions, 2)
+        XCTAssertEqual(summary.additions, 3)
+    }
 }

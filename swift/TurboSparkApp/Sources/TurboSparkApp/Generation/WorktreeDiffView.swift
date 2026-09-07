@@ -71,7 +71,7 @@ public struct WorktreeDiffView: View {
     private var fileHeader: some View {
         HStack(spacing: 8) {
             Image(systemName: file.status.systemImage)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(file.status.color)
 
             Text(file.fileName)
@@ -80,7 +80,7 @@ public struct WorktreeDiffView: View {
 
             if !file.directoryPath.isEmpty {
                 Text(file.directoryPath)
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -91,13 +91,13 @@ public struct WorktreeDiffView: View {
             if file.additions > 0 || file.deletions > 0 {
                 HStack(spacing: 4) {
                     if file.additions > 0 {
-                        Text("+\(file.additions)")
-                            .font(.caption2.monospacedDigit().weight(.semibold))
+                        Text("+\(file.additions)", bundle: .module)
+                            .themedFont(.tiny, weight: .semibold).monospacedDigit()
                             .foregroundStyle(.green)
                     }
                     if file.deletions > 0 {
-                        Text("-\(file.deletions)")
-                            .font(.caption2.monospacedDigit().weight(.semibold))
+                        Text("-\(file.deletions)", bundle: .module)
+                            .themedFont(.tiny, weight: .semibold).monospacedDigit()
                             .foregroundStyle(.red)
                     }
                 }
@@ -116,7 +116,7 @@ public struct WorktreeDiffView: View {
                 }
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(copied ? .green : .secondary)
             }
             .buttonStyle(.plain)
@@ -125,7 +125,7 @@ public struct WorktreeDiffView: View {
             if let onClose = onClose {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -174,9 +174,9 @@ public struct WorktreeDiffView: View {
         Button(action: toggle) {
             HStack(spacing: 6) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
-                Text("\(count) unmodified lines")
+                Text("\(count) unmodified lines", bundle: .module)
                     .font(theme.code(.small, weight: .medium))
                     .foregroundStyle(.secondary)
                 Spacer()

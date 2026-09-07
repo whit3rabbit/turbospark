@@ -13,24 +13,24 @@ struct InstalledModelOrganizationCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Organization & Notes", systemImage: "tag")
-                .font(.subheadline.weight(.semibold))
+                .themedFont(.small, weight: .semibold)
 
             // Tags section
             VStack(alignment: .leading, spacing: 6) {
-                Text("Custom Tags")
-                    .font(.caption)
+                Text("Custom Tags", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
 
                 FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(orgStore.tags(alias: installedModel.alias, path: installedModel.path), id: \.self) { tag in
                         HStack(spacing: 4) {
                             Text(tag)
-                                .font(.caption2.weight(.medium))
+                                .themedFont(.tiny, weight: .medium)
                             Button {
                                 orgStore.removeTag(tag, for: installedModel.alias, path: installedModel.path)
                             } label: {
                                 Image(systemName: "xmark")
-                                    .font(.system(size: 8, weight: .bold))
+                                    .themedFont(points: 8, weight: .bold)
                             }
                             .buttonStyle(.plain)
                             .help("Remove tag \(tag)")
@@ -46,7 +46,7 @@ struct InstalledModelOrganizationCardView: View {
                         HStack(spacing: 4) {
                             TextField("Tag name", text: $newTagText)
                                 .textFieldStyle(.plain)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .frame(width: 80)
                                 .onSubmit {
                                     addTagAction()
@@ -54,7 +54,7 @@ struct InstalledModelOrganizationCardView: View {
                             Button("Add") {
                                 addTagAction()
                             }
-                            .font(.caption2)
+                            .themedFont(.tiny)
                             .buttonStyle(.plain)
                             .disabled(newTagText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
@@ -67,7 +67,7 @@ struct InstalledModelOrganizationCardView: View {
                             isAddingTag = true
                         } label: {
                             Label("Add Tag", systemImage: "plus")
-                                .font(.caption2.weight(.medium))
+                                .themedFont(.tiny, weight: .medium)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
                         }
@@ -82,13 +82,13 @@ struct InstalledModelOrganizationCardView: View {
 
             // Notes section
             VStack(alignment: .leading, spacing: 6) {
-                Text("Personal Notes")
-                    .font(.caption)
+                Text("Personal Notes", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
 
                 TextField("Add personal notes for this model (e.g., best for Swift, fast test runner)...", text: $notesText, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.caption)
+                    .themedFont(.small)
                     .padding(8)
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
                     .overlay { RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor), lineWidth: 0.5) }

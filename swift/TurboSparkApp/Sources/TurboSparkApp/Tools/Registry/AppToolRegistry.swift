@@ -78,47 +78,109 @@ public enum AppToolRegistry {
 
         do {
             let output: String
+            // Populated by the producing cases below (write_file, edit_file,
+            // apply_patch, notebook_edit, send_user_file) and reported once,
+            // after the switch succeeds -- `ArtifactRegistrar.report`'s own
+            // doc requires calling it from the success path only, since a
+            // `write_file` that threw wrote nothing.
+            var producedFiles: [ArtifactRegistrar.ProducedFile] = []
             switch call.name.lowercased() {
             case "list_directory", "list_dir", "ls", "glob":
-                let relPath = call.arguments["path"] ?? call.arguments["pattern"] ?? "."
+                let relPath = call.arguments["path"]
+                    ?? call.arguments["file_path"]
+                    ?? call.arguments["filePath"]
+                    ?? call.arguments["DirectoryPath"]
+                    ?? call.arguments["dir"]
+                    ?? call.arguments["directory"]
+                    ?? call.arguments["pattern"]
+                    ?? "."
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
                 output = try listDirectory(relPath: relPath, rootURL: rootURL)
 
             case "read_file", "view_file", "cat", "fileread", "read":
-                guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] ?? call.arguments["resource"] else {
+                guard let relPath = call.arguments["path"]
+                    ?? call.arguments["file_path"]
+                    ?? call.arguments["filePath"]
+                    ?? call.arguments["AbsolutePath"]
+                    ?? call.arguments["file"]
+                    ?? call.arguments["TargetFile"]
+                    ?? call.arguments["resource"] else {
                     throw NSError(domain: "TurboSparkTool", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' or 'file_path' argument."])
                 }
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
-                let startLine = Int(call.arguments["start_line"] ?? call.arguments["offset"] ?? "")
+                let startLine = Int(call.arguments["start_line"]
+                    ?? call.arguments["startLine"]
+                    ?? call.arguments["StartLine"]
+                    ?? call.arguments["start"]
+                    ?? call.arguments["offset"] ?? "")
                 // Read from their OWN keys: `end_line` is an absolute bound
                 // (what the schema advertises) and `limit` is a count (what
                 // the Claude/OpenAI convention means). Collapsing them made
                 // `end_line: 520` return 520 lines.
-                let endLine = Int(call.arguments["end_line"] ?? "")
-                let limit = Int(call.arguments["limit"] ?? "")
+                let endLine = Int(call.arguments["end_line"]
+                    ?? call.arguments["endLine"]
+                    ?? call.arguments["EndLine"]
+                    ?? call.arguments["end"] ?? "")
+                let limit = Int(call.arguments["limit"]
+                    ?? call.arguments["max_lines"]
+                    ?? call.arguments["maxLines"] ?? "")
                 output = try await readFile(
                     relPath: relPath, rootURL: rootURL, startLine: startLine, endLine: endLine,
                     limit: limit)
 
-            case "write_file", "save_file", "filewrite", "write":
-                guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {
+            case "write_file", "save_file", "filewrite", "write", "create_file", "write_to_file":
+                guard let relPath = call.arguments["path"]
+                    ?? call.arguments["file_path"]
+                    ?? call.arguments["filePath"]
+                    ?? call.arguments["TargetFile"]
+                    ?? call.arguments["AbsolutePath"]
+                    ?? call.arguments["file"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' or 'file_path' argument."])
                 }
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
-                let content = call.arguments["content"] ?? ""
+                let content = call.arguments["content"]
+                    ?? call.arguments["CodeContent"]
+                    ?? call.arguments["text"]
+                    ?? call.arguments["code"]
+                    ?? ""
                 output = try await writeFile(relPath: relPath, content: content, rootURL: rootURL)
+                if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
+                    producedFiles.append(ArtifactRegistrar.ProducedFile(
+                        url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                }
 
-            case "edit_file", "fileedit", "edit":
-                guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {
+            case "edit_file", "fileedit", "edit", "replace_file_content":
+                guard let relPath = call.arguments["path"]
+                    ?? call.arguments["file_path"]
+                    ?? call.arguments["filePath"]
+                    ?? call.arguments["TargetFile"]
+                    ?? call.arguments["AbsolutePath"]
+                    ?? call.arguments["file"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'file_path' argument."])
                 }
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
-                guard let oldStr = call.arguments["old_string"] ?? call.arguments["target"] ?? call.arguments["oldStr"] else {
+                guard let oldStr = call.arguments["old_string"]
+                    ?? call.arguments["oldString"]
+                    ?? call.arguments["target"]
+                    ?? call.arguments["oldStr"]
+                    ?? call.arguments["TargetContent"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'old_string' argument."])
                 }
-                let newStr = call.arguments["new_string"] ?? call.arguments["replacement"] ?? call.arguments["newStr"] ?? ""
-                let replaceAll = (call.arguments["replace_all"]?.lowercased() == "true")
+                let newStr = call.arguments["new_string"]
+                    ?? call.arguments["newString"]
+                    ?? call.arguments["replacement"]
+                    ?? call.arguments["newStr"]
+                    ?? call.arguments["ReplacementContent"]
+                    ?? ""
+                let replaceAll = ["true", "1", "yes"].contains((call.arguments["replace_all"]
+                    ?? call.arguments["replaceAll"]
+                    ?? call.arguments["AllowMultiple"]
+                    ?? call.arguments["allowMultiple"])?.lowercased() ?? "")
                 output = try await editFile(relPath: relPath, oldString: oldStr, newString: newStr, replaceAll: replaceAll, rootURL: rootURL)
+                if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
+                    producedFiles.append(ArtifactRegistrar.ProducedFile(
+                        url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                }
 
             case "apply_patch", "applypatch":
                 guard let patchText = call.arguments["patch_text"] ?? call.arguments["patchText"] ?? call.arguments["patch"] else {
@@ -126,24 +188,47 @@ public enum AppToolRegistry {
                 }
                 let result = try ApplyPatchExecutor.apply(patchText: patchText, rootURL: rootURL)
                 output = result.summary
+                for op in result.applied where op.type != "delete" {
+                    producedFiles.append(ArtifactRegistrar.ProducedFile(
+                        url: URL(fileURLWithPath: op.target), toolCallID: call.id, toolName: call.name,
+                        origin: .fileWrite))
+                }
 
-            case "search_code", "grep", "search":
-                guard let pattern = call.arguments["pattern"] ?? call.arguments["query"] else {
+            case "search_code", "grep", "search", "grep_search":
+                guard let pattern = call.arguments["pattern"]
+                    ?? call.arguments["query"]
+                    ?? call.arguments["Query"]
+                    ?? call.arguments["search_query"] else {
                     throw NSError(domain: "TurboSparkTool", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing 'pattern' argument."])
                 }
-                let relPath = call.arguments["path"] ?? "."
+                let relPath = call.arguments["path"]
+                    ?? call.arguments["file_path"]
+                    ?? call.arguments["filePath"]
+                    ?? call.arguments["SearchPath"]
+                    ?? call.arguments["dir"]
+                    ?? call.arguments["directory"]
+                    ?? "."
                 output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
 
             case "run_command", "bash", "shell", "exec", "terminal":
-                guard let command = call.arguments["command"] ?? call.arguments["cmd"] else {
+                guard let command = call.arguments["command"]
+                    ?? call.arguments["cmd"]
+                    ?? call.arguments["CommandLine"]
+                    ?? call.arguments["code"] else {
                     throw NSError(domain: "TurboSparkTool", code: 4, userInfo: [NSLocalizedDescriptionKey: "Missing 'command' argument."])
                 }
-                let timeoutMs = Int(call.arguments["timeout"] ?? "")
+                let timeoutMs = Int(call.arguments["timeout"]
+                    ?? call.arguments["timeout_ms"]
+                    ?? call.arguments["timeoutMs"] ?? "")
                 // Tolerant boolean: the flattened argument dictionary carries
                 // JSON booleans as strings.
                 let runInBackground = ["true", "1", "yes"]
-                    .contains(call.arguments["run_in_background"]?.lowercased() ?? "")
+                    .contains((call.arguments["run_in_background"]
+                        ?? call.arguments["runInBackground"]
+                        ?? call.arguments["background"])?.lowercased() ?? "")
                 let commandDescription = call.arguments["description"]
+                    ?? call.arguments["toolSummary"]
+                    ?? call.arguments["toolAction"]
                 output = try await ShellCommandRunner.run(
                     command: command, rootURL: rootURL, timeoutMs: timeoutMs,
                     runInBackground: runInBackground, description: commandDescription,
@@ -181,11 +266,15 @@ public enum AppToolRegistry {
                 output = searchOutput.formatMarkdown()
 
             case "webfetch", "web_fetch", "fetch_url", "read_url_content":
-                guard let urlString = call.arguments["url"] ?? call.arguments["uri"] else {
+                guard let urlString = call.arguments["url"]
+                    ?? call.arguments["uri"]
+                    ?? call.arguments["Url"]
+                    ?? call.arguments["URL"]
+                    ?? call.arguments["href"] else {
                     throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [NSLocalizedDescriptionKey: "Missing 'url' argument for WebFetch tool call."])
                 }
                 let format = call.arguments["format"] ?? "markdown"
-                let timeoutSeconds = Int(call.arguments["timeout"] ?? "")
+                let timeoutSeconds = Int(call.arguments["timeout"] ?? call.arguments["timeout_seconds"] ?? "")
                 output = try await WebFetchExecutor.fetch(url: urlString, format: format, timeout: timeoutSeconds)
 
             case "skill":
@@ -218,19 +307,30 @@ public enum AppToolRegistry {
                         content: matched.content,
                         arguments: call.arguments,
                         skillDirectoryURL: matched.skillDirectoryURL,
-                        sessionID: nil
+                        // The tool path used to pass nil, so `${SESSION_ID}`
+                        // substituted to nothing here while the user slash
+                        // path got a real one.
+                        sessionID: chatID?.uuidString
                     )
-                    var res = "### Skill: \(matched.name) (\(matched.scope.label))\n\(expanded)"
-                    if !matched.referenceFiles.isEmpty {
-                        res += "\n\n*Reference Files in skill directory:* \(matched.referenceFiles.joined(separator: ", "))"
+                    if matched.manifest.context == .fork {
+                        output = try await runForkedSkill(
+                            matched, expandedBody: expanded,
+                            project: project, chatID: chatID, subagentDepth: subagentDepth)
+                    } else {
+                        var res = "### Skill: \(matched.name) (\(matched.scope.label))\n\(expanded)"
+                        if !matched.referenceFiles.isEmpty {
+                            res += "\n\n*Reference Files in skill directory:* \(matched.referenceFiles.joined(separator: ", "))"
+                        }
+                        output = res
                     }
-                    output = res
                 } else {
                     // A skill the model may not invoke is not listed as
                     // available to it either, or the next turn simply asks
-                    // for it again (state#48).
-                    let available = effectiveSkills
-                        .filter { $0.isEnabled && !($0.manifest.disableModelInvocation ?? false) }
+                    // for it again (state#48). `advertisedSkills` is the
+                    // SAME eligibility the listing itself applies, so an
+                    // unactivated conditional skill is a miss here too.
+                    let available = SkillManager.shared
+                        .advertisedSkills(effectiveSkills)
                         .map { "- \($0.name): \($0.skillDescription)" }
                         .joined(separator: "\n")
                     output = "Skill '\(skillName)' was not found.\n\nAvailable skills:\n\(available.isEmpty ? "(No skills currently installed)" : available)"
@@ -241,7 +341,11 @@ public enum AppToolRegistry {
                 output = res.output
 
             case "agent", "subagent", "task":
-                guard let prompt = call.arguments["prompt"] ?? call.arguments["task"] ?? call.arguments["instructions"] else {
+                guard let prompt = call.arguments["prompt"]
+                    ?? call.arguments["task"]
+                    ?? call.arguments["instructions"]
+                    ?? call.arguments["instruction"]
+                    ?? call.arguments["description"] else {
                     throw NSError(domain: "TurboSparkTool", code: 20, userInfo: [NSLocalizedDescriptionKey: "Missing 'prompt' argument for Agent tool call."])
                 }
                 // **A MODEL OVERRIDE NEEDS A SECOND OPEN MODEL, AND THE APP
@@ -260,7 +364,13 @@ public enum AppToolRegistry {
                             + "want it to use before this turn."
                     ])
                 }
-                let subagentType = call.arguments["subagent_type"] ?? call.arguments["type"] ?? call.arguments["name"] ?? "general-purpose"
+                let subagentType = call.arguments["subagent_type"]
+                    ?? call.arguments["subagentType"]
+                    ?? call.arguments["agent"]
+                    ?? call.arguments["agent_name"]
+                    ?? call.arguments["type"]
+                    ?? call.arguments["name"]
+                    ?? "general-purpose"
                 let agentDef = AgentManager.shared.findAgent(name: subagentType, projectURL: project?.rootDirectoryURL)
                     ?? AgentManager.shared.findAgent(name: "general-purpose", projectURL: project?.rootDirectoryURL)
                     ?? AgentManager.shared.builtInAgents[0]
@@ -269,10 +379,21 @@ public enum AppToolRegistry {
                         NSLocalizedDescriptionKey: "Agent '\(agentDef.name)' is currently disabled."
                     ])
                 }
-                let taskDescription = call.arguments["description"] ?? ""
-                let runInBackground = ["true", "1", "yes"]
-                    .contains(call.arguments["run_in_background"]?.lowercased() ?? "")
+                let taskDescription = call.arguments["description"]
+                    ?? call.arguments["task_description"]
+                    ?? call.arguments["taskDescription"]
+                    ?? ""
+                let bgVal = (call.arguments["run_in_background"]
+                    ?? call.arguments["runInBackground"]
+                    ?? call.arguments["background"])?.lowercased() ?? ""
+                let runInBackground = ["true", "1", "yes"].contains(bgVal)
                 if runInBackground {
+                    guard subagentDepth == 0 else {
+                        throw NSError(domain: "TurboSparkTool", code: 28, userInfo: [
+                            NSLocalizedDescriptionKey: "Background subagents can only be launched from the "
+                                + "main conversation, not from inside another subagent."
+                        ])
+                    }
                     guard let launcher = backgroundAgentLauncher else {
                         throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
                             NSLocalizedDescriptionKey: "Background subagents are unavailable: no launch "
@@ -280,13 +401,15 @@ public enum AppToolRegistry {
                         ])
                     }
                     let userSystemPrompt = await userSystemPromptProvider?() ?? ""
+                    let options = await subagentSamplingOptionsProvider?() ?? GenerateOptions()
                     output = try await launcher(BackgroundAgentLaunch(
                         agent: agentDef, taskPrompt: prompt, taskDescription: taskDescription,
                         project: project, chatID: chatID, depth: subagentDepth + 1,
-                        userSystemPrompt: userSystemPrompt))
+                        userSystemPrompt: userSystemPrompt, samplingOptions: options))
                 } else {
                     let activeSession = await activeSessionProvider?()
                     let userSystemPrompt = await userSystemPromptProvider?() ?? ""
+                    let options = await subagentSamplingOptionsProvider?() ?? GenerateOptions()
                     let callKey = call.id.uuidString
                     var progress: (@Sendable (SubagentProgressEvent) async -> Void)?
                     if let sink = subagentProgressSink {
@@ -295,7 +418,7 @@ public enum AppToolRegistry {
                     let result = await SubagentRunner.run(
                         agent: agentDef, taskPrompt: prompt, session: activeSession, project: project,
                         chatID: chatID, depth: subagentDepth + 1,
-                        userSystemPrompt: userSystemPrompt,
+                        userSystemPrompt: userSystemPrompt, samplingOptions: options,
                         progress: progress, taskDescription: taskDescription)
                     if result.status == "error" || result.status == "failed" {
                         throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [NSLocalizedDescriptionKey: result.finalResponse])
@@ -303,8 +426,13 @@ public enum AppToolRegistry {
                     output = SubagentRunner.toolOutput(for: result, agentName: agentDef.name)
                 }
 
-            case "stop_agent", "agentstop", "kill_agent":
-                let agentID = call.arguments["id"] ?? call.arguments["agent_id"] ?? call.arguments["task_id"] ?? ""
+            case "stop_agent", "agentstop", "kill_agent", "stopagent":
+                let agentID = call.arguments["id"]
+                    ?? call.arguments["agent_id"]
+                    ?? call.arguments["agentId"]
+                    ?? call.arguments["task_id"]
+                    ?? call.arguments["taskId"]
+                    ?? ""
                 guard !agentID.trimmingCharacters(in: .whitespaces).isEmpty else {
                     throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
                         NSLocalizedDescriptionKey: "Missing 'id' argument: give the background subagent id "
@@ -342,12 +470,25 @@ public enum AppToolRegistry {
 
             case "notebookedit", "notebook_edit":
                 output = try await NotebookEditExecutor.execute(arguments: call.arguments, rootURL: rootURL)
+                if let relPath = call.arguments["notebook_path"] ?? call.arguments["notebookPath"]
+                    ?? call.arguments["path"] ?? call.arguments["file_path"],
+                   let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
+                    producedFiles.append(ArtifactRegistrar.ProducedFile(
+                        url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                }
 
             case "snip", "extract_snippet":
                 output = try SnipExecutor.execute(arguments: call.arguments, rootURL: rootURL)
 
             case "senduserfile", "send_user_file":
                 output = try SendUserFileExecutor.execute(arguments: call.arguments, rootURL: rootURL, chatID: chatID)
+                if let relPath = call.arguments["path"] ?? call.arguments["file_path"] ?? call.arguments["file"],
+                   let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
+                    let title = call.arguments["message"] ?? call.arguments["description"] ?? call.arguments["title"]
+                    producedFiles.append(ArtifactRegistrar.ProducedFile(
+                        url: targetURL, toolCallID: call.id, toolName: call.name, title: title,
+                        origin: .sentToUser))
+                }
 
             case "taskcreate", "task_create", "task_add":
                 output = try TaskManager.executeCreate(arguments: call.arguments, chatID: chatID)
@@ -392,10 +533,17 @@ public enum AppToolRegistry {
                 output = try await McpResourceExecutor.readResource(arguments: call.arguments, project: project, rootURL: rootURL)
 
             case "call_mcp_tool", "callmcptool", "mcp_tool":
-                guard let serverName = call.arguments["server"] ?? call.arguments["server_name"] else {
+                guard let serverName = call.arguments["server"]
+                    ?? call.arguments["server_name"]
+                    ?? call.arguments["serverName"]
+                    ?? call.arguments["ServerName"] else {
                     throw NSError(domain: "TurboSparkTool", code: 5, userInfo: [NSLocalizedDescriptionKey: "Missing 'server' argument for MCP tool call."])
                 }
-                guard let toolName = call.arguments["toolName"] ?? call.arguments["tool"] ?? call.arguments["name"] else {
+                guard let toolName = call.arguments["toolName"]
+                    ?? call.arguments["tool_name"]
+                    ?? call.arguments["ToolName"]
+                    ?? call.arguments["tool"]
+                    ?? call.arguments["name"] else {
                     throw NSError(domain: "TurboSparkTool", code: 6, userInfo: [NSLocalizedDescriptionKey: "Missing 'toolName' argument for MCP tool call."])
                 }
                 output = try await executeMcpCall(serverName: serverName, toolName: toolName, arguments: call.arguments, project: project, rootURL: rootURL)
@@ -431,6 +579,7 @@ public enum AppToolRegistry {
                 }
             }
 
+            ArtifactRegistrar.report(chatID: chatID, produced: producedFiles)
             let elapsed = Date().timeIntervalSince(startTime)
             return AppToolResult(callID: call.id, output: output, isError: false, durationSeconds: elapsed)
         } catch is CancellationError {
@@ -492,5 +641,53 @@ public enum AppToolRegistry {
             arguments: arguments,
             workingDirectory: rootURL
         )
+    }
+
+    /// Runs a `context: fork` skill through the same subagent path the
+    /// `agent` tool uses: the substituted body is the task prompt, `agent:`
+    /// names the runner with general-purpose as the fallback (Claude Code's
+    /// `command.agent ?? 'general-purpose'`), and the subagent's final answer
+    /// is the tool result. The skill's `allowed-tools` are parsed but not
+    /// yet GRANTED on this path -- a grant needs the permission engine, not
+    /// the executor (DEVIATIONS.md, skills).
+    ///
+    /// `depth: subagentDepth + 1` keeps a forked skill called from inside a
+    /// subagent under the same nesting cap as the `agent` tool itself.
+    private static func runForkedSkill(
+        _ skill: AppSkill,
+        expandedBody: String,
+        project: AppProject?,
+        chatID: UUID?,
+        subagentDepth: Int
+    ) async throws -> String {
+        let requested = skill.manifest.agent.flatMap { $0.isEmpty ? nil : $0 } ?? "general-purpose"
+        let agentDef = AgentManager.shared.findAgent(name: requested, projectURL: project?.rootDirectoryURL)
+            ?? AgentManager.shared.findAgent(name: "general-purpose", projectURL: project?.rootDirectoryURL)
+            ?? AgentManager.shared.builtInAgents[0]
+        guard agentDef.isEnabled else {
+            throw NSError(domain: "TurboSparkTool", code: 18, userInfo: [
+                NSLocalizedDescriptionKey: "Skill '\(skill.name)' declares context: fork with agent "
+                    + "'\(agentDef.name)', which is currently disabled."
+            ])
+        }
+        var taskPrompt = "Execute the following skill instructions:\n\n\(expandedBody)"
+        if !skill.referenceFiles.isEmpty {
+            taskPrompt += "\n\n*Reference Files in skill directory:* \(skill.referenceFiles.joined(separator: ", "))"
+        }
+        if agentDef.name.lowercased() != requested.lowercased() {
+            taskPrompt += "\n\n(Requested agent '\(requested)' was not found; running as '\(agentDef.name)'.)"
+        }
+        let activeSession = await activeSessionProvider?()
+        let userSystemPrompt = await userSystemPromptProvider?() ?? ""
+        let options = await subagentSamplingOptionsProvider?() ?? GenerateOptions()
+        let result = await SubagentRunner.run(
+            agent: agentDef, taskPrompt: taskPrompt, session: activeSession, project: project,
+            chatID: chatID, depth: subagentDepth + 1,
+            userSystemPrompt: userSystemPrompt, samplingOptions: options,
+            taskDescription: "Skill: \(skill.name)")
+        if result.status == "error" || result.status == "failed" {
+            throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [NSLocalizedDescriptionKey: result.finalResponse])
+        }
+        return SubagentRunner.toolOutput(for: result, agentName: agentDef.name)
     }
 }

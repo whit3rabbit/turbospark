@@ -67,7 +67,18 @@ extension AppModel {
         // four fields alone left the persisted proposal at
         // `.pendingApproval` forever: the card rendered as still awaiting a
         // decision across relaunches, with nothing left able to answer it.
-        if let pending = pendingToolCall {
+        if let batchCalls = pendingBatchCalls, batchCalls.count > 1 {
+            let chatID = pendingToolCallChatID ?? selectedChatID
+            for var batchCall in batchCalls {
+                batchCall.status = .denied
+                appendToolExecutionTurn(
+                    call: batchCall,
+                    result: AppToolResult(
+                        callID: batchCall.id, output: TOOL_REJECTED_MESSAGE,
+                        isError: true, durationSeconds: 0.0),
+                    chatID: chatID)
+            }
+        } else if let pending = pendingToolCall {
             let chatID = pendingToolCallChatID ?? selectedChatID
             var stopped = pending
             stopped.status = .denied

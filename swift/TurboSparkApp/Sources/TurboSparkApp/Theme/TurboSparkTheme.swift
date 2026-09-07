@@ -117,20 +117,4 @@ public enum TurboSparkTheme {
     }
 
     public static var hairlineColor: Color { hairlineColor(isDark: resolvedIsDark) }
-
-    /// Returns high-contrast compliant text styling for metadata and captions (WCAG 2.1 AA >= 4.5:1).
-    public static func metadataForeground(contrast: ColorSchemeContrast = .standard) -> Color {
-        let config = AppearanceManager.shared.activeConfig(isDark: resolvedIsDark)
-        if contrast == .increased || config.contrast > 70 {
-            return Color.primary.opacity(0.9)
-        }
-        return Color.secondary
-    }
-
-    /// Returns high-contrast compliant secondary border stroke opacity.
-    public static func borderStrokeOpacity(contrast: ColorSchemeContrast = .standard) -> Double {
-        let config = AppearanceManager.shared.activeConfig(isDark: resolvedIsDark)
-        let base = (config.contrast / 100.0) * 0.85
-        return contrast == .increased ? max(0.85, base) : max(0.3, base)
-    }
 }

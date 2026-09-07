@@ -81,11 +81,11 @@ struct ModelManagerView: View {
                         } header: {
                             HStack {
                                 Text(group.groupTitle)
-                                    .font(.caption.weight(.bold))
+                                    .themedFont(.small, weight: .bold)
                                     .foregroundStyle(.secondary)
                                 Spacer()
-                                Text("\(group.models.count)")
-                                    .font(.caption2.monospacedDigit())
+                                Text("\(group.models.count)", bundle: .module)
+                                    .themedFont(.tiny).monospacedDigit()
                                     .foregroundStyle(.tertiary)
                             }
                             .padding(.horizontal, 8)
@@ -116,14 +116,14 @@ struct ModelManagerView: View {
     private var emptyListState: some View {
         VStack(spacing: 12) {
             Image(systemName: "internaldrive")
-                .font(.system(size: 32))
+                .themedFont(points: 32)
                 .foregroundStyle(.quaternary)
             Text(model.installed.isEmpty ? "No Models Installed" : "No Matching Models")
-                .font(.callout.weight(.medium))
+                .themedFont(.base, weight: .medium)
             Text(model.installed.isEmpty
                 ? "Download models from the Discover catalog or scan an external folder."
                 : "Try clearing search or filter terms.")
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 240)
@@ -133,7 +133,7 @@ struct ModelManagerView: View {
                     model.activeSection = .modelHub
                 } label: {
                     Label("Discover Models in Hub", systemImage: "shippingbox.fill")
-                        .font(.caption.weight(.medium))
+                        .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                 }
@@ -156,12 +156,12 @@ struct ModelManagerView: View {
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "internaldrive")
-                    .font(.system(size: 30))
+                    .themedFont(points: 30)
                     .foregroundStyle(.quaternary)
-                Text("No Model Selected")
-                    .font(.callout.weight(.medium))
-                Text("Select an installed model to view specifications, runtime options, or load it into memory.")
-                    .font(.caption)
+                Text("No Model Selected", bundle: .module)
+                    .themedFont(.base, weight: .medium)
+                Text("Select an installed model to view specifications, runtime options, or load it into memory.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 300)

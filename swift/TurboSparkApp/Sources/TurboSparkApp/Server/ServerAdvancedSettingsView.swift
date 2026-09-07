@@ -9,14 +9,15 @@ import TurboSpark
 struct ServerAdvancedSettingsView: View {
     @ObservedObject var model: AppModel
     @State private var portText: String = ""
+    @State private var portError: String? = nil
 
     private var isRunning: Bool { model.server != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if isRunning {
-                Text("These take effect the next time the server starts.")
-                    .font(.system(size: 10))
+                Text("These take effect the next time the server starts.", bundle: .module)
+                    .themedFont(points: 10)
                     .foregroundStyle(.secondary)
             }
 
@@ -41,7 +42,7 @@ struct ServerAdvancedSettingsView: View {
                 Label(
                     "With no key, any process on this machine can drive your models.",
                     systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 10))
+                    .themedFont(points: 10)
                     .foregroundStyle(.orange)
             }
 
@@ -56,12 +57,25 @@ struct ServerAdvancedSettingsView: View {
                         .frame(width: 90)
                         .disabled(isRunning)
                         .onChange(of: portText) { _, value in
-                            model.serverPinnedPort = UInt16(value) ?? 0
-                            model.persistSettingsDebounced()
+                            // A typo used to become 0, i.e. "automatic", with
+                            // the hint below confirming it as a choice. An
+                            // invalid string now changes nothing and says so.
+                            switch ServerPortInput.parse(value) {
+                            case .success(let port):
+                                portError = nil
+                                model.serverPinnedPort = port
+                                model.persistSettingsDebounced()
+                            case .failure(let error):
+                                portError = error.message
+                            }
                         }
-                    if model.serverPinnedPort == 0 {
-                        Text("automatic")
-                            .font(.system(size: 10))
+                    if let portError {
+                        Text(portError)
+                            .themedFont(points: 10)
+                            .foregroundStyle(.red)
+                    } else if model.serverPinnedPort == 0 {
+                        Text("automatic", bundle: .module)
+                            .themedFont(points: 10)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -97,13 +111,16 @@ struct ServerAdvancedSettingsView: View {
 
             field(
                 "Memory guard tier",
-                help: "Model load memory reservation tier (safe/balanced, strict, relaxed, off), matching CLI --memory-guard."
+                help: "How much of the machine a model may commit when it loads, matching CLI --load-guard. The same value as Settings > Models & Storage, where Custom takes a byte ceiling."
             ) {
+                // Built from the enum, not restated: a hardcoded four-entry
+                // list omitted `.custom`, so after choosing Custom in Models &
+                // Storage this picker rendered BLANK and any touch of it
+                // discarded the ceiling (swift/CLAUDE.md Gotcha 22).
                 Picker("", selection: $model.runtimeOptions.loadGuard) {
-                    Text("Safe / Balanced").tag(AppLoadGuardOption.balanced)
-                    Text("Relaxed (Default)").tag(AppLoadGuardOption.relaxed)
-                    Text("Strict").tag(AppLoadGuardOption.strict)
-                    Text("Off").tag(AppLoadGuardOption.off)
+                    ForEach(AppLoadGuardOption.allCases) { tier in
+                        Text(tier.menuLabel).tag(tier)
+                    }
                 }
                 .pickerStyle(.menu)
                 .frame(width: 200)
@@ -117,26 +134,31 @@ struct ServerAdvancedSettingsView: View {
                 "Default reasoning effort",
                 help: "Default reasoning effort for incoming requests that do not specify reasoning_effort, matching CLI --reasoning."
             ) {
-                Picker("", selection: $model.reasoning) {
-                    Text("Off (Fastest)").tag(GenerateOptions.Reasoning.off)
-                    Text("Low").tag(GenerateOptions.Reasoning.low)
-                    Text("Medium (Balanced)").tag(GenerateOptions.Reasoning.medium)
-                    Text("High").tag(GenerateOptions.Reasoning.high)
-                    Text("Extra High (Max Thorough)").tag(GenerateOptions.Reasoning.xhigh)
+                // Same binding and same option source as the Engine pane.
+                // Binding `$model.reasoning` directly skipped `setReasoning`,
+                // so the per-model memory (state#96) was never written from
+                // here, and hardcoding all five levels offered ones the loaded
+                // checkpoint refuses (swift/CLAUDE.md Gotcha 9).
+                Picker("", selection: Binding(
+                    get: { model.reasoning },
+                    set: { model.setReasoning($0) }
+                )) {
+                    ForEach(model.session == nil
+                            ? GenerateOptions.Reasoning.allCases
+                            : model.availableReasoningLevels) { level in
+                        Text(model.reasoningLabel(for: level)).tag(level)
+                    }
                 }
                 .pickerStyle(.menu)
                 .frame(width: 220)
                 .disabled(isRunning)
-                .onChange(of: model.reasoning) { _, _ in
-                    model.persistSettingsDebounced()
-                }
             }
 
             Divider()
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("What this server does not do")
-                    .font(.system(size: 11, weight: .medium))
+                Text("What this server does not do", bundle: .module)
+                    .themedFont(points: 11, weight: .medium)
                 // Stated rather than left to be discovered. Each of these is
                 // a thing somebody will look for, and the honest answer is
                 // cheaper than the search.
@@ -155,18 +177,18 @@ struct ServerAdvancedSettingsView: View {
         _ label: String, help: String, @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.system(size: 11, weight: .medium))
+            Text(label).themedFont(points: 11, weight: .medium)
             content()
             Text(help)
-                .font(.system(size: 10))
+                .themedFont(points: 10)
                 .foregroundStyle(.secondary)
         }
     }
 
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            Text("-").font(.system(size: 10)).foregroundStyle(.secondary)
-            Text(text).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text("-", bundle: .module).themedFont(points: 10).foregroundStyle(.secondary)
+            Text(text).themedFont(points: 10).foregroundStyle(.secondary)
         }
     }
 }

@@ -36,6 +36,10 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
     /// existed, which -- with the policy above -- is not guaranteed at quit.
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
+            // Before the coordinator: the fan restore must not depend on the
+            // view tree having set `onTerminate`, and a hold left pinned
+            // outlives the process (FanController's header).
+            FanController.shared.restoreOnQuitIfNeeded()
             AppShutdownCoordinator.shared.onTerminate?()
         }
     }
@@ -58,7 +62,6 @@ struct TurboSparkApp: App {
         Window("TurboSpark", id: "main") {
             RootView(model: model)
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
-                .dynamicTypeSize(appearanceManager.textSize.dynamicTypeSize)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
         }
@@ -87,6 +90,13 @@ struct TurboSparkApp: App {
                     model.activeSection = .modelHub
                 }
                 .keyboardShortcut("4", modifiers: .command)
+
+                // The rail's tooltip had advertised this since the section
+                // was appended (`AppSection.shortcutKey`), with nothing bound.
+                Button("Server") {
+                    model.activeSection = .server
+                }
+                .keyboardShortcut("5", modifiers: .command)
 
                 Divider()
 
@@ -241,7 +251,6 @@ struct TurboSparkApp: App {
             AppSettingsView(model: model)
                 .appThemed()
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
-                .dynamicTypeSize(appearanceManager.textSize.dynamicTypeSize)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
         }
@@ -251,7 +260,12 @@ struct TurboSparkApp: App {
             systemImage: model.server != nil ? "bolt.fill" : "bolt",
             isInserted: $model.showMenuBarItem
         ) {
+            // A THIRD scene: the same reason the Settings scene above injects
+            // its own theme applies here, and the menu bar's own text and
+            // icons were reading `ResolvedAppTheme.fallback` for the life of
+            // the feature (docs/SWIFT_SETTINGS_AUDIT.md item 7).
             ServerMenuBarView(model: model)
+                .appThemed()
         }
     }
 }

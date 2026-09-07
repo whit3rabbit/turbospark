@@ -16,16 +16,16 @@ struct ProjectMcpServerRowView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: "server.rack")
-                    .font(.headline)
+                    .themedFont(.base, weight: .semibold)
                     .foregroundStyle(server.isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(server.name)
-                            .font(.headline)
+                            .themedFont(.base, weight: .semibold)
                         if let src = server.sourcePath {
                             Text(URL(fileURLWithPath: src).lastPathComponent)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(Color.secondary.opacity(0.12))
@@ -33,7 +33,7 @@ struct ProjectMcpServerRowView: View {
                         }
                     }
                     Text(server.commandSummary)
-                        .font(.caption.monospaced())
+                        .themedCode(.small)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -50,7 +50,7 @@ struct ProjectMcpServerRowView: View {
                                 .frame(width: 16, height: 16)
                         } else {
                             Image(systemName: "bolt.fill")
-                                .font(.caption)
+                                .themedFont(.small)
                         }
                     }
                     .buttonStyle(.borderless)
@@ -60,7 +60,7 @@ struct ProjectMcpServerRowView: View {
                         onEdit()
                     } label: {
                         Image(systemName: "gearshape")
-                            .font(.caption)
+                            .themedFont(.small)
                     }
                     .buttonStyle(.borderless)
                     .help("Edit server settings")
@@ -86,7 +86,7 @@ struct ProjectMcpServerRowView: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis")
-                            .font(.caption)
+                            .themedFont(.small)
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
@@ -97,7 +97,7 @@ struct ProjectMcpServerRowView: View {
 
             if let toast = testResultToast, toast.id == server.id {
                 Text(toast.message)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(toast.isError ? .red : .green)
                     .padding(6)
                     .background(toast.isError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
@@ -110,9 +110,9 @@ struct ProjectMcpServerRowView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.caption2)
+                            .themedFont(.tiny)
                         Text(isExpanded ? "Hide Discovered Tools" : "Show Discovered Tools (\(server.discoveredTools.count))")
-                            .font(.caption2.weight(.medium))
+                            .themedFont(.tiny, weight: .medium)
                     }
                     .foregroundStyle(.secondary)
                 }
@@ -123,14 +123,14 @@ struct ProjectMcpServerRowView: View {
                         ForEach(server.discoveredTools) { tool in
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: "wrench.and.screwdriver")
-                                    .font(.caption2)
+                                    .themedFont(.tiny)
                                     .foregroundStyle(TurboSparkTheme.accentColor)
                                     .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(tool.name)
-                                        .font(.caption.monospaced().weight(.semibold))
+                                        .themedCode(.small, weight: .semibold)
                                     Text(tool.description)
-                                        .font(.caption2)
+                                        .themedFont(.tiny)
                                         .foregroundStyle(.secondary)
                                 }
                             }

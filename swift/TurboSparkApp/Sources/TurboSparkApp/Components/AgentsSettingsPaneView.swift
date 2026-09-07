@@ -78,7 +78,7 @@ public struct AgentsSettingsPaneView: View {
                         "This project overrides your own \(shadowed.joined(separator: ", ")).",
                         systemImage: "arrow.triangle.branch"
                     )
-                    .font(.caption)
+                    .themedFont(.small)
                 }
                 if !constrained.isEmpty {
                     Label(
@@ -86,7 +86,7 @@ public struct AgentsSettingsPaneView: View {
                             + "held to its tool limits.",
                         systemImage: "lock.shield"
                     )
-                    .font(.caption)
+                    .themedFont(.small)
                 }
             }
             .foregroundStyle(.secondary)
@@ -131,10 +131,10 @@ public struct AgentsSettingsPaneView: View {
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "person.2.badge.gearshape")
-                                .font(.system(size: 36))
+                                .themedFont(points: 36)
                                 .foregroundStyle(.tertiary)
-                            Text("Select an agent to inspect system instructions and capabilities.")
-                                .font(.callout)
+                            Text("Select an agent to inspect system instructions and capabilities.", bundle: .module)
+                                .themedFont(.base)
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -201,14 +201,14 @@ public struct AgentsSettingsPaneView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text(agent.displayName)
-                                .font(.headline)
+                                .themedFont(.base, weight: .semibold)
                                 .lineLimit(1)
                             Spacer()
                             badgeView(text: agent.scope.label, color: scopeColor(agent.scope))
                         }
 
                         Text(agent.agentDescription)
-                            .font(.caption)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
@@ -230,14 +230,14 @@ public struct AgentsSettingsPaneView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 8) {
                             Text(agent.displayName)
-                                .font(.title2.bold())
+                                .themedFont(.title2, weight: .bold)
 
                             badgeView(text: agent.scope.label, color: scopeColor(agent.scope))
                             badgeView(text: agent.sourceAgent.displayName, color: .indigo)
                         }
 
                         Text(agent.agentDescription)
-                            .font(.body)
+                            .themedFont(.base)
                             .foregroundStyle(.secondary)
                     }
 
@@ -254,51 +254,48 @@ public struct AgentsSettingsPaneView: View {
 
                 // Configuration metadata
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Configuration")
-                        .font(.headline)
+                    Text("Configuration", bundle: .module)
+                        .themedFont(.base, weight: .semibold)
 
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                         GridRow {
-                            Text("Agent Identifier:")
+                            Text("Agent Identifier:", bundle: .module)
                                 .foregroundStyle(.secondary)
-                            Text("`\(agent.name)`")
-                                .font(.system(.body, design: .monospaced))
+                            Text("`\(agent.name)`", bundle: .module)
+                                .themedCode(.base)
                         }
                         GridRow {
-                            Text("Max Turns:")
+                            Text("Max Turns:", bundle: .module)
                                 .foregroundStyle(.secondary)
-                            Text("\(agent.maxTurns)")
+                            Text("\(agent.maxTurns)", bundle: .module)
                         }
-                        if let model = agent.model {
-                            GridRow {
-                                Text("Model Override:")
-                                    .foregroundStyle(.secondary)
-                                Text(model)
-                            }
-                        }
+                        // No "Model Override" row: `agent.model` is parsed
+                        // and read by nothing, a subagent runs on whatever is
+                        // loaded, and the row sat between two that ARE
+                        // enforced (`docs/SWIFT_SETTINGS_AUDIT.md`).
                         if let disallowed = agent.disallowedTools, !disallowed.isEmpty {
                             GridRow {
-                                Text("Disallowed Tools:")
+                                Text("Disallowed Tools:", bundle: .module)
                                     .foregroundStyle(.secondary)
                                 Text(disallowed.joined(separator: ", "))
-                                    .font(.caption)
+                                    .themedFont(.small)
                                     .foregroundStyle(.red)
                             }
                         }
                         if let allowed = agent.tools, !allowed.isEmpty {
                             GridRow {
-                                Text("Allowed Tools:")
+                                Text("Allowed Tools:", bundle: .module)
                                     .foregroundStyle(.secondary)
                                 Text(allowed.joined(separator: ", "))
-                                    .font(.caption)
+                                    .themedFont(.small)
                             }
                         }
                         if let path = agent.filePath {
                             GridRow {
-                                Text("File Location:")
+                                Text("File Location:", bundle: .module)
                                     .foregroundStyle(.secondary)
                                 Text(path)
-                                    .font(.caption)
+                                    .themedFont(.small)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                             }
@@ -310,12 +307,12 @@ public struct AgentsSettingsPaneView: View {
 
                 // System Prompt / Instructions
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("System Instructions")
-                        .font(.headline)
+                    Text("System Instructions", bundle: .module)
+                        .themedFont(.base, weight: .semibold)
 
                     ScrollView(.horizontal, showsIndicators: false) {
                         Text(agent.systemPrompt)
-                            .font(.system(.caption, design: .monospaced))
+                            .themedCode(.small)
                             .textSelection(.enabled)
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -323,17 +320,21 @@ public struct AgentsSettingsPaneView: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
                 }
 
-                // REPL Usage hint
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("REPL Chat Invocation")
-                        .font(.subheadline.bold())
-                    Text("You can invoke this subagent in chat or via slash command with clean context isolation:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("`/\(agent.name) <task description>`")
-                        .font(.system(.caption, design: .monospaced))
-                        .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                // REPL Usage hint. Only for an ENABLED agent: the slash
+                // command refuses a disabled one (state#93), so the hint
+                // would advertise a command that fails.
+                if agent.isEnabled {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("REPL Chat Invocation", bundle: .module)
+                            .themedFont(.small, weight: .bold)
+                        Text("You can invoke this subagent in chat or via slash command with clean context isolation:", bundle: .module)
+                            .themedFont(.small)
+                            .foregroundStyle(.secondary)
+                        Text("`/\(agent.name) <task description>`", bundle: .module)
+                            .themedCode(.small)
+                            .padding(8)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                    }
                 }
             }
             .padding(24)
@@ -345,12 +346,12 @@ public struct AgentsSettingsPaneView: View {
     private var emptyStateView: some View {
         VStack(spacing: 12) {
             Image(systemName: "person.2.badge.gearshape")
-                .font(.system(size: 44))
+                .themedFont(points: 44)
                 .foregroundStyle(.tertiary)
-            Text("No Agents Found")
-                .font(.title3.bold())
-            Text("No agent definitions match the selected scope filter.")
-                .font(.callout)
+            Text("No Agents Found", bundle: .module)
+                .themedFont(.title3, weight: .bold)
+            Text("No agent definitions match the selected scope filter.", bundle: .module)
+                .themedFont(.base)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -360,7 +361,7 @@ public struct AgentsSettingsPaneView: View {
 
     private func badgeView(text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium))
+            .themedFont(points: 10, weight: .medium)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.15)))

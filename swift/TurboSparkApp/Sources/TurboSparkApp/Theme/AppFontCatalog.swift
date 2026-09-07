@@ -159,10 +159,23 @@ public enum AppFontCatalog {
     }
 
     /// The families macOS reports as installed, including any this process
-    /// registered. Call after `AppFontRegistrar.registerBundledFonts()`.
+    /// registered.
+    ///
+    /// MEMOIZED, because `ResolvedAppTheme.resolve` calls this from
+    /// `AppThemeInjector`'s body, which `RootView` re-evaluates once per
+    /// streamed token (swift/CLAUDE.md Gotcha 16), and enumerating every
+    /// installed family that often made the Appearance pane and decode both
+    /// feel sluggish. The cost of the cache: a font installed while the app
+    /// runs appears in the pickers after a relaunch.
     @MainActor
     public static func installedFamilies() -> Set<String> {
+        if let cachedInstalledFamilies { return cachedInstalledFamilies }
         AppFontRegistrar.registerBundledFonts()
-        return Set(NSFontManager.shared.availableFontFamilies)
+        let families = Set(NSFontManager.shared.availableFontFamilies)
+        cachedInstalledFamilies = families
+        return families
     }
+
+    @MainActor
+    private static var cachedInstalledFamilies: Set<String>?
 }

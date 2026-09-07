@@ -4,6 +4,7 @@ import TurboSpark
 /// Settings pane for engine configuration, sampling parameters, reasoning level, guardrails, and in-process server.
 struct EngineSettingsPaneView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var fans: FanController = .shared
 
     /// **FIVE PROPERTIES RATHER THAN ONE EXPRESSION.** A `Form` holding
     /// all five `Section`s inline is ONE expression to the type checker,
@@ -19,6 +20,7 @@ struct EngineSettingsPaneView: View {
             systemPromptSection
             generationDefaultsSection
             advancedGenerationSection
+            coolingSection
             reasoningEffortSection
             guardrailsSection
             speculationSection
@@ -34,7 +36,7 @@ struct EngineSettingsPaneView: View {
         Section("Default System Prompt") {
             VStack(alignment: .leading, spacing: 6) {
                 TextEditor(text: $model.defaultSystemPrompt)
-                    .font(.system(.body, design: .monospaced))
+                    .themedCode(.base)
                     .frame(minHeight: 100)
                     .onChange(of: model.defaultSystemPrompt) { _, _ in
                         model.persistSettingsDebounced()
@@ -44,10 +46,10 @@ struct EngineSettingsPaneView: View {
                     + "project rules. A chat with its own system prompt uses that instead. "
                     + "Leave empty for none."
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
-                Text("\(model.defaultSystemPrompt.count) characters")
-                    .font(.caption)
+                Text("\(model.defaultSystemPrompt.count) characters", bundle: .module)
+                    .themedFont(.small)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
@@ -57,7 +59,7 @@ struct EngineSettingsPaneView: View {
     private var generationDefaultsSection: some View {
         Section("Generation Defaults") {
             HStack {
-                Text("Temperature")
+                Text("Temperature", bundle: .module)
                 Spacer()
                 Slider(value: $model.temperature, in: 0.0...1.5, step: 0.05)
                     .frame(width: 160)
@@ -70,7 +72,7 @@ struct EngineSettingsPaneView: View {
             }
 
             HStack {
-                Text("Top-P Sampling")
+                Text("Top-P Sampling", bundle: .module)
                 Spacer()
                 Toggle("", isOn: $model.topPEnabled)
                     .labelsHidden()
@@ -99,35 +101,37 @@ struct EngineSettingsPaneView: View {
     private var advancedGenerationSection: some View {
         Section("Advanced Generation") {
             HStack {
-                Text("Context Window")
+                Text("Context Window", bundle: .module)
                 Spacer()
                 TextField("auto", value: $model.maxContextTokens, format: .number.grouping(.never))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                     .onChange(of: model.maxContextTokens) { _, _ in
                         model.persistSettingsDebounced()
                     }
                 Text(model.maxContextTokens == 0 ? "auto" : "tokens")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .leading)
             }
 
             HStack {
-                Text("Max New Tokens")
+                Text("Max New Tokens", bundle: .module)
                 Spacer()
                 TextField("2048", value: $model.maxNewTokens, format: .number.grouping(.never))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                     .onChange(of: model.maxNewTokens) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("")
+                Text("", bundle: .module)
                     .frame(width: 44)
             }
 
             HStack {
-                Text("Top-K Sampling")
+                Text("Top-K Sampling", bundle: .module)
                 Spacer()
                 Toggle("", isOn: $model.topKEnabled)
                     .labelsHidden()
@@ -135,18 +139,19 @@ struct EngineSettingsPaneView: View {
                         model.persistSettingsDebounced()
                     }
                 TextField("64", value: $model.topK, format: .number.grouping(.never))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                     .disabled(!model.topKEnabled)
                     .onChange(of: model.topK) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("")
+                Text("", bundle: .module)
                     .frame(width: 44)
             }
 
             HStack {
-                Text("Repetition Penalty")
+                Text("Repetition Penalty", bundle: .module)
                 Spacer()
                 Toggle("", isOn: $model.repetitionPenaltyEnabled)
                     .labelsHidden()
@@ -154,18 +159,19 @@ struct EngineSettingsPaneView: View {
                         model.persistSettingsDebounced()
                     }
                 TextField("1.0", value: $model.repetitionPenalty, format: .number)
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                     .disabled(!model.repetitionPenaltyEnabled)
                     .onChange(of: model.repetitionPenalty) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("")
+                Text("", bundle: .module)
                     .frame(width: 44)
             }
 
             HStack {
-                Text("Fixed Seed")
+                Text("Fixed Seed", bundle: .module)
                 Spacer()
                 Toggle("", isOn: $model.seedEnabled)
                     .labelsHidden()
@@ -173,25 +179,27 @@ struct EngineSettingsPaneView: View {
                         model.persistSettingsDebounced()
                     }
                 TextField("0", value: $model.seed, format: .number.grouping(.never))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                     .disabled(!model.seedEnabled)
                     .onChange(of: model.seed) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("")
+                Text("", bundle: .module)
                     .frame(width: 44)
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Stop Sequences")
+                Text("Stop Sequences", bundle: .module)
                 TextField("comma-separated", text: $model.stopSequences)
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: model.stopSequences) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("Generation stops when the model emits any of these comma-separated strings.")
-                    .font(.caption)
+                Text("Generation stops when the model emits any of these comma-separated strings.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
 
@@ -206,16 +214,17 @@ struct EngineSettingsPaneView: View {
             }
 
             HStack {
-                Text("Output Rate Cap")
+                Text("Output Rate Cap", bundle: .module)
                 Spacer()
                 TextField("Uncapped", value: $model.runtimeOptions.maxTokensPerSec, format: .number)
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                     .onChange(of: model.runtimeOptions.maxTokensPerSec) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("tok/s")
-                    .font(.caption)
+                Text("tok/s", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .leading)
             }
@@ -230,9 +239,59 @@ struct EngineSettingsPaneView: View {
                 model.persistSettingsDebounced()
             }
 
-            Text("Context 0 means the checkpoint's trained context, capped by memory. These mirror the Inspector's engine options and edit the same values.")
-                .font(.caption)
+            // `.labelsHidden()` on every TextField above is load-bearing: on macOS a
+            // TextField's title is a VISIBLE LABEL rather than a placeholder
+            // (swift/CLAUDE.md Gotcha 23), and this pane reintroduced the exact
+            // "Uncapped" clipping the Inspector had already fixed.
+            Text("Context 0 means the checkpoint's trained context, capped by memory. Stop sequences, power profile, output rate cap and memory load guard also appear in the Inspector and edit the same values.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var coolingSection: some View {
+        Section("Cooling & Fan Control") {
+            if fans.isAvailable {
+                Toggle(isOn: Binding(
+                    get: { fans.keepFansPinnedOnQuit },
+                    set: { newValue in
+                        fans.keepFansPinnedOnQuit = newValue
+                        model.keepFansPinnedOnQuit = newValue
+                        model.persistSettingsDebounced()
+                    }
+                )) {
+                    Text("Keep fans pinned when TurboSpark quits", bundle: .module)
+                }
+
+                Text(
+                    "ThermalForge is active. Fan speed can be monitored and pinned to maximum "
+                        + "from the status bar fan readout."
+                )
+                .themedFont(.small)
+                .foregroundStyle(.secondary)
+            } else {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("ThermalForge Not Installed", bundle: .module)
+                            .themedFont(.base, weight: .medium)
+                        Text(
+                            "Fan speed cannot be controlled without ThermalForge installed. "
+                                + "Install ThermalForge to monitor and pin fan speeds for sustained performance."
+                        )
+                        .themedFont(.small)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Link(destination: URL(string: "https://github.com/ProducerGuy/ThermalForge")!) {
+                        HStack(spacing: 4) {
+                            Text("ThermalForge", bundle: .module)
+                            Image(systemName: "arrow.up.forward.app")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
         }
     }
 
@@ -254,8 +313,8 @@ struct EngineSettingsPaneView: View {
             }
             .pickerStyle(.menu)
 
-            Text("Controls internal chain-of-thought depth. The accepted levels belong to each checkpoint's own chat template, not to this app: Qwen 3.8 tops out at Extra High and refuses High, while gpt-oss is the other way round. A level a model cannot express is clamped to its nearest one on load, and your choice is remembered per model.")
-                .font(.caption)
+            Text("Controls internal chain-of-thought depth. The accepted levels belong to each checkpoint's own chat template, not to this app: Qwen 3.8 tops out at Extra High and refuses High, while gpt-oss is the other way round. A level a model cannot express is clamped to its nearest one on load, and your choice is remembered per model.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
         }
     }
@@ -273,7 +332,7 @@ struct EngineSettingsPaneView: View {
             }
 
             Text(model.guardrailsMode.descriptionText)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
         }
     }
@@ -330,19 +389,19 @@ struct EngineSettingsPaneView: View {
                 let rows = ServerStatusRows(info: info, guardrails: model.serverStartedGuardrails)
 
                 HStack {
-                    Text("Address")
+                    Text("Address", bundle: .module)
                     Spacer()
                     Text(rows.address)
-                        .font(.caption.monospaced())
+                        .themedCode(.small)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
 
                 HStack {
-                    Text("Auth")
+                    Text("Auth", bundle: .module)
                     Spacer()
                     Text(rows.authLabel)
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
                 }
             }
@@ -358,7 +417,7 @@ struct EngineSettingsPaneView: View {
                     + "and NOT off this machine: without an API key, any process running "
                     + "here can reach it."
             )
-            .font(.caption)
+            .themedFont(.small)
             .foregroundStyle(.secondary)
         }
     }

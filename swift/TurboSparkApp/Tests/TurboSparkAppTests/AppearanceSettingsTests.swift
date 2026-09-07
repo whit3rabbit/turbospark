@@ -513,11 +513,11 @@ final class AppearanceSettingsTests: XCTestCase {
 
         let viewSystem = ChatMessageMarkdownView(text)
             .environment(\.appTheme, ResolvedAppTheme(
-                isDark: false, accent: .black, background: .white, foreground: .black, contrast: 50,
+                isDark: false, accent: .black, foreground: .black, contrast: 50,
                 uiFontDescriptor: descSystem, codeFontDescriptor: codeDesc))
         let viewAvenir = ChatMessageMarkdownView(text)
             .environment(\.appTheme, ResolvedAppTheme(
-                isDark: false, accent: .black, background: .white, foreground: .black, contrast: 50,
+                isDark: false, accent: .black, foreground: .black, contrast: 50,
                 uiFontDescriptor: descAvenir, codeFontDescriptor: codeDesc))
 
         let hostSystem = NSHostingView(rootView: viewSystem)

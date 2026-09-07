@@ -89,7 +89,9 @@ public enum SubagentRunner {
         // one at a time, and the run burned its turn budget on calls that
         // were never available. `tools(for:)` is the same slice the main
         // loop advertises.
-        let allTools = AppToolCatalog.tools(for: project?.agentType ?? .coder)
+        let allTools = AppToolCatalog.tools(
+            for: project?.agentType ?? .coder,
+            projectURL: project?.rootDirectoryURL)
         let allowed = allTools.filter { agent.isToolAllowed($0.function.name) }
 
         if !allowed.isEmpty {
@@ -167,6 +169,7 @@ public enum SubagentRunner {
         depth: Int = 0,
         maxTurnsOverride: Int? = nil,
         userSystemPrompt: String = "",
+        samplingOptions: GenerateOptions = GenerateOptions(),
         progress: (@Sendable (SubagentProgressEvent) async -> Void)? = nil,
         taskDescription: String = ""
     ) async -> SubagentRunResult {
@@ -190,7 +193,8 @@ public enum SubagentRunner {
         let bodyResult = await runBody(
             agent: agent, taskPrompt: taskPrompt, session: session, project: project,
             chatID: chatID, depth: depth, maxTurnsOverride: maxTurnsOverride,
-            userSystemPrompt: userSystemPrompt, progress: progress, runID: runID)
+            userSystemPrompt: userSystemPrompt, samplingOptions: samplingOptions,
+            progress: progress, runID: runID)
         var result = bodyResult
         result.runID = runID
 
@@ -219,8 +223,10 @@ public enum SubagentRunner {
     /// answer becomes the explicit no-output sentence rather than silence,
     /// which a model would read as "the tool produced nothing".
     public static func toolOutput(for result: SubagentRunResult, agentName: String) -> String {
-        let body = result.finalResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (body.isEmpty ? "(Subagent completed but returned no output.)" : body)
+        let rawBody = result.finalResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeBody = escapingWrapperTags(["subagent_meta"], in: rawBody)
+        let body = safeBody.isEmpty ? "(Subagent completed but returned no output.)" : safeBody
+        return body
             + "\n\n<subagent_meta>\n"
             + "agent: \(agentName)\n"
             + "id: \(result.runID)\n"
@@ -241,6 +247,7 @@ public enum SubagentRunner {
         depth: Int = 0,
         maxTurnsOverride: Int? = nil,
         userSystemPrompt: String = "",
+        samplingOptions: GenerateOptions = GenerateOptions(),
         progress: (@Sendable (SubagentProgressEvent) async -> Void)? = nil,
         runID: String
     ) async -> SubagentRunResult {
@@ -303,8 +310,14 @@ public enum SubagentRunner {
             currentTurn += 1
             await progress?(.turnStarted(number: currentTurn))
 
-            var options = GenerateOptions()
-            options.temperature = 0.2
+            // The caller's sampling preferences (temperature, top-k, top-p,
+            // repetition penalty, seed, stop sequences), which every subagent
+            // turn ignored until this parameter existed
+            // (`docs/SWIFT_SETTINGS_AUDIT.md`). `maxNewTokens` is still this
+            // run's OWN turn budget rather than the interactive chat's reply
+            // length: a subagent runs many turns of tool use, which is a
+            // different quantity than one user-facing answer.
+            var options = samplingOptions
             options.maxNewTokens = 2048
 
             var generatedText = ""
@@ -343,13 +356,40 @@ public enum SubagentRunner {
                 droppedTurns += fitted.removedTurnCount
                 for try await event in session.generate(fitted.retained, options: options) {
                     try Task.checkCancellation()
-                    if case .content(let chunk) = event {
+                    switch event {
+                    case .content(let chunk):
                         generatedText += chunk
                         await progress?(.content(chunk))
+                    case .reasoning(let chunk):
+                        await progress?(.content(chunk))
+                    default:
+                        break
                     }
                 }
+            } catch is CancellationError {
+                let duration = Date().timeIntervalSince(startTime)
+                return SubagentRunResult(
+                    agentName: agent.name,
+                    status: "cancelled",
+                    finalResponse: finalContent.isEmpty
+                        ? "Subagent run was cancelled." : finalContent,
+                    totalTurns: currentTurn,
+                    totalToolCalls: totalToolCalls,
+                    durationSeconds: duration
+                )
             } catch {
                 let duration = Date().timeIntervalSince(startTime)
+                if Task.isCancelled {
+                    return SubagentRunResult(
+                        agentName: agent.name,
+                        status: "cancelled",
+                        finalResponse: finalContent.isEmpty
+                            ? "Subagent run was cancelled." : finalContent,
+                        totalTurns: currentTurn,
+                        totalToolCalls: totalToolCalls,
+                        durationSeconds: duration
+                    )
+                }
                 // **AN ERROR KEEPS THE PROGRESS IT HAD** (Claude Code's
                 // partial-result rule). `finalContent` is the last COMPLETED
                 // turn's text; discarding it reported an error that looked
@@ -405,18 +445,42 @@ public enum SubagentRunner {
 
             // Execute parsed tool calls
             for call in parsedCalls {
+                if Task.isCancelled { break }
                 totalToolCalls += 1
                 await progress?(.toolStarted(name: call.name, summary: call.argumentsSummary))
                 let observationMessage = await observation(
                     for: call, agent: agent, project: project, chatID: chatID, depth: depth)
                 await progress?(.toolFinished(
                     name: call.name, summary: call.argumentsSummary,
-                    isError: observationMessage.content.contains("<tool_error>")))
+                    isError: observationMessage.content.hasPrefix("<tool_error>")))
                 history.append(observationMessage)
+            }
+
+            if Task.isCancelled {
+                return SubagentRunResult(
+                    agentName: agent.name,
+                    status: "cancelled",
+                    finalResponse: finalContent.isEmpty
+                        ? "Subagent run was cancelled." : finalContent,
+                    totalTurns: currentTurn,
+                    totalToolCalls: totalToolCalls,
+                    durationSeconds: Date().timeIntervalSince(startTime)
+                )
             }
         }
 
         let totalDuration = Date().timeIntervalSince(startTime)
+        if Task.isCancelled {
+            return SubagentRunResult(
+                agentName: agent.name,
+                status: "cancelled",
+                finalResponse: finalContent.isEmpty
+                    ? "Subagent run was cancelled." : finalContent,
+                totalTurns: currentTurn,
+                totalToolCalls: totalToolCalls,
+                durationSeconds: totalDuration
+            )
+        }
         // **A RUN THAT RAN OUT OF TURNS DID NOT COMPLETE.** `finalContent` here
         // is the last turn's raw text, which on this exit is a tool call the
         // loop never got to execute -- reported as `completed` it reaches the
@@ -450,7 +514,7 @@ public enum SubagentRunner {
 
     /// The tools available to this agent under the turn's project and MCP environment.
     public static func availableTools(for agent: AppAgentDefinition, project: AppProject?) -> [OpenAITool] {
-        let baseTools = AppToolCatalog.tools(for: project?.agentType ?? .coder)
+        let baseTools = AppToolCatalog.tools(for: project?.agentType ?? .coder, projectURL: project?.rootDirectoryURL)
             .filter { agent.isToolAllowed($0.function.name) }
         guard let project else { return baseTools }
         let servers = AppToolCatalogMcp.visibleServers(

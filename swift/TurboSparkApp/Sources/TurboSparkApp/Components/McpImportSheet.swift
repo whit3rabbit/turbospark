@@ -69,10 +69,10 @@ public struct McpImportSheet: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Add MCP Marketplace")
-                    .font(.headline)
-                Text("Install servers from a catalog published in a Git repository or a local folder.")
-                    .font(.caption)
+                Text("Add MCP Marketplace", bundle: .module)
+                    .themedFont(.base, weight: .semibold)
+                Text("Install servers from a catalog published in a Git repository or a local folder.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -86,19 +86,19 @@ public struct McpImportSheet: View {
 
     private var scopeBar: some View {
         HStack(spacing: 10) {
-            Text("Install Into:")
-                .font(.caption.weight(.semibold))
+            Text("Install Into:", bundle: .module)
+                .themedFont(.small, weight: .semibold)
             Picker("Scope", selection: $installToProjectScope) {
-                Text("All Projects (Global)").tag(false)
-                Text("This Project Only").tag(true)
+                Text("All Projects (Global)", bundle: .module).tag(false)
+                Text("This Project Only", bundle: .module).tag(true)
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
             .disabled(model.selectedProject == nil)
             Spacer()
             if model.selectedProject == nil {
-                Text("Open a project to install into one.")
-                    .font(.caption2)
+                Text("Open a project to install into one.", bundle: .module)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
         }
@@ -145,30 +145,30 @@ public struct McpImportSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Text(manifest.name)
-                    .font(.subheadline.weight(.semibold))
+                    .themedFont(.small, weight: .semibold)
                 if let owner = manifest.owner {
                     Text(owner)
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.12))
                         .clipShape(Capsule())
                 }
                 Spacer()
-                Text("\(manifest.servers.count) servers")
-                    .font(.caption)
+                Text("\(manifest.servers.count) servers", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
 
             if let description = manifest.manifestDescription {
                 Text(description)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
 
             if manifest.servers.isEmpty {
-                Text("This catalog lists no servers.")
-                    .font(.caption)
+                Text("This catalog lists no servers.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(manifest.servers) { entry in
@@ -184,15 +184,15 @@ public struct McpImportSheet: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(entry.name)
-                            .font(.callout.weight(.semibold))
+                            .themedFont(.base, weight: .semibold)
                         if let version = entry.version {
                             Text(version)
-                                .font(.caption2.monospaced())
+                                .themedCode(.tiny)
                                 .foregroundStyle(.secondary)
                         }
                         if let category = entry.category {
                             Text(category)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(TurboSparkTheme.accentColor.opacity(0.12))
@@ -201,7 +201,7 @@ public struct McpImportSheet: View {
                     }
                     if !entry.entryDescription.isEmpty {
                         Text(entry.entryDescription)
-                            .font(.caption)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
                     }
                     // **THE COMMAND IS SHOWN BEFORE THE BUTTON, ON PURPOSE.**
@@ -209,7 +209,7 @@ public struct McpImportSheet: View {
                     // the user is approving is that command line, not a name in
                     // somebody else's repository.
                     Text(entry.commandSummary)
-                        .font(.caption2.monospaced())
+                        .themedCode(.tiny)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .padding(6)
@@ -223,7 +223,7 @@ public struct McpImportSheet: View {
 
             if let message = entryErrors[entry.id] {
                 Text(message)
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.red)
             }
         }
@@ -241,7 +241,7 @@ public struct McpImportSheet: View {
         Group {
             if installedNames.contains(entry.id) {
                 Label("Added", systemImage: "checkmark.circle.fill")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.green)
             } else {
                 Button("Install") {
@@ -255,10 +255,10 @@ public struct McpImportSheet: View {
     private func errorRow(_ message: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.orange)
             Text(message)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
         }
         .padding(8)

@@ -33,9 +33,9 @@ public struct HookEditorSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(existingHook == nil ? "New Lifecycle Hook" : "Edit Hook")
-                        .font(.headline)
-                    Text("Configure deterministic actions, guardrails, and lifecycle event handlers.")
-                        .font(.caption)
+                        .themedFont(.base, weight: .semibold)
+                    Text("Configure deterministic actions, guardrails, and lifecycle event handlers.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -43,7 +43,7 @@ public struct HookEditorSheet: View {
                     onDismiss()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
+                        .themedFont(.title3)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -58,8 +58,8 @@ public struct HookEditorSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Hook Name
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Hook Name")
-                            .font(.caption.weight(.semibold))
+                        Text("Hook Name", bundle: .module)
+                            .themedFont(.small, weight: .semibold)
                         TextField("e.g. Lint before tool use, Auto-format on edit...", text: $name)
                             .textFieldStyle(.roundedBorder)
                     }
@@ -67,8 +67,8 @@ public struct HookEditorSheet: View {
                     // Event & Type
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Lifecycle Event")
-                                .font(.caption.weight(.semibold))
+                            Text("Lifecycle Event", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             Picker("", selection: $event) {
                                 ForEach(AppHookEvent.allCases) { ev in
                                     Text(ev.displayName).tag(ev)
@@ -78,8 +78,8 @@ public struct HookEditorSheet: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Hook Type")
-                                .font(.caption.weight(.semibold))
+                            Text("Hook Type", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             Picker("", selection: $type) {
                                 ForEach(AppHookType.allCases) { t in
                                     Text(t.title).tag(t)
@@ -92,9 +92,9 @@ public struct HookEditorSheet: View {
                     // Command / URL / Prompt Text
                     VStack(alignment: .leading, spacing: 6) {
                         Text(type == .http ? "Webhook URL" : (type == .prompt ? "Evaluator Prompt" : "Shell Command or Script"))
-                            .font(.caption.weight(.semibold))
+                            .themedFont(.small, weight: .semibold)
                         TextEditor(text: $command)
-                            .font(.system(.body, design: .monospaced))
+                            .themedCode(.base)
                             .frame(minHeight: 90)
                             .padding(4)
                             .background(Color(nsColor: .controlBackgroundColor))
@@ -103,23 +103,23 @@ public struct HookEditorSheet: View {
                                 RoundedRectangle(cornerRadius: 6)
                                     .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
                             )
-                        Text("Payload is supplied via JSON over stdin. Exit code 2 blocks PreToolUse execution.")
-                            .font(.caption2)
+                        Text("Payload is supplied via JSON over stdin. Exit code 2 blocks PreToolUse execution.", bundle: .module)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                     }
 
                     // Matchers & Filters
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Tool Matcher (Optional)")
-                                .font(.caption.weight(.semibold))
+                            Text("Tool Matcher (Optional)", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             TextField("e.g. Write|Edit, Bash, *", text: $matcher)
                                 .textFieldStyle(.roundedBorder)
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("If Condition (Optional)")
-                                .font(.caption.weight(.semibold))
+                            Text("If Condition (Optional)", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             TextField("e.g. Bash(git *), Read(*.ts)", text: $ifCondition)
                                 .textFieldStyle(.roundedBorder)
                         }
@@ -129,8 +129,8 @@ public struct HookEditorSheet: View {
                     HStack(spacing: 12) {
                         if type == .command {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Shell")
-                                    .font(.caption.weight(.semibold))
+                                Text("Shell", bundle: .module)
+                                    .themedFont(.small, weight: .semibold)
                                 Picker("", selection: $shell) {
                                     ForEach(AppHookShell.allCases) { sh in
                                         Text(sh.rawValue).tag(sh)
@@ -141,19 +141,19 @@ public struct HookEditorSheet: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Timeout (Seconds)")
-                                .font(.caption.weight(.semibold))
+                            Text("Timeout (Seconds)", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             TextField("30", value: $timeoutSeconds, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
-                            Text("Hooks discovered from Claude Code config default to 600s when unset.")
-                                .font(.caption2)
+                            Text("Hooks discovered from Claude Code config default to 600s when unset.", bundle: .module)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.secondary)
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Status Message")
-                                .font(.caption.weight(.semibold))
+                            Text("Status Message", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                             TextField("e.g. Running pre-check...", text: $statusMessage)
                                 .textFieldStyle(.roundedBorder)
                         }
@@ -161,7 +161,7 @@ public struct HookEditorSheet: View {
 
                     // Async Toggle
                     Toggle("Run in background asynchronously (non-blocking)", isOn: $isAsync)
-                        .font(.subheadline)
+                        .themedFont(.small)
                         .padding(.top, 4)
                 }
                 .padding(20)

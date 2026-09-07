@@ -9,16 +9,16 @@ struct HardwareScanCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "memorychip")
-                    .font(.headline)
+                    .themedFont(.base, weight: .semibold)
                     .foregroundStyle(TurboSparkTheme.accentColor)
                     .help("Apple Silicon unified memory and hardware analysis")
                     .accessibilityHidden(true)
-                Text("Hardware & Memory Analysis")
-                    .font(.headline)
+                Text("Hardware & Memory Analysis", bundle: .module)
+                    .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Text("Detected")
-                    .font(.caption2.weight(.bold))
+                Text("Detected", bundle: .module)
+                    .themedFont(.tiny, weight: .bold)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.green.opacity(0.18), in: Capsule())
@@ -68,14 +68,14 @@ struct HardwareScanCard: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
                 Text(label)
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
             Text(value)
-                .font(.callout.weight(.semibold))
+                .themedFont(.base, weight: .semibold)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -88,17 +88,17 @@ struct MoESpotlightCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
-                    .font(.headline)
+                    .themedFont(.base, weight: .semibold)
                     .foregroundStyle(Color.purple)
                     .help("Mixture of Experts architecture details")
                     .accessibilityHidden(true)
-                Text("MoE (Mixture of Experts) Architecture Spotlight")
-                    .font(.subheadline.weight(.bold))
+                Text("MoE (Mixture of Experts) Architecture Spotlight", bundle: .module)
+                    .themedFont(.small, weight: .bold)
                     .foregroundStyle(.primary)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Text("RAM Saver")
-                    .font(.caption2.weight(.bold))
+                Text("RAM Saver", bundle: .module)
+                    .themedFont(.tiny, weight: .bold)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.purple.opacity(0.2), in: Capsule())
@@ -106,8 +106,8 @@ struct MoESpotlightCard: View {
                     .accessibilityHidden(true)
             }
 
-            Text("MoE models stream weights directly from fast NVMe storage and only cache active experts in **~2-4 GB RAM**. This delivers **26B-35B parameter intelligence** on Apple Silicon without exhausting memory.")
-                .font(.caption)
+            Text("MoE models stream weights directly from fast NVMe storage and only cache active experts in **~2-4 GB RAM**. This delivers **26B-35B parameter intelligence** on Apple Silicon without exhausting memory.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -139,11 +139,11 @@ struct MoESpotlightCard: View {
     private func featurePill(icon: String, text: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(Color.purple)
                 .accessibilityHidden(true)
             Text(text)
-                .font(.caption2.weight(.medium))
+                .themedFont(.tiny, weight: .medium)
                 .foregroundStyle(.primary)
         }
         .padding(.horizontal, 8)
@@ -162,7 +162,7 @@ struct ActiveInstallCard: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(model.installStageText ?? "Downloading model...")
-                        .font(.callout.weight(.semibold))
+                        .themedFont(.base, weight: .semibold)
                 }
                 Spacer()
                 Button("Cancel", action: model.cancelInstall)
@@ -181,12 +181,12 @@ struct ActiveInstallCard: View {
 
                 HStack {
                     if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {
-                        Text("\(MetricFormat.storage(downloaded)) of \(MetricFormat.storage(total))")
+                        Text("\(MetricFormat.storage(downloaded)) of \(MetricFormat.storage(total))", bundle: .module)
                     }
                     Spacer()
                     Text(MetricFormat.percent(fraction * 100))
                 }
-                .font(.caption.monospacedDigit())
+                .themedFont(.small).monospacedDigit()
                 .foregroundStyle(.secondary)
             }
         }

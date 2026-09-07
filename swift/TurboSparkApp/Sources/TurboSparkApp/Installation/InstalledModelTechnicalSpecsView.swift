@@ -10,52 +10,52 @@ struct InstalledModelTechnicalSpecsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Technical Specifications", systemImage: "info.circle")
-                .font(.subheadline.weight(.semibold))
+                .themedFont(.small, weight: .semibold)
 
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 GridRow {
-                    Text("Architecture").font(.caption).foregroundStyle(.secondary)
-                    Text(visuals.architectureType).font(.caption.weight(.medium))
+                    Text("Architecture", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
+                    Text(visuals.architectureType).themedFont(.small, weight: .medium)
                 }
                 GridRow {
-                    Text("Quantization").font(.caption).foregroundStyle(.secondary)
-                    Text(descriptor.quantFormat).font(.caption.weight(.medium))
+                    Text("Quantization", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
+                    Text(descriptor.quantFormat).themedFont(.small, weight: .medium)
                 }
                 GridRow {
-                    Text("Format & Package").font(.caption).foregroundStyle(.secondary)
-                    Text(descriptor.format.rawValue).font(.caption.weight(.medium))
+                    Text("Format & Package", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
+                    Text(descriptor.format.rawValue).themedFont(.small, weight: .medium)
                 }
                 if let ctx = descriptor.contextLimit {
                     GridRow {
-                        Text("Trained Context").font(.caption).foregroundStyle(.secondary)
-                        Text("\(ctx) tokens").font(.caption.monospacedDigit().weight(.medium))
+                        Text("Trained Context", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
+                        Text("\(ctx) tokens", bundle: .module).themedFont(.small, weight: .medium).monospacedDigit()
                     }
                 }
                 if let layers = descriptor.layerCount {
                     GridRow {
-                        Text("Layers").font(.caption).foregroundStyle(.secondary)
-                        Text("\(layers) layers").font(.caption.monospacedDigit().weight(.medium))
+                        Text("Layers", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
+                        Text("\(layers) layers", bundle: .module).themedFont(.small, weight: .medium).monospacedDigit()
                     }
                 }
                 if let hidden = descriptor.hiddenSize {
                     GridRow {
-                        Text("Hidden Dimension").font(.caption).foregroundStyle(.secondary)
-                        Text("\(hidden)").font(.caption.monospacedDigit().weight(.medium))
+                        Text("Hidden Dimension", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
+                        Text("\(hidden)", bundle: .module).themedFont(.small, weight: .medium).monospacedDigit()
                     }
                 }
                 if let vocab = descriptor.vocabSize {
                     GridRow {
-                        Text("Vocabulary Size").font(.caption).foregroundStyle(.secondary)
-                        Text("\(vocab)").font(.caption.monospacedDigit().weight(.medium))
+                        Text("Vocabulary Size", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
+                        Text("\(vocab)", bundle: .module).themedFont(.small, weight: .medium).monospacedDigit()
                     }
                 }
                 GridRow {
-                    Text("Disk Path").font(.caption).foregroundStyle(.secondary)
+                    Text("Disk Path", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
                     Button {
                         ModelStorageManager.revealInFinder(path: installedModel.path)
                     } label: {
                         Text(installedModel.path)
-                            .font(.caption.monospaced())
+                            .themedCode(.small)
                             .lineLimit(2)
                             .foregroundStyle(Color.accentColor)
                     }
@@ -67,8 +67,8 @@ struct InstalledModelTechnicalSpecsView: View {
                 }
                 if !installedModel.installedOn.isEmpty {
                     GridRow {
-                        Text("Installed On").font(.caption).foregroundStyle(.secondary)
-                        Text(installedModel.installedOn).font(.caption.weight(.medium))
+                        Text("Installed On", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
+                        Text(installedModel.installedOn).themedFont(.small, weight: .medium)
                     }
                 }
             }

@@ -29,10 +29,10 @@ struct MessageShareButton: View {
         ShareLink(item: text) {
             HStack(spacing: 4) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 11, weight: .medium))
+                    .themedFont(points: 11, weight: .medium)
                     .accessibilityHidden(true)
-                Text("Share")
-                    .font(.caption2.weight(.medium))
+                Text("Share", bundle: .module)
+                    .themedFont(.tiny, weight: .medium)
             }
             .foregroundStyle(Color.secondary)
             .padding(.horizontal, 7)
@@ -62,10 +62,10 @@ struct MessageSpeechButton: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isSpeakingThis ? "stop.fill" : "speaker.wave.2")
-                    .font(.system(size: 11, weight: .medium))
+                    .themedFont(points: 11, weight: .medium)
                     .accessibilityHidden(true)
                 Text(isSpeakingThis ? "Stop" : "Read")
-                    .font(.caption2.weight(.medium))
+                    .themedFont(.tiny, weight: .medium)
             }
             .foregroundStyle(isSpeakingThis ? TurboSparkTheme.accentColor : Color.secondary)
             .padding(.horizontal, 7)
@@ -90,11 +90,11 @@ struct MessageTimestampBadge: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: "clock")
-                .font(.system(size: 10, weight: .medium))
+                .themedFont(points: 10, weight: .medium)
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
             Text(isHovered ? MessageTimestampFormatter.standardString(for: date) : MessageTimestampFormatter.relativeString(for: date))
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -126,10 +126,10 @@ struct MessageCopyButton: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
+                    .themedFont(points: 11, weight: .medium)
                     .accessibilityHidden(true)
                 Text(isCopied ? "Copied" : "Copy")
-                    .font(.caption2.weight(.medium))
+                    .themedFont(.tiny, weight: .medium)
             }
             .foregroundStyle(isCopied ? TurboSparkTheme.accentColor : Color.secondary)
             .padding(.horizontal, 7)

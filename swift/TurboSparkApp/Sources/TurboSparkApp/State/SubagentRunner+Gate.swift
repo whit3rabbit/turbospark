@@ -50,7 +50,7 @@ extension SubagentRunner {
         // was started too deep; this catches the call that would start it,
         // and reports the reason to the model rather than letting it read a
         // failed subagent as a tool that broke.
-        if call.name.lowercased() == "agent" || call.name.lowercased() == "task" {
+        if AppModel.isAgentFamilyToolName(call.name) {
             guard depth < maxSubagentDepth else {
                 return errorObservation(
                     "Refused: subagents may nest at most \(maxSubagentDepth) deep and this one "

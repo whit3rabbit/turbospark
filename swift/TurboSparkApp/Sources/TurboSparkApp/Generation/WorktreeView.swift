@@ -83,7 +83,7 @@ struct WorktreeView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: tab.systemImage)
-                            .font(.caption2)
+                            .themedFont(.tiny)
                         Text(tab.title)
                             .font(theme.ui(points: 11.5, weight: worktree.activeTab == tab ? .semibold : .regular))
                     }
@@ -115,7 +115,7 @@ struct WorktreeView: View {
                     }
                 } label: {
                     Image(systemName: worktree.viewMode.systemImage)
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
@@ -131,13 +131,13 @@ struct WorktreeView: View {
             if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                 HStack(spacing: 4) {
                     if worktree.totalAdditions > 0 {
-                        Text("+\(worktree.totalAdditions)")
-                            .font(.caption2.monospacedDigit().weight(.semibold))
+                        Text("+\(worktree.totalAdditions)", bundle: .module)
+                            .themedFont(.tiny, weight: .semibold).monospacedDigit()
                             .foregroundStyle(.green)
                     }
                     if worktree.totalDeletions > 0 {
-                        Text("-\(worktree.totalDeletions)")
-                            .font(.caption2.monospacedDigit().weight(.semibold))
+                        Text("-\(worktree.totalDeletions)", bundle: .module)
+                            .themedFont(.tiny, weight: .semibold).monospacedDigit()
                             .foregroundStyle(.red)
                     }
                 }
@@ -154,7 +154,7 @@ struct WorktreeView: View {
                     }
                 } label: {
                     Image(systemName: "magnifyingglass")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(worktree.isSearchVisible ? TurboSparkTheme.accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
@@ -165,7 +165,7 @@ struct WorktreeView: View {
                 worktree.refresh()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .rotationEffect(worktree.isRefreshing ? .degrees(360) : .degrees(0))
                     .animation(
@@ -182,7 +182,7 @@ struct WorktreeView: View {
                 }
             } label: {
                 Image(systemName: worktree.isExpandedSplitMode ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(worktree.isExpandedSplitMode ? TurboSparkTheme.accentColor : .secondary)
             }
             .buttonStyle(.plain)
@@ -192,7 +192,7 @@ struct WorktreeView: View {
                 NotificationCenter.default.post(name: .toggleInspector, object: nil)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
@@ -209,7 +209,7 @@ struct WorktreeView: View {
                     worktree.setComparisonMode(.againstBranch(worktree.currentBranch))
                 } label: {
                     HStack {
-                        Text("All changes vs \(worktree.currentBranch)")
+                        Text("All changes vs \(worktree.currentBranch)", bundle: .module)
                         if case .againstBranch(let b) = worktree.comparisonMode, b == worktree.currentBranch {
                             Image(systemName: "checkmark")
                         }
@@ -220,7 +220,7 @@ struct WorktreeView: View {
                     worktree.setComparisonMode(.uncommitted)
                 } label: {
                     HStack {
-                        Text("Uncommitted changes")
+                        Text("Uncommitted changes", bundle: .module)
                         if case .uncommitted = worktree.comparisonMode {
                             Image(systemName: "checkmark")
                         }
@@ -235,7 +235,7 @@ struct WorktreeView: View {
                             Button {
                                 Task { _ = await worktree.switchBranch(to: branch) }
                             } label: {
-                                Text("Switch to \(branch)")
+                                Text("Switch to \(branch)", bundle: .module)
                             }
                         }
                     }
@@ -263,7 +263,7 @@ struct WorktreeView: View {
                         Button {
                             worktree.setComparisonMode(.commit(hash: commit.hash, summary: commit.summary))
                         } label: {
-                            Text("\(commit.shortHash): \(commit.summary)")
+                            Text("\(commit.shortHash): \(commit.summary)", bundle: .module)
                         }
                     }
                 }
@@ -276,7 +276,7 @@ struct WorktreeView: View {
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -294,12 +294,12 @@ struct WorktreeView: View {
 
     private var subtitleBar: some View {
         HStack {
-            Text("Files are collapsed for large diffs. Select a file to expand it.")
-                .font(.caption2)
+            Text("Files are collapsed for large diffs. Select a file to expand it.", bundle: .module)
+                .themedFont(.tiny)
                 .foregroundStyle(.tertiary)
             Spacer()
-            Text("\(worktree.filteredFiles.count) \(worktree.filteredFiles.count == 1 ? "file" : "files")")
-                .font(.caption2.monospacedDigit())
+            Text("\(worktree.filteredFiles.count) \(worktree.filteredFiles.count == 1 ? "file" : "files")", bundle: .module)
+                .themedFont(.tiny).monospacedDigit()
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
@@ -344,8 +344,8 @@ struct WorktreeView: View {
                 if worktree.isLoadingDiff {
                     VStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("Loading diff for \(file.fileName)...")
-                            .font(.caption2)
+                        Text("Loading diff for \(file.fileName)...", bundle: .module)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -358,21 +358,21 @@ struct WorktreeView: View {
                     )
                     .padding(8)
                 } else {
-                    Text("No diff available.")
-                        .font(.caption)
+                    Text("No diff available.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 28))
+                        .themedFont(points: 28)
                         .foregroundStyle(.tertiary)
-                    Text("Select a file to inspect diff")
-                        .font(.callout.weight(.medium))
+                    Text("Select a file to inspect diff", bundle: .module)
+                        .themedFont(.base, weight: .medium)
                         .foregroundStyle(.secondary)
-                    Text("Click any file to view modifications.")
-                        .font(.caption)
+                    Text("Click any file to view modifications.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -391,8 +391,8 @@ struct WorktreeView: View {
                 if worktree.isLoadingDiff {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
-                        Text("Loading diff...")
-                            .font(.caption2)
+                        Text("Loading diff...", bundle: .module)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                     }
                     .padding(8)
@@ -416,16 +416,16 @@ struct WorktreeView: View {
     private var nonGitRepositoryCard: some View {
         VStack(spacing: 12) {
             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .font(.system(size: 32))
+                .themedFont(points: 32)
                 .foregroundStyle(TurboSparkTheme.accentColor.opacity(0.8))
                 .padding(.top, 40)
 
-            Text("No Git Repository Detected")
-                .font(.headline)
+            Text("No Git Repository Detected", bundle: .module)
+                .themedFont(.base, weight: .semibold)
                 .foregroundStyle(.primary)
 
-            Text("The current workspace folder is not tracked by Git. Initialize a repository to enable version control, change inspection, and diffs.")
-                .font(.caption)
+            Text("The current workspace folder is not tracked by Git. Initialize a repository to enable version control, change inspection, and diffs.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
@@ -435,9 +435,9 @@ struct WorktreeView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle.fill")
-                    Text("Initialize Git Repository")
+                    Text("Initialize Git Repository", bundle: .module)
                 }
-                .font(.callout.weight(.medium))
+                .themedFont(.base, weight: .medium)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
             }

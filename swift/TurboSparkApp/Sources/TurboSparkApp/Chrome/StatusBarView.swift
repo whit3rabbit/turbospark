@@ -27,6 +27,7 @@ struct StatusBarView: View {
             memoryReadout
             barDivider
             cpuReadout
+            FanReadoutView(model: model)
             if let contextFill {
                 barDivider
                 contextReadout(contextFill)
@@ -170,7 +171,7 @@ struct StatusBarView: View {
                 .monospacedDigit()
                 .foregroundStyle(.primary)
             if !isGraphMode {
-                Text("CPU")
+                Text("CPU", bundle: .module)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -297,7 +298,7 @@ struct StatusBarView: View {
             Text(rateText)
                 .monospacedDigit()
                 .foregroundStyle(.primary)
-            Text("tok/s")
+            Text("tok/s", bundle: .module)
                 .foregroundStyle(.tertiary)
         }
         .help("Live or last run decoding throughput (tokens per second)")
@@ -311,7 +312,7 @@ struct StatusBarView: View {
             Text(tokensText)
                 .monospacedDigit()
                 .foregroundStyle(.primary)
-            Text("tokens")
+            Text("tokens", bundle: .module)
                 .foregroundStyle(.tertiary)
         }
         .help("Total tokens generated in this turn or previous run")
@@ -351,7 +352,7 @@ struct StatusBarView: View {
                 .accessibilityHidden(true)
             Text(level.capitalized)
                 .foregroundStyle(isAbnormal ? tintColor : .primary)
-            Text("Temp")
+            Text("Temp", bundle: .module)
                 .foregroundStyle(.tertiary)
         }
         .help(thermalHelp(level))
@@ -375,7 +376,7 @@ struct StatusBarView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(theme.ui(points: 10))
                 .accessibilityHidden(true)
-            Text("Memory \(level.capitalized)")
+            Text("Memory \(level.capitalized)", bundle: .module)
         }
         .foregroundStyle(level.lowercased() == "critical" ? .red : .orange)
         .help(

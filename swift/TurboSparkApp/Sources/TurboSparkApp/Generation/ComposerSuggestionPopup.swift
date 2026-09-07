@@ -51,7 +51,7 @@ struct ComposerSuggestionPopup: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
-        .font(.system(size: 12))
+        .themedFont(points: 12)
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .accessibilityElement(children: .combine)
@@ -72,7 +72,7 @@ struct ComposerSuggestionPopup: View {
                         .truncationMode(.middle)
                     if let subtitle = suggestion.subtitle {
                         Text(subtitle)
-                            .font(.system(size: 11))
+                            .themedFont(points: 11)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)

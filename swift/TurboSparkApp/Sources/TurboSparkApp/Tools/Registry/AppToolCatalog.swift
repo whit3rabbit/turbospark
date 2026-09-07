@@ -56,7 +56,12 @@ public enum AppToolCatalog {
     }
 
     /// Filters available tools appropriate for a specific agent profile, including custom workspace tools.
-    public static func tools(for agentType: AppAgentType, projectURL: URL? = nil) -> [OpenAITool] {
+    ///
+    /// `contextTokens` feeds the skill tool's 1%-of-context listing budget;
+    /// nil keeps the 8,000-character default.
+    public static func tools(
+        for agentType: AppAgentType, projectURL: URL? = nil, contextTokens: Int? = nil
+    ) -> [OpenAITool] {
         var list: [OpenAITool]
         switch agentType {
         case .coder:
@@ -95,7 +100,7 @@ public enum AppToolCatalog {
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).map { $0.openAITool }
         list.append(contentsOf: custom)
         if let idx = list.firstIndex(where: { $0.function.name == "skill" }) {
-            list[idx] = SkillToolDefinitions.skillTool(projectURL: projectURL)
+            list[idx] = SkillToolDefinitions.skillTool(projectURL: projectURL, contextTokens: contextTokens)
         }
         return list.filter { AppToolRegistry.isImplemented($0.function.name, projectURL: projectURL) }
     }
@@ -142,8 +147,18 @@ public enum AppToolCatalog {
     }
 
     /// Generates Markdown / XML system prompt guidance for tool use.
-    public static func systemPromptAddendum(for agentType: AppAgentType) -> String {
-        let active = tools(for: agentType)
+    ///
+    /// `projectURL` and `contextTokens` reach the skill tool's listing: the
+    /// embedded skill list is THE listing (there is no second
+    /// `## Available Skills` section beside it), so it must resolve the same
+    /// project scope the tool executor does and budget against the real
+    /// context window.
+    public static func systemPromptAddendum(
+        for agentType: AppAgentType,
+        projectURL: URL? = nil,
+        contextTokens: Int? = nil
+    ) -> String {
+        let active = tools(for: agentType, projectURL: projectURL, contextTokens: contextTokens)
         var lines: [String] = []
         lines.append("## Available Tools")
         lines.append("You have access to the following developer tools formatted in OpenAI function calling style:")
@@ -183,9 +198,13 @@ public enum AppToolCatalog {
     public static func systemPromptAddendum(
         for agentType: AppAgentType,
         mcpServers: [McpServerConfig],
-        project: AppProject?
+        project: AppProject?,
+        contextTokens: Int? = nil
     ) -> String {
-        let base = systemPromptAddendum(for: agentType)
+        let base = systemPromptAddendum(
+            for: agentType,
+            projectURL: project?.rootDirectoryURL,
+            contextTokens: contextTokens)
         let definitions = AppToolCatalogMcp.toolDefinitions(servers: mcpServers, permissions: project?.permissions)
         guard !definitions.isEmpty else { return base }
         var lines: [String] = [

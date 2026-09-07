@@ -14,19 +14,19 @@ struct ModelManagerHeaderView: View {
                         .fill(Color.teal.opacity(0.15))
                         .frame(width: 30, height: 30)
                     Image(systemName: "internaldrive.fill")
-                        .font(.system(size: 14, weight: .semibold))
+                        .themedFont(points: 14, weight: .semibold)
                         .foregroundStyle(Color.teal)
                         .accessibilityHidden(true)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text("Installed Models")
-                            .font(.system(size: 14, weight: .semibold))
+                        Text("Installed Models", bundle: .module)
+                            .themedFont(points: 14, weight: .semibold)
                             .accessibilityAddTraits(.isHeader)
 
-                        Text("LOCAL STORAGE")
-                            .font(.system(size: 9, weight: .bold))
+                        Text("LOCAL STORAGE", bundle: .module)
+                            .themedFont(points: 9, weight: .bold)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
                             .background(Color.teal.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
@@ -34,7 +34,7 @@ struct ModelManagerHeaderView: View {
                     }
 
                     Text(summaryText)
-                        .font(.system(size: 10))
+                        .themedFont(points: 10)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -46,7 +46,7 @@ struct ModelManagerHeaderView: View {
                 model.showToast("Refreshed model libraries", style: .info)
             } label: {
                 Label("Rescan", systemImage: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .medium))
+                    .themedFont(points: 11, weight: .medium)
                     .frame(height: 22)
                     .padding(.horizontal, 8)
             }
@@ -59,7 +59,7 @@ struct ModelManagerHeaderView: View {
                 ModelLocationPicker.choose(for: model)
             } label: {
                 Label("Add Folder...", systemImage: "folder.badge.plus")
-                    .font(.system(size: 11, weight: .medium))
+                    .themedFont(points: 11, weight: .medium)
                     .frame(height: 22)
                     .padding(.horizontal, 8)
             }
@@ -73,10 +73,10 @@ struct ModelManagerHeaderView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 10))
+                        .themedFont(points: 10)
                         .accessibilityHidden(true)
-                    Text("Discover Hub ->")
-                        .font(.system(size: 11, weight: .medium))
+                    Text("Discover Hub ->", bundle: .module)
+                        .themedFont(points: 11, weight: .medium)
                 }
                 .frame(height: 22)
                 .padding(.horizontal, 10)

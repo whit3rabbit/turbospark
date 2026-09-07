@@ -35,19 +35,19 @@ struct ProjectMcpApprovalSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 Image(systemName: "server.rack")
-                    .font(.title2)
+                    .themedFont(.title2)
                     .foregroundStyle(TurboSparkTheme.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("MCP Server Approval")
-                        .font(.headline)
-                    Text("Project \"\(projectName(approval))\" declares MCP servers in its config files.")
-                        .font(.caption)
+                    Text("MCP Server Approval", bundle: .module)
+                        .themedFont(.base, weight: .semibold)
+                    Text("Project \"\(projectName(approval))\" declares MCP servers in its config files.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 if model.pendingMcpApprovals.count > 1 {
-                    Text("\(model.pendingMcpApprovals.count) pending")
-                        .font(.caption.weight(.medium))
+                    Text("\(model.pendingMcpApprovals.count) pending", bundle: .module)
+                        .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(Color.secondary.opacity(0.12))
@@ -57,14 +57,14 @@ struct ProjectMcpApprovalSheet: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(approval.config.name)
-                    .font(.body.monospaced().weight(.semibold))
+                    .themedCode(.base, weight: .semibold)
                 Text(approval.config.commandSummary)
-                    .font(.caption.monospaced())
+                    .themedCode(.small)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .lineLimit(3)
-                Text("Declared in \(approval.sourceRelativePath)")
-                    .font(.caption2)
+                Text("Declared in \(approval.sourceRelativePath)", bundle: .module)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
             .padding(12)
@@ -73,8 +73,8 @@ struct ProjectMcpApprovalSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(TurboSparkTheme.hairlineColor, lineWidth: 1))
 
-            Text("Approving runs this server's commands on this machine. Auto-approval stays off: tool calls still ask unless you opt in later.")
-                .font(.caption)
+            Text("Approving runs this server's commands on this machine. Auto-approval stays off: tool calls still ask unless you opt in later.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 10) {

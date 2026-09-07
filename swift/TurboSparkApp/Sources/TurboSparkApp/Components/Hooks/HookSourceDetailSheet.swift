@@ -26,13 +26,13 @@ public struct HookSourceDetailSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             Image(systemName: "gearshape")
-                                .font(.title3)
+                                .themedFont(.title3)
                                 .foregroundStyle(.secondary)
                             Text(group.title)
-                                .font(.title2.weight(.bold))
+                                .themedFont(.title2, weight: .bold)
                         }
                         Text(group.subtitle)
-                            .font(.caption)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
                     }
 
@@ -51,7 +51,7 @@ public struct HookSourceDetailSheet: View {
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .semibold))
+                            .themedFont(points: 14, weight: .semibold)
                             .foregroundStyle(.secondary)
                             .frame(width: 24, height: 24)
                             .background(Color(nsColor: .controlBackgroundColor))
@@ -80,10 +80,10 @@ public struct HookSourceDetailSheet: View {
                         if eventsPresent.isEmpty {
                             VStack(spacing: 12) {
                                 Image(systemName: "link.badge.plus")
-                                    .font(.system(size: 36))
+                                    .themedFont(points: 36)
                                     .foregroundStyle(.secondary)
-                                Text("No hooks registered in \(group.title).")
-                                    .font(.subheadline)
+                                Text("No hooks registered in \(group.title).", bundle: .module)
+                                    .themedFont(.small)
                                     .foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity)
@@ -98,7 +98,7 @@ public struct HookSourceDetailSheet: View {
                 }
             } else {
                 VStack(spacing: 12) {
-                    Text("Source group not found.")
+                    Text("Source group not found.", bundle: .module)
                         .foregroundStyle(.secondary)
                     Button("Close") { dismiss() }
                 }
@@ -133,25 +133,25 @@ public struct HookSourceDetailSheet: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.circle.fill")
                 .foregroundStyle(.orange)
-                .font(.title3)
+                .themedFont(.title3)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Hooks can run outside of the sandbox so we ask you to review any recently installed or modified hooks")
-                    .font(.subheadline.weight(.medium))
+                Text("Hooks can run outside of the sandbox so we ask you to review any recently installed or modified hooks", bundle: .module)
+                    .themedFont(.small, weight: .medium)
                     .foregroundStyle(.primary)
 
                 if group.unreviewedCount > 0 {
                     HStack(spacing: 12) {
-                        Text("\(group.unreviewedCount) hook\(group.unreviewedCount == 1 ? "" : "s") pending trust review")
-                            .font(.caption)
+                        Text("\(group.unreviewedCount) hook\(group.unreviewedCount == 1 ? "" : "s") pending trust review", bundle: .module)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
 
                         Button {
                             hookStore.trustAllInGroup(group.id)
                         } label: {
                             Label("Trust All in Group", systemImage: "checkmark.shield.fill")
-                                .font(.caption.weight(.semibold))
+                                .themedFont(.small, weight: .semibold)
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -178,14 +178,14 @@ public struct HookSourceDetailSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: event.systemImage)
-                    .font(.system(size: 14, weight: .semibold))
+                    .themedFont(points: 14, weight: .semibold)
                     .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(event.displayName)
-                        .font(.headline)
+                        .themedFont(.base, weight: .semibold)
                     Text(event.eventDescription)
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
 
@@ -195,10 +195,10 @@ public struct HookSourceDetailSheet: View {
                 if unreviewedInEvent > 0 {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
+                            .themedFont(.tiny)
                             .foregroundStyle(.orange)
-                        Text("\(unreviewedInEvent) needs review")
-                            .font(.caption2.weight(.medium))
+                        Text("\(unreviewedInEvent) needs review", bundle: .module)
+                            .themedFont(.tiny, weight: .medium)
                             .foregroundStyle(.orange)
                     }
                     .padding(.horizontal, 8)
@@ -234,11 +234,11 @@ public struct HookSourceDetailSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(hook.name)
-                            .font(.subheadline.weight(.medium))
+                            .themedFont(.small, weight: .medium)
 
                         if let matcher = hook.matcher, !matcher.isEmpty {
-                            Text("for \(matcher)")
-                                .font(.caption2.monospaced())
+                            Text("for \(matcher)", bundle: .module)
+                                .themedCode(.tiny)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(Color.accentColor.opacity(0.15))
@@ -246,8 +246,8 @@ public struct HookSourceDetailSheet: View {
                         }
 
                         if hook.isAsync {
-                            Text("async")
-                                .font(.caption2)
+                            Text("async", bundle: .module)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
@@ -259,8 +259,8 @@ public struct HookSourceDetailSheet: View {
                         // (see AppHookExecutionEngine); the badge keeps the
                         // no-op from being a silent one.
                         if hook.type == .prompt {
-                            Text("not evaluated")
-                                .font(.caption2.weight(.medium))
+                            Text("not evaluated", bundle: .module)
+                                .themedFont(.tiny, weight: .medium)
                                 .foregroundStyle(.orange)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -279,7 +279,7 @@ public struct HookSourceDetailSheet: View {
                         NSWorkspace.shared.selectFile(sourcePath, inFileViewerRootedAtPath: "")
                     } label: {
                         Image(systemName: "arrow.up.right.square")
-                            .font(.caption)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -297,7 +297,7 @@ public struct HookSourceDetailSheet: View {
                     }
                 } label: {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption.weight(.semibold))
+                        .themedFont(.small, weight: .semibold)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -309,9 +309,9 @@ public struct HookSourceDetailSheet: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "checkmark.shield")
-                            Text("Trust")
+                            Text("Trust", bundle: .module)
                         }
-                        .font(.caption.weight(.semibold))
+                        .themedFont(.small, weight: .semibold)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -337,11 +337,11 @@ public struct HookSourceDetailSheet: View {
                     // Command box
                     VStack(alignment: .leading, spacing: 4) {
                         Text(hook.type == .command ? "Command Script" : (hook.type == .http ? "Webhook URL" : "Prompt"))
-                            .font(.caption2.weight(.semibold))
+                            .themedFont(.tiny, weight: .semibold)
                             .foregroundStyle(.secondary)
 
                         Text(hook.command)
-                            .font(.system(.caption, design: .monospaced))
+                            .themedCode(.small)
                             .textSelection(.enabled)
                             .padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -353,16 +353,16 @@ public struct HookSourceDetailSheet: View {
                     HStack(spacing: 16) {
                         if let ifCond = hook.ifCondition, !ifCond.isEmpty {
                             Label("If: \(ifCond)", systemImage: "line.3.horizontal.decrease.circle")
-                                .font(.caption)
+                                .themedFont(.small)
                                 .foregroundStyle(.secondary)
                         }
 
                         Label("Shell: \(hook.shell.rawValue)", systemImage: "terminal")
-                            .font(.caption)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
 
                         Label("Timeout: \(Int(hook.timeoutSeconds))s", systemImage: "clock")
-                            .font(.caption)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
 
                         Spacer()

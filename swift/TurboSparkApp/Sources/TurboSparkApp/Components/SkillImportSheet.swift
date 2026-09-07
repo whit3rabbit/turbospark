@@ -70,10 +70,10 @@ public struct SkillImportSheet: View {
     private var headerBar: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Skills Import & Marketplace")
-                    .font(.headline)
-                Text("Acquire skills from local agent harnesses (Claude, Cursor, Codex) or remote Git/HTTPS marketplaces.")
-                    .font(.caption)
+                Text("Skills Import & Marketplace", bundle: .module)
+                    .themedFont(.base, weight: .semibold)
+                Text("Acquire skills from local agent harnesses (Claude, Cursor, Codex) or remote Git/HTTPS marketplaces.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -99,11 +99,11 @@ public struct SkillImportSheet: View {
 
             Spacer()
 
-            Text("Target Scope:")
-                .font(.caption.weight(.semibold))
+            Text("Target Scope:", bundle: .module)
+                .themedFont(.small, weight: .semibold)
             Picker("Scope", selection: $importToProjectScope) {
-                Text("User Scope (~/.turbospark/skills)").tag(false)
-                Text("Project Scope (.turbospark/skills)").tag(true)
+                Text("User Scope (~/.turbospark/skills)", bundle: .module).tag(false)
+                Text("Project Scope (.turbospark/skills)", bundle: .module).tag(true)
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
@@ -121,18 +121,18 @@ public struct SkillImportSheet: View {
         if isLoading {
             VStack(spacing: 12) {
                 ProgressView()
-                Text("Scanning agent skill directories...")
-                    .font(.callout)
+                Text("Scanning agent skill directories...", bundle: .module)
+                    .themedFont(.base)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if candidates.isEmpty {
             VStack(spacing: 16) {
                 Image(systemName: "folder.badge.questionmark")
-                    .font(.system(size: 36))
+                    .themedFont(points: 36)
                     .foregroundStyle(.secondary)
-                Text("No external skills found in standard agent locations.")
-                    .font(.callout)
+                Text("No external skills found in standard agent locations.", bundle: .module)
+                    .themedFont(.base)
                     .foregroundStyle(.secondary)
 
                 Button("Choose Custom Folder...") {
@@ -152,20 +152,20 @@ public struct SkillImportSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
                                     Text(cand.skill.name)
-                                        .font(.subheadline.weight(.semibold))
+                                        .themedFont(.small, weight: .semibold)
                                     Text(cand.agent.displayName)
-                                        .font(.caption2)
+                                        .themedFont(.tiny)
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 1)
                                         .background(Color.secondary.opacity(0.15))
                                         .clipShape(Capsule())
                                 }
                                 Text(cand.skill.skillDescription)
-                                    .font(.caption)
+                                    .themedFont(.small)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                                 Text(cand.sourceLocationDescription)
-                                    .font(.caption2)
+                                    .themedFont(.tiny)
                                     .foregroundStyle(.tertiary)
                             }
                             Spacer()
@@ -183,15 +183,15 @@ public struct SkillImportSheet: View {
                         for i in candidates.indices { candidates[i].isSelected = true }
                     }
                     .buttonStyle(.plain)
-                    .font(.caption)
+                    .themedFont(.small)
 
-                    Text("|").foregroundStyle(.tertiary)
+                    Text("|", bundle: .module).foregroundStyle(.tertiary)
 
                     Button("Deselect All") {
                         for i in candidates.indices { candidates[i].isSelected = false }
                     }
                     .buttonStyle(.plain)
-                    .font(.caption)
+                    .themedFont(.small)
 
                     Spacer()
 
@@ -218,13 +218,13 @@ public struct SkillImportSheet: View {
             HStack(spacing: 10) {
                 TextField("GitHub repo (owner/name), Git URL, or HTTPS marketplace.json", text: $remoteInput)
                     .textFieldStyle(.roundedBorder)
-                    .font(.callout)
+                    .themedFont(.base)
 
                 Button(action: { fetchRemoteMarketplace() }) {
                     if isFetchingRemote {
                         ProgressView().controlSize(.small)
                     } else {
-                        Text("Fetch")
+                        Text("Fetch", bundle: .module)
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -242,10 +242,10 @@ public struct SkillImportSheet: View {
             if let error = remoteError {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
-                        .font(.title2)
+                        .themedFont(.title2)
                         .foregroundStyle(.red)
                     Text(error)
-                        .font(.callout)
+                        .themedFont(.base)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -256,16 +256,16 @@ public struct SkillImportSheet: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(manifest.name)
-                                .font(.headline)
+                                .themedFont(.base, weight: .semibold)
                             if let desc = manifest.description {
                                 Text(desc)
-                                    .font(.caption)
+                                    .themedFont(.small)
                                     .foregroundStyle(.secondary)
                             }
                         }
                         Spacer()
-                        Text("\(manifest.skills.count) skills available")
-                            .font(.caption2)
+                        Text("\(manifest.skills.count) skills available", bundle: .module)
+                            .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
                     }
                     .padding(.horizontal, 20)
@@ -281,15 +281,15 @@ public struct SkillImportSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
                                     Text(entry.name)
-                                        .font(.subheadline.weight(.semibold))
+                                        .themedFont(.small, weight: .semibold)
                                     if let v = entry.version {
                                         Text(v)
-                                            .font(.caption2)
+                                            .themedFont(.tiny)
                                             .foregroundStyle(.secondary)
                                     }
                                     if let cat = entry.category {
                                         Text(cat)
-                                            .font(.caption2)
+                                            .themedFont(.tiny)
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 1)
                                             .background(Color.blue.opacity(0.12))
@@ -297,7 +297,7 @@ public struct SkillImportSheet: View {
                                     }
                                 }
                                 Text(entry.description)
-                                    .font(.caption)
+                                    .themedFont(.small)
                                     .foregroundStyle(.secondary)
                             }
 
@@ -308,7 +308,7 @@ public struct SkillImportSheet: View {
                                 if isInstalling {
                                     ProgressView().controlSize(.small)
                                 } else {
-                                    Text("Install")
+                                    Text("Install", bundle: .module)
                                 }
                             }
                             .buttonStyle(.bordered)
@@ -320,10 +320,10 @@ public struct SkillImportSheet: View {
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "globe.badge.chevron.backward")
-                        .font(.system(size: 40))
+                        .themedFont(points: 40)
                         .foregroundStyle(.secondary)
-                    Text("Enter a GitHub repository (e.g. 'whit3rabbit/agent-skills') or direct HTTPS URL to browse and install remote skills.")
-                        .font(.callout)
+                    Text("Enter a GitHub repository (e.g. 'whit3rabbit/agent-skills') or direct HTTPS URL to browse and install remote skills.", bundle: .module)
+                        .themedFont(.base)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 440)

@@ -35,7 +35,7 @@ struct ProbeReportCardView: View {
                 report.runnable ? "Would run here" : "Would not run here",
                 systemImage: report.runnable ? "checkmark.seal.fill" : "xmark.octagon.fill"
             )
-            .font(.subheadline.weight(.semibold))
+            .themedFont(.small, weight: .semibold)
             .foregroundStyle(report.runnable ? Color.green : Color.red)
             Spacer()
             // The fit pill is a SECOND question and only shown when something
@@ -77,16 +77,16 @@ struct ProbeReportCardView: View {
     @ViewBuilder
     private func fitSection(_ fit: ProbeFit) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Memory at \(fit.context.formatted()) tokens, \(fit.slotCacheSlots) slots")
-                .font(.caption.weight(.semibold))
+            Text("Memory at \(fit.context.formatted()) tokens, \(fit.slotCacheSlots) slots", bundle: .module)
+                .themedFont(.small, weight: .semibold)
                 .foregroundStyle(.secondary)
 
             // Guarded on the SOURCE, not on the number. A row nothing has
             // sized reports zeros, and a zero rendered as a figure reads as
             // "fits easily" (swift Gotcha 23).
             if fit.countedSource == .unknown {
-                Text("Nothing has read this checkpoint's shape, so its footprint is unknown.")
-                    .font(.caption)
+                Text("Nothing has read this checkpoint's shape, so its footprint is unknown.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             } else {
                 specRow("Allocates", MetricFormat.storage(fit.countedBytes))
@@ -129,16 +129,16 @@ struct ProbeReportCardView: View {
 
     private var blockTypeSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Block types")
-                .font(.caption.weight(.semibold))
+            Text("Block types", bundle: .module)
+                .themedFont(.small, weight: .semibold)
                 .foregroundStyle(.secondary)
             ForEach(report.types, id: \.name) { t in
                 HStack(spacing: 6) {
                     Text(t.name)
-                        .font(.caption.monospaced())
+                        .themedCode(.small)
                         .frame(width: 74, alignment: .leading)
-                    Text("\(t.tensors) tensors")
-                        .font(.caption.monospacedDigit())
+                    Text("\(t.tensors) tensors", bundle: .module)
+                        .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.secondary)
                         .frame(width: 90, alignment: .leading)
                     // **UNSIZED, NEVER 0 BYTES.** A type this port cannot
@@ -146,11 +146,11 @@ struct ProbeReportCardView: View {
                     // sorts to the bottom of a share column, which is the
                     // inverse of its real rank.
                     Text(t.bytes.map(MetricFormat.storage) ?? "UNSIZED")
-                        .font(.caption.monospacedDigit())
+                        .themedFont(.small).monospacedDigit()
                         .foregroundStyle(t.bytes == nil ? Color.orange : .secondary)
                         .frame(width: 84, alignment: .leading)
                     Text(t.executable ? "has kernels" : "no kernels")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(t.executable ? Color.green : Color.red)
                     Spacer()
                 }
@@ -180,11 +180,11 @@ struct ProbeReportCardView: View {
     private func specRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .frame(width: 118, alignment: .leading)
             Text(value)
-                .font(.caption.monospacedDigit())
+                .themedFont(.small).monospacedDigit()
                 .textSelection(.enabled)
             Spacer()
         }
@@ -193,9 +193,9 @@ struct ProbeReportCardView: View {
     private func calloutBox(_ text: String, tone: Color, icon: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: icon)
-                .font(.caption)
+                .themedFont(.small)
                 .accessibilityHidden(true)
-            Text(text).font(.caption)
+            Text(text).themedFont(.small)
         }
         .foregroundStyle(tone)
         .padding(10)

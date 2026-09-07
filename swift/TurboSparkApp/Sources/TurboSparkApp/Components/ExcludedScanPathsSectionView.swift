@@ -15,14 +15,14 @@ struct ExcludedScanPathsSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Excluded from scan", systemImage: "eye.slash")
-                .font(.headline)
+                .themedFont(.base, weight: .semibold)
 
             if orgStore.excludedScanPaths.isEmpty {
                 Text(
                     "Models you remove from TurboSpark without deleting their files are listed "
                         + "here, so they can be restored."
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
             } else {
                 ForEach(orgStore.excludedScanPaths.sorted(), id: \.self) { path in
@@ -30,7 +30,7 @@ struct ExcludedScanPathsSectionView: View {
                         Image(systemName: "eye.slash")
                             .foregroundStyle(.secondary)
                         Text(path)
-                            .font(.system(.caption, design: .monospaced))
+                            .themedCode(.small)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer()

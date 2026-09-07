@@ -39,12 +39,14 @@ public struct SubagentToolRow: Identifiable, Equatable, Sendable {
     public var name: String
     public var summary: String
     public var isError: Bool
+    public var isRunning: Bool
 
-    public init(id: UUID = UUID(), name: String, summary: String, isError: Bool) {
+    public init(id: UUID = UUID(), name: String, summary: String, isError: Bool, isRunning: Bool = false) {
         self.id = id
         self.name = name
         self.summary = summary
         self.isError = isError
+        self.isRunning = isRunning
     }
 }
 
@@ -79,6 +81,22 @@ public final class SubagentRunState: ObservableObject, Identifiable {
     @Published public var toolRows: [SubagentToolRow] = []
     @Published public var status: String = "running"
     @Published public var result: SubagentRunResult?
+    /// Set ONLY by `AppModel.completeBackgroundAgent`, after it has recorded
+    /// the final result and delivered (or queued) the `<task-notification>`.
+    ///
+    /// `status` alone is NOT this signal: `SubagentRunner.run` fires its
+    /// `.finished` progress event -- which flips `status` away from
+    /// "running" via `apply(_:)` above -- from INSIDE the run, before the
+    /// unstructured `Task` awaiting it in `launchBackgroundAgent` has even
+    /// resumed. A `Dismiss` action gated on `status != "running"` alone can
+    /// therefore race ahead of `completeBackgroundAgent` and remove this
+    /// run's entry from `backgroundAgentRuns` first, so that when
+    /// `completeBackgroundAgent` finally runs its `guard let state =
+    /// backgroundAgentRuns[id] else { return }` silently no-ops -- the
+    /// notification is dropped with no error anywhere. Gating dismissal on
+    /// this flag as well closes that window: the card cannot be removed
+    /// until completion has genuinely landed.
+    @Published public var isRecordedComplete: Bool = false
 
     public init(
         id: String, mode: SubagentRunMode, chatID: UUID?,
@@ -108,18 +126,23 @@ public final class SubagentRunState: ObservableObject, Identifiable {
         case .content(let chunk):
             streamedText += chunk
         case .toolStarted(let name, let summary):
-            toolRows.append(SubagentToolRow(name: name, summary: summary, isError: false))
+            toolRows.append(SubagentToolRow(name: name, summary: summary, isError: false, isRunning: true))
         case .toolFinished(let name, let summary, let isError):
             // The started row for this call is the last one with the same
             // name; mark it rather than append a second row, so a card shows
             // one row per call with its outcome.
-            if let idx = toolRows.lastIndex(where: { $0.name == name && !$0.isError }) {
-                toolRows[idx] = SubagentToolRow(id: toolRows[idx].id, name: name, summary: summary, isError: isError)
+            if let idx = toolRows.lastIndex(where: { $0.name == name && $0.isRunning }) {
+                toolRows[idx] = SubagentToolRow(id: toolRows[idx].id, name: name, summary: summary, isError: isError, isRunning: false)
+            } else if let idx = toolRows.lastIndex(where: { $0.name == name && !$0.isError }) {
+                toolRows[idx] = SubagentToolRow(id: toolRows[idx].id, name: name, summary: summary, isError: isError, isRunning: false)
             } else {
-                toolRows.append(SubagentToolRow(name: name, summary: summary, isError: isError))
+                toolRows.append(SubagentToolRow(name: name, summary: summary, isError: isError, isRunning: false))
             }
         case .finished(let status):
             self.status = status
+            for idx in toolRows.indices where toolRows[idx].isRunning {
+                toolRows[idx].isRunning = false
+            }
         }
     }
 }

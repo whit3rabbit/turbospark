@@ -118,7 +118,7 @@ struct ChatSidebarGroupedProjectsView: View {
             projectHeaderRow(project, isSelected: isProjectSelected)
 
             if projectTasks.isEmpty {
-                Text("No tasks yet")
+                Text("No tasks yet", bundle: .module)
                     .font(theme.ui(points: 11))
                     .foregroundStyle(.tertiary)
                     .padding(.leading, 24)
@@ -370,7 +370,7 @@ struct ChatSidebarGroupedProjectsView: View {
                 Image(systemName: "tray")
                     .font(theme.ui(points: 11))
                     .foregroundStyle(.secondary)
-                Text("Other Tasks")
+                Text("Other Tasks", bundle: .module)
                     .font(theme.ui(points: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -394,7 +394,7 @@ struct ChatSidebarGroupedProjectsView: View {
                 .font(theme.ui(points: 22))
                 .foregroundStyle(.tertiary)
                 .padding(.top, 24)
-            Text("No projects match filter")
+            Text("No projects match filter", bundle: .module)
                 .font(theme.ui(points: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             Button("Add Project") {

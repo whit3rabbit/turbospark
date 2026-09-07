@@ -50,7 +50,7 @@ extension AppSettingsView {
         public var keywords: [String] {
             switch self {
             case .general:
-                return ["language", "locale", "localization", "keyboard", "readability", "text size", "hugging face", "hf", "token", "auth", "api key"]
+                return ["language", "locale", "localization", "keyboard", "readability", "text size", "hugging face", "hf", "token", "auth", "authentication", "api key", "ghost", "temporary chats", "compaction", "summarize", "menu bar", "background"]
             case .profiles:
                 return ["profiles", "users", "accounts", "switch user", "multi user"]
             case .appearance:
@@ -58,21 +58,21 @@ extension AppSettingsView {
             case .shortcuts:
                 return ["keyboard", "keys", "shortcuts", "hotkeys", "commands"]
             case .permissions:
-                return ["files", "privacy", "access", "filesystem", "security"]
+                return ["files", "privacy", "access", "filesystem", "security", "tcc", "sandbox", "accessibility", "advisory veto", "full disk access"]
             case .models:
-                return ["storage", "lm studio", "downloads", "folders", "cache", "context", "hugging face", "hf", "token", "auth"]
+                return ["storage", "lm studio", "downloads", "folders", "cache", "context", "hugging face", "hf", "token", "auth", "zero-copy", "rescan"]
             case .engine:
-                return ["system prompt", "temperature", "tokens", "sampling", "guardrails", "speculation", "server", "reasoning"]
+                return ["system prompt", "temperature", "tokens", "sampling", "guardrails", "speculation", "server", "reasoning", "fan", "cooling", "thermal", "thermalforge", "seed", "context window", "stop sequence", "rate cap", "port", "address", "auth"]
             case .safety:
-                return ["steering", "vectors", "safety", "direction", "control"]
+                return ["steering", "vectors", "safety", "direction", "control", "activation"]
             case .mcp:
-                return ["mcp", "servers", "tools", "protocols"]
+                return ["mcp", "servers", "tools", "protocols", "marketplace"]
             case .skills:
-                return ["skills", "custom tools", "instructions"]
+                return ["skills", "custom tools", "instructions", "triggers", "shell", "scope"]
             case .agents:
-                return ["agents", "subagents", "personas"]
+                return ["agents", "subagents", "personas", "system instructions", "scope"]
             case .plugins:
-                return ["plugins", "marketplace", "extensions", "addons"]
+                return ["plugins", "marketplace", "extensions", "addons", "contributions", "commands"]
             case .hooks:
                 return ["hooks", "lifecycle", "events", "scripts"]
             }

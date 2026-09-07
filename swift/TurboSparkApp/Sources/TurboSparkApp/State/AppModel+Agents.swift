@@ -225,6 +225,7 @@ extension AppModel {
                 // The app-wide DEFAULT, never a per-chat override: a subagent
                 // runs in a fresh isolated context with zero parent history.
                 userSystemPrompt: self.defaultSystemPrompt,
+                samplingOptions: self.samplingOptions(),
                 progress: { event in await sink?(runKey, event) }
             )
 

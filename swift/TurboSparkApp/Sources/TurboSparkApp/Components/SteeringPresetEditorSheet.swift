@@ -51,7 +51,7 @@ struct SteeringPresetEditorSheet: View {
     private var header: some View {
         HStack {
             Text(draft.name.isEmpty ? "Add a direction" : "Edit direction")
-                .font(.headline)
+                .themedFont(.base, weight: .semibold)
             Spacer()
         }
         .padding()
@@ -92,7 +92,7 @@ struct SteeringPresetEditorSheet: View {
             }
             if let readError {
                 Label(readError, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.red)
             }
 
@@ -102,7 +102,7 @@ struct SteeringPresetEditorSheet: View {
                 modelLayers: model.selectedModelLayerCount
             )
             Label(compatibility.summary, systemImage: "info.circle")
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(compatibility.allowsEnabling ? Color.secondary : Color.red)
         }
     }
@@ -115,7 +115,7 @@ struct SteeringPresetEditorSheet: View {
                 }
             }
             HStack {
-                Text("Strength")
+                Text("Strength", bundle: .module)
                 Slider(value: $draft.scale, in: -2...2, step: 0.05)
                 Text(draft.scale, format: .number.precision(.fractionLength(2)))
                     .monospacedDigit()
@@ -135,7 +135,7 @@ struct SteeringPresetEditorSheet: View {
                         + "layer band, or lower this.",
                     systemImage: "exclamationmark.triangle"
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.orange)
             }
             TextField("Layers, e.g. 20:45 (blank = every covered block)", text: $draft.layers)

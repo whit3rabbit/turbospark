@@ -38,15 +38,20 @@ struct SubagentLiveCardView: View {
                     if !state.toolRows.isEmpty {
                         ForEach(state.toolRows) { row in
                             HStack(alignment: .top, spacing: 6) {
-                                Image(systemName: row.isError
-                                        ? "xmark.circle.fill" : "checkmark.circle.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(row.isError ? Color.red : Color.green)
-                                    .accessibilityHidden(true)
+                                if row.isRunning {
+                                    TaskProgressFlameIcon(size: 11)
+                                        .accessibilityHidden(true)
+                                } else {
+                                    Image(systemName: row.isError
+                                            ? "xmark.circle.fill" : "checkmark.circle.fill")
+                                        .themedFont(.tiny)
+                                        .foregroundStyle(row.isError ? Color.red : Color.green)
+                                        .accessibilityHidden(true)
+                                }
                                 Text(row.name)
                                     .font(theme.code(.small))
                                 Text(row.summary)
-                                    .font(.caption)
+                                    .themedFont(.small)
                                     .foregroundStyle(theme.metadataForeground)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
@@ -98,14 +103,14 @@ struct SubagentLiveCardView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2.wave.2")
-                        .font(.caption.weight(.bold))
+                        .themedFont(.small, weight: .bold)
                         .foregroundStyle(TurboSparkTheme.accentColor)
                         .accessibilityHidden(true)
                     Text(state.displayName)
-                        .font(.caption.weight(.semibold))
+                        .themedFont(.small, weight: .semibold)
                     if !state.taskDescription.isEmpty {
                         Text(state.taskDescription)
-                            .font(.caption)
+                            .themedFont(.small)
                             .foregroundStyle(theme.metadataForeground)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -120,15 +125,15 @@ struct SubagentLiveCardView: View {
             if isRunning {
                 TaskProgressFlameIcon(size: 14)
                 Text(statusText)
-                    .font(.caption.weight(.medium))
+                    .themedFont(.small, weight: .medium)
                     .foregroundStyle(theme.metadataForeground)
                 Text(state.startedAt, style: .timer)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(theme.metadataForeground)
                 if let onStop {
                     Button(action: onStop) {
                         Image(systemName: "stop.fill")
-                            .font(.caption2)
+                            .themedFont(.tiny)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.red.opacity(0.8))
@@ -137,12 +142,12 @@ struct SubagentLiveCardView: View {
                 }
             } else {
                 Text(statusText)
-                    .font(.caption.weight(.medium))
+                    .themedFont(.small, weight: .medium)
                     .foregroundStyle(statusColor)
                 if let onDismiss {
                     Button(action: onDismiss) {
                         Image(systemName: "xmark")
-                            .font(.caption2)
+                            .themedFont(.tiny)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(theme.metadataForeground)

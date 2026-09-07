@@ -33,11 +33,10 @@ public struct ModelFeatureBadgeView: View {
         HStack(spacing: iconSpacing) {
             if let iconSystemName {
                 Image(systemName: iconSystemName)
-                    .font(.system(size: iconSize, weight: .semibold))
+                    .themedFont(points: iconSize, weight: .semibold)
             }
             Text(title)
-                .font(font)
-                .fontWeight(fontWeight)
+                .themedFont(fontStep, weight: fontWeight)
                 .lineLimit(1)
         }
         .padding(.horizontal, horizontalPadding)
@@ -72,11 +71,11 @@ public struct ModelFeatureBadgeView: View {
         }
     }
 
-    private var font: Font {
+    private var fontStep: AppFontStep {
         switch style {
-        case .compact: return .caption2
-        case .regular: return .caption
-        case .prominent: return .subheadline
+        case .compact: return .tiny
+        case .regular: return .small
+        case .prominent: return .small
         }
     }
 

@@ -67,9 +67,9 @@ public struct CollapsibleMessageContentView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(isExpanded ? "Show less" : "Show more")
-                            .font(.caption.weight(.medium))
+                            .themedFont(.small, weight: .medium)
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
+                            .themedFont(points: 9, weight: .bold)
                     }
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)

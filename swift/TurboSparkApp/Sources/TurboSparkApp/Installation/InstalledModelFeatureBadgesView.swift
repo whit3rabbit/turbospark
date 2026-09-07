@@ -7,8 +7,8 @@ struct InstalledModelFeatureBadgesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Model Highlights & Features")
-                .font(.caption.weight(.semibold))
+            Text("Model Highlights & Features", bundle: .module)
+                .themedFont(.small, weight: .semibold)
                 .foregroundStyle(.secondary)
 
             FlowLayout(spacing: 6, lineSpacing: 6) {

@@ -37,8 +37,8 @@ struct ProjectPermissionsSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Tool Permissions & Risk Policy")
-                    .font(.subheadline.weight(.semibold))
+                Text("Tool Permissions & Risk Policy", bundle: .module)
+                    .themedFont(.small, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Menu("Presets") {
@@ -48,15 +48,15 @@ struct ProjectPermissionsSectionView: View {
                     Button("Read Only") { applyPreset(.readOnly) }
                 }
                 .menuStyle(.borderlessButton)
-                .font(.caption)
+                .themedFont(.small)
                 .accessibilityLabel("Permission presets")
                 .accessibilityHint("Applies a recommended set of tool permissions")
             }
 
             // Mode Selector
             VStack(alignment: .leading, spacing: 6) {
-                Text("Execution Mode")
-                    .font(.caption.weight(.medium))
+                Text("Execution Mode", bundle: .module)
+                    .themedFont(.small, weight: .medium)
                     .foregroundStyle(.secondary)
 
                 Picker("Execution Mode", selection: $permissionMode) {
@@ -70,9 +70,9 @@ struct ProjectPermissionsSectionView: View {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: permissionMode.systemImage)
                         .foregroundStyle(TurboSparkTheme.accentColor)
-                        .font(.caption)
+                        .themedFont(.small)
                     Text(permissionMode.descriptionText)
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
                 .padding(8)
@@ -95,17 +95,17 @@ struct ProjectPermissionsSectionView: View {
             // Forge Guardrails project option
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Forge Tool-Call Guardrails")
-                        .font(.callout.weight(.medium))
-                    Text("Repair malformed dialect calls and validate schemas")
-                        .font(.caption2)
+                    Text("Forge Tool-Call Guardrails", bundle: .module)
+                        .themedFont(.base, weight: .medium)
+                    Text("Repair malformed dialect calls and validate schemas", bundle: .module)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Picker("", selection: $guardrailsOption) {
-                    Text("Auto (Model Default)").tag(AppProjectGuardrailsOption.auto)
-                    Text("Always Enabled").tag(AppProjectGuardrailsOption.enabled)
-                    Text("Always Disabled").tag(AppProjectGuardrailsOption.disabled)
+                    Text("Auto (Model Default)", bundle: .module).tag(AppProjectGuardrailsOption.auto)
+                    Text("Always Enabled", bundle: .module).tag(AppProjectGuardrailsOption.enabled)
+                    Text("Always Disabled", bundle: .module).tag(AppProjectGuardrailsOption.disabled)
                 }
                 .pickerStyle(.menu)
                 .frame(width: 175)
@@ -120,9 +120,9 @@ struct ProjectPermissionsSectionView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.callout.weight(.medium))
+                    .themedFont(.base, weight: .medium)
                 Text(desc)
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
             Spacer()

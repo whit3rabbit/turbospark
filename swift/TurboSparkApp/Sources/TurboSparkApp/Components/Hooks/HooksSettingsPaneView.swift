@@ -49,8 +49,8 @@ public struct HooksSettingsPaneView: View {
                         let configGroups = filteredGroups.filter { $0.sourceType == .userConfig || $0.sourceType == .projectConfig || $0.sourceType == .localConfig }
                         if !configGroups.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("From Config")
-                                    .font(.caption.weight(.semibold))
+                                Text("From Config", bundle: .module)
+                                    .themedFont(.small, weight: .semibold)
                                     .foregroundStyle(.secondary)
 
                                 ForEach(configGroups) { group in
@@ -63,8 +63,8 @@ public struct HooksSettingsPaneView: View {
                         let pluginGroups = filteredGroups.filter { $0.sourceType == .plugin }
                         if !pluginGroups.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Plugins")
-                                    .font(.caption.weight(.semibold))
+                                Text("Plugins", bundle: .module)
+                                    .themedFont(.small, weight: .semibold)
                                     .foregroundStyle(.secondary)
 
                                 ForEach(pluginGroups) { group in
@@ -77,8 +77,8 @@ public struct HooksSettingsPaneView: View {
                         let customGroups = filteredGroups.filter { $0.sourceType == .custom }
                         if !customGroups.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Custom & App Hooks")
-                                    .font(.caption.weight(.semibold))
+                                Text("Custom & App Hooks", bundle: .module)
+                                    .themedFont(.small, weight: .semibold)
                                     .foregroundStyle(.secondary)
 
                                 ForEach(customGroups) { group in
@@ -116,18 +116,18 @@ public struct HooksSettingsPaneView: View {
     private var headerBar: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Hooks")
-                    .font(.title2.weight(.bold))
+                Text("Hooks", bundle: .module)
+                    .themedFont(.title2, weight: .bold)
                 HStack(spacing: 4) {
-                    Text("Manage lifecycle hooks from config and enabled plugins.")
-                        .font(.caption)
+                    Text("Manage lifecycle hooks from config and enabled plugins.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                     Button("Learn more") {
                         if let url = URL(string: "https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks") {
                             NSWorkspace.shared.open(url)
                         }
                     }
-                    .font(.caption)
+                    .themedFont(.small)
                     .buttonStyle(.link)
                     .help("Open Hooks Documentation: https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks")
                     .accessibilityLabel("Learn more about hooks")
@@ -141,10 +141,10 @@ public struct HooksSettingsPaneView: View {
             if totalUnreviewedCount > 0 {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.orange)
-                    Text("\(totalUnreviewedCount) needs review")
-                        .font(.caption.weight(.semibold))
+                    Text("\(totalUnreviewedCount) needs review", bundle: .module)
+                        .themedFont(.small, weight: .semibold)
                         .foregroundStyle(.orange)
                 }
                 .padding(.horizontal, 10)
@@ -185,14 +185,14 @@ public struct HooksSettingsPaneView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(.orange)
-                    Text("\(hookStore.discoveryDiagnostics.count) discovery issue\(hookStore.discoveryDiagnostics.count == 1 ? "" : "s") found while scanning hook config files")
-                        .font(.caption.weight(.medium))
+                    Text("\(hookStore.discoveryDiagnostics.count) discovery issue\(hookStore.discoveryDiagnostics.count == 1 ? "" : "s") found while scanning hook config files", bundle: .module)
+                        .themedFont(.small, weight: .medium)
                         .foregroundStyle(.orange)
                     Spacer()
                     Image(systemName: showDiagnosticsDetail ? "chevron.up" : "chevron.down")
-                        .font(.caption2.weight(.semibold))
+                        .themedFont(.tiny, weight: .semibold)
                         .foregroundStyle(.orange)
                 }
             }
@@ -203,7 +203,7 @@ public struct HooksSettingsPaneView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(hookStore.discoveryDiagnostics.enumerated()), id: \.offset) { _, message in
                         Text(message)
-                            .font(.caption2)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
@@ -226,16 +226,16 @@ public struct HooksSettingsPaneView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-                .font(.caption)
+                .themedFont(.small)
             TextField("Search hooks, commands, plugins...", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.caption)
+                .themedFont(.small)
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -260,7 +260,7 @@ public struct HooksSettingsPaneView: View {
             HStack(spacing: 12) {
                 // Icon
                 Image(systemName: groupIcon(for: group.sourceType))
-                    .font(.system(size: 16))
+                    .themedFont(points: 16)
                     .foregroundStyle(.secondary)
                     .frame(width: 28, height: 28)
                     .background(Color(nsColor: .windowBackgroundColor))
@@ -269,11 +269,11 @@ public struct HooksSettingsPaneView: View {
                 // Title and hook count
                 VStack(alignment: .leading, spacing: 2) {
                     Text(group.title)
-                        .font(.subheadline.weight(.semibold))
+                        .themedFont(.small, weight: .semibold)
                         .foregroundStyle(.primary)
 
-                    Text("\(group.hooks.count) hook\(group.hooks.count == 1 ? "" : "s")")
-                        .font(.caption)
+                    Text("\(group.hooks.count) hook\(group.hooks.count == 1 ? "" : "s")", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
 
@@ -283,10 +283,10 @@ public struct HooksSettingsPaneView: View {
                 if group.unreviewedCount > 0 {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .font(.caption2)
+                            .themedFont(.tiny)
                             .foregroundStyle(.orange)
-                        Text("\(group.unreviewedCount) needs review")
-                            .font(.caption2.weight(.medium))
+                        Text("\(group.unreviewedCount) needs review", bundle: .module)
+                            .themedFont(.tiny, weight: .medium)
                             .foregroundStyle(.orange)
                     }
                     .padding(.horizontal, 8)
@@ -296,7 +296,7 @@ public struct HooksSettingsPaneView: View {
                 }
 
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .themedFont(.small, weight: .semibold)
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14)
@@ -325,11 +325,25 @@ public struct HooksSettingsPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "link.badge.plus")
-                .font(.system(size: 40))
+                .themedFont(points: 40)
                 .foregroundStyle(.secondary)
-            Text("No hooks found matching '\(searchText)'")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            // Two states, two sentences: a fresh install with no hooks used
+            // to read `No hooks found matching ''`.
+            if searchText.isEmpty {
+                Text("No hooks configured", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.secondary)
+                Button {
+                    showingAddHookSheet = true
+                } label: {
+                    Label("Add Hook", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Text("No hooks found matching '\(searchText)'", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)

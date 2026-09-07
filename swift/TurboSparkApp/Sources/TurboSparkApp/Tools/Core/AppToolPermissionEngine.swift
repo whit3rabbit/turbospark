@@ -132,6 +132,31 @@ public enum AppToolPermissionEngine {
             return ToolRiskClassifier.adjusting(base, annotations: annotations)
         }()
 
+        // Whether THIS call's server has never completed discovery, so its
+        // own destructive/read-only annotations are genuinely UNKNOWN rather
+        // than merely absent. `McpToolCatalogCache.tools(forServerName:)`
+        // returns nil ONLY in that case (never for "discovered, and this
+        // tool has no annotations"), and `refreshEnabled` kicks discovery off
+        // as a fire-and-forget background Task -- so a server just approved
+        // or just enabled can have its first tool call reach here before
+        // that Task has ever run. This is consulted ONLY at the two steps
+        // below that would otherwise auto-allow with NO other gate in
+        // between (permissive mode, and auto mode's own fallback): an
+        // explicit deny rule, an explicit allow rule, a session approval and
+        // ask-mode all already make their decision from the name heuristic
+        // alone and are unaffected, because each of those is a distinct,
+        // already-vetted signal rather than "nothing said no".
+        let mcpAnnotationsUnknown: Bool = {
+            guard category == .mcp, let target = mcpTarget else { return false }
+            return McpToolCatalogCache.shared.tools(forServerName: target.server) == nil
+        }()
+        func askBecauseAnnotationsUnknown(defaultReason: String) -> ToolPermissionDecision {
+            .ask(
+                assessment: risk,
+                reason: "MCP server '\(mcpTarget?.server ?? "")' has not finished advertising its tools "
+                    + "yet, so \(defaultReason)")
+        }
+
         // 1. Strict Read-Only Mode. Absolute: session approval never applies here.
         if permissions.mode == .readOnly {
             if category == .fileRead && !risk.isHighRisk {
@@ -197,7 +222,17 @@ public enum AppToolPermissionEngine {
         // denied and except for high risk", which is what the ordering
         // comment already claimed and what the `.readOnly` arm above models:
         // that one IS absolute, and in the safe direction.
+        //
+        // EXCEPT when this is an MCP call whose server has not finished
+        // discovery: this is the one auto-allow in the whole function with
+        // NOTHING else standing between the call and execution, so it is
+        // exactly where an undiscovered destructive tool would otherwise run
+        // unprompted (see `mcpAnnotationsUnknown`'s own doc above).
         if permissions.mode == .permissive {
+            if mcpAnnotationsUnknown {
+                return askBecauseAnnotationsUnknown(
+                    defaultReason: "this tool's own destructive/read-only annotations are not yet known.")
+            }
             return .allow
         }
 
@@ -263,7 +298,17 @@ public enum AppToolPermissionEngine {
         // 9. Auto Mode ("Approve for me" - Unsloth Studio default): runs
         // safe and low-risk operations silently. High-risk was already
         // handled in step 4, above every other check in this function.
+        //
+        // Same MCP-discovery exception as step 4's permissive arm: this is
+        // auto mode's own trailing default, reached only when no deny rule,
+        // allow rule, session approval or repo-import gate (7b) has already
+        // decided -- exactly the case an undiscovered destructive tool would
+        // otherwise fall through to.
         if permissions.mode == .auto {
+            if mcpAnnotationsUnknown {
+                return askBecauseAnnotationsUnknown(
+                    defaultReason: "this tool's own destructive/read-only annotations are not yet known.")
+            }
             return .allow
         }
 

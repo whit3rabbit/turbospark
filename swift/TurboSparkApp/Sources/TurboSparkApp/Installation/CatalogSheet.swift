@@ -31,11 +31,11 @@ struct CatalogSheet: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Model Catalog")
-                    .font(.headline)
+                Text("Model Catalog", bundle: .module)
+                    .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Text("Install models locally from the curated catalog or Hugging Face.")
-                    .font(.caption)
+                Text("Install models locally from the curated catalog or Hugging Face.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -66,7 +66,7 @@ struct CatalogSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(model.installStageText ?? "Installing...")
-                    .font(.callout.weight(.medium))
+                    .themedFont(.base, weight: .medium)
                 Spacer()
                 Button("Cancel") {
                     model.cancelInstall()
@@ -82,12 +82,12 @@ struct CatalogSheet: View {
                     .accessibilityValue(MetricFormat.percent(fraction * 100))
                 HStack {
                     if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {
-                        Text("\(MetricFormat.storage(downloaded)) / \(MetricFormat.storage(total))")
+                        Text("\(MetricFormat.storage(downloaded)) / \(MetricFormat.storage(total))", bundle: .module)
                     }
                     Spacer()
                     Text(MetricFormat.percent(fraction * 100))
                 }
-                .font(.caption.monospacedDigit())
+                .themedFont(.small).monospacedDigit()
                 .foregroundStyle(.secondary)
             } else {
                 ProgressView()
@@ -99,13 +99,13 @@ struct CatalogSheet: View {
 
     private var installedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Installed Models")
-                .font(.subheadline.weight(.semibold))
+            Text("Installed Models", bundle: .module)
+                .themedFont(.small, weight: .semibold)
                 .accessibilityAddTraits(.isHeader)
 
             if model.installed.isEmpty {
-                Text("No models currently installed.")
-                    .font(.caption)
+                Text("No models currently installed.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(model.installed) { item in
@@ -116,16 +116,16 @@ struct CatalogSheet: View {
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.alias)
-                                    .font(.callout.weight(.medium))
-                                Text("\(visuals.family) | \(MetricFormat.storage(item.installBytes))")
-                                    .font(.caption)
+                                    .themedFont(.base, weight: .medium)
+                                Text("\(visuals.family) | \(MetricFormat.storage(item.installBytes))", bundle: .module)
+                                    .themedFont(.small)
                                     .foregroundStyle(.secondary)
                             }
                         }
                         Spacer()
                         if model.selected?.alias == item.alias && model.session != nil {
-                            Text("Active")
-                                .font(.caption.weight(.semibold))
+                            Text("Active", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
                                 .foregroundStyle(TurboSparkTheme.accentColor)
                         }
                         Button("Delete", role: .destructive) {
@@ -146,8 +146,8 @@ struct CatalogSheet: View {
 
     private var curatedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Available in Catalog")
-                .font(.subheadline.weight(.semibold))
+            Text("Available in Catalog", bundle: .module)
+                .themedFont(.small, weight: .semibold)
                 .accessibilityAddTraits(.isHeader)
 
             ForEach(model.catalog) { entry in
@@ -159,30 +159,30 @@ struct CatalogSheet: View {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(entry.alias)
-                                    .font(.callout.weight(.medium))
+                                    .themedFont(.base, weight: .medium)
                                 HStack(spacing: 3) {
                                     Image(systemName: visuals.iconSystemName)
-                                        .font(.system(size: 8))
+                                        .themedFont(points: 8)
                                     Text(visuals.family)
                                 }
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1.5)
                                 .background(visuals.accentColor.opacity(0.15), in: Capsule())
                                 .foregroundStyle(visuals.accentColor)
                             }
                             Text(entry.name)
-                                .font(.caption)
+                                .themedFont(.small)
                                 .foregroundStyle(.secondary)
-                            Text("Download: \(MetricFormat.storage(entry.downloadBytes)) | Disk: \(MetricFormat.storage(entry.installBytes))")
-                                .font(.caption2)
+                            Text("Download: \(MetricFormat.storage(entry.downloadBytes)) | Disk: \(MetricFormat.storage(entry.installBytes))", bundle: .module)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.tertiary)
                         }
                     }
                     Spacer()
                     if entry.installed {
-                        Text("Installed")
-                            .font(.caption)
+                        Text("Installed", bundle: .module)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
                     } else {
                         Button("Install") {
@@ -223,7 +223,7 @@ struct CatalogSheet: View {
             }
             .padding(.top, 6)
         }
-        .font(.subheadline)
+        .themedFont(.small)
     }
 
     private var footer: some View {

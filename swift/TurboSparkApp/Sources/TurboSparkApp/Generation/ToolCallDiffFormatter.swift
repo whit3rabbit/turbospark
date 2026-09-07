@@ -52,7 +52,30 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 2. Structured Task System
+        // 2. Subagent & Agent Execution
+        if lowerName == "agent" || lowerName == "subagent"
+            || (lowerName == "task" && (arguments["subagent_type"] != nil || arguments["subagentType"] != nil || arguments["prompt"] != nil || arguments["description"] != nil)) {
+            let isBg = arguments["run_in_background"]?.lowercased() == "true"
+                || arguments["runInBackground"]?.lowercased() == "true"
+                || arguments["background"]?.lowercased() == "true"
+            let agentType = arguments["subagent_type"] ?? arguments["subagentType"] ?? arguments["agent"] ?? arguments["agent_name"] ?? "agent"
+            let desc = arguments["description"] ?? arguments["task"] ?? arguments["prompt"] ?? ""
+            let target = desc.isEmpty ? agentType : "\(agentType): \(desc)"
+            return ToolCallSummaryInfo(
+                action: isBg ? "Background Agent" : "Agent",
+                target: target
+            )
+        }
+
+        if lowerName == "stop_agent" || lowerName == "stopagent" {
+            let targetId = arguments["task_id"] ?? arguments["taskId"] ?? arguments["id"] ?? "agent"
+            return ToolCallSummaryInfo(
+                action: "Stop",
+                target: targetId
+            )
+        }
+
+        // 3. Structured Task System
         if lowerName.hasPrefix("task") {
             let subj = arguments["subject"] ?? arguments["taskId"] ?? arguments["task_id"] ?? "task"
             return ToolCallSummaryInfo(
@@ -125,18 +148,49 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 7. File Edits: replace_file_content, edit_file, etc.
+        // 7. Patch Application
+        if lowerName == "apply_patch" || lowerName == "applypatch" {
+            let patch = arguments["patch_text"] ?? arguments["patchText"] ?? arguments["patch"] ?? ""
+            var fileName = "patch"
+            var additions = 0
+            var deletions = 0
+            for line in patch.components(separatedBy: "\n") {
+                if line.starts(with: "+++ b/") {
+                    fileName = (String(line.dropFirst(6)) as NSString).lastPathComponent
+                } else if line.starts(with: "--- a/") && fileName == "patch" {
+                    fileName = (String(line.dropFirst(6)) as NSString).lastPathComponent
+                } else if line.starts(with: "+") && !line.starts(with: "+++") {
+                    additions += 1
+                } else if line.starts(with: "-") && !line.starts(with: "---") {
+                    deletions += 1
+                }
+            }
+            return ToolCallSummaryInfo(
+                action: "Patched",
+                target: fileName,
+                additions: additions > 0 ? additions : nil,
+                deletions: deletions > 0 ? deletions : nil
+            )
+        }
+
+        // 8. File Edits: replace_file_content, edit_file, etc.
         if lowerName.contains("replace") || lowerName.contains("edit") {
-            let targetPath = arguments["TargetFile"] ?? arguments["path"] ?? arguments["file"] ?? "file"
+            let targetPath = arguments["TargetFile"]
+                ?? arguments["AbsolutePath"]
+                ?? arguments["path"]
+                ?? arguments["file_path"]
+                ?? arguments["filePath"]
+                ?? arguments["file"]
+                ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
 
             var additions: Int? = nil
             var deletions: Int? = nil
 
-            if let targetContent = arguments["TargetContent"] {
+            if let targetContent = arguments["TargetContent"] ?? arguments["old_string"] ?? arguments["target"] {
                 deletions = countLines(targetContent)
             }
-            if let replacementContent = arguments["ReplacementContent"] {
+            if let replacementContent = arguments["ReplacementContent"] ?? arguments["new_string"] ?? arguments["replacement"] {
                 additions = countLines(replacementContent)
             }
 
@@ -166,13 +220,19 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 8. File Writes: write_to_file, write_file, create_file
+        // 9. File Writes: write_to_file, write_file, create_file
         if lowerName.contains("write") || lowerName.contains("create") {
-            let targetPath = arguments["TargetFile"] ?? arguments["path"] ?? arguments["file"] ?? "file"
+            let targetPath = arguments["TargetFile"]
+                ?? arguments["AbsolutePath"]
+                ?? arguments["path"]
+                ?? arguments["file_path"]
+                ?? arguments["filePath"]
+                ?? arguments["file"]
+                ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
 
             var additions: Int? = nil
-            if let content = arguments["CodeContent"] ?? arguments["content"] {
+            if let content = arguments["CodeContent"] ?? arguments["content"] ?? arguments["text"] {
                 additions = countLines(content)
             }
 
@@ -183,13 +243,79 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 9. File Reads: view_file, read_file
+        // 10. Web Fetch
+        if lowerName.contains("fetch") || lowerName.contains("read_url") {
+            let rawUrl = arguments["url"] ?? arguments["uri"] ?? arguments["Url"] ?? arguments["URL"] ?? "url"
+            let targetStr: String
+            if let parsed = URL(string: rawUrl), let host = parsed.host {
+                let path = parsed.path
+                targetStr = path.isEmpty || path == "/" ? host : "\(host)\(path.prefix(24))"
+            } else {
+                targetStr = String(rawUrl.prefix(30))
+            }
+            return ToolCallSummaryInfo(
+                action: "Fetched",
+                target: targetStr
+            )
+        }
+
+        // 11. Directory Listing
+        if lowerName == "list_directory" || lowerName == "list_dir" || lowerName == "ls" || lowerName == "glob" {
+            let path = arguments["path"] ?? arguments["pattern"] ?? arguments["DirectoryPath"] ?? arguments["dir"] ?? "."
+            let target = path == "." ? "workspace" : (path as NSString).lastPathComponent
+            return ToolCallSummaryInfo(
+                action: "Listed",
+                target: target.isEmpty ? path : target
+            )
+        }
+
+        // 12. Skills & Feedback
+        if lowerName == "skill" {
+            let name = arguments["name"] ?? arguments["skill_name"] ?? "skill"
+            return ToolCallSummaryInfo(
+                action: "Skill",
+                target: name
+            )
+        }
+
+        if lowerName.contains("propose_skill") || lowerName.contains("proposeskill") {
+            let name = arguments["name"] ?? arguments["skill_name"] ?? "skills"
+            return ToolCallSummaryInfo(
+                action: "Proposed",
+                target: name
+            )
+        }
+
+        if lowerName.contains("propose_goal") || lowerName.contains("proposegoal") {
+            let title = arguments["title"] ?? arguments["goal"] ?? "goal"
+            return ToolCallSummaryInfo(
+                action: "Goal",
+                target: title
+            )
+        }
+
+        if lowerName.contains("feedback") {
+            return ToolCallSummaryInfo(
+                action: "Feedback",
+                target: "session notes"
+            )
+        }
+
+        // 13. File Reads: view_file, read_file
         if lowerName.contains("view") || lowerName.contains("read") {
-            let targetPath = arguments["AbsolutePath"] ?? arguments["path"] ?? arguments["file"] ?? arguments["TargetFile"] ?? "file"
+            let targetPath = arguments["AbsolutePath"]
+                ?? arguments["path"]
+                ?? arguments["file_path"]
+                ?? arguments["filePath"]
+                ?? arguments["file"]
+                ?? arguments["TargetFile"]
+                ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
 
             var lineRange: String? = nil
-            if let start = arguments["StartLine"], let end = arguments["EndLine"], !start.isEmpty, !end.isEmpty {
+            let start = arguments["StartLine"] ?? arguments["start_line"] ?? arguments["startLine"] ?? arguments["start"]
+            let end = arguments["EndLine"] ?? arguments["end_line"] ?? arguments["endLine"] ?? arguments["end"]
+            if let start, let end, !start.isEmpty, !end.isEmpty {
                 lineRange = "(\(start)-\(end))"
             }
 
@@ -200,8 +326,18 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 10. Commands: run_command, bash, terminal
-        if lowerName.contains("command") || lowerName.contains("bash") || lowerName.contains("exec") || lowerName.contains("worktree") {
+        // 14. Worktree
+        if lowerName.contains("worktree") && (lowerName.contains("enter") || lowerName.contains("exit")) {
+            let act = lowerName.contains("exit") ? "Exit Worktree" : "Worktree"
+            let name = arguments["name"] ?? arguments["branch"] ?? arguments["path"] ?? "active"
+            return ToolCallSummaryInfo(
+                action: act,
+                target: name
+            )
+        }
+
+        // 15. Commands: run_command, bash, terminal
+        if lowerName.contains("command") || lowerName.contains("bash") || lowerName.contains("exec") || lowerName.contains("terminal") {
             let cmd = arguments["CommandLine"] ?? arguments["command"] ?? arguments["cmd"] ?? arguments["name"] ?? ""
             let trimmed = cmd.trimmingCharacters(in: .whitespacesAndNewlines)
             let shortCmd = simplifyCommand(trimmed)
@@ -212,7 +348,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 11. Grep / Search
+        // 16. Grep / Search
         if lowerName.contains("grep") || lowerName.contains("search") {
             let query = arguments["Query"] ?? arguments["query"] ?? arguments["pattern"] ?? ""
             return ToolCallSummaryInfo(
@@ -221,7 +357,43 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 12. Generic fallback
+        // 17. MCP Tools
+        if lowerName.contains("mcp") {
+            let server = arguments["server"] ?? arguments["server_name"] ?? arguments["ServerName"] ?? ""
+            let tool = arguments["toolName"] ?? arguments["tool"] ?? arguments["name"] ?? arguments["ToolName"] ?? ""
+            if !server.isEmpty && !tool.isEmpty {
+                return ToolCallSummaryInfo(
+                    action: "MCP: \(server)",
+                    target: tool
+                )
+            } else if lowerName.hasPrefix("mcp__") {
+                let parts = callName.components(separatedBy: "__")
+                if parts.count >= 3 {
+                    return ToolCallSummaryInfo(
+                        action: "MCP: \(parts[1])",
+                        target: parts[2...].joined(separator: "__")
+                    )
+                }
+            } else if lowerName.contains("resource") {
+                let uri = arguments["uri"] ?? arguments["Uri"] ?? "resource"
+                return ToolCallSummaryInfo(
+                    action: "MCP Resource",
+                    target: (uri as NSString).lastPathComponent
+                )
+            }
+        }
+
+        // 18. Shared user files
+        if lowerName == "senduserfile" || lowerName == "send_user_file" {
+            let targetPath = arguments["path"] ?? arguments["file_path"] ?? "file"
+            let fileName = (targetPath as NSString).lastPathComponent
+            return ToolCallSummaryInfo(
+                action: "Shared",
+                target: fileName.isEmpty ? "file" : fileName
+            )
+        }
+
+        // 19. Generic fallback
         return ToolCallSummaryInfo(
             action: "Invoked",
             target: callName

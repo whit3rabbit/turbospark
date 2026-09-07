@@ -270,8 +270,6 @@ public struct AppRuntimeOptions: Equatable, Sendable {
 
     /// Number of expert cache slots (0 for automatic).
     public var expertCacheSlots: Int = 0
-    /// Whether prompt prefill acceleration is enabled.
-    public var prefillEnabled: Bool = true
     /// Selected power and thermal profile.
     public var powerProfile: AppPowerProfileOption = .auto
     /// How much of the machine a model may commit when it loads.
@@ -305,7 +303,6 @@ public struct AppRuntimeOptions: Equatable, Sendable {
     /// Creates runtime options with configured defaults.
     public init(
         expertCacheSlots: Int = 0,
-        prefillEnabled: Bool = true,
         powerProfile: AppPowerProfileOption = .auto,
         loadGuard: AppLoadGuardOption = .relaxed,
         loadGuardCustomBytes: UInt64 = 0,
@@ -321,7 +318,6 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         steeringGate: Double = 0.0
     ) {
         self.expertCacheSlots = expertCacheSlots
-        self.prefillEnabled = prefillEnabled
         self.powerProfile = powerProfile
         self.loadGuard = loadGuard
         self.loadGuardCustomBytes = loadGuardCustomBytes

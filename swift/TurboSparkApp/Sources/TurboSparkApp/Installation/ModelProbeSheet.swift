@@ -53,11 +53,11 @@ struct ModelProbeSheet: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Probe Hugging Face Repository")
-                    .font(.headline)
+                Text("Probe Hugging Face Repository", bundle: .module)
+                    .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Text("Check compatibility by reading checkpoint headers without downloading.")
-                    .font(.caption)
+                Text("Check compatibility by reading checkpoint headers without downloading.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -76,8 +76,8 @@ struct ModelProbeSheet: View {
                 if isProbing {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("Probing repository headers...")
-                            .font(.callout)
+                        Text("Probing repository headers...", bundle: .module)
+                            .themedFont(.base)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 8)
@@ -85,22 +85,22 @@ struct ModelProbeSheet: View {
                 if let err = probeError {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(err)
-                            .font(.caption)
+                            .themedFont(.small)
                             .foregroundStyle(.red)
 
                         if err.contains("401") || err.contains("403") || err.contains("gated") || err.localizedCaseInsensitiveContains("unauthorized") || err.localizedCaseInsensitiveContains("forbidden") {
                             HStack(spacing: 6) {
                                 Image(systemName: "key.fill")
-                                    .font(.caption2)
+                                    .themedFont(.tiny)
                                     .foregroundStyle(.orange)
-                                Text("This repository may require Hugging Face authentication.")
-                                    .font(.caption2)
+                                Text("This repository may require Hugging Face authentication.", bundle: .module)
+                                    .themedFont(.tiny)
                                     .foregroundStyle(.secondary)
                                 Button("Open Settings") {
                                     model.openSettings(tab: .general)
                                 }
                                 .buttonStyle(.link)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                             }
                             .padding(.top, 2)
                         }
@@ -152,7 +152,7 @@ struct ModelProbeSheet: View {
                 HStack(spacing: 8) {
                     if let listed = variants, !listed.variants.isEmpty {
                         Picker("", selection: $ggufFile) {
-                            Text("Let the installer choose").tag("")
+                            Text("Let the installer choose", bundle: .module).tag("")
                             ForEach(listed.variants) { v in
                                 Text(variantLabel(v)).tag(v.file)
                             }
@@ -179,15 +179,15 @@ struct ModelProbeSheet: View {
                 }
 
                 if let v = selectedVariant, !v.executable {
-                    Text("This port has no kernels for the type this filename names. Probe it to see what the header actually contains.")
-                        .font(.caption)
+                    Text("This port has no kernels for the type this filename names. Probe it to see what the header actually contains.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.orange)
                 }
                 // Nonzero shards is why the list may be short or empty. Say
                 // so, or an empty picker reads as "no GGUF here".
                 if let listed = variants, listed.shardedSkipped > 0 {
-                    Text("\(listed.shardedSkipped) multi-part file\(listed.shardedSkipped == 1 ? "" : "s") not listed: this port cannot walk a shard set.")
-                        .font(.caption)
+                    Text("\(listed.shardedSkipped) multi-part file\(listed.shardedSkipped == 1 ? "" : "s") not listed: this port cannot walk a shard set.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -210,7 +210,7 @@ struct ModelProbeSheet: View {
             // broken control.
             if let reason = decision.reason {
                 Label(reason, systemImage: decision.isBlocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(decision.isBlocked ? Color.red : Color.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }

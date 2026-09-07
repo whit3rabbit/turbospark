@@ -33,7 +33,7 @@ struct PromptTipsGuideView: View {
     @Environment(\.appTheme) private var theme
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Prompting tips")
+            Text("Prompting tips", bundle: .module)
                 .font(theme.ui(points: 13, weight: .semibold))
 
             tipSection("Clear task & constraints",
@@ -71,7 +71,7 @@ struct PromptAttachDocumentButton: View {
                     TaskProgressFlameIcon(size: 16)
                 } else {
                     Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .medium))
+                        .themedFont(points: 13, weight: .medium)
                 }
             }
             .frame(width: iconButtonSize, height: iconButtonSize)
@@ -105,8 +105,8 @@ struct SearchToggleButton: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "globe")
-                    .font(.system(size: 11, weight: .medium))
-                Text("Search")
+                    .themedFont(points: 11, weight: .medium)
+                Text("Search", bundle: .module)
                     .font(theme.ui(points: 12, weight: .medium))
             }
             .padding(.horizontal, 8)
@@ -144,7 +144,7 @@ struct PromptAudioInputButton: View {
             NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
         } label: {
             Image(systemName: "mic")
-                .font(.system(size: 13, weight: .medium))
+                .themedFont(points: 13, weight: .medium)
                 .foregroundStyle(Color.secondary)
                 .frame(width: 28, height: 28)
                 .background(

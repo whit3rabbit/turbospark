@@ -5,11 +5,21 @@ import SwiftUI
 struct CustomModelFoldersSectionView: View {
     @ObservedObject var model: AppModel
 
+    /// Model counts per folder, from the last `rescanCounts()`.
+    ///
+    /// `ModelStorageManager.scanModels` walks the whole directory tree with
+    /// a `FileManager.enumerator`, stat-ing every entry -- real I/O, not a
+    /// property read. It used to run inline in `body`, so SwiftUI re-ran the
+    /// walk, for every configured folder, on every body evaluation this view
+    /// received for any reason (`docs/SWIFT_SETTINGS_AUDIT.md`). `.task(id:)`
+    /// below reruns this exactly when the folder list changes.
+    @State private var scannedCounts: [String: Int] = [:]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Additional Model Folders", systemImage: "folder.badge.plus")
-                    .font(.headline)
+                    .themedFont(.base, weight: .semibold)
                 Spacer()
                 Button {
                     addCustomFolder()
@@ -26,10 +36,10 @@ struct CustomModelFoldersSectionView: View {
                         Spacer()
                         VStack(spacing: 6) {
                             Image(systemName: "folder.badge.questionmark")
-                                .font(.title2)
+                                .themedFont(.title2)
                                 .foregroundStyle(.secondary)
-                            Text("No additional model scan folders configured.")
-                                .font(.caption)
+                            Text("No additional model scan folders configured.", bundle: .module)
+                                .themedFont(.small)
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 16)
@@ -41,14 +51,14 @@ struct CustomModelFoldersSectionView: View {
                             Image(systemName: "folder")
                                 .foregroundStyle(.secondary)
                             Text(dir)
-                                .font(.system(.caption, design: .monospaced))
+                                .themedCode(.small)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer()
 
-                            let found = ModelStorageManager.scanModels(in: dir, sourceTag: "Custom").count
-                            Text("\(found) model\(found == 1 ? "" : "s")")
-                                .font(.caption2)
+                            let found = scannedCounts[dir] ?? 0
+                            Text("\(found) model\(found == 1 ? "" : "s")", bundle: .module)
+                                .themedFont(.tiny)
                                 .foregroundStyle(.secondary)
 
                             Button {
@@ -74,8 +84,8 @@ struct CustomModelFoldersSectionView: View {
                     }
                 }
 
-                Text("Add folders on external drives or secondary locations to scan for .gturbo bundles and .gguf models.")
-                    .font(.caption2)
+                Text("Add folders on external drives or secondary locations to scan for .gturbo bundles and .gguf models.", bundle: .module)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
             .padding(14)
@@ -83,6 +93,16 @@ struct CustomModelFoldersSectionView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1))
         }
+        .task(id: model.customModelDirectories) {
+            rescanCounts()
+        }
+    }
+
+    private func rescanCounts() {
+        scannedCounts = Dictionary(
+            uniqueKeysWithValues: model.customModelDirectories.map {
+                ($0, ModelStorageManager.scanModels(in: $0, sourceTag: "Custom").count)
+            })
     }
 
     private func addCustomFolder() {

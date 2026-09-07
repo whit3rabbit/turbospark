@@ -23,8 +23,8 @@ struct ModelTechnicalSpecsCardView: View {
                 Image(systemName: visuals.iconSystemName)
                     .foregroundStyle(visuals.accentColor)
                     .help("\(visuals.family) architecture specifications")
-                Text("Technical Overview")
-                    .font(.headline)
+                Text("Technical Overview", bundle: .module)
+                    .themedFont(.base, weight: .semibold)
             }
 
             VStack(spacing: 8) {
@@ -34,15 +34,15 @@ struct ModelTechnicalSpecsCardView: View {
                 specRow(label: "Estimated Install", value: MetricFormat.storage(entry.installBytes))
                 if let inst = installedModel {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("Installed Path")
-                            .font(.caption)
+                        Text("Installed Path", bundle: .module)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 16)
                         Button {
                             ModelStorageManager.revealInFinder(path: inst.path)
                         } label: {
                             Text(inst.path)
-                                .font(.caption.monospaced())
+                                .themedCode(.small)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .foregroundStyle(Color.accentColor)
@@ -63,11 +63,11 @@ struct ModelTechnicalSpecsCardView: View {
     private func specRow(label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 16)
             Text(value)
-                .font(.caption.monospaced())
+                .themedCode(.small)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -75,11 +75,11 @@ struct ModelTechnicalSpecsCardView: View {
 
     private func notesCard(_ notes: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Benchmark & Architecture Notes")
-                .font(.headline)
+            Text("Benchmark & Architecture Notes", bundle: .module)
+                .themedFont(.base, weight: .semibold)
 
             Text(notes)
-                .font(.callout)
+                .themedFont(.base)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

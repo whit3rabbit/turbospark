@@ -15,8 +15,8 @@ struct ServerLoadedModelsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Serving")
-                    .font(.system(size: 12, weight: .semibold))
+                Text("Serving", bundle: .module)
+                    .themedFont(points: 12, weight: .semibold)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if model.session != nil, !rows.contains(where: \.isChatSession) {
@@ -25,7 +25,7 @@ struct ServerLoadedModelsView: View {
                     // where a second install costs its whole footprint.
                     Button("Serve loaded model") { model.attachChatSession() }
                         .buttonStyle(.link)
-                        .font(.system(size: 11))
+                        .themedFont(points: 11)
                 }
                 Button {
                     showingPicker = true
@@ -38,8 +38,8 @@ struct ServerLoadedModelsView: View {
             }
 
             if rows.isEmpty {
-                Text("Nothing attached yet.")
-                    .font(.system(size: 11))
+                Text("Nothing attached yet.", bundle: .module)
+                    .themedFont(points: 11)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 10)
@@ -74,11 +74,11 @@ struct ServerLoadedModelsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(row.id)
-                        .font(.system(size: 12, design: .monospaced))
+                        .themedCode(points: 12)
                         .textSelection(.enabled)
                     if row.isChatSession {
-                        Text("chat")
-                            .font(.system(size: 9, weight: .medium))
+                        Text("chat", bundle: .module)
+                            .themedFont(points: 9, weight: .medium)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(
@@ -87,7 +87,7 @@ struct ServerLoadedModelsView: View {
                     }
                 }
                 Text(detailLine(row))
-                    .font(.system(size: 10))
+                    .themedFont(points: 10)
                     .foregroundStyle(.secondary)
                 // READ-ONLY, and only when this model is steering. Steering
                 // resolves at OPEN and this server serves already-open
@@ -98,15 +98,15 @@ struct ServerLoadedModelsView: View {
                 // one carries an edit and the other does not.
                 if let summary = row.steeringSummary {
                     Label(summary, systemImage: "dial.medium.fill")
-                        .font(.system(size: 10))
+                        .themedFont(points: 10)
                         .foregroundStyle(Color.orange)
                 }
             }
 
             Spacer(minLength: 8)
 
-            Text("\(row.requestsServed) req")
-                .font(.system(size: 10))
+            Text("\(row.requestsServed) req", bundle: .module)
+                .themedFont(points: 10)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
 
@@ -175,7 +175,7 @@ struct ServerLoadedModelsView: View {
                 Text(
                     "\(byteText(UInt64(used))) peak of \(byteText(telemetry.physicalMemoryBytes)) "
                         + "unified memory")
-                    .font(.system(size: 10))
+                    .themedFont(points: 10)
                     .foregroundStyle(.secondary)
             }
         }
@@ -199,16 +199,16 @@ private struct ServerModelPickerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Serve another model")
-                .font(.system(size: 14, weight: .semibold))
+            Text("Serve another model", bundle: .module)
+                .themedFont(points: 14, weight: .semibold)
                 .padding(16)
 
             Divider()
 
             let candidates = model.serverAttachableModels
             if candidates.isEmpty {
-                Text("Every installed model is already attached.")
-                    .font(.system(size: 12))
+                Text("Every installed model is already attached.", bundle: .module)
+                    .themedFont(points: 12)
                     .foregroundStyle(.secondary)
                     .padding(24)
                     .frame(maxWidth: .infinity)
@@ -231,8 +231,8 @@ private struct ServerModelPickerSheet: View {
                 // machine that can hold one comfortably it may not hold two.
                 // Said before the click rather than surfaced as a load
                 // failure after it.
-                Text("Each model is opened separately and holds its own memory.")
-                    .font(.system(size: 10))
+                Text("Each model is opened separately and holds its own memory.", bundle: .module)
+                    .themedFont(points: 10)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Done") { dismiss() }
@@ -251,9 +251,9 @@ private struct ServerModelPickerSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(candidate.alias)
-                        .font(.system(size: 12, weight: .medium))
+                        .themedFont(points: 12, weight: .medium)
                     Text((candidate.path as NSString).lastPathComponent)
-                        .font(.system(size: 10, design: .monospaced))
+                        .themedCode(points: 10)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()

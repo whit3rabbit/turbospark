@@ -42,11 +42,11 @@ struct FilesSectionView: View {
     private var header: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("Files")
-                    .font(.system(size: 14, weight: .semibold))
+                Text("Files", bundle: .module)
+                    .themedFont(points: 14, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Text(summaryText)
-                    .font(.system(size: 10))
+                    .themedFont(points: 10)
                     .foregroundStyle(.secondary)
             }
 
@@ -63,7 +63,7 @@ struct FilesSectionView: View {
                         ProgressView().controlSize(.small)
                     } else {
                         Label("Add files", systemImage: "plus")
-                            .font(.system(size: 11, weight: .medium))
+                            .themedFont(points: 11, weight: .medium)
                     }
                 }
                 .frame(height: 22)
@@ -84,19 +84,19 @@ struct FilesSectionView: View {
     private var searchField: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 10))
+                .themedFont(points: 10)
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
             TextField("Filter", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 11))
+                .themedFont(points: 11)
                 .frame(width: 120)
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 10))
+                        .themedFont(points: 10)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
@@ -130,7 +130,7 @@ struct FilesSectionView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
         }
-        .font(.caption)
+        .themedFont(.small)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
     }
@@ -166,15 +166,15 @@ struct FilesSectionView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "folder")
-                .font(.system(size: 30))
+                .themedFont(points: 30)
                 .foregroundStyle(.quaternary)
                 .accessibilityHidden(true)
             Text(searchText.isEmpty ? "No files attached" : "No matching files")
-                .font(.callout.weight(.medium))
+                .themedFont(.base, weight: .medium)
             Text(searchText.isEmpty
                  ? "Attach PDFs, Office documents, or source files to give a chat something to read."
                  : "Nothing matches \u{201C}\(searchText)\u{201D}.")
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
@@ -225,18 +225,18 @@ private struct FileRowView: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: attachment.symbolName)
-                .font(.system(size: 14))
+                .themedFont(points: 14)
                 .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                 .frame(width: 20)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.fileName)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .themedFont(points: 12, weight: isSelected ? .semibold : .regular)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(detailText)
-                    .font(.system(size: 10))
+                    .themedFont(points: 10)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -245,7 +245,7 @@ private struct FileRowView: View {
 
             if !attachment.sourceExists {
                 Image(systemName: "questionmark.folder")
-                    .font(.system(size: 10))
+                    .themedFont(points: 10)
                     .foregroundStyle(.orange)
                     .help("The source file has moved; only the extracted text remains.")
             }
@@ -306,7 +306,7 @@ private struct FileRowView: View {
             .disabled(model.isRunning)
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 11, weight: .semibold))
+                .themedFont(points: 11, weight: .semibold)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }

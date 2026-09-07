@@ -37,9 +37,9 @@ struct ChatSidebarFooterView: View {
                 Section("Active Profile") {
                     Label(profileDisplayName, systemImage: "person.circle.fill")
                     if UserProfileStore.isDefault {
-                        Text("Default Machine Profile")
+                        Text("Default Machine Profile", bundle: .module)
                     } else {
-                        Text("Profile ID: \(UserProfileStore.active.id)")
+                        Text("Profile ID: \(UserProfileStore.active.id)", bundle: .module)
                     }
                 }
 
@@ -70,7 +70,7 @@ struct ChatSidebarFooterView: View {
 
                 Divider()
 
-                Text("\(chatCount) local chats stored")
+                Text("\(chatCount) local chats stored", bundle: .module)
             } label: {
                 HStack(spacing: 7) {
                     avatarView
@@ -120,7 +120,7 @@ struct ChatSidebarFooterView: View {
     }
 
     private var badgePill: some View {
-        Text("P")
+        Text("P", bundle: .module)
             .font(theme.code(points: 9, weight: .bold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 4)

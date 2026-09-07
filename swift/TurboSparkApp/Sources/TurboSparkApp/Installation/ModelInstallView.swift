@@ -53,14 +53,14 @@ struct ModelInstallView: View {
     private var lmStudioDetectedBanner: some View {
         HStack(spacing: 12) {
             Image(systemName: "shippingbox.fill")
-                .font(.title2)
+                .themedFont(.title2)
                 .foregroundStyle(Color.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("LM Studio Library Detected")
-                    .font(.subheadline.weight(.semibold))
-                Text("Found models at ~/.lmstudio/models. TurboSpark can run your LM Studio models directly without copying files.")
-                    .font(.caption)
+                Text("LM Studio Library Detected", bundle: .module)
+                    .themedFont(.small, weight: .semibold)
+                Text("Found models at ~/.lmstudio/models. TurboSpark can run your LM Studio models directly without copying files.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
 
@@ -83,17 +83,17 @@ struct ModelInstallView: View {
     private var headerSection: some View {
         VStack(spacing: 8) {
             Image(systemName: "bolt.horizontal.circle.fill")
-                .font(.system(size: 42))
+                .themedFont(points: 42)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help("TurboSpark Local Inference")
                 .accessibilityHidden(true)
 
-            Text("Welcome to TurboSpark")
-                .font(.system(.title2, design: .rounded).bold())
+            Text("Welcome to TurboSpark", bundle: .module)
+                .themedFont(.title2, weight: .bold)
                 .accessibilityAddTraits(.isHeader)
 
-            Text("No local models found in ~/.turbospark. Choose a recommended model below to start.")
-                .font(.subheadline)
+            Text("No local models found in ~/.turbospark. Choose a recommended model below to start.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -105,10 +105,10 @@ struct ModelInstallView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Recommended Models for Your Mac")
-                        .font(.headline)
-                    Text("Ranked by compatibility with your \(model.telemetry?.chip ?? "device") memory budget.")
-                        .font(.caption)
+                    Text("Recommended Models for Your Mac", bundle: .module)
+                        .themedFont(.base, weight: .semibold)
+                    Text("Ranked by compatibility with your \(model.telemetry?.chip ?? "device") memory budget.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -126,8 +126,8 @@ struct ModelInstallView: View {
                 VStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Calculating hardware fit recommendations...")
-                        .font(.caption)
+                    Text("Calculating hardware fit recommendations...", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)

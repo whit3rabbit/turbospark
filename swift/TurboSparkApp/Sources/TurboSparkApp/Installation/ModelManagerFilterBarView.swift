@@ -23,7 +23,7 @@ struct ModelManagerFilterBarView: View {
                     showFavoritesOnly.toggle()
                 } label: {
                     Image(systemName: showFavoritesOnly ? "star.fill" : "star")
-                        .font(.system(size: 11))
+                        .themedFont(points: 11)
                         .foregroundStyle(showFavoritesOnly ? Color.yellow : Color.secondary)
                         .padding(.horizontal, 7)
                         .frame(height: 22)
@@ -47,9 +47,9 @@ struct ModelManagerFilterBarView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(architectureFilter.rawValue)
-                            .font(.system(size: 11))
+                            .themedFont(points: 11)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8))
+                            .themedFont(points: 8)
                             .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 8)
@@ -71,9 +71,9 @@ struct ModelManagerFilterBarView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(drafterFilter.rawValue)
-                            .font(.system(size: 11))
+                            .themedFont(points: 11)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8))
+                            .themedFont(points: 8)
                             .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 8)
@@ -95,9 +95,9 @@ struct ModelManagerFilterBarView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(sourceFilter.rawValue)
-                            .font(.system(size: 11))
+                            .themedFont(points: 11)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8))
+                            .themedFont(points: 8)
                             .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 8)
@@ -130,10 +130,10 @@ struct ModelManagerFilterBarView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.arrow.down")
-                            .font(.system(size: 10))
+                            .themedFont(points: 10)
                             .accessibilityHidden(true)
                         Text(sortOption.rawValue)
-                            .font(.system(size: 11))
+                            .themedFont(points: 11)
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 22)
@@ -151,15 +151,15 @@ struct ModelManagerFilterBarView: View {
             if !knownTags.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
-                        Text("Tags:")
-                            .font(.system(size: 10))
+                        Text("Tags:", bundle: .module)
+                            .themedFont(points: 10)
                             .foregroundStyle(.tertiary)
 
                         Button {
                             selectedTag = nil
                         } label: {
-                            Text("All")
-                                .font(.system(size: 10, weight: selectedTag == nil ? .bold : .regular))
+                            Text("All", bundle: .module)
+                                .themedFont(points: 10, weight: selectedTag == nil ? .bold : .regular)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(selectedTag == nil ? Color.accentColor.opacity(0.2) : Color.clear, in: Capsule())
@@ -176,7 +176,7 @@ struct ModelManagerFilterBarView: View {
                                 }
                             } label: {
                                 Text(tag)
-                                    .font(.system(size: 10, weight: selectedTag == tag ? .bold : .regular))
+                                    .themedFont(points: 10, weight: selectedTag == tag ? .bold : .regular)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(selectedTag == tag ? Color.accentColor.opacity(0.2) : Color.clear, in: Capsule())
@@ -195,12 +195,12 @@ struct ModelManagerFilterBarView: View {
     private var searchField: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 10))
+                .themedFont(points: 10)
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
             TextField("Filter installed models...", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 11))
+                .themedFont(points: 11)
                 .frame(minWidth: 120, idealWidth: 160)
                 .accessibilityLabel("Filter installed models")
             if !searchText.isEmpty {
@@ -208,7 +208,7 @@ struct ModelManagerFilterBarView: View {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 10))
+                        .themedFont(points: 10)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)

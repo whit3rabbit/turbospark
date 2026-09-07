@@ -224,8 +224,24 @@ extension AppModel {
         }
 
         if skill.manifest.context == .fork {
-            let prompt = "Execute skill [\(skill.name)] with arguments: \(rawArgs.isEmpty ? "(none)" : rawArgs)"
-            if let agent = findAgent(named: "general-purpose") ?? AgentManager.shared.builtInAgents.first {
+            // The SUBSTITUTED BODY rides along, not just the name: an agent
+            // handed only "execute skill [name]" would have to find and load
+            // the skill itself, and `disable-model-invocation` skills would
+            // be unreachable from here at all. `agent:` names the runner,
+            // general-purpose the fallback (Claude Code's
+            // `command.agent ?? 'general-purpose'`).
+            guard let payload = executeSkill(named: skill.name, arguments: argsDict) else {
+                return false
+            }
+            let requested = skill.manifest.agent.flatMap { $0.isEmpty ? nil : $0 }
+            let agent = requested.flatMap { findAgent(named: $0) }
+                ?? findAgent(named: "general-purpose")
+                ?? AgentManager.shared.builtInAgents.first
+            if let agent {
+                var prompt = "Execute the following skill instructions:\n\n\(payload)"
+                if let requested, agent.name.lowercased() != requested.lowercased() {
+                    prompt += "\n\n(Requested agent '\(requested)' was not found; running as '\(agent.name)'.)"
+                }
                 runAgentTaskDirectly(agent: agent, prompt: prompt)
             }
             return true

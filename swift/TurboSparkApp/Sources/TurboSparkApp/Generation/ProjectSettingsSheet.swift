@@ -74,9 +74,9 @@ struct ProjectSettingsSheet: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(editingProject == nil ? "New Project" : "Project Settings")
-                    .font(.headline)
-                Text("Manage codebase root, agent profile, rules, and execution permissions.")
-                    .font(.caption)
+                    .themedFont(.base, weight: .semibold)
+                Text("Manage codebase root, agent profile, rules, and execution permissions.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -90,13 +90,13 @@ struct ProjectSettingsSheet: View {
 
     private var generalSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("General")
-                .font(.subheadline.weight(.semibold))
+            Text("General", bundle: .module)
+                .themedFont(.small, weight: .semibold)
                 .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Project Name")
-                    .font(.caption)
+                Text("Project Name", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                 TextField("e.g. My Rust Engine", text: $name)
                     .textFieldStyle(.roundedBorder)
@@ -104,8 +104,8 @@ struct ProjectSettingsSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Codebase Root Directory")
-                    .font(.caption)
+                Text("Codebase Root Directory", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 8) {
                     TextField("/path/to/codebase", text: $rootDirectoryPath)
@@ -125,8 +125,8 @@ struct ProjectSettingsSheet: View {
 
     private var agentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Agent Specialization")
-                .font(.subheadline.weight(.semibold))
+            Text("Agent Specialization", bundle: .module)
+                .themedFont(.small, weight: .semibold)
                 .accessibilityAddTraits(.isHeader)
 
             Picker("Agent Profile", selection: $agentType) {
@@ -138,7 +138,7 @@ struct ProjectSettingsSheet: View {
             .accessibilityLabel("Agent profile")
 
             Text(agentType.descriptionText)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -146,12 +146,12 @@ struct ProjectSettingsSheet: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Autonomous Step Limit")
-                        .font(.caption)
+                    Text("Autonomous Step Limit", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(Int(maxAutonomousSteps)) steps")
-                        .font(.caption.monospacedDigit())
+                    Text("\(Int(maxAutonomousSteps)) steps", bundle: .module)
+                        .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
                 Slider(value: $maxAutonomousSteps, in: 1...15, step: 1)
@@ -170,7 +170,7 @@ struct ProjectSettingsSheet: View {
                         : "Each step sees the whole transcript. Simple and exact, but long runs "
                             + "grow until they hit the context window."
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
             }
             .padding(10)
@@ -183,12 +183,12 @@ struct ProjectSettingsSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("MCP External Servers & Detection")
-                        .font(.subheadline.weight(.semibold))
+                    Text("MCP External Servers & Detection", bundle: .module)
+                        .themedFont(.small, weight: .semibold)
                         .accessibilityAddTraits(.isHeader)
                     let count = editingProject?.mcpServers.count ?? 0
                     Text(count > 0 ? "\(count) server(s) configured for this project." : "Import .mcp.json or configure codebase MCP tools.")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -201,8 +201,8 @@ struct ProjectSettingsSheet: View {
                     .buttonStyle(.bordered)
                     .help("Manage MCP servers for this project")
                 } else {
-                    Text("Save project to configure MCPs")
-                        .font(.caption2)
+                    Text("Save project to configure MCPs", bundle: .module)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
             }

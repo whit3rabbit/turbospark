@@ -12,7 +12,7 @@ public struct AppearancePreferencesCardView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Preferences")
+            Text("Preferences", bundle: .module)
                 .font(theme.ui(.large, weight: .semibold))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -49,7 +49,27 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 3. Reduce motion
+            // 3. Dock icon. The manager's `didSet` re-renders the icon, so
+            // this row is the whole feature: the preference had persisted and
+            // applied for months with no control anywhere to change it
+            // (`docs/SWIFT_SETTINGS_AUDIT.md`).
+            preferenceRow(
+                title: "Dock icon",
+                description: "Choose the icon TurboSpark shows in the Dock"
+            ) {
+                Picker("", selection: $manager.dockIcon) {
+                    ForEach(AppDockIcon.allCases) { icon in
+                        Text(icon.label).tag(icon)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 140)
+                .labelsHidden()
+            }
+
+            Divider().padding(.leading, 16)
+
+            // 4. Reduce motion
             preferenceRow(
                 title: "Reduce motion",
                 description: "Reduce animations or match your system"
@@ -66,7 +86,7 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 4. Text size
+            // 5. Text size
             preferenceRow(
                 title: "Text size",
                 description: "Scale interface, messages, and transcript text"
@@ -83,7 +103,7 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 5. UI font
+            // 6. UI font
             preferenceRow(
                 title: "UI font",
                 description: "Select the typeface and weight for the TurboSpark interface"
@@ -104,7 +124,7 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 6. UI font size
+            // 7. UI font size
             preferenceRow(
                 title: "UI font size",
                 description: "Adjust the base size used for the TurboSpark UI"
@@ -113,11 +133,11 @@ public struct AppearancePreferencesCardView: View {
                     Stepper("", value: $manager.uiFontSize, in: 11...28, step: 1)
                         .labelsHidden()
 
-                    Text("\(Int(manager.uiFontSize))")
+                    Text("\(Int(manager.uiFontSize))", bundle: .module)
                         .font(theme.ui(points: 14, weight: .medium).monospacedDigit())
                         .frame(width: 28, alignment: .center)
 
-                    Text("px")
+                    Text("px", bundle: .module)
                         .font(theme.ui(.small))
                         .foregroundStyle(.secondary)
                 }
@@ -133,7 +153,7 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 7. Code font
+            // 8. Code font
             preferenceRow(
                 title: "Code font",
                 description: "Select the typeface and weight for code blocks and diffs"
@@ -154,7 +174,7 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 8. Code font size
+            // 9. Code font size
             preferenceRow(
                 title: "Code font size",
                 description: "Adjust the base size used for code across chats and diffs"
@@ -163,11 +183,11 @@ public struct AppearancePreferencesCardView: View {
                     Stepper("", value: $manager.codeFontSize, in: 10...24, step: 1)
                         .labelsHidden()
 
-                    Text("\(Int(manager.codeFontSize))")
+                    Text("\(Int(manager.codeFontSize))", bundle: .module)
                         .font(theme.ui(points: 14, weight: .medium).monospacedDigit())
                         .frame(width: 28, alignment: .center)
 
-                    Text("px")
+                    Text("px", bundle: .module)
                         .font(theme.ui(.small))
                         .foregroundStyle(.secondary)
                 }
@@ -183,7 +203,7 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 7. Diff markers
+            // 10. Diff markers
             preferenceRow(
                 title: "Diff markers",
                 description: "Show changes using colors or +/- markers"
@@ -248,10 +268,10 @@ public struct AppearancePreferencesCardView: View {
             .labelsHidden()
 
             Picker("", selection: weight) {
-                Text("Regular").font(AppFontDescriptor(family: family.wrappedValue, weight: .regular, size: 13, isCode: isCodeFont).font).tag("Regular")
-                Text("Medium").font(AppFontDescriptor(family: family.wrappedValue, weight: .medium, size: 13, isCode: isCodeFont).font).tag("Medium")
-                Text("Semibold").font(AppFontDescriptor(family: family.wrappedValue, weight: .semibold, size: 13, isCode: isCodeFont).font).tag("Semibold")
-                Text("Bold").font(AppFontDescriptor(family: family.wrappedValue, weight: .bold, size: 13, isCode: isCodeFont).font).tag("Bold")
+                Text("Regular", bundle: .module).font(AppFontDescriptor(family: family.wrappedValue, weight: .regular, size: 13, isCode: isCodeFont).font).tag("Regular")
+                Text("Medium", bundle: .module).font(AppFontDescriptor(family: family.wrappedValue, weight: .medium, size: 13, isCode: isCodeFont).font).tag("Medium")
+                Text("Semibold", bundle: .module).font(AppFontDescriptor(family: family.wrappedValue, weight: .semibold, size: 13, isCode: isCodeFont).font).tag("Semibold")
+                Text("Bold", bundle: .module).font(AppFontDescriptor(family: family.wrappedValue, weight: .bold, size: 13, isCode: isCodeFont).font).tag("Bold")
             }
             .pickerStyle(.menu)
             .frame(width: 100)

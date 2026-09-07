@@ -72,6 +72,49 @@ struct ToolCallCardView: View {
         (try? ReportFindingsExecutor.parseFindings(from: call.arguments))?.findings
     }
 
+    private var isAgentCall: Bool {
+        AppModel.isAgentFamilyToolName(call.name)
+    }
+
+    private var isStopAgentCall: Bool {
+        let n = call.name.lowercased()
+        return n == "stop_agent" || n == "stopagent"
+    }
+
+    private var isWriteCall: Bool {
+        let n = call.name.lowercased()
+        return n.contains("write") || n.contains("create")
+    }
+
+    private var isEditCall: Bool {
+        let n = call.name.lowercased()
+        return n.contains("edit") || n.contains("replace")
+    }
+
+    private var isPatchCall: Bool {
+        let n = call.name.lowercased()
+        return n == "apply_patch" || n == "applypatch"
+    }
+
+    private var isReadCall: Bool {
+        let n = call.name.lowercased()
+        return n.contains("read") || n.contains("view")
+    }
+
+    private var isWebFetchCall: Bool {
+        let n = call.name.lowercased()
+        return n.contains("fetch") || n.contains("read_url")
+    }
+
+    private var isSkillCall: Bool {
+        call.name.lowercased() == "skill"
+    }
+
+    private var isMcpCall: Bool {
+        let n = call.name.lowercased()
+        return n.contains("mcp")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             summaryHeaderButton
@@ -84,6 +127,10 @@ struct ToolCallCardView: View {
                         questionPreview(questions)
                     } else if isFindingsCall, let findings = parsedFindings, !findings.isEmpty {
                         findingsPreview(findings)
+                    } else if isAgentCall {
+                        agentPreview
+                    } else if isStopAgentCall {
+                        stopAgentPreview
                     } else if let cmd = terminalCommand {
                         ToolCodeCellView(
                             label: "command",
@@ -91,6 +138,20 @@ struct ToolCallCardView: View {
                             language: "bash",
                             downloadFilename: "command.sh"
                         )
+                    } else if isPatchCall {
+                        patchPreview
+                    } else if isWriteCall {
+                        fileWritePreview
+                    } else if isEditCall {
+                        fileEditPreview
+                    } else if isReadCall {
+                        fileReadPreview
+                    } else if isWebFetchCall {
+                        webFetchPreview
+                    } else if isSkillCall {
+                        skillPreview
+                    } else if isMcpCall {
+                        mcpPreview
                     } else {
                         argumentsPreview
                     }
@@ -144,13 +205,13 @@ struct ToolCallCardView: View {
                 headerLabelView
 
                 if let additions = summary.additions {
-                    Text("+\(additions)")
+                    Text("+\(additions)", bundle: .module)
                         .font(theme.code(.small, weight: .bold))
                         .foregroundStyle(diffAdditionColor)
                 }
 
                 if let deletions = summary.deletions {
-                    Text("-\(deletions)")
+                    Text("-\(deletions)", bundle: .module)
                         .font(theme.code(.small, weight: .bold))
                         .foregroundStyle(diffDeletionColor)
                 }
@@ -170,7 +231,7 @@ struct ToolCallCardView: View {
                 statusBadge
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .themedFont(points: 10, weight: .semibold)
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees((isExpanded || isPendingApproval) ? 90 : 0))
             }
@@ -186,7 +247,7 @@ struct ToolCallCardView: View {
         Group {
             if isPendingApproval {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(isHighRisk ? Color.red : Color.orange)
             } else {
                 switch call.status {
@@ -194,19 +255,19 @@ struct ToolCallCardView: View {
                     TaskProgressFlameIcon(size: 12)
                 case .completed:
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(Color.green)
                 case .denied:
                     Image(systemName: "minus.circle.fill")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(Color.secondary)
                 case .failed:
                     Image(systemName: "xmark.circle.fill")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(Color.red)
                 case .pendingApproval:
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption)
+                        .themedFont(.small)
                         .foregroundStyle(Color.orange)
                 }
             }
@@ -217,17 +278,17 @@ struct ToolCallCardView: View {
     private var headerLabelView: some View {
         let isCancelled = call.status == .denied
         if let cmd = terminalCommand {
-            Text("$ \(cmd)")
+            Text("$ \(cmd)", bundle: .module)
                 .font(theme.code(.small, weight: .semibold))
                 .foregroundStyle(isCancelled ? .secondary : .primary)
                 .strikethrough(isCancelled, color: .secondary)
                 .lineLimit(1)
         } else if call.category == .web, let query = call.arguments["query"] {
             HStack(spacing: 4) {
-                Text("Search:")
-                    .font(.callout.weight(.medium))
+                Text("Search:", bundle: .module)
+                    .themedFont(.base, weight: .medium)
                     .foregroundStyle(.secondary)
-                Text("\"\(query)\"")
+                Text("\"\(query)\"", bundle: .module)
                     .font(theme.code(.small, weight: .semibold))
                     .foregroundStyle(.primary)
             }
@@ -236,7 +297,7 @@ struct ToolCallCardView: View {
         } else {
             HStack(spacing: 5) {
                 Text(summary.action)
-                    .font(.callout.weight(.medium))
+                    .themedFont(.base, weight: .medium)
                     .foregroundStyle(isCancelled ? .secondary : .primary)
 
                 Text(summary.target)
@@ -251,9 +312,9 @@ struct ToolCallCardView: View {
     private func riskBadge(_ risk: ToolRiskAssessment) -> some View {
         HStack(spacing: 4) {
             Image(systemName: risk.level.systemImage)
-                .font(.system(size: 9))
+                .themedFont(points: 9)
             Text(risk.level.label)
-                .font(.system(size: 10, weight: .semibold))
+                .themedFont(points: 10, weight: .semibold)
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 1)
@@ -267,14 +328,14 @@ struct ToolCallCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
-                    .font(.caption)
+                    .themedFont(.small)
                 Text(risk.level == .high ? "High-Risk Operation Detected" : "Security Notice")
-                    .font(.caption.weight(.semibold))
+                    .themedFont(.small, weight: .semibold)
                     .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
             }
             ForEach(risk.reasons, id: \.self) { reason in
-                Text("- \(reason)")
-                    .font(.caption2)
+                Text("- \(reason)", bundle: .module)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
         }
@@ -288,7 +349,7 @@ struct ToolCallCardView: View {
 
     private var statusBadge: some View {
         Text(statusLabel)
-            .font(.caption2.weight(.medium))
+            .themedFont(.tiny, weight: .medium)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(statusBackground, in: Capsule())
@@ -335,28 +396,28 @@ struct ToolCallCardView: View {
                     if item.isCompleted {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(Color.green)
-                            .font(.caption)
+                            .themedFont(.small)
                     } else if item.isInProgress {
                         TaskProgressFlameIcon(size: 12)
                     } else if item.isCancelled {
                         Image(systemName: "minus.circle.fill")
                             .foregroundStyle(Color.secondary)
-                            .font(.caption)
+                            .themedFont(.small)
                     } else {
                         Image(systemName: "circle")
                             .foregroundStyle(Color.secondary.opacity(0.7))
-                            .font(.caption)
+                            .themedFont(.small)
                     }
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.content)
-                            .font(.callout.weight(item.isInProgress ? .semibold : .regular))
+                            .themedFont(.base, weight: item.isInProgress ? .semibold : .regular)
                             .foregroundStyle(item.isCompleted ? .secondary : .primary)
                             .strikethrough(item.isCompleted || item.isCancelled, color: .secondary)
 
                         if item.isInProgress && !item.activeForm.isEmpty && item.activeForm != item.content {
                             Text(item.activeForm)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .foregroundStyle(TurboSparkTheme.accentColor)
                         }
                     }
@@ -364,8 +425,8 @@ struct ToolCallCardView: View {
                     Spacer()
 
                     if item.isInProgress {
-                        Text("In Progress")
-                            .font(.caption2.weight(.medium))
+                        Text("In Progress", bundle: .module)
+                            .themedFont(.tiny, weight: .medium)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.orange.opacity(0.15), in: Capsule())
@@ -386,14 +447,14 @@ struct ToolCallCardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(q.header)
-                            .font(.caption2.weight(.bold))
+                            .themedFont(.tiny, weight: .bold)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(TurboSparkTheme.accentColor.opacity(0.15), in: Capsule())
                             .foregroundStyle(TurboSparkTheme.accentColor)
 
                         Text(q.question)
-                            .font(.callout.weight(.medium))
+                            .themedFont(.base, weight: .medium)
                             .foregroundStyle(.primary)
                     }
 
@@ -401,15 +462,15 @@ struct ToolCallCardView: View {
                         ForEach(Array(q.options.enumerated()), id: \.offset) { _, opt in
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: "circle")
-                                    .font(.caption2)
+                                    .themedFont(.tiny)
                                     .foregroundStyle(.secondary)
                                     .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(opt.label)
-                                        .font(.caption.weight(.semibold))
+                                        .themedFont(.small, weight: .semibold)
                                         .foregroundStyle(.primary)
                                     Text(opt.description)
-                                        .font(.caption2)
+                                        .themedFont(.tiny)
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -434,7 +495,7 @@ struct ToolCallCardView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .font(.caption2)
+                            .themedFont(.tiny)
                             .foregroundStyle(.orange)
 
                         Text(f.file + (f.line.map { ":\($0)" } ?? ""))
@@ -443,7 +504,7 @@ struct ToolCallCardView: View {
 
                         if let cat = f.category {
                             Text(cat)
-                                .font(.caption2)
+                                .themedFont(.tiny)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(Color.secondary.opacity(0.12), in: Capsule())
@@ -452,11 +513,11 @@ struct ToolCallCardView: View {
                     }
 
                     Text(f.summary)
-                        .font(.callout)
+                        .themedFont(.base)
                         .foregroundStyle(.primary)
 
                     Text("Scenario: " + f.failureScenario)
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 2)
@@ -470,16 +531,405 @@ struct ToolCallCardView: View {
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
     }
 
+    private var agentPreview: some View {
+        let agentType = call.arguments["subagent_type"]
+            ?? call.arguments["subagentType"]
+            ?? call.arguments["agent"]
+            ?? call.arguments["agent_name"]
+            ?? "general"
+        let description = call.arguments["description"]
+            ?? call.arguments["task"]
+            ?? ""
+        let prompt = call.arguments["prompt"]
+            ?? (description.isEmpty ? "" : description)
+        let isBackground = call.arguments["run_in_background"]?.lowercased() == "true"
+            || call.arguments["runInBackground"]?.lowercased() == "true"
+            || call.arguments["background"]?.lowercased() == "true"
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.wave.2")
+                    .themedFont(.tiny, weight: .bold)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                Text(agentType)
+                    .themedFont(.tiny, weight: .bold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(TurboSparkTheme.accentColor.opacity(0.15), in: Capsule())
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+
+                if isBackground {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .themedFont(points: 8)
+                        Text("Background", bundle: .module)
+                            .themedFont(points: 9, weight: .medium)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.purple.opacity(0.15), in: Capsule())
+                    .foregroundStyle(Color.purple)
+                }
+
+                if !description.isEmpty && description != prompt {
+                    Text(description)
+                        .themedFont(.small)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            if !prompt.isEmpty {
+                Text(prompt)
+                    .font(theme.code(.small))
+                    .foregroundStyle(.primary.opacity(0.9))
+                    .lineLimit(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var stopAgentPreview: some View {
+        let taskId = call.arguments["task_id"] ?? call.arguments["taskId"] ?? call.arguments["id"] ?? "agent"
+        return HStack(spacing: 6) {
+            Image(systemName: "stop.circle.fill")
+                .themedFont(.small)
+                .foregroundStyle(Color.red)
+            Text("Stop Background Agent:", bundle: .module)
+                .themedFont(.small, weight: .medium)
+                .foregroundStyle(.secondary)
+            Text(taskId)
+                .font(theme.code(.small, weight: .bold))
+                .foregroundStyle(.primary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var fileWritePreview: some View {
+        let targetPath = call.arguments["TargetFile"]
+            ?? call.arguments["AbsolutePath"]
+            ?? call.arguments["path"]
+            ?? call.arguments["file_path"]
+            ?? call.arguments["filePath"]
+            ?? call.arguments["file"]
+            ?? "file"
+        let content = call.arguments["CodeContent"]
+            ?? call.arguments["content"]
+            ?? call.arguments["text"]
+            ?? call.arguments["code"]
+            ?? ""
+        let fileName = (targetPath as NSString).lastPathComponent
+        let lang = detectLanguage(from: fileName)
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.badge.plus")
+                    .themedFont(.small)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                Text(targetPath)
+                    .font(theme.code(.small, weight: .bold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                let lineCount = ToolCallDiffFormatter.countLines(content)
+                Text("\(lineCount) lines", bundle: .module)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !content.isEmpty {
+                ToolCodeCellView(
+                    label: fileName,
+                    code: content,
+                    language: lang,
+                    downloadFilename: fileName
+                )
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var fileEditPreview: some View {
+        let targetPath = call.arguments["TargetFile"]
+            ?? call.arguments["AbsolutePath"]
+            ?? call.arguments["path"]
+            ?? call.arguments["file_path"]
+            ?? call.arguments["filePath"]
+            ?? call.arguments["file"]
+            ?? "file"
+        let oldStr = call.arguments["TargetContent"]
+            ?? call.arguments["old_string"]
+            ?? call.arguments["oldString"]
+            ?? call.arguments["target"]
+            ?? ""
+        let newStr = call.arguments["ReplacementContent"]
+            ?? call.arguments["new_string"]
+            ?? call.arguments["newString"]
+            ?? call.arguments["replacement"]
+            ?? ""
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.badge.ellipsis")
+                    .themedFont(.small)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                Text(targetPath)
+                    .font(theme.code(.small, weight: .bold))
+                    .foregroundStyle(.primary)
+            }
+
+            if !oldStr.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "minus")
+                            .themedFont(points: 9, weight: .bold)
+                            .foregroundStyle(diffDeletionColor)
+                        Text("ORIGINAL", bundle: .module)
+                            .themedCode(points: 10, weight: .bold)
+                            .foregroundStyle(diffDeletionColor)
+                    }
+                    Text(oldStr)
+                        .font(theme.code(.small))
+                        .foregroundStyle(.primary.opacity(0.9))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                        .textSelection(.enabled)
+                }
+            }
+
+            if !newStr.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .themedFont(points: 9, weight: .bold)
+                            .foregroundStyle(diffAdditionColor)
+                        Text("REPLACEMENT", bundle: .module)
+                            .themedCode(points: 10, weight: .bold)
+                            .foregroundStyle(diffAdditionColor)
+                    }
+                    Text(newStr)
+                        .font(theme.code(.small))
+                        .foregroundStyle(.primary.opacity(0.9))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .background(Color.green.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var patchPreview: some View {
+        let patch = call.arguments["patch_text"]
+            ?? call.arguments["patchText"]
+            ?? call.arguments["patch"]
+            ?? ""
+        return ToolCodeCellView(
+            label: "patch",
+            code: patch,
+            language: "diff",
+            downloadFilename: "change.patch"
+        )
+    }
+
+    private var fileReadPreview: some View {
+        let targetPath = call.arguments["AbsolutePath"]
+            ?? call.arguments["path"]
+            ?? call.arguments["file_path"]
+            ?? call.arguments["filePath"]
+            ?? call.arguments["file"]
+            ?? call.arguments["TargetFile"]
+            ?? "file"
+        let start = call.arguments["StartLine"] ?? call.arguments["start_line"] ?? call.arguments["startLine"] ?? call.arguments["start"]
+        let end = call.arguments["EndLine"] ?? call.arguments["end_line"] ?? call.arguments["endLine"] ?? call.arguments["end"]
+
+        return HStack(spacing: 8) {
+            Image(systemName: "doc.text")
+                .themedFont(.small)
+                .foregroundStyle(TurboSparkTheme.accentColor)
+            Text(targetPath)
+                .font(theme.code(.small, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            if let start, let end, !start.isEmpty, !end.isEmpty {
+                Text("Lines \(start)-\(end)", bundle: .module)
+                    .themedFont(.tiny, weight: .medium)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.12), in: Capsule())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var webFetchPreview: some View {
+        let urlString = call.arguments["url"]
+            ?? call.arguments["uri"]
+            ?? call.arguments["Url"]
+            ?? call.arguments["URL"]
+            ?? call.arguments["href"]
+            ?? ""
+        let format = call.arguments["format"] ?? "markdown"
+
+        return HStack(spacing: 8) {
+            Image(systemName: "globe")
+                .themedFont(.small)
+                .foregroundStyle(TurboSparkTheme.accentColor)
+
+            if let url = URL(string: urlString), url.scheme != nil {
+                Link(urlString, destination: url)
+                    .font(theme.code(.small, weight: .semibold))
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .lineLimit(1)
+            } else {
+                Text(urlString)
+                    .font(theme.code(.small, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text(format.uppercased())
+                .themedFont(.tiny, weight: .bold)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.secondary.opacity(0.12), in: Capsule())
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var skillPreview: some View {
+        let skillName = call.arguments["name"] ?? call.arguments["skill_name"] ?? "skill"
+        let otherArgs = call.arguments.filter { $0.key != "name" && $0.key != "skill_name" }
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "puzzlepiece.extension")
+                    .themedFont(.small)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                Text(skillName)
+                    .themedFont(.tiny, weight: .bold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(TurboSparkTheme.accentColor.opacity(0.15), in: Capsule())
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+            }
+
+            if !otherArgs.isEmpty {
+                ForEach(otherArgs.sorted(by: { $0.key < $1.key }), id: \.key) { key, val in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("\(key):", bundle: .module)
+                            .font(theme.code(.small, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Text(val)
+                            .font(theme.code(.small))
+                            .foregroundStyle(.primary)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var mcpPreview: some View {
+        let server = call.arguments["server"] ?? call.arguments["server_name"] ?? call.arguments["ServerName"] ?? ""
+        let tool = call.arguments["toolName"] ?? call.arguments["tool"] ?? call.arguments["name"] ?? call.arguments["ToolName"] ?? ""
+        let otherArgs = call.arguments.filter {
+            !["server", "server_name", "ServerName", "toolName", "tool", "name", "ToolName"].contains($0.key)
+        }
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "shippingbox")
+                    .themedFont(.small)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                if !server.isEmpty {
+                    Text(server)
+                        .themedFont(.tiny, weight: .bold)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.indigo.opacity(0.15), in: Capsule())
+                        .foregroundStyle(Color.indigo)
+                }
+                if !tool.isEmpty {
+                    Text(tool)
+                        .font(theme.code(.small, weight: .bold))
+                        .foregroundStyle(.primary)
+                }
+            }
+
+            if !otherArgs.isEmpty {
+                ForEach(otherArgs.sorted(by: { $0.key < $1.key }), id: \.key) { key, val in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("\(key):", bundle: .module)
+                            .font(theme.code(.small, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Text(val)
+                            .font(theme.code(.small))
+                            .foregroundStyle(.primary)
+                            .lineLimit(6)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func detectLanguage(from path: String) -> String {
+        let ext = (path as NSString).pathExtension.lowercased()
+        switch ext {
+        case "swift": return "swift"
+        case "rs": return "rust"
+        case "py": return "python"
+        case "js", "mjs", "cjs": return "javascript"
+        case "ts", "tsx": return "typescript"
+        case "json": return "json"
+        case "md": return "markdown"
+        case "sh", "zsh", "bash": return "bash"
+        case "html": return "html"
+        case "css": return "css"
+        case "yml", "yaml": return "yaml"
+        case "toml": return "toml"
+        case "c", "h", "cpp", "hpp": return "c"
+        case "diff", "patch": return "diff"
+        default: return "plaintext"
+        }
+    }
+
     private var argumentsPreview: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("ARGUMENTS")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+            Text("ARGUMENTS", bundle: .module)
+                .themedCode(points: 10, weight: .bold)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(call.arguments.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                     HStack(alignment: .top, spacing: 6) {
-                        Text("\(key):")
+                        Text("\(key):", bundle: .module)
                             .font(theme.code(.small, weight: .medium))
                             .foregroundStyle(.secondary)
                         Text(value)
@@ -505,8 +955,8 @@ struct ToolCallCardView: View {
 
     private var approvalPrompt: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("This action requires your confirmation to execute.")
-                .font(.caption)
+            Text("This action requires your confirmation to execute.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {

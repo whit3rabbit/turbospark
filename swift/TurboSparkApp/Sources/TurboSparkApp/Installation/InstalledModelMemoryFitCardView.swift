@@ -14,7 +14,7 @@ struct InstalledModelMemoryFitCardView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Unified Memory & Working Set", systemImage: "memorychip")
-                    .font(.subheadline.weight(.semibold))
+                    .themedFont(.small, weight: .semibold)
                 Spacer()
                 if let fit {
                     ModelFitVerdictPill(verdict: fit.verdict)
@@ -32,7 +32,7 @@ struct InstalledModelMemoryFitCardView: View {
             if let fit, fit.countedSource != .unknown {
                 allocationRow(fit)
                 Text(workingSetExplanation(fit))
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -45,11 +45,11 @@ struct InstalledModelMemoryFitCardView: View {
                     )
                 }
             } else {
-                Text("RAM requirement: unknown")
-                    .font(.caption.monospacedDigit().weight(.medium))
+                Text("RAM requirement: unknown", bundle: .module)
+                    .themedFont(.small, weight: .medium).monospacedDigit()
                     .foregroundStyle(.secondary)
-                Text("Nothing has read this checkpoint's header, so its working set is unknown. `turbospark-model recommend --probe` reads it without downloading anything.")
-                    .font(.caption)
+                Text("Nothing has read this checkpoint's header, so its working set is unknown. `turbospark-model recommend --probe` reads it without downloading anything.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -68,17 +68,17 @@ struct InstalledModelMemoryFitCardView: View {
     private func allocationRow(_ fit: ModelRecommendation) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text("Allocates")
-                    .font(.caption)
+                Text("Allocates", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                 Text(MetricFormat.storage(fit.countedBytes))
-                    .font(.caption.monospacedDigit().weight(.medium))
+                    .themedFont(.small, weight: .medium).monospacedDigit()
                     .foregroundStyle(Color.accentColor)
                 // A measured figure and an estimate are different claims and
                 // must not read the same.
                 if fit.countedSource == .measured {
-                    Text("measured")
-                        .font(.caption2.weight(.semibold))
+                    Text("measured", bundle: .module)
+                        .themedFont(.tiny, weight: .semibold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(Color.green.opacity(0.16), in: Capsule())
@@ -90,14 +90,14 @@ struct InstalledModelMemoryFitCardView: View {
             // A footprint is only meaningful beside its context and slot
             // count: Gemma 4 reads 2,175 MiB at 16 slots and 3,654 at 32.
             Text(configurationCaption(fit))
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
             HStack(spacing: 6) {
-                Text("Reads")
-                    .font(.caption)
+                Text("Reads", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
-                Text("\(MetricFormat.storage(installedModel.installBytes)) on disk")
-                    .font(.caption.monospacedDigit())
+                Text("\(MetricFormat.storage(installedModel.installBytes)) on disk", bundle: .module)
+                    .themedFont(.small).monospacedDigit()
             }
             // **THE BAND MAY BELONG TO OTHER SILICON, AND THEN IT NAMES THE
             // CHIP.** Every frozen row in the catalog was taken on one

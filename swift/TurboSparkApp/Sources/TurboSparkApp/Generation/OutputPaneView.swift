@@ -188,11 +188,11 @@ private struct MessageRowView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles")
-                            .font(.caption.weight(.bold))
+                            .themedFont(.small, weight: .bold)
                             .foregroundStyle(TurboSparkTheme.accentColor)
                             .accessibilityHidden(true)
                         Text(model.selected?.alias ?? "TurboSpark")
-                            .font(.caption.weight(.semibold))
+                            .themedFont(.small, weight: .semibold)
                             .foregroundStyle(theme.metadataForeground)
                     }
                     .padding(.bottom, -2)
@@ -261,11 +261,11 @@ private struct ActiveStreamingRowView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
-                    .font(.caption.weight(.bold))
+                    .themedFont(.small, weight: .bold)
                     .foregroundStyle(TurboSparkTheme.accentColor)
                     .accessibilityHidden(true)
                 Text(model.selected?.alias ?? "TurboSpark")
-                    .font(.caption.weight(.semibold))
+                    .themedFont(.small, weight: .semibold)
                     .foregroundStyle(theme.metadataForeground)
             }
             .padding(.bottom, -2)
@@ -274,7 +274,7 @@ private struct ActiveStreamingRowView: View {
                 HStack(spacing: 8) {
                     TaskProgressFlameIcon(size: 16)
                     Text(waitingStatusText)
-                        .font(.callout)
+                        .themedFont(.base)
                         .foregroundStyle(theme.metadataForeground)
                 }
                 .padding(.vertical, 8)
@@ -339,7 +339,7 @@ private struct BackgroundAgentsStripView: View {
 
     private var runsForChat: [SubagentRunState] {
         model.backgroundAgentRuns.values
-            .filter { $0.chatID == model.selectedChatID }
+            .filter { $0.chatID == nil || $0.chatID == model.selectedChatID }
             .sorted { $0.startedAt < $1.startedAt }
     }
 
@@ -351,7 +351,8 @@ private struct BackgroundAgentsStripView: View {
                     SubagentLiveCardView(
                         state: state,
                         onStop: state.status == "running" ? { stop(state.id) } : nil,
-                        onDismiss: state.status != "running" ? { model.dismissBackgroundAgent(state.id) } : nil)
+                        onDismiss: state.status != "running" && state.isRecordedComplete
+                            ? { model.dismissBackgroundAgent(state.id) } : nil)
                 }
             }
         }
@@ -397,7 +398,7 @@ private struct CompactionDividerView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.compress.vertical")
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(TurboSparkTheme.accentColor)
                     .accessibilityHidden(true)
                 Text(
@@ -405,7 +406,7 @@ private struct CompactionDividerView: View {
                         ? "Earlier message compacted into a summary"
                         : "\(summarizedRows) earlier messages compacted into a summary"
                 )
-                .font(.caption.weight(.medium))
+                .themedFont(.small, weight: .medium)
                 .foregroundStyle(theme.metadataForeground)
             }
         }
@@ -442,11 +443,11 @@ private struct ReasoningDisclosureView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "brain")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(TurboSparkTheme.accentColor)
                     .accessibilityHidden(true)
-                Text("Thought process")
-                    .font(.caption.weight(.medium))
+                Text("Thought process", bundle: .module)
+                    .themedFont(.small, weight: .medium)
                     .foregroundStyle(theme.metadataForeground)
             }
         }

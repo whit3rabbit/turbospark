@@ -19,8 +19,8 @@ struct ServerChartsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Traffic")
-                .font(.system(size: 12, weight: .semibold))
+            Text("Traffic", bundle: .module)
+                .themedFont(points: 12, weight: .semibold)
                 .foregroundStyle(.secondary)
 
             if points.isEmpty {
@@ -35,8 +35,8 @@ struct ServerChartsView: View {
     }
 
     private var emptyState: some View {
-        Text("No requests yet. Charts fill in as traffic arrives.")
-            .font(.system(size: 11))
+        Text("No requests yet. Charts fill in as traffic arrives.", bundle: .module)
+            .themedFont(points: 11)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 18)
@@ -107,10 +107,10 @@ struct ServerChartsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 11, weight: .medium))
+                Text(title).themedFont(points: 11, weight: .medium)
                 if !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 10))
+                        .themedFont(points: 10)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }

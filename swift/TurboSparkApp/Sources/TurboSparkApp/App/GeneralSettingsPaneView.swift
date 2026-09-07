@@ -22,7 +22,7 @@ struct GeneralSettingsPaneView: View {
 
                 if let keyboard = LanguageDetector.currentKeyboardLayoutName() {
                     HStack {
-                        Text("Active Keyboard Layout:")
+                        Text("Active Keyboard Layout:", bundle: .module)
                             .font(theme.ui(.small))
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -133,7 +133,7 @@ struct GeneralSettingsPaneView: View {
                     model.persistSettingsDebounced()
                 })) {
                 ForEach(AppChatCompaction.keepRecentRange, id: \.self) { count in
-                    Text("\(count)").tag(count)
+                    Text("\(count)", bundle: .module).tag(count)
                 }
             }
             .pickerStyle(.menu)

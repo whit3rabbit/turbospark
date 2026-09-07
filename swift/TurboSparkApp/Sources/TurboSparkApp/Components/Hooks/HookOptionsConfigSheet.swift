@@ -17,10 +17,10 @@ public struct HookOptionsConfigSheet: View {
             // Header
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(group.title) Options")
-                        .font(.headline)
-                    Text("Configure environment variables and options for \(group.title).")
-                        .font(.caption)
+                    Text("\(group.title) Options", bundle: .module)
+                        .themedFont(.base, weight: .semibold)
+                    Text("Configure environment variables and options for \(group.title).", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -28,7 +28,7 @@ public struct HookOptionsConfigSheet: View {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
+                        .themedFont(.title3)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -42,10 +42,10 @@ public struct HookOptionsConfigSheet: View {
             if group.optionSpecs.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 32))
+                        .themedFont(points: 32)
                         .foregroundStyle(.secondary)
-                    Text("No configurable options declared for this source.")
-                        .font(.subheadline)
+                    Text("No configurable options declared for this source.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -87,14 +87,14 @@ public struct HookOptionsConfigSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(spec.title)
-                    .font(.subheadline.weight(.semibold))
+                    .themedFont(.small, weight: .semibold)
                 if spec.isRequired {
-                    Text("*")
+                    Text("*", bundle: .module)
                         .foregroundStyle(.red)
                 }
                 Spacer()
-                Text("$\(spec.key.uppercased())")
-                    .font(.caption2.monospaced())
+                Text("$\(spec.key.uppercased())", bundle: .module)
+                    .themedCode(.tiny)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -103,7 +103,7 @@ public struct HookOptionsConfigSheet: View {
             }
 
             Text(spec.description)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
 
             switch spec.type {

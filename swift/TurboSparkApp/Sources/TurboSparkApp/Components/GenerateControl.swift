@@ -31,7 +31,7 @@ struct GenerateControl: View {
             model.run()
         } label: {
             Image(systemName: "arrow.up")
-                .font(.system(size: 13, weight: .bold))
+                .themedFont(points: 13, weight: .bold)
                 .foregroundStyle(fgColor)
                 .frame(width: circularButtonSize, height: circularButtonSize)
                 .background(
@@ -57,15 +57,15 @@ struct GenerateControl: View {
             HStack(spacing: 8) {
                 TaskProgressFlameIcon(size: 14)
                 if model.isCancellationPending {
-                    Text("Stopping")
-                        .font(.callout.weight(.medium))
+                    Text("Stopping", bundle: .module)
+                        .themedFont(.base, weight: .medium)
                 } else if model.phase == .prefill {
-                    Text("Reading \(model.livePrefillDone)/\(max(model.livePrefillTotal, 1))")
-                        .font(.callout.weight(.medium))
+                    Text("Reading \(model.livePrefillDone)/\(max(model.livePrefillTotal, 1))", bundle: .module)
+                        .themedFont(.base, weight: .medium)
                         .monospacedDigit()
                 } else {
                     Text(String(format: "%.1f tok/s", model.liveTokensPerSecond))
-                        .font(.callout.weight(.semibold))
+                        .themedFont(.base, weight: .semibold)
                         .monospacedDigit()
                 }
                 ZStack {
@@ -73,7 +73,7 @@ struct GenerateControl: View {
                         .fill(contrastFg.opacity(0.16))
                         .frame(width: 22, height: 22)
                     Image(systemName: "stop.fill")
-                        .font(.system(size: 10, weight: .bold))
+                        .themedFont(points: 10, weight: .bold)
                         .foregroundStyle(contrastFg)
                 }
                 .accessibilityHidden(true)

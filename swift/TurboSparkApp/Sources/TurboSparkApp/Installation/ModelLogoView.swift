@@ -78,11 +78,11 @@ public struct ModelLogoView: View {
 
             if !fallbackLetter.isEmpty {
                 Text(fallbackLetter)
-                    .font(.system(size: size * 0.45, weight: .bold, design: .rounded))
+                    .themedFont(points: size * 0.45, weight: .bold)
                     .foregroundStyle(.white)
             } else {
                 Image(systemName: fallbackIcon)
-                    .font(.system(size: size * 0.45, weight: .semibold))
+                    .themedFont(points: size * 0.45, weight: .semibold)
                     .foregroundStyle(.white)
             }
         }

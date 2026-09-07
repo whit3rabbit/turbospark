@@ -39,7 +39,6 @@ extension AppModel {
         self.topK = Self.clampedSetting(settings.topK, upperBound: Int(UInt32.max))
         self.topPEnabled = settings.topPEnabled
         self.topP = settings.topP
-        self.runtimeOptions.prefillEnabled = settings.prefillEnabled
         self.reasoning = GenerateOptions.Reasoning(rawValue: settings.reasoning) ?? .off
         self.maxNewTokens = Self.clampedSetting(
             settings.maxNewTokens, upperBound: Int(UInt32.max))
@@ -73,7 +72,6 @@ extension AppModel {
         self.activeSteeringPresetID = UUID(uuidString: settings.activeSteeringPresetID)
             .flatMap { id in settings.steeringPresets.contains(where: { $0.id == id }) ? id : nil }
         self.steeringEnabled = settings.steeringEnabled
-        self.modelsDirectory = settings.modelsDirectory
         self.enableLMStudioDetection = settings.enableLMStudioDetection
         self.lmStudioDirectory = settings.lmStudioDirectory
         self.customModelDirectories = settings.customModelDirectories
@@ -94,6 +92,11 @@ extension AppModel {
             try? TurboSparkCatalog.setHfEndpoint(settings.hfEndpoint)
         }
         self.showMenuBarItem = settings.showMenuBarItem
+        self.keepFansPinnedOnQuit = settings.keepFansPinnedOnQuit
+        // The quit restore reads the controller's live copy: the settings
+        // write is debounced, so a toggle-and-quick-quit must not consult
+        // disk and find the previous value there.
+        FanController.shared.keepFansPinnedOnQuit = settings.keepFansPinnedOnQuit
         self.serverAutoStartOnLaunch = settings.serverAutoStartOnLaunch
         self.keepServerRunningInBackground = settings.keepServerRunningInBackground
         // `ToolRiskClassifier` is a static surface reached from the agent loop
@@ -132,7 +135,6 @@ extension AppModel {
             topK: topK,
             topPEnabled: topPEnabled,
             topP: topP,
-            prefillEnabled: runtimeOptions.prefillEnabled,
             reasoning: reasoning.rawValue,
             maxNewTokens: maxNewTokens,
             repetitionPenaltyEnabled: repetitionPenaltyEnabled,
@@ -156,7 +158,6 @@ extension AppModel {
             steeringPresets: steeringPresets,
             activeSteeringPresetID: activeSteeringPresetID?.uuidString ?? "",
             steeringEnabled: steeringEnabled,
-            modelsDirectory: modelsDirectory,
             enableLMStudioDetection: enableLMStudioDetection,
             lmStudioDirectory: lmStudioDirectory,
             customModelDirectories: customModelDirectories,
@@ -171,6 +172,7 @@ extension AppModel {
             defaultSystemPrompt: defaultSystemPrompt,
             enabledPlugins: pluginEnableState,
             showMenuBarItem: showMenuBarItem,
+            keepFansPinnedOnQuit: keepFansPinnedOnQuit,
             serverAutoStartOnLaunch: serverAutoStartOnLaunch,
             keepServerRunningInBackground: keepServerRunningInBackground,
             serverEmbeddingModel: serverEmbeddingModelInput,

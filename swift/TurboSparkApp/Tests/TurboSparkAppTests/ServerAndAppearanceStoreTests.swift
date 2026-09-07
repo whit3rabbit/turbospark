@@ -94,5 +94,21 @@ final class ServerAndAppearanceStoreTests: XCTestCase {
         XCTAssertTrue(AppSettingsView.SettingsTab.allCases.contains(.safety))
         XCTAssertTrue(AppSettingsView.SettingsTab.safety.keywords.contains("steering"))
         XCTAssertTrue(AppSettingsView.SettingsTab.appearance.keywords.contains("font"))
+        XCTAssertTrue(AppSettingsView.SettingsTab.engine.keywords.contains("thermalforge"))
+        XCTAssertTrue(AppSettingsView.SettingsTab.engine.keywords.contains("fan"))
+    }
+
+    /// `docs/SWIFT_SETTINGS_AUDIT.md`'s settings-search item: the keyword
+    /// lists drift from the panes they describe. Each of these names a
+    /// control that is really in that pane (checked against the pane's own
+    /// source) and was missing from its tab's keywords before this test was
+    /// added -- `Command Classifier Veto` is the one added the SAME DAY as
+    /// this audit item, in `PermissionsSettingsPaneView`, with nothing
+    /// making it reachable by search.
+    func testSettingsKeywordsCoverRecentlyAddedControls() {
+        XCTAssertTrue(AppSettingsView.SettingsTab.permissions.keywords.contains("advisory veto"))
+        XCTAssertTrue(AppSettingsView.SettingsTab.general.keywords.contains("ghost"))
+        XCTAssertTrue(AppSettingsView.SettingsTab.engine.keywords.contains("context window"))
+        XCTAssertTrue(AppSettingsView.SettingsTab.skills.keywords.contains("triggers"))
     }
 }

@@ -50,8 +50,8 @@ public struct McpSettingsPaneView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Servers")
-                            .font(.caption.weight(.semibold))
+                        Text("Servers", bundle: .module)
+                            .themedFont(.small, weight: .semibold)
                             .foregroundStyle(.secondary)
 
                         ForEach(filteredServers) { server in
@@ -93,15 +93,15 @@ public struct McpSettingsPaneView: View {
     private var headerBar: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Plugins & MCPs")
-                    .font(.title2.weight(.bold))
+                Text("MCP Servers", bundle: .module)
+                    .themedFont(.title2, weight: .bold)
                 HStack(spacing: 4) {
-                    Text("Manage Model Context Protocol servers, external tools, and integrations.")
-                        .font(.caption)
+                    Text("Manage Model Context Protocol servers, external tools, and integrations.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                     if let url = URL(string: "https://modelcontextprotocol.io") {
                         Link("Documentation", destination: url)
-                            .font(.caption)
+                            .themedFont(.small)
                             .help("Open MCP official documentation: https://modelcontextprotocol.io")
                             .accessibilityLabel("MCP Documentation")
                             .accessibilityHint("Opens Model Context Protocol documentation in web browser")
@@ -138,9 +138,11 @@ public struct McpSettingsPaneView: View {
     private var filterAndPillsBar: some View {
         HStack(spacing: 12) {
             HStack(spacing: 6) {
-                summaryPill(label: "MCPs", value: "\(model.globalMcpServers.count)", isSelected: true)
-                summaryPill(label: "Active", value: "\(activeCount)", isSelected: false)
-                summaryPill(label: "Tools", value: "\(totalToolsCount)", isSelected: false)
+                // Counts, not filters: these used to tint the first one as
+                // "selected", which read as a filter that could not be changed.
+                summaryPill(label: "Servers", value: "\(model.globalMcpServers.count)")
+                summaryPill(label: "Active", value: "\(activeCount)")
+                summaryPill(label: "Tools", value: "\(totalToolsCount)")
             }
 
             Spacer()
@@ -148,10 +150,10 @@ public struct McpSettingsPaneView: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                    .font(.caption)
+                    .themedFont(.small)
                 TextField("Search MCP servers", text: $searchText)
                     .textFieldStyle(.plain)
-                    .font(.caption)
+                    .themedFont(.small)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -162,18 +164,18 @@ public struct McpSettingsPaneView: View {
         }
     }
 
-    private func summaryPill(label: String, value: String, isSelected: Bool) -> some View {
+    private func summaryPill(label: String, value: String) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(isSelected ? .primary : .secondary)
+                .themedFont(.small, weight: .medium)
+                .foregroundStyle(.secondary)
             Text(value)
-                .font(.caption.monospacedDigit().weight(.bold))
-                .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .secondary)
+                .themedFont(.small, weight: .bold).monospacedDigit()
+                .foregroundStyle(.primary)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.secondary.opacity(0.08))
+        .background(Color.secondary.opacity(0.08))
         .clipShape(Capsule())
     }
 
@@ -183,19 +185,19 @@ public struct McpSettingsPaneView: View {
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Image(systemName: server.isEnabled ? "server.rack" : "server.rack")
-                    .font(.title3)
+                Image(systemName: "server.rack")
+                    .themedFont(.title3)
                     .foregroundStyle(server.isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(server.name)
-                            .font(.headline)
+                            .themedFont(.base, weight: .semibold)
                             .foregroundStyle(.primary)
 
                         if !server.discoveredTools.isEmpty {
-                            Text("\(server.discoveredTools.count) tools")
-                                .font(.caption2.weight(.medium))
+                            Text("\(server.discoveredTools.count) tools", bundle: .module)
+                                .themedFont(.tiny, weight: .medium)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(Color.secondary.opacity(0.12))
@@ -204,7 +206,7 @@ public struct McpSettingsPaneView: View {
                     }
 
                     Text(server.commandSummary)
-                        .font(.caption.monospaced())
+                        .themedCode(.small)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -222,7 +224,7 @@ public struct McpSettingsPaneView: View {
                                 .frame(width: 16, height: 16)
                         } else {
                             Image(systemName: "bolt.fill")
-                                .font(.caption)
+                                .themedFont(.small)
                         }
                     }
                     .buttonStyle(.borderless)
@@ -233,7 +235,7 @@ public struct McpSettingsPaneView: View {
                         showingEditorSheet = true
                     } label: {
                         Image(systemName: "gearshape")
-                            .font(.caption)
+                            .themedFont(.small)
                     }
                     .buttonStyle(.borderless)
                     .help("Edit server settings")
@@ -260,7 +262,7 @@ public struct McpSettingsPaneView: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis")
-                            .font(.caption)
+                            .themedFont(.small)
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
@@ -271,7 +273,7 @@ public struct McpSettingsPaneView: View {
 
             if let toast = testResultToast, toast.id == server.id {
                 Text(toast.message)
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(toast.isError ? .red : .green)
                     .padding(6)
                     .background(toast.isError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
@@ -288,9 +290,9 @@ public struct McpSettingsPaneView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.caption2)
+                            .themedFont(.tiny)
                         Text(isExpanded ? "Hide Discovered Tools" : "Show Discovered Tools (\(server.discoveredTools.count))")
-                            .font(.caption2.weight(.medium))
+                            .themedFont(.tiny, weight: .medium)
                     }
                     .foregroundStyle(.secondary)
                 }
@@ -301,14 +303,14 @@ public struct McpSettingsPaneView: View {
                         ForEach(server.discoveredTools) { tool in
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: "wrench.and.screwdriver")
-                                    .font(.caption2)
+                                    .themedFont(.tiny)
                                     .foregroundStyle(TurboSparkTheme.accentColor)
                                     .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(tool.name)
-                                        .font(.caption.monospaced().weight(.semibold))
+                                        .themedCode(.small, weight: .semibold)
                                     Text(tool.description)
-                                        .font(.caption2)
+                                        .themedFont(.tiny)
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -330,12 +332,12 @@ public struct McpSettingsPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "server.rack")
-                .font(.system(size: 36))
+                .themedFont(points: 36)
                 .foregroundStyle(.secondary.opacity(0.5))
-            Text("No MCP Servers Configured")
-                .font(.headline)
-            Text("Add external MCP servers (like memory, GitHub, filesystem, database, or browser tools) to extend assistant capabilities.")
-                .font(.caption)
+            Text("No MCP Servers Configured", bundle: .module)
+                .themedFont(.base, weight: .semibold)
+            Text("Add external MCP servers (like memory, GitHub, filesystem, database, or browser tools) to extend assistant capabilities.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)

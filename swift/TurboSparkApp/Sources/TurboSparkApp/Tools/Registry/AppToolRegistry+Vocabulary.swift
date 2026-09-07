@@ -70,6 +70,14 @@ extension AppToolRegistry {
     /// divergence `SubagentRunner.buildSystemPrompt`'s own comment warns about.
     public static var userSystemPromptProvider: (@Sendable @MainActor () -> String)?
 
+    /// The user's sampling preferences, for a subagent spawned by the
+    /// `agent` TOOL. A provider for `activeSessionProvider`'s reason: every
+    /// subagent turn ran at a hardcoded `temperature: 0.2` regardless of this
+    /// setting until this provider existed
+    /// (`docs/SWIFT_SETTINGS_AUDIT.md`), and `AppModel.samplingOptions()` is
+    /// the one place that reads it.
+    public static var subagentSamplingOptionsProvider: (@Sendable @MainActor () -> GenerateOptions)?
+
     /// Progress sink for subagent runs, keyed by a host-chosen run key (a
     /// tool-call UUID for a foreground run, a `bga_N` id for a background
     /// one). The app installs one at startup, which routes the events into

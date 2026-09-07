@@ -32,6 +32,20 @@ public enum SkillScope: Codable, Equatable, Hashable, Sendable {
         }
     }
 
+    /// Short form of `label` for prompt listings: "[User]", not "[User Scope]".
+    public var scopeTag: String {
+        switch self {
+        case .userGlobal:
+            return "User"
+        case .projectLocal:
+            return "Project"
+        case .bundled:
+            return "Bundled"
+        case .plugin:
+            return "Plugin"
+        }
+    }
+
     public var badgeIcon: String {
         switch self {
         case .userGlobal:
@@ -158,6 +172,9 @@ public struct SkillPermissionPattern: Codable, Equatable, Hashable, Sendable {
 public struct SkillManifest: Codable, Equatable, Hashable, Sendable {
     public var name: String?
     public var description: String?
+    /// Model-facing "when to use" guidance, appended to the listing entry
+    /// (Claude Code's `when_to_use`).
+    public var whenToUse: String?
     public var allowedTools: [String]
     public var argumentHint: String?
     public var arguments: [SkillArgument]
@@ -172,6 +189,7 @@ public struct SkillManifest: Codable, Equatable, Hashable, Sendable {
     public init(
         name: String? = nil,
         description: String? = nil,
+        whenToUse: String? = nil,
         allowedTools: [String] = [],
         argumentHint: String? = nil,
         arguments: [SkillArgument] = [],
@@ -185,6 +203,7 @@ public struct SkillManifest: Codable, Equatable, Hashable, Sendable {
     ) {
         self.name = name
         self.description = description
+        self.whenToUse = whenToUse
         self.allowedTools = allowedTools
         self.argumentHint = argumentHint
         self.arguments = arguments

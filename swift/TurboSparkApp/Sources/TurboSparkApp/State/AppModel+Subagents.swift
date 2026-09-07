@@ -15,10 +15,12 @@ public final class BackgroundAgentLaunch: @unchecked Sendable {
     public let chatID: UUID?
     public let depth: Int
     public let userSystemPrompt: String
+    public let samplingOptions: GenerateOptions
 
     public init(
         agent: AppAgentDefinition, taskPrompt: String, taskDescription: String,
-        project: AppProject?, chatID: UUID?, depth: Int, userSystemPrompt: String
+        project: AppProject?, chatID: UUID?, depth: Int, userSystemPrompt: String,
+        samplingOptions: GenerateOptions = GenerateOptions()
     ) {
         self.agent = agent
         self.taskPrompt = taskPrompt
@@ -27,7 +29,46 @@ public final class BackgroundAgentLaunch: @unchecked Sendable {
         self.chatID = chatID
         self.depth = depth
         self.userSystemPrompt = userSystemPrompt
+        self.samplingOptions = samplingOptions
     }
+}
+
+/// Escapes any occurrence of an opening or closing `<tagName>` for each name
+/// in `tagNames`, case-insensitively and tolerant of whitespace around the
+/// name (`</ Result >`, `<TASK-NOTIFICATION>`), so a subagent's own generated
+/// text cannot splice a forged close into a wrapper the parent model is
+/// meant to read as trusted run metadata.
+///
+/// Plain `.replacingOccurrences(of:with:)` against exact-case literal
+/// strings -- what this used to be -- only ever catches the one spelling it
+/// names; a subagent's answer containing `</Result>` or `</ result >` passed
+/// through unescaped, which is exactly the gap a wrapper like this exists to
+/// close. Only the `<`/`>` characters of a MATCHED tag are replaced, so the
+/// visible wording (case, internal spacing) is otherwise untouched.
+func escapingWrapperTags(_ tagNames: [String], in text: String) -> String {
+    guard !tagNames.isEmpty, !text.isEmpty else { return text }
+    let namePattern = tagNames.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
+    guard let regex = try? NSRegularExpression(
+        pattern: "<\\s*/?\\s*(?:\(namePattern))\\s*>", options: [.caseInsensitive]
+    ) else {
+        return text
+    }
+    let nsText = text as NSString
+    let fullRange = NSRange(location: 0, length: nsText.length)
+    var result = ""
+    var lastEnd = 0
+    regex.enumerateMatches(in: text, range: fullRange) { match, _, _ in
+        guard let match else { return }
+        let range = match.range
+        result += nsText.substring(with: NSRange(location: lastEnd, length: range.location - lastEnd))
+        let matched = nsText.substring(with: range)
+        result += matched
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        lastEnd = range.location + range.length
+    }
+    result += nsText.substring(from: lastEnd)
+    return result
 }
 
 /// Formats the `<task-notification>` user turn a background subagent's
@@ -39,14 +80,15 @@ enum BackgroundAgentNotification {
         id: String, status: String, agentName: String, displayName: String,
         result: SubagentRunResult
     ) -> String {
-        let body = result.finalResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawBody = result.finalResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeBody = escapingWrapperTags(["result", "task-notification"], in: rawBody)
         return """
         <task-notification>
         task_id: \(id)
         status: \(status)
         agent: \(displayName) (\(agentName))
         <result>
-        \(body.isEmpty ? "(No output.)" : body)
+        \(safeBody.isEmpty ? "(No output.)" : safeBody)
         </result>
         turns: \(result.totalTurns), tool_calls: \(result.totalToolCalls), duration_s: \(String(format: "%.1f", result.durationSeconds))
         </task-notification>
@@ -144,10 +186,12 @@ extension AppModel {
         let depth = launch.depth
         let userSystemPrompt = launch.userSystemPrompt
         let description = launch.taskDescription
+        let options = launch.samplingOptions
         let runTask = Task<SubagentRunResult, Never> {
             await SubagentRunner.run(
                 agent: agent, taskPrompt: prompt, session: session, project: project,
                 chatID: chatID, depth: depth, userSystemPrompt: userSystemPrompt,
+                samplingOptions: options,
                 progress: { event in await sink?(id, event) },
                 taskDescription: description)
         }
@@ -186,10 +230,20 @@ extension AppModel {
         state.result = result
         // A stop request turns the runner's own `cancelled` exit into
         // `killed`, so the notification reads as what the user did.
-        let status = killedBackgroundAgentIDs.contains(id) && result.status == "cancelled"
+        let wasKilled = killedBackgroundAgentIDs.remove(id) != nil
+        let status = wasKilled && result.status == "cancelled"
             ? "killed" : result.status
         state.status = status
         pruneFinishedBackgroundAgents()
+
+        // Marked on every exit path from here, including the one below: once
+        // this function has run, there is nothing further for it to deliver,
+        // so the entry is exactly as "completed" whether or not the chat it
+        // belonged to still exists. Doing this AFTER `pruneFinishedBackgroundAgents()`
+        // matters only in that it must not be skipped by an early return
+        // above this point -- there is none, but see `dismissBackgroundAgent`'s
+        // own doc for why this flag exists rather than relying on `status`.
+        defer { state.isRecordedComplete = true }
 
         guard let chatID = state.chatID, chats.contains(where: { $0.id == chatID }) else {
             return
@@ -235,7 +289,8 @@ extension AppModel {
     /// the notification still belongs in the transcript, and the generation
     /// it triggers self-guards on `session`.
     func canInjectTaskNotification(into chatID: UUID) -> Bool {
-        !generating && !submitting && pendingToolCall == nil
+        !generating && !submitting && pendingToolCall == nil && pendingBatchCalls == nil
+            && selectedChatID == chatID
             && chats.contains(where: { $0.id == chatID })
     }
 
@@ -267,23 +322,42 @@ extension AppModel {
     /// Removes one finished background run's card at the user's request. A
     /// running run cannot be dismissed -- stop it first, so an id the model
     /// may still reference cannot vanish from under `stop_agent`.
+    ///
+    /// **ALSO REFUSES BEFORE `completeBackgroundAgent` HAS RECORDED THE
+    /// RESULT, EVEN THOUGH `status` MAY ALREADY SAY "not running".**
+    /// `SubagentRunner.run` flips `status` via its own `.finished` progress
+    /// event from INSIDE the run, before the separate watcher `Task` in
+    /// `launchBackgroundAgent` has resumed and called `completeBackgroundAgent`
+    /// -- so `status != "running"` alone is true during a real window in
+    /// which dismissing would remove this entry out from under that
+    /// completion, which then silently drops the `<task-notification>` (its
+    /// own `guard let state = backgroundAgentRuns[id] else { return }`
+    /// no-ops). `isRecordedComplete` is set only once that has genuinely
+    /// happened.
     public func dismissBackgroundAgent(_ id: String) {
-        guard backgroundAgentRuns[id]?.status != "running" else { return }
+        guard let state = backgroundAgentRuns[id],
+              state.status != "running", state.isRecordedComplete else { return }
         backgroundAgentRuns.removeValue(forKey: id)
         killedBackgroundAgentIDs.remove(id)
     }
 
     /// Drops the oldest finished background records past the keep count.
     /// Running records are never pruned: their ids must keep resolving for
-    /// `stop_agent`.
+    /// `stop_agent`. Same reasoning as `dismissBackgroundAgent`'s own doc:
+    /// `status` alone flips before `completeBackgroundAgent` has recorded the
+    /// result, so a record not yet marked `isRecordedComplete` is excluded
+    /// from what may be pruned even though it already reads as finished --
+    /// otherwise a large enough backlog of completions landing back to back
+    /// could prune a record out from under its own still-pending completion.
     private func pruneFinishedBackgroundAgents() {
         let finished = backgroundAgentRuns.values
-            .filter { $0.status != "running" }
+            .filter { $0.status != "running" && $0.isRecordedComplete }
             .sorted { $0.startedAt < $1.startedAt }
         guard finished.count > Self.maxFinishedBackgroundAgents else { return }
         let doomed = finished.prefix(finished.count - Self.maxFinishedBackgroundAgents)
         for state in doomed {
             backgroundAgentRuns.removeValue(forKey: state.id)
+            killedBackgroundAgentIDs.remove(state.id)
         }
     }
 }

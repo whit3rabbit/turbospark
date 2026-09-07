@@ -51,7 +51,7 @@ public struct WorktreeFileListView: View {
     private var searchBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
 
             TextField("Filter changed files...", text: $worktree.searchQuery)
@@ -63,7 +63,7 @@ public struct WorktreeFileListView: View {
                     worktree.searchQuery = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
@@ -77,14 +77,14 @@ public struct WorktreeFileListView: View {
     private var emptySearchResults: some View {
         VStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.title3)
+                .themedFont(.title3)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 24)
-            Text("No matching changed files")
-                .font(.callout.weight(.medium))
+            Text("No matching changed files", bundle: .module)
+                .themedFont(.base, weight: .medium)
                 .foregroundStyle(.secondary)
-            Text("Try clearing the search filter.")
-                .font(.caption)
+            Text("Try clearing the search filter.", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -100,17 +100,17 @@ public struct WorktreeFileListView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: file.status.systemImage)
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(file.status.color)
 
                 Text(file.fileName)
-                    .font(.callout.weight(isSelected ? .semibold : .regular))
+                    .themedFont(.base, weight: isSelected ? .semibold : .regular)
                     .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .primary)
                     .lineLimit(1)
 
                 if !file.directoryPath.isEmpty {
                     Text(file.directoryPath)
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.head)
@@ -134,13 +134,13 @@ public struct WorktreeFileListView: View {
     private func statPills(adds: Int, dels: Int) -> some View {
         HStack(spacing: 4) {
             if adds > 0 {
-                Text("+\(adds)")
-                    .font(.caption2.monospacedDigit().weight(.medium))
+                Text("+\(adds)", bundle: .module)
+                    .themedFont(.tiny, weight: .medium).monospacedDigit()
                     .foregroundStyle(.green)
             }
             if dels > 0 {
-                Text("-\(dels)")
-                    .font(.caption2.monospacedDigit().weight(.medium))
+                Text("-\(dels)", bundle: .module)
+                    .themedFont(.tiny, weight: .medium).monospacedDigit()
                     .foregroundStyle(.red)
             }
         }
@@ -196,16 +196,16 @@ struct WorktreeTreeNodeRow: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
                     .frame(width: 12)
 
                 Image(systemName: isExpanded ? "folder.fill" : "folder")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(TurboSparkTheme.accentColor.opacity(0.85))
 
                 Text(node.name)
-                    .font(.callout.weight(.medium))
+                    .themedFont(.base, weight: .medium)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
@@ -231,12 +231,12 @@ struct WorktreeTreeNodeRow: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: file.status.systemImage)
-                    .font(.caption2)
+                    .themedFont(.tiny)
                     .foregroundStyle(file.status.color)
                     .frame(width: 12)
 
                 Text(file.fileName)
-                    .font(.callout.weight(isSelected ? .semibold : .regular))
+                    .themedFont(.base, weight: isSelected ? .semibold : .regular)
                     .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .primary)
                     .lineLimit(1)
 
@@ -259,13 +259,13 @@ struct WorktreeTreeNodeRow: View {
     private func statPills(adds: Int, dels: Int) -> some View {
         HStack(spacing: 4) {
             if adds > 0 {
-                Text("+\(adds)")
-                    .font(.caption2.monospacedDigit().weight(.medium))
+                Text("+\(adds)", bundle: .module)
+                    .themedFont(.tiny, weight: .medium).monospacedDigit()
                     .foregroundStyle(.green)
             }
             if dels > 0 {
-                Text("-\(dels)")
-                    .font(.caption2.monospacedDigit().weight(.medium))
+                Text("-\(dels)", bundle: .module)
+                    .themedFont(.tiny, weight: .medium).monospacedDigit()
                     .foregroundStyle(.red)
             }
         }

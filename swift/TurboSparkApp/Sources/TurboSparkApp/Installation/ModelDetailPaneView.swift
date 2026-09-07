@@ -74,7 +74,7 @@ struct ModelDetailPaneView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will remove the downloaded model files from disk.")
+            Text("This will remove the downloaded model files from disk.", bundle: .module)
         }
     }
 
@@ -85,11 +85,11 @@ struct ModelDetailPaneView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(entry.name)
-                        .font(.title2.weight(.bold))
+                        .themedFont(.title2, weight: .bold)
                         .lineLimit(2)
 
-                    Text("CATALOG")
-                        .font(.system(size: 9, weight: .bold))
+                    Text("CATALOG", bundle: .module)
+                        .themedFont(points: 9, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(TurboSparkTheme.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
@@ -100,27 +100,27 @@ struct ModelDetailPaneView: View {
 
                 HStack(spacing: 8) {
                     Text(entry.alias)
-                        .font(.subheadline.monospaced().weight(.medium))
+                        .themedCode(.small, weight: .medium)
                         .foregroundStyle(.secondary)
 
-                    Text("\u{2022}")
+                    Text("\u{2022}", bundle: .module)
                         .foregroundStyle(.tertiary)
 
                     HStack(spacing: 4) {
                         Image(systemName: visuals.iconSystemName)
-                            .font(.caption2)
+                            .themedFont(.tiny)
                             .foregroundStyle(visuals.accentColor)
                         Text(visuals.family)
                     }
-                    .font(.subheadline)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .help("Model Family: \(visuals.family)")
 
-                    Text("\u{2022}")
+                    Text("\u{2022}", bundle: .module)
                         .foregroundStyle(.tertiary)
 
                     Text(entry.status.capitalized)
-                        .font(.caption.weight(.medium))
+                        .themedFont(.small, weight: .medium)
                         .foregroundStyle(statusTint)
                 }
             }
@@ -142,13 +142,13 @@ struct ModelDetailPaneView: View {
         switch entry.status {
         case "verified":
             Image(systemName: "checkmark.seal.fill")
-                .font(.title3)
+                .themedFont(.title3)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help("Verified: this port has run this row end to end")
                 .accessibilityHidden(true)
         case "caveat":
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
+                .themedFont(.title3)
                 .foregroundStyle(.orange)
                 .help("Runs with a caveat; see the notes below")
                 .accessibilityHidden(true)
@@ -171,7 +171,7 @@ struct ModelDetailPaneView: View {
             NSPasteboard.general.setString(entry.alias, forType: .string)
         } label: {
             Label("Copy Alias", systemImage: "doc.on.doc")
-                .font(.caption)
+                .themedFont(.small)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -185,10 +185,10 @@ struct ModelDetailPaneView: View {
             HStack(spacing: 6) {
                 HStack(spacing: 4) {
                     Image(systemName: visuals.iconSystemName)
-                        .font(.caption2)
+                        .themedFont(.tiny)
                         .foregroundStyle(visuals.accentColor)
                     Text(visuals.family)
-                        .font(.caption.weight(.semibold))
+                        .themedFont(.small, weight: .semibold)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -197,7 +197,7 @@ struct ModelDetailPaneView: View {
 
                 ForEach(visuals.capabilities, id: \.self) { tag in
                     Text(tag)
-                        .font(.caption.weight(.medium))
+                        .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
@@ -211,16 +211,16 @@ struct ModelDetailPaneView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Quantization & Format")
-                        .font(.caption.weight(.medium))
+                    Text("Quantization & Format", bundle: .module)
+                        .themedFont(.small, weight: .medium)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 6) {
                         Text(visuals.formatLabel)
-                            .font(.callout.weight(.semibold))
-                        Text("\u{2022}")
+                            .themedFont(.base, weight: .semibold)
+                        Text("\u{2022}", bundle: .module)
                             .foregroundStyle(.tertiary)
-                        Text("\(MetricFormat.storage(entry.downloadBytes)) download")
-                            .font(.caption)
+                        Text("\(MetricFormat.storage(entry.downloadBytes)) download", bundle: .module)
+                            .themedFont(.small)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -239,7 +239,7 @@ struct ModelDetailPaneView: View {
                     systemImage: installDecision.isBlocked
                         ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
                 )
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(installDecision.isBlocked ? Color.red : Color.orange)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -330,14 +330,14 @@ struct ModelDetailPaneView: View {
 
             HStack {
                 Text(model.installStageText ?? "Downloading weights...")
-                    .font(.caption.weight(.medium))
+                    .themedFont(.small, weight: .medium)
                     .foregroundStyle(.primary)
 
                 Spacer()
 
                 if let fraction = model.installProgressFraction {
                     Text(MetricFormat.percent(fraction * 100))
-                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .themedFont(.small, weight: .semibold).monospacedDigit()
                         .foregroundStyle(Color.accentColor)
                 }
             }
@@ -362,14 +362,14 @@ struct ModelDetailPaneView: View {
 
             HStack {
                 if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {
-                    Text("\(MetricFormat.storage(downloaded)) of \(MetricFormat.storage(total))")
+                    Text("\(MetricFormat.storage(downloaded)) of \(MetricFormat.storage(total))", bundle: .module)
                 }
                 Spacer()
                 if let eta = model.installETAText {
                     Text(eta)
                 }
             }
-            .font(.caption2.monospacedDigit())
+            .themedFont(.tiny).monospacedDigit()
             .foregroundStyle(.secondary)
         }
     }

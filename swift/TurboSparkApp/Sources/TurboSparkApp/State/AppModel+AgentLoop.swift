@@ -386,7 +386,7 @@ extension AppModel {
     /// The three names the `agent` tool answers to. One source of truth for
     /// the batch router and its tests; the registry's own `switch` spells
     /// the same three, and a drift test would catch the split if it grew.
-    static func isAgentFamilyToolName(_ name: String) -> Bool {
+    nonisolated static func isAgentFamilyToolName(_ name: String) -> Bool {
         switch name.lowercased() {
         case "agent", "subagent", "task": return true
         default: return false
@@ -441,6 +441,7 @@ extension AppModel {
         // PermissionDenied to configured hooks; a hook deny does not, the
         // same split the single path makes.
         var denied: [(call: AppToolCall, reason: String, fromEngine: Bool)] = []
+        var updatedCalls: [AppToolCall] = []
 
         for call in calls {
             let hookDecision = await evaluatePreToolUseHooks(
@@ -460,6 +461,7 @@ extension AppModel {
             if let newInput = hookDecision.updatedInput {
                 for (key, value) in newInput { updated.arguments[key] = value }
             }
+            updatedCalls.append(updated)
             if hookDecision.behavior == .deny {
                 denied.append((updated, hookDecision.reason ?? "Blocked by PreToolUse hook", false))
                 continue
@@ -500,8 +502,8 @@ extension AppModel {
             pendingToolCallChatID = chatID
             pendingToolCallStep = currentStep
             pendingToolCallProject = project
-            pendingBatchCalls = calls
-            let parked = calls.map { call -> AppToolCall in
+            pendingBatchCalls = updatedCalls
+            let parked = updatedCalls.map { call -> AppToolCall in
                 var parked = call
                 parked.status = .pendingApproval
                 return parked
@@ -521,8 +523,24 @@ extension AppModel {
 
         if !asked.isEmpty {
             // Mixed batch: no single honest card. The historical shape.
+            //
+            // **THE PRIMARY CALL MUST COME FROM `asked`, NEVER FROM
+            // `updatedCalls`/`calls` BY POSITION.** `handleExtractedToolCall`
+            // re-evaluates whatever call it is given from scratch (hooks,
+            // then the engine), so if the batch's first call in original
+            // order happened to be one already resolved as `denied` above --
+            // whose engine denial already dispatched `PermissionDenied` at
+            // the loop a few lines up -- passing it here re-runs the same
+            // evaluation, lands on the same `.deny`, and dispatches
+            // `PermissionDenied` a SECOND time for one logical denial. Every
+            // call in `asked` is, by construction, one the loop above did
+            // NOT already resolve, so picking from there cannot re-trigger
+            // anything already dispatched.
+            let primary = asked[0].call
             await handleExtractedToolCall(
-                calls[0], deferred: Array(calls.dropFirst()), fullContent: fullContent,
+                primary,
+                deferred: updatedCalls.filter { $0.id != primary.id },
+                fullContent: fullContent,
                 reasoning: reasoning, result: result, currentStep: currentStep,
                 chatID: chatID, project: project)
             return

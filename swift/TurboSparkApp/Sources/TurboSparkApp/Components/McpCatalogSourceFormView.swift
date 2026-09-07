@@ -14,8 +14,8 @@ struct McpCatalogSourceFormView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Catalog Source")
-                .font(.subheadline.weight(.semibold))
+            Text("Catalog Source", bundle: .module)
+                .themedFont(.small, weight: .semibold)
 
             Picker("Source", selection: $sourceKind) {
                 ForEach(McpImportSheet.SourceKind.allCases) { kind in
@@ -34,8 +34,8 @@ struct McpCatalogSourceFormView: View {
 
     private var sourceField: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Source")
-                .font(.caption)
+            Text("Source", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 TextField(placeholder, text: $sourceText)
@@ -58,8 +58,8 @@ struct McpCatalogSourceFormView: View {
 
     private var gitRefField: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Git Ref")
-                .font(.caption)
+            Text("Git Ref", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
             TextField("main", text: $gitRef)
                 .textFieldStyle(.roundedBorder)
@@ -68,11 +68,11 @@ struct McpCatalogSourceFormView: View {
 
     private var sparsePathsField: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Sparse Paths (one per line, optional)")
-                .font(.caption)
+            Text("Sparse Paths (one per line, optional)", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
             TextEditor(text: $sparsePathsText)
-                .font(.system(.caption, design: .monospaced))
+                .themedCode(.small)
                 .frame(height: 50)
                 .padding(4)
                 .background(Color(nsColor: .controlBackgroundColor))
@@ -80,8 +80,8 @@ struct McpCatalogSourceFormView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
-            Text("Checks out only these subtrees, for a repository too large to clone whole.")
-                .font(.caption2)
+            Text("Checks out only these subtrees, for a repository too large to clone whole.", bundle: .module)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
         }
     }

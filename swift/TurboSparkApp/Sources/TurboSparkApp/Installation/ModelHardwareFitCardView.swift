@@ -28,11 +28,11 @@ struct ModelHardwareFitCardView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "gauge.with.needle")
-                    .font(.subheadline)
+                    .themedFont(.small)
                     .foregroundStyle(Color.accentColor)
                     .help("Hardware compatibility estimate")
-                Text("Hardware Compatibility")
-                    .font(.headline)
+                Text("Hardware Compatibility", bundle: .module)
+                    .themedFont(.base, weight: .semibold)
 
                 Spacer()
 
@@ -40,7 +40,7 @@ struct ModelHardwareFitCardView: View {
             }
 
             Text(rec.verdictSummary)
-                .font(.callout)
+                .themedFont(.base)
                 .foregroundStyle(.secondary)
 
             Divider()
@@ -90,24 +90,24 @@ struct ModelHardwareFitCardView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "gauge.with.needle")
-                    .font(.subheadline)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text("Hardware Compatibility")
-                    .font(.headline)
+                Text("Hardware Compatibility", bundle: .module)
+                    .themedFont(.base, weight: .semibold)
 
                 Spacer()
 
-                Text("Not sized")
-                    .font(.caption.weight(.bold))
+                Text("Not sized", bundle: .module)
+                    .themedFont(.small, weight: .bold)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Color.secondary.opacity(0.16), in: Capsule())
                     .foregroundStyle(.secondary)
             }
 
-            Text("This row has no memory sizing for this machine, so whether it fits, how much it would pin, and its largest usable context are all unknown.")
-                .font(.callout)
+            Text("This row has no memory sizing for this machine, so whether it fits, how much it would pin, and its largest usable context are all unknown.", bundle: .module)
+                .themedFont(.base)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -122,8 +122,8 @@ struct ModelHardwareFitCardView: View {
                 }
             }
 
-            Text("Read the headers to size it: turbospark-model recommend --probe")
-                .font(.caption.monospaced())
+            Text("Read the headers to size it: turbospark-model recommend --probe", bundle: .module)
+                .themedCode(.small)
                 .foregroundStyle(.tertiary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -136,10 +136,10 @@ struct ModelHardwareFitCardView: View {
     private func metricCell(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.caption2)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.callout.monospacedDigit().weight(.medium))
+                .themedFont(.base, weight: .medium).monospacedDigit()
         }
     }
 

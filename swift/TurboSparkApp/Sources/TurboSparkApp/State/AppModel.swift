@@ -107,6 +107,11 @@ public final class AppModel: ObservableObject {
     var serverPollTimer: Timer?
     /// Whether to display the menu bar status extra icon in macOS menu bar.
     @Published public var showMenuBarItem: Bool = true
+    /// Whether fans pinned through the status bar's ThermalForge control
+    /// stay pinned when the app quits. Mirrored onto
+    /// `FanController.keepFansPinnedOnQuit` at load, because the quit path
+    /// cannot consult the debounced settings write.
+    @Published public var keepFansPinnedOnQuit: Bool = false
     /// Whether the server automatically starts when the app launches.
     @Published public var serverAutoStartOnLaunch: Bool = false
     /// Whether the server keeps running in the background when the main window is closed.
@@ -390,8 +395,6 @@ public final class AppModel: ObservableObject {
     @Published public var composerGuardrailsOverride: Bool? = nil
 
     // Storage and Model Discovery Settings
-    /// Custom TurboSpark primary models directory (empty uses default ~/.turbospark/models).
-    @Published public var modelsDirectory: String = ""
     /// Whether to automatically scan and include models from LM Studio library.
     @Published public var enableLMStudioDetection: Bool = true
     /// Custom LM Studio models directory (empty uses default ~/.lmstudio/models).
@@ -499,6 +502,9 @@ public final class AppModel: ObservableObject {
         AppToolRegistry.userSystemPromptProvider = { [weak self] in
             self?.defaultSystemPrompt ?? ""
         }
+        AppToolRegistry.subagentSamplingOptionsProvider = { [weak self] in
+            self?.samplingOptions() ?? GenerateOptions()
+        }
         AppToolRegistry.subagentProgressSink = { [weak self] key, event in
             await self?.applySubagentEvent(key, event)
         }
@@ -537,6 +543,11 @@ public final class AppModel: ObservableObject {
                 guard let self = self else { return }
                 NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 self.activeToast = AppToast(message: "Presented file: \(fileURL.lastPathComponent)", style: .info)
+            }
+        }
+        ArtifactRegistrar.onArtifactsProduced = { [weak self] targetChatID, files in
+            Task { @MainActor [weak self] in
+                self?.registerProducedArtifacts(chatID: targetChatID, files: files)
             }
         }
         PushNotificationExecutor.onNotificationPushed = { [weak self] title, message in

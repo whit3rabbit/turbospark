@@ -145,7 +145,9 @@ final class AgentLoopLifecycleTests: XCTestCase {
         appModel.selectProject(id: projectB.id)
 
         appModel.approvePendingToolCall(id: call.id)
-        try await waitUntil { FileManager.default.fileExists(atPath: witness.path) }
+        try await waitUntil {
+            (try? String(contentsOf: witness, encoding: .utf8))?.isEmpty == false
+        }
 
         let recorded = (try? String(contentsOf: witness, encoding: .utf8)) ?? ""
         XCTAssertEqual(

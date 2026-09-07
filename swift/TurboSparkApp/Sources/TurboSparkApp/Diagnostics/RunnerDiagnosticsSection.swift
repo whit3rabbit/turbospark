@@ -34,8 +34,8 @@ struct RunnerDiagnosticsSection: View {
                 }
 
             } else {
-                Text("No runs yet")
-                    .font(.caption)
+                Text("No runs yet", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -43,7 +43,7 @@ struct RunnerDiagnosticsSection: View {
 
     private func groupLabel(_ title: String) -> some View {
         Text(title)
-            .font(.caption)
+            .themedFont(.small)
             .textCase(.uppercase)
             .foregroundStyle(.tertiary)
             .accessibilityHeading(.h3)
@@ -62,7 +62,7 @@ private struct DiagnosticRow: View {
     var body: some View {
         LabeledContent(label) {
             Text(value)
-                .font(.caption.monospacedDigit())
+                .themedFont(.small).monospacedDigit()
                 .foregroundStyle(.secondary)
         }
     }

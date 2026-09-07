@@ -94,11 +94,11 @@ public struct ProjectMcpSettingsSheet: View {
                     Image(systemName: "folder.badge.gearshape")
                         .foregroundStyle(TurboSparkTheme.accentColor)
                         .help("Project MCP Tool Configuration")
-                    Text("\(project?.name ?? "Project") - MCP External Tools")
-                        .font(.headline)
+                    Text("\(project?.name ?? "Project") - MCP External Tools", bundle: .module)
+                        .themedFont(.base, weight: .semibold)
                 }
-                Text("Manage project-specific MCP servers and import configs from codebase.")
-                    .font(.caption)
+                Text("Manage project-specific MCP servers and import configs from codebase.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -114,10 +114,10 @@ public struct ProjectMcpSettingsSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Configured Project Servers (\(projectServers.count))")
-                        .font(.subheadline.weight(.semibold))
-                    Text("Active servers are available to the assistant during turns in this project.")
-                        .font(.caption)
+                    Text("Configured Project Servers (\(projectServers.count))", bundle: .module)
+                        .themedFont(.small, weight: .semibold)
+                    Text("Active servers are available to the assistant during turns in this project.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -132,8 +132,8 @@ public struct ProjectMcpSettingsSheet: View {
 
             if projectServers.isEmpty {
                 VStack(spacing: 8) {
-                    Text("No project MCP servers configured.")
-                        .font(.caption)
+                    Text("No project MCP servers configured.", bundle: .module)
+                        .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
                 .padding(20)
@@ -182,17 +182,17 @@ public struct ProjectMcpSettingsSheet: View {
     private var permissionRulesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Permission Rules")
-                    .font(.subheadline.weight(.semibold))
-                Text("`mcp__server` covers every tool on a server; `mcp__server__tool` covers one. Deny also hides the tool from the assistant.")
-                    .font(.caption)
+                Text("Permission Rules", bundle: .module)
+                    .themedFont(.small, weight: .semibold)
+                Text("`mcp__server` covers every tool on a server; `mcp__server__tool` covers one. Deny also hides the tool from the assistant.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
 
             let permissions = project?.permissions
             if (permissions?.mcpAllowRules.isEmpty ?? true) && (permissions?.mcpDenyRules.isEmpty ?? true) {
-                Text("No MCP permission rules for this project.")
-                    .font(.caption)
+                Text("No MCP permission rules for this project.", bundle: .module)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -215,15 +215,15 @@ public struct ProjectMcpSettingsSheet: View {
         HStack(spacing: 8) {
             Image(systemName: isAllow ? "checkmark.circle.fill" : "nosign")
                 .foregroundStyle(isAllow ? Color.green : Color.red)
-                .font(.caption)
+                .themedFont(.small)
             Text(rule)
-                .font(.caption.monospaced())
+                .themedCode(.small)
             Spacer()
             Button {
                 removeRule(rule)
             } label: {
                 Image(systemName: "trash")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)

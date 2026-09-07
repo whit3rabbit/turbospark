@@ -171,11 +171,11 @@ private struct CodeBlockContainer<Content: View>: View {
             HStack {
                 if let language, !language.isEmpty {
                     Text(language.lowercased())
-                        .font(.caption2.monospaced().weight(.semibold))
+                        .themedCode(.tiny, weight: .semibold)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("code")
-                        .font(.caption2.monospaced().weight(.semibold))
+                    Text("code", bundle: .module)
+                        .themedCode(.tiny, weight: .semibold)
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
@@ -187,7 +187,7 @@ private struct CodeBlockContainer<Content: View>: View {
                             .accessibilityHidden(true)
                         Text(isCopied ? "Copied" : "Copy")
                     }
-                    .font(.caption2.weight(.medium))
+                    .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(isCopied ? Color.accentColor : Color.secondary)
                 }
                 .buttonStyle(.plain)
