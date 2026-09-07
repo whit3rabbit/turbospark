@@ -1,504 +1,342 @@
 # Roadmap
 
-The forward-looking roadmap and task tracker for this engine, last reconciled against the tree on 2026-09-06. All core port phases (Q, P1, G, S, P2, M1-M5) are complete and green. This document functions as an active TODO list for forward engineering, measurements, and architectural bring-ups.
+The forward-looking roadmap and prioritized task tracker for this engine, last reconciled against the tree on 2026-09-07. All core port phases (Q, P1, G, S, P2, M1-M5) are complete and green. This document functions as an active TODO list for forward engineering, measurements, and architectural bring-ups.
+
+All completed work, historical milestones, and landed features have been removed to focus strictly on remaining tasks.
 
 ---
 
-## Current Status (2026-09-06)
+## Current Status
 
-- **Test Suite**: **2,090 tests declared workspace-wide, of which 1,953 run under the standing gate and 137 are `#[ignore]`d** (the checkpoint downloads, the memory oracles, the quality gates, the sensitivity proof, the cross-engine dumps, and offline benchmarks). Re-derived 2026-09-06 on macOS with `cargo test --workspace -- --list` and `--list --ignored`. **Note `--list` ALREADY INCLUDES the ignored ones**, so the arithmetic is `declared - ignored = under gate`, not a sum; checked by intersecting the two lists rather than assumed. The prior figure on this line (2,017 / 1,880 / 137) was from 2026-09-05 and had grown by 73, entirely offline/synthetic, from the vision memory sidecar work (section 11); the ignored count is unmoved, since none of that work's tests needed a real install to run. This repo's own house rule is not to trust a prose test count without re-deriving it. Full workspace suite, strict formatting, clippy and the cross-target check all green.
-- **Architectures**: **8** `ModelFamily` variants running across **20** curated catalog rows (`gemma4`, `qwenGdnMoe`, `llama`, `qwen3moe`, `gptOss`, `museGlimmer`, `qwenGdnDense`, `qwen4Exp`). A ninth variant, `deepseekV4Flash`, is declared and scaffolded only (section 5).
-- **Family-Coverage Discovery (2026-09-06)**: audited `jundot/omlx`'s patch and kernel surface against our registry, then cross-checked the Unsloth HF catalog with direct GGUF header probes of 40 of its repos. Section 13 records both: ten missing text families from the omlx side (GLM DSA, MiniMax M3, Nemotron-H, Ling 3.0, Laguna, Hunyuan Hy3, Step 3.7, MiMo V2.5, Inkling, Kimi K2/LongCat), five missing tool-call markups, omlx's MTP-compatible set, missing vision towers and quantization formats; and, from the Unsloth witnesses, the dense `qwen3`/`gemma3` usage gap, `deepseek2` covering Kimi K2.5/2.6 + GLM-4.7-Flash + Mistral-Large-3 in one arch string, `deepseek4` as the scaffold's first GGUF witness, and DiffusionGemma as a missing generation-loop class. Discovery only; nothing scoped. A third same-day survey (`github.com/Blaizzy/mlx-embeddings`, section 13) closed the embedding-model question: nothing to build -- the encoder half is out-of-class, and the decoder-embedder half (Qwen3-Embedding) rides the dense-`qwen3` gap if a server `/v1/embeddings` ever becomes a goal. A fourth same-day survey (`github.com/Blaizzy/mlx-vlm`, section 14) did the same for vision: this port runs one tower (the Qwen3-VL generation); every other vision-capable model in its ~220-entry registry is a gap, inventoried tower class by tower class with a nearest-term ranking.
-- **Recent Landings**:
-  - **Vision Memory Sidecar, Parts A1-A6, B1-B3, C (2026-09-06)**: the tower no longer has to be bundled inside a full trunk install to run. A `<alias>.gturbo-vision/` sidecar directory carries the tower alone (a degenerate zero-layer `manifest.json` plus a `vision_sidecar.json` record naming which family and hidden size it pairs with, since the manifest itself cannot carry a "this is a tower, not a model" marker), `RealForwardRunner::attach_vision_sidecar(dir)` binds one to an already-open text-only trunk at runtime, and `turbospark-model pull-vision` fetches one straight from a repo without ever streaming that repo's 14+ GB trunk. **The headline claim is verified on real hardware, not merely by the synthetic gate that motivated it**: `~/models/qwen38-27b.gturbo` (text-only, no tower) with the pulled `qwen38-vision-tower.gturbo-vision` sidecar (879 MiB, pulled for real from `mlx-community/Qwen3.8-27B-4bit`) attached produces byte-for-byte identical transcription of a real OCR page against the combined `qwen38-27b-vision.gturbo` install, on BOTH the greedy arm and a fixed-seed sampled arm (SHA-256-compared stdout), and attaching a sidecar perturbs no text-only output. `--vision-sidecar <PATH>` reaches `turbospark-check`, `turbospark-server`, and the FFI's `OpenOptions`; catalog gating (`catalog::gate`) is bypassed for a tower row, since a BF16 tower repo legitimately carries no `quantization` block for that gate to find. Part B closes the tower's own memory footprint, all three sub-parts landed: B1 (`VISION_MLP_TILE_ROWS`) bounds `VisionScratch::h1` at a fixed row tile instead of a whole page's worth; B2 aliases the five `VisionScratch` buffers that are never live at once under the serial encoder's commit-order guarantee, cutting the buffer count from seven to five; B3 (`crates/runtime/src/vision/budget.rs`) derives `max_pixels` from the load guard's own memory budget rather than only from the checkpoint's declared ceiling, refusing with the whole subtraction shown when even the floor does not fit. Part C (`release_vision_tower`, exposed through `ts_session_release_vision`) frees an open tower's slots, position table, and a sidecar's own weights and mmap without forgetting the attachment. Part D (a Qwen3-VL Phase 0 scoping doc, `docs/QWEN3VL_PHASE0.md`) landed as documentation only, by design. **One thing still left open**: `crates/runtime/tests/vision_tower_parity.rs` / `crates/bench/tests/vision_memory_oracle.rs` have no sidecar-aware env arm yet, so the tower's mlx-vlm cosine and the multi-page memory ceiling have not been re-measured specifically THROUGH a sidecar (the CLI byte-identity comparison above is the evidence that a sidecar run reaches the identical bytes those two gates already certified). See `docs/VISION.md`'s "The vision memory sidecar" section for the full design and the exact measured numbers.
-  - **Ghost Mode Ephemeral Chats (2026-09-06)**: Ephemeral unpersisted chats in `TurboSparkApp` with memory-only store, distinct UI badge, auto-purging on close/navigation, and reviewed UX polish (`38d8b8c`, `d32c102`).
-  - **PF-02 Step 7 Matrix-Path Re-Tile Measured & Closed (2026-09-05)**: Built `dequant_int4_gemm_mma_wide` (`crates/gpu/src/shaders/dequant_int4_mma.metal`), the four-SIMD-group re-tile that was the last untried lever on `dequant_int4_gemm_mma`, measured it on AC against exact and narrow matrix tiles, and closed it as Do Not Revisit 16 (`74f00d5`). Best cell was 2.10x against a gate of 1.00. Refuted both staging `x` and the 4-SIMD-group matrix-path hypothesis.
-  - **Swift User Profiles & Claude Code Plugin System (2026-09-05)**: Full user profile isolation under `~/Library/Application Support/TurboSpark/profiles/<id>/` (`UserProfileStore`, save-and-relaunch switching, launch overrides `-TurboSparkProfile` / `TURBOSPARK_PROFILE`, `docs/SWIFT_PROFILES.md`) and complete Claude Code plugin system (`PluginManager`, `PluginMarketplaceManager`, manifests, hooks, skills, subagents, marketplace management, `docs/SWIFT_PLUGINS.md`).
-  - **Swift Git Worktree Management & Unified Diff Viewer (2026-09-05)**: In-app worktree management (`WorktreeModel+Git.swift`, `WorktreeModel+Tree.swift`), worktree listing, branch switching, commit log inspection, unified diff viewer with syntax highlights, and timeline inspector.
-  - **Swift Model Hub Redesign, Context Ladder & Hardware Fit (2026-09-05)**: Context ladder visualizer (`ContextLadderView.swift`), memory fit presentation, hardware fit cards, probe report inspector (`ProbeReportCardView.swift`), model manager filter bar, and installation gating (`ModelInstallGate.swift`).
-  - **Swift Settings Tabs, Prompt Composer & Tool Cards Redesign (2026-09-05)**: Redesigned settings tabs (Engine, General, Shortcuts, Appearance, Agents, Hooks), Prompt Composer plus menu, context pills, safety pills, tool approval dropdown, structured tool call cards and code cell view (`ToolCallCardView.swift`, `ToolCodeCellView.swift`), theme typography preview, and server keychain integration.
-  - **Swift Shell, Hook Contract and Settings Stores (2026-09-05)**: `run_in_background: true` now really backgrounds a command (`BackgroundShellManager`, `bg_N` ids scoped to the launching chat, a 20-shell ceiling, `BashOutput`/`KillShell` tools); shell execution moved out of the tool registry into `Tools/Terminal/` with cwd persistence across calls, ANSI stripping, head+tail compaction, benign-exit mapping (a `grep` exit 1 is an answer, not an error) and a hang-prevention environment. The Claude Code hook contract gained five deliberate divergences documented rather than guessed (`docs/SWIFT_TOOLS.md`).
-  - **One `TurnSplitter` for Turn Splitting (2026-09-05)**: three drifting copies of the same "split a turn into content / reasoning / tool calls" wiring collapsed into one `runtime::turn_stream` (`TurnSplitter`, `TurnEvent`). `StructuredAssistantDecoder` is now constructed in exactly ONE place in the workspace. C ABI gained `TS_EVENT_TOOL` and `TS_EVENT_FINISH`; Swift gained `.toolCall` and `.stopped`. `docs/STREAMING.md` is the home.
-  - **`qwen4_exp` Decode Flow, Router Dtype Fix, and QSA Sparse Attention (2026-09-02..05)**: Complete per-token forward pass, widened cache slots, runtime top-k phase 2 down-reduce, router INT8-affine quantization, QSA sparse attention verified on real REAP-288 install, and seventh `ChunkedPrefillRunner` (`families/qwen4/prefill.rs`).
-  - **Batch INT4 GEMM Row Blocking (`dequant_int4_batch.rs` & `dequant_int4_mma.metal`)**: Row-blocked dispatch wired for M-row batch GEMMs with optimal tile dispatch (`R=1, 2, 4`), register limit queries, and crossover points documented in `docs/BATCHED_PREFILL.md` and `docs/BENCHMARKS.md`.
-  - **Reasoning Effort & Thinking Token Protocol**: Multi-dialect support for `--reasoning` / `reasoning_effort` across CLI and server (`off`, `low`, `medium`, `high`, `xhigh`), ChatML/Gemma thinking extraction, and Swift UI integration.
-  - **Expert Disk I/O & Bypass Telemetry**: Disk I/O tracking and cache-bypass telemetry in `crates/streaming` (`TURBOSPARK_PILOT_PROBE` validation and pread streamer metrics).
-  - **Prefix KV Reuse (cached-prompt continuation)**: Turn continuation from previous turn's KV across CLI, FFI (`crates/ffi`), and server (`--prefix-reuse`, session pool `--session-slots`).
-  - **Vision (`qwen3_5`), M-V0 through M-V9**: CLI and server multimodal transcription end to end.
-  - **Native macOS App (`TurboSparkApp`) & Release Automation**: Full Swift desktop app with multi-chat persistence, project/agent system with tool execution and permissions engine, reasoning controls, model management, document attachments, and official `.app`/DMG packaging automation.
-  - **Swift Agent & Tool Execution Subsystem (2026-08-31)**: AGENTS.md parser and custom agent definition loader, autonomous subagent runner, custom tool execution engine, and built-in executors.
-  - **Directional Weight Steering**: Runtime abliteration, ActAdd, clamping, and renorm shipped across 7 families (`docs/OBLITERATION.md`).
-  - **DFlash2 Block Drafter**: Complete block-diffusion speculative drafter for dense Qwen 3.8 (`docs/DFLASH2.md`).
+- **Test Suite**: 2,090 tests declared workspace-wide, of which 1,953 run under the standing gate and 137 are `#[ignore]`d (the checkpoint downloads, memory oracles, quality gates, sensitivity proof, cross-engine dumps, and offline benchmarks).
+- **Architectures**: 8 `ModelFamily` variants running across 20 curated catalog rows (`gemma4`, `qwenGdnMoe`, `llama`, `qwen3moe`, `gptOss`, `museGlimmer`, `qwenGdnDense`, `qwen4Exp`). A ninth variant, `deepseekV4Flash`, is declared and scaffolded only.
 
 ---
 
-## Active Tasks & Measurement Owed
+## Prioritized Task Backlog
 
-In estimated cost/effort order:
+### Priority 0: Immediate / Startable Now
 
-| Task / Item | Cost / Dependencies | Details / Why Open |
-|---|---|---|
-| **PF-02 Step 6 Throughput A/B** | Attempted 2026-09-05 and 2026-09-06, both uncitable; re-run owed with mid-run contamination polling | Real Gemma 4 install, `--expert-cache-slots 24` (`TURBOSPARK_ROUTED_BATCH=1` refuses 32+), three interleaved pairs each attempt: `BATCHED_GEMV` never slower than the baseline on either attempt (7 of 7 timed pairs, both discarded warmups). 2026-09-05's pair-to-pair spread was background MCP contention. 2026-09-06's re-run passed pre-run idle check but hit a concurrent `cargo build` mid-run. Direction confirmed twice over; magnitude still open. Next attempt needs `pgrep -x rustc` polled THROUGHOUT run. See `docs/BATCHED_PREFILL.md`'s Step 6 section. |
-| **Prefill Energy Capture** | UNBLOCKED 2026-09-05. ~12 min, sudo, quiet machine, AC. | `turbospark-bench --prefill-chunk off|auto|N` and `scripts/power.sh` `seq|chunked` arm wired (`30e184d`). Run `ARMS=seq,chunked scripts/power.sh` on AC, quiet machine, ~12 min. Read `rows.tsv`'s per-arm dispersion and contamination floor before believing any J/tok. |
-| **`qwen4_exp` Chunked Prefill Throughput & Pread Verification** | Driver landed; throughput still unmeasured; diff two runs | Seventh `ChunkedPrefillRunner` is wired and verified byte-identical to sequential on 7 synthetic cases and real REAP-288 install. Throughput measurement attempted and was uncitable due to non-idle machine and pread bounds. Next step: difference two `TURBOSPARK_PHASES=1` runs' `expert io (pread)` bucket via `turbospark-check` (short vs long prompt at same `--max-new`) to test if prefill is pread-bound. |
-| **PF-02 Step 4 (Batched Attention Kernel)** | New Metal kernel, real risk. **LOW VALUE on `qwenGdnDense`; scope it on a family where attention is a real share.** | Widen `attention_decode_partial` to hold M query rows per KV chunk. Real new-kernel work: new function-constant axis, per-row online-softmax state generalized to M rows, register-pressure risk. On dense qwen flow it targets only 2.6% of prefill in the 16 of 64 layers with attention. Scope on an attention-heavy family. |
-| **Mapped Residency Eviction Benchmark** | Investigation / memory pressure test | Measure degradation/fault costs when OS reclaims clean mapped pages under memory pressure. Gates `auto` default and CLI flag. |
-| **`qwen4_exp` GPU Top-K for Block Selection** | Unbuilt, unmeasured | Above `index_budget`, QSA's block scoring currently commits and waits on the host for `compute::select_blocks` once per QSA layer per token. A GPU top-k would remove that mid-layer commit (12 per token above budget on real install) but has no evidence yet that it is the bottleneck -- measure before building. |
-| **Cancellable Model Installation (`ts_install_cancel`)** | Thread cancellation atomic through `catalog::install` walk | `ts_install` currently blocks its thread for the whole streaming walk; GUI Cancel only detaches observation while download continues in background (`DEVIATIONS.md`). Thread cancellation atomic through `catalog::install` and expose `ts_install_cancel` in C ABI and Swift package. |
-| **Turn Decoder `finish()` Symmetry on CLI and FFI** | Wire `finish()` call in CLI and FFI streaming loops | Server calls `TurnSplitter::finish()` to flush trailing text and stop-token tool calls, but CLI and FFI loops do not call it yet (`DEVIATIONS.md`). Wire `finish()` call symmetrically across all generation consumers. |
-| **Plugin Marketplace Remote Catalog Indexing** | Network discovery and manifest fetching | `PluginMarketplaceManager` handles local and bundled plugins (`docs/SWIFT_PLUGINS.md`); wire remote repository discovery and manifest indexing for community plugins. |
-| **`qwen38` Cross-Engine KL** | Table entry in script + ref download | Add `qwen38` to `scripts/kld_mlx_affine.py` test suite against upstream MLX. |
-| **`qwen38` External Follow-Up Benchmark** | Read-only, link-only | TerminalBytes (2026-08) benchmarked Qwen3.8 27B on Mac Studio M3 Ultra / 256 GB: Ollama Q4_K_M at **14.0 tok/s**; 1-bit Unsloth at **27 tok/s** in 6.7 GB. Reference: <https://terminalbytes.com/run-qwen-3-8-27b-locally/>. |
-| **`qwen38` Community Benchmark Target (oMLX)** | See GEMV-to-GEMM widening for PP; freeze MTP projection for TG | oMLX Qwen3.8-27B 4-bit bar: PP 210.3 tok/s, TG 17.1 tok/s. This port's M4 Max reads TG 18.6-21.1 tok/s and PP 42.1 tok/s. Kernel gap decomposes to 1.50x kernel at M=16 and 2.00x width from M=16 to M=32. Kernel first, then re-price width. Reference: <https://share.google/KzY3rnCKaUxdYwrpz>. |
-| **`qwen36` Cross-Engine KL** | Reference download + `pull qwen36` (~23 min) | Cross-engine KL for Qwen 3.6 MoE against MLX reference. |
-| **`bonsai27b` Quality & Oracle Rows** | `pull bonsai27b` (~10 min) + run | Freeze quality gate and memory oracle rows for the 1-bit Bonsai model. |
-| **Dense `llama` Quality-Gate Rows** | Reference answer suited to 7B + pull | Add frozen quality-gate rows for dense Mistral-7B / TinyLlama installs. |
-| **`power.sh` Sweep for Remaining Models** | ~12 min each, sudo, quiet machine | Capture baseline power and J/tok for `qwen3_5` 27B variants, `ornith9b`, and `ornith35b`. |
+Low-friction, high-impact fixes, unblocked measurement runs, or low-hanging symmetry tasks that can be executed immediately.
+
+#### 1. Turn Decoder `finish()` Symmetry on CLI and FFI
+- **Objective**: Server calls `runtime::TurnSplitter::finish` to flush trailing text and stop-token tool calls, but CLI and FFI loops do not call it yet (`DEVIATIONS.md`). Symmetrically wire `finish()` across all generation consumers so withheld text (`held_text` from DeepSeek) and pending tool calls flush properly.
+- **Why Open**: Was previously inert because CLI and FFI ran with empty tool allowlists, but creating symmetry prevents subtle output dropping when tool execution expands.
+- **Files to Touch**:
+  - `crates/cli/src/generate/mod.rs` (invoke `split.finish()` after decode loop)
+  - `crates/ffi/src/generate/mod.rs` (invoke `split.finish()` after decode loop)
+  - `crates/runtime/src/turn_stream.rs` (verify finish event propagation)
+  - `docs/STREAMING.md`, `DEVIATIONS.md`
+
+#### 2. Cancellable Model Installation (`ts_install_cancel`)
+- **Objective**: `ts_install` currently blocks its thread for the whole streaming walk; GUI Cancel only detaches observation while the download continues in the background (`DEVIATIONS.md`). Thread an atomic cancellation flag through `catalog::install` and expose `ts_install_cancel` in the C ABI and Swift package.
+- **Why Open**: Required for genuine user cancellation in `TurboSparkApp` without background resource leaks or file write collisions.
+- **Files to Touch**:
+  - `crates/catalog/src/install.rs` (thread cancellation atomic through download and extract loops)
+  - `crates/ffi/include/turbospark.h` (declare `ts_install_cancel`)
+  - `crates/ffi/src/c_surface.rs` / `crates/ffi/src/install.rs` (expose C FFI cancel endpoint)
+  - `swift/TurboSpark/Sources/TurboSpark/ModelCatalog.swift` (wrap cancellation in Swift library)
+  - `swift/TurboSparkApp/Sources/TurboSparkApp/ModelInstallView.swift` / `CatalogSheet.swift` (wire UI Cancel button)
+
+#### 3. Prefill Energy Capture
+- **Objective**: Run `ARMS=seq,chunked scripts/power.sh` on AC quiet machine (~12 min, sudo) to capture baseline chunked prefill power and J/tok.
+- **Why Open**: Tooling was unblocked (`turbospark-bench --prefill-chunk off|auto|N` and `scripts/power.sh seq|chunked` wired), but clean baseline row run is still owed.
+- **Files to Touch / Run**:
+  - `scripts/power.sh` (execute benchmark)
+  - `docs/POWER_BASELINE.md` (record resulting rows)
+
+#### 4. Step 6 Batched GEMV Throughput A/B Re-run
+- **Objective**: Re-run throughput A/B on a quiet machine via `turbospark-bench --prefill-chunk auto` with `TURBOSPARK_BATCHED_GEMV=1` exported, polling `pgrep -x rustc` throughout to guard against mid-run build contamination.
+- **Why Open**: Direction confirmed twice over (never slower on Gemma 4 install), but exact magnitude was invalidated by concurrent build processes.
+- **Files to Touch / Run**:
+  - `crates/bench/` (`turbospark-bench`)
+  - `docs/BATCHED_PREFILL.md` (freeze verified throughput speedup)
+
+#### 5. `qwen4_exp` Chunked Prefill Throughput & Pread Verification
+- **Objective**: Difference two `TURBOSPARK_PHASES=1` runs' `expert io (pread)` buckets via `turbospark-check` (short prompt vs long prompt at same `--max-new`) to test if prefill is pread-bound.
+- **Why Open**: Seventh `ChunkedPrefillRunner` landed and is bit-identical, but throughput numbers remain unmeasured.
+- **Files to Touch / Run**:
+  - `crates/cli/src/bin/check.rs`
+  - `crates/runtime/src/families/qwen4/prefill.rs`
+  - `docs/QWEN4_EXP.md`
+
+#### 6. Real-Model Smoke for TurboQuant `--kv-bits`
+- **Objective**: Run `turbospark-check --kv-bits 2|3|3.5|4` on real installs and record sanity output and perplexity checks.
+- **Why Open**: Pipeline and Metal kernels landed across all 7 families, but real-model execution has not been validated against real hardware from the main worktree.
+- **Files to Touch / Run**:
+  - `crates/bench/tests/kv_quant_probe.rs`
+  - `docs/TRUBOQUANT.md`
 
 ---
 
-## Immediate Next Actions (Startable Now)
+### Priority 1: Near-Term Core Engine & Infrastructure
 
-1. **PF-02 Completion & Prefill Verification**:
-   - **Run `ARMS=seq,chunked scripts/power.sh` on AC** (~12 min). The prefill energy row this file has carried as BLOCKED since it was written is now just owed.
-   - **Difference two `TURBOSPARK_PHASES=1` runs' `expert io (pread)` bucket on `qwen4-reap288`** via `turbospark-check` (short prompt vs long prompt at same `--max-new`). Tests the hypothesis that this family's prefill is pread-bound.
-   - **Re-run Step 6 throughput A/B on a quiet machine** via `turbospark-bench --prefill-chunk auto` with `TURBOSPARK_BATCHED_GEMV=1` exported, polling `pgrep -x rustc` throughout to guard against mid-run build contention.
-   - **Implement Step 4 batched attention kernel** (widening of `attention_decode_partial` to process M query rows per KV chunk) for families where attention is a dominant share.
-2. **MoE Drafter & Speculation Investigation**:
-   - Investigate ingestible MoE drafters (e.g. Ornith MoE MTP head conversion or lightweight block drafter).
-3. **Streamable-MoE Bring-Up**:
-   - Test and benchmark `gpt-oss-120b-MXFP4.gguf` under mapped residency (evaluates SSD vs page cache bound decode).
-4. **Cancellable Model Installation**:
-   - Thread cancellation atomic through `catalog::install` streaming loop and expose `ts_install_cancel` in C ABI and Swift package.
-5. **Streaming Pipeline Decoder `finish()` Symmetry**:
-   - Wire `TurnSplitter::finish()` into CLI and FFI streaming loops matching server behavior.
+High-leverage engine improvements, memory policy unifications, and front-end wirings.
+
+#### 1. Vision Memory Sidecar Parity & Memory Oracle Arms
+- **Objective**: Wire sidecar-aware test arms into `crates/runtime/tests/vision_tower_parity.rs` and `crates/bench/tests/vision_memory_oracle.rs` to measure mlx-vlm cosine parity and multi-page memory ceilings through a sidecar-attached trunk.
+- **Why Open**: Sidecar format and runtime attachment landed, but the two real-model vision gates do not yet have sidecar-aware arms.
+- **Files to Touch**:
+  - `crates/runtime/tests/vision_tower_parity.rs` (add sidecar attach test arm)
+  - `crates/bench/tests/vision_memory_oracle.rs` (add sidecar memory assertion)
+  - `docs/VISION.md`
+
+#### 2. `--vision-sidecar auto` Front-End Resolution
+- **Objective**: Wire catalog-based automatic sidecar resolution by family and hidden size (via `catalog::resolve_vision_sidecar`) to the CLI and server front ends.
+- **Why Open**: Backend resolution exists in `crates/catalog/src/resolve.rs`, but CLI and server currently only accept explicit `--vision-sidecar <PATH>`.
+- **Files to Touch**:
+  - `crates/cli/src/args.rs`
+  - `crates/server/src/args.rs`
+  - `crates/catalog/src/resolve.rs`
+
+#### 3. Server Multimodal Chunked Prefill
+- **Objective**: Allow server image completion endpoints to use chunked prefill. CLI and FFI already chunk image prompts, but the server image path does not chunk.
+- **Why Open**: Image prompts generate >1,000 merged vision tokens; chunking prefill on the server is critical to prevent request stalls.
+- **Files to Touch**:
+  - `crates/server/src/completions.rs`
+  - `crates/server/src/handler/`
+
+#### 4. MTP / DFlash2 Verify Pass for Multimodal Prompts
+- **Objective**: Make speculative verify passes vision-aware (handling image token injection) or enforce an explicit open-time refusal when both an MTP head and vision sidecar are active.
+- **Why Open**: Verify pass currently assumes text tokens only; no install currently combines both, but combination is unhandled.
+- **Files to Touch**:
+  - `crates/runtime/src/speculative.rs`
+  - `crates/runtime/src/families/qwen/mtp.rs`
+  - `crates/runtime/src/families/qwen/dflash.rs`
+  - `docs/VISION.md`
+
+#### 5. Mapped Residency Eviction Benchmark & Policy Unification
+- **Objective**: Measure paging overhead and fault costs when OS reclaims clean mapped pages under memory pressure. Unify slot cache policy with mapped expert residency: pick residency mode first (`mapped` vs `streamed`), then slot count only if `streamed` is active. Expose `--expert-residency auto|streamed|mapped`.
+- **Why Open**: Mapped residency is landed and measured, but requires automated selection based on system memory headroom.
+- **Files to Touch / Create**:
+  - `crates/bench/tests/mapped_residency_eviction.rs` [NEW]
+  - `crates/invocation/src/options.rs`
+  - `crates/cli/src/args.rs`
+  - `crates/server/src/args.rs`
+  - `crates/runtime/src/runner.rs`
+  - `crates/model-io/src/expert_cache_policy.rs`
+  - `docs/EXPERT_RESIDENCY.md`
+
+#### 6. Exact Rejection Sampling for Speculation (T > 0)
+- **Objective**: Implement Leviathan/Chen algorithm on shaped distributions for non-greedy sampling during speculative verification.
+- **Why Open**: Current speculative verification only supports greedy decoding (T = 0); non-greedy sampling requires distribution-preserving rejection sampling.
+- **Files to Touch**:
+  - `crates/selection/src/` (rejection sampling algorithm)
+  - `crates/runtime/src/speculative.rs`
+  - `crates/runtime/src/speculation_policy.rs`
+  - `docs/SPECULATIVE_DECODING.md`
+
+#### 7. Server Request Queue & Fairness (Option 1)
+- **Objective**: Implement request FIFO queue with streaming-aware fairness and cancellation handling in `turbospark-server`.
+- **Why Open**: Currently single-runner concurrency relies on mutex serialization and session-pool KV reuse; request queueing provides fairness under high client concurrency.
+- **Files to Touch / Create**:
+  - `crates/server/src/queue.rs` [NEW]
+  - `crates/server/src/server.rs`
+  - `crates/server/src/chat.rs`
 
 ---
 
-## Artifact State & Disk Usage (RE-CHECKED 2026-09-05)
+### Priority 2: Architecture Bring-ups & Kernel Scaling
+
+Adding missing high-demand model families, specialized Metal kernels, and architectural extensions.
+
+#### 1. `qwen4_exp` GPU Top-K for Block Selection
+- **Objective**: Above `index_budget`, QSA block scoring commits and waits on the host for `compute::select_blocks` once per QSA layer per token (12 host commits per token). Profile whether this is a bottleneck, and implement a GPU top-k kernel to eliminate host-device synchronization.
+- **Why Open**: Host-side top-k was wired for bring-up; GPU kernel removes synchronization points during decode.
+- **Files to Touch / Create**:
+  - `crates/gpu/src/shaders/qsa_topk.metal` [NEW]
+  - `crates/gpu/src/` (pipeline dispatch)
+  - `crates/runtime/src/families/qwen4/attn.rs`
+  - `docs/QWEN4_EXP.md`
+
+#### 2. Dense `qwen3` / `qwen2.5` Architecture Bring-up (Usage-Weighted Priority)
+- **Objective**: Bring up dense Qwen family (0.6B to 32B, Coder, QwQ, R1 distills) which forms the primary backbone of user-downloaded GGUF repositories.
+- **Why Open**: Our qwen family currently covers GDN and MoE lines, but standard dense Qwen is missing from the architecture registry.
+- **Files to Touch / Create**:
+  - `crates/model-io/src/arch_config/family.rs`
+  - `crates/model-io/src/manifest.rs`
+  - `crates/repack/src/`
+  - `crates/runtime/src/families/qwen_dense/` [NEW]
+  - `docs/NEW_MODEL.md`, `docs/MODEL_FAMILY.md`
+
+#### 3. `deepseek2` Architecture Support (High-Leverage Multi-Model Unlock)
+- **Objective**: Implement Multi-head Latent Attention (MLA) bring-up to unlock Kimi K2.5, Kimi K2.6, GLM-4.7-Flash, and Mistral-Large-3-675B under one `deepseek2` architecture string.
+- **Why Open**: Recognition-only in registry today; single highest-leverage architectural unlock across the catalog.
+- **Files to Touch / Create**:
+  - `crates/gpu/src/shaders/mla.metal` [NEW]
+  - `crates/gpu/src/mla.rs` [NEW]
+  - `crates/runtime/src/families/deepseek2/` [NEW]
+  - `crates/model-io/src/arch_config/family.rs`
+
+#### 4. `gpt-oss-120b` (MXFP4 GGUF) Evaluation under Mapped Residency
+- **Objective**: 36 layers, 128 experts top-4, 12.6 MiB stride, 59 GiB total. Evaluate under mapped expert residency to test SSD throughput limits on large models.
+- **Why Open**: Model fits unified memory on 64GB+ Macs; benchmarks evaluate page cache bounds vs SSD read bandwidth.
+- **Files to Touch**:
+  - `crates/model-io/src/manifest.rs`
+  - `crates/runtime/src/families/gptoss/`
+  - `crates/catalog/src/`
+
+#### 5. MoE Drafter Ingestion & Conversion
+- **Objective**: Build ingest/repack for MoE MTP heads (e.g. Ornith 35B with 256 per-expert tensors) or adapt DFlash2 block drafters for MoE architectures.
+- **Why Open**: Speculative drafters currently only operate on dense models (`qwen38-27b`).
+- **Files to Touch**:
+  - `crates/repack/src/`
+  - `crates/runtime/src/families/qwen/mtp.rs`
+  - `crates/runtime/src/families/llama/`
+  - `docs/SPECULATIVE_DECODING.md`
+
+#### 6. Step 4 Batched Attention Kernel
+- **Objective**: Widen `attention_decode_partial` to hold M query rows per KV chunk with per-row online-softmax state generalized to M rows. Scope specifically on an attention-dominant family (e.g. dense Llama/Gemma).
+- **Why Open**: Low value on GDN-heavy Qwen (only 2.6% of prefill), but valuable for pure attention transformers.
+- **Files to Touch**:
+  - `crates/gpu/src/shaders/attention.metal`
+  - `crates/gpu/src/attention.rs`
+  - `crates/runtime/src/families/llama/` or `crates/runtime/src/families/gemma4/`
+  - `docs/BATCHED_PREFILL.md`
+
+#### 7. SigLIP-Class Vision Tower Bring-up (`gemma4_unified`)
+- **Objective**: Implement SigLIP-class vision tower encoder and intake for `gemma4_unified`. Gemma 4 text trunk already runs here; intake currently drops ~815 vision tensors.
+- **Why Open**: Nearest-term VLM candidate to expand multimodal support beyond Qwen3-VL.
+- **Files to Touch / Create**:
+  - `crates/vision-io/src/siglip.rs` [NEW]
+  - `crates/runtime/src/vision/`
+  - `crates/repack/src/gemma4_checkpoint/classify.rs`
+  - `docs/VISION.md`
+
+#### 8. Missing Tool-Calling Markups
+- **Objective**: Implement structured tool-call decoders for formats found in modern checkpoints: GLM XML `<arg_key>/<arg_value>`, MiniMax namespaced `<minimax:tool_call>`, Mistral `[TOOL_CALLS]`, and Kimi K2 section markers `<|tool_calls_section_begin|>`.
+- **Why Open**: Parser currently covers ChatML, DeepSeek, Harmony, and Gemma channels only.
+- **Files to Touch**:
+  - `crates/tokenizer/src/structured_decoder/`
+  - `crates/tokenizer/src/chat_template.rs`
+  - `docs/TOOL_CALLING.md`
+
+#### 9. Vision Ingestion from HF Hub in `turbospark-model pull`
+- **Objective**: Fix production intake so `turbospark-model pull` parses vision config instead of hardcoding `vision: VisionConfig::NONE` in `parse_qwen_gdn_dense_config`.
+- **Why Open**: Currently vision installs on disk were streamed by test harnesses, not through `turbospark-model pull`.
+- **Files to Touch**:
+  - `crates/repack/src/qwen36_config.rs`
+  - `crates/catalog/src/install.rs`
+
+---
+
+### Priority 3: Long-Term Extensions & Platform Expansion
+
+System architecture extensions, platform ports, and developer tooling.
+
+#### 1. Remote Plugin Marketplace & Registry Indexing (`TurboSparkApp`)
+- **Objective**: Wire network discovery and remote repository manifest fetching in `PluginMarketplaceManager` beyond local directories.
+- **Why Open**: Local plugin management and manifest enable cascades are complete; remote registry indexing allows community plugin discovery.
+- **Files to Touch**:
+  - `swift/TurboSparkApp/Sources/TurboSparkApp/Plugins/PluginMarketplaceManager.swift`
+  - `swift/TurboSparkApp/Sources/TurboSparkApp/Plugins/PluginManifest.swift`
+  - `docs/SWIFT_PLUGINS.md`
+
+#### 2. Multi-Direction Steering & Automated Alpha Calibration
+- **Objective**: Support simultaneous application of multiple steering vectors with per-vector scales and layer masks; implement automated alpha calibration to detect semantic steering collapse thresholds.
+- **Why Open**: Single-direction steering is shipped; multi-direction and automated tuning improve developer ergonomics.
+- **Files to Touch / Create**:
+  - `crates/runtime/src/steering.rs`
+  - `crates/runtime/tests/activation_capture.rs` [NEW]
+  - `crates/invocation/src/options.rs`
+  - `docs/OBLITERATION.md`
+
+#### 3. Batched Sub-Byte GEMMs for Bonsai / Ternary Speculation
+- **Objective**: Implement batched INT1 and INT2 GEMM kernels to unblock speculative verification for Bonsai-27B and Ternary-Bonsai.
+- **Why Open**: Decode GEMVs exist; batched GEMMs are required for speculative verification.
+- **Files to Touch / Create**:
+  - `crates/gpu/src/shaders/gemv_int1.metal`
+  - `crates/gpu/src/shaders/gemv_int2.metal`
+  - `crates/gpu/src/gemv_int1.rs`
+  - `crates/gpu/src/gemv_int2.rs`
+
+#### 4. DeepSeek-V4-Flash Metal Kernels & Feasibility (Scaffolded)
+- **Objective**: Port CSA/HCA attention, unrolled mHC Sinkhorn, and sub-3bit GEMV Metal kernels (`dsv4.metal`), assessing 106.9 GB peak RSS memory feasibility.
+- **Why Open**: Architecture is scaffolded; full implementation requires large unified memory (128 GB Mac).
+- **Files to Touch / Create**:
+  - `crates/gpu/src/shaders/dsv4.metal` [NEW]
+  - `crates/gpu/src/`
+  - `crates/runtime/src/families/dsv4/` [NEW]
+
+#### 5. Linux Backend (Portable Architecture)
+- **Objective**: Implement `io_uring` + `O_DIRECT` streaming I/O layer paired with portable CPU/Vulkan compute backend and cgroup memory limit support on Linux.
+- **Why Open**: Current runtime and streaming layers are Metal and macOS unified memory optimized.
+- **Files to Touch / Create**:
+  - `crates/streaming/src/linux_uring.rs` [NEW]
+  - `crates/compute/src/vulkan/` [NEW]
+
+#### 6. Server Multi-Runner Pool (Option 2)
+- **Objective**: Support N active `RealForwardRunner` instances for concurrent request serving where VRAM/RAM permits.
+- **Why Open**: Multiplexed session state (Option 3) is complete; full multi-runner pool allows parallel batch compute on high-memory hardware.
+- **Files to Touch**:
+  - `crates/server/src/session_pool.rs`
+  - `crates/server/src/server.rs`
+
+---
+
+### Priority 4: Measurements, Baselines & Quality Sweeps
+
+Verification sweeps, cross-engine KL proofs, and power captures.
+
+#### 1. Cross-Engine KL Verification (`qwen38`, `qwen36`)
+- **Objective**: Add `qwen38` and `qwen36` to `scripts/kld_mlx_affine.py` test suite against upstream MLX reference outputs.
+- **Why Open**: Verification script exists, but table entries for these models need to be frozen.
+- **Files to Touch / Run**:
+  - `scripts/kld_mlx_affine.py`
+  - `docs/BENCHMARKS.md`
+
+#### 2. Missing Quality & Memory Oracle Baseline Rows
+- **Objective**: Freeze quality gate and memory oracle rows for `bonsai27b`, dense `llama` (Mistral 7B / TinyLlama), and `qwen38` external follow-ups.
+- **Why Open**: Requires downloading reference checkpoints and running frozen protocol sweeps.
+- **Files to Touch / Run**:
+  - `crates/bench/tests/`
+  - `docs/BENCHMARKS.md`
+
+#### 3. Power Profile Sweep Across Remaining Catalog Rows
+- **Objective**: Capture baseline power and J/tok for `qwen3_5` 27B variants, `ornith9b`, and `ornith35b`.
+- **Why Open**: Requires re-pulling Ornith checkpoints to disk before executing `scripts/power.sh`.
+- **Files to Touch / Run**:
+  - `scripts/power.sh`
+  - `docs/POWER_BASELINE.md`
+
+---
+
+## Artifact State & Disk Usage
 
 Disk space is a key constraint for downloading large checkpoints and running cross-engine KL reference dumps.
 
-**Re-derived from `ls ~/models` and `ls ~/.turbospark/models` rather than carried
-forward.** The 2026-08-29 version of this table named four installs that are gone
-and omitted four that are present, which is the same drift `CLAUDE.local.md`
-recorded on 2026-08-30. Re-run those two commands before trusting any row here:
-this table has now been wrong twice, and nothing goes red when it rots.
+Re-derived from `ls ~/models` and `ls ~/.turbospark/models`:
 
 | Path in `~/models/` | Size | Status / Associated Targets |
 |---|---|---|
 | `gemma4.gturbo` | 13G | PINNED: smoke, memory oracle, sensitivity proof, mapped residency |
 | `ternary27b.gturbo` | 7.1G | `ternary_{quality_gate,memory_oracle}` |
 | `qwen38-27b.gturbo` | 14G | `qwen38_{quality_gate,memory_oracle}`, steering baseline |
-| `qwen38-27b-mtp.gturbo` | 14G | MTP speculative validation. **Duplicated**: an independent second copy sits at `~/.turbospark/models/qwen38-27b-mtp.gturbo`, and they are NOT APFS clones (`du -sch` over both reads 29G against a 14G each, i.e. ~2x the sum). Deleting either frees ~14G. The catalog's `installed.json` points at the `.turbospark` one. |
+| `qwen38-27b-mtp.gturbo` | 14G | MTP speculative validation. Second copy sits at `~/.turbospark/models/qwen38-27b-mtp.gturbo` |
 | `qwen38-27b-dflash2.gturbo` | 15G | DFlash2 block drafter validation |
-| `qwen38-gguf.gturbo` | 15G | Qwen 3.8 27B via GGUF intake. Present on disk and in `installed.json`, absent from every previous version of this table. |
+| `qwen38-gguf.gturbo` | 15G | Qwen 3.8 27B via GGUF intake |
 | `steering-vectors/` | ~3M | `ocean` and `register` legacy vectors for regression tests |
-| `gguf-ref/`, `qwen38-mtp-ref/`, `skill-state-probe/` | -- | Reference and probe sidecars (the llama.cpp KL bytes, the MTP reference, `docs/SKILL_STATE.md`'s corpus). Not `.gturbo` installs. |
-| `qwen38-27b-vision.gturbo` | 15G | The ONLY install carrying a vision tower. `vision_tower_parity`, `vision_logit_dump`, the CLI's `--image` / `--image-batch` runs and the server's `real_backend_reads_an_image_sent_over_both_endpoints`. **Deliberately separate from `qwen38-27b.gturbo`**: that one backs the frozen quality-gate and memory-oracle rows, and ~0.9 GiB of tower would force a re-freeze for a component neither gate exercises. Do not merge them. |
-| `vision-probe-qwen38/` | 4.8G | `mlx-community/Qwen3.8-27B-4bit`'s tower alone, pinned to revision `3e6447f0`, which is what `vision_tower_parity` pairs against. 4.8G for 879 MiB of tensors because `vision_tower.*` is not contiguous in this checkpoint and the fetch spans min..max offset (over-fetches, does not miss data). |
-| `vision-probe/` | 879M | `prism-ml/Bonsai-27B-mlx-1bit`'s tower, F16. What `docs/VISION_PHASE0.md` items 3 and 4 were measured on. Contiguous, so 879M for 879 MiB. |
+| `gguf-ref/`, `qwen38-mtp-ref/`, `skill-state-probe/` | -- | Reference and probe sidecars |
+| `qwen38-27b-vision.gturbo` | 15G | Combined vision trunk + tower install |
+| `vision-probe-qwen38/` | 4.8G | `mlx-community/Qwen3.8-27B-4bit` tower (revision `3e6447f0`) |
+| `vision-probe/` | 879M | `prism-ml/Bonsai-27B-mlx-1bit` tower |
 
-The `turbospark-model pull` store, `~/.turbospark/models/`, which several rows
-above and below depend on and which no previous version of this table listed:
+Store models in `~/.turbospark/models/`:
 
 | Path in `~/.turbospark/models/` | Size | Status / Associated Targets |
 |---|---|---|
-| `qwen4-reap288.gturbo` | 68G | **The largest artifact on this machine and the subject of section 2.** Qwen3.8-Flash-Next REAP-288, `top_k_experts=10`. Backs `qwen4exp_{quality_gate,memory_oracle}`, the QSA force-dense probe, and the chunked-prefill throughput measurement that is still owed. |
-| `qwen3moe.gturbo` | 17G | The `llama` flow's `Qwen3Moe` half. `qwen3moe_{quality_gate,memory_oracle}`, and one of the two real installs mapped expert residency was verified byte-identical on. |
-| `gptoss-20b.gturbo` | 11G | `gptoss_{quality_gate,memory_oracle}`, steering validation, PF-02 Step 5's MXFP4 arm, and the second mapped-residency verification. Reads 11G here against the 14G this table used to claim. |
-| `qwen38-27b-mtp.gturbo` | 14G | The duplicate noted above. |
+| `qwen4-reap288.gturbo` | 68G | Qwen3.8-Flash-Next REAP-288 (`top_k_experts=10`). Backs `qwen4exp_{quality_gate,memory_oracle}` |
+| `qwen3moe.gturbo` | 17G | `llama` flow's `Qwen3Moe` half. `qwen3moe_{quality_gate,memory_oracle}` |
+| `gptoss-20b.gturbo` | 11G | `gptoss_{quality_gate,memory_oracle}`, steering validation, mapped residency |
+| `qwen38-27b-mtp.gturbo` | 14G | Duplicate of `~/models/qwen38-27b-mtp.gturbo` |
 
-**GONE from disk as of 2026-09-05**, each named as present by the previous
-version of this table, and each with rows elsewhere in this file that silently
-depend on it: `museglimmer-30b.gturbo` (15G), `ornith9b.gturbo` (8.9G),
-`ornith35b.gturbo` (18G), `ornith35b-gguf.gturbo` (34G), plus `mistral7b.gturbo`
-and `llama3-8b-instruct.gturbo` from the store. Three consequences to carry
-rather than rediscover:
-
-- The **`power.sh` Sweep for Remaining Models** row names `ornith9b` and
-  `ornith35b`. Neither is on disk, so that row is a re-pull before it is a
-  capture.
-- Section 9's one open verification gap (mapped residency on `qwen`'s own
-  `QwenGdnMoe` family) still has **no install to close it with**. Ornith 35B was
-  already gone when that wiring landed on 2026-08-30 and has not come back.
-- `museGlimmer` and both Ornith rows in `docs/BENCHMARKS.md` and
-  `docs/POWER_BASELINE.md` are now unreproducible on this machine without a
-  re-pull. The numbers stand; the ability to re-derive them does not.
-
-Two vision artifacts live OUTSIDE `~/models/` and are the larger half of the
-feature's disk cost:
-
-| Path | Size | Status |
-|---|---|---|
-| `~/.cache/huggingface/hub/models--mlx-community--Qwen3.8-27B-4bit` | 15G | The FULL reference checkpoint, revision `3e6447f0`, needed by `scripts/kld_mlx_vlm.py` because that gate runs the reference's TRUNK as well as its tower. Re-downloadable. |
-| `/tmp/vision-kld/` | 4.3G | The cross-engine working dump (`reference.f32` 1.29 GB, `port.f16` 646 MB, pixel and merger sidecars). Regenerable in ~4 minutes, so `/tmp` is correct for it -- unlike the two tower caches above, which a previous handoff lost to a `/tmp` clear. |
-
-*Note*: If disk space is needed for reference dumps, check `target/` first (`cargo clean` often recovers 30+ GB).
-
----
-
-## Detailed Feature Roadmaps & TODOs
-
-### 1. Prefill Batching (PF-02)
-
-- **Status**: Steps 1-3 (chunked prefill, batched routed pair) and Step 6 (batched resident GEMVs) shipped for Gemma 4. Measured 1.54x speedup on Gemma 4 `long-synthesis`. `--prefill-chunk` is wired as the default (2026-08-26): `RealForwardRunner::supports_chunked_prefill()` is the one predicate both the CLI's default routing and `ChunkedPrefillRunner::prefill_chunk`'s own refusal check, so a caller who never typed the flag cannot see a family it doesn't serve, and `TURBOSPARK_PREFILL_CHUNK`'s existing hard-fail-on-unsupported-family A/B-seam contract is unchanged. **Every MoE-capable family now serves chunked prefill (2026-08-27)**: `muse_glimmer` landed the same no-mid-layer-commit shape as dense `llama` (no router), and the MoE half of `families/llama/` (Mixtral, Qwen3MoE) plus `gpt-oss` landed Step 1 alone -- a per-layer command buffer for attention-and-router plus a per-token routed loop pipelined via a shared `RoutedSlot` module (`moe_prefill_pipeline.rs`, extracted from Gemma 4's driver) -- with NO new kernel needed, since Step 1 reuses the same layout-agnostic per-token dispatch the sequential decode path already uses. **Step 5's MXFP4 arm landed 2026-08-27 at 1.31x** on the real 20B install (`families/gptoss/moe_batch.rs` over `moe_prefill_batch_gguf.metal`), so TWO families now serve the batched routed pair: Gemma 4 on INT4-affine blobs and `gpt-oss` on MXFP4 ones. Wiring the second one exposed that the unwired MoE `llama` family had been SILENTLY IGNORING `TURBOSPARK_ROUTED_BATCH` rather than refusing it; that is a named refusal now. **The DENSE half of the qwen linear-attention flow landed 2026-08-29** (`families/qwen/prefill.rs`, `qwenGdnDense`): the same Step 1 shape as dense `llama`/`muse_glimmer`, no new kernel and no new buffer -- the recurrent GDN state's correctness follows from calling the existing per-token kernels in order rather than from any batched machinery, and the driver refuses an image prompt or an open drafter by name rather than growing a second embedding call site or silently starving a drafter's aux capture. **`qwen4_exp` landed 2026-09-05 as the SEVENTH driver** (`families/qwen4/prefill.rs`), so the only family left without one is the MoE half of qwen (`qwenGdnMoe`), which has no install on this machine to attempt it against. Verified byte-identical against the pre-wiring sequential path on real installs (`~/models/gemma4.gturbo`, `~/.turbospark/models/mistral7b.gturbo`, `~/models/museglimmer-30b.gturbo`, `~/.turbospark/models/gptoss-20b.gturbo`, a freshly-pulled `Qwen/Qwen3-30B-A3B-GGUF`, `~/models/qwen38-27b.gturbo`; greedy and sampled, stdout md5-identical both ways), plus the standing gemma4 chunked parity suite and new per-family parity suites (chunk-span sweep, cache-too-small-to-pipeline case where the family has a slot cache, MoE-still-refused case where applicable).
-- **Reference**: `docs/BATCHED_PREFILL.md`.
-- **Detailed TODO**:
-  - [x] **Kernel-quality reference measured 2026-08-29** (`scripts/mlx_qmm_reference.py`, `docs/BENCHMARKS.md` "The reference curve, measured rather than inferred"). Replaces the extrapolated 2.2x/2.3x pair with 1.50x kernel + 2.00x width, and moves the saturation point to **M=32**. Both engines' M=1 baselines agree to 1.16x, which is what makes `c` comparable at all.
-  - [x] **Step 7 (matrix-path re-tile): DONE 2026-09-05, and it is a LOSS. See Do Not Revisit 16.** This row used to call it "the only untried lever" on `dequant_int4_gemm_mma`; it was built, measured, and closed, and with it all four levers named in Do Not Revisit 14 are measured. What follows is the item as it was written, kept because the design record is the useful half. Four SIMD groups (`WM = WN = 2`, 128 threads) with `FC_MMA_STAGE_X` ON, changed TOGETHER -- the three sub-levers are not independent and each was measured to a dead end alone (Do Not Revisit 13, 14). It stays PREFILL-ONLY whatever it measures, since the kernel is not bit-exact against the GEMV (AGENTS.md Gotcha 27), and `MAX_BATCH_ROWS = 16` still caps the width term regardless.
-    - **BUILT AND MEASURED 2026-09-05; `wide/exact` best cell 2.10x against a gate of 1.00.** `dequant_int4_gemm_mma_wide` (`crates/gpu/src/shaders/dequant_int4_mma.metal`, `encode_dequant_int4_gemm_mma_resident_wide`): 128 threads, 16 output rows per threadgroup, `acc[4]`, two `threadgroup_barrier`s per 64-element K block, a per-SIMD-group `y_tile` slice. A SEPARATE KERNEL rather than a function constant, and that is the measurement's requirement rather than style -- MSL threadgroup arrays need a compile-time bound, so one kernel serving both shapes would declare the wide sizes for BOTH arms and move the control. Correct and green on 10 parity cases plus 3 CPU arithmetic guards; nothing dispatches it.
-    - **Gate was `c_of_m_matrix_against_exact_at_qwen38_shapes`'s `wide/exact` column below 1.00, and it is not met at any width.** Note the gate column MOVED -- this row used to say "third column", which is now the narrow control (`matrix/exact`). The bench also gained `wide-plain` beside `wide+stageX` (Do Not Revisit 13's own named reversal condition, staging priced WITHIN the re-tile) and a wide column on `c_of_m_matrix_with_and_without_the_dequant`, since the narrow tile's dequant share is a property of 32 lanes carrying the unpack and does not transfer. Needs AC and a quiet machine.
-    - **Three things the build settled without a clock.** (1) `x_tile` IS eliminated when `FC_MMA_STAGE_X` is false -- the narrow arm reads 1,280 B of threadgroup memory un-staged against 9,472 staged -- so the header's first table is NOT contaminated by 8 KiB of dead allocation, and the occupancy argument is narrower than it looks: 88 B/thread wide against the narrow STAGED arm's 296, but against the un-staged CONTROL's 40. If the wide arm wins, occupancy is not why. (2) The re-tile is BIT-IDENTICAL to the narrow tile, not merely close, because K is never split across SIMD groups -- asserted on `to_bits` at seven widths and both staging flags. (3) `WN` splits token tiles between SIMD groups of ONE threadgroup, never between threadgroups: splitting `B` across threadgroups would multiply the `N / B` dequant-per-output term this kernel does not lose on, which is the obvious reading of MLX's `BM` and is wrong here.
-    - **The one mutation no parity case can see is narrower than feared, measured.** The token-tile stride is coupled to the accumulator size, so a one-line `t += 1` desynchronizes the copy-out index and reddens two cases; only the coordinated three-edit variant is genuinely bit-correct-and-2x, and it survives all ten. It is caught by a COUNTED source-text guard (`the_host_and_shader_agree_on_the_wide_tile`) -- counted, not `contains`, because the stride appears twice and the first draft of that guard missed a single-loop mutation for exactly that reason.
-  - [ ] **Step 6 Throughput A/B**: re-run owed. Attempted 2026-09-05 and 2026-09-06, both contaminated (see the Active Tasks row); the second attempt still used the CLI footer directly (`prefill=Ntok/Ss`) rather than `turbospark-bench --prefill-chunk auto` with `TURBOSPARK_BATCHED_GEMV=1` exported, to stay comparable with the first attempt's method. The bench route (whose header echoes the seam so the arm cannot silently be the wrong one) is still the better instrument for whichever attempt comes next, and that next attempt also needs a contamination check polled DURING the run (`pgrep -x rustc` or similar), not just once before it starts -- 2026-09-06 passed a clean pre-run `ps` check and was still caught by a `cargo build` that started mid-run.
-  - [ ] **Prefill Energy Capture**: UNBLOCKED 2026-09-05, and now just owed. `turbospark-bench --prefill-chunk` reaches the chunked driver and `scripts/power.sh` has a `seq|chunked` arm; run `ARMS=seq,chunked scripts/power.sh` on AC. Every existing row in `docs/POWER_BASELINE.md` is a `prefill=sequential` row, so a chunked row is a NEW row rather than a re-freeze.
-  - [ ] **Step 4 (Batched Attention Kernel)**: Widen `attention_decode_partial` to process M query rows per KV chunk. Deferred as real new-kernel work (new function-constant axis, per-row online-softmax state generalized to M rows, real register-pressure risk per `dequant_int4_gemm_simd`'s spill history), not attempted alongside the default-on wiring. **Measured LOW VALUE on `qwenGdnDense` (2026-08-29): 2.6% of prefill, in the 16 of 64 layers that have attention at all.** Pick the family before picking this item; see the Active Tasks row.
-  - [ ] **Step 5 (GGUF Routed Pair Widening)**: Widen the BATCHED routed kernels (steps 2/3, `TURBOSPARK_ROUTED_BATCH`) to GGUF and MXFP4 block types if/when the throughput they add becomes a priority; Step 1's per-token routed loop already runs on every layout, so this is a speed lever, not a correctness gap.
-    - **SCOPED BY MEASUREMENT 2026-08-27, and the order is the opposite of this item's title** (`docs/BATCHED_PREFILL.md`, "Step 5's two arms, measured before building either"). Do **MXFP4 (`gpt-oss`) first**: its routed pair is 61.4% of prefill GPU device time against Gemma's 38.2%, its un-batchable `pread` bucket is 8.2% against 25-37% (32 experts at top-4 give a 96.7% hit rate), and it is the ONLY family that reaches M=16 -- both 128-expert families cap at M=8 on `union(M) <= slot_count`. It also needs ONE block type for both phases.
-    - [x] **MXFP4 arm DONE 2026-08-27**, and it measured **1.31x** on the real 20B install against Gemma 4's 1.19x for the same step -- the share arithmetic held. `crates/gpu/src/shaders/moe_prefill_batch_gguf.metal` plus `crates/runtime/src/families/gptoss/moe_batch.rs`, behind the existing `TURBOSPARK_ROUTED_BATCH` seam. Bit-exact against M decode-pair calls at the real shape, byte-identical greedy AND sampled on the real install. The pair's own `c(M)` was later measured on the bench's interleaved arms at 0.76/0.74/0.73/0.74 (M=2/4/8/16); the 0.67 first inferred for c(16) from the phase table's device-time rows was 9% optimistic, and the within-a-point agreement with the affine pair holds on same-day same-instrument terms (affine c(8) read 0.73 beside MXFP4's 0.73). The occupancy-not-weight-amortization conclusion stands.
-    - [x] **Silu-flag hygiene on the MXFP4 pair DONE 2026-08-28**: `moe_prefill_batch_gguf.rs`'s four public functions no longer take `use_silu`; the specialization is a module-private `const USE_SILU: bool = true` feeding `moe_function_constants`/`constants_key`, so the argument encoder and dispatches cannot disagree and no caller can compile a second copy of the seven-file MSL concatenation mid-prefill. Two things the task's premise got wrong, both settled by grep and by the parity suite: the flag is NOT fully dead for MXFP4 (`moe_activate_mxfp4`'s PLAIN arm falls back to `moe_hidden_activation`, which reads `FC_MOE_ACT_SILU`, and the parity file's plain-activation case reaches it), and the parity suite had been holding bit-identity at silu=false against a production that runs silu=true. Both arms of the parity file now compile the specialization production compiles (the decode-pair oracle's args flipped to true alongside the const), all 7 cases green byte-for-byte. Production output cannot move: the family runs `Mxfp4Activation::GPT_OSS`, where the flag selects a dead branch.
-    - **The GGUF (`qwen3moe`) arm is the weak one and may not be worth building.** 37.1% of its prefill is expert `pread`, which batches not at all and is already at the end of its lever (75.7% hit rate at the maximum 32 slots). Its routed device share and reachable M are both Gemma's, and it needs TWO kernels (Q4_K gate/up, Q6_K down).
-    - Before quoting any end-to-end number for either arm, measure `c(M)` on the real shape. The only measured `c(M)` anywhere is INT4-affine at Gemma's shape, and this document already recorded being wrong by 2.3x once from borrowing a proxy across kernels.
-    - [x] **MXFP4 `c(M)` on the bench harness** DONE 2026-08-27: `moe_prefill_batch_bench.rs` has an `mxfp4` module at the real D=2880 F=2880 top_k=4 shape (unions 6/10/13/17), reading 0.76/0.74/0.73/0.74 at M=2/4/8/16 across four serial runs with spread under 0.01. The inferred 0.67 was 9% optimistic (a real cross-instrument gap); the within-a-point cross-block-type agreement holds when both arms are measured on the same instrument the same day. The two benches in that file are serialized by a static mutex now -- the first `-- --ignored` run put both on the GPU concurrently and read affine c(8) as 0.38 with no error (`docs/BATCHED_PREFILL.md`).
-    - [x] **Separate the 28% expert-miss drop** DONE 2026-08-27, and the measurement REFUTED the doc's reasoned attribution. Two corrections to how this task was written. The seam it named did not exist: `TURBOSPARK_ROUTED_PIPELINE` was read by Gemma 4's sequential decode alone, and the gpt-oss per-token prefill arm passed its `protect` set unconditionally -- so "no new code" was false, and the seam had to be wired first (`families/gptoss/prefill.rs`: off means banks = 1 AND an empty protect set, together, since retire-before-plan is what makes the empty set sound). And the hypothesis it carried was wrong: with the protect set off, misses read 9,400 against the control's 9,024 (stdout md5-identical), recovering NOTHING of the 9,024 -> 6,478 drop. The drop is real union dedup -- the one measured family-scoped exception to "the union saves nothing", consistent with AGENTS.md Gotcha 54's own bound: gpt-oss is the one family whose full 16-token window union (17.2) fits the slot cache (24) while the cache does not hold the expert table (32), so intra-window eviction re-reads exist AND the union can recover them (`docs/BATCHED_PREFILL.md`).
-  - [x] **Default-On Configuration**: `--prefill-chunk` wired in the CLI and (with no per-request flag, matching the rate cap and guardrails toggle) automatically in the server, both gated on `supports_chunked_prefill()`.
-  - [x] **Family Widening (complete)**: Gemma 4, both halves of `llama` (Mistral, Llama 2/3.x, Mixtral, Qwen3MoE), `muse_glimmer` and `gpt-oss` all land Step 1. Only the qwen linear-attention flow (`qwenGdnMoe` / `qwenGdnDense`) remains, and it was not attempted this pass.
-  - [x] **Qwen Dense Chunked Prefill (2026-08-29)**: `families/qwen/prefill.rs` lands `qwenGdnDense` as Step 1, no new kernel, no new buffer -- see the status paragraph above and `docs/BATCHED_PREFILL.md`'s "sixth flow" entry for the design (GDN state ordering, the vision and open-drafter refusals). `qwenGdnMoe` (Ornith 35B) is not attempted this pass, matching how `llama`'s two halves landed as separate steps.
-
----
-
-### 2. Streamable-MoE Candidate Bring-up
-
-- **Context**: Future large/low-memory models on Mac Unified Memory require fine-grained MoE architecture where expert weights stream or map on demand.
-- **Detailed TODO**:
-  - [ ] **`qwen4_exp` (Qwen3.8-Flash-Next)**: 48 layers, fine-grained MoE (288 or 512 experts), GDN + gated attention, sigmoid-gated norm (not silu); see `docs/QWEN4_PHASE0.md` for the full config/tensor-layout fact-finding. **Intake landed 2026-08-31**: family/config surface, Phase 0 config gate, n-gram table classification and on-disk layout, streaming writer, manifest wiring. **Decode flow landed 2026-09-02** (`families/qwen4/`, Phase 3): a complete per-token forward pass -- hyper-connections, the sigmoid-gated GDN norm this family needed (`gdn_gated_norm_sigmoid`, `crates/gpu/CLAUDE.md` Gotcha 12, no longer open), QSA-as-dense attention, gated MoE, the PLE n-gram chain -- wired into `RealForwardRunner` and verified against a synthetic fixture (12 reachability/refusal cases plus a mutation-checked frozen digest). **`ALLOWED_CACHE_SLOTS` widened to `[8,...,128]` 2026-09-03** (Phase 4), so the 6.25-11%-of-table ceiling this row used to name no longer bounds residency the way it did; an open-time refusal now fires when `expert_cache_slots < top_k_experts` instead. **The real install (`~/.turbospark/models/qwen4-reap288.gturbo`, 68G, REAP-288, top_k=10) now OPENS as of 2026-09-04**, after `moe_phase2_down_reduce_k8`'s fixed 8-slot dispatch was widened to a runtime width sized to the caller's own `top_k` rather than a new fixed ceiling (`crates/gpu/CLAUDE.md` Gotcha 13). **The router-dtype blocker this row used to name was fixed the same day** (`612be53`, `27b666f`): the safetensors repack orchestrator now force-quantizes this checkpoint's router and shared-expert gate to INT8-affine, since its from-safetensors publish shipped both raw BF16 where every other MoE family's MLX conversion pre-packs the router as `U32`. **Decode runs, and QSA landed 2026-09-05**: `families/qwen4/attn.rs` now runs sparse block-selected attention above `index_budget` in place of the dense fallback, verified on the real install with a coherent smoke run, a frozen quality gate and memory oracle, and a KL-based force-dense probe. **Chunked prefill landed 2026-09-05** (`families/qwen4/prefill.rs`, the seventh `ChunkedPrefillRunner`), and it needed NEITHER of the two things this bullet used to predict: the indexer's per-token key write and block pooling stayed per token, and no per-QSA-layer position list was required, because `encode_full_attention_block` already owns its own above-budget mid-layer commit and the driver preserves gemma4's per-layer commit-and-wait ordering. What it did need was a widened PLE `ngram_emb` -- a HOST `write_buffer_bytes` that ignores command-buffer commit order, so a single-row buffer silently fed every token but the last of a micro-batch the wrong n-gram embedding. Open: the THROUGHPUT number for that driver (unmeasured; the driver's whole purpose), a GPU top-k to remove the above-budget mid-layer commit (unbuilt, unmeasured), and the bench-window decision (`QWEN4_EXP_MAX_CONTEXT` stays 2,048 so the frozen rows keep their meaning). See `docs/QWEN4_EXP.md` for the full mechanism and the Recent Landings bullet above for the summary.
-  - [ ] **`gpt-oss-120b` (MXFP4 GGUF)**:
-    - 36 layers, 128 experts top-4, 12.6 MiB stride. 59 GiB total.
-    - Evaluate under mapped expert residency to test SSD throughput limits.
-  - [ ] **`Qwen/Qwen3-Next-80B-A3B-Instruct-GGUF`**:
-    - 45.1 GiB, ~1.7 MiB stride (512 experts top-10, 48 layers).
-    - Shares GDN + gated attention + fine MoE layer graph with `qwen36`.
-  - [ ] **`bartowski/OLMoE-1B-7B-0924-Instruct-GGUF`**:
-    - 3.9 GiB, ~3.4 MiB stride (64 experts top-8, 16 layers). Lightweight bring-up testbed.
-  - [ ] **`bartowski/baidu_ERNIE-4.5-21B-A3B-Thinking-GGUF`**:
-    - 12.6 GiB, ~6.3 MiB stride.
-  - [ ] **`LiquidAI/LFM2.5-8B-A1B-GGUF`**:
-    - 4.8 GiB, ~5.9 MiB stride. Requires conv-hybrid Metal kernels.
-
----
-
-### 3. Speculative Decoding & Drafters
-
-- **Dense MTP**: Shipped native MTP drafter for Qwen 3.8 (1.44x decode at block 2).
-- **DFlash2 Block Drafter**: Shipped block-diffusion drafter (1.33x code, 1.47x math; `docs/DFLASH2.md`).
-- **MoE Speculative Verify**: Kernel half shipped (`moe_batch.rs`, bit-identical to sequential decode).
-- **Detailed TODO**:
-  - [ ] **Exact Rejection Sampling (T > 0)**: Implement Leviathan/Chen algorithm on shaped distributions for non-greedy sampling.
-  - [ ] **Small Qwen Drafter Rows**: Baseline and verify 9B / 4B dense MTP models.
-  - [ ] **Batched Sub-byte GEMMs**: Implement batched INT1 and INT2 GEMM kernels to unblock Bonsai-27B and Ternary-Bonsai speculation.
-  - [ ] **Speculative Prefill Optimization**: Retain drafter input activations across prefill when `skip_head` is active to eliminate duplicate evaluation.
-  - [ ] **MoE Drafter Ingest**:
-    - Build ingest for MoE MTP heads (e.g. Ornith 35B with 256 per-expert tensors) or convert block drafter for MoE models.
-  - [x] **Speculation String Cleanup**: DONE (verified 2026-08-31, see "MoE Speculative Refusal Strings" in the Active Tasks table above). `mtp_state.rs`/`speculation_policy.rs` were fixed in `38553e1`; `dflash_state.rs` already had the correct wording; `crates/cli` carries no matching string at all.
-
----
-
-### 4. Server Concurrency & Fairness
-
-- **Current State**: Single mutex-serialized runner per process.
-- **Detailed TODO**:
-  - [x] **Prefix KV Reuse on the Server**: DONE 2026-09-01. `RealChatModel::open` takes a `prefix_reuse: bool` and calls `RealForwardRunner::set_prefix_reuse` once at open, exercised on the same `run_raw_completion_chunked` path `crates/ffi`'s `open.rs` reaches (Gotcha 16 there). **Unlike the FFI binding, this got a real `--prefix-reuse on|off` flag rather than an unconditional `true`**, because the FFI's one-session-per-model shape has no cross-conversation hazard and this server's one-runner-serves-every-client shape does: two interleaved unrelated conversations each discard the other's reusable prefix, so the match rate is traffic-mix-dependent even though the mechanism itself is provably lossless (a mismatch always falls back to a full reset, never stale KV). Defaults ON, matching this item's own framing as the largest available TTFT win on this surface. **The `crates/invocation`'s-five-places clause in the prior version of this row was wrong and is now removed**: `crates/server` has its own flat parser and no dependency on that crate at all -- the flag follows `--guardrails on|off`'s exact shape in `args.rs` instead (`ModelArgs` field, `USAGE` line, one `match` arm). Observability landed as `ServerEvent::Generated.reusedPrefixTokens` rather than a CLI-style stderr line, since a server has no terminal an operator is watching; `tests/real_backend.rs`'s `real_backend_reuses_kv_across_two_chat_turns` asserts the count is nonzero on a real Gemma 4 install's second turn, not just that both requests returned 200 (the same trivially-passing-test trap `crates/runtime/CLAUDE.md` Gotcha 30 warns against). See `crates/server/CLAUDE.md` Gotcha 31. **Option 3 below is the actual fix for multi-conversation reuse and has now landed too.**
-  - [ ] **Request Queue & Fairness (Option 1)**: Implement request FIFO queue with streaming-aware fairness and cancellation handling.
-  - [ ] **Multi-Runner Pool (Option 2)**: Support configurable N runners (multiplies KV cache and slot cache memory by N).
-  - [x] **Multiplexed Session State (Option 3)**: DONE 2026-09-01. A swap-based bounded pool (`crate::session_pool::SessionPool`, `--session-slots N`, default 1, no pool), not a rewrite of every family's dispatch code and not a duplicate `RealForwardRunner` per session (Option 2's cost): the runner keeps its existing single `kv`/`real_qwen.gdn`/`kv_prefix` fields as the "live" session and holds `session_slots - 1` PARKED `SessionSlot`s, moved onto the live fields via `std::mem::replace` (an O(1) struct swap, never a memcpy -- the exact cost a per-switch KV host-copy was rejected for during design research). `RealForwardRunner::select_session` (called first inside `try_reuse_prefix`) swaps in whichever parked slot best matches the incoming prompt; `reset()` parks the outgoing live session instead of clobbering it, which is the path that actually fixes Gotcha 31's stated stomping problem, since every caller that finds no live match (including the speculative loop) reaches `reset()`. A GDN family's recurrent state swaps as a second LIVE `GdnStateManager` rather than the expensive `GdnSnapshot` host-copy pair speculative rollback uses, costing one extra allocation at open and zero per switch. **Two real bugs were found by the real-install gate (`crates/server/tests/real_backend.rs`'s `real_backend_reuses_kv_across_two_interleaved_conversations`), neither visible to the synthetic fixture written alongside the feature**: a shallow coincidental match (e.g. two unrelated conversations sharing only a chat template's opening tokens) rewinding a live session in place instead of parking it, destroying real content; and an overly strict `back > keep` discriminator that, once fixed for the first bug, also undid `select_session`'s own correct swap decisions, needlessly cascading into evicting a third, unrelated conversation to serve a request that already had its real match in hand. See `crates/runtime/CLAUDE.md` Gotcha 32 (the mechanism and both bugs) and `crates/server/CLAUDE.md` Gotcha 32 (the flag). Verified: full workspace suite/fmt/clippy green; new synthetic tests in `crates/runtime/tests/session_pool.rs` (byte-identity at the default, the destructive-shallow-match regression on both the sequential and chunked-prefill paths, the same regression on a GDN family, eviction reporting); the real-install gate above, plus the two pre-existing prefix-reuse tests, all pass on a real Gemma 4 install; `qwen38_quality_gate`/`qwen38_memory_oracle` reproduce their frozen rows exactly at the default `--session-slots 1`, confirming the mechanism moves no numerics or footprint when unused.
-
----
-
-### 5. DeepSeek-V4-Flash Bring-up & Feasibility
-
-- **Status**: Scaffolded (`CompressedAttentionConfig`, `HyperConnectionConfig`, `Dsv4StateManager`).
-- **Detailed TODO**:
-  - [ ] Port CSA/HCA attention, unrolled mHC Sinkhorn, and sub-3bit GEMV Metal kernels (`dsv4.metal`).
-  - [ ] Assess memory constraints: Model requires ~106.9 GB peak RSS (128 GB Unified Memory Mac required; SSD read bounds decode to ~0.05-0.1 tok/s on smaller machines).
-
----
-
-### 6. Adaptive Expert-Cache Sizing & Mapped Unification
-
-- **Status**: `ExpertCacheSlots::Auto` shipped in `crates/model-io/src/expert_cache_policy.rs`.
-- **Detailed TODO**:
-  - [ ] **Unify Residency and Cache Policy**: Combine slot cache policy with mapped expert residency -- pick residency mode first (`mapped` vs `streamed`), then slot count only if `streamed` is active. Gated on eviction benchmarks.
-
----
-
-### 7. Linux Backend
-
-- **Detailed TODO**:
-  - [ ] Implement `io_uring` + `O_DIRECT` streaming I/O layer on Linux.
-  - [ ] Pair with portable CPU/Vulkan compute backend.
-  - [ ] Support cgroup memory and CPU limits.
-
----
-
-### 8. Directional Weight Steering (Abliteration & ActAdd)
-
-- **Status**: Runtime abliteration, ActAdd (`add`), feature clamping (`clamp`), and norm-preserving projection (`renorm`) shipped across 7 families (`docs/OBLITERATION.md`). CLI and server flags wired.
-- **Detailed TODO**:
-  - [ ] **Activation Capture Integration Tests**: Add automated integration test verifying end-to-end activation capture and vector export.
-  - [ ] **Multi-Direction Steering**: Support applying multiple steering vectors simultaneously with per-vector scales and layer masks.
-  - [ ] **Throughput Profiling on Remaining Families**: Benchmark decode overhead of steering across `llama`, `gemma4`, `gpt-oss`, and `museGlimmer`.
-  - [ ] **Automated Alpha Calibration**: Improve heuristic/proxy metrics for detecting semantic steering thresholds before collapse.
-
----
-
-### 9. Mapped Expert Residency
-
-- **Status**: LANDED ON `main` 2026-08-30. The base feature spent a day as a commit nobody could reach: written 2026-08-23 on an unmerged branch `cache-policy`, then rebased onto `expert-residency` in a worktree (`../mrefrust-residency`) that was later removed WITHOUT the branch ever being merged -- the branch ref itself was gone by 2026-08-30, and the tip commit (`702716b`) survived only as a dangling git object one `git gc` away from being pruned (AGENTS.md Gotcha 13's exact failure shape). Recovered with `git branch expert-residency 702716b` and merged into `main`: 8 files conflicted against the router-lookahead PILOT probe and prefix-KV-reuse work that had landed on `main` in the meantime, all independent, non-overlapping additions that `git merge`'s `ort` strategy resolved cleanly except two doc files (`AGENTS.md`'s doc index, `crates/streaming/CLAUDE.md`'s gotcha numbering), fixed by hand. Full workspace suite, fmt, clippy and the cross-target check all green; `mapped_expert_probe`/`mapped_experts`/`mapped_expert_residency` pass against the real install; Gemma 4 quality gate and memory oracle reproduce their frozen rows exactly on the default arm; greedy and sampled smoke are byte-identical between the default and `mapped` arms. Seam: `TURBOSPARK_EXPERT_RESIDENCY=mapped`, off by default, Gemma 4 only, both arms produce identical tokens.
-- **Numbers, RE-MEASURED 2026-08-29 on AC at the `auto`-resolved 32 slots**: peak `phys_footprint` **3,652 -> 559 MiB** (a 3,093 MiB saving against a predicted `32 x 30 x 3.2 MiB` = 3,072 MiB slot cache; both arms reproduce to under 0.6%) and decode **53.8 -> 68.7 tok/s, 1.28x**. The superseded pair was 3,721 -> 606 MiB and 51.9 -> 69.8 tok/s, taken before chunked prefill became the default. **Read the throughput figure with its caveat**: the capture was not on an idle machine, contention costs the `pread` arm more than the mapped one, so 1.28x is a ceiling rather than a floor (`docs/EXPERT_RESIDENCY.md`).
-- **Detailed TODO**:
-  - [x] **Wire Remaining MoE Families, DONE 2026-08-30**: `qwen`, `llama` (both `Llama` and `Qwen3Moe`), and `gptoss` all carry the same fork Gemma 4's `moe.rs` does, replacing `mapped_residency_refusal`'s named refusal for each rather than adding a branch beside a silent path. `qwen`'s and `gptoss`'s batched-routed drivers (`moe_batch.rs`) each gained the same mapped-vs-batched conflict guard Gemma 4's carries; `llama` needs none, since it has no batched-routed driver to conflict with. Verified: full workspace suite/fmt/clippy green; per-family synthetic tests (`crates/runtime/tests/mapped_expert_residency_{qwen,llama,gptoss}.rs`) pass, each opening under `TURBOSPARK_EXPERT_RESIDENCY=mapped` and asserting finite non-zero logits plus (where applicable) the batched-conflict refusal firing by name; real-install verification landed for two of the three -- `~/.turbospark/models/qwen3moe.gturbo` (the `llama` flow's `Qwen3Moe` half) and `~/.turbospark/models/gptoss-20b.gturbo` both reproduce byte-identical greedy output between streamed and mapped arms, with `TURBOSPARK_PHASES=1` confirming 0.0 ms `pread` time and a 100% expert-cache hit rate under mapped mode on both; gptoss's frozen `quality_gate` and `memory_oracle` rows reproduce exactly with the seam unset, confirming the default arm is unmoved. **`qwen`'s own family (`QwenGdnMoe`) has no real install left on this machine** -- Ornith 35B, which this TODO's own text called "on disk; immediate win" when written, is gone by the time the wiring landed (`CLAUDE.local.md`'s artifact inventory has drifted and needs re-checking against `ls ~/models` / `ls ~/.turbospark/models` before the next session trusts it) -- so that family is verified on the synthetic fixture only.
-  - [ ] **Memory Pressure Eviction Benchmark**: Measure paging overhead and latency impact when operating under OS memory pressure.
-  - [ ] **`auto` Policy Resolution**: Automatically select `mapped` when machine memory accommodates the full model file cache, falling back to `streamed`.
-  - [ ] **CLI Flag**: Expose `--expert-residency auto|streamed|mapped` on `turbospark-check` and `turbospark-server`.
-  - [ ] **`madvise(MADV_WILLNEED)` Prefetching**: Evaluate background advice on routed offsets to minimize cold-start fault overhead.
-  - [ ] **Mapped Memory Oracle Rows**: Record separate frozen memory baseline rows for mapped residency mode across all MoE families.
-
----
-
-### 10. Phase-2 `top_k` Specialization
-
-- **Status**: DONE 2026-08-31. Landed as `moe_phase2_down_reduce_k8_mxfp4`-only
-  (`crates/gpu/src/shaders/moe_gguf.metal`, `crates/gpu/src/moe_gguf/mxfp4.rs`),
-  the kernel `gpt-oss` actually dispatches, not the whole
-  `moe_phase2_down_reduce_k8` family this section's title names -- the
-  affine kernel and the other GGUF phase-2 kernels (Q8_0/Q4_K/Q6_K/IQ4_NL)
-  serve no family with `top_k < MAX_STREAMED_EXPERTS` today (Gemma 4 and
-  `qwen3moe` both route top-8 of 128) and were left untouched.
-- **Background**: `moe_phase2_down_reduce_k8_mxfp4` executed 8 down-GEMVs
-  regardless of model `top_k`. `gpt-oss` (`top_k = 4` of 32 experts) wasted
-  the dequant-and-dot-product on the 4 unused slots every decode step.
-- **The mechanism, and the bug it caught on the first attempt**: `FC_MOE_TOP_K`
-  is baked via `phase2_function_constants`, and the kernel masks the compute
-  (`if (sg_idx < KK) { ... }`) while still reaching the unconditional
-  `threadgroup_barrier` for all 256 threads -- masking the compute rather
-  than returning early is what avoids Metal's undefined behaviour for
-  divergent barrier participation. The first cut baked `top_k` by turning on
-  the SHARED `FC_MOE_USE_FC` gate, which `moe_fc_d`/`moe_fc_f` also read --
-  so `D`/`F` silently resolved to their baked-but-never-set value of zero and
-  the kernel returned before writing anything. Caught immediately by
-  `moe_gguf_parity.rs`'s existing tests (`all_eight_mxfp4_slots_participate`,
-  `the_mxfp4_decode_pair_matches_the_cpu_reference`,
-  `the_oai_activation_matches_its_reference`,
-  `the_silu_activation_constant_reaches_the_mxfp4_kernels`), all four reading
-  back `0` where the CPU reference expected a real value. Fixed by resolving
-  `top_k` with its own `is_function_constant_defined(FC_MOE_TOP_K)` check,
-  independent of `FC_MOE_USE_FC`. See `crates/gpu/CLAUDE.md` Gotcha 3.
-- **Detailed TODO**:
-  - [x] **Specialization Pipeline**: `moe_phase2_down_reduce_k8_mxfp4` masks
-    compute for `sg_idx >= FC_MOE_TOP_K`, provably bit-identical to the
-    unconditional 8-slot reduce (`0 * value == 0` whether or not the masked
-    slots are computed).
-  - [x] **Widen Pipeline Cache Key**: `phase2_constants_key` is a
-    phase-2-only key (`[use_silu, top_k]`), deliberately NOT a widening of
-    the shared `constants_key`/`moe_function_constants` phase 1 and every
-    other GGUF pair's phase 1/2 reuse -- that would force every one of them
-    to carry a `top_k` byte only this one kernel reads.
-  - [x] **Benchmark and Validate**: full `turbospark-gpu` and
-    `turbospark-runtime` suites green (`cargo test -p turbospark-gpu` /
-    `-p turbospark-runtime`, no filter); workspace build/fmt-check/clippy
-    green. Real-model verification on `~/.turbospark/models/gptoss-20b.gturbo`:
-    greedy and sampled stdout md5-identical against a pre-change binary built
-    in a clean `git worktree` (200 new tokens each), `gptoss_quality_gate`'s
-    frozen reference-answer perplexity (12.0801) and all three digests
-    reproduced exactly. Throughput, three interleaved pairs, 300 new tokens
-    greedy, real install, not a quiet machine: **33.4-34.0 -> 37.5-38.1
-    tok/s, a consistent ~1.13x** end-to-end decode win (the kernel itself
-    drops close to half its work, but phase 2 is one term among attention,
-    phase 1, the router and sampling, so the end-to-end number is smaller
-    than a naive 2x and that is expected rather than a shortfall).
-
----
-
-### 11. Vision & Multimodal Support
-
-- **Status**: M-V0 through M-V8 have LANDED, against the `qwen3_5` tower rather than
-  ViT/SigLIP. An image reaches a generated token from the command line AND from both
-  server endpoints: the tower agrees with mlx-vlm at its own FP16 floor, this port
-  renders and splices a text+image prompt byte-identically to the reference
-  processor, and `turbospark-check --image`, `/v1/chat/completions` and
-  `/v1/messages` all transcribe a real page to the same bytes. This entry used to read
-  "Implement ViT / SigLIP image encoder pre-pass" as though nothing had started,
-  which was wrong in the opposite direction from item 9's.
-- **`docs/VISION.md` is the home for this work and carries the milestone list.**
-  Do not duplicate the milestones here; a second copy is what rots.
-- **Closed 2026-08-29, and ON `main`**: M-V9 (multi-page memory oracle,
-  NaN-safe parity instruments, FP16 overflow capture), commit `c400329`,
-  carrying exactly the five files it touched; the catalog row and its
-  `assert_agrees_with_catalog` tie are `2aee922` the same day. Verified
-  against the real install (measured peaks 785.3-871.5 MiB across four pages,
-  ceiling 950 MiB).
-  **This bullet said "but UNCOMMITTED" until 2026-09-06**, a week after both
-  commits landed, and `docs/VISION.md` carried the matching claim. Neither
-  sentence had to change to become wrong -- only the work it described had to
-  finish. `git merge-base --is-ancestor c400329 HEAD` is the one command that
-  settles it and costs nothing.
-- **Landed 2026-09-06**: an image prompt CHUNKS its prefill.
-  `families/qwen/prefill.rs` refused a live `prompt_vision` map by name (the
-  injection in `produce.rs` was the family's only embedding call site), so
-  the one family with a tower could not chunk the prompts that need it most
-  -- a real page is over a thousand merged tokens of a ~1,300-token prompt.
-  Both halves are mirrored now, the blit and the mRoPE angle;
-  `TURBOSPARK_BATCHED_GEMV` plus an image is still refused, about the ANGLE.
-  `crates/ffi` composes; `crates/server`'s image path does not yet.
-- **OPEN, pre-existing**: the MTP/DFlash2 VERIFY pass is vision-blind in both
-  halves. Unreachable today only because no install carries both a tower and
-  an `mtp.*` head, and nothing refuses the COMBINATION -- see
-  `docs/VISION.md`'s "What is not built".
-- **RESOLVED artifact gap**: `~/models/qwen38-27b-vision.gturbo` shipped no
-  tokenizer or preprocessor sidecars, having been streamed for the tower alone.
-  All five were copied in from `~/models/qwen38-27b.gturbo` on 2026-08-29, each
-  verified byte-identical to the pinned reference snapshot
-  `models--mlx-community--Qwen3.8-27B-4bit/snapshots/3e6447f0...` first -- the same
-  revision the weights were streamed from. A future vision install should be
-  `pull`ed with `--sidecar-repo` rather than repaired this way.
-- **The lesson M-V7 and M-V8 both acted on**: M-V5 shipped a bug that only an
-  end-to-end run could find. `run_raw_completion` calls `producer.reset()` at
-  ENTRY and `reset` was clearing the injection map, so every image prompt
-  prefilled placeholder embeddings and answered fluently about a picture it had
-  not seen -- with the right prompt length and no error anywhere. Every test drove
-  `produce` directly and missed it. The server was the SECOND caller of that
-  contract and got its own end-to-end arm accordingly
-  (`real_backend_reads_an_image_sent_over_both_endpoints`, which asserts the
-  transcription carries the page's own line numbers). **M-V9 is the third: an
-  oracle that asserts a memory shape cannot see whether the pages were read.**
-- **Vision Memory Sidecar (Parts A1-A6, B1; landed 2026-09-06, on top of M-V0
-  through M-V9).** The tower's install SHAPE was the remaining cost: every
-  vision-capable install duplicated the 14+ GB text trunk just to carry
-  ~0.9 GiB of tower, which is why `~/models/qwen38-27b.gturbo` and
-  `~/models/qwen38-27b-vision.gturbo` are two independent 15 GB copies of one
-  checkpoint. Part A builds a standalone `<alias>.gturbo-vision/` sidecar
-  format (`model_io::vision_sidecar`, a degenerate zero-layer manifest plus a
-  `vision_sidecar.json` record, since the manifest cannot itself carry a
-  "this is a tower, not a model" marker), a runtime attach point
-  (`RealForwardRunner::attach_vision_sidecar`, called after `open()` and
-  before any image, so a text-only session still opens the tower lazily and
-  pays nothing until the first image), `--vision-sidecar <PATH>` across
-  `turbospark-check`/`turbospark-server`/the FFI's `OpenOptions`, and
-  `turbospark-model pull-vision` to fetch one directly (bypassing
-  `catalog::gate`'s MLX quantization check, which a legitimately-BF16 tower
-  repo would otherwise fail). Part B closes the tower's OWN memory
-  footprint, all three sub-parts now landed: B1 (row-tiled
-  `fc1 -> gelu -> fc2`, `VISION_MLP_TILE_ROWS`) caps `VisionScratch::h1` at
-  one tile's rows instead of a whole page's, with identical arithmetic; B2
-  aliases `VisionScratch`'s five buffers that are never live at once under
-  the serial encoder's commit-order guarantee, dropping the buffer count
-  from seven to five; B3 (`crates/runtime/src/vision/budget.rs`) derives
-  `max_pixels` from the load guard's own memory budget -- a binary search
-  against `VisionShape::scratch_bytes` -- rather than only from the
-  checkpoint's declared ceiling, refusing with the whole subtraction shown
-  when even the floor does not fit. Part C
-  (`RealForwardRunner::release_vision_tower`, exposed through
-  `ts_session_release_vision`) frees an open tower's streamer slots (or
-  mapped-residency buffer), position table, and a sidecar's own resident
-  weights and mmap, without forgetting an attached sidecar directory or
-  un-declaring the install's vision capability. Part D (a Qwen3-VL bring-up
-  scoping doc, `docs/QWEN3VL_PHASE0.md`) landed as documentation only, by
-  design -- fact-finding for a future bring-up, not the bring-up itself.
-  **Verified on real hardware, not synthetic fixtures alone**: a
-  freshly-`pull-vision`ed tower (879 MiB, `mlx-community/Qwen3.8-27B-4bit`,
-  the SAME pinned revision `3e6447f0` both existing installs were streamed
-  from) attached to the text-only `qwen38-27b.gturbo` produces byte-for-byte
-  identical transcription of the real test page against the combined
-  `qwen38-27b-vision.gturbo` install, on both the greedy arm and a
-  fixed-seed sampled arm (SHA-256-compared stdout past the resolved-request
-  block), and attaching the sidecar moves no byte of a text-only run either.
-  This is the direct, real-weights confirmation of what Part A1's synthetic
-  tests could only prove structurally (the sidecar and the combined install
-  write byte-identical tower bytes from the same source checkpoint).
-  **Left open**: `crates/runtime/tests/vision_tower_parity.rs` and
-  `crates/bench/tests/vision_memory_oracle.rs` have no sidecar-aware arm, so
-  the tower's mlx-vlm cosine and the multi-page memory ceiling have not been
-  re-measured specifically THROUGH a sidecar-attached trunk -- adding one
-  needs care around each file's existing calibrated assertions (the memory
-  oracle's `assert_agrees_with_catalog` in particular stays keyed to
-  `qwen38-27b-vision`, a deliberate choice to keep that install and its
-  frozen rows). `--vision-sidecar auto` (catalog-based resolution by family
-  and hidden size, via `catalog::resolve_vision_sidecar`, built in A5 but
-  wired to no front end) is also unbuilt; every front end today takes an
-  explicit path only. See `docs/VISION.md`'s new "The vision memory
-  sidecar" section for the design and the exact measured numbers.
-
----
-
-### 12. macOS App, Plugins, Profiles & Tool Execution (`TurboSparkApp`)
-
-- **Status**: Native macOS app with multi-chat persistence, agent loop, background shell execution, Claude Code hook contract, user profiles, plugin marketplace, git worktree manager, model hub with context ladder and hardware fit cards, structured tool cards, and Ghost Mode ephemeral chats (`docs/SWIFT_TOOLS.md`, `docs/SWIFT_PLUGINS.md`, `docs/SWIFT_PROFILES.md`).
-- **Detailed TODO**:
-  - [ ] **Cancellable Model Installation (`ts_install_cancel`)**: Thread cancellation flag through `catalog::install` streaming loop, expose in C ABI (`crates/ffi`) and Swift package, enabling immediate abort of in-flight downloads from `ModelInstallView` / `CatalogSheet` (`DEVIATIONS.md`).
-  - [ ] **Turn Decoder `finish()` Symmetry on CLI and FFI**: Symmetrically call `runtime::TurnSplitter::finish` on CLI and FFI streaming loops, ensuring withheld text and tool call closing states are flushed when tool calling expands beyond the server (`DEVIATIONS.md`, `docs/STREAMING.md`).
-  - [ ] **Remote Plugin Marketplace & Registry Indexing**: Wire network discovery and remote repository manifest fetching in `PluginMarketplaceManager` beyond local directories (`docs/SWIFT_PLUGINS.md`).
-  - [ ] **Multi-turn / Multi-model Memory Pressure with Profiles**: Benchmark and stress-test profile switching and resource release under rapid profile swaps.
-
----
-
-### 13. Model-Family Coverage Discovery: the oMLX and Unsloth Catalog Audits (2026-09-06)
-
-- **Status**: DISCOVERY ONLY, nothing wired, no catalog rows touched. Source read 2026-09-06: `github.com/jundot/omlx` (a Python/MLX inference server pinning mlx-lm + mlx-vlm), specifically `omlx/utils/model_loading.py` (the authoritative `model_type`-keyed patch dispatch), `omlx/patches/` (what its PINNED mlx-lm could not load unpatched), `omlx/custom_kernels/` (where it pays real Metal work), and the README's tool-parser table. Parity against mlx-lm-at-large is `docs/MODEL_FAMILY.md`'s job and is not duplicated here; this section records what omlx adds ON TOP of its base, because every entry below is a published checkpoint shape a current engine refuses, which is the same population as "what this port may be asked to run next".
-- **Overlap first**: ten of the model types omlx dispatches are families this port already runs or has declared: `gemma4` (plus `gemma4_unified`, its VLM/MTP variant), `qwen3_5_moe` (Qwen 3.6; omlx's nested-visual and MoE-VLM sanitize fixes are layout work inside a family we have), `qwen3_5` dense (its Bonsai 1-bit construct/qmv patches mirror our INT1/INT2 GEMV work), `qwen3moe`, `llama` and `llama4` (ours registered), `deepseek_v4` (ours scaffolded, section 5; theirs is a full working port of mlx-lm PR 1192), `muse_glimmer`, `gpt-oss`, and `qwen4_exp` (they even carry a `qwen4_qsa_sparse_gqa` kernel beside our QSA work). Those are not gaps.
-- **Missing text families** (name as declared in the wild; every one starts at a header-only Phase 0 probe per `docs/NEW_MODEL.md`, and the MoE ones at the expert-slot multiplication of Gotcha 36):
-  - **`glm_moe_dsa`** (GLM 4.7 / 5 / 5.2; omlx ports mlx-lm PR 1410): DeepSeek-V3.2-lineage MoE with DeepSeek Sparse Attention, and the same patch carries DeepSeek V3.2 itself. Needs MLA latent KV (a new cache shape) plus a token-level indexer and sparse-MLA kernels; the closest in-house prior is `qwen4_exp`'s QSA indexer and block-sparse attention, which scores BLOCKS where DSA indexes tokens. Ships MXFP4-Q8 per-layer mixes (GLM-5.1-MXFP4-Q8) and a fused gate/up quantization quirk its loader documents.
-  - **`minimax_m3`** (+ `minimax_m3_vl`): MiniMax M3, with its own sparse-attention kernel family (`custom_kernels/minimax_m3`) and an 8-bit MoE gate over a 4-bit body that needs per-layer quantization overrides to construct at the right widths.
-  - **`nemotron_h`** (NVIDIA Nemotron-H hybrid): Mamba-Transformer hybrid, so it needs recurrent SSM state machinery beside our GDN state manager rather than any new attention kernel; omlx runs its depth-1-trained MTP at fixed depth 1.
-  - **`bailing_hybrid`** (Ling 3.0 Flash, Ant): a mixed MLA + KDA (Kimi Delta Attention) hybrid MoE -- two attention/linear-attention mechanisms new to this engine in one model. Quantization is FP8 E4M3 on 128x128 blocks with float32 `weight_scale_inv` (omlx dequantizes and requantizes to 8-bit affine) and MXFP4 routed experts.
-  - **`laguna`** (Laguna XS.2; mlx-lm PR 1223): MoE whose router quant keys live one module deeper than the config declares, compressed-tensors FP8 and nvfp4-pack quantization, and its own tool parser.
-  - **`hy_v3`** (Tencent Hunyuan Hy3 / Hy-MT2): legacy root-level `rope_theta` normalized into a structured `rope_parameters` map; own tool parser.
-  - **`step3p7`** (StepFun Step 3.7 Flash; omlx's README example also shows Step-3.5-Flash): a text-only wrapper over a multimodal checkpoint -- the vendored model deliberately ignores the base's vision, audio, speech and MTP weights; MTP-compatible.
-  - **`mimo_v2`** (Xiaomi MiMo V2.5): fused/virtual QKV layout; same text-backbone-over-multimodal-checkpoint pattern as step3p7.
-  - **`inkling` / `inkling_mm_model`**: multimodal with an audio tower and per-depth MTP blocks (8 on Inkling Small).
-  - **Kimi K2 and LongCat-Flash**: unpatched by omlx (native mlx-lm), but both carry tool markups this port has no decoder for (below), and K2's body is deepseek2-shaped, which this port refuses today (`deepseek2` is recognition-only in the registry).
-- **Missing chat/tool templates**: mlx-lm's auto-detected tool formats, from omlx's README table: GLM `<arg_key>/<arg_value>` XML, MiniMax namespaced `<minimax:tool_call>`, Mistral `[TOOL_CALLS]` prefix, Kimi K2 `<|tool_calls_section_begin|>` section markers, and Longcat `<longcat_tool_call>`; omlx additionally ships per-model parsers for laguna, hy_v3 and deepseek_v4. This port's `ChatDialect` covers Gemma, ChatML, DeepSeek, Mistral, Llama3, Harmony and Muse Glimmer, with structured tool-call decoding on the ChatML, DeepSeek, Muse Glimmer, Gemma-channel and Harmony arms (`crates/tokenizer/src/structured_decoder/`); the five markups above exist nowhere here. Two smaller template-surface notes: their reasoning-effort alias ladder (`off -> low` through `ultra -> max`, Harmony capped at `high`) is a friendlier front over the same per-checkpoint levels `--reasoning` resolves (Gotcha 56's "the accepted set is the checkpoint's" is the sharper rule), and they forward arbitrary per-request `chat_template_kwargs` where this port forwards the reasoning keys only.
-- **Missing speculation surface**: omlx's MTP-compatible set is `qwen3_5*`/`qwen3_6*` (Lightning MTP, mlx-lm PR 990), `deepseek_v4*` (an embedded DSpark block drafter shipped inside the checkpoint, detected by `dspark_block_size`), `glm_moe_dsa`, `nemotron_h*`, `gemma4`/`gemma4_unified` (merged-assistant MTP heads; their controller rides depth 4..8 on predictable text), `step3p7` and `inkling`; plus DFlash as a general drafter engine with a laguna arm, and per-sequence ADAPTIVE draft depth (1..max chosen from rolling accept-rate estimates). This port has native MTP and DFlash2 on dense qwen3.8 only. The named gaps: Gemma 4 MTP heads (a family we run, a head we do not ingest), the adaptive depth controller, and second head-layout detection -- DeepSeek-style MTP stored as extra `model.layers.<N+i>.*` decoder layers rather than `mtp.*`, which their sanitize gates on. Our qwen4_exp PLE intake already classifies one in-checkpoint head layout, so a second has precedent.
-- **Missing vision towers** (this port runs exactly one, the `qwen3_5` tower): omlx's VLM surface covers the Qwen3.5/3.6 series VLMs (including MoE and nested-visual layouts), GLM-4V and GLM-5-Next (`glm5_next`: gated-delta linear attention plus vision), Pixtral/Mistral-3 with a torch-free processor, MiniMax M3-VL, Muse Glimmer VLM, Inkling (vision AND audio), and an OCR class -- DeepSeek-OCR, DOTS-OCR, GLM-OCR, unlimited-ocr -- with auto-detected OCR prompts. Nearest-term for this port would be Gemma 4 vision (`gemma4_unified`), whose text half already runs here. The full tower-by-tower inventory from a fourth same-day survey, `github.com/Blaizzy/mlx-vlm`, is section 14.
-- **Missing quantization formats** (orthogonal to family; each is a refusal in our intake today): FP8 E4M3 with 128x128 float32 `weight_scale_inv` blocks (Ling 3.0), nvfp4 pack-quantized (Laguna), MXFP4-Q8 per-layer mixes (GLM-5.1), and Qwen3.8 ModelOpt mixed compressed-tensors (which omlx refuses to load as text-only -- it is a VLM checkpoint). Our intake handles affine INT1..INT8 plus MXFP4 and the GGUF block types only. ParoQuant exists in omlx as an external loader dependency, not a format they implement.
-- **Deliberate divergences, not gaps**: omlx ships opt-in TurboQuant KV-cache quantization and a DeepSeek-V4 PoolingCache (fixed-ratio KV pooling); this port measured quantized KV as a quality loss and froze it (Do Not Revisit 1). Their WY-chunked GDN prefill is already recorded as a negative out of their own docstring (Do Not Revisit 15). Their ANE prefill (`qwen35_ane_prefill`, Apple Neural Engine, ~20 profile fields) is a capability this port has never touched -- unexplored here, not a gap to copy blindly. Their cluster/distributed multi-Mac mode is infrastructure outside this audit's scope.
-- **Catalog consequence, none yet**: when any of these is scoped for bring-up, the Phase 0 passes are header-only and cheap: the GLM-5.x MXFP4 row (expert-slot arithmetic first), MiniMax-M3, Nemotron-H, Ling 3.0 Flash, Step-3.5-Flash. One adjacent observation: `Qwen3.5-122B-A10B-4bit` (an omlx README example) is our `qwenGdnMoe` family by config and has simply never been run here, and `gpt-oss-120b` and `Qwen3-Next-80B` are already section 2 candidates.
-- **Cross-check, same day: the Unsloth model catalog** (user-supplied dump of unsloth's HF directory). The two surfaces expose different gaps: omlx shows what an MLX-side server must patch; Unsloth's catalog is GGUF-FIRST, i.e. the artifacts `turbospark-model probe` and `pull` are actually handed. I read the GGUF header KV block off shard 1 of 40 catalog repos (the same bytes our probe reads; ranged GET + KV walk), so every string below is a WITNESS, not a guess, and each is re-derivable in seconds with `turbospark-model probe`. Findings:
-  - **The usage-weighted gap is DENSE, not exotic.** The catalog's backbone is dense Qwen -- `qwen3` (0.6B/1.7B/4B/8B/14B/32B, Coder 30B/480B dense-and-MoE split, QwQ, the R1-Qwen distills) and the `qwen2`-generation 2.5 line -- plus dense Gemma `gemma3` / `gemma2` / `gemma3n`. NONE is in this port's registry: our qwen rows are the GDN line plus `qwen3moe`, our gemma row is `gemma4` only. omlx never exposed this because mlx-lm serves those natively; a GGUF-first catalog does. SmolLM2, Yi and Zephyr ride the same dense shapes.
-  - **`deepseek2`'s recognition-only row is the single highest-leverage unlock.** Kimi K2.5, Kimi K2.6, GLM-4.7-Flash AND Mistral-Large-3-675B all report `deepseek2` (61 layers; 384 experts top-8, 64 top-4, and 128 top-4 respectively) -- one MLA bring-up covers four headline models, the same one-string-many-models shape as our `llama` row. Kimi K3 is its OWN string (`kimi-k3`, 896 experts top-16, ffn 33792): 3 x 7168 x 33792 is ~727M params per expert, roughly 7x Mixtral's 108.9 MiB blob, so Gotcha 36's header multiplication says unstreamable here at any legal slot count -- recorded so nobody re-derives it after a download.
-  - **Other witnessed missing arch strings**: `glm-dsa` (GLM-5 / 5.3, 256 top-8 -- the DSA line of the omlx audit above), `glm5next` (GLM-5.3-Flash, 288 top-8 -- the gated-delta one, matching omlx's `glm5_next` patch), `glm4moe` (GLM-4.6 / 4.5-Air), `nemotron_h_moe` (Nemotron 3 / 3.5 Lightning and Super; 128 top-6 up to 512 top-22), `minimax-m2` (M2.5, 256 top-8 over ffn 1536 -- 3 x 3072 x 1536 is ~14M params per expert, gemma4-like and a GOOD streaming shape for this engine), `mistral3` (Ministral 3 and Devstral Small 2 -- dense, and a separate string from `llama`, so they need their own row despite the name), `qwen3next` (Qwen3-Coder-Next, 512 top-10 -- its OWN string despite sharing `qwen36`'s GDN layer graph, so the section-2 candidate needs its own intake row), `hunyuan-moe` (A13B, 64 top-8), `ernie4_5-moe` (already a section-2 candidate; 64 top-6, now witnessed), and `grok` (Grok-2 270B, 8 experts top-2 at ffn 32768 -- the Mixtral unstreamable shape at 4x the size). Plus `diffusion-gemma` (DiffusionGemma 26B-A4B, 128 top-8 on the gemma4 26B body): NOT a family flow but a generation-LOOP class this port lacks -- a block-diffusion LM as the main model, with DFlash2 as the nearest in-house relative.
-  - **Our scaffold's first GGUF witness**: DeepSeek-V4-Flash-Vision-Exp and DeepSeek-V4-Pro-0813 report `deepseek4` (256/384 experts top-6, context 1M, and `attention.sliding_window` = 128 -- SWA layers are part of this shape, which section 5's CSA/HCA notes never mentioned), and the Flash variant is a VISION checkpoint, so the scaffold's eventual bring-up inherits the vision-blind-verify-pass question of section 11 too.
-  - **Witnesses for the two registered rows**: Phi-4-reasoning-plus reports `phi3`; Llama-4-Scout reports `llama4` at 16 experts top-1 (the registry's existing witness file checks out against unsloth's own conversion).
-  - **Rows that look runnable today, unverified**: the Qwen3.5/3.6 GGUFs report `qwen35` / `qwen35moe` exactly -- INCLUDING the MTP-GGUF variants, where the head rides as extra tensors under the SAME arch string, so the work there is head-layout detection (section-13's speculation note), not intake. gemma-4-31B and -12B report `gemma4` DENSE (60 blocks, ffn 21504; this flow's dense-FFN arm should serve them, never verified on a dense gemma4); the E2B/E4B repos' first shard is a separate `gemma4-assistant` 4-block MTP-drafter GGUF, so unsloth ships the gemma4 drafter as its own FILE and the MatFormer bodies remain unverified. Magistral Small, Mistral Small 3.x, Devstral Small (2507) and Mistral-Nemo report plain `llama` dense with no learned-scaling tensor in sight, so the candidates are the runner's checks and their 131k-1,024k contexts are a window-fit question, not an arch one.
-  - **Two format gaps the catalog leans on**: NVFP4 (unsloth's 4-bit safetensors line for qwen3.8 / qwen3.6 / gemma-4 / Nemotron / Mistral-Large-3) and `unsloth-bnb-4bit` (bitsandbytes NF4-family) -- both outside this port's affine + MXFP4 + GGUF-block intake. NVFP4 is recorded above via Laguna; the catalog shows it is not a one-model format but a distribution channel.
-  - **Out-of-class rows, named so nobody rediscovers them as engine gaps**: Qwen-Image 2512 / Edit-2511 (image GENERATION), Orpheus (TTS), Qwen2.5-Omni (audio tower), and the vision-tower lines (Qwen3-VL -- `qwen3vl` witnessed for the 8B -- Qwen2.5-VL / Qwen2-VL, LLaVA, Pixtral, MedGemma); the tower-class list in the omlx audit above covers what towers would mean here. Plus the embedding/retrieval MODEL class -- BERT-class text encoders, SigLIP image embedders, ColPali late-interaction retrieval (the encoder half of the mlx-embeddings survey below): bidirectional attention, new intake and a pooling head, with no consumer in this port.
-  - **Catalog consequence, none yet**: when scoping, the order writes itself -- `qwen3`-dense is the usage-weighted bring-up, `deepseek2` is the multi-model unlock, and `minimax-m2` is the best pure streaming-shape candidate; run `turbospark-model probe` against any repo named here before believing any of it further.
-- **Third same-day survey, closing the embedding-model question: `github.com/Blaizzy/mlx-embeddings` (2026-09-06)**. An MLX model-zoo layer for embedding and reranking models -- encoder models (BERT, ModernBERT, XLM-R), decoder embedders (Qwen3-Embedding; NV-Embed's bidirectional Llama), and multimodal retrieval (Qwen3-VL embed/rerank, SigLIP, ColPali late interaction) -- plus pooling, normalization and similarity utilities and an HF conversion CLI. **VERDICT: nothing to build.** This port has no embedding-model surface -- the registry is decoder-only, so a BERT/XLM-R/SigLIP header is refused at probe; there is no pooling, similarity or retrieval code anywhere in the workspace; and the vision tower emits projected patch tokens blitted into the token embeddings (`set_prompt_vision`), not pooled embeddings -- AND no consumer: the server serves no `/v1/embeddings`, and the Swift app's `project_search` tool documents "semantic/keyword retrieval" while only the keyword half has a backend. The class split decides both readings if a use ever appears. The ENCODER half is out-of-class for a decoder engine -- bidirectional attention, new intake, new kernels -- and is recorded in the out-of-class row above rather than as a family gap. The DECODER-EMBEDDER half (Qwen3-Embedding, GGUF arch `qwen3`) needs nothing this section does not already name: it rides the dense-`qwen3` usage-weighted gap above, and the forward pass is already willing -- prefill skips the LM head, so last-prompt-token hidden states sit host-visible in `scratch.x`, and `crates/runtime/src/resid_capture.rs` already lifts exactly that tensor -- so the increment over a dense-qwen3 bring-up is a pooling API, not a kernel project. Escape hatches by consumer: app-side semantic search for `project_search`'s semantic half via Apple `NLEmbedding` (native, macOS 14+, no new dependency); a server `/v1/embeddings` via the decoder-embedder route. One license flag: mlx-embeddings is GPLv3 against this repo's MIT, so it is survey-only -- no code port, the same reading rule as any other reference engine.
-
----
-
-### 14. Vision-Model Coverage Gap: the mlx-vlm inventory (2026-09-06)
-
-- **Status**: DISCOVERY ONLY, nothing wired, no catalog rows touched. Source read 2026-09-06: `github.com/Blaizzy/mlx-vlm`, the Python/MLX vision-language package this port ALREADY uses as its cross-engine vision reference -- the `qwen3_5` tower's stage parity is judged against `mlx-vlm/models/qwen3_vl/vision.py` (`docs/VISION.md`), `crates/runtime/tests/vision_tower_parity.rs` diffs tower stages against its dumps, and `scripts/kld_mlx_vlm.py` runs the full-model text+image KL against it. Its authoritative model list is the `mlx_vlm/models/` directory (~220 entries, about 60 of which ship vision), not the README's Model-Specific Documentation table (24 rows, partial) -- the same README-is-not-the-registry rule the omlx audit recorded.
-- **What is already covered, and it is one line**: the Qwen3-VL tower generation. This port's single tower IS mlx-vlm's `qwen3_vl` tower (27 blocks, hidden 1152, patch 16, mRoPE section [11,11,10]), consumed by the `qwen3_5` family and wired end to end on one install (`qwen38-27b-vision`); `qwen3_vl_moe`'s text side is the `qwenGdnMoe` flow, whose vision tensors are already classified ingestible (`crates/repack/src/gemma4_checkpoint/classify.rs`) but has no install and no test. `qwen3_5`, `qwen3_5_moe`, `qwen4_exp` and plain `gemma4` overlap as text families, not vision. Everything else mlx-vlm ships vision for is a gap.
-- **The gap, grouped by tower class** (about 60 vision-capable entries). The class assignment below is from lineage and directory naming; the authoritative per-checkpoint check is `vision_config.model_type` in config.json -- KB, not GB, the Gotcha 47 workflow -- run before scoping any bring-up:
-  - **SigLIP-class towers, the largest cluster** (one well-understood tower would partially cover all of it): `gemma4_unified` (Gemma 4 vision), `paligemma`, `idefics2`, `idefics3`, `colidefics3` (retrieval variant), `smolvlm`, `llava_onevision`, `llava_bunny`, `minicpmv4_6`, `minicpmo` (vision + audio), `moondream2`, `moondream3`, `granite4_vision`, `phi4_siglip` (Phi-4 Reasoning Vision), `aya_vision`, `llmjpvl`, `kimi_vl` (MoonViT, SigLIP-derived at native resolution), `k2_horizon`, `jina_vlm`, `hunyuan_vl`, `youtu_vl`, `zaya1_vl`, `plamo2vl`, `mage_vl`, `muse_glimmer` (its VLM form; the text half already runs here).
-  - **CLIP ViT-class towers**: `llava`, `llava_next`, `phi3_v` (CLIP ViT-L/14 over the registered `phi3` text family), `granite_vision` (Granite 3.2/3.3), `molmo` / `molmo2` / `molmo_point` (CLIP-ViT with DCLIP-style pooling), `falcon_perception`.
-  - **Its own tower class**: `fastvlm` (Apple FastVLM, FastViT-HD).
-  - **Qwen-VL lineage older than ours**: `qwen2_vl`, `qwen2_5_vl` (windowed tower attention), `colqwen2_5` (multi-vector retrieval over 2.5-VL), `dots_ocr` / `dots_mocr` (OCR built on the 2.5-VL lineage), `locateanything` (grounding). The mRoPE injection machinery already exists here (`crates/vision-io/src/mrope.rs`); the delta is the tower variant PLUS the dense `qwen2`/`qwen2.5` text families, which are section 13's usage-weighted registry gap.
-  - **InternViT**: `internvl_chat` (InternVL 2/2.5/3; dynamic tiling + pixel shuffle -- a per-image tiling preprocessing layer, not just a tower).
-  - **Pixtral / Mistral**: `pixtral` (ViT with 2D RoPE over variable aspect), `mistral3`'s vision variants (the `mistral3` GGUF string is already a section-13 text gap).
-  - **GLM-4V (EVA-CLIP)**: `glm4v`, `glm4v_moe`, `glm5_next` (gated-delta linear attention plus vision -- also a section-13 text gap).
-  - **The OCR class** (document encoders, each with its own tiling/crop preprocessing): `deepseekocr` (DeepEncoder: SAM windowed trunk + 16x conv compressor + CLIP local), `deepseekocr_2` (SAM trunk + a Qwen2 encoder stack), `got` (GOT-OCR 2.0), `glm_ocr`, `unlimited_ocr`, `falcon_ocr`, `paddleocr_vl` (NaViT tower + ERNIE decoder), `nemotron_parse`, `gliner2_5` (document extraction; tower class to confirm). Carries `docs/VISION_PHASE0.md`'s measured constraint: the tower stays FP16 end to end -- INT4 tower quantization was rejected on OCR quality.
-  - **A different injection class, so the existing machinery does not transfer**: `mllama` (Llama 3.2 Vision -- CROSS-ATTENTION layers against the LLM, not embedding replacement), `florence2` (encoder-decoder seq2seq, a different generation loop the way block-diffusion is), `ernie4_5_moe_vl`, `minimax_m3_vl` (its text half is a section-13 gap), `inkling` (vision AND audio), `phi4mm` (Phi-4 Multimodal, SigLIP + audio adapter), `qwen3_omni_moe` (omni audio + vision), `multi_modality` (early fusion; confirm at Phase 0).
-  - **Out of class, named so nobody rediscovers them as engine gaps**: pure encoders (`siglip`, `dinov2`, `bert`, `xlm_roberta`, `modernbert`); embedding models (`gemma3_embedding`, `qwen3_embedding`, `qwen3_vl_embedding`, `lfm2_embedding`, `ministral3_embedding`, `llama_nemotron_vl_embedding` -- section 13's embeddings verdict said "nothing to build", but an encoder surface (`crates/compute/src/encoder.rs`, `crates/server/src/embeddings.rs`) now exists in the tree, so read these rows against that rather than against the survey's verdict); detection, segmentation and depth (`yolo11`, `rfdetr`, `rt_detr_v2`, `sam3`, `sam3_1`, `sam3d_body`, `video_depth_anything`, `moge3`, `openai_privacy_filter`); image GENERATION (`flux2`, `z_image`, `ernie_image`, `ideogram4`); audio (`nemotron_voicechat`).
-- **Nearest-term ranking if any of this is scoped** (the text half already running here is what makes a tower cheap, because the tower lands into an existing decode flow instead of beside a new one):
-  1. **`gemma4_unified`** -- Gemma 4 vision. The text half runs (`gemma4`); a Gemma 4 checkpoint's ~815 vision tensors are actively DROPPED today (`classify.rs`'s `vision_tower.` / `vision_adapter.` / `vision_projection.` exclusions). Needs the SigLIP-class tower, its intake, and Gemma's image-token template -- the omlx audit's nearest-term name, now with a full inventory behind it.
-  2. **`muse_glimmer` vision** -- the same shape one family over: text half runs, tower dropped at intake, mlx-vlm reference exists.
-  3. **`qwen2_5_vl` / `qwen2_vl`** -- needs the dense `qwen2`/`qwen2.5` text families (section 13) plus the windowed-attention tower delta on an mRoPE path that already exists; unlocks the DOTS / LocateAnything / ColQwen lineage with it.
-  4. **A generic CLIP/SigLIP tower** -- one implementation opens both named clusters; LLaVA-1.5 becomes cheap almost immediately because the `llama` text family already runs here. A working Rust reference for the parametrized CLIP/SigLIP pair sits in `~/Documents/GitHub/mlx-v` ("sconce"), which implements exactly three of these models -- LLaVA (generic CLIP/SigLIP ViT), Qwen2-VL (mRoPE), and DeepSeek-OCR-2 (SAM trunk + Qwen2 encoder); candle-based, reference-only per the license rule, and note its vendored `mlx-vlm/` upstream copy is already the `--vendor-root` this port's own probe scripts point at.
-  5. **`internvl_chat`**, then the OCR class as a group (its per-model cost is the preprocessing, not the towers).
-- **A precondition no tower scoping escapes**: the production intake cannot create ANY vision install today -- the catalog's safetensors walk and the probe call `parse_qwen_gdn_dense_config`, which hardcodes `vision: VisionConfig::NONE` (`crates/repack/src/qwen36_config.rs`); the one vision install on disk was streamed by a test, not by `pull`. That lands first, or per family. Then the gates: section 11's open items (the vision-blind MTP/DFlash2 verify pass, the `TURBOSPARK_BATCHED_GEMV` + image refusal, the server image path not chunking) are per-tower work every new model inherits, and `docs/VISION.md` is the implementation home for all of it -- section 11 carries the milestones, this section carries the model list, and neither duplicates the other.
+**Missing from disk** (require re-pull before dependent benchmark/oracle tasks can run):
+- `museglimmer-30b.gturbo` (15G)
+- `ornith9b.gturbo` (8.9G)
+- `ornith35b.gturbo` (18G)
+- `ornith35b-gguf.gturbo` (34G)
+- `mistral7b.gturbo`
+- `llama3-8b-instruct.gturbo`
 
 ---
 
@@ -514,10 +352,10 @@ feature's disk cost:
 
 ## Do Not Revisit (Measured Dead Ends)
 
-1. ~~**Quantized KV Cache**: Quality loss (delta-NLL +0.015).~~ **REVERSED 2026-09-06.** That one-line verdict was this repo's own reading of `sharpner/turboquant-mlx`'s numbers against this port's memory and throughput profile (`docs/TRUBOQUANT.md`'s original "Assessed, Not Adopted"), not a measurement on a real install here, and it answered "does this pay today" rather than "should this exist as an opt-in flag nobody has to pay for". Built anyway as `--kv-bits off|2|3|3.5|4`, wired end to end (`crates/invocation` through `crates/ffi`/Swift) across every family (`gemma4`, `qwen` -- both dense and MoE halves --, `qwen4`, `llama`, `gptoss`, `museglimmer`), defaulting OFF so every frozen oracle and quality-gate row is untouched by its existence. Ported mlx-vlm's actual `_TurboQuantMSECodec` (Lloyd-Max codebook plus a random Hadamard rotation) rather than the assessment's own recommended subset ("4-bit affine only, skip Lloyd-Max, skip fractional rates") -- a real fused Metal attention kernel now exists here (`attention_tq.metal`) where the assessment's blocking objection was that this port had no equivalent to borrow and would have to write one. `docs/TRUBOQUANT.md` is rewritten as the feature's home; its old assessment survives there as the record of why the decision needed reversing rather than defaulting to on.
+1. ~~**Quantized KV Cache**~~: Reversed 2026-09-06. Built as opt-in `--kv-bits off|2|3|3.5|4` using Lloyd-Max codebooks and random Hadamard rotations (`docs/TRUBOQUANT.md`).
 2. **Cold mmap as a Replacement for Streaming**: `pread` is strictly superior for cold uncached experts (74.8s vs 2.5s prefill). `mmap` is only used for warm residency (`docs/EXPERT_RESIDENCY.md`).
 3. **RDADVISE as Default**: No stable production benefit.
-4. **Expert Prefetch / Speculation**: TWO different predictors, both measured, both negative. The inherited one copies layer L's selected expert IDs and hits 7% (Jaccard 0.039). The second, measured here 2026-08-29 against colibri's PILOT, RUNS layer L+1's router GEMV on layer L's post-attention residual and genuinely works -- 70.6% recall, reproducing colibri's reported 71.6% on a different architecture, covering 60.4% of misses at 32 slots. It still loses, on a different axis: a prefetcher's COST scales with prediction width while its BENEFIT scales with the miss rate, and at an 84.6% cache hit rate every `PILOT_K` from 1 to 8 reads MORE total expert bytes than the demand path (1.03x to 1.85x). No operating point pays. Reversal condition: a machine where the expert read is genuinely disk-bound rather than a page-cache memcpy. Probe stays wired (`TURBOSPARK_PILOT_PROBE`, `=self` to validate the instrument); method and full sweep in `docs/EXPERT_ROUTING.md`.
+4. **Expert Prefetch / Speculation**: Two predictors measured negative. Copied expert IDs hit 7%. PILOT router lookahead hits 70.6% recall but scales total bytes read above demand path (1.03x-1.85x) at high cache hit rates (`docs/EXPERT_ROUTING.md`).
 5. **Expert Pread Tuning**: `MISS_READ_CHUNK_BYTES` (840 KiB) and `POOL_THREADS` (8) are at measured local optima.
 6. **Deferred End-of-Token Wait**: Max theoretical gain 0.25 ms/token (1.4%); bottlenecked by layer dependencies.
 7. **GPU-Side Router Top-K**: Host top-k overhead is 0.13 ms/token; GPU top-k only relocates synchronization.
@@ -526,11 +364,10 @@ feature's disk cost:
 10. **Offset-Sorted Reads / Fine-Grained Read Dispatch**: Slower or nondeterministic.
 11. **Domain-Restricted Expert Sets (pruned / pinned)**: 95% of routed mass touches ~67 of 128 experts across domains; static pruning damages quality (`docs/EXPERT_ROUTING.md`).
 12. **Sub-4-bit Experts as an Efficiency Win**: IQ3_XXS / IQ4_NL is 35% slower and roughly doubles joules/token (GPU codebook dequant bound); valid only as a memory/disk tradeoff (`docs/POWER_BASELINE.md`).
-13. **Staging `x` in `dequant_int4_gemm_mma`**: measured 2026-08-29 behind `FC_MMA_STAGE_X` (110), bit-identical to the un-staged arm and **3.3x to 5.9x SLOWER at every width, penalty growing with B**. A transposed `simdgroup_load` from device is not the naive strided gather it reads as; hand-staging the same bytes through 32 LANES is. MLX stages `x` and wins because it has 128 threads to do it and `BM` 32-128 to amortize over, so staging is a CONSEQUENCE of the wider threadgroup rather than a separate lever (AGENTS.md Gotcha 65). Reversal condition: only as part of a four-SIMD-group re-tile, never alone.
-14. **The dequant loader and `kMmaTile` as levers on the matrix kernel**: two settled by different methods on the same day. `kMmaTile` is refuted by ARITHMETIC -- dequant per output is `N / B` here and `K / BM` in MLX, both keyed on TOKENS, so a bigger weight tile scales dequant and outputs together and changes nothing; this kernel already runs at B=64 at MLX's own BM=64 intensity and is still 3.5x behind. The loader is refuted by MEASUREMENT: `FC_MMA_SKIP_DEQUANT` (111) deletes the unpack and the kernel **still reads 0.46-0.50 past M=16 against MLX's 0.145**, and is still slower with a FREE dequant (0.51 at M=16) than the scalar `dequant_int4_gemm_simd` is with a real one (0.38). What is left is the matrix path itself: one SIMD group per threadgroup, two `simdgroup_barrier`s per 64-element K block, eight `simdgroup_float8x8` accumulators over 32 lanes. That is the ONLY untried lever there.
-16. **The four-SIMD-group re-tile of `dequant_int4_gemm_mma` (PF-02 Step 7)**: measured 2026-09-05 on AC, one process, arms interleaved width by width after a discarded warmup each, reproduced across two runs to within 0.02 a cell. `dequant_int4_gemm_mma_wide` is 128 threads owning 16 output rows, `acc[4]`, two `threadgroup_barrier`s per 64-element K block, with `WN` splitting token tiles between SIMD groups of ONE threadgroup (splitting `B` across threadgroups would multiply the `N / B` dequant-per-output term this kernel does not lose on). `c(M)` on gate/up 17408x5120, the other five shapes agreeing to 0.03: exact 0.51/0.31/0.44/0.39 at M=2/4/8/16, narrow matrix 3.66/1.83/0.92/0.67, **wide-plain 4.33/2.18/1.08/0.74, wide+stageX 5.10/2.57/1.25/0.81**, so `wide/exact` reads 10.01x/8.22x/2.83x/**2.10x** against a gate of 1.00. The re-tile is also worse than the NARROW matrix tile at every width up to 32; at M=64 wide-plain edges it 0.52 to 0.54, which is 4%, inside this bench's resolution and past the exact kernel's cap. **TWO SUB-CLAIMS ARE REFUTED RATHER THAN MERELY UNCONFIRMED.** Staging `x` STILL LOSES inside the wide shape (`wide+stageX` worse than `wide-plain` in every cell, worst where `N` is largest -- `down` 5120x17408 reads 1.17 against 0.76 at M=16, staging cost scaling with the reduction length), so entry 13's stated reversal condition, "only as part of a four-SIMD-group re-tile, never alone", has now been tested and does not hold. And FOUR SIMD GROUPS DOES NOT MOVE THE MATRIX PATH, which is the term the kernel's header identified as the only one left: with the dequant deleted on both tiles at the same staging setting, the floors are the SAME (0.48 narrow against 0.48 wide at M=64, 0.48 against 0.51 at M=32, 0.52 against 0.59 at M=16), and spreading the unpack over 128 lanes did not make it relatively cheaper either (`nodq/wide` tracks `nodq/mma` within a few points at every width). **With 13, 14 and this, all four levers are measured and the dead-end verdict is no longer scoped to one tile** -- staging, `kMmaTile`, the dequant loader and the threadgroup width have each been eliminated, three by measurement and one by arithmetic. Reversal condition, unchanged from what the header said at the start: weights already in a `simdgroup_load`able format, not a better tiling. The kernel is KEPT, as constants 110 and 111 are, because a deleted dead end gets re-proposed; nothing dispatches it.
-
-15. **Chunked WY-representation gated DeltaNet prefill, and GDN threadgroup staging**: two negatives on one kernel. The chunked (flash-linear-attention) reformulation is a negative on oMLX's OWN side -- `gdn.py` ships ~270 lines of it and its docstring says the production path is the blocked-sequential recurrence at "half the FLOPs of the WY-chunked path". And their blocked-sequential kernel's real contribution (threadgroup-staged q/k/v against a `(Hv, Dv/4)` re-read, which this port's `gdn_delta_step_prefill` does have) targets a term measured at **4.66%** of a prefill micro-batch, upper bound (`crates/gpu/tests/gdn_prefill_share_bench.rs`, agreeing with an independent traffic calculation to 0.2 points). Even a perfect 8x traffic reduction there caps out near 4% of prefill.
+13. **Staging `x` in `dequant_int4_gemm_mma`**: 3.3x to 5.9x slower at every width; penalty grows with B.
+14. **The dequant loader and `kMmaTile` as levers on the matrix kernel**: `kMmaTile` refuted by arithmetic (`N/B` scaling); loader refuted by measurement (`FC_MMA_SKIP_DEQUANT` still 3x slower than MLX).
+15. **Chunked WY-representation gated DeltaNet prefill, and GDN threadgroup staging**: Flash-linear-attention chunking takes 2x FLOPs of blocked sequential. Threadgroup staging targets only 4.66% of prefill traffic.
+16. **Four-SIMD-group re-tile of `dequant_int4_gemm_mma` (PF-02 Step 7)**: 128-thread re-tile measured 2.10x slower than exact GEMV baseline. Staging `x` still loses inside wide shape, and 4 SIMD groups does not move the matrix path bottleneck (`docs/BATCHED_PREFILL.md`).
 
 ---
 
@@ -545,56 +382,6 @@ Every new feature or model bring-up requires:
 5. Win demonstrated under interleaved-pairs testing on quiet machine.
 
 ### Descoped Components
-- Upstream Swift UI: Out of scope (superseded by this repository's native `TurboSparkApp` desktop application and `.app`/DMG release packaging).
+- Upstream Swift UI: Out of scope (superseded by native `TurboSparkApp` desktop application and `.app`/DMG release packaging).
 - `prefill.metal` GPU tile pipeline: Descoping retained; chunked prefill driver reuses standard kernels.
 - `logit.metal` `sample` kernel: Host sampling via `crates/selection` is standard.
-
----
-
-## Changelog (Completed Milestones)
-
-- **Core Port**: Gemma 4 26B-A4B and Qwen 3.6 35B-A3B at Swift parity, `.gturbo` streamed format, CLI, server, bench harness, and memory oracle.
-- **Phase Q / P1 (2026-08-07)**: Quality harness, perplexity gates, golden digests, cross-engine KL, power baseline (`scripts/power.sh`).
-- **Phase G / S (2026-08-08/09)**: GGUF ingestion, repack transcode, Q8_0/Q4_K/Q6_K kernels, sub-4-bit IQ3_XXS/IQ4_NL codebook kernels.
-- **Phase P2 / M1 (2026-08-09)**: User power controls (rate limiting, low power), architecture registry and model discovery.
-- **Phase M2 / M3 / M4 / M5 (2026-08-10..12)**: Mixtral MoE, Qwen3-30B fine-grained MoE, dense Mistral/TinyLlama, `gpt-oss-20b` MXFP4 MoE.
-- **Quantization Widening (2026-08-13..15)**: 1-bit (`Bonsai-27B`) and 2-bit ternary (`Ternary-Bonsai`) affine quantization and Metal GEMVs.
-- **Harmony Protocol (2026-08-13..15)**: Thinking token channel splitting (`analysis`), tool call extraction and schema validation.
-- **Native MTP Speculation (2026-08-18)**: Native MTP drafter for dense Qwen 3.8 at block 2 (1.44x decode, lossless greedy verification).
-- **Batched Routed Prefill (2026-08-18)**: PF-02 steps 2-3 routed pair batching (1.54x prefill speedup on Gemma 4).
-- **DFlash2 Block Drafter (2026-08-19..21)**: Block-diffusion drafter for Qwen 3.8, unblocked from FP16 overflow, 1.33x-1.47x speedup on code/math.
-- **Ornith-1.5 Checkpoints (2026-08-20)**: 9B dense and 35B MoE in GGUF Q8_0 and MLX INT4 formats, verified via cross-engine KL.
-- **Batched Resident GEMVs (2026-08-22)**: PF-02 step 6 resident attention and shared expert GEMVs dispatched as M-row GEMMs.
-- **Mapped Expert Residency (written 2026-08-23, landed on `main` 2026-08-30)**: In-place `mmap` expert execution on Gemma 4 (footprint 3,652 -> 559 MiB, decode 53.8 -> 68.7 tok/s, re-measured 2026-08-29). Written on a branch that was never merged and whose worktree was later removed, leaving the tip commit dangling and one `git gc` from lost; recovered by re-creating the branch ref from the dangling object and merged against `main`'s intervening PILOT-probe and prefix-KV-reuse work. See section 9.
-- **Mapped Expert Residency, remaining MoE families (2026-08-30)**: `qwen`, `llama` (both `Llama` and `Qwen3Moe`), and `gptoss` all wired the same day the base feature landed, each replacing its named refusal rather than adding a branch beside it. Real-install verification on `qwen3moe.gturbo` and `gptoss-20b.gturbo` reproduces byte-identical greedy output between streamed and mapped arms with a confirmed 100% expert-cache hit rate under mapped mode; `qwen`'s own family has no real install left on this machine to verify against (Ornith 35B is gone from disk since the feature was scoped), so it stands on synthetic-fixture verification alone. See section 9.
-- **Directional Weight Steering (2026-08-23..25)**: Runtime abliteration, ActAdd, clamping, and renorm Metal shader across 7 model families with CLI/server flags (`docs/OBLITERATION.md`).
-- **PF-02 Default-On and Dense-Llama Widening (2026-08-26)**: `--prefill-chunk` wired as the default in the CLI and automatically in the server, gated on a shared `supports_chunked_prefill()` predicate so an unsupported family falls back to sequential with no error. Chunked prefill also runs the dense half of `llama` now (Mistral, Llama 2/3.x), the second `ChunkedPrefillRunner` implementation, needing no mid-layer host round trip.
-- **PF-02 Qwen Dense Widening (2026-08-29)**: chunked prefill now serves `qwenGdnDense` (`qwen38-27b.gturbo`), the sixth `ChunkedPrefillRunner` implementation and the first with no new buffer allocation at all -- the existing per-token GDN and attention kernels reused unmodified inside fewer command buffers. Verified byte-identical against sequential on the real install; unblocks the missing oMLX PP comparison. `qwenGdnMoe` is a follow-up.
-- **Reasoning Effort & Thinking Channels (2026-08-29)**: `--reasoning` / `reasoning_effort` wire support across server, CLI, and tokenizer; reasoning channel separation for ChatML and Gemma.
-- **Prefix KV Cache Reuse (2026-08-29)**: Cached prompt continuation in `runtime::kv_prefix`, evaluated on real 26B (11.6x prefill speedup on continuation).
-- **Batch INT4 GEMM Row Blocking (2026-08-29..30)**: Hardware-optimal row block dispatch (`R=1, 2, 4`) for M-row batched INT4 GEMMs, maximizing GPU compute occupancy and establishing crossover curves (`docs/BATCHED_PREFILL.md`).
-- **macOS App & Release Automation (2026-08-29..30)**: `TurboSpark.app` bundle and DMG release pipeline (`scripts/make-app-bundle.sh`, `scripts/make-dmg.sh`, Homebrew cask), permissions engine, and Swift UI localization.
-- **Swift Agent Subsystem & Custom Tools (2026-08-31)**: Built-in agent manager, `AGENTS.md` parser, subagent execution runner, custom tool runtime with JSON schema support, and `web_fetch`/`todo_write` executors in `TurboSparkApp`.
-- **Phase-2 `top_k` Specialization (2026-08-31)**: `moe_phase2_down_reduce_k8_mxfp4` skips the down-GEMV for `gpt-oss`'s unused routed slots (top-4 of 32) instead of reducing all 8 unconditionally. Verified bit-identical to a pre-change binary on the real `gpt-oss-20b` install (greedy and sampled, plus `gptoss_quality_gate`'s frozen rows); measured ~1.13x end-to-end decode throughput over three interleaved pairs. See section 10.
-- **`crates/ffi` Prefix KV Reuse and Chunked Prefill (2026-09-01)**: `open.rs`'s `open()` now calls `set_prefix_reuse(true)` unconditionally (the one deliberate divergence from the CLI's single-shot `open_session`), and `generate.rs` now routes non-speculative real-model turns through `run_raw_completion_chunked_cancellable` whenever the install's family supports it and the turn carries no image -- both were previously CLI/server-only. `TurboSparkApp`'s multi-chat sessions, which hold one long-lived session per loaded model across a chat's whole lifetime, get both wins with no app-side code change. `GenerateResult` gained a `reusedPrefixTokens` field for observability, matching the CLI's own `[prefix-reuse]` footer line. Verified: `cargo test -p turbospark-ffi` (56 tests), workspace build/fmt/clippy, `make swift-test-real MODEL=~/models/gemma4.gturbo` (48 tests including a new `testASecondTurnReusesThePreviousTurnsKV`, which measured 14/18 reused prompt tokens on a real two-turn conversation), and the full `TurboSparkApp` suite (410 tests). See `crates/ffi/CLAUDE.md` Gotcha 16 and `docs/SWIFT_BINDINGS.md`'s "Generating" section.
-- **`qwen4_exp` (Qwen3.8-Flash-Next) Intake (2026-08-31)**: family/config surface, Phase 0 config gate, n-gram table classification, on-disk layout and refusals, and a streaming self-checked writer that never holds the whole table in memory. Manifest wiring reaches all three consumers. Decode flow landed 2026-09-02; see below and section 2.
-- **`qwen4_exp` Decode Flow Wired End to End (2026-09-02)**: `families/qwen4/` (hyper-connections, sigmoid-gated GDN norm, QSA-as-dense attention, gated MoE, PLE n-gram chain) wired into `RealForwardRunner`, Phases 2-3. Verified against a synthetic fixture only (12 reachability/refusal cases, a mutation-checked frozen digest); no real checkpoint had been tried yet.
-- **`qwen4_exp` Memory Policy and Safetensors Intake (2026-09-03)**: Phase 4 widened `ALLOWED_CACHE_SLOTS` to `[8,...,128]` (this family's 288-expert table costs 126.6 MiB/slot, so the old 32-slot ceiling capped residency at 11%) and added an open-time `expert_cache_slots < top_k_experts` refusal. Wired into the safetensors install path the same day.
-- **`qwen4_exp` Real Install Opens (2026-09-04)**: widened `moe_phase2_down_reduce_k8`'s fixed 8-slot dispatch to a runtime width sized to the caller's own `top_k`, unblocking `~/.turbospark/models/qwen4-reap288.gturbo` (REAP-288, top_k=10) at OPEN with no change to any pre-existing top_k=8 family's dispatch. See section 2.
-- **`qwen4_exp` Router Dtype Fix (2026-09-04)**: `612be53` and `27b666f` taught the safetensors repack orchestrator (`crates/repack/src/gemma4_checkpoint/orchestrate.rs`) to force-quantize `mlp.gate.weight` and `mlp.shared_expert_gate.weight` to INT8-affine for `Qwen4Exp`. Root cause: this REAP-288 checkpoint is a from-safetensors publish that ships both gating matrices raw BF16, where every other MoE family's upstream MLX conversion happens to pre-pack the router as `U32` -- so `families/qwen4/moe.rs`'s INT8-only router GEMV, correct by design, was refusing a checkpoint the repack path had never learned to transcode. Unblocks decode on the real install. See section 2.
-- **`qwen4_exp` QSA Sparse Attention Wired End to End (2026-09-05)**: `families/qwen4/attn.rs` runs the indexer and, above the install's own `index_budget`, block-selected sparse attention in place of the dense fallback. Verified against 17 new synthetic-fixture tests (mutation-checked) and against the real install: coherent greedy and sampled smoke on a 2,940-token prompt, `qwen4exp_quality_gate` and `qwen4exp_memory_oracle` both green and frozen (perplexity 8.7224, peak 2521 MiB against a 3000 MiB ceiling), and a KL-based force-dense probe showing bitwise identity below budget and sub-0.1-nat divergence with 100% argmax agreement above it. Chunked prefill landed later the SAME DAY (see the entry below), so the "open: chunked prefill" clause this entry carried for a few hours is gone; what stays open is a GPU top-k for block selection and the bench-window decision. See `docs/QWEN4_EXP.md` and section 2.
-- **Server Prefix KV Reuse and Session Pool (2026-09-01)**: `turbospark-server` gained a real `--prefix-reuse on|off` flag (default on), verified against a real Gemma 4 install's second turn. A swap-based bounded session pool (`--session-slots N`, default 1) fixes the cross-conversation KV-stomping hazard the flag exposes when several conversations interleave on one runner; two real bugs (a destructive shallow-match rewind, an overly strict eviction discriminator) surfaced only under the real-install interleaved-conversation gate, not the synthetic fixture. See `crates/runtime/CLAUDE.md` Gotcha 32 and `crates/server/CLAUDE.md` Gotchas 31-32, and section 4.
-- **`qwen4_exp` Chunked Prefill, the Seventh Flow (2026-09-05)**: `families/qwen4/prefill.rs`, step 1 again and no new kernel. Both blockers this roadmap had predicted turned out not to exist -- QSA needed nothing (its `encode_full_attention_block` already takes a `&mut PassEncoder` and owns its own above-budget mid-layer commit, and the shared `qsa_positions` buffer is protected by the driver preserving gemma4's per-layer commit-and-wait ordering), and no per-layer position list was required. The real hazard was PLE's `ngram_emb`: a HOST `write_buffer_bytes` that does not respect command-buffer commit order, so a single-row buffer silently fed every token but the last of a micro-batch the wrong n-gram embedding. Caught at chunk span 2 by the boundary test. Both batching seams are now refused by name, the pair every other chunked driver already carried. Verified byte-identical to sequential on 7 synthetic cases and on the real REAP-288 install; **throughput still unmeasured**, which is the one thing the driver exists for.
-- **One `TurnSplitter` for Turn Splitting (2026-09-05)**: three drifting copies of the turn-splitting wiring collapsed into `runtime::turn_stream`, with `StructuredAssistantDecoder` now constructed in exactly one place workspace-wide. Two additive C ABI event kinds (`TS_EVENT_TOOL`, `TS_EVENT_FINISH`) and a `toolCalls` result field; `.toolCall` and `.stopped` on the Swift side. `docs/STREAMING.md` is the home and carries the two measured negatives (no engine-side iterator or async stream, no backpressure in the decode path).
-- **Swift Shell, Hook Contract and Settings Stores (2026-09-05)**: real background shell execution with per-chat scoped ids, shell execution extracted out of the tool registry with cwd persistence and output shaping, five documented divergences from the Claude Code hook contract, the server API key moved to the login Keychain, and appearance settings moved off `UserDefaults`. ~42 new tests. `docs/SWIFT_TOOLS.md` is the home.
-- **Chunked Prefill Becomes Measurable (2026-09-05)**: `turbospark-bench --prefill-chunk off|auto|N` (default OFF) plus a `seq|chunked` arm pair in `scripts/power.sh`. Before this the bench reached only `run_raw_completion` and `run_raw_completion_speculative`, so every throughput and power row ever taken through either tool measured the sequential prefill path regardless of the env seams -- which is why the Prefill Energy Capture row read BLOCKED. Only `TURBOSPARK_PREFILL_CHUNK` needed wiring; the other two seams are read inside the runtime's chunk drivers and needed a header echo. Default-OFF verified by measurement, not argument: pre- and post-change release binaries agree on the stop reason, prompt-token and new-token counts on the real Gemma 4 install, with two pre-change runs agreeing with each other to make the comparison mean something.
-- **PF-02 Step 7 Matrix-Path Re-Tile Measured and Closed (2026-09-05)**: Built `dequant_int4_gemm_mma_wide` (`crates/gpu/src/shaders/dequant_int4_mma.metal`), the four-SIMD-group re-tile that was the last untried lever on `dequant_int4_gemm_mma`, measured it on AC against exact and narrow matrix tiles, and closed it as Do Not Revisit 16 (`74f00d5`). Best cell was 2.10x against a gate of 1.00. Refuted both staging `x` and the 4-SIMD-group matrix-path hypothesis.
-- **Swift User Profiles & Claude Code Plugin System (2026-09-05)**: Multi-user profiles with isolation under `~/Library/Application Support/TurboSpark/profiles/<id>/` and Default user at root (`UserProfileStore`, save-and-relaunch switching, launch overrides `-TurboSparkProfile` / `TURBOSPARK_PROFILE`); Claude Code plugin system with manifests, hooks, skills, agents, marketplace management, and enable cascade (`docs/SWIFT_PROFILES.md`, `docs/SWIFT_PLUGINS.md`).
-- **Swift Git Worktree Manager, Diff Viewer & Timeline (2026-09-05)**: In-app worktree management (`WorktreeModel+Git.swift`, `WorktreeModel+Tree.swift`), worktree listing, branch switching, commit log inspection, unified diff viewer with syntax highlights, and timeline inspector (`d3e0cf4`).
-- **Swift Model Hub Redesign, Context Ladder & Hardware Fit (2026-09-05)**: Context ladder visualizer (`ContextLadderView.swift`), memory fit presentation, hardware fit cards, probe report inspector (`ProbeReportCardView.swift`), model manager filter bar, and installation gating (`ModelInstallGate.swift`, `a7f45ff`).
-- **Swift Settings Tabs, Prompt Composer & Tool Cards Redesign (2026-09-05)**: Redesigned settings tabs (Engine, General, Shortcuts, Appearance, Agents, Hooks), Prompt Composer plus menu, context pills, safety pills, tool approval dropdown, structured tool call cards and code cell view (`ToolCallCardView.swift`, `ToolCodeCellView.swift`), theme typography preview, and server keychain integration (`c34a204`).
-- **Ghost Mode Ephemeral Chats (2026-09-06)**: Ephemeral unpersisted chats in `TurboSparkApp` with memory-only store, distinct UI badge, auto-purging on close/navigation, and UX polish (`38d8b8c`, `d32c102`).
-- **Large File Modularization Refactors (2026-09-05)**: Split oversized files across Swift tests (`RealModelTests`), C ABI (`generate.rs`, `c_surface.rs`), server (`responses.rs`), and runtime (`qwen4_decode.rs`) to conform to repository line count guidelines.
-- **Worktree Consolidation (2026-09-02)**: merged four development worktrees back into `main` -- the two feature branches above, plus the uncommitted `gpt-oss` phase-2 `top_k` specialization and `crates/ffi` prefix-reuse work that had been sitting unstaged directly on `main`. Two worktrees (`qwen3-8-mtp-support`, `roadmap-next-items`) carried no unique commits past what `origin/main` already had and were removed. Full workspace build/fmt/clippy green post-merge.
-- **Vision Memory Sidecar, Parts A1-A6, B1-B3, C (2026-09-06)**: a standalone `<alias>.gturbo-vision/` install format for the vision tower ALONE, so a text-only trunk can gain vision without re-streaming or duplicating its 14+ GB. `model_io::vision_sidecar` (the on-disk format: a degenerate zero-layer manifest plus a `vision_sidecar.json` record naming the pairing family and hidden size, since the manifest cannot itself say "tower, not model"), `RealForwardRunner::attach_vision_sidecar` (runtime binding, called after `open()` and before the tower's lazy first-image open, so a text-only session is unaffected), `--vision-sidecar <PATH>` across `turbospark-check`/`turbospark-server`/the FFI, `MfTokenizer::verify_image_markers` (catches a mismatched sidecar/tokenizer pairing at attach time by name, rather than deep inside `splice_and_walk` on the first real image), and `turbospark-model pull-vision` (a generalized `fetch_prefixed_shards` off the existing MTP-shard fetcher, `catalog::gate` bypassed for a tower row since a BF16 tower repo legitimately carries no quantization block, `resolve_vision_sidecar` to find an installed tower by family and hidden size with no silent pick between two candidates). Part B closes the tower's own memory footprint, all three sub-parts landed the same session: B1 (`VISION_MLP_TILE_ROWS`, row-tiling the MLP's `fc1 -> gelu -> fc2` so `VisionScratch::h1` never holds more than one tile's rows), B2 (aliasing the five `VisionScratch` buffers that are never live at once under the serial encoder's commit-order guarantee, seven physical allocations down to five), and B3 (`crates/runtime/src/vision/budget.rs`, deriving `max_pixels` from the load guard's own memory budget via a binary search against `VisionShape::scratch_bytes`, rather than only from the checkpoint's declared ceiling). Part C (`release_vision_tower`, exposed through `ts_session_release_vision`) frees an open tower's streamer slots or mapped-residency buffer, position table, and a sidecar's own resident weights and mmap, without forgetting the sidecar attachment or un-declaring the install's vision capability. Part D (a Qwen3-VL scoping doc, `docs/QWEN3VL_PHASE0.md`) landed as documentation only, by design. **Verified end to end on real hardware**: `turbospark-model pull-vision qwen38-vision-tower` fetched a real 879 MiB tower from `mlx-community/Qwen3.8-27B-4bit` at the same pinned revision (`3e6447f0`) both existing vision installs were streamed from, and attaching it to the text-only `qwen38-27b.gturbo` produced byte-for-byte identical transcription of the real OCR test page against the combined `qwen38-27b-vision.gturbo` install -- greedy AND a fixed-seed sampled arm, SHA-256-compared -- with text-only generation unperturbed by the attach either way; B3's budget arithmetic was additionally checked against this machine's own real tower under `CLAUDE.local.md`'s stated 36 GiB spec (no clamp needed at the Relaxed tier), and Part C's release was verified on a text-only trunk with a standalone sidecar attached, specifically so a wrongly-forgotten attachment would refuse outright rather than silently pass a trivial byte-identity check. 80 new tests (73 through B1, 0 in B2's pure aliasing, 7 in B3/C), all offline/synthetic; the two real-model vision gates (`vision_tower_parity`, `vision_memory_oracle`) have no sidecar-aware arm yet. `docs/VISION.md`'s "The vision memory sidecar" section is the design record; section 11 above tracks what remains.
-- **TurboQuant KV-Cache Quantization, `--kv-bits` (2026-09-06)**: reverses Do Not Revisit entry 1. `crates/compute::kv_quant` ports mlx-vlm's `_TurboQuantMSECodec` (Lloyd-Max codebook, random Hadamard rotation) as a portable reference; `crates/gpu`'s `kv_quantize_tq.metal` and `attention_tq.metal` are the write-side quantizer and the fused read-side dequant inside attention that `docs/TRUBOQUANT.md`'s original assessment named as the missing, hard part. `crates/model-io::kv_quant` carries the per-layer eligibility policy (mlx-vlm's own `should_quantize_kv_layer`: skip SWA/linear layers always, skip the last full-attention layer when the stack is deeper than two) and the packed-row sizing math, kept dependency-free of `gpu` per `context_policy.rs`'s own precedent. Wired into every family's decode flow (`families/{gemma4,qwen,qwen4,llama,gptoss,museglimmer}/attn.rs`) and end to end through the stack: `crates/invocation`'s `KvBits` (the 5-place rule), `crates/cli` and `crates/server`'s `--kv-bits off|2|3|3.5|4`, `crates/ffi`'s `kvBits` wire option and `SessionInfo.kvBits`, and the Swift binding's `OpenOptions.KvBits` enum. `crates/bench` reaches it ONLY through a separate, more-parameterized opener (`open_model_runner_for_protocol_speculative_kv_quant`) that the plain protocol opener calls with `KvQuant::Off` explicitly -- the same shape speculation and steering already used to keep every frozen memory-oracle and quality-gate row in that crate untouched by an axis nobody asked for (AGENTS.md Gotcha 35). `crates/bench/tests/kv_quant_probe.rs` is the real-install probe (needs `TURBOSPARK_KV_QUANT_INSTALL_DIR`; not yet run against real hardware from this worktree). Real-model smoke (`turbospark-check --kv-bits ...` on an actual install) is still owed. See `docs/TRUBOQUANT.md`, rewritten as the feature's home.
