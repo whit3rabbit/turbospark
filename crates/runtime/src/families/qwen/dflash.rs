@@ -44,6 +44,7 @@ pub(crate) use super::dflash_state::{
     DflashDraftPolicy, DflashShape, DFLASH_AUX_LAYERS, DFLASH_MASK_TOKEN, DFLASH_RESIDUAL_EPS,
     DFLASH_RESIDUAL_SCALE, DFLASH_RING_SLACK, DFLASH_SERVING_BLOCK, DFLASH_TOP_K, DFLASH_WINDOW,
 };
+use super::MOE_SPECULATION_BLOCKER_MARKER;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 
 /// The drafter's per-open state.
@@ -101,9 +102,27 @@ impl DflashState {
                 if !install_has_dflash(index) {
                     return Ok(None);
                 }
+                if arch.num_experts != 0 {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "{MOE_SPECULATION_BLOCKER_MARKER}: this install routes to {} experts, and no \
+                         published MoE checkpoint of this architecture ships a DFlash2 drafter (the \
+                         published one targets the dense half). The batched routed verify itself \
+                         runs, so this is a checkpoint gap and not a missing kernel",
+                        arch.num_experts
+                    )));
+                }
                 DFLASH_SERVING_BLOCK
             }
             DflashDraftPolicy::Fixed(block) => {
+                if arch.num_experts != 0 {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "{MOE_SPECULATION_BLOCKER_MARKER}: this install routes to {} experts, and no \
+                         published MoE checkpoint of this architecture ships a DFlash2 drafter (the \
+                         published one targets the dense half). The batched routed verify itself \
+                         runs, so this is a checkpoint gap and not a missing kernel",
+                        arch.num_experts
+                    )));
+                }
                 if !install_has_dflash(index) {
                     return Err(RealForwardError::Unsupported(format!(
                         "TURBOSPARK_DFLASH_DRAFT={block} asks for the DFlash2 drafter, but this \
@@ -135,7 +154,8 @@ impl DflashState {
         }
 
         let hidden = arch.hidden_size as usize;
-        let shape = DflashShape::derive(index, hidden)?;
+        let vocab = arch.vocab_size as usize;
+        let shape = DflashShape::derive(index, hidden, vocab)?;
         // The install-side half of the aux contract: fc fuses as many
         // states as there are taps below.
         if shape.aux_count != DFLASH_AUX_LAYERS.len() {

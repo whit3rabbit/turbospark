@@ -19,7 +19,8 @@ use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
 use turbospark_repack::build_synthetic_qwen_gdn_moe_install;
 use turbospark_runtime::{
-    run_raw_completion, GenerationConfig, LogitProducer, RawDecodeProgress, RealForwardRunner,
+    run_raw_completion, DflashDraftPolicy, DraftPolicies, GenerationConfig, LogitProducer,
+    MtpDraftPolicy, RawDecodeProgress, RealForwardRunner, SteeringPolicy,
     MOE_SPECULATION_BLOCKER_MARKER,
 };
 
@@ -331,4 +332,36 @@ fn a_moe_install_reports_the_architectural_blocker_and_not_the_missing_head() {
          missing head, got: {blocker}"
     );
     assert_eq!(runner.mtp_draft_depth(), 0);
+}
+
+#[test]
+fn a_dflash_block_on_an_moe_install_is_refused_for_the_experts_not_the_missing_tensor() {
+    let dir = temp_dir();
+    let arch = build_synthetic_qwen_gdn_moe_install(&dir, VOCAB, LAYERS, EXPERTS, "tiny-qwen36")
+        .expect("qwen install builds");
+
+    let err = RealForwardRunner::open_with_slot_policy_speculation_steering_and_sessions(
+        &dir,
+        arch,
+        4096,
+        model_io::ExpertCacheSlots::Fixed(16),
+        DraftPolicies {
+            mtp: MtpDraftPolicy::Off,
+            dflash: DflashDraftPolicy::Fixed(3),
+        },
+        SteeringPolicy::off(),
+        1,
+    )
+    .err()
+    .expect("dflash on MoE install must be refused at open");
+
+    let text = err.to_string();
+    assert!(
+        text.contains(MOE_SPECULATION_BLOCKER_MARKER),
+        "expected error to contain MOE_SPECULATION_BLOCKER_MARKER, got: {text}"
+    );
+    assert!(
+        !text.contains("carries none"),
+        "error must name the expert blocker rather than missing tensor, got: {text}"
+    );
 }

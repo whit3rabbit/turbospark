@@ -125,7 +125,7 @@ fn fp16_view(
 /// `turbospark_repack`'s `VISION_INSTALL_PREFIX`, restated for
 /// [`BLOCK_ROLES`]' reason. `the_resident_prefix_matches_the_writers` pins the
 /// agreement.
-pub(crate) const VISION_PREFIX: &str = "vision.";
+pub(crate) use crate::real_forward_layout::VISION_PREFIX;
 
 impl VisionResident {
     /// Resolve all nine off the resident index.
@@ -200,10 +200,28 @@ impl VisionResident {
 /// kind of accident worth asserting: Metal's `setBuffer:offset:` requires it,
 /// and a violation is a validation-layer abort a long way from the layout
 /// that produced it.
+/// Expected byte size for a block role given the tower's shape.
+pub(crate) fn role_size(role: &str, shape: &VisionShape) -> Option<u64> {
+    let h = shape.hidden as u64;
+    let inter = shape.intermediate as u64;
+    let elems = match role {
+        "ln1_w" | "ln1_b" | "ln2_w" | "ln2_b" | "proj_b" | "fc2_b" => h,
+        "qkv_w" => 3 * h * h,
+        "qkv_b" => 3 * h,
+        "proj_w" => h * h,
+        "fc1_w" => inter * h,
+        "fc1_b" => inter,
+        "fc2_w" => h * inter,
+        _ => return None,
+    };
+    Some(elems * 2)
+}
+
 pub(crate) fn resolve_block_roles(
     entry: &model_io::ExpertEntry,
     block: usize,
     stride: u64,
+    shape: &VisionShape,
 ) -> Result<BlockRoles, RealForwardError> {
     let mut offsets = [0u64; 12];
     for (i, role) in BLOCK_ROLES.iter().enumerate() {
@@ -218,6 +236,14 @@ pub(crate) fn resolve_block_roles(
                  bind FP16; a same-width type would be read as a different number",
                 sub.dtype
             )));
+        }
+        if let Some(expected) = role_size(role, shape) {
+            if sub.size != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "vision block {block} role {role} size {} does not match expected size {expected}",
+                    sub.size
+                )));
+            }
         }
         if sub.offset % 4 != 0 {
             return Err(RealForwardError::Unsupported(format!(
@@ -236,4 +262,78 @@ pub(crate) fn resolve_block_roles(
         offsets[i] = sub.offset;
     }
     Ok(BlockRoles { offsets })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn test_shape() -> VisionShape {
+        VisionShape {
+            depth: 1,
+            hidden: 16,
+            intermediate: 32,
+            heads: 2,
+            head_dim: 8,
+            merge: 2,
+            out_hidden: 16,
+            patch_dim: 16,
+            pos_rows: 16,
+            pos_side: 4,
+            patch_size: 16,
+        }
+    }
+
+    fn make_entry_with_sub(role: &str, size: u64) -> model_io::ExpertEntry {
+        let shape = test_shape();
+        let mut sub_tensors = BTreeMap::new();
+        let mut offset = 0u64;
+        for &r in &BLOCK_ROLES {
+            let r_size = if r == role {
+                size
+            } else {
+                role_size(r, &shape).unwrap()
+            };
+            sub_tensors.insert(
+                r.to_string(),
+                model_io::SubTensorEntry {
+                    offset,
+                    size: r_size,
+                    dtype: "fp16".to_string(),
+                },
+            );
+            offset += r_size;
+        }
+        model_io::ExpertEntry {
+            expert: 0,
+            offset: 0,
+            size: offset,
+            sub_tensors,
+        }
+    }
+
+    #[test]
+    fn block_roles_validates_exact_sizes() {
+        let shape = test_shape();
+        let entry = make_entry_with_sub("ln1_w", role_size("ln1_w", &shape).unwrap());
+        assert!(resolve_block_roles(&entry, 0, 100_000, &shape).is_ok());
+    }
+
+    #[test]
+    fn block_role_wrong_size_is_refused() {
+        let shape = test_shape();
+        let wrong_size = role_size("ln1_w", &shape).unwrap() + 2;
+        let entry = make_entry_with_sub("ln1_w", wrong_size);
+        let err = resolve_block_roles(&entry, 0, 100_000, &shape).expect_err("wrong size");
+        match err {
+            RealForwardError::Unsupported(msg) => {
+                assert!(
+                    msg.contains("role ln1_w size 34 does not match expected size 32"),
+                    "msg: {msg}"
+                );
+            }
+            other => panic!("expected Unsupported error, got {other:?}"),
+        }
+    }
 }

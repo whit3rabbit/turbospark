@@ -129,6 +129,7 @@ impl DflashDraftPolicy {
 /// than restated, so the synthetic fixture exercises the same code the
 /// real install does and a checkpoint that moved a width cannot drift past
 /// open.
+#[derive(Debug)]
 pub(crate) struct DflashShape {
     pub(crate) layers: usize,
     pub(crate) hidden: usize,
@@ -145,7 +146,11 @@ pub(crate) struct DflashShape {
 }
 
 impl DflashShape {
-    pub(crate) fn derive(index: &ResidentIndex, hidden: usize) -> Result<Self, RealForwardError> {
+    pub(crate) fn derive(
+        index: &ResidentIndex,
+        hidden: usize,
+        vocab: usize,
+    ) -> Result<Self, RealForwardError> {
         let shape_of = |name: &str| -> Result<(u32, u32), RealForwardError> {
             let e = entry(index, name)?;
             Ok((e.shape.0, e.shape.1))
@@ -157,7 +162,13 @@ impl DflashShape {
         let (q_rows, _) = shape_of(&dflash_layer_tensor(0, "self_attn.q_proj.weight"))?;
         let (k_rows, _) = shape_of(&dflash_layer_tensor(0, "self_attn.k_proj.weight"))?;
         let (gate_rows, _) = shape_of(&dflash_layer_tensor(0, "mlp.gate_proj.weight"))?;
-        let (_, rank) = shape_of("dflash.candidate_selector.predecessor_codebook")?;
+        let (pred_rows, rank) = shape_of("dflash.candidate_selector.predecessor_codebook")?;
+        let (succ_rows, succ_rank) = shape_of("dflash.candidate_selector.successor_codebook")?;
+        if pred_rows as usize != vocab || succ_rows as usize != vocab || succ_rank != rank {
+            return Err(RealForwardError::Unsupported(format!(
+                "dflash candidate selector codebook shape mismatch: pred [{pred_rows}, {rank}], succ [{succ_rows}, {succ_rank}], expected [{vocab}, {rank}]"
+            )));
+        }
         let (_, fc_cols) = shape_of("dflash.fc.weight")?;
         let layers = (0..)
             .take_while(|&l| {
@@ -231,7 +242,14 @@ pub fn dflash_speculation_blocker(
             arch.num_experts
         ));
     }
-    let full = (0..arch.num_layers as usize).find(|&l| !arch.layer_is_linear(l))?;
+    let full = (0..arch.num_layers as usize).find(|&l| !arch.layer_is_linear(l));
+    let Some(full) = full else {
+        return Some(
+            "the batched verify needs a full-attention layer to probe and this \
+             install declares none"
+                .to_string(),
+        );
+    };
     let probe = prefixed_layer_tensor(TRUNK_PREFIX, full, "self_attn.q_proj.weight");
     match index.entries.get(&probe) {
         None => Some(format!(
@@ -258,6 +276,90 @@ pub fn dflash_speculation_blocker(
                 );
             }
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_install_with_no_full_attention_layer_is_refused_by_name() {
+        let mut arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        arch.full_attention_layer_mask = vec![2; 4];
+        let index = ResidentIndex {
+            header: model_io::ResidentIndexHeader {
+                index_size: 0,
+                resident_size: 0,
+                entry_count: 0,
+            },
+            entries: std::collections::HashMap::new(),
+        };
+        let reason = dflash_speculation_blocker(&index, &arch, true)
+            .expect("should be refused because install declares no full-attention layer");
+        assert!(
+            reason.contains("declares none"),
+            "expected 'declares none' in refusal, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn derive_refuses_mismatched_codebook_shape() {
+        let mut entries = std::collections::HashMap::new();
+        let make_entry = |shape: (u32, u32), size_bytes: u64| model_io::ResidentIndexEntry {
+            name: String::new(),
+            dtype: 0,
+            file_offset: 0,
+            size_bytes,
+            shape: (shape.0, shape.1, 1, 1),
+            scale_offset: 0,
+            scale_size: 0,
+            bias_offset: 0,
+            bias_size: 0,
+        };
+        entries.insert(
+            dflash_layer_tensor(0, "self_attn.q_norm.weight"),
+            make_entry((64, 1), 128),
+        );
+        entries.insert(
+            dflash_layer_tensor(0, "self_attn.q_proj.weight"),
+            make_entry((64, 64), 8192),
+        );
+        entries.insert(
+            dflash_layer_tensor(0, "self_attn.k_proj.weight"),
+            make_entry((64, 64), 8192),
+        );
+        entries.insert(
+            dflash_layer_tensor(0, "mlp.gate_proj.weight"),
+            make_entry((128, 64), 16384),
+        );
+        entries.insert(
+            "dflash.candidate_selector.predecessor_codebook".to_string(),
+            make_entry((100, 32), 6400),
+        );
+        entries.insert(
+            "dflash.candidate_selector.successor_codebook".to_string(),
+            make_entry((200, 32), 12800),
+        );
+        let index = ResidentIndex {
+            header: model_io::ResidentIndexHeader {
+                index_size: 0,
+                resident_size: 0,
+                entry_count: entries.len() as u64,
+            },
+            entries,
+        };
+        let err = DflashShape::derive(&index, 64, 200)
+            .expect_err("should refuse mismatched codebook shape");
+        match err {
+            RealForwardError::Unsupported(msg) => {
+                assert!(
+                    msg.contains("codebook shape mismatch"),
+                    "unexpected msg: {msg}"
+                );
+            }
+            other => panic!("expected Unsupported error, got {other:?}"),
         }
     }
 }

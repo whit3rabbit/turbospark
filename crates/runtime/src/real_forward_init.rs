@@ -336,22 +336,13 @@ mod tests {
     /// three-family sample -- is what lets a new family inherit an answer
     /// nobody gave it (AGENTS.md Gotchas 24, 37 and 39, and `crates/bench`
     /// Gotcha 16's no-wildcard-arm rule).
-    const EVERY_FAMILY: &[ModelFamily] = &[
-        ModelFamily::Gemma4,
-        ModelFamily::QwenGdnMoe,
-        ModelFamily::QwenGdnDense,
-        ModelFamily::DeepseekV4Flash,
-        ModelFamily::Llama,
-        ModelFamily::Qwen3Moe,
-        ModelFamily::GptOss,
-        ModelFamily::MuseGlimmer,
-    ];
+    const EVERY_FAMILY: &[ModelFamily] = &ModelFamily::ALL;
 
     #[test]
     fn mapped_residency_is_served_on_gemma4_and_refused_by_name_everywhere_else() {
         assert_eq!(
             EVERY_FAMILY.len(),
-            8,
+            ModelFamily::ALL.len(),
             "a ModelFamily variant was added without deciding whether it serves \
              mapped expert residency; add it to EVERY_FAMILY and to the dispatch \
              site, or leave it refused deliberately"

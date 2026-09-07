@@ -237,7 +237,11 @@ impl crate::real_forward::RealForwardRunner {
             let slot = RoutedSlot {
                 token: t,
                 bank: t % banks,
-                protect: previous_slots.clone(),
+                protect: if banks == 1 {
+                    std::collections::HashSet::new()
+                } else {
+                    previous_slots.clone()
+                },
             };
             let routed_pass = self.context.begin_pass_labeled("llama moe routed cb");
             let (

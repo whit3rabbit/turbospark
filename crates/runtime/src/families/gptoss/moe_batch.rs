@@ -102,6 +102,16 @@ impl RealForwardRunner {
                 self.slot_buffers[layer].len()
             )));
         }
+        if self
+            .router_hist
+            .as_ref()
+            .is_some_and(crate::router_hist::RouterHistogram::pilot_enabled)
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "batched routed prefill (TURBOSPARK_ROUTED_BATCH) and the router pilot probe \
+                 (TURBOSPARK_PILOT_PROBE) cannot be combined (layer {layer})"
+            )));
+        }
 
         // Router readback for the WHOLE micro-batch at once, then the bias
         // and the host top-k per token. The readback is the per-layer

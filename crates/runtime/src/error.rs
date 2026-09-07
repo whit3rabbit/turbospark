@@ -13,6 +13,7 @@ pub enum RuntimeError {
     },
     Selection(selection::SelectionError),
     Producer(String),
+    ZeroBudget,
     /// Speculative decoding was asked for under a configuration it cannot
     /// serve losslessly. REFUSED rather than silently falling back to the
     /// sequential loop: a caller that asked for speculation and quietly got
@@ -36,6 +37,7 @@ impl fmt::Display for RuntimeError {
             ),
             RuntimeError::Selection(e) => write!(f, "{e}"),
             RuntimeError::Producer(detail) => write!(f, "logit producer failed: {detail}"),
+            RuntimeError::ZeroBudget => write!(f, "max_new_tokens must be greater than 0"),
             RuntimeError::SpeculationUnavailable(detail) => {
                 write!(f, "speculative decoding unavailable: {detail}")
             }

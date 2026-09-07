@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use half::f16;
 use model_io::ExpertCacheSlots;
 use turbospark_repack::{
-    build_synthetic_gemma4_real_install, build_synthetic_qwen_gdn_dense_install,
+    build_synthetic_gemma4_real_install, build_synthetic_qwen4_exp_decode_install,
+    build_synthetic_qwen_gdn_dense_install,
 };
 use turbospark_runtime::{
     ChunkedPrefillRunner, DraftPolicies, LogitProducer, RealForwardRunner, SteeringPolicy,
@@ -329,4 +330,42 @@ fn a_shallow_match_does_not_destroy_a_gdn_familys_recurrent_state() {
         "session A's GDN-carrying session should have been parked (not destroyed) when B's \
          turn ran; expected close to A's full 13-token history reused, got {reused_a2}"
     );
+}
+
+#[test]
+fn a_session_pool_is_refused_by_name_on_qwen4_exp() {
+    let dir = temp_dir();
+    let arch = build_synthetic_qwen4_exp_decode_install(&dir, VOCAB, "qwen4-pool")
+        .expect("qwen4 install builds");
+
+    let runner = RealForwardRunner::open_with_slot_policy_speculation_steering_and_sessions(
+        &dir,
+        arch.clone(),
+        4096,
+        ExpertCacheSlots::Fixed(16),
+        DraftPolicies::off(),
+        SteeringPolicy::off(),
+        1,
+    );
+    assert!(runner.is_ok(), "1 session slot should succeed on qwen4_exp");
+
+    let err = RealForwardRunner::open_with_slot_policy_speculation_steering_and_sessions(
+        &dir,
+        arch,
+        4096,
+        ExpertCacheSlots::Fixed(16),
+        DraftPolicies::off(),
+        SteeringPolicy::off(),
+        2,
+    )
+    .err()
+    .expect("2 session slots must be refused on qwen4_exp");
+
+    let text = err.to_string();
+    assert!(text.contains("--session-slots"), "{text}");
+    assert!(text.contains("gdn"), "{text}");
+    assert!(text.contains("qsa"), "{text}");
+    assert!(text.contains("ngram_context"), "{text}");
+    assert!(text.contains("ple_conv_tail"), "{text}");
+    assert!(text.contains("families/qwen4/state.rs"), "{text}");
 }

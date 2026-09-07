@@ -165,6 +165,19 @@ pub enum ModelFamily {
 }
 
 impl ModelFamily {
+    /// Exhaustive list of all 9 model families.
+    pub const ALL: [ModelFamily; 9] = [
+        ModelFamily::Gemma4,
+        ModelFamily::QwenGdnMoe,
+        ModelFamily::DeepseekV4Flash,
+        ModelFamily::Llama,
+        ModelFamily::Qwen3Moe,
+        ModelFamily::GptOss,
+        ModelFamily::QwenGdnDense,
+        ModelFamily::MuseGlimmer,
+        ModelFamily::Qwen4Exp,
+    ];
+
     /// Returns static string identifier for the model family.
     ///
     /// **THESE STRINGS ARE AN ON-DISK FORMAT AND TWO OF THEM NO LONGER MATCH
@@ -212,5 +225,29 @@ impl ModelFamily {
             "qwen4exp" => Some(ModelFamily::Qwen4Exp),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_families_matches_every_variant_exhaustively() {
+        for (idx, &family) in ModelFamily::ALL.iter().enumerate() {
+            let expected_idx = match family {
+                ModelFamily::Gemma4 => 0,
+                ModelFamily::QwenGdnMoe => 1,
+                ModelFamily::DeepseekV4Flash => 2,
+                ModelFamily::Llama => 3,
+                ModelFamily::Qwen3Moe => 4,
+                ModelFamily::GptOss => 5,
+                ModelFamily::QwenGdnDense => 6,
+                ModelFamily::MuseGlimmer => 7,
+                ModelFamily::Qwen4Exp => 8,
+            };
+            assert_eq!(idx, expected_idx);
+        }
+        assert_eq!(ModelFamily::ALL.len(), 9);
     }
 }

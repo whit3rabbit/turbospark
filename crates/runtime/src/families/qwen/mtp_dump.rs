@@ -26,6 +26,7 @@ impl RealForwardRunner {
         position: usize,
         hidden: usize,
         vocab: usize,
+        has_logits: bool,
     ) {
         let _ = std::fs::create_dir_all(dir);
         let qwen = match self.real_qwen.as_ref() {
@@ -49,7 +50,9 @@ impl RealForwardRunner {
         write("moe_x.f16", &qwen.moe_x, hidden);
         write("block_out.f16", &self.scratch.x, hidden);
         write("post_norm.f16", &self.scratch.normed, hidden);
-        write("logits.f16", &self.scratch.logits, vocab);
+        if has_logits {
+            write("logits.f16", &self.scratch.logits, vocab);
+        }
         let _ = std::fs::write(
             dir.join("meta.json"),
             format!(

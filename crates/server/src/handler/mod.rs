@@ -138,6 +138,7 @@ pub(crate) fn error_response(status: axum::http::StatusCode, message: String) ->
 pub(crate) fn status_for(e: &RuntimeError) -> axum::http::StatusCode {
     match e {
         RuntimeError::EmptyPrompt
+        | RuntimeError::ZeroBudget
         | RuntimeError::ContextOverflow { .. }
         | RuntimeError::Selection(_) => axum::http::StatusCode::BAD_REQUEST,
         // 500 rather than 400: nothing in the REQUEST asks for speculation

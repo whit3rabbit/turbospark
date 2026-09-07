@@ -53,9 +53,14 @@ impl RealForwardRunner {
         let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
             .map_err(RealForwardError::Model)?;
 
-        if let Some(entry) = index.entries.values().find(|e| {
-            GGUF_BLOCK_DTYPES.contains(&e.dtype) && !EXECUTABLE_GGUF_DTYPES.contains(&e.dtype)
-        }) {
+        if let Some(entry) = index
+            .entries
+            .values()
+            .filter(|e| {
+                GGUF_BLOCK_DTYPES.contains(&e.dtype) && !EXECUTABLE_GGUF_DTYPES.contains(&e.dtype)
+            })
+            .min_by_key(|e| &e.name)
+        {
             // The message names the RESIDENT question, not a global one: a
             // type can have routed kernels and no GEMV (MXFP4 does), so
             // "has no kernel in this port" was about to become false while
@@ -82,7 +87,8 @@ impl RealForwardRunner {
         if let Some(entry) = index
             .entries
             .values()
-            .find(|e| !readable_resident_dtype(&e.name, e.dtype))
+            .filter(|e| !readable_resident_dtype(&e.name, e.dtype))
+            .min_by_key(|e| &e.name)
         {
             return Err(RealForwardError::Unsupported(format!(
                 "tensor {} carries resident dtype {}, which no reader in this crate honours; \
@@ -148,6 +154,7 @@ impl RealForwardRunner {
         let router_hist = crate::router_hist::RouterHistogram::from_env(
             expecting.num_layers as usize,
             expecting.num_experts.max(0) as usize,
+            expecting.top_k_experts.max(0) as usize,
         );
         let ffn_hist = crate::ffn_hist::FfnActHist::from_env(&context, &expecting);
         let resid_capture = crate::resid_capture::ResidCapture::from_env(&context, &expecting);
@@ -364,6 +371,22 @@ impl RealForwardRunner {
         // `model_io::context_policy::session_pool_bytes`). `session_slots <= 1`
         // allocates nothing at all, which is the whole byte-identity
         // guarantee for the default case.
+        if session_slots > 1 && runner.real_qwen4.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "--session-slots > 1 is not supported for qwen4_exp: recurrent states \
+                 (gdn, qsa, ngram_context, ple_conv_tail) are not swapped between slots \
+                 (families/qwen4/state.rs)"
+                    .to_string(),
+            ));
+        }
+        if runner.resid_capture.is_some()
+            && runner.real_mtp.is_some()
+            && runner.real_dflash.is_none()
+        {
+            if let Some(msg) = crate::resid_capture::capture_blocker(true, false) {
+                return Err(RealForwardError::Unsupported(msg));
+            }
+        }
         let parked_slots = session_slots.saturating_sub(1);
         let mut pool_slots = Vec::with_capacity(parked_slots);
         for _ in 0..parked_slots {

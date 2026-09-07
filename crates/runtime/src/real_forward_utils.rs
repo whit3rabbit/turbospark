@@ -173,7 +173,8 @@ pub(crate) fn owned_rows(
     let scales = le_bytes_to_u16(&data[scale_local..scale_local + entry.scale_size as usize]);
     let biases = le_bytes_to_u16(&data[bias_local..bias_local + entry.bias_size as usize]);
     let row_bytes = cols / 2;
-    let groups = cols / 64;
+    let group_size = affine_group_size(entry, name, rows, cols, 4)?;
+    let groups = cols / group_size;
     Ok((0..rows)
         .map(|r| compute::quant::Int4AffineRow {
             packed: packed_all[r * row_bytes..(r + 1) * row_bytes].to_vec(),
@@ -288,6 +289,10 @@ pub(crate) fn topk_softmax(logits: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
 /// `physical_slot` is `position % capacity` whatever the layer kind, so a
 /// linear layer simply never reaches the second span.
 pub(crate) fn ring_spans(capacity: usize, base: usize, rows: usize) -> [(usize, usize); 2] {
+    assert!(
+        capacity > 0 && rows <= capacity,
+        "capacity must be positive and rows <= capacity: rows={rows}, capacity={capacity}"
+    );
     let first = rows.min(capacity - base % capacity);
     [(0, first), (first, rows - first)]
 }

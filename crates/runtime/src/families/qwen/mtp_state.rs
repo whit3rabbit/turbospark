@@ -53,6 +53,9 @@ pub(crate) struct MtpState {
     /// keep describing the pre-MTP engine. Sized for `depth + 1` rows,
     /// because a round verifies the confirmed token plus `depth` proposals.
     pub(crate) batched: super::batched::BatchedScratch,
+    /// Surviving intermediates dump directory from TURBOSPARK_MTP_DUMP,
+    /// resolved once at open rather than re-reading the environment on every draft step.
+    pub(crate) dump_dir: Option<std::path::PathBuf>,
 }
 
 impl MtpState {
@@ -141,11 +144,13 @@ impl MtpState {
             true,
         )
         .map_err(RealForwardError::Gpu)?;
+        let dump_dir = dump_dir();
         Ok(Some(Self {
             kv,
             concat: context.new_output_buffer(2 * hidden * 2),
             depth,
             batched,
+            dump_dir,
         }))
     }
 
@@ -281,8 +286,12 @@ impl MtpState {
 /// surviving intermediates into, for `scripts/mtp_bisect.py`. Off by
 /// default, and it OVERWRITES on every step, so a caller that wants a
 /// specific position takes exactly one step with it set.
+pub(crate) fn parse_dump_dir(val: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    val.map(std::path::PathBuf::from)
+}
+
 pub(crate) fn dump_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("TURBOSPARK_MTP_DUMP").map(std::path::PathBuf::from)
+    parse_dump_dir(std::env::var_os("TURBOSPARK_MTP_DUMP"))
 }
 
 /// What a caller asked for, which is NOT the same question as whether the
@@ -343,4 +352,38 @@ impl MtpDraftPolicy {
 /// head is an error rather than a reason to decline.
 pub fn install_has_mtp_head(index: &ResidentIndex) -> bool {
     index.entries.contains_key(FC)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_install_with_no_full_attention_layer_is_refused_by_name() {
+        let mut arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        arch.full_attention_layer_mask = vec![2; 4];
+        let index = ResidentIndex {
+            header: model_io::ResidentIndexHeader {
+                index_size: 0,
+                resident_size: 0,
+                entry_count: 0,
+            },
+            entries: std::collections::HashMap::new(),
+        };
+        let reason = MtpState::speculation_blocker(&index, &arch, true)
+            .expect("should be refused because install declares no full-attention layer");
+        assert!(
+            reason.contains("declares none"),
+            "expected 'declares none' in refusal, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn dump_dir_resolution_maps_os_str() {
+        assert_eq!(
+            parse_dump_dir(Some(std::ffi::OsString::from("/tmp/test_dump"))),
+            Some(std::path::PathBuf::from("/tmp/test_dump"))
+        );
+        assert_eq!(parse_dump_dir(None), None);
+    }
 }

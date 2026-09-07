@@ -179,10 +179,12 @@ impl SteeringState {
                 let r = h.to_f32();
                 sum_sq += r * r;
             }
-            let inv_norm = if sum_sq > 0.0 {
+            let inv_norm = if sum_sq > 0.0 && sum_sq.is_finite() {
                 1.0 / sum_sq.sqrt()
             } else {
-                0.0
+                return Err(RealForwardError::Unsupported(format!(
+                    "steering direction for layer {layer} has zero norm; steering direction must be non-zero"
+                )));
             };
             *slot = Some(LayerSteer { offset, inv_norm });
         }

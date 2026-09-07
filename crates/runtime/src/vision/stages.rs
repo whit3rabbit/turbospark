@@ -68,9 +68,10 @@ pub(crate) fn pos_embed_rows(
     let hidden = shape.hidden;
     let patches = entries.len();
     let mut out = vec![half::f16::ZERO; patches * hidden];
+    let mut acc = vec![0.0f32; hidden];
     for patch in 0..patches {
+        acc.fill(0.0);
         let dst = &mut out[patch * hidden..(patch + 1) * hidden];
-        let mut acc = vec![0.0f32; hidden];
         for corner in 0..4 {
             let row = entries.indices[corner][patch];
             let w = entries.weights[corner][patch];

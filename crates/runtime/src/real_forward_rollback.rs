@@ -41,6 +41,11 @@ impl RealForwardRunner {
     /// previous pass has completed -- `produce` waits on its own command
     /// buffer before returning, so any point between calls is safe.
     pub fn checkpoint(&self) -> RollbackPoint {
+        assert!(
+            self.real_qwen4.is_none(),
+            "checkpoint/rollback is not implemented for qwen4_exp; recurrent/hybrid state \
+             (gdn, qsa, ngram_context, ple_conv_tail) cannot be rolled back (families/qwen4/state.rs)"
+        );
         RollbackPoint {
             position: self.kv.position(),
             gdn: self.real_qwen.as_ref().map(|qwen| qwen.gdn.snapshot()),
@@ -57,6 +62,11 @@ impl RealForwardRunner {
     /// alternative is attending over rows this generation has already
     /// overwritten, which produces plausible text rather than an error.
     pub fn rollback(&mut self, point: &RollbackPoint) {
+        assert!(
+            self.real_qwen4.is_none(),
+            "rollback is not implemented for qwen4_exp; recurrent/hybrid state \
+             (gdn, qsa, ngram_context, ple_conv_tail) cannot be rolled back (families/qwen4/state.rs)"
+        );
         assert!(
             point.position <= self.kv.position(),
             "rollback target is ahead of the cursor"
@@ -108,6 +118,11 @@ impl RealForwardRunner {
         point: &RollbackPoint,
         keep_rows: usize,
     ) -> Result<(), String> {
+        assert!(
+            self.real_qwen4.is_none(),
+            "retaining rollback is not implemented for qwen4_exp; recurrent/hybrid state \
+             (gdn, qsa, ngram_context, ple_conv_tail) cannot be rolled back (families/qwen4/state.rs)"
+        );
         let tape = *self.batched_tape.as_ref().ok_or_else(|| {
             "retaining rollback needs a verify tape; the last trunk pass was not a batched verify"
                 .to_string()

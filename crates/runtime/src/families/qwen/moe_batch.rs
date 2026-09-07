@@ -119,6 +119,14 @@ pub(crate) fn encode_qwen_layer_moe_batched(
             slot_buffers[layer].len()
         )));
     }
+    if router_hist
+        .as_ref()
+        .is_some_and(crate::router_hist::RouterHistogram::pilot_enabled)
+    {
+        return Err(RealForwardError::Unsupported(format!(
+            "batched routed verify and the router pilot probe (TURBOSPARK_PILOT_PROBE) cannot be combined (layer {layer})"
+        )));
+    }
 
     // Router readback for the WHOLE batch at once, then host top-k per
     // token. This is the per-layer blocking wait a batched pass exists to

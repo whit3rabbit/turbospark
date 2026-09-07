@@ -4,8 +4,7 @@ use model_io::encoder_config::EncoderConfig;
 use turbospark_runtime::encoder::weights::{EncoderLayerWeightsOwned, EncoderWeights};
 use turbospark_runtime::{cosine_similarity, EncoderRunner};
 
-#[test]
-fn test_encoder_runner_synthetic() {
+fn build_test_runner() -> EncoderRunner {
     let hidden_size = 16;
     let num_heads = 4;
     let intermediate_size = 32;
@@ -75,7 +74,13 @@ fn test_encoder_runner_synthetic() {
         layers,
     };
 
-    let runner = EncoderRunner::from_parts(config, weights);
+    EncoderRunner::from_parts(config, weights)
+}
+
+#[test]
+fn test_encoder_runner_synthetic() {
+    let runner = build_test_runner();
+    let hidden_size = runner.config.hidden_size;
 
     // Encode single sequence
     let tokens_a = vec![1, 10, 20, 30, 2]; // [CLS], text..., [SEP]
@@ -108,4 +113,104 @@ fn test_encoder_runner_synthetic() {
     assert_eq!(batch_res.len(), 2);
     assert_eq!(batch_res[0], emb_a);
     assert_eq!(batch_res[1], emb_b);
+}
+
+#[test]
+fn encoder_rejects_over_length_input() {
+    let runner = build_test_runner();
+    let tokens = vec![1u32; 65];
+    let err = runner
+        .encode_tokens(&tokens, None)
+        .expect_err("over-length input must be rejected");
+    assert!(err.contains("max_position_embeddings"), "{err}");
+}
+
+#[test]
+fn encoder_rejects_out_of_vocab_token() {
+    let runner = build_test_runner();
+    let tokens = vec![1, 100, 2];
+    let err = runner
+        .encode_tokens(&tokens, None)
+        .expect_err("out-of-vocab token must be rejected");
+    assert!(err.contains("vocab_size"), "{err}");
+}
+
+#[test]
+fn encoder_rejects_bad_token_type_ids() {
+    let runner = build_test_runner();
+    let tokens = vec![1, 10, 2];
+    let mismatched_len = vec![0, 0];
+    let err = runner
+        .encode_tokens(&tokens, Some(&mismatched_len))
+        .expect_err("mismatched length token_type_ids must be rejected");
+    assert!(err.contains("token_type_ids length"), "{err}");
+
+    let out_of_range_type = vec![0, 2, 0];
+    let err2 = runner
+        .encode_tokens(&tokens, Some(&out_of_range_type))
+        .expect_err("out-of-range token_type_ids must be rejected");
+    assert!(err2.contains("type_vocab_size"), "{err2}");
+}
+
+#[test]
+fn missing_tokenizer_refuses_text_encoding_by_name() {
+    let runner = build_test_runner();
+    assert!(runner.tokenizer.is_none());
+
+    let err = runner
+        .encode_text("hello world")
+        .expect_err("encode_text without tokenizer must error");
+    assert!(
+        err.contains("no tokenizer loaded in EncoderRunner"),
+        "error must name missing tokenizer: {err}"
+    );
+
+    let batch_err = runner
+        .encode_batch_text(&["hello", "world"])
+        .expect_err("encode_batch_text without tokenizer must error");
+    assert!(
+        batch_err.contains("no tokenizer loaded in EncoderRunner"),
+        "error must name missing tokenizer: {batch_err}"
+    );
+}
+
+#[test]
+fn quantized_int8_dequantization_parity() {
+    use compute::quant::{dequantize_int8_affine, quantize_int8_affine};
+
+    // 128 elements spanning two 64-element quantization groups
+    let original: Vec<f32> = (0..128).map(|i| ((i as f32) - 64.0) * 0.05).collect();
+
+    let packed_row = quantize_int8_affine(&original);
+    assert_eq!(packed_row.packed.len(), 128);
+    assert_eq!(packed_row.scales.len(), 2);
+    assert_eq!(packed_row.biases.len(), 2);
+
+    let dequantized = dequantize_int8_affine(&packed_row, original.len());
+    assert_eq!(dequantized.len(), original.len());
+
+    // Round-trip within quantization tolerance
+    let mut max_diff = 0.0f32;
+    for (orig, deq) in original.iter().zip(dequantized.iter()) {
+        let diff = (orig - deq).abs();
+        if diff > max_diff {
+            max_diff = diff;
+        }
+    }
+    assert!(
+        max_diff < 0.05,
+        "max absolute difference {max_diff} exceeds tolerance 0.05"
+    );
+
+    // Exact arithmetic check against raw packed bits and scale/bias bfloat16s
+    for (i, (&raw_byte, &deq)) in packed_row.packed.iter().zip(dequantized.iter()).enumerate() {
+        let group = i / 64;
+        let scale = compute::quant::bf16_to_f32(packed_row.scales[group]);
+        let bias = compute::quant::bf16_to_f32(packed_row.biases[group]);
+        let expected = (raw_byte as f32) * scale + bias;
+        assert!(
+            (deq - expected).abs() < 1e-6,
+            "dequantized value {deq} disagrees with scale/bias reconstruction {expected}"
+        );
+    }
 }

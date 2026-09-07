@@ -917,3 +917,11 @@ const FROZEN_LOGITS: [f32; VOCAB as usize] = [
     -5.2578125, 3.5527344, -2.4472656, -5.0195313, 4.7539063, 2.2402344, 3.1171875, 0.21252441,
     -3.2832031, 2.5664063, 0.33251953, 2.1679688, 0.20031738, 7.8867188, 2.7910156, -4.515625,
 ];
+
+#[test]
+#[should_panic(expected = "checkpoint/rollback is not implemented for qwen4_exp")]
+fn checkpoint_and_rollback_panic_on_qwen4_exp() {
+    let (dir, arch) = qwen4_install();
+    let runner = RealForwardRunner::open(&dir, arch).expect("open");
+    let _ = runner.checkpoint();
+}

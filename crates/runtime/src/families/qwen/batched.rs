@@ -403,6 +403,7 @@ impl RealForwardRunner {
             gpu::write_buffer_bytes(&scratch.x, 0, &last);
         }
         gpu::read_buffer_f16_into(&batched.logits, 0, logits);
+        phases.calls += batch as u64;
         // THE TAPE RECORD, valid until the next trunk pass clears it: this
         // pass's start and row count, the metadata half of what
         // `rollback_retaining` needs (the row inputs themselves sit in the

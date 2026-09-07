@@ -269,7 +269,9 @@ impl RealForwardRunner {
         } else {
             pass.relabel("llama dense chunk cb (no head)");
         }
+        let t_wait = Instant::now();
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance_by(m);
 
         let skip_head = !want_head;

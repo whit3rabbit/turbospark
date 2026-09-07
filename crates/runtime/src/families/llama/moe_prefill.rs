@@ -148,7 +148,11 @@ impl RealForwardRunner {
         // `--expert-cache-slots == top_k` panics on the first multi-token
         // prefill (Qwen3-30B-A3B's top_k of 8 hits it; Mixtral's top_k of 2
         // does not, since 8 >= 2 * 2).
-        let banks = routed_pipeline_banks(self.expert_cache_slots, top_k);
+        let banks = if self.routed_pipeline {
+            routed_pipeline_banks(self.expert_cache_slots, top_k)
+        } else {
+            1
+        };
 
         let embed_name = "language_model.model.embed_tokens.weight";
 
@@ -257,7 +261,9 @@ impl RealForwardRunner {
         } else {
             pass.relabel("llama moe chunk cb (no head)");
         }
+        let t_wait = Instant::now();
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance_by(m);
 
         let skip_head = !want_head;

@@ -68,6 +68,7 @@ pub(crate) struct FfnActAccum {
     overlap_pairs: u64,
     decode_passes: u64,
     prefill_passes: u64,
+    order_buf: Vec<u32>,
 }
 
 fn bucket_index(a: f32) -> usize {
@@ -99,6 +100,7 @@ impl FfnActAccum {
             overlap_pairs: 0,
             decode_passes: 0,
             prefill_passes: 0,
+            order_buf: (0..inter as u32).collect(),
         }
     }
 
@@ -136,25 +138,29 @@ impl FfnActAccum {
         // Top-K ids by |act|, descending: one partial select at the largest
         // K, then every smaller K is a prefix of the sorted top slice.
         let k_max = self.ks[OVERLAP_KS.len() - 1];
-        let mut order: Vec<u32> = (0..self.inter as u32).collect();
+        for (i, v) in self.order_buf.iter_mut().enumerate() {
+            *v = i as u32;
+        }
         let desc = |&a: &u32, &b: &u32| {
-            row[b as usize]
-                .abs()
-                .partial_cmp(&row[a as usize].abs())
-                .expect("finite activations")
+            let a_val = row[a as usize].abs();
+            let b_val = row[b as usize].abs();
+            let a_key = if a_val.is_finite() { a_val } else { -1.0 };
+            let b_key = if b_val.is_finite() { b_val } else { -1.0 };
+            b_key
+                .total_cmp(&a_key)
                 // Tie-break on the index so the census is deterministic
                 // for a replayed capture even where FP16 values tie.
                 .then(a.cmp(&b))
         };
         if k_max < self.inter {
-            order.select_nth_unstable_by(k_max - 1, desc);
+            self.order_buf.select_nth_unstable_by(k_max - 1, desc);
         }
-        order[..k_max].sort_unstable_by(desc);
+        self.order_buf[..k_max].sort_unstable_by(desc);
 
         for (ki, &k) in self.ks.iter().enumerate() {
             if count_pair {
                 let prev = &self.prev_top[layer][ki];
-                let hits = order[..k]
+                let hits = self.order_buf[..k]
                     .iter()
                     .filter(|&&id| prev[id as usize / 64] >> (id % 64) & 1 == 1)
                     .count();
@@ -162,7 +168,7 @@ impl FfnActAccum {
             }
             let bits = &mut self.prev_top[layer][ki];
             bits.iter_mut().for_each(|w| *w = 0);
-            for &id in &order[..k] {
+            for &id in &self.order_buf[..k] {
                 bits[id as usize / 64] |= 1 << (id % 64);
             }
         }
@@ -351,5 +357,17 @@ mod tests {
         // buckets 1..=32 empty between them.
         let expected = format!("\"hist_count\":[[1,{}1,", "0,".repeat(32));
         assert!(json.contains(&expected), "hist_count: {json}");
+    }
+
+    #[test]
+    fn nan_activation_lands_in_bucket_63_and_never_ranks() {
+        let mut acc = FfnActAccum::new(1, 2048);
+        let mut x = vec![1.0f32; 2048];
+        x[0] = f32::NAN;
+        acc.record_pass(&x);
+        assert_eq!(acc.hist_count[0][63], 1);
+        let prev = &acc.prev_top[0][0]; // k = 512
+        let id_0_selected = prev[0] & 1 == 1;
+        assert!(!id_0_selected, "NaN must not rank in top-K");
     }
 }

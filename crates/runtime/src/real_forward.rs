@@ -303,10 +303,10 @@ pub struct RealForwardRunner {
     /// `families/qwen/produce.rs`) then execute exactly the statements they
     /// executed before vision existed.
     ///
-    /// Cleared by `reset()` and NOT by `rollback`: a new generation is a new
-    /// prompt, where a stale span map would blit one page's rows into the
-    /// next page's prefill, while a speculative rewind stays inside one
-    /// prompt and still needs the map it was built with.
+    /// Survives both `reset()` and `rollback`: `reset()` is called at the
+    /// start of generation after the caller sets the injection map, and a
+    /// speculative rewind stays inside the prompt. Explicitly cleared by
+    /// [`RealForwardRunner::clear_prompt_vision`].
     pub(crate) prompt_vision: Option<crate::vision::PromptVision>,
     /// Set for the duration of one [`LogitProducer::produce_prefill`] call:
     /// the caller is discarding this token's logits, so the output head

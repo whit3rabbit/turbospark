@@ -85,6 +85,9 @@ fn tool_call_json(call: &ParsedToolCall) -> serde_json::Value {
 /// the SESSION, because under `auto` the caller named no number and the KV
 /// cache was allocated at the resolved one.
 fn clamp_max_new(session: &Session, asked: u32, prompt_len: usize) -> Result<u32, String> {
+    if asked == 0 {
+        return Err("max_new_tokens must be greater than 0".to_string());
+    }
     if prompt_len >= session.max_context as usize {
         return Err(format!(
             "context overflow: the rendered prompt is {prompt_len} tokens and the \

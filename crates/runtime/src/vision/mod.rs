@@ -319,6 +319,7 @@ impl VisionTower {
                     entry,
                     entry.expert,
                     layer.expert_stride,
+                    &shape,
                 )?)
                 .is_some()
             {

@@ -321,7 +321,7 @@ pub unsafe extern "C" fn ts_daemon_start(args_json: *const c_char) -> c_int {
             if s.trim().is_empty() {
                 Vec::new()
             } else {
-                serde_json::from_str(&s).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?
+                serde_json::from_str(s).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?
             }
         } else {
             Vec::new()
@@ -343,7 +343,7 @@ pub unsafe extern "C" fn ts_daemon_restart(args_json: *const c_char) -> c_int {
             if s.trim().is_empty() {
                 Vec::new()
             } else {
-                serde_json::from_str(&s).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?
+                serde_json::from_str(s).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?
             }
         } else {
             Vec::new()

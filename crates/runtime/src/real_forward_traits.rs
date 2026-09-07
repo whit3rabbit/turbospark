@@ -277,8 +277,10 @@ impl SpeculativeProducer for RealForwardRunner {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
-        self.mtp_draft_step(token, position, logits)
-            .map_err(|e| e.to_string())
+        gpu::autorelease_pool(|| {
+            self.mtp_draft_step(token, position, logits)
+                .map_err(|e| e.to_string())
+        })
     }
 
     fn drafts_block_passes(&self) -> bool {
@@ -308,8 +310,10 @@ impl SpeculativeProducer for RealForwardRunner {
                  {block}; open it at or above the block the loop is running"
             ));
         }
-        self.dflash_draft_block(anchor, base, proposals)
-            .map_err(|e| e.to_string())?;
+        gpu::autorelease_pool(|| {
+            self.dflash_draft_block(anchor, base, proposals)
+                .map_err(|e| e.to_string())
+        })?;
         proposals.truncate(block);
         Ok(())
     }
@@ -352,9 +356,10 @@ impl SpeculativeProducer for RealForwardRunner {
         base: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
-        let result = self
-            .produce_batched(feed, base, logits)
-            .map_err(|e| e.to_string());
+        let result = gpu::autorelease_pool(|| {
+            self.produce_batched(feed, base, logits)
+                .map_err(|e| e.to_string())
+        });
         // NOT recorded here, and no longer TAINTED either. This used to
         // taint, on the reasoning that the record would have to track an
         // accept count this method is never told -- which left the

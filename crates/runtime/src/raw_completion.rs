@@ -131,6 +131,9 @@ pub(crate) fn check_admission(
     if prompt_ids.is_empty() {
         return Err(RuntimeError::EmptyPrompt);
     }
+    if config.max_new_tokens == 0 {
+        return Err(RuntimeError::ZeroBudget);
+    }
     let required = prompt_ids.len() as u64 + config.max_new_tokens as u64;
     if required > max_context as u64 {
         return Err(RuntimeError::ContextOverflow {

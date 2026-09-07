@@ -51,7 +51,7 @@ use foundation::LogitValue;
 
 pub(crate) use super::mtp_state::MtpState;
 use super::mtp_state::{
-    dump_dir, FC, FINAL_NORM, PRE_FC_NORM_EMBEDDING, PRE_FC_NORM_HIDDEN, TRUNK_FINAL_NORM,
+    FC, FINAL_NORM, PRE_FC_NORM_EMBEDDING, PRE_FC_NORM_HIDDEN, TRUNK_FINAL_NORM,
 };
 use crate::families::qwen::{
     dense, encode_full_attention_block, prefixed_layer_tensor, QkNormConvention, RopePosition,
@@ -395,11 +395,12 @@ impl RealForwardRunner {
         // and the row is not written until the GPU has run this block.
         pass.commit_and_wait();
         self.real_mtp.as_mut().expect("checked above").kv.advance();
+        let has_logits = logits.is_some();
         if let Some(out) = logits {
             gpu::read_buffer_f16_into(&self.scratch.logits, 0, out);
         }
-        if let Some(dir) = dump_dir() {
-            self.dump_mtp_stage(&dir, next_token, position, hidden, vocab);
+        if let Some(dir) = self.real_mtp.as_ref().and_then(|m| m.dump_dir.as_deref()) {
+            self.dump_mtp_stage(dir, next_token, position, hidden, vocab, has_logits);
         }
         Ok(())
     }

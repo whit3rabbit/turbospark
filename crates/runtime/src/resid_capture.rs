@@ -190,14 +190,19 @@ impl Drop for ResidCapture {
             );
             return;
         }
-        let mut bytes = Vec::with_capacity(self.snapshots.len() * self.layers * self.hidden * 4);
-        for s in &self.snapshots {
-            for v in &s.resid {
-                bytes.extend_from_slice(&v.to_le_bytes());
-            }
-        }
         let data = self.data_path();
-        if let Err(e) = std::fs::write(&data, &bytes) {
+        let write_res = (|| -> std::io::Result<()> {
+            use std::io::Write;
+            let file = std::fs::File::create(&data)?;
+            let mut writer = std::io::BufWriter::new(file);
+            for s in &self.snapshots {
+                for v in &s.resid {
+                    writer.write_all(&v.to_le_bytes())?;
+                }
+            }
+            writer.flush()
+        })();
+        if let Err(e) = write_res {
             eprintln!("[resid-capture] FAILED writing {}: {e}", data.display());
             return;
         }
@@ -268,4 +273,36 @@ pub(crate) fn encode_resid_capture(
         c.hidden() as u32,
     )
     .map_err(crate::real_forward_types::RealForwardError::Gpu)
+}
+
+/// Speculative drafting blockers for residual capture.
+///
+/// Residual capture relies on exactly one snapshot per generation: the
+/// first pass with `skip_head` false (the last prompt token). Under an MTP
+/// drafter, prefill is headful on every token, and MTP draft steps run
+/// after prefill, corrupting the capture buffer and taking snapshots at
+/// unintended positions.
+pub(crate) fn capture_blocker(mtp_open: bool, headless_drafter: bool) -> Option<String> {
+    if mtp_open && !headless_drafter {
+        Some(
+            "residual capture is incompatible with MTP speculative drafting: MTP requires \
+             headful prefill and its draft steps corrupt residual snapshots"
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_blocker_refuses_mtp_without_headless_drafter() {
+        assert!(capture_blocker(true, false).is_some());
+        assert!(capture_blocker(true, true).is_none());
+        assert!(capture_blocker(false, false).is_none());
+        assert!(capture_blocker(false, true).is_none());
+    }
 }

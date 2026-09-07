@@ -252,18 +252,9 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         let context_room = (max_context as usize).saturating_sub(position);
         let round_block = block.min(budget_room).min(context_room);
         if round_block == 0 {
-            // Nothing left worth proposing; fall back to one plain step.
-            producer
-                .produce(next, position, &mut logits)
-                .map_err(RuntimeError::Producer)?;
-            position += 1;
-            next = select(
-                LogitsView::new(&logits),
-                &config.shaping,
-                &sink.history,
-                sink.generated as u64,
-            )?;
-            continue;
+            return Err(RuntimeError::Producer(
+                "round_block is 0: no room after admission; invariant violation".to_string(),
+            ));
         }
 
         // -- Draft. Two shapes, and the producer says which it is:
@@ -287,6 +278,12 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
             producer
                 .draft_block(next, base, round_block, &mut proposals)
                 .map_err(RuntimeError::Producer)?;
+            assert_eq!(
+                proposals.len(),
+                round_block,
+                "draft_block must populate exactly round_block proposals ({round_block} expected, {} produced)",
+                proposals.len()
+            );
         } else {
             let mut chained = next;
             for d in 0..=round_block {

@@ -86,6 +86,41 @@ impl EncoderRunner {
         if input_ids.is_empty() {
             return Err("input_ids cannot be empty".to_string());
         }
+        if input_ids.len() + self.config.position_offset() > self.config.max_position_embeddings {
+            return Err(format!(
+                "sequence length {} with position offset {} exceeds max_position_embeddings {}",
+                input_ids.len(),
+                self.config.position_offset(),
+                self.config.max_position_embeddings
+            ));
+        }
+        if let Some(&bad) = input_ids
+            .iter()
+            .find(|&&id| id as usize >= self.config.vocab_size)
+        {
+            return Err(format!(
+                "token id {bad} exceeds vocab_size {}",
+                self.config.vocab_size
+            ));
+        }
+        if let Some(types) = token_type_ids {
+            if types.len() != input_ids.len() {
+                return Err(format!(
+                    "token_type_ids length {} does not match input_ids length {}",
+                    types.len(),
+                    input_ids.len()
+                ));
+            }
+            if let Some(&bad_type) = types
+                .iter()
+                .find(|&&t| t as usize >= self.config.type_vocab_size)
+            {
+                return Err(format!(
+                    "token type id {bad_type} exceeds type_vocab_size {}",
+                    self.config.type_vocab_size
+                ));
+            }
+        }
 
         let ref_config = self.reference_config();
         let seq = input_ids.len();

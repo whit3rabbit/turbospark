@@ -63,12 +63,26 @@ pub struct EncoderWeights {
     pub layers: Vec<EncoderLayerWeightsOwned>,
 }
 
+pub(crate) fn check_quantization(config: &EncoderConfig) -> Result<(), ModelError> {
+    if let Some(q) = &config.quantization {
+        if q.bits == 8 && q.group_size != compute::quant::GROUP_SIZE {
+            return Err(ModelError::ArchMismatch {
+                field: "quantization.group_size".to_string(),
+                expected: compute::quant::GROUP_SIZE.to_string(),
+                actual: q.group_size.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
 impl EncoderWeights {
     /// Load weights from a safetensors file according to config.
     pub fn load_from_safetensors(
         file: &SafetensorsFile,
         config: &EncoderConfig,
     ) -> Result<Self, ModelError> {
+        check_quantization(config)?;
         let is_int8 = config.is_int8_quantized();
 
         // Helper to load either unquantized or 8-bit quantized linear weights
@@ -187,5 +201,53 @@ impl EncoderWeights {
             emb_ln_bias,
             layers,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use model_io::encoder_config::{EncoderConfig, EncoderQuantization};
+
+    fn make_config(q: Option<EncoderQuantization>) -> EncoderConfig {
+        EncoderConfig {
+            model_type: "bert".to_string(),
+            architectures: vec!["BertModel".to_string()],
+            hidden_size: 16,
+            num_hidden_layers: 1,
+            num_attention_heads: 2,
+            intermediate_size: 32,
+            max_position_embeddings: 64,
+            vocab_size: 100,
+            type_vocab_size: 2,
+            pad_token_id: 0,
+            layer_norm_eps: 1e-5,
+            quantization: q,
+        }
+    }
+
+    #[test]
+    fn check_quantization_validates_group_size() {
+        // None -> Ok
+        assert!(check_quantization(&make_config(None)).is_ok());
+
+        // 64 -> Ok
+        assert!(check_quantization(&make_config(Some(EncoderQuantization {
+            bits: 8,
+            group_size: 64,
+        })))
+        .is_ok());
+
+        // 128 -> Err naming quantization.group_size
+        let err = check_quantization(&make_config(Some(EncoderQuantization {
+            bits: 8,
+            group_size: 128,
+        })))
+        .expect_err("group_size 128 should be rejected");
+
+        assert!(
+            err.to_string().contains("quantization.group_size"),
+            "expected quantization.group_size in error, got: {err}"
+        );
     }
 }

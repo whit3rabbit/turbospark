@@ -119,3 +119,73 @@ fn a_ring_write_splits_at_the_wrap_and_nowhere_else() {
         }
     }
 }
+
+#[test]
+#[should_panic(expected = "capacity must be positive")]
+fn ring_spans_zero_capacity_panics() {
+    let _ = ring_spans(0, 0, 1);
+}
+
+#[test]
+#[should_panic(expected = "rows <= capacity")]
+fn ring_spans_rows_exceeding_capacity_panics() {
+    let _ = ring_spans(10, 0, 11);
+}
+
+#[test]
+fn owned_rows_derives_group_size_and_slices_companion_planes() {
+    let rows = 2;
+    let cols = 128;
+    let group_size = 64;
+    let groups_per_row = cols / group_size;
+    let total_groups = rows * groups_per_row;
+    let packed_bytes = rows * cols / 2;
+    let companion_bytes = total_groups * 2;
+
+    let mut data = vec![0u8; 1024];
+    let packed_off = 0;
+    let scale_off = 256;
+    let bias_off = 512;
+    for i in 0..packed_bytes {
+        data[packed_off + i] = (i + 1) as u8;
+    }
+    for i in 0..total_groups {
+        data[scale_off + i * 2] = (10 + i) as u8;
+        data[bias_off + i * 2] = (20 + i) as u8;
+    }
+
+    let mut entries = std::collections::HashMap::new();
+    entries.insert(
+        "test_tensor".to_string(),
+        ResidentIndexEntry {
+            name: "test_tensor".to_string(),
+            dtype: 1,
+            file_offset: 0,
+            size_bytes: packed_bytes as u64,
+            shape: (rows as u32, cols as u32, 0, 0),
+            scale_offset: scale_off as u64,
+            scale_size: companion_bytes as u64,
+            bias_offset: bias_off as u64,
+            bias_size: companion_bytes as u64,
+        },
+    );
+    let index = model_io::ResidentIndex {
+        header: model_io::ResidentIndexHeader {
+            index_size: 0,
+            resident_size: 1024,
+            entry_count: 1,
+        },
+        entries,
+    };
+
+    let result = super::owned_rows(&index, &data, "test_tensor", rows, cols).unwrap();
+    assert_eq!(result.len(), rows);
+    assert_eq!(result[0].packed.len(), cols / 2);
+    assert_eq!(result[0].scales.len(), groups_per_row);
+    assert_eq!(result[0].biases.len(), groups_per_row);
+    assert_eq!(result[1].scales.len(), groups_per_row);
+    assert_eq!(result[0].scales[0], 10);
+    assert_eq!(result[0].scales[1], 11);
+    assert_eq!(result[1].scales[0], 12);
+    assert_eq!(result[1].scales[1], 13);
+}

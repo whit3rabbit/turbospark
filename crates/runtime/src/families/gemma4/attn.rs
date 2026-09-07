@@ -247,93 +247,41 @@ impl RealForwardRunner {
             &layer_tensor(layer, "post_attention_layernorm.weight"),
             hidden,
         )?;
-        gpu::encode_rms_norm_bf16w(
-            &mut self.context,
-            pass,
-            (&self.scratch.o, 0),
-            post_attn,
-            (&self.scratch.o_normed, 0),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
-        gpu::encode_residual_add(
-            &mut self.context,
-            pass,
-            (&self.scratch.x, x_off),
-            (&self.scratch.o_normed, 0),
-            hidden as u32,
-        )
-        .map_err(gpu_err)?;
-
-        let real = self.real.as_ref().expect("real state present");
-        gpu::encode_rms_norm_no_scale(
-            &mut self.context,
-            pass,
-            (&self.scratch.x, x_off),
-            (&real.router_x, 0),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
         let pre_ffn = norm_view(
             &self.weights,
             &self.index,
             &layer_tensor(layer, "pre_feedforward_layernorm.weight"),
             hidden,
         )?;
-        gpu::encode_rms_norm_bf16w(
-            &mut self.context,
-            pass,
-            (&self.scratch.x, x_off),
-            pre_ffn,
-            (&real.dense_x, x_off),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
         let pre_ffn2 = norm_view(
             &self.weights,
             &self.index,
             &layer_tensor(layer, "pre_feedforward_layernorm_2.weight"),
             hidden,
         )?;
-        gpu::encode_rms_norm_bf16w(
-            &mut self.context,
-            pass,
-            (&self.scratch.x, x_off),
-            pre_ffn2,
-            (&real.routed_x, x_off),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
-
         let router_name = layer_tensor(layer, "router.proj.weight");
         let (router_w, router_scale, router_bias) =
             self.router_offsets_gemma4(&router_name, num_experts, hidden)?;
-        gpu::encode_router_gemv_gemma4(
+
+        let real = self.real.as_ref().expect("real state present");
+        encode_gemma4_layer_tail(
             &mut self.context,
             pass,
-            (
-                self.weights.buffer(),
-                self.weights.gpu_offset(router_w - base),
-            ),
-            (
-                self.weights.buffer(),
-                self.weights.gpu_offset(router_scale - base),
-            ),
-            (
-                self.weights.buffer(),
-                self.weights.gpu_offset(router_bias - base),
-            ),
-            (&real.router_x, 0),
-            (&real.effective_scale[layer], 0),
-            (&real.router_logits_f32, logits_off),
-            num_experts as u32,
-            hidden as u32,
-        )
-        .map_err(gpu_err)?;
+            &self.weights,
+            &self.scratch,
+            real,
+            (&self.scratch.o, 0),
+            x_off,
+            logits_off,
+            layer,
+            hidden,
+            num_experts,
+            base,
+            post_attn,
+            pre_ffn,
+            pre_ffn2,
+            (router_w, router_scale, router_bias),
+        )?;
 
         self.encode_gemma4_pilot_probe(pass, layer, hidden, num_experts, base)?;
 
@@ -433,4 +381,92 @@ impl RealForwardRunner {
             router_entry.bias_offset,
         ))
     }
+}
+
+/// The trailing norms, residual add, and router GEMV shared between the
+/// per-token attention flow and the batched driver.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_gemma4_layer_tail(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    scratch: &crate::real_forward_types::DecodeScratch,
+    real: &super::RealGemmaState,
+    o: (&gpu::MetalBuffer, u64),
+    x_off: u64,
+    logits_off: u64,
+    layer: usize,
+    hidden: usize,
+    num_experts: usize,
+    base: u64,
+    post_attn: (&gpu::MetalBuffer, u64),
+    pre_ffn: (&gpu::MetalBuffer, u64),
+    pre_ffn2: (&gpu::MetalBuffer, u64),
+    router: (u64, u64, u64),
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    gpu::encode_rms_norm_bf16w(
+        context,
+        pass,
+        o,
+        post_attn,
+        (&scratch.o_normed, 0),
+        hidden as u32,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+    gpu::encode_residual_add(
+        context,
+        pass,
+        (&scratch.x, x_off),
+        (&scratch.o_normed, 0),
+        hidden as u32,
+    )
+    .map_err(gpu_err)?;
+
+    gpu::encode_rms_norm_no_scale(
+        context,
+        pass,
+        (&scratch.x, x_off),
+        (&real.router_x, 0),
+        hidden as u32,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+    gpu::encode_rms_norm_bf16w(
+        context,
+        pass,
+        (&scratch.x, x_off),
+        pre_ffn,
+        (&real.dense_x, x_off),
+        hidden as u32,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+    gpu::encode_rms_norm_bf16w(
+        context,
+        pass,
+        (&scratch.x, x_off),
+        pre_ffn2,
+        (&real.routed_x, x_off),
+        hidden as u32,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+
+    let (router_w, router_scale, router_bias) = router;
+    gpu::encode_router_gemv_gemma4(
+        context,
+        pass,
+        (weights.buffer(), weights.gpu_offset(router_w - base)),
+        (weights.buffer(), weights.gpu_offset(router_scale - base)),
+        (weights.buffer(), weights.gpu_offset(router_bias - base)),
+        (&real.router_x, 0),
+        (&real.effective_scale[layer], 0),
+        (&real.router_logits_f32, logits_off),
+        num_experts as u32,
+        hidden as u32,
+    )
+    .map_err(gpu_err)?;
+    Ok(())
 }

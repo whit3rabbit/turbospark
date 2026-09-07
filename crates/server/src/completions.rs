@@ -89,6 +89,9 @@ fn build_config(request: &CompletionRequest) -> Result<GenerationConfig, String>
         None,
         &request.extra,
     )?;
+    if request.max_tokens == Some(0) {
+        return Err("max_tokens must be greater than 0".to_string());
+    }
     Ok(GenerationConfig {
         shaping,
         max_new_tokens: request.max_tokens.unwrap_or(16),
@@ -389,6 +392,16 @@ mod tests {
     fn max_tokens_defaults_to_sixteen() {
         let r = request(serde_json::json!({"model": "m", "prompt": "hi"}));
         assert_eq!(build_config(&r).unwrap().max_new_tokens, 16);
+    }
+
+    #[test]
+    fn zero_max_tokens_is_refused() {
+        let r = request(serde_json::json!({"model": "m", "prompt": "hi", "max_tokens": 0}));
+        let err = build_config(&r).unwrap_err();
+        assert!(
+            err.contains("max_tokens"),
+            "expected max_tokens in err, got: {err}"
+        );
     }
 
     #[test]

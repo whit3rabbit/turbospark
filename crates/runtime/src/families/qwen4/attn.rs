@@ -417,11 +417,12 @@ pub(crate) fn encode_full_attention_block(
             .collect();
         debug_assert!(positions.iter().all(|&p| (p as usize) < visible));
         let capacity = (qwen4.qsa_positions.length() / 4) as usize;
-        assert!(
-            !positions.is_empty() && positions.len() <= capacity,
-            "QSA selected {} positions against a {capacity}-entry buffer",
-            positions.len()
-        );
+        if positions.is_empty() || positions.len() > capacity {
+            return Err(RealForwardError::Unsupported(format!(
+                "QSA selected {} positions against a {capacity}-entry buffer",
+                positions.len()
+            )));
+        }
         // ONE position buffer for all QSA layers, written from the host
         // while the previous layer's indexed attention may still be
         // encoded: safe only because `produce.rs` commits and WAITS on

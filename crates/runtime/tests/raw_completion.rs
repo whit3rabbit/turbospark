@@ -136,6 +136,32 @@ fn rejects_empty_prompt() {
 }
 
 #[test]
+fn a_zero_budget_is_refused_before_any_token_is_emitted() {
+    let tokenizer = load_tokenizer();
+    let vocab_size = tokenizer.vocab_size;
+    let prompt_ids = tokenizer.encode("hi", false);
+    let mut producer = ScriptedLogitProducer::new(Vec::new());
+    let config = greedy_config(0);
+    let mut events = Vec::new();
+
+    let err = run_raw_completion(
+        &mut producer,
+        &tokenizer,
+        &prompt_ids,
+        &config,
+        4096,
+        vocab_size,
+        |e| {
+            events.push(e);
+        },
+    )
+    .expect_err("zero budget must be refused");
+
+    assert_eq!(err, turbospark_runtime::RuntimeError::ZeroBudget);
+    assert!(events.is_empty(), "zero events emitted when budget is 0");
+}
+
+#[test]
 fn rejects_context_overflow() {
     let tokenizer = load_tokenizer();
     let vocab_size = tokenizer.vocab_size;
@@ -201,6 +227,18 @@ fn stop_string_truncates_visible_output() {
 static THERMAL_POLLS: AtomicUsize = AtomicUsize::new(0);
 
 static MEMORY_POLLS: AtomicUsize = AtomicUsize::new(0);
+
+static SEQUENCE_MEMORY_POLLS: AtomicUsize = AtomicUsize::new(0);
+
+/// Probe returning Normal -> Critical -> Normal to test worst-level accumulation.
+fn sequence_memory_probe() -> turbospark_runtime::MemoryPressure {
+    let count = SEQUENCE_MEMORY_POLLS.fetch_add(1, Ordering::Relaxed);
+    match count {
+        0 => turbospark_runtime::MemoryPressure::Normal,
+        1 => turbospark_runtime::MemoryPressure::Critical,
+        _ => turbospark_runtime::MemoryPressure::Normal,
+    }
+}
 
 /// Always `Critical`, so the memory ladder is unambiguously the thing
 /// imposing the cap. A probe returning `Normal` would leave the run
@@ -518,4 +556,176 @@ fn a_prefix_covering_the_whole_prompt_is_clamped_so_one_token_is_always_fed() {
 
     assert_eq!(producer.fed, vec![(12, 2)]);
     assert_eq!(producer.resets, 0);
+}
+
+#[test]
+fn peak_memory_pressure_accumulates_worst_level_and_does_not_regress() {
+    let tokenizer = load_tokenizer();
+    const MAX_NEW: usize = 40;
+    SEQUENCE_MEMORY_POLLS.store(0, Ordering::Relaxed);
+
+    let prompt_ids = tokenizer.encode("hi", false);
+    let h_id = tokenizer
+        .token_to_id("h")
+        .expect("'h' is in the base vocab") as usize;
+    let mut producer =
+        ScriptedLogitProducer::new(repeating_steps(&tokenizer, prompt_ids.len(), h_id, MAX_NEW));
+
+    let result = run_raw_completion(
+        &mut producer,
+        &tokenizer,
+        &prompt_ids,
+        &GenerationConfig {
+            rate: RateControl {
+                max_tokens_per_sec: Some(400.0),
+                thermal_probe: None,
+                memory_probe: Some(sequence_memory_probe),
+            },
+            ..greedy_config(MAX_NEW as u32)
+        },
+        4096,
+        tokenizer.vocab_size,
+        |_| {},
+    )
+    .unwrap();
+
+    assert!(SEQUENCE_MEMORY_POLLS.load(Ordering::Relaxed) >= 3);
+    assert_eq!(
+        result.peak_memory_pressure,
+        turbospark_runtime::MemoryPressure::Critical,
+        "peak memory pressure must retain Critical even after subsequent polls returned Normal"
+    );
+}
+
+/// A chunked-prefill runner that records every chunk and decoded token it is
+/// fed, so chunked reuse arithmetic is verifiable without GPU kernels.
+struct ChunkedRecordingProducer {
+    fed_chunks: Vec<(Vec<i32>, usize)>,
+    fed_decode: Vec<(i32, usize)>,
+    reusable: usize,
+    resets: usize,
+    vocab: usize,
+    next: usize,
+}
+
+impl ChunkedRecordingProducer {
+    fn new(vocab: usize, reusable: usize, next: usize) -> Self {
+        Self {
+            fed_chunks: Vec::new(),
+            fed_decode: Vec::new(),
+            reusable,
+            resets: 0,
+            vocab,
+            next,
+        }
+    }
+}
+
+impl turbospark_runtime::LogitProducer for ChunkedRecordingProducer {
+    fn reset(&mut self) {
+        self.resets += 1;
+    }
+
+    fn try_reuse_prefix(&mut self, _prompt_ids: &[i32]) -> usize {
+        self.reusable
+    }
+
+    fn produce(
+        &mut self,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.fed_decode.push((token, position));
+        logits.copy_from_slice(&one_hot(self.vocab, self.next));
+        Ok(())
+    }
+}
+
+impl turbospark_runtime::ChunkedPrefillRunner for ChunkedRecordingProducer {
+    fn prefill_chunk(
+        &mut self,
+        chunk: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.fed_chunks.push((chunk.to_vec(), start_position));
+        logits.copy_from_slice(&one_hot(self.vocab, self.next));
+        Ok(())
+    }
+}
+
+fn run_chunked_with(
+    producer: &mut ChunkedRecordingProducer,
+    prompt: &[i32],
+    chunk_tokens: usize,
+) -> turbospark_runtime::RawDecodeResult {
+    let tokenizer = load_tokenizer();
+    let config = GenerationConfig {
+        shaping: ShapingConfig::new(0.0, 0, None, 1.0, None).unwrap(),
+        max_new_tokens: 1,
+        stop_strings: Vec::new(),
+        extra_stop_tokens: Vec::new(),
+        rate: RateControl::default(),
+    };
+    let vocab = producer.vocab;
+    turbospark_runtime::run_raw_completion_chunked(
+        producer,
+        &tokenizer,
+        prompt,
+        &config,
+        4096,
+        vocab,
+        chunk_tokens,
+        |_| {},
+    )
+    .expect("chunked run should succeed")
+}
+
+#[test]
+fn chunked_reusable_prefix_skips_those_positions_and_the_reset() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let mut producer = ChunkedRecordingProducer::new(vocab, 2, 7);
+    let result = run_chunked_with(&mut producer, &[10, 11, 12, 13, 14], 2);
+
+    assert_eq!(producer.fed_chunks, vec![(vec![12, 13], 2), (vec![14], 4)]);
+    assert_eq!(producer.resets, 0);
+    assert_eq!(result.reused_prefix_tokens, 2);
+    assert_eq!(result.prompt_tokens, 5);
+    assert_eq!(result.kv_position, 5);
+    assert_eq!(result.kv_backed_token_ids[..5], [10, 11, 12, 13, 14]);
+}
+
+#[test]
+fn chunked_no_reusable_prefix_resets_and_feeds_all_chunks() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let mut producer = ChunkedRecordingProducer::new(vocab, 0, 7);
+    let result = run_chunked_with(&mut producer, &[10, 11, 12, 13, 14], 2);
+
+    assert_eq!(
+        producer.fed_chunks,
+        vec![(vec![10, 11], 0), (vec![12, 13], 2), (vec![14], 4)]
+    );
+    assert_eq!(producer.resets, 1);
+    assert_eq!(result.reused_prefix_tokens, 0);
+    assert_eq!(result.prompt_tokens, 5);
+    assert_eq!(result.kv_position, 5);
+    assert_eq!(result.kv_backed_token_ids[..5], [10, 11, 12, 13, 14]);
+}
+
+#[test]
+fn chunked_prefix_covering_whole_prompt_is_clamped_so_at_least_one_token_is_chunked() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let mut producer = ChunkedRecordingProducer::new(vocab, 99, 7);
+    let result = run_chunked_with(&mut producer, &[10, 11, 12], 2);
+
+    assert_eq!(producer.fed_chunks, vec![(vec![12], 2)]);
+    assert_eq!(producer.resets, 0);
+    assert_eq!(result.reused_prefix_tokens, 2);
+    assert_eq!(result.prompt_tokens, 3);
+    assert_eq!(result.kv_position, 3);
+    assert_eq!(result.kv_backed_token_ids[..3], [10, 11, 12]);
 }

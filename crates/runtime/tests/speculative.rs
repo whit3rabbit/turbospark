@@ -100,6 +100,12 @@ struct ScriptedTarget {
     /// is the only way to see a round that wrote KV rows past the window the
     /// caller sized for.
     high_water: Cell<usize>,
+    is_block_drafter: bool,
+    supports_retaining: bool,
+    supports_headless: bool,
+    retaining_rollback_calls: Cell<usize>,
+    headless_prefill_calls: Cell<usize>,
+    recorded_committed: Cell<Vec<(Vec<i32>, usize)>>,
 }
 
 impl ScriptedTarget {
@@ -113,7 +119,28 @@ impl ScriptedTarget {
             verify_calls: Cell::new(0),
             verify_rows: Cell::new(0),
             high_water: Cell::new(0),
+            is_block_drafter: false,
+            supports_retaining: false,
+            supports_headless: false,
+            retaining_rollback_calls: Cell::new(0),
+            headless_prefill_calls: Cell::new(0),
+            recorded_committed: Cell::new(Vec::new()),
         }
+    }
+
+    fn with_block_drafter(mut self) -> Self {
+        self.is_block_drafter = true;
+        self
+    }
+
+    fn with_retaining_rollback(mut self) -> Self {
+        self.supports_retaining = true;
+        self
+    }
+
+    fn with_headless_prefill(mut self) -> Self {
+        self.supports_headless = true;
+        self
     }
 
     /// What the target says after the token at `position`.
@@ -149,6 +176,17 @@ impl LogitProducer for ScriptedTarget {
         self.cursor += 1;
         self.high_water.set(self.high_water.get().max(self.cursor));
         Ok(())
+    }
+
+    fn produce_prefill(
+        &mut self,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.headless_prefill_calls
+            .set(self.headless_prefill_calls.get() + 1);
+        self.produce(token, position, logits)
     }
 }
 
@@ -251,6 +289,87 @@ impl SpeculativeProducer for ScriptedTarget {
         self.cursor += feed.len();
         self.high_water.set(self.high_water.get().max(self.cursor));
         Ok(())
+    }
+
+    fn drafts_block_passes(&self) -> bool {
+        self.is_block_drafter
+    }
+
+    fn draft_block(
+        &mut self,
+        _anchor: i32,
+        base: usize,
+        round_block: usize,
+        proposals: &mut Vec<i32>,
+    ) -> Result<(), String> {
+        assert!(
+            self.is_block_drafter,
+            "draft_block called on step-wise drafter"
+        );
+        proposals.clear();
+        for i in 0..round_block {
+            let pos = base + i;
+            let id = match self.drafter {
+                Drafter::Perfect => self.truth_at(pos + 1),
+                Drafter::Useless => {
+                    let wrong = (self.truth_at(pos + 1) + 1) % self.vocab as i32;
+                    if wrong == 0 {
+                        1
+                    } else {
+                        wrong
+                    }
+                }
+                Drafter::Alternating => {
+                    if pos % 2 == 0 {
+                        self.truth_at(pos + 1)
+                    } else {
+                        let wrong = (self.truth_at(pos + 1) + 1) % self.vocab as i32;
+                        if wrong == 0 {
+                            1
+                        } else {
+                            wrong
+                        }
+                    }
+                }
+            };
+            proposals.push(id);
+        }
+        self.drafter_cursor = base + round_block;
+        Ok(())
+    }
+
+    fn supports_retaining_rollback(&self) -> bool {
+        self.supports_retaining
+    }
+
+    fn rollback_retaining(
+        &mut self,
+        point: &Self::Checkpoint,
+        keep_rows: usize,
+    ) -> Result<(), String> {
+        assert!(
+            self.supports_retaining,
+            "rollback_retaining called on un-retaining target"
+        );
+        assert!(point.0 <= self.cursor, "point is ahead of cursor");
+        assert!(
+            point.0 + keep_rows <= self.cursor,
+            "keep_rows exceeds verified count"
+        );
+        self.retaining_rollback_calls
+            .set(self.retaining_rollback_calls.get() + 1);
+        self.cursor = point.0 + keep_rows;
+        Ok(())
+    }
+
+    fn supports_headless_prefill(&self) -> bool {
+        self.supports_headless
+    }
+
+    fn record_committed(&mut self, tokens: &[i32], pos0: usize) {
+        let mut rec = self.recorded_committed.take();
+        rec.push((tokens.to_vec(), pos0));
+        self.recorded_committed.set(rec);
     }
 }
 
@@ -606,4 +725,262 @@ fn cancelling_mid_block_reports_cancelled_and_leaves_an_honest_cache() {
         "a cancelled speculative run must not leave the engine ahead of what it reported"
     );
     assert_eq!(result.kv_backed_token_ids.len(), result.kv_position);
+}
+
+#[test]
+fn a_zero_budget_is_refused_before_any_token_is_emitted() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(0);
+
+    let mut producer = ScriptedTarget::new(vocab, truth, Drafter::Perfect);
+    let mut events = Vec::new();
+    let err = run_raw_completion_speculative(
+        &mut producer,
+        &tokenizer,
+        &prompt,
+        &config,
+        4096,
+        vocab,
+        2,
+        |e| events.push(e),
+    )
+    .expect_err("zero budget must be refused");
+
+    assert_eq!(err, turbospark_runtime::RuntimeError::ZeroBudget);
+    assert!(events.is_empty());
+    assert_eq!(producer.cursor, 0);
+}
+
+struct BadBlockDrafterTarget {
+    target: ScriptedTarget,
+}
+
+impl LogitProducer for BadBlockDrafterTarget {
+    fn reset(&mut self) {
+        self.target.reset()
+    }
+    fn produce(
+        &mut self,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.target.produce(token, position, logits)
+    }
+}
+
+impl SpeculativeProducer for BadBlockDrafterTarget {
+    type Checkpoint = (usize, usize);
+    fn prime_drafter(&mut self, next: i32, position: usize) -> Result<(), String> {
+        self.target.prime_drafter(next, position)
+    }
+    fn draft_step(
+        &mut self,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.target.draft_step(token, position, logits)
+    }
+    fn drafts_block_passes(&self) -> bool {
+        true
+    }
+    fn draft_block(
+        &mut self,
+        _anchor: i32,
+        _base: usize,
+        round_block: usize,
+        proposals: &mut Vec<i32>,
+    ) -> Result<(), String> {
+        proposals.extend(std::iter::repeat_n(1, round_block.saturating_sub(1)));
+        Ok(())
+    }
+    fn rewind_drafter(&mut self, pos: usize) -> Result<(), String> {
+        self.target.rewind_drafter(pos)
+    }
+    fn checkpoint(&mut self) -> Self::Checkpoint {
+        self.target.checkpoint()
+    }
+    fn rollback(&mut self, point: &Self::Checkpoint) {
+        self.target.rollback(point)
+    }
+    fn verify(
+        &mut self,
+        feed: &[i32],
+        base: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.target.verify(feed, base, logits)
+    }
+}
+
+#[test]
+#[should_panic(expected = "draft_block must populate exactly round_block proposals")]
+fn bad_block_drafter_length_panics() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(10);
+    let target = ScriptedTarget::new(vocab, truth, Drafter::Perfect);
+    let mut producer = BadBlockDrafterTarget { target };
+    let _ = run_raw_completion_speculative(
+        &mut producer,
+        &tokenizer,
+        &prompt,
+        &config,
+        4096,
+        vocab,
+        4,
+        |_| {},
+    );
+}
+
+#[test]
+fn block_drafter_reproduces_sequential_stream_across_qualities() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(12);
+
+    let (seq, seq_tokens) = run_sequential(&tokenizer, &truth, &prompt, &config, vocab);
+    assert_eq!(seq.reason, StopReason::MaxTokens);
+
+    for drafter in [Drafter::Perfect, Drafter::Useless, Drafter::Alternating] {
+        for block in [1usize, 2, 4] {
+            let mut producer =
+                ScriptedTarget::new(vocab, truth.clone(), drafter).with_block_drafter();
+            let mut events = Vec::new();
+            let result = run_raw_completion_speculative(
+                &mut producer,
+                &tokenizer,
+                &prompt,
+                &config,
+                4096,
+                vocab,
+                block,
+                |e| events.push(e),
+            )
+            .expect("block drafter speculative run");
+
+            let spec_tokens = collect_tokens(&events);
+            assert_eq!(
+                spec_tokens, seq_tokens,
+                "block drafter with {drafter:?} at block {block} drifted from sequential"
+            );
+            assert_eq!(result.new_tokens, seq.new_tokens);
+            assert_eq!(result.reason, seq.reason);
+            assert_eq!(producer.cursor, result.kv_position);
+        }
+    }
+}
+
+#[test]
+fn retaining_rollback_is_invoked_on_rejection_and_reproduces_sequential_stream() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(12);
+
+    let (_seq, seq_tokens) = run_sequential(&tokenizer, &truth, &prompt, &config, vocab);
+
+    // Alternating drafter forces partial acceptance and rollbacks.
+    let mut producer =
+        ScriptedTarget::new(vocab, truth, Drafter::Alternating).with_retaining_rollback();
+    let mut events = Vec::new();
+    let result = run_raw_completion_speculative(
+        &mut producer,
+        &tokenizer,
+        &prompt,
+        &config,
+        4096,
+        vocab,
+        4,
+        |e| events.push(e),
+    )
+    .expect("retaining rollback run");
+
+    assert!(
+        producer.retaining_rollback_calls.get() > 0,
+        "alternating drafter must exercise rollback_retaining"
+    );
+    assert_eq!(collect_tokens(&events), seq_tokens);
+    assert_eq!(producer.cursor, result.kv_position);
+}
+
+#[test]
+fn headless_prefill_is_driven_when_supported_and_reproduces_sequential_stream() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi there friend", false);
+    let config = greedy_config(8);
+
+    let (_seq, seq_tokens) = run_sequential(&tokenizer, &truth, &prompt, &config, vocab);
+
+    let mut producer = ScriptedTarget::new(vocab, truth, Drafter::Perfect).with_headless_prefill();
+    let mut events = Vec::new();
+    let result = run_raw_completion_speculative(
+        &mut producer,
+        &tokenizer,
+        &prompt,
+        &config,
+        4096,
+        vocab,
+        2,
+        |e| events.push(e),
+    )
+    .expect("headless prefill run");
+
+    // All prompt tokens except the last should have called produce_prefill
+    assert_eq!(
+        producer.headless_prefill_calls.get(),
+        prompt.len() - 1,
+        "headless prefill must be called for all prompt tokens except the last"
+    );
+    assert_eq!(collect_tokens(&events), seq_tokens);
+    assert_eq!(producer.cursor, result.kv_position);
+}
+
+#[test]
+fn record_committed_captures_accepted_feed_prefixes() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(10);
+
+    let mut producer = ScriptedTarget::new(vocab, truth, Drafter::Alternating);
+    let _ = run_raw_completion_speculative(
+        &mut producer,
+        &tokenizer,
+        &prompt,
+        &config,
+        4096,
+        vocab,
+        4,
+        |_| {},
+    )
+    .expect("speculative run");
+
+    let committed = producer.recorded_committed.into_inner();
+    assert!(
+        !committed.is_empty(),
+        "speculative rounds must record committed tokens"
+    );
+    for (tokens, pos0) in &committed {
+        assert!(
+            !tokens.is_empty(),
+            "each round must commit at least the anchor token"
+        );
+        assert!(
+            *pos0 >= prompt.len(),
+            "committed tokens start at or after prompt"
+        );
+    }
 }

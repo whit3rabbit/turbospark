@@ -259,9 +259,24 @@ pub(crate) struct RoutedLayerLayout {
 /// cannot drift; matching on dtype names instead would mean tracking how each
 /// writer spells its packed run (the affine ones say `"U32"`, since that is
 /// what the nibbles are packed into).
+fn require_ascending_layers(
+    layout: &model_io::PackedExpertsLayout,
+) -> Result<(), RealForwardError> {
+    for pair in layout.layers.windows(2) {
+        if pair[0].layer >= pair[1].layer {
+            return Err(RealForwardError::Unsupported(format!(
+                "packed layout layers are not in strictly ascending order: layer {} followed by {}",
+                pair[0].layer, pair[1].layer
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn routed_layouts_from_layout(
     layout: &model_io::PackedExpertsLayout,
 ) -> Result<Vec<RoutedLayerLayout>, RealForwardError> {
+    require_ascending_layers(layout)?;
     layout
         .layers
         .iter()
@@ -317,6 +332,7 @@ pub(crate) fn routed_layouts_from_layout(
 pub(crate) fn moe_offsets_from_layout(
     layout: &model_io::PackedExpertsLayout,
 ) -> Result<Vec<gpu::MoeExpertOffsets>, RealForwardError> {
+    require_ascending_layers(layout)?;
     layout
         .layers
         .iter()
@@ -329,25 +345,39 @@ pub(crate) fn moe_offsets_from_layout(
                 })?
                 .sub_tensors;
             let get = |name: &str| -> Result<u32, RealForwardError> {
-                entry
-                    .get(name)
-                    .map(|s| s.offset as u32)
-                    .ok_or_else(|| RealForwardError::MissingTensor(format!("expert blob {name}")))
+                let sub = entry.get(name).ok_or_else(|| {
+                    RealForwardError::MissingTensor(format!("expert blob {name}"))
+                })?;
+                u32::try_from(sub.offset).map_err(|_| {
+                    RealForwardError::Unsupported(format!(
+                        "layer {} expert blob {name} offset {} exceeds 32-bit address space",
+                        l.layer, sub.offset
+                    ))
+                })
             };
             // Absent companions mean a block-quantized blob, not a broken one.
-            let companion =
-                |name: &str| -> u32 { entry.get(name).map(|s| s.offset as u32).unwrap_or(0) };
+            let companion = |name: &str| -> Result<u32, RealForwardError> {
+                let Some(s) = entry.get(name) else {
+                    return Ok(0);
+                };
+                u32::try_from(s.offset).map_err(|_| {
+                    RealForwardError::Unsupported(format!(
+                        "layer {} expert blob {name} offset {} exceeds 32-bit address space",
+                        l.layer, s.offset
+                    ))
+                })
+            };
             let planar = entry.contains_key("gate_scales");
             let offsets = gpu::MoeExpertOffsets {
                 gate_w: get("gate")?,
-                gate_s: companion("gate_scales"),
-                gate_b: companion("gate_biases"),
+                gate_s: companion("gate_scales")?,
+                gate_b: companion("gate_biases")?,
                 up_w: get("up")?,
-                up_s: companion("up_scales"),
-                up_b: companion("up_biases"),
+                up_s: companion("up_scales")?,
+                up_b: companion("up_biases")?,
                 down_w: get("down")?,
-                down_s: companion("down_scales"),
-                down_b: companion("down_biases"),
+                down_s: companion("down_scales")?,
+                down_b: companion("down_biases")?,
             };
             if planar && offsets.down_w % 4 != 0 {
                 return Err(RealForwardError::Unsupported(format!(
@@ -358,4 +388,101 @@ pub(crate) fn moe_offsets_from_layout(
             Ok(offsets)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn make_test_layout(
+        layer_indices: &[usize],
+        gate_offset: u64,
+    ) -> model_io::PackedExpertsLayout {
+        let layers = layer_indices
+            .iter()
+            .map(|&layer| {
+                let mut sub_tensors = BTreeMap::new();
+                sub_tensors.insert(
+                    "gate".to_string(),
+                    model_io::SubTensorEntry {
+                        offset: gate_offset,
+                        size: 64,
+                        dtype: "Q4_0".to_string(),
+                    },
+                );
+                sub_tensors.insert(
+                    "up".to_string(),
+                    model_io::SubTensorEntry {
+                        offset: 64,
+                        size: 64,
+                        dtype: "Q4_0".to_string(),
+                    },
+                );
+                sub_tensors.insert(
+                    "down".to_string(),
+                    model_io::SubTensorEntry {
+                        offset: 128,
+                        size: 64,
+                        dtype: "Q4_0".to_string(),
+                    },
+                );
+                model_io::LayerLayout {
+                    layer,
+                    file: format!("layer_{layer}.bin"),
+                    expert_stride: 256,
+                    experts: vec![model_io::ExpertEntry {
+                        expert: 0,
+                        offset: 0,
+                        size: 256,
+                        sub_tensors,
+                    }],
+                }
+            })
+            .collect();
+        model_io::PackedExpertsLayout {
+            expert_stride: 256,
+            num_layers: layer_indices.len(),
+            experts_per_layer: 1,
+            layers,
+        }
+    }
+
+    #[test]
+    fn out_of_order_layers_are_refused() {
+        let layout = make_test_layout(&[1, 0], 0);
+        let err = routed_layouts_from_layout(&layout).expect_err("out of order layers");
+        match err {
+            RealForwardError::Unsupported(msg) => {
+                assert!(
+                    msg.contains("not in strictly ascending order"),
+                    "msg: {msg}"
+                );
+            }
+            other => panic!("expected Unsupported error, got {other:?}"),
+        }
+
+        let err2 = moe_offsets_from_layout(&layout).expect_err("out of order layers");
+        match err2 {
+            RealForwardError::Unsupported(msg) => {
+                assert!(
+                    msg.contains("not in strictly ascending order"),
+                    "msg: {msg}"
+                );
+            }
+            other => panic!("expected Unsupported error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn offset_overflowing_u32_is_refused() {
+        let layout = make_test_layout(&[0], (u32::MAX as u64) + 1);
+        let err = moe_offsets_from_layout(&layout).expect_err("overflowing offset");
+        match err {
+            RealForwardError::Unsupported(msg) => {
+                assert!(msg.contains("exceeds 32-bit address space"), "msg: {msg}");
+            }
+            other => panic!("expected Unsupported error, got {other:?}"),
+        }
+    }
 }

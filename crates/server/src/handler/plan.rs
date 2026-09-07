@@ -116,6 +116,9 @@ fn build_config(request: &ChatCompletionRequest) -> Result<GenerationConfig, Str
         request.frequency_penalty,
         &request.extra,
     )?;
+    if request.max_tokens == Some(0) || request.max_completion_tokens == Some(0) {
+        return Err("max_tokens must be greater than 0".to_string());
+    }
 
     Ok(GenerationConfig {
         shaping,

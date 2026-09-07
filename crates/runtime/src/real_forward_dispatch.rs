@@ -371,6 +371,9 @@ pub(crate) fn router_topk_gemma4(
     k: usize,
     per_expert_scale: &[f32],
 ) -> (Vec<usize>, Vec<f32>) {
+    if logits.is_empty() || k == 0 {
+        return (Vec::new(), Vec::new());
+    }
     let mut order: Vec<usize> = (0..logits.len()).collect();
     order.sort_by(|&a, &b| logits[b].total_cmp(&logits[a]).then(a.cmp(&b)));
     let selected: Vec<usize> = order.into_iter().take(k).collect();
@@ -380,7 +383,24 @@ pub(crate) fn router_topk_gemma4(
     let weights = selected
         .iter()
         .zip(exps.iter())
-        .map(|(&i, e)| e / sum * per_expert_scale[i])
+        .map(|(&i, e)| {
+            let scale = per_expert_scale.get(i).copied().unwrap_or(1.0);
+            e / sum * scale
+        })
         .collect();
     (selected, weights)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn router_topk_gemma4_handles_empty_or_zero_k() {
+        let (sel, w) = router_topk_gemma4(&[], 4, &[]);
+        assert!(sel.is_empty() && w.is_empty());
+
+        let (sel, w) = router_topk_gemma4(&[1.0, 2.0, 3.0], 0, &[1.0, 1.0, 1.0]);
+        assert!(sel.is_empty() && w.is_empty());
+    }
 }

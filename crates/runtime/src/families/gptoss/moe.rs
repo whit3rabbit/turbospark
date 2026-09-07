@@ -259,7 +259,7 @@ impl crate::real_forward::RealForwardRunner {
                 // Empty when pipelining is off: retire-before-plan has
                 // already run (banks == 1 above), so no slot is in
                 // flight for the plan to avoid.
-                protect: if self.routed_pipeline {
+                protect: if self.routed_pipeline && banks > 1 {
                     previous_slots.clone()
                 } else {
                     std::collections::HashSet::new()

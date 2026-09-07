@@ -1,5 +1,6 @@
 //! Batched attention and router pass encoding for Gemma 4 prefill flow.
 
+use super::attn::encode_gemma4_layer_tail;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::encode_gemm_any;
 use crate::real_forward_types::RealForwardError;
@@ -336,80 +337,28 @@ impl RealForwardRunner {
         let (router_w, router_scale, router_bias) =
             self.router_offsets_gemma4(&router_name, num_experts, hidden)?;
 
+        let real = self.real.as_ref().expect("real state present");
         for t in 0..m {
             let x_off = (t * hidden * 2) as u64;
             let logits_off = (t * num_experts * 4) as u64;
-            gpu::encode_rms_norm_bf16w(
+            encode_gemma4_layer_tail(
                 &mut self.context,
                 pass,
+                &self.weights,
+                &self.scratch,
+                real,
                 (&b_o, x_off),
+                x_off,
+                logits_off,
+                layer,
+                hidden,
+                num_experts,
+                base,
                 post_attn,
-                (&self.scratch.o_normed, 0),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-            gpu::encode_residual_add(
-                &mut self.context,
-                pass,
-                (&self.scratch.x, x_off),
-                (&self.scratch.o_normed, 0),
-                hidden as u32,
-            )
-            .map_err(gpu_err)?;
-
-            let real = self.real.as_ref().expect("real state present");
-            gpu::encode_rms_norm_no_scale(
-                &mut self.context,
-                pass,
-                (&self.scratch.x, x_off),
-                (&real.router_x, 0),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-            gpu::encode_rms_norm_bf16w(
-                &mut self.context,
-                pass,
-                (&self.scratch.x, x_off),
                 pre_ffn,
-                (&real.dense_x, x_off),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-            gpu::encode_rms_norm_bf16w(
-                &mut self.context,
-                pass,
-                (&self.scratch.x, x_off),
                 pre_ffn2,
-                (&real.routed_x, x_off),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-            gpu::encode_router_gemv_gemma4(
-                &mut self.context,
-                pass,
-                (
-                    self.weights.buffer(),
-                    self.weights.gpu_offset(router_w - base),
-                ),
-                (
-                    self.weights.buffer(),
-                    self.weights.gpu_offset(router_scale - base),
-                ),
-                (
-                    self.weights.buffer(),
-                    self.weights.gpu_offset(router_bias - base),
-                ),
-                (&real.router_x, 0),
-                (&real.effective_scale[layer], 0),
-                (&real.router_logits_f32, logits_off),
-                num_experts as u32,
-                hidden as u32,
-            )
-            .map_err(gpu_err)?;
+                (router_w, router_scale, router_bias),
+            )?;
         }
 
         Ok(())

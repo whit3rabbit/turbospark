@@ -202,7 +202,11 @@ impl RealForwardRunner {
 
         // `banks == 1` does not make every slot count safe here: see
         // `routed_pipeline_banks`'s doc and AGENTS.md Gotcha 64.
-        let banks = routed_pipeline_banks(self.expert_cache_slots, top_k);
+        let banks = if self.routed_pipeline {
+            routed_pipeline_banks(self.expert_cache_slots, top_k)
+        } else {
+            1
+        };
 
         let embed_name = "language_model.model.embed_tokens.weight";
         let hc_count = self

@@ -43,7 +43,7 @@ fn the_qwen_flow_still_refuses_chunked_prefill_by_name() {
         .prefill_chunk(&[5, 9], 0, &mut logits)
         .expect_err("the qwen flow must refuse chunked prefill by name, not fall back");
     assert!(
-        !err.is_empty(),
-        "the refusal must name the flows it DOES serve rather than being silent"
+        err.contains("Gemma 4") || err.to_lowercase().contains("gemma"),
+        "the refusal must name the flows it DOES serve rather than being silent, got: {err}"
     );
 }

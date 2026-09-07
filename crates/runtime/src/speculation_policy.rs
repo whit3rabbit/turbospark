@@ -321,7 +321,15 @@ pub fn resolve_speculation(
         (Speculation::Block(_), Some(reason)) => Err(format!(
             "--speculative was asked for but cannot be served: {reason}"
         )),
-        (Speculation::Block(n), None) => Ok(SpeculationPlan::Enabled { block: n as usize }),
+        (Speculation::Block(n), None) => {
+            if !foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS.contains(&n) {
+                return Err(format!(
+                    "--speculative was asked for but cannot be served: block {n} is outside allowed range {:?}",
+                    foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS
+                ));
+            }
+            Ok(SpeculationPlan::Enabled { block: n as usize })
+        }
     }
 }
 

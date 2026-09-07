@@ -114,3 +114,117 @@ fn the_two_unsteerable_families_are_the_expected_ones() {
     .collect();
     assert_eq!(unsupported, vec![F::DeepseekV4Flash, F::Qwen4Exp]);
 }
+
+#[test]
+fn a_zero_norm_steering_direction_is_refused_naming_the_layer() {
+    let context = gpu::MetalContext::new().expect("Metal device");
+    let arch = turbospark_repack::tiny_gemma4_arch(128, 1);
+    let hidden = arch.hidden_size as usize;
+    let set = model_io::SteeringSet {
+        layers: vec![Some(model_io::LayerDirection::new(vec![0.0; hidden]))],
+        hidden,
+        declared_mode: None,
+        declared_arch: None,
+    };
+    let policy = SteeringPolicy {
+        set: Some(set),
+        mode: foundation::SteeringMode::Add,
+        alpha: 1.0,
+        target: 0.0,
+        gate_threshold: 0.0,
+    };
+    let res = SteeringState::build(&context, &arch, &policy);
+    let err = match res {
+        Err(e) => e,
+        Ok(_) => panic!("expected zero norm steering direction to be refused"),
+    };
+    match err {
+        RealForwardError::Unsupported(msg) => {
+            assert!(msg.contains("layer 0 has zero norm"), "msg: {msg}");
+        }
+        other => panic!("expected Unsupported error, got {other:?}"),
+    }
+}
+
+#[test]
+fn nan_steering_parameters_are_refused() {
+    let context = gpu::MetalContext::new().expect("Metal device");
+    let arch = turbospark_repack::tiny_gemma4_arch(128, 1);
+    let hidden = arch.hidden_size as usize;
+    let make_policy = |alpha: f32, target: f32, gate: f32| {
+        let set = model_io::SteeringSet {
+            layers: vec![Some(model_io::LayerDirection::new(vec![1.0; hidden]))],
+            hidden,
+            declared_mode: None,
+            declared_arch: None,
+        };
+        SteeringPolicy {
+            set: Some(set),
+            mode: foundation::SteeringMode::Add,
+            alpha,
+            target,
+            gate_threshold: gate,
+        }
+    };
+
+    for (alpha, target, gate) in [
+        (f32::NAN, 0.0, 0.0),
+        (1.0, f32::NAN, 0.0),
+        (1.0, 0.0, f32::NAN),
+    ] {
+        let policy = make_policy(alpha, target, gate);
+        let res = SteeringState::build(&context, &arch, &policy);
+        match res {
+            Err(RealForwardError::Unsupported(msg)) => {
+                assert!(
+                    msg.contains("steering parameters must be finite"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            Err(other) => panic!("expected Unsupported error for NaN parameter, got {other:?}"),
+            Ok(_) => panic!("expected Unsupported error for NaN parameter, got Ok"),
+        }
+    }
+}
+
+#[test]
+fn steering_state_build_computes_inv_norm_from_f16_values_and_packs_offsets() {
+    let context = gpu::MetalContext::new().expect("Metal device");
+    let arch = turbospark_repack::tiny_gemma4_arch(128, 2);
+    let hidden = arch.hidden_size as usize;
+
+    let mut dir0 = vec![0.0f32; hidden];
+    dir0[0] = 3.0;
+    dir0[1] = 4.0;
+
+    let set = model_io::SteeringSet {
+        layers: vec![
+            Some(model_io::LayerDirection::new(dir0)),
+            None, // layer 1 unsteered
+        ],
+        hidden,
+        declared_mode: None,
+        declared_arch: None,
+    };
+    let policy = SteeringPolicy {
+        set: Some(set),
+        mode: foundation::SteeringMode::Ablate,
+        alpha: 1.0,
+        target: 0.0,
+        gate_threshold: 0.0,
+    };
+
+    let state = SteeringState::build(&context, &arch, &policy)
+        .expect("build should succeed")
+        .expect("state must be Some");
+
+    assert_eq!(state.layers.len(), 2);
+    let l0 = state.layers[0].expect("layer 0 must be present");
+    assert_eq!(l0.offset, 0);
+    // sqrt(3^2 + 4^2) = 5.0, 1 / 5 = 0.2
+    assert!((l0.inv_norm - 0.2).abs() < 1e-5);
+    assert!(
+        state.layers[1].is_none(),
+        "layer 1 was not in set and must be None"
+    );
+}

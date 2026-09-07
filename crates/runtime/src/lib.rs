@@ -46,6 +46,8 @@ mod real_forward_types;
 #[cfg(target_os = "macos")]
 mod real_forward_utils;
 #[cfg(target_os = "macos")]
+mod real_forward_vision_api;
+#[cfg(target_os = "macos")]
 mod resid_capture;
 #[cfg(target_os = "macos")]
 mod router_hist;

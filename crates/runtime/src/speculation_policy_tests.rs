@@ -594,3 +594,20 @@ fn a_headless_moe_install_is_refused_for_its_architecture_not_its_head() {
         "the NO_HEAD fixture must stay a verbatim copy of the engine's arm: {dense}"
     );
 }
+
+#[test]
+fn a_block_outside_allowed_range_is_refused() {
+    for invalid in [0, 16, 100] {
+        let err = resolve_speculation(
+            Speculation::Block(invalid),
+            SpeculativeDrafter::Mtp,
+            None,
+            true,
+        )
+        .expect_err("block outside allowed range must be refused");
+        assert!(
+            err.contains("outside allowed range"),
+            "expected 'outside allowed range' in refusal, got: {err}"
+        );
+    }
+}

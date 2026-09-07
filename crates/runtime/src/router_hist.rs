@@ -60,7 +60,7 @@ pub(crate) struct RouterHistogram {
 impl RouterHistogram {
     /// `Some` only when `TURBOSPARK_ROUTER_HIST` names an output path and the
     /// install actually routes (dense installs have nothing to count).
-    pub(crate) fn from_env(num_layers: usize, num_experts: usize) -> Option<Self> {
+    pub(crate) fn from_env(num_layers: usize, num_experts: usize, top_k: usize) -> Option<Self> {
         let path = std::env::var_os("TURBOSPARK_ROUTER_HIST")?;
         if num_experts == 0 {
             return None;
@@ -76,7 +76,7 @@ impl RouterHistogram {
             trace,
             pred,
             pilot_self_test,
-            top_k: 0,
+            top_k,
         })
     }
 
