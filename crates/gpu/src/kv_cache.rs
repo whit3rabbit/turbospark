@@ -40,20 +40,6 @@ pub enum LayerKind {
     Compressed,
 }
 
-/// A read view the attention kernels bind.
-pub struct KvView<'a> {
-    /// Reference to underlying Metal GPU buffer storing key or value states.
-    pub buffer: &'a metal::Buffer,
-    /// Byte offset of logical position 0. Always 0 under linear storage.
-    pub offset: usize,
-    /// Bytes per token for the half (K or V) this view reads.
-    pub stride: usize,
-    /// Number of valid positions written so far.
-    pub valid_token_count: usize,
-    /// Ring start slot. 0 under linear storage.
-    pub start_slot: usize,
-}
-
 /// KV cache manager orchestrating per-layer Metal buffers for token generation.
 pub struct KvCacheManager {
     max_context: usize,
@@ -254,11 +240,6 @@ impl KvCacheManager {
     /// Bytes per token for `layer`'s K side. Equal to [`Self::v_stride`] on
     /// every FP16 layer; the two can differ on a TurboQuant-quantized one
     /// (K and V bit widths need not match, e.g. K3/V4).
-    pub fn stride(&self, layer: usize) -> usize {
-        self.k_strides[layer]
-    }
-
-    /// Bytes per token for `layer`'s K side.
     pub fn k_stride(&self, layer: usize) -> usize {
         self.k_strides[layer]
     }
@@ -364,40 +345,6 @@ impl KvCacheManager {
         write_into(buffer, offset, bytes);
     }
 
-    /// Returns key buffer view bound at the current cursor position.
-    pub fn key_view(&self, layer: usize) -> KvView<'_> {
-        self.key_view_at(layer, self.position)
-    }
-
-    /// Returns key buffer view for a given valid token count.
-    pub fn key_view_at(&self, layer: usize, valid_token_count: usize) -> KvView<'_> {
-        self.validate_valid_token_count(valid_token_count);
-        KvView {
-            buffer: &self.k_buffers[layer],
-            offset: 0,
-            stride: self.k_strides[layer],
-            valid_token_count,
-            start_slot: self.ring_start_slot(layer, valid_token_count),
-        }
-    }
-
-    /// Returns value buffer view bound at the current cursor position.
-    pub fn value_view(&self, layer: usize) -> KvView<'_> {
-        self.value_view_at(layer, self.position)
-    }
-
-    /// Returns value buffer view for a given valid token count.
-    pub fn value_view_at(&self, layer: usize, valid_token_count: usize) -> KvView<'_> {
-        self.validate_valid_token_count(valid_token_count);
-        KvView {
-            buffer: &self.v_buffers[layer],
-            offset: 0,
-            stride: self.v_strides[layer],
-            valid_token_count,
-            start_slot: self.ring_start_slot(layer, valid_token_count),
-        }
-    }
-
     /// Advance the position cursor once the current token's K/V are written
     /// across all layers.
     pub fn advance(&mut self) {
@@ -420,29 +367,10 @@ impl KvCacheManager {
         );
     }
 
-    fn validate_valid_token_count(&self, count: usize) {
-        assert!(
-            count <= self.max_context,
-            "valid_token_count exceeds max_context"
-        );
-    }
-
     fn physical_slot(&self, layer: usize, position: usize) -> usize {
         let capacity = self.capacity_tokens[layer];
         assert!(capacity > 0, "layer has no KV storage");
         position % capacity
-    }
-
-    fn ring_start_slot(&self, layer: usize, valid_token_count: usize) -> usize {
-        if !self.fp16_ring_enabled || self.kinds[layer] != LayerKind::Swa {
-            return 0;
-        }
-        let capacity = self.capacity_tokens[layer];
-        if valid_token_count <= capacity {
-            0
-        } else {
-            valid_token_count % capacity
-        }
     }
 }
 

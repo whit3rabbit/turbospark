@@ -232,6 +232,29 @@ impl RoutedBlobLayout {
             }
         })
     }
+
+    /// The library and a representative function name whose `RoutedBlobs`
+    /// argument-buffer layout `RoutedBlobsBuffer` should reflect for this
+    /// layout's group (S7). `Affine` is the vendored pair's own library;
+    /// every GGUF variant compiles from `moe_gguf`'s ONE concatenated
+    /// library (`crates/gpu/CLAUDE.md` Gotcha 4), so any one of its entry
+    /// points reflects the same struct layout -- which kernel actually runs
+    /// is still resolved per layer by `encode_moe_phase1_any`, this only
+    /// picks which reflection the shared argument buffer is built from.
+    pub(crate) fn source_function(self) -> (&'static str, &'static str) {
+        match self {
+            RoutedBlobLayout::Affine => {
+                (gpu::moe_decode_source(), "moe_phase1_gate_up_act_u16load")
+            }
+            RoutedBlobLayout::GgufQ8_0
+            | RoutedBlobLayout::GgufQ4K
+            | RoutedBlobLayout::GgufIq3Xxs
+            | RoutedBlobLayout::GgufIq4Xs
+            | RoutedBlobLayout::GgufIq4Nl
+            | RoutedBlobLayout::GgufMxfp4
+            | RoutedBlobLayout::GgufQ6K => (gpu::moe_gguf_source(), "moe_phase1_gate_up_act_q8_0"),
+        }
+    }
 }
 
 /// Which layout each PHASE of one layer's routed experts uses.

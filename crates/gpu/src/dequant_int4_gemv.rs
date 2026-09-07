@@ -199,6 +199,17 @@ pub fn encode_dequant_int4_gemv_resident(
 ) -> Result<(), GpuError> {
     assert_eq!(w.cols % 64, 0, "N must be a multiple of 64");
     assert!(w.rows > 0);
+    // `dequant_int4.metal`'s inner loop reads `x` through a `half4` cast
+    // (`dequant_int4.metal:139-140`), so a caller-supplied offset (a token
+    // slot in a shared scratch buffer, not the freshly-allocated buffer the
+    // `_resident` sibling below always binds at 0) must be 8-byte aligned or
+    // the vectorized read straddles the wrong halfs. `dispatch.rs`'s own doc
+    // states the general 2-byte rule this kernel is the one exception to.
+    assert_eq!(
+        x.1 % 8,
+        0,
+        "x offset must be half4-aligned (8 bytes) for the INT4 GEMV's vectorized read"
+    );
     let m_u32 = w.rows as u32;
     let n_u32 = w.cols as u32;
     let (constants, key) = specialized_constants(m_u32, n_u32);

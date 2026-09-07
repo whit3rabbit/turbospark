@@ -284,8 +284,10 @@ kernel void gdn_conv_tail_update(
     // would occur between threads in different threadgroups. Stage through
     // a register and rely on the separate raw-row case being the common
     // path; for the tiny T < history case the kernel is dispatched with a
-    // single threadgroup per channel column (grid.y == history <= 8), and
-    // the loop below performs the ordered shift instead.
+    // single threadgroup per channel column (grid.y == history, which with
+    // dilation > 1 is (taps - 1) * dilation and can exceed 8 -- PLE's
+    // dilation=3 over 4 taps makes it 9), and the loop below performs the
+    // ordered shift instead.
     if (T >= history) {
         tail[j * C + ch] = value;
         return;

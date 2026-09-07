@@ -84,7 +84,7 @@ fn stride_matches_kv_heads_times_head_dim_times_two() {
     let context = MetalContext::new().unwrap();
     let arch = toy_arch(vec![0]);
     let cache = KvCacheManager::new(context.device(), &arch, 32, false, None, 8, None).unwrap();
-    assert_eq!(cache.stride(0), 2 * 8 * 2); // num_kv_heads * head_dim * fp16
+    assert_eq!(cache.k_stride(0), 2 * 8 * 2); // num_kv_heads * head_dim * fp16
 }
 
 #[test]
@@ -159,19 +159,6 @@ fn reset_zeroes_the_position_cursor() {
     assert_eq!(cache.position(), 0);
 }
 
-#[test]
-fn key_view_reports_valid_token_count_and_ring_start_slot() {
-    let context = MetalContext::new().unwrap();
-    let arch = toy_arch(vec![0]);
-    let mut cache =
-        KvCacheManager::new(context.device(), &arch, 1000, true, Some(4), 4, None).unwrap();
-    // ring capacity = 4 + 4 = 8.
-    cache.advance_by(10);
-    let view = cache.key_view(0);
-    assert_eq!(view.valid_token_count, 10);
-    assert_eq!(view.start_slot, 10 % 8);
-}
-
 /// Static KV accounting for the real Gemma 4 shape at the CLI's 4K
 /// default: the fp16 ring caps the 25 SWA layers at 1024 + 128 = 1152
 /// rows while the 5 full layers stay linear at 4096. Total KV bytes are
@@ -188,11 +175,11 @@ fn real_gemma4_shape_kv_bytes_match_swift_budget() {
     for layer in 0..30 {
         if arch.full_attention_layer_mask[layer] == 0 {
             assert_eq!(cache.ring_capacity(layer), 1152);
-            assert_eq!(cache.stride(layer), 8 * 256 * 2);
+            assert_eq!(cache.k_stride(layer), 8 * 256 * 2);
         } else {
             assert_eq!(cache.ring_capacity(layer), 0);
             assert_eq!(cache.capacity(layer), 4096);
-            assert_eq!(cache.stride(layer), 2 * 512 * 2);
+            assert_eq!(cache.k_stride(layer), 2 * 512 * 2);
         }
         // K and V buffers per layer.
         total += 2 * cache.buffer_length(layer);

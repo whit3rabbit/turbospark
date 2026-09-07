@@ -154,8 +154,9 @@ pub(crate) fn encode_llama_layer_moe(
         RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
     })?;
     let offsets = &moe_offsets[layer];
+    let (blob_source, blob_function) = routed_layouts[layer].phase1.source_function();
     routed
-        .bind(context, use_silu, &blob_refs)
+        .bind_for(context, blob_source, blob_function, use_silu, &blob_refs)
         .map_err(gpu_err)?;
     phases.bind_nanos += t_bind.elapsed().as_nanos() as u64;
 

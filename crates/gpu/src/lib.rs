@@ -27,12 +27,15 @@
 //! the resident mmap), `wrap_page_aligned_no_copy` (streamer slot wrap),
 //! `KvCacheManager` (persistent K/V, `RealForwardRunner`'s cache),
 //! `PassEncoder` (many kernels per command buffer, serial encoder), and
-//! the pipeline cache keyed by function constants. Still vendored-only or
-//! absent: the `sample` kernel and fused lm_head (no CPU reference — see
-//! `DEVIATIONS.md`), `moe.metal`'s routers/top-k selectors/INT2 family,
-//! the chunked-prefill tile pipeline (scratch allocated, kernel
-//! descoped), `fused.metal`, and the GDN/DSV4 compute kernels (state
-//! managers only).
+//! the pipeline cache keyed by function constants. `moe.metal`'s router
+//! GEMV (`router_gemv_gemma4_r4`, INT8-weight) IS dispatched, across nearly
+//! every family; its top-k selection stays host-side (the runtime's own
+//! top-k, not this kernel). Still vendored-only or absent: the `sample`
+//! kernel and fused lm_head (no CPU reference -- see `DEVIATIONS.md`),
+//! `moe.metal`'s parallel top-k selector kernels and the whole DeepSeek-V4
+//! INT2 family, the chunked-prefill tile pipeline (scratch allocated,
+//! kernel descoped), `fused.metal`, and the DSV4 compute kernels (state
+//! manager only).
 
 #[cfg(target_os = "macos")]
 mod attention_decode;
@@ -121,8 +124,7 @@ mod vision;
 
 #[cfg(target_os = "macos")]
 pub use attention_decode::{
-    attention_decode, attention_decode_buffers, encode_attention_decode, AttentionScratch,
-    MAX_DECODE_ATTENTION_HEAD_DIM,
+    attention_decode, encode_attention_decode, AttentionScratch, MAX_DECODE_ATTENTION_HEAD_DIM,
 };
 #[cfg(target_os = "macos")]
 pub use attention_indexed::{attention_decode_indexed, encode_attention_decode_indexed};
@@ -217,7 +219,7 @@ pub use gdn_state::{GdnSnapshot, GdnStateManager};
 #[cfg(target_os = "macos")]
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
-pub use kv_cache::{KvCacheManager, KvView, LayerKind};
+pub use kv_cache::{KvCacheManager, LayerKind};
 #[cfg(target_os = "macos")]
 pub use kv_quant_tables::{KvQuantTables, TqSideTables};
 #[cfg(target_os = "macos")]
@@ -226,16 +228,16 @@ pub use kv_quantize::encode_kv_quantize_tq;
 pub use logit_softmax::{encode_logit_softcap_softmax, logit_softcap_softmax};
 #[cfg(target_os = "macos")]
 pub use moe_decode::{
-    encode_moe_phase1, encode_moe_phase2, encode_router_gemv_gemma4, router_gemv_gemma4,
-    MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
+    encode_moe_phase1, encode_moe_phase2, encode_router_gemv_gemma4, moe_decode_source,
+    router_gemv_gemma4, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
     encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
     encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl,
     encode_moe_phase2_mxfp4, encode_moe_phase2_q4_k, encode_moe_phase2_q6_k,
-    encode_moe_phase2_q8_0, mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
-    PHASE2_FIXED_SLOTS,
+    encode_moe_phase2_q8_0, moe_gguf_source, mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES,
+    MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{

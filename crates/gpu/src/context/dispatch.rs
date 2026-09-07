@@ -41,8 +41,12 @@ pub fn dispatch_one_threadgroup_per_row(
 /// carries an explicit byte offset -- the shape used to bind tensors as
 /// offsets into the one shared resident-weights `MTLBuffer`
 /// (`ResidentGpuWeights`) instead of staging copies. Offsets need only
-/// match the kernel argument's element alignment (2 for `half`/`bfloat`,
-/// 1 for `uint8_t`), which the `.gturbo` layout guarantees.
+/// match the kernel argument's element alignment for most callers (2 for
+/// `half`/`bfloat`, 1 for `uint8_t`), which the `.gturbo` layout
+/// guarantees. **The INT4 GEMV is the one caller that needs MORE**:
+/// `dequant_int4.metal`'s vectorized read takes `x` as `half4`-aligned
+/// (8 bytes, `lane*8` elements), so `dequant_int4_gemv.rs`'s encoder
+/// asserts that offset explicitly rather than relying on this doc alone.
 pub fn dispatch_one_threadgroup_per_row_offsets(
     context: &MetalContext,
     pipeline: &ComputePipelineState,
