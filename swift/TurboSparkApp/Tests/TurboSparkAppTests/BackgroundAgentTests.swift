@@ -135,7 +135,16 @@ final class BackgroundAgentTests: XCTestCase {
         XCTAssertNotNil(appModel.backgroundAgentRuns["bga_1"],
                         "A live id must keep resolving for stop_agent.")
 
+        // `status` alone does NOT make a record dismissible: it flips when
+        // the model emits its final turn (the progress event below), before
+        // `completeBackgroundAgent` has recorded the result. The half-state
+        // is exactly what `isRecordedComplete` exists to catch.
         running.apply(.finished(status: "completed"))
+        appModel.dismissBackgroundAgent("bga_1")
+        XCTAssertNotNil(appModel.backgroundAgentRuns["bga_1"],
+                        "A finished-but-unrecorded run must keep resolving.")
+
+        running.isRecordedComplete = true
         appModel.dismissBackgroundAgent("bga_1")
         XCTAssertNil(appModel.backgroundAgentRuns["bga_1"])
     }
