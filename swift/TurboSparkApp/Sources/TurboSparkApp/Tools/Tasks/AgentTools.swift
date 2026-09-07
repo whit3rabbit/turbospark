@@ -133,19 +133,42 @@ public enum AgentOutput: Codable, Sendable, Equatable {
 public enum AgentToolDefinitions {
     public static let agent = OpenAITool.function(
         name: "Agent",
-        description: "Spawn a specialized subagent to perform an autonomous task or workflow.",
+        description: "Spawn a specialized subagent that works in its own fresh context (it cannot "
+            + "see this conversation) and reports its final answer back to you as the tool result. "
+            + "Brief it fully: it knows only what you put in the prompt. You may issue SEVERAL "
+            + "agent calls in one reply; they run concurrently and each returns its own result. "
+            + "Set run_in_background to true to launch one without waiting: you get a task id "
+            + "immediately and a <task-notification> message when it finishes.",
         parameters: .object(
             properties: [
                 "description": .string(description: "A short 3-5 word summary of the task."),
-                "prompt": .string(description: "Detailed instructions for the subagent to perform."),
-                "subagent_type": .string(description: "Type of specialized agent profile."),
-                "model": .string(description: "Optional model override for the subagent."),
-                "run_in_background": .boolean(description: "Whether to run the subagent asynchronously in the background."),
+                "prompt": .string(description: "Detailed instructions for the subagent to perform. Include everything it needs to know; it starts with zero context."),
+                "subagent_type": .string(description: "Type of specialized agent profile (e.g. general-purpose, explore, plan, reviewer)."),
+                "model": .string(description: "Optional model override for the subagent. Only 'inherit' (or omitting it) is supported today."),
+                "run_in_background": .boolean(description: "Set true to run the subagent in the background. You will be notified with a <task-notification> when it completes; use stop_agent to cancel it."),
                 "name": .string(description: "Unique label for the spawned agent.")
             ],
             required: ["description", "prompt"]
         )
     )
 
-    public static let all: [OpenAITool] = [agent]
+    /// Stops one background subagent by id.
+    ///
+    /// `taskstop` names the TASK-LIST system (`TaskManager`), not this one,
+    /// so the kill verb for background agents gets its own name rather than
+    /// overloading a word the model already knows to mean something else.
+    public static let stopAgent = OpenAITool.function(
+        name: "stop_agent",
+        description: "Stop a background subagent you launched with run_in_background, by its id. "
+            + "The subagent ends with whatever partial answer it had, and a <task-notification> "
+            + "with status killed follows.",
+        parameters: .object(
+            properties: [
+                "id": .string(description: "The background subagent id from its launch result (the `id:` line).")
+            ],
+            required: ["id"]
+        )
+    )
+
+    public static let all: [OpenAITool] = [agent, stopAgent]
 }

@@ -383,6 +383,276 @@ extension AppModel {
         await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
     }
 
+    /// The three names the `agent` tool answers to. One source of truth for
+    /// the batch router and its tests; the registry's own `switch` spells
+    /// the same three, and a drift test would catch the split if it grew.
+    static func isAgentFamilyToolName(_ name: String) -> Bool {
+        switch name.lowercased() {
+        case "agent", "subagent", "task": return true
+        default: return false
+        }
+    }
+
+    /// Routes one reply's extracted calls. **A WHOLE-AGENT BATCH RUNS
+    /// TOGETHER; everything else keeps the one-call-per-turn rule** (state#37):
+    /// mixing an `agent` call with a `write_file` still runs only the first
+    /// and records the rest refused, because ordering a subagent against an
+    /// ordinary tool is a dependency the model should spell out across turns.
+    func handleExtractedToolCalls(_ calls: [AppToolCall], fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID, project: AppProject?) async {
+        guard let first = calls.first else { return }
+        if calls.count > 1, calls.allSatisfy({ Self.isAgentFamilyToolName($0.name) }) {
+            await runConcurrentAgentBatch(
+                calls, fullContent: fullContent, reasoning: reasoning, result: result,
+                currentStep: currentStep, chatID: chatID, project: project)
+        } else {
+            await handleExtractedToolCall(
+                first, deferred: Array(calls.dropFirst()), fullContent: fullContent,
+                reasoning: reasoning, result: result, currentStep: currentStep,
+                chatID: chatID, project: project)
+        }
+    }
+
+    /// Runs every call of an all-agent batch concurrently and records them
+    /// all on ONE assistant message, then continues the loop once (the batch
+    /// costs one of `maxAutonomousSteps`, not one per subagent).
+    ///
+    /// Gating is per call and reuses the single-call rules: PreToolUse
+    /// hooks, then the permission engine. Every call is EVALUATED before
+    /// anything runs, because the verdicts decide the shape:
+    /// - all `.allow` -> concurrent execution (the ordinary batch);
+    /// - any `.ask` and NOTHING denied or allowed -> the WHOLE batch parks
+    ///   under one approval card (`pendingBatchCalls`), because under the
+    ///   standard preset `agent` is category `.ask` and a fallback here
+    ///   would make the parallel path unreachable under default
+    ///   permissions; approving the card runs the batch, denying refuses
+    ///   it;
+    /// - `.ask` mixed with allow/deny -> the old single-call path (first
+    ///   call, rest deferred), since the card machinery parks one shape at a
+    ///   time and a mixed batch has no single honest card;
+    /// - an engine deny records that one call as refused and lets the rest
+    ///   run.
+    /// The PreToolUse hooks for the first call run a second time on the
+    /// fallback path; they are consultative, and that is the price of not
+    /// duplicating the ladder.
+    private func runConcurrentAgentBatch(_ calls: [AppToolCall], fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID, project: AppProject?) async {
+        var prepared: [AppToolCall] = []
+        var asked: [(call: AppToolCall, assessment: ToolRiskAssessment)] = []
+        // (call, reason, fromEngine) -- an engine deny dispatches
+        // PermissionDenied to configured hooks; a hook deny does not, the
+        // same split the single path makes.
+        var denied: [(call: AppToolCall, reason: String, fromEngine: Bool)] = []
+
+        for call in calls {
+            let hookDecision = await evaluatePreToolUseHooks(
+                toolName: call.name, toolArguments: call.arguments, chatID: chatID, project: project)
+            if hookDecision.preventContinuation {
+                let reason = hookDecision.continuationStopReason
+                    ?? hookDecision.reason
+                    ?? "A PreToolUse hook stopped the turn."
+                await appendBatchMessage(
+                    executed: [], executedResults: [],
+                    denied: calls.map { ($0, reason, false) },
+                    fullContent: fullContent, reasoning: reasoning, chatID: chatID)
+                showToast("Turn stopped by hook: \(reason)", style: .warning)
+                return
+            }
+            var updated = call
+            if let newInput = hookDecision.updatedInput {
+                for (key, value) in newInput { updated.arguments[key] = value }
+            }
+            if hookDecision.behavior == .deny {
+                denied.append((updated, hookDecision.reason ?? "Blocked by PreToolUse hook", false))
+                continue
+            }
+            let sessionApproved = await SessionApprovalStore.shared.isApproved(
+                sessionID: chatID.uuidString, toolName: updated.name,
+                command: updated.arguments["command"] ?? updated.arguments["cmd"])
+            let decision = AppToolPermissionEngine.evaluate(
+                call: updated, project: project, sessionApproved: sessionApproved,
+                fallbackMode: activePermissionMode, globalServers: globalMcpServers)
+            switch decision {
+            case .deny(let reason):
+                denied.append((updated, reason, true))
+            case .ask(let assessment, _):
+                asked.append((updated, assessment))
+            case .allow:
+                prepared.append(updated)
+            }
+        }
+
+        // An engine deny is a `PermissionDenied` in Claude Code's contract,
+        // so configured hooks hear about it -- at gate time, like the single
+        // path does, not at execution time.
+        for entry in denied where entry.fromEngine {
+            await dispatchPermissionDenied(
+                toolName: entry.call.name, toolArguments: entry.call.arguments,
+                reason: entry.reason, chatID: chatID, project: project)
+        }
+
+        // **THE WHOLE BATCH PARKS UNDER ONE CARD.** `pendingToolCall` stays
+        // the call the card RENDERS (the one that asked); the batch is what
+        // approval acts on.
+        if let firstAsk = asked.first, prepared.isEmpty, denied.isEmpty {
+            var pending = firstAsk.call
+            pending.status = .pendingApproval
+            pending.riskAssessment = firstAsk.assessment
+            pendingToolCall = pending
+            pendingToolCallChatID = chatID
+            pendingToolCallStep = currentStep
+            pendingToolCallProject = project
+            pendingBatchCalls = calls
+            let parked = calls.map { call -> AppToolCall in
+                var parked = call
+                parked.status = .pendingApproval
+                return parked
+            }
+            mutateTurnMessages(for: chatID) {
+                $0.append(AppChatMessage(
+                    role: .assistant,
+                    content: fullContent,
+                    reasoning: reasoning,
+                    stopReason: "tool_use",
+                    toolCalls: parked,
+                    toolResults: []
+                ))
+            }
+            return
+        }
+
+        if !asked.isEmpty {
+            // Mixed batch: no single honest card. The historical shape.
+            await handleExtractedToolCall(
+                calls[0], deferred: Array(calls.dropFirst()), fullContent: fullContent,
+                reasoning: reasoning, result: result, currentStep: currentStep,
+                chatID: chatID, project: project)
+            return
+        }
+
+        guard !prepared.isEmpty else {
+            await appendBatchMessage(
+                executed: [], executedResults: [],
+                denied: denied.map { ($0.call, $0.reason, $0.fromEngine) },
+                fullContent: fullContent, reasoning: reasoning, chatID: chatID)
+            await continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
+            return
+        }
+
+        // **THE SUBAGENTS INTERLEAVE, THEY DO NOT RACE.** Each run's
+        // `session.generate` queues on the one session, so N concurrent
+        // batches alternate whole turns, correct by the session's own
+        // contract. What overlaps for real is tool execution (file, shell)
+        // in one run against generation in another.
+        await runApprovedAgentBatch(
+            prepared, currentStep: currentStep, chatID: chatID, project: project,
+            extraDenied: denied.map { ($0.call, $0.reason, $0.fromEngine) },
+            fullContent: fullContent, reasoning: reasoning)
+    }
+
+    /// Executes already-gated agent calls CONCURRENTLY and records every
+    /// outcome. Shared by the batch router (the all-allow case, which
+    /// appends the turn) and `approvePendingToolCall` (a parked batch the
+    /// user approved, which UPDATES the parked message in place, one call
+    /// id at a time -- `appendToolExecutionTurn`'s own rule, state#20).
+    func runApprovedAgentBatch(
+        _ calls: [AppToolCall], currentStep: Int, chatID: UUID, project: AppProject?,
+        extraDenied: [(call: AppToolCall, reason: String, fromEngine: Bool)] = [],
+        fullContent: String = "", reasoning: String = "",
+        updatesParkedMessage: Bool = false
+    ) async {
+        var outcomesByID: [UUID: (call: AppToolCall, result: AppToolResult)] = [:]
+        await withTaskGroup(of: (AppToolCall, AppToolResult).self) { group in
+            for call in calls {
+                var running = call
+                running.status = .running
+                group.addTask {
+                    let result = await AppToolRegistry.execute(
+                        call: running, in: project, chatID: chatID)
+                    return (running, result)
+                }
+            }
+            for await (call, result) in group {
+                outcomesByID[call.id] = (call, result)
+            }
+        }
+        let ordered = calls.compactMap { outcomesByID[$0.id] }
+
+        var executedResults: [AppToolResult] = []
+        var stopReason: String?
+        for (var call, var executedResult) in ordered {
+            call.status = executedResult.isError ? .failed : .completed
+            let postVerdict = await dispatchPostToolUseVerdict(
+                toolName: call.name, toolArguments: call.arguments,
+                toolOutput: executedResult.output,
+                toolDurationSeconds: executedResult.durationSeconds,
+                isError: executedResult.isError, chatID: chatID, project: project)
+            if let note = postVerdict.blockReason ?? postVerdict.feedbackMessage, !note.isEmpty {
+                executedResult.output += "\n\n<hook_feedback>\n\(note)\n</hook_feedback>"
+            }
+            if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
+                executedResult.output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
+            }
+            if postVerdict.preventContinuation, stopReason == nil {
+                stopReason = postVerdict.continuationStopReason
+            }
+            executedResults.append(executedResult)
+            outcomesByID[call.id] = (call, executedResult)
+        }
+
+        if updatesParkedMessage {
+            // Restore the prepared order for the in-place updates.
+            for call in calls.compactMap({ outcomesByID[$0.id]?.call }) {
+                let match = outcomesByID[call.id]
+                appendToolExecutionTurn(
+                    call: call, result: match?.result
+                        ?? AppToolResult(callID: call.id, output: "", isError: true),
+                    chatID: chatID)
+            }
+        } else {
+            let executedCalls = calls.compactMap { outcomesByID[$0.id]?.call }
+            await appendBatchMessage(
+                executed: executedCalls, executedResults: executedResults,
+                denied: extraDenied, fullContent: fullContent, reasoning: reasoning,
+                chatID: chatID)
+        }
+
+        if let reason = stopReason {
+            showToast("Turn stopped by hook: \(reason)", style: .warning)
+            return
+        }
+        await continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
+    }
+
+    /// Appends the ONE assistant message a batch produces, pairing every
+    /// call with its result (`ToolGroupView` renders the multi-call row).
+    private func appendBatchMessage(
+        executed: [AppToolCall], executedResults: [AppToolResult],
+        denied: [(call: AppToolCall, reason: String, fromEngine: Bool)],
+        fullContent: String, reasoning: String, chatID: UUID
+    ) async {
+        let deniedCalls: [AppToolCall] = denied.map { entry in
+            var call = entry.call
+            call.status = .denied
+            return call
+        }
+        let deniedResults = denied.map { entry in
+            AppToolResult(
+                callID: entry.call.id,
+                output: "Tool execution denied: \(entry.reason)",
+                isError: true,
+                durationSeconds: 0.0)
+        }
+        mutateTurnMessages(for: chatID) {
+            $0.append(AppChatMessage(
+                role: .assistant,
+                content: fullContent,
+                reasoning: reasoning,
+                stopReason: "tool_use",
+                toolCalls: executed + deniedCalls,
+                toolResults: executedResults + deniedResults
+            ))
+        }
+    }
+
     /// Continues multi-turn autonomous loop after tool execution.
     ///
     /// Does NOT gate on `!generating`: by the time anything calls this

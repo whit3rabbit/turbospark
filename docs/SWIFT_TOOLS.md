@@ -569,3 +569,83 @@ compatibility. Every guard above is mutation-checked: disabling the deny
 arm, the allow arm, the repo-import gate, the annotation adjustment, the
 catalog's deny strip, its `isEnabled` filter, or flipping a decode default
 each reddens exactly its own case.
+
+## 12. Subagents: the `agent` tool, progress, batches, and background
+
+A subagent is a tool call whose handler runs a SECOND, isolated
+conversation and returns its final message as the tool result. The loop is
+`State/SubagentRunner` (fresh history, its own system-prompt assembler, its
+own turn budget), the gate is `State/SubagentRunner+Gate` (`.ask` DENIES:
+no approval UI exists to answer it), and the definitions live in
+`State/AppAgentDefinition` + `State/AgentManager` (built-ins
+explore/plan/general-purpose/reviewer, user, project, and plugin scopes).
+Fresh context is free: the engine holds no history, so a new message array
+just prefills from zero. This section is the SURFACE around that loop.
+
+**Result contract (Claude Code's shape).** The tool result is the
+subagent's final text plus a `<subagent_meta>` trailer (agent, id, status,
+turns, tool_calls, duration_s). Empty output becomes the sentence
+"(Subagent completed but returned no output.)". An error or cancellation
+keeps whatever the run had already produced: the error path appends the
+last completed turn's text as "Partial progress before the error", and a
+cancelled run returns its partial answer with status `cancelled`. A run
+that exhausted `maxTurns` or overflowed its window reports `max_turns` /
+`context_overflow` with its last turn explicitly marked not-an-answer.
+`SubagentRunner` is the only writer of these rules; the registry's `agent`
+case formats the trailer.
+
+**Progress.** `SubagentRunner.run` takes an optional `progress` sink
+(`SubagentProgressEvent`: started, turnStarted, content, toolStarted,
+toolFinished, finished), emitted in order from the run's own task. The app
+installs `AppToolRegistry.subagentProgressSink` at startup; it routes by
+run key into `AppModel.applySubagentEvent`, which maintains
+`liveSubagentRuns` (foreground, keyed by tool-call UUID, removed on
+`finished`) and `backgroundAgentRuns` (keyed `bga_N`, kept). The cards are
+`Generation/SubagentLiveCardView.swift`; a foreground card lives in the
+active turn's row, a background one in a strip under the transcript.
+
+**Batches.** A reply whose calls are ALL agent-family (`agent`, `subagent`,
+`task`) runs them CONCURRENTLY
+(`AppModel+AgentLoop.runConcurrentAgentBatch`) and records them on ONE
+assistant message; the batch costs one `maxAutonomousSteps` step, not one
+per subagent. Each call still passes the single-call gate. Anything else
+keeps the one-call-per-turn rule (state#37): a mixed batch runs only the
+first call and records the rest refused, and a batch where ANY call would
+raise the approval card falls back to that same single-call path, because
+the card machinery parks exactly one call. Concurrent runs do not race the
+engine: each turn queues on the one session, so runs interleave whole
+turns. The cost is prefix-cache thrash (alternating conversations reset the
+KV prefix, so each interleaved turn prefills fully) -- the wall-clock win
+is one run's tool execution overlapping another's generation, never
+parallel token generation.
+
+**Background.** `run_in_background: true` launches through
+`AppModel.launchBackgroundAgent` and returns the task id immediately. The
+run's `Task` is unstructured ON PURPOSE: it inherits no cancellation, so
+chat Stop cannot kill it, and `stopBackgroundAgent` (the `stop_agent`
+tool, or the card's stop button) is the only kill path -- a stopped run
+reports `killed`, not `cancelled`. The session is CAPTURED at launch, so
+unloading the model in the UI does not kill a run already going.
+Completion injects a USER-role `<task-notification>` turn (task_id, status
+completed/failed/killed, agent, result, turns/tool_calls/duration) into
+the originating chat and, if the chat is idle, answers it with a fresh
+step-0 generation turn; if a turn is in flight or an approval card is up,
+the notification parks in `pendingTaskNotifications` until a turn tail
+drains it. Caps: 4 running, 20 finished kept, in-memory only, process
+lifetime (nothing persists across relaunch, and no sidechain transcript is
+written -- both deliberate deviations from Claude Code).
+
+**`model` is refused, not ignored.** A non-inherit `model` argument fails
+the call by name: honoring it needs a second open model session (the FFI
+is structurally capable; it is untested and each open model pins
+gigabytes), so until that lands the honest answer is the refusal. The seam
+is `SubagentRunner.run(session:)`, which already takes whatever session
+the caller resolves.
+
+Names on this surface that must stay in sync:
+`AppToolRegistry+Vocabulary` (supportedToolNames),
+`AppToolCatalog.category`, and `AgentToolDefinitions`. `stop_agent` is
+deliberately NOT `taskstop`, which is the task-list system's verb.
+Tests: `SubagentProgressTests`, `SubagentBatchRoutingTests`,
+`BackgroundAgentTests` (plus the pre-existing Subagent* suites, which pin
+the gate and the hooks).

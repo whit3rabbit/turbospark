@@ -197,6 +197,12 @@ extension AppModel {
         phase = .prefill
         outputText = "Running isolated subagent [\(agent.displayName)]...\n"
 
+        // Same live progress surface an `agent` TOOL call gets: the sink
+        // routes into `applySubagentEvent`, which creates the card's state
+        // on the runner's `.started` event and drops it on `.finished`.
+        let runKey = UUID().uuidString
+        let sink = AppToolRegistry.subagentProgressSink
+
         runTask = Task { @MainActor in
             defer {
                 // Guarded for the same reason an ordinary turn's tail is: a
@@ -208,6 +214,7 @@ extension AppModel {
                     self.outputText = ""
                     self.runTask = nil
                 }
+                self.liveSubagentRuns.removeValue(forKey: runKey)
             }
             let result = await SubagentRunner.run(
                 agent: agent,
@@ -217,7 +224,8 @@ extension AppModel {
                 chatID: turnChatID,
                 // The app-wide DEFAULT, never a per-chat override: a subagent
                 // runs in a fresh isolated context with zero parent history.
-                userSystemPrompt: self.defaultSystemPrompt
+                userSystemPrompt: self.defaultSystemPrompt,
+                progress: { event in await sink?(runKey, event) }
             )
 
             let assistantContent = """

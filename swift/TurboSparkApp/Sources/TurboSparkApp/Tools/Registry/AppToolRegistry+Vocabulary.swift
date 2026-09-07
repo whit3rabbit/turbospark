@@ -70,6 +70,23 @@ extension AppToolRegistry {
     /// divergence `SubagentRunner.buildSystemPrompt`'s own comment warns about.
     public static var userSystemPromptProvider: (@Sendable @MainActor () -> String)?
 
+    /// Progress sink for subagent runs, keyed by a host-chosen run key (a
+    /// tool-call UUID for a foreground run, a `bga_N` id for a background
+    /// one). The app installs one at startup, which routes the events into
+    /// the published state the progress cards read; without it runs still
+    /// work, they are just invisible while they run, as before.
+    public static var subagentProgressSink: (@Sendable (String, SubagentProgressEvent) async -> Void)?
+
+    /// Launches a BACKGROUND subagent and returns the immediate tool output
+    /// (the `async_launched` text naming the task id). Installed by
+    /// `AppModel`, which owns the task registry and the completion
+    /// notification; this type cannot hold either.
+    public static var backgroundAgentLauncher: (@Sendable (BackgroundAgentLaunch) async throws -> String)?
+
+    /// Stops a running background subagent by id, returning its final
+    /// status text. Throws for an id that is not a live background agent.
+    public static var backgroundAgentStopper: (@Sendable (String) async throws -> String)?
+
     /// Tool names `execute(call:in:)` actually has a real handler for,
     /// independent of which `OpenAITool` DEFINITIONS `AppToolCatalog`
     /// advertises to the model. A name outside this set (and not a dynamic
@@ -93,6 +110,7 @@ extension AppToolRegistry {
         "skill",
         "todowrite", "todo_write",
         "agent", "subagent", "task",
+        "stop_agent", "agentstop", "kill_agent",
         "askuserquestion", "ask_user_question", "ask_question", "question",
         "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
         "exitplanmode", "exit_plan_mode",

@@ -106,5 +106,6 @@ extension AppModel {
         pendingToolCallChatID = nil
         pendingToolCallStep = 0
         pendingToolCallProject = nil
+        pendingBatchCalls = nil
     }
 }

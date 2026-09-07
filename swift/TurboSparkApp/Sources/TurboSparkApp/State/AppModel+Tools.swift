@@ -174,6 +174,7 @@ extension AppModel {
         let chatID = pendingToolCallChatID ?? selectedChatID
         let originStep = pendingToolCallStep
         let project = pendingToolCallProject ?? selectedProject
+        let batchCalls = pendingBatchCalls
         clearPendingToolCall()
 
         let sessionID = chatID.uuidString
@@ -222,6 +223,18 @@ extension AppModel {
                 }
             }
 
+            // **A PARKED BATCH APPROVES AS ONE.** The gate ladder ran at
+            // proposal time (`runConcurrentAgentBatch`), so approval executes
+            // every call concurrently and updates the parked message in
+            // place, then continues the loop once -- the batch costs one
+            // step, not one per subagent.
+            if let batchCalls, batchCalls.count > 1 {
+                await self.runApprovedAgentBatch(
+                    batchCalls, currentStep: originStep, chatID: chatID,
+                    project: project, updatesParkedMessage: true)
+                return
+            }
+
             var result = await AppToolRegistry.execute(call: call, in: project, chatID: chatID)
             call.status = result.isError ? .failed : .completed
 
@@ -265,15 +278,31 @@ extension AppModel {
         let chatID = pendingToolCallChatID ?? selectedChatID
         let originStep = pendingToolCallStep
         let project = pendingToolCallProject ?? selectedProject
+        let batchCalls = pendingBatchCalls
         clearPendingToolCall()
 
-        let result = AppToolResult(
-            callID: call.id,
-            output: TOOL_REJECTED_MESSAGE,
-            isError: true,
-            durationSeconds: 0.0
-        )
-        self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
+        // **A PARKED BATCH DENIES AS ONE**: every call is updated in place
+        // on the parked message, and configured hooks hear a
+        // PermissionDenied per call (in the task below).
+        if let batchCalls, batchCalls.count > 1 {
+            for var batchCall in batchCalls {
+                batchCall.status = .denied
+                self.appendToolExecutionTurn(
+                    call: batchCall,
+                    result: AppToolResult(
+                        callID: batchCall.id, output: TOOL_REJECTED_MESSAGE,
+                        isError: true, durationSeconds: 0.0),
+                    chatID: chatID)
+            }
+        } else {
+            let result = AppToolResult(
+                callID: call.id,
+                output: TOOL_REJECTED_MESSAGE,
+                isError: true,
+                durationSeconds: 0.0
+            )
+            self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
+        }
 
         // **DENY IS A TURN TOO** (state#29). This raised nothing, so across
         // the awaited `dispatchNotification` (up to 120 s) and the whole
@@ -303,16 +332,28 @@ extension AppModel {
                 }
                 self.toolExecutionTask = nil
             }
-            _ = await self.dispatchNotification(
-                message: "Tool call '\(call.name)' was denied by the user.",
-                chatID: chatID, project: project)
             // Claude Code's `PermissionDenied` contract: configured hooks
             // hear the refusal with the tool fields, not just the prose
-            // notification above.
-            _ = await self.dispatchPermissionDenied(
-                toolName: call.name, toolArguments: call.arguments,
-                reason: "Denied by the user at the approval card.",
-                chatID: chatID, project: project)
+            // notification above. A denied batch hears one per call.
+            if let batchCalls, batchCalls.count > 1 {
+                _ = await self.dispatchNotification(
+                    message: "\(batchCalls.count) tool calls were denied by the user.",
+                    chatID: chatID, project: project)
+                for batchCall in batchCalls {
+                    _ = await self.dispatchPermissionDenied(
+                        toolName: batchCall.name, toolArguments: batchCall.arguments,
+                        reason: "Denied by the user at the approval card.",
+                        chatID: chatID, project: project)
+                }
+            } else {
+                _ = await self.dispatchNotification(
+                    message: "Tool call '\(call.name)' was denied by the user.",
+                    chatID: chatID, project: project)
+                _ = await self.dispatchPermissionDenied(
+                    toolName: call.name, toolArguments: call.arguments,
+                    reason: "Denied by the user at the approval card.",
+                    chatID: chatID, project: project)
+            }
             await self.continueOrStop(afterStep: originStep, chatID: chatID, project: project)
         }
     }

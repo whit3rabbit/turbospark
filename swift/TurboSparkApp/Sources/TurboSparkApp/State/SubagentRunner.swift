@@ -9,6 +9,10 @@ public struct SubagentRunResult: Sendable, Equatable {
     public var totalTurns: Int
     public var totalToolCalls: Int
     public var durationSeconds: Double
+    /// Identifier emitted with the `SubagentStart` / `SubagentStop` hooks
+    /// and reported to the parent in the result trailer, so a caller can
+    /// refer back to a specific run.
+    public var runID: String
 
     public init(
         agentName: String,
@@ -16,7 +20,8 @@ public struct SubagentRunResult: Sendable, Equatable {
         finalResponse: String,
         totalTurns: Int,
         totalToolCalls: Int,
-        durationSeconds: Double
+        durationSeconds: Double,
+        runID: String = ""
     ) {
         self.agentName = agentName
         self.status = status
@@ -24,6 +29,7 @@ public struct SubagentRunResult: Sendable, Equatable {
         self.totalTurns = totalTurns
         self.totalToolCalls = totalToolCalls
         self.durationSeconds = durationSeconds
+        self.runID = runID
     }
 }
 
@@ -144,6 +150,14 @@ public enum SubagentRunner {
     /// - Parameter depth: how many subagents deep this run already is. An
     ///   `agent` tool call from inside a subagent used to nest without any
     ///   bound at all, each level free to spawn its own.
+    /// - Parameter progress: optional observer for the run's loop seams
+    ///   (`SubagentProgressEvent`). Called and awaited in order from the
+    ///   run's own task; a slow observer slows the run, which is what keeps
+    ///   the events ordered. Nothing here reads the observer's result -- a
+    ///   run is never steered by who is watching it.
+    /// - Parameter taskDescription: the caller's short summary of the task,
+    ///   reported in the `started` progress event. Prose for a card header,
+    ///   never part of the prompt.
     public static func run(
         agent: AppAgentDefinition,
         taskPrompt: String,
@@ -152,11 +166,17 @@ public enum SubagentRunner {
         chatID: UUID? = nil,
         depth: Int = 0,
         maxTurnsOverride: Int? = nil,
-        userSystemPrompt: String = ""
+        userSystemPrompt: String = "",
+        progress: (@Sendable (SubagentProgressEvent) async -> Void)? = nil,
+        taskDescription: String = ""
     ) async -> SubagentRunResult {
         let sessionID = chatID?.uuidString ?? "subagent"
         let runID = UUID().uuidString
         let workingDirectory = project?.rootDirectoryPath
+        await progress?(.started(
+            agentName: agent.name, displayName: agent.displayName,
+            taskDescription: taskDescription, promptHead: head(of: taskPrompt),
+            chatID: chatID))
         // The engine directly, exactly like `observation`: the hook store is
         // not rebound here (state#67 -- it follows the parent turn's
         // project, and this type has no AppModel to rebind it with).
@@ -167,10 +187,12 @@ public enum SubagentRunner {
             agentID: runID,
             agentType: agent.name)
 
-        let result = await runBody(
+        let bodyResult = await runBody(
             agent: agent, taskPrompt: taskPrompt, session: session, project: project,
             chatID: chatID, depth: depth, maxTurnsOverride: maxTurnsOverride,
-            userSystemPrompt: userSystemPrompt)
+            userSystemPrompt: userSystemPrompt, progress: progress, runID: runID)
+        var result = bodyResult
+        result.runID = runID
 
         _ = await AppHookExecutionEngine.shared.dispatch(
             event: .subagentStop,
@@ -179,7 +201,34 @@ public enum SubagentRunner {
             stopHookActive: false,
             agentID: runID,
             agentType: agent.name)
+        await progress?(.finished(status: result.status))
         return result
+    }
+
+    /// Bounded head of a task prompt for a progress card header. The full
+    /// prompt stays in the run; a card shows enough to recognize it by.
+    private static func head(of prompt: String) -> String {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 300 else { return trimmed }
+        return String(trimmed.prefix(300)) + "..."
+    }
+
+    /// The `agent` tool's result text for one finished run: the final
+    /// answer, then a `<subagent_meta>` trailer (Claude Code's result
+    /// contract -- the parent reads the trailer, not the UI). An empty
+    /// answer becomes the explicit no-output sentence rather than silence,
+    /// which a model would read as "the tool produced nothing".
+    public static func toolOutput(for result: SubagentRunResult, agentName: String) -> String {
+        let body = result.finalResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (body.isEmpty ? "(Subagent completed but returned no output.)" : body)
+            + "\n\n<subagent_meta>\n"
+            + "agent: \(agentName)\n"
+            + "id: \(result.runID)\n"
+            + "status: \(result.status)\n"
+            + "turns: \(result.totalTurns)\n"
+            + "tool_calls: \(result.totalToolCalls)\n"
+            + "duration_s: \(String(format: "%.1f", result.durationSeconds))\n"
+            + "</subagent_meta>"
     }
 
     /// The run itself, without the lifecycle dispatch (see `run`).
@@ -191,7 +240,9 @@ public enum SubagentRunner {
         chatID: UUID? = nil,
         depth: Int = 0,
         maxTurnsOverride: Int? = nil,
-        userSystemPrompt: String = ""
+        userSystemPrompt: String = "",
+        progress: (@Sendable (SubagentProgressEvent) async -> Void)? = nil,
+        runID: String
     ) async -> SubagentRunResult {
         let startTime = Date()
         let maxTurns = maxTurnsOverride ?? agent.maxTurns
@@ -250,6 +301,7 @@ public enum SubagentRunner {
                 )
             }
             currentTurn += 1
+            await progress?(.turnStarted(number: currentTurn))
 
             var options = GenerateOptions()
             options.temperature = 0.2
@@ -293,14 +345,25 @@ public enum SubagentRunner {
                     try Task.checkCancellation()
                     if case .content(let chunk) = event {
                         generatedText += chunk
+                        await progress?(.content(chunk))
                     }
                 }
             } catch {
                 let duration = Date().timeIntervalSince(startTime)
+                // **AN ERROR KEEPS THE PROGRESS IT HAD** (Claude Code's
+                // partial-result rule). `finalContent` is the last COMPLETED
+                // turn's text; discarding it reported an error that looked
+                // like the run had done nothing, and the parent re-briefed a
+                // fresh subagent from scratch over work that had happened.
+                let partial = finalContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                let partialNote = partial.isEmpty
+                    ? ""
+                    : "\n\nPartial progress before the error:\n\(partial)"
                 return SubagentRunResult(
                     agentName: agent.name,
                     status: "error",
-                    finalResponse: "Subagent generation error: \(error.localizedDescription)",
+                    finalResponse: "Subagent generation error: \(error.localizedDescription)"
+                        + partialNote,
                     totalTurns: currentTurn,
                     totalToolCalls: totalToolCalls,
                     durationSeconds: duration
@@ -343,9 +406,13 @@ public enum SubagentRunner {
             // Execute parsed tool calls
             for call in parsedCalls {
                 totalToolCalls += 1
-                history.append(
-                    await observation(
-                        for: call, agent: agent, project: project, chatID: chatID, depth: depth))
+                await progress?(.toolStarted(name: call.name, summary: call.argumentsSummary))
+                let observationMessage = await observation(
+                    for: call, agent: agent, project: project, chatID: chatID, depth: depth)
+                await progress?(.toolFinished(
+                    name: call.name, summary: call.argumentsSummary,
+                    isError: observationMessage.content.contains("<tool_error>")))
+                history.append(observationMessage)
             }
         }
 

@@ -124,7 +124,7 @@ public enum AppToolCatalog {
             return .terminal
         case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content":
             return .web
-        case "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
+        case "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
         case "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource":
             return .mcp
@@ -164,6 +164,11 @@ public enum AppToolCatalog {
         lines.append("")
         lines.append("## Task & Progress Tracking")
         lines.append("For multi-step or non-trivial tasks (3+ steps), proactively use `TodoWrite` to organize your plan, track progress, and update status in real-time. Mark a task as `in_progress` BEFORE working on it and `completed` IMMEDIATELY upon finishing.")
+        lines.append("")
+        lines.append("## Subagents")
+        lines.append("The `agent` tool runs a task in a separate subagent that starts with NO context from this conversation and reports its final answer back to you as the tool result. Brief each subagent fully in its `prompt`: what to do, what it needs to know, and what to return.")
+        lines.append("You may issue several `agent` calls in ONE reply (one tool call block each); they run concurrently and every one returns its own result. Other tools remain one call per turn.")
+        lines.append("Set `\"run_in_background\": \"true\"` to launch without waiting: you get a task id at once and a `<task-notification>` message later when it finishes. Cancel one with `stop_agent`.")
         return lines.joined(separator: "\n")
     }
 

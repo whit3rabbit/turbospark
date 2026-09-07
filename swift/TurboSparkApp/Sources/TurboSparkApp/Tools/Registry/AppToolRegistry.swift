@@ -244,6 +244,22 @@ public enum AppToolRegistry {
                 guard let prompt = call.arguments["prompt"] ?? call.arguments["task"] ?? call.arguments["instructions"] else {
                     throw NSError(domain: "TurboSparkTool", code: 20, userInfo: [NSLocalizedDescriptionKey: "Missing 'prompt' argument for Agent tool call."])
                 }
+                // **A MODEL OVERRIDE NEEDS A SECOND OPEN MODEL, AND THE APP
+                // OPENS ONE.** `SubagentRunner.run` takes the session it is
+                // handed, so the seam exists, but resolving an override to a
+                // second `TurboSparkSession` means a second full model in
+                // memory and the multi-session shape is untested
+                // (docs/SWIFT_BINDINGS.md). Refusing by name beats silently
+                // running the subagent on the wrong model.
+                if let modelOverride = call.arguments["model"],
+                    !modelOverride.trimmingCharacters(in: .whitespaces).isEmpty,
+                    modelOverride.lowercased() != "inherit" {
+                    throw NSError(domain: "TurboSparkTool", code: 25, userInfo: [
+                        NSLocalizedDescriptionKey: "The 'model' override is not supported yet: a subagent runs "
+                            + "on the model session already loaded. Omit 'model', or load the model you "
+                            + "want it to use before this turn."
+                    ])
+                }
                 let subagentType = call.arguments["subagent_type"] ?? call.arguments["type"] ?? call.arguments["name"] ?? "general-purpose"
                 let agentDef = AgentManager.shared.findAgent(name: subagentType, projectURL: project?.rootDirectoryURL)
                     ?? AgentManager.shared.findAgent(name: "general-purpose", projectURL: project?.rootDirectoryURL)
@@ -253,16 +269,55 @@ public enum AppToolRegistry {
                         NSLocalizedDescriptionKey: "Agent '\(agentDef.name)' is currently disabled."
                     ])
                 }
-                let activeSession = await activeSessionProvider?()
-                let userSystemPrompt = await userSystemPromptProvider?() ?? ""
-                let result = await SubagentRunner.run(
-                    agent: agentDef, taskPrompt: prompt, session: activeSession, project: project,
-                    chatID: chatID, depth: subagentDepth + 1,
-                    userSystemPrompt: userSystemPrompt)
-                if result.status == "error" || result.status == "failed" {
-                    throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [NSLocalizedDescriptionKey: result.finalResponse])
+                let taskDescription = call.arguments["description"] ?? ""
+                let runInBackground = ["true", "1", "yes"]
+                    .contains(call.arguments["run_in_background"]?.lowercased() ?? "")
+                if runInBackground {
+                    guard let launcher = backgroundAgentLauncher else {
+                        throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                            NSLocalizedDescriptionKey: "Background subagents are unavailable: no launch "
+                                + "handler is installed (the app wires one at startup)."
+                        ])
+                    }
+                    let userSystemPrompt = await userSystemPromptProvider?() ?? ""
+                    output = try await launcher(BackgroundAgentLaunch(
+                        agent: agentDef, taskPrompt: prompt, taskDescription: taskDescription,
+                        project: project, chatID: chatID, depth: subagentDepth + 1,
+                        userSystemPrompt: userSystemPrompt))
+                } else {
+                    let activeSession = await activeSessionProvider?()
+                    let userSystemPrompt = await userSystemPromptProvider?() ?? ""
+                    let callKey = call.id.uuidString
+                    var progress: (@Sendable (SubagentProgressEvent) async -> Void)?
+                    if let sink = subagentProgressSink {
+                        progress = { event in await sink(callKey, event) }
+                    }
+                    let result = await SubagentRunner.run(
+                        agent: agentDef, taskPrompt: prompt, session: activeSession, project: project,
+                        chatID: chatID, depth: subagentDepth + 1,
+                        userSystemPrompt: userSystemPrompt,
+                        progress: progress, taskDescription: taskDescription)
+                    if result.status == "error" || result.status == "failed" {
+                        throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [NSLocalizedDescriptionKey: result.finalResponse])
+                    }
+                    output = SubagentRunner.toolOutput(for: result, agentName: agentDef.name)
                 }
-                output = "Subagent [\(agentDef.displayName)] completed in \(result.totalTurns) turn(s) (\(result.totalToolCalls) tool call(s), \(String(format: "%.2f", result.durationSeconds))s):\n\n\(result.finalResponse)"
+
+            case "stop_agent", "agentstop", "kill_agent":
+                let agentID = call.arguments["id"] ?? call.arguments["agent_id"] ?? call.arguments["task_id"] ?? ""
+                guard !agentID.trimmingCharacters(in: .whitespaces).isEmpty else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing 'id' argument: give the background subagent id "
+                            + "(the `id:` line from the launch result) to stop."
+                    ])
+                }
+                guard let stopper = backgroundAgentStopper else {
+                    throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                        NSLocalizedDescriptionKey: "Background subagents are unavailable: no stop handler "
+                            + "is installed (the app wires one at startup)."
+                    ])
+                }
+                output = try await stopper(agentID)
 
             case "askuserquestion", "ask_user_question", "ask_question", "question":
                 output = try AskUserQuestionExecutor.execute(arguments: call.arguments, chatID: chatID)

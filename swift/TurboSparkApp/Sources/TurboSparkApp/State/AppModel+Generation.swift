@@ -221,28 +221,28 @@ extension AppModel {
                         let parsedCalls = self.extractToolCalls(
                             from: generatedContent, project: turnProject)
 
-                        // One helper for the four dispatch sites below, so the
-                        // "first call runs, the rest are recorded as refused"
-                        // rule (state#37) cannot be spelled differently in one
-                        // of them.
+                        // One helper for the four dispatch sites below. An
+                        // all-agent batch runs its calls concurrently
+                        // (handleExtractedToolCalls); everything else keeps
+                        // the "first call runs, the rest are recorded as
+                        // refused" rule (state#37).
                         func dispatch(_ calls: [AppToolCall], content: String) async {
-                            if let firstCall = calls.first {
-                                await self.handleExtractedToolCall(
-                                    firstCall,
-                                    deferred: Array(calls.dropFirst()),
-                                    fullContent: content,
-                                    reasoning: generatedReasoning,
-                                    result: result,
-                                    currentStep: step,
-                                    chatID: turnChatID,
-                                    project: turnProject)
-                            } else {
+                            if calls.isEmpty {
                                 await self.finishProseTurn(
                                     content: content,
                                     reasoning: generatedReasoning,
                                     result: result,
                                     chatID: turnChatID,
                                     step: step,
+                                    project: turnProject)
+                            } else {
+                                await self.handleExtractedToolCalls(
+                                    calls,
+                                    fullContent: content,
+                                    reasoning: generatedReasoning,
+                                    result: result,
+                                    currentStep: step,
+                                    chatID: turnChatID,
                                     project: turnProject)
                             }
                         }
@@ -313,6 +313,12 @@ extension AppModel {
             self.isCancellationPending = false
             self.runTask = nil
             self.updateTokenEstimate()
+            // **A BACKGROUND AGENT MAY HAVE FINISHED MID-TURN.** Its
+            // notification parked in `pendingTaskNotifications` because the
+            // chat was busy; this tail is the first idle moment after, under
+            // the same epoch guard that says no newer turn owns the state.
+            // The drain re-checks idleness and may start the next turn here.
+            self.drainPendingTaskNotificationsIfIdle(chatID: turnChatID)
         }
     }
 

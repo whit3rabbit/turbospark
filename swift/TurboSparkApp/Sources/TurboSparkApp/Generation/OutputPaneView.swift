@@ -116,6 +116,8 @@ private struct ChatTranscriptView: View {
                         )
                     }
 
+                    BackgroundAgentsStripView(model: model)
+
                     Color.clear
                         .frame(height: 1)
                         .id("bottom")
@@ -287,6 +289,12 @@ private struct ActiveStreamingRowView: View {
                 if let pending = model.pendingToolCall {
                     ToolCallCardView(model: model, call: pending, result: nil)
                 }
+                // Foreground subagent runs proposed by THIS turn stream
+                // here, the same place the approval card goes up. The run's
+                // own chat is what filters, never a selection made later.
+                ForEach(liveRunsForChat) { state in
+                    SubagentLiveCardView(state: state)
+                }
                 if !output.isEmpty {
                     ChatMessageMarkdownView(output)
                 }
@@ -301,7 +309,7 @@ private struct ActiveStreamingRowView: View {
     }
 
     /// Copy shown while nothing has streamed yet: which of the waiting
-    /// states (tool approval, prefilling, reasoning, or plain decode) the turn is in.
+    /// states (tool approval, prefill, reasoning, or plain decode) the turn is in.
     private var waitingStatusText: String {
         if model.pendingToolCall != nil {
             "Awaiting tool confirmation..."
@@ -311,6 +319,52 @@ private struct ActiveStreamingRowView: View {
             "Thinking..."
         } else {
             "Generating response..."
+        }
+    }
+
+    /// Live foreground subagent runs belonging to this chat, oldest first.
+    private var liveRunsForChat: [SubagentRunState] {
+        model.liveSubagentRuns.values
+            .filter { $0.chatID == nil || $0.chatID == model.selectedChatID }
+            .sorted { $0.startedAt < $1.startedAt }
+    }
+}
+
+/// The strip of background subagent runs for the selected chat, running or
+/// finished. It renders OUTSIDE the streaming row so a background agent is
+/// visible while nothing else is happening in the conversation -- which is
+/// most of a background run's life.
+private struct BackgroundAgentsStripView: View {
+    @ObservedObject var model: AppModel
+
+    private var runsForChat: [SubagentRunState] {
+        model.backgroundAgentRuns.values
+            .filter { $0.chatID == model.selectedChatID }
+            .sorted { $0.startedAt < $1.startedAt }
+    }
+
+    var body: some View {
+        let runs = runsForChat
+        if !runs.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(runs) { state in
+                    SubagentLiveCardView(
+                        state: state,
+                        onStop: state.status == "running" ? { stop(state.id) } : nil,
+                        onDismiss: state.status != "running" ? { model.dismissBackgroundAgent(state.id) } : nil)
+                }
+            }
+        }
+    }
+
+    private func stop(_ id: String) {
+        Task { @MainActor in
+            do {
+                let message = try await model.stopBackgroundAgent(id)
+                model.showToast(message, style: .info)
+            } catch {
+                model.showToast(error.localizedDescription, style: .error)
+            }
         }
     }
 }

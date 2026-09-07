@@ -181,6 +181,12 @@ public final class AppModel: ObservableObject {
     /// guards only on `!generating`, which is false while a call waits
     /// (state#9). Not `@Published`: nothing draws it.
     var pendingToolCallProject: AppProject?
+    /// The full agent batch parked behind `pendingToolCall` (nil for a solo
+    /// call). A parallel subagent launch under an asking project shows ONE
+    /// card; approving runs every call of the batch concurrently, denying
+    /// refuses all. `pendingToolCall` remains the call whose verdict the
+    /// card renders.
+    var pendingBatchCalls: [AppToolCall]? = nil
     /// Why the last SKILL.state patch was rejected, or nil if the last one
     /// merged. Surfaced rather than swallowed: a dropped patch means the run
     /// lost a step's bookkeeping, which is invisible in the transcript.
@@ -214,6 +220,31 @@ public final class AppModel: ObservableObject {
     // Agents State
     /// All discovered agents (built-in, user, project).
     @Published public var discoveredAgents: [AppAgentDefinition] = []
+
+    // Subagent State
+    /// Live FOREGROUND subagent runs, keyed by the tool-call UUID string
+    /// that started them. A run is removed when its `finished` event lands,
+    /// which is within moments of the transcript's own tool card appearing
+    /// -- the card is the durable record, this dict is the live view.
+    @Published public var liveSubagentRuns: [String: SubagentRunState] = [:]
+    /// Background subagent runs, keyed `bga_N`. Unlike the foreground dict,
+    /// finished runs STAY here until pruned: nothing else in the transcript
+    /// represents a background run, so its card (with its result) is the
+    /// only record the chat has.
+    @Published public var backgroundAgentRuns: [String: SubagentRunState] = [:]
+    /// User-role `<task-notification>` turns a background agent finished
+    /// while its chat was busy, parked per chat until a turn tail can inject
+    /// them (Claude Code's pending-notification queue).
+    var pendingTaskNotifications: [UUID: [String]] = [:]
+    /// The spawned `Task` per background agent id. Deliberately NOT a child
+    /// of `runTask`: an unstructured `Task` inherits no cancellation, which
+    /// is the whole point -- chat Stop must not kill an agent the model was
+    /// told runs independently.
+    var backgroundAgentTasks: [String: Task<SubagentRunResult, Never>] = [:]
+    /// Ids the user or the model asked to stop, so their completion reads
+    /// `killed` rather than `cancelled`.
+    var killedBackgroundAgentIDs: Set<String> = []
+    var nextBackgroundAgentID = 1
 
     // Multi-chat State
     /// All user chat conversations.
@@ -467,6 +498,25 @@ public final class AppModel: ObservableObject {
         }
         AppToolRegistry.userSystemPromptProvider = { [weak self] in
             self?.defaultSystemPrompt ?? ""
+        }
+        AppToolRegistry.subagentProgressSink = { [weak self] key, event in
+            await self?.applySubagentEvent(key, event)
+        }
+        AppToolRegistry.backgroundAgentLauncher = { [weak self] launch in
+            guard let self else {
+                throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                    NSLocalizedDescriptionKey: "Background subagents are unavailable: the app model is gone."
+                ])
+            }
+            return try await self.launchBackgroundAgent(launch)
+        }
+        AppToolRegistry.backgroundAgentStopper = { [weak self] id in
+            guard let self else {
+                throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                    NSLocalizedDescriptionKey: "Background subagents are unavailable: the app model is gone."
+                ])
+            }
+            return try await self.stopBackgroundAgent(id)
         }
         TodoWriteExecutor.onTodosUpdated = { [weak self] targetChatID, newTodos in
             Task { @MainActor [weak self] in
