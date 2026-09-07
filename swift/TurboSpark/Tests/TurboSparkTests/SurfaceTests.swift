@@ -578,12 +578,27 @@ final class SurfaceTests: XCTestCase {
         XCTAssertNil(off.imageTokenId)
         XCTAssertNotNil(off.reason)
 
-        let serving = #"{ "active": true, "imageTokenId": 151655, "reason": null }"#
+        let serving = #"{ "active": true, "imageTokenId": 151655, "reason": null, "source": "sidecar", "sidecarPath": "/path/to/tower", "maxPixels": 1048576 }"#
         let on = try JSONDecoder().decode(
             SessionInfo.Vision.self, from: Data(serving.utf8))
         XCTAssertTrue(on.active)
         XCTAssertEqual(on.imageTokenId, 151655)
         XCTAssertNil(on.reason)
+        XCTAssertEqual(on.source, "sidecar")
+        XCTAssertEqual(on.sidecarPath, "/path/to/tower")
+        XCTAssertEqual(on.maxPixels, 1048576)
+    }
+
+    /// Tests that OpenOptions encodes visionSidecar when provided.
+    func testOpenOptionsVisionSidecarEncodable() throws {
+        var options = OpenOptions()
+        options.visionSidecar = "/tmp/tower.gturbo-vision"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        let data = try encoder.encode(options)
+        let json = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(json.contains("visionSidecar"))
+        XCTAssertTrue(json.contains("/tmp/tower.gturbo-vision"))
     }
 
     /// Tests that GenerateOptions encodes custom stopTokens without error.
@@ -607,6 +622,9 @@ final class SurfaceTests: XCTestCase {
 
         let statusDetokenize = ts_session_detokenize_json(nil, nil, false, &out)
         XCTAssertEqual(statusDetokenize, TS_ERR_INVALID_ARGUMENT)
+
+        let statusReleaseVision = ts_session_release_vision(nil)
+        XCTAssertEqual(statusReleaseVision, TS_ERR_INVALID_ARGUMENT)
     }
 
     /// The in-process server's C ABI entry points, called through the

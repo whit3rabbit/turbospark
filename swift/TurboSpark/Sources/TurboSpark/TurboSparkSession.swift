@@ -216,10 +216,8 @@ public final class TurboSparkSession: @unchecked Sendable {
     /// `TurboSparkServer` for as long as it should keep running.
     ///
     /// Serves the same OpenAI/Anthropic-compatible routes the standalone
-    /// `turbospark-server` binary does, EXCEPT vision and the standalone
-    /// binary's tool-call guardrails: a session opened through this type
-    /// carries no vision wiring, so an image request the server receives is
-    /// refused by name rather than silently dropped.
+    /// `turbospark-server` binary does, including vision endpoints when this session
+    /// has an active vision tower.
     public func startServer(options: ServerOptions = ServerOptions()) async throws
         -> TurboSparkServer
     {
@@ -394,6 +392,22 @@ public final class TurboSparkSession: @unchecked Sendable {
                 } catch {
                     cont.resume(throwing: error)
                 }
+            }
+        }
+    }
+
+    /// Frees the vision tower's open resources on this session (vision memory
+    /// sidecar Part C) without forgetting an attached sidecar or changing
+    /// `info.vision`. Subsequent image generation re-opens the tower on demand.
+    public func releaseVision() async throws {
+        return try await withCheckedThrowingContinuation { cont in
+            queue.async { [handle] in
+                let status = ts_session_release_vision(handle.raw)
+                guard status == 0 else {
+                    cont.resume(throwing: TurboSparkError.fromLastError(status))
+                    return
+                }
+                cont.resume(returning: ())
             }
         }
     }

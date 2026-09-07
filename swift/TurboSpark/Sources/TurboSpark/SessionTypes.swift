@@ -83,6 +83,14 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
         /// tower and `active` is false. That is the only case a caller can
         /// act on, so it is the only case that says anything.
         public let reason: String?
+        /// `"install"` when this session's tower comes from the trunk's
+        /// own directory, `"sidecar"` when a `visionSidecar` option attached a
+        /// standalone tower install instead. Null when inactive and no tower present.
+        public let source: String?
+        /// The sidecar directory, present only when `source` is `"sidecar"`.
+        public let sidecarPath: String?
+        /// The resolved pixel ceiling this session will preprocess an image against.
+        public let maxPixels: Int?
     }
 
     /// Special token identifiers for tokenizer introspection.

@@ -160,6 +160,8 @@ public struct OpenOptions: Encodable, Sendable {
     public var steeringTarget: Double?
     /// Activation magnitude threshold to trigger the edit (default 0.0).
     public var steeringGate: Double?
+    /// Path to a standalone vision-tower directory (.gturbo-vision). nil for default.
+    public var visionSidecar: String?
 
     /// Creates options for opening a model session.
     public init(
@@ -176,7 +178,8 @@ public struct OpenOptions: Encodable, Sendable {
         steeringScale: Double? = nil,
         steeringLayers: String? = nil,
         steeringTarget: Double? = nil,
-        steeringGate: Double? = nil
+        steeringGate: Double? = nil,
+        visionSidecar: String? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
@@ -192,6 +195,7 @@ public struct OpenOptions: Encodable, Sendable {
         self.steeringLayers = steeringLayers
         self.steeringTarget = steeringTarget
         self.steeringGate = steeringGate
+        self.visionSidecar = visionSidecar
     }
 }
 
