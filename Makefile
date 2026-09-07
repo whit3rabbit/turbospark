@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib compile-strings swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -60,6 +60,14 @@ catalog-guard:
 swift-lib:
 	./scripts/swift-lib.sh
 
+# Compiles Localization/Localizable.xcstrings into the .lproj resources the
+# app actually reads. `swift build`/`swift run` never do this themselves --
+# only Xcode's own build phase compiles a String Catalog, and this package
+# has no Xcode project -- so without it every localized string is dead JSON
+# sitting unused in the resource bundle (docs/SWIFT_SETTINGS_AUDIT.md item 1).
+compile-strings:
+	./scripts/compile-strings.sh
+
 # The test target that proves the HAND-WRITTEN header matches the Rust side.
 # Nothing else can: the Rust tests call the same function bodies through the
 # rlib, so they would pass against a wrong declaration.
@@ -83,13 +91,13 @@ swift-test-real: swift-lib
 	  TURBOSPARK_TEST_MODEL_NO_SPECULATION=$(BLOCKED) \
 	  TURBOSPARK_TEST_IMAGE=$(IMAGE) swift test
 
-swift-app-build: swift-lib
+swift-app-build: swift-lib compile-strings
 	cd swift/TurboSparkApp && swift build
 
-swift-app-release: swift-lib
+swift-app-release: swift-lib compile-strings
 	cd swift/TurboSparkApp && swift build -c release
 
-swift-app: swift-lib
+swift-app: swift-lib compile-strings
 	cd swift/TurboSparkApp && swift run TurboSparkApp
 
 swift-demo: swift-app

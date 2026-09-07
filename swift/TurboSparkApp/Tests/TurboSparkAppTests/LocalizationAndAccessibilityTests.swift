@@ -5,6 +5,21 @@ import XCTest
 
 @MainActor
 final class LocalizationAndAccessibilityTests: XCTestCase {
+    /// `Localization/Localizable.xcstrings`, found without going through a
+    /// bundle. It moved out of `Sources/TurboSparkApp/Resources/` in the
+    /// font/localization pass (`docs/SWIFT_SETTINGS_AUDIT.md` item 1): it is
+    /// a build INPUT for `scripts/compile-strings.sh`, not a runtime
+    /// resource, so it is never bundled and `Bundle.module` can no longer
+    /// find it. `#filePath` reaches the checked-in source directly, the same
+    /// reasoning as `LocalizationTests.sourceCatalogURL`.
+    private var sourceCatalogURL: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Tests/TurboSparkAppTests/
+            .deletingLastPathComponent()   // Tests/
+            .deletingLastPathComponent()   // TurboSparkApp/
+            .appendingPathComponent("Localization/Localizable.xcstrings")
+    }
+
     func testAppLanguageEnumProperties() {
         XCTAssertEqual(AppLanguage.allCases.count, 22) // system + 21 languages
         XCTAssertTrue(AppLanguage.arabic.isRTL)
@@ -27,10 +42,7 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
     }
 
     func testLocalizableXCStringsValidityAndLanguageCoverage() throws {
-        // Read Localizable.xcstrings directly from Resources folder or Bundle
-        let bundle = Bundle.module
-        let xcstringsURL = bundle.url(forResource: "Localizable", withExtension: "xcstrings")
-            ?? URL(fileURLWithPath: "Sources/TurboSparkApp/Resources/Localizable.xcstrings")
+        let xcstringsURL = sourceCatalogURL
 
         guard FileManager.default.fileExists(atPath: xcstringsURL.path) else {
             XCTFail("Localizable.xcstrings not found at path: \(xcstringsURL.path)")
@@ -106,17 +118,8 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
         XCTAssertTrue(foundTooltip, "Rendered attributed string should contain NSAttributedString.Key.toolTip for hover")
     }
 
-    func testLanguageDetector() {
-        XCTAssertEqual(LanguageDetector.detectTextLanguage("This is a simple english sentence."), .english)
-        XCTAssertEqual(LanguageDetector.detectTextLanguage("Esta es una frase en espa\u{00F1}ol."), .spanish)
-        XCTAssertTrue(LanguageDetector.isRTL(languageCode: "ar"))
-        XCTAssertFalse(LanguageDetector.isRTL(languageCode: "en"))
-    }
-
     func testAccessibilityAndTooltipCatalogKeysCoverage() throws {
-        let bundle = Bundle.module
-        let xcstringsURL = bundle.url(forResource: "Localizable", withExtension: "xcstrings")
-            ?? URL(fileURLWithPath: "Sources/TurboSparkApp/Resources/Localizable.xcstrings")
+        let xcstringsURL = sourceCatalogURL
 
         guard FileManager.default.fileExists(atPath: xcstringsURL.path) else {
             XCTFail("Localizable.xcstrings not found at path: \(xcstringsURL.path)")

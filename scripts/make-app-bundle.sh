@@ -66,6 +66,9 @@ if [ "$skip_build" -eq 0 ]; then
   echo "==> staging the FFI staticlib (crates/ffi -> SwiftPM)"
   "$root/scripts/swift-lib.sh"
 
+  echo "==> compiling the string catalog (Localization/Localizable.xcstrings -> .lproj)"
+  "$root/scripts/compile-strings.sh"
+
   echo "==> cargo build --release (CLI + server)"
   cargo build --release --target "$target" \
     -p turbospark-cli -p turbospark-server --manifest-path "$root/Cargo.toml"
