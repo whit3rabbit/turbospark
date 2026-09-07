@@ -187,6 +187,32 @@ fn the_hash_heads_may_underfill_the_table_but_never_overrun_it() {
     assert!(format!("{err:?}").contains("address"), "{err:?}");
 }
 
+/// A negative offset would otherwise reach `ple_ngram_rows`'s `as u64` cast
+/// unchecked and wrap into a huge row index rather than erroring.
+#[test]
+fn a_negative_head_offset_is_refused() {
+    let mut l = real();
+    l.head_offsets[0] = -1;
+    let err = l.validate().expect_err("refused");
+    assert!(format!("{err:?}").contains("negative"), "{err:?}");
+}
+
+/// The `used` check above examines only the LAST offset, which is sound
+/// only because the array is ASCENDING; a non-ascending array could hide a
+/// too-large offset anywhere but the end.
+#[test]
+fn a_non_ascending_head_offsets_array_is_refused() {
+    let mut l = real();
+    let last = l.head_offsets.len() - 1;
+    l.head_offsets.swap(0, last);
+    // Swapping two DISTINCT elements of a strictly increasing array breaks
+    // the ordering; guard against a degenerate fixture where that would not
+    // hold.
+    assert_ne!(l.head_offsets[0], l.head_offsets[last]);
+    let err = l.validate().expect_err("refused");
+    assert!(format!("{err:?}").contains("ascending"), "{err:?}");
+}
+
 /// `multipliers` is one per n-gram ORDER and the other two are one per HEAD,
 /// so they are different lengths by construction.
 ///

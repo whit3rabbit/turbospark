@@ -428,10 +428,17 @@ cargo test -p turbospark-runtime
     **`committed_bytes` is not the weight file's size**, and on a streamed MoE
     install the difference is most of the answer: Gemma 4's
     `model_weights.bin` is 1.26 GiB while its expert table is 12 GB, of which
-    the slot cache pins `slots x sum(expert_stride)` -- about 3.0 GiB at the
-    top of `ALLOWED_CACHE_SLOTS`. It adds the WORST case rather than the
-    resolved count, because the slot policy resolves inside `open` and this
-    has to decide first. Per-layer strides summed, never `layers x
+    the slot cache pins `slots x sum(expert_stride)` -- roughly 12 GiB at the
+    current top of `ALLOWED_CACHE_SLOTS` (128; this read "about 3.0 GiB" before
+    that constant widened past 32 for `qwen4_exp`'s finer-grained experts, and
+    the figure is stated relative to the constant here rather than as a number
+    that goes stale again the next time it moves). `committed_bytes` adds this
+    WORST case, because it has no slot policy to resolve against.
+    `committed_breakdown` is the fix: every production caller (`crates/cli`,
+    `crates/ffi`, `crates/server`) resolves the slot cache to what THIS open
+    will actually request instead, which is also what makes `--load-guard
+    custom`'s ceiling on allocated bytes mean something -- it used to be read
+    nowhere in `resolve_max_context`. Per-layer strides summed, never `layers x
     max(stride)`, for `model-io` Gotcha 2's reason.
 
     **`physical_memory()` answering 0 means the probe is unavailable, not that

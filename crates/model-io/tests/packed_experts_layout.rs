@@ -132,6 +132,101 @@ fn load_rejects_missing_expert_entries() {
     assert!(matches!(err, ModelError::IndexCorrupt { .. }));
 }
 
+/// Two layers declaring the wrong ORDER (1 before 0) resolve the wrong blob
+/// through `PackedExpertsLayout::expert()`'s positional indexing with no
+/// error, unless the loader refuses it -- which it now does.
+#[test]
+fn load_rejects_layers_out_of_order() {
+    let dir = tempdir();
+    let json = r#"{
+        "expertStride": 4096,
+        "numLayers": 2,
+        "expertsPerLayer": 1,
+        "layers": [
+            {"layer": 1, "file": "layer_01.bin", "experts": [
+                {"expert": 0, "offset": 0, "size": 4096, "tensors": {}}
+            ]},
+            {"layer": 0, "file": "layer_00.bin", "experts": [
+                {"expert": 0, "offset": 0, "size": 4096, "tensors": {}}
+            ]}
+        ]
+    }"#;
+    write_layout(&dir, json);
+    let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
+    assert!(matches!(err, ModelError::IndexCorrupt { .. }));
+}
+
+/// A gap (0, then 2, skipping 1) is the same positional-indexing hazard as
+/// out-of-order layers and is refused the same way.
+#[test]
+fn load_rejects_a_gap_in_the_layer_sequence() {
+    let dir = tempdir();
+    let json = r#"{
+        "expertStride": 4096,
+        "numLayers": 2,
+        "expertsPerLayer": 1,
+        "layers": [
+            {"layer": 0, "file": "layer_00.bin", "experts": [
+                {"expert": 0, "offset": 0, "size": 4096, "tensors": {}}
+            ]},
+            {"layer": 2, "file": "layer_02.bin", "experts": [
+                {"expert": 0, "offset": 0, "size": 4096, "tensors": {}}
+            ]}
+        ]
+    }"#;
+    write_layout(&dir, json);
+    let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
+    assert!(matches!(err, ModelError::IndexCorrupt { .. }));
+}
+
+/// `numLayers` disagreeing with the array's own length (here: declaring 2
+/// while shipping 1) is refused rather than silently trusting either side.
+#[test]
+fn load_rejects_num_layers_disagreeing_with_the_array() {
+    let dir = tempdir();
+    let json = r#"{
+        "expertStride": 4096,
+        "numLayers": 2,
+        "expertsPerLayer": 1,
+        "layers": [
+            {"layer": 0, "file": "layer_00.bin", "experts": [
+                {"expert": 0, "offset": 0, "size": 4096, "tensors": {}}
+            ]}
+        ]
+    }"#;
+    write_layout(&dir, json);
+    let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
+    let ModelError::IndexCorrupt { detail } = err else {
+        panic!("expected IndexCorrupt, got {err:?}");
+    };
+    assert!(detail.contains("numLayers"), "{detail}");
+}
+
+/// A duplicate `expert` id would otherwise silently overwrite the first
+/// blob and leave the real second slot `None`, reported downstream as an
+/// unrelated "missing expert entries" with no hint of the actual cause.
+#[test]
+fn load_rejects_a_duplicate_expert_id() {
+    let dir = tempdir();
+    let json = r#"{
+        "expertStride": 4096,
+        "numLayers": 1,
+        "expertsPerLayer": 2,
+        "layers": [
+            {"layer": 0, "file": "layer_00.bin", "experts": [
+                {"expert": 0, "offset": 0, "size": 4096, "tensors": {}},
+                {"expert": 0, "offset": 4096, "size": 4096, "tensors": {}}
+            ]}
+        ]
+    }"#;
+    write_layout(&dir, json);
+    let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
+    let ModelError::IndexCorrupt { detail } = err else {
+        panic!("expected IndexCorrupt, got {err:?}");
+    };
+    assert!(detail.contains("more than once"), "{detail}");
+}
+
 #[test]
 fn load_rejects_missing_file() {
     let dir = tempdir();

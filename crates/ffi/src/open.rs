@@ -253,9 +253,13 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     let trained = repack::trained_context_meta::peek(dir);
     // Bound rather than computed inline: the vision pixel budget (Part B3)
     // needs the SAME committed-bytes figure `max_context` resolved against,
-    // not a second read of the install.
-    let committed = runtime::committed_bytes(dir);
-    let plan = runtime::resolve_max_context(
+    // not a second read of the install. `committed_breakdown` resolves the
+    // slot cache to what THIS open will actually request (`expert_cache_slots`,
+    // already mapped above), not `committed_bytes`'s worst case, so a
+    // `loadGuard: "custom"` ceiling is checked against a real allocation.
+    let committed =
+        runtime::committed_breakdown(dir, runtime::physical_memory(), expert_cache_slots);
+    let plan = runtime::resolve_max_context_with(
         match max_context {
             Some(n) => runtime::MaxContext::Fixed(n),
             None => runtime::MaxContext::Auto,
@@ -273,6 +277,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         runtime::physical_memory(),
         committed,
         &load_policy,
+        kv_quant,
     )
     .map_err(|e| e.to_string())?;
 
@@ -465,7 +470,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             &runner,
             vision_sidecar_dir.as_deref(),
             load_policy.guard,
-            committed,
+            committed.total(),
             plan.kv_bytes,
         ),
         kv_bits: kv_quant.label(),
@@ -489,7 +494,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         speculation_block,
         info,
         load_policy,
-        committed_bytes: committed,
+        committed_bytes: committed.total(),
         kv_bytes: plan.kv_bytes,
     }))
 }

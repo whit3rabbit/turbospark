@@ -147,7 +147,7 @@ fn auto_without_a_declared_trained_context_stays_at_the_default() {
         None,
         DEFAULT,
         36 * GIB,
-        13 * GIB,
+        CommittedBytes::resident_only(13 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap();
@@ -166,7 +166,7 @@ fn auto_takes_the_trained_context_when_memory_allows() {
         Some(131_072),
         DEFAULT,
         36 * GIB,
-        13 * GIB,
+        CommittedBytes::resident_only(13 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap();
@@ -185,7 +185,7 @@ fn auto_takes_the_machine_when_it_is_the_smaller_bound() {
         Some(131_072),
         DEFAULT,
         36 * GIB,
-        4 * GIB,
+        CommittedBytes::resident_only(4 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap();
@@ -207,7 +207,7 @@ fn a_named_context_may_exceed_the_comfortable_share() {
         Some(131_072),
         DEFAULT,
         36 * GIB,
-        4 * GIB,
+        CommittedBytes::resident_only(4 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap();
@@ -227,7 +227,7 @@ fn past_the_trained_context_resolves_and_flags_itself() {
         Some(131_072),
         DEFAULT,
         36 * GIB,
-        13 * GIB,
+        CommittedBytes::resident_only(13 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap();
@@ -246,7 +246,7 @@ fn past_what_memory_holds_is_refused_with_the_arithmetic() {
         Some(1_000_000),
         DEFAULT,
         36 * GIB,
-        4 * GIB,
+        CommittedBytes::resident_only(4 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap_err();
@@ -279,7 +279,7 @@ fn auto_never_resolves_to_something_the_machine_refuses() {
                         trained,
                         DEFAULT,
                         physical,
-                        resident,
+                        CommittedBytes::resident_only(resident),
                         &LoadPolicy::default(),
                     );
                     // The one legitimate failure is a machine with no
@@ -310,7 +310,7 @@ fn a_machine_smaller_than_its_install_refuses_rather_than_underflowing() {
         None,
         DEFAULT,
         8 * GIB,
-        13 * GIB,
+        CommittedBytes::resident_only(13 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap_err();
@@ -333,7 +333,7 @@ fn an_unknown_machine_constrains_nothing() {
         Some(131_072),
         DEFAULT,
         0,
-        13 * GIB,
+        CommittedBytes::resident_only(13 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap();
@@ -349,7 +349,7 @@ fn an_unknown_machine_constrains_nothing() {
         None,
         DEFAULT,
         0,
-        13 * GIB,
+        CommittedBytes::resident_only(13 * GIB),
         &LoadPolicy::default(),
     )
     .unwrap();
@@ -363,7 +363,7 @@ fn an_unknown_machine_constrains_nothing() {
         None,
         DEFAULT,
         0,
-        0,
+        CommittedBytes::resident_only(0),
         &LoadPolicy::default(),
     )
     .unwrap();
@@ -388,7 +388,7 @@ fn fixed_is_returned_untouched() {
             None,
             DEFAULT,
             36 * GIB,
-            0,
+            CommittedBytes::resident_only(0),
             &LoadPolicy::default(),
         )
         .unwrap();
@@ -423,7 +423,7 @@ fn a_tighter_guard_resolves_a_smaller_auto_window() {
             Some(131_072),
             DEFAULT,
             36 * GIB,
-            4 * GIB,
+            CommittedBytes::resident_only(4 * GIB),
             &LoadPolicy::new(guard),
         )
         .unwrap()
@@ -448,7 +448,7 @@ fn off_admits_a_window_every_other_tier_refuses() {
             Some(1_000_000),
             DEFAULT,
             36 * GIB,
-            4 * GIB,
+            CommittedBytes::resident_only(4 * GIB),
             &LoadPolicy::new(guard),
         )
     };
@@ -472,7 +472,7 @@ fn the_refusal_quotes_the_tiers_own_reserve() {
         Some(1_000_000),
         DEFAULT,
         36 * GIB,
-        4 * GIB,
+        CommittedBytes::resident_only(4 * GIB),
         &LoadPolicy::new(LoadGuard::Strict),
     )
     .unwrap_err();
@@ -494,7 +494,7 @@ fn a_floor_above_what_memory_affords_is_refused_naming_memory() {
         Some(131_072),
         DEFAULT,
         36 * GIB,
-        4 * GIB,
+        CommittedBytes::resident_only(4 * GIB),
         &LoadPolicy {
             guard: LoadGuard::Relaxed,
             min_auto_context: 65_536,
@@ -523,7 +523,7 @@ fn a_floor_above_the_trained_context_is_refused_naming_the_checkpoint() {
         Some(8_192),
         DEFAULT,
         36 * GIB,
-        13 * GIB,
+        CommittedBytes::resident_only(13 * GIB),
         &LoadPolicy {
             guard: LoadGuard::Relaxed,
             min_auto_context: 32_768,
@@ -550,7 +550,7 @@ fn an_explicit_window_below_the_floor_is_not_refused() {
         Some(131_072),
         DEFAULT,
         36 * GIB,
-        4 * GIB,
+        CommittedBytes::resident_only(4 * GIB),
         &LoadPolicy {
             guard: LoadGuard::Relaxed,
             min_auto_context: 65_536,
@@ -572,7 +572,7 @@ fn the_floor_applies_under_every_tier_including_off() {
         Some(1_000_000),
         DEFAULT,
         8 * GIB,
-        0,
+        CommittedBytes::resident_only(0),
         &LoadPolicy {
             guard: LoadGuard::Off,
             min_auto_context: 500_000,
@@ -593,7 +593,7 @@ fn a_zero_floor_never_refuses() {
             None,
             DEFAULT,
             physical,
-            0,
+            CommittedBytes::resident_only(0),
             &LoadPolicy::default(),
         )
         .is_ok());
@@ -664,4 +664,177 @@ fn session_pool_bytes_scales_linearly_with_extra_slots() {
             kv_bytes_for_context(&arch, 4096) + gdn_state_bytes(&arch)
         );
     }
+}
+
+/// **`LoadGuard::Custom`'s ceiling is on `counted` (slot cache + KV), and it
+/// refuses regardless of how much headroom the machine otherwise has** --
+/// this is the fix for the finding that this tier never actually capped
+/// anything: the cap used to be read nowhere in `resolve_max_context`.
+#[test]
+fn custom_refuses_when_slot_cache_plus_kv_exceeds_the_cap() {
+    let cap = 5 * GIB;
+    let err = resolve_max_context(
+        MaxContext::Fixed(200_000),
+        &dense_7b(),
+        Some(200_000),
+        DEFAULT,
+        36 * GIB,
+        CommittedBytes {
+            resident: 0,
+            slot_cache: 2 * GIB,
+        },
+        &LoadPolicy::new(LoadGuard::Custom {
+            max_counted_bytes: cap,
+        }),
+    )
+    .unwrap_err();
+    let ContextRefused::OverCap(over) = err else {
+        panic!("expected an OverCap refusal, got {err:?}");
+    };
+    assert_eq!(over.cap, cap);
+    assert_eq!(over.slot_cache, 2 * GIB);
+    assert!(over.counted > cap);
+    assert!(over.to_string().contains("--load-guard custom"), "{over}");
+}
+
+/// A window landing exactly AT the cap is admitted, not refused: the
+/// boundary is `>`, matching `catalog::recommend::fit::verdict_for`'s own
+/// `counted > cap`.
+#[test]
+fn custom_admits_a_window_exactly_at_the_cap() {
+    // `kv_bytes_for_context(&dense_7b(), 4096) == 512 MiB`
+    // (`the_dense_7b_estimate_reproduces_the_measured_row`).
+    let cap = 512 * 1024 * 1024;
+    let plan = resolve_max_context(
+        MaxContext::Fixed(4096),
+        &dense_7b(),
+        Some(4096),
+        DEFAULT,
+        36 * GIB,
+        CommittedBytes::resident_only(0),
+        &LoadPolicy::new(LoadGuard::Custom {
+            max_counted_bytes: cap,
+        }),
+    )
+    .unwrap();
+    assert_eq!(plan.kv_bytes, cap);
+}
+
+/// A `Custom` cap that never binds is otherwise IDENTICAL to `Relaxed`:
+/// `GuardBudget` gives the two tiers the same reserve, fraction and tight
+/// threshold, so a plan built under either, with a cap the scenario never
+/// reaches, must come out byte-for-byte the same.
+#[test]
+fn custom_with_a_cap_that_never_binds_reproduces_relaxed_exactly() {
+    let scenario = |guard: LoadGuard| {
+        resolve_max_context(
+            MaxContext::Auto,
+            &dense_7b(),
+            Some(131_072),
+            DEFAULT,
+            36 * GIB,
+            CommittedBytes::resident_only(4 * GIB),
+            &LoadPolicy::new(guard),
+        )
+        .unwrap()
+    };
+    let relaxed = scenario(LoadGuard::Relaxed);
+    let custom = scenario(LoadGuard::Custom {
+        max_counted_bytes: u64::MAX,
+    });
+    assert_eq!(relaxed, custom);
+}
+
+/// A refusal's `largest_fitting` must honor `quant` too -- it used to call
+/// the FP16-only `largest_context_within`, so a `--kv-bits` caller was told
+/// a smaller "largest context that fits" than TurboQuant actually affords,
+/// inside the very message meant to suggest a working value.
+#[test]
+fn a_refusals_largest_fitting_honors_kv_quant() {
+    let arch = dense_7b();
+    // (36 - 30 - 4) GiB reserve = 2 GiB available -- small enough that even
+    // TurboQuant's cheaper KV rows cannot hold a million-token request.
+    let available = 2 * GIB;
+    let fp16_largest = largest_context_within(&arch, available);
+    let quant = KvQuant::TurboQuant {
+        k_bits: 3,
+        v_bits: 3,
+    };
+    let err = resolve_max_context_with(
+        MaxContext::Fixed(1_000_000),
+        &arch,
+        Some(1_000_000),
+        DEFAULT,
+        36 * GIB,
+        CommittedBytes::resident_only(30 * GIB),
+        &LoadPolicy::default(),
+        quant,
+    )
+    .unwrap_err();
+    let ContextRefused::TooLarge(err) = err else {
+        panic!("expected a memory refusal, got {err:?}");
+    };
+    assert_eq!(err.available, available);
+    // TurboQuant K3/V3 packs a KV row into fewer bytes than FP16, so the
+    // same `available` budget affords a STRICTLY larger window.
+    assert!(
+        err.largest_fitting > fp16_largest,
+        "{} should exceed the FP16 answer {fp16_largest}",
+        err.largest_fitting
+    );
+    assert!(kv_bytes_for_context_with(&arch, err.largest_fitting, quant) <= available);
+    assert!(
+        kv_bytes_for_context_with(&arch, err.largest_fitting + CONTEXT_GRANULARITY, quant)
+            > available
+    );
+}
+
+/// [`committed_breakdown`] resolves the slot cache to what THIS open would
+/// actually request -- `ExpertCacheSlots::Auto` against the real machine and
+/// the real per-layer strides, capped at the layout's own expert count --
+/// never to [`committed_bytes`]'s worst case, which assumes the top of
+/// `ALLOWED_CACHE_SLOTS` regardless of what either could ever resolve to.
+#[test]
+fn committed_breakdown_resolves_the_slot_policy_actually_requested() {
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-committed-breakdown-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(dir.join("packed_experts")).unwrap();
+    // One layer, one expert: `experts_per_layer` alone already caps the
+    // resolved slot count far below the allowlist's top of 128.
+    let layout_json = r#"{
+        "expertStride": 1048576,
+        "numLayers": 1,
+        "expertsPerLayer": 1,
+        "layers": [
+            {"layer": 0, "file": "layer_00.bin", "experts": [
+                {"expert": 0, "offset": 0, "size": 1048576, "tensors": {}}
+            ]}
+        ]
+    }"#;
+    std::fs::write(dir.join("packed_experts").join("layout.json"), layout_json).unwrap();
+
+    let physical = 36 * GIB;
+    let breakdown = crate::committed_breakdown(&dir, physical, crate::ExpertCacheSlots::Auto);
+    let expected_slots =
+        crate::ExpertCacheSlots::Auto.resolve(physical, breakdown.resident, 1_048_576);
+    // Capped at the layout's one expert, exactly as `real_forward_init.rs`
+    // caps its own resolved count.
+    assert_eq!(
+        breakdown.slot_cache, 1_048_576,
+        "{expected_slots} slots resolved before the cap"
+    );
+    assert!(
+        breakdown.slot_cache < crate::committed_bytes(&dir),
+        "the breakdown ({}) should sit far below the worst case ({})",
+        breakdown.slot_cache,
+        crate::committed_bytes(&dir)
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }

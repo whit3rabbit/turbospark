@@ -72,6 +72,13 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
         call: "open".to_string(),
         detail: e.to_string(),
     })?;
+    let file_len = file
+        .metadata()
+        .map_err(|e| ModelError::IoFailed {
+            call: "stat".to_string(),
+            detail: e.to_string(),
+        })?
+        .len();
 
     let mut header_buf = [0u8; HEADER_BYTES];
     file.read_exact(&mut header_buf)
@@ -88,11 +95,35 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
             header.index_size
         )));
     }
-    let expected_entry_table_end = HEADER_BYTES as u64 + header.entry_count * ENTRY_BYTES as u64;
+    let entry_table_bytes = header
+        .entry_count
+        .checked_mul(ENTRY_BYTES as u64)
+        .ok_or_else(|| {
+            corrupt(format!(
+                "entryCount {} overflows the entry table",
+                header.entry_count
+            ))
+        })?;
+    let expected_entry_table_end = (HEADER_BYTES as u64)
+        .checked_add(entry_table_bytes)
+        .ok_or_else(|| corrupt("header + entry table size overflows"))?;
     if expected_entry_table_end > header.index_size {
         return Err(corrupt(format!(
             "header+entries ({expected_entry_table_end}) > indexSize {}",
             header.index_size
+        )));
+    }
+    // Bounds every offset an entry can declare, and (since `index_size` is
+    // what sizes the allocation below) caps that allocation at the file's own
+    // length rather than at whatever a corrupt header claims.
+    let region_end = header
+        .index_size
+        .checked_add(header.resident_size)
+        .ok_or_else(|| corrupt("indexSize + residentSize overflows"))?;
+    if region_end > file_len {
+        return Err(corrupt(format!(
+            "indexSize {} + residentSize {} = {region_end} exceeds file length {file_len}",
+            header.index_size, header.resident_size
         )));
     }
 
@@ -136,6 +167,41 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
         }
         let name = String::from_utf8_lossy(&index_buf[name_offset..name_offset + name_length])
             .into_owned();
+
+        // Every offset/size pair below is untrusted input: a corrupt or
+        // hostile index can name any `u64`, and every consumer (host slices,
+        // `ResidentBuffer::map`, the GPU's `gpu_offset`) subtracts
+        // `index_size` and slices with no bound of its own -- this is the
+        // one place that CAN check, and `runtime::real_forward_utils`'s
+        // `resident_matrix` doc already claims it does.
+        let in_region = |offset: u64, size: u64| -> bool {
+            size == 0
+                || (offset >= header.index_size
+                    && offset
+                        .checked_add(size)
+                        .is_some_and(|end| end <= region_end))
+        };
+        if !in_region(file_offset, size_bytes) {
+            return Err(corrupt(format!(
+                "entry {i} ({name}) payload [{file_offset}, +{size_bytes}) outside the resident \
+                 region [{}, {region_end})",
+                header.index_size
+            )));
+        }
+        if !in_region(scale_offset, scale_size) {
+            return Err(corrupt(format!(
+                "entry {i} ({name}) scale plane [{scale_offset}, +{scale_size}) outside the \
+                 resident region [{}, {region_end})",
+                header.index_size
+            )));
+        }
+        if !in_region(bias_offset, bias_size) {
+            return Err(corrupt(format!(
+                "entry {i} ({name}) bias plane [{bias_offset}, +{bias_size}) outside the \
+                 resident region [{}, {region_end})",
+                header.index_size
+            )));
+        }
 
         let entry = ResidentIndexEntry {
             name: name.clone(),

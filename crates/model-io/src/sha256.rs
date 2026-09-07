@@ -18,7 +18,11 @@ pub fn hash_file(path: &Path, chunk_bytes: usize) -> Result<String, ModelError> 
         detail: e.to_string(),
     })?;
     let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; chunk_bytes];
+    // A zero-length buffer's `read` always returns `Ok(0)` regardless of
+    // what the file actually holds (the `Read` trait's own contract), so
+    // `chunk_bytes: 0` would otherwise report the EMPTY-file hash for any
+    // file, silently.
+    let mut buf = vec![0u8; chunk_bytes.max(1)];
     loop {
         let got = file.read(&mut buf).map_err(|e| ModelError::IoFailed {
             call: "read".to_string(),

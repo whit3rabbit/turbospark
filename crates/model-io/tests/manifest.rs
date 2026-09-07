@@ -124,6 +124,24 @@ fn load_rejects_hidden_size_mismatch() {
     }
 }
 
+/// `as u8` used to narrow silently: 257 would read as 1 and pass the mask
+/// check by coincidence. A value outside `0..=255` must be refused by name
+/// instead.
+#[test]
+fn load_rejects_a_mask_entry_that_overflows_a_byte() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace(
+        "\"fullAttentionLayerMask\": [1, 1]",
+        "\"fullAttentionLayerMask\": [257, 1]",
+    );
+    write_manifest(dir.path(), &json);
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    match err {
+        ModelError::ArchMismatch { field, .. } => assert_eq!(field, "fullAttentionLayerMask"),
+        other => panic!("expected ArchMismatch, got {other:?}"),
+    }
+}
+
 #[test]
 fn load_rejects_missing_manifest_file() {
     let dir = tempfile_dir();

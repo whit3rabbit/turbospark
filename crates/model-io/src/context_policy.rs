@@ -121,6 +121,47 @@ impl std::fmt::Display for ContextTooLarge {
     }
 }
 
+/// Why a requested context was refused for exceeding a [`crate::LoadGuard::Custom`]
+/// ceiling on what the engine may ALLOCATE.
+///
+/// A sibling of [`ContextTooLarge`] rather than a variant of it, because the
+/// two check different things: that one is the MACHINE's budget, skippable
+/// per tier (`budget.refuses`) and measured against `available`; this one is
+/// the CALLER's own ceiling on `slot_cache + kv_bytes` ("counted": what the
+/// engine actually allocates, `catalog::recommend::fit`'s own term), checked
+/// BEFORE the budget and regardless of headroom -- mirroring that module's
+/// `verdict_for` exactly, which is the whole point of the two sharing a
+/// budget by construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextOverCap {
+    /// The context that was asked for.
+    pub requested: u32,
+    /// `slot_cache + kv_bytes` at [`Self::requested`].
+    pub counted: u64,
+    /// The [`crate::LoadGuard::Custom`] ceiling.
+    pub cap: u64,
+    /// KV bytes alone, at [`Self::requested`].
+    pub kv_bytes: u64,
+    /// The routed-expert slot cache alone, unaffected by the requested
+    /// context.
+    pub slot_cache: u64,
+}
+
+impl std::fmt::Display for ContextOverCap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "--load-guard custom would allocate {} at --max-context {} \
+             ({} slot cache + {} KV), over the {} ceiling",
+            gib(self.counted),
+            self.requested,
+            gib(self.slot_cache),
+            gib(self.kv_bytes),
+            gib(self.cap),
+        )
+    }
+}
+
 /// Why an AUTOMATIC context resolution was refused for landing below the
 /// caller's floor.
 ///
@@ -207,6 +248,8 @@ pub enum ContextRefused {
     TooLarge(ContextTooLarge),
     /// `Auto` landed below the caller's floor.
     FloorUnmet(ContextFloorUnmet),
+    /// A [`crate::LoadGuard::Custom`] ceiling on allocated bytes was exceeded.
+    OverCap(ContextOverCap),
 }
 
 impl std::fmt::Display for ContextRefused {
@@ -214,6 +257,7 @@ impl std::fmt::Display for ContextRefused {
         match self {
             Self::TooLarge(e) => e.fmt(f),
             Self::FloorUnmet(e) => e.fmt(f),
+            Self::OverCap(e) => e.fmt(f),
         }
     }
 }
@@ -425,7 +469,7 @@ pub fn resolve_max_context(
     trained: Option<u32>,
     default_context: u32,
     physical: u64,
-    committed: u64,
+    committed: CommittedBytes,
     policy: &LoadPolicy,
 ) -> Result<ContextPlan, ContextRefused> {
     resolve_max_context_with(
@@ -450,7 +494,7 @@ pub fn resolve_max_context_with(
     trained: Option<u32>,
     default_context: u32,
     physical: u64,
-    committed: u64,
+    committed: CommittedBytes,
     policy: &LoadPolicy,
     quant: KvQuant,
 ) -> Result<ContextPlan, ContextRefused> {
@@ -463,7 +507,8 @@ pub fn resolve_max_context_with(
     // context imposes no ceiling.
     let known_machine = physical > 0;
     let budget = policy.guard.budget();
-    let available = policy.guard.available(physical, committed);
+    let committed_total = committed.total();
+    let available = policy.guard.available(physical, committed_total);
     let comfortable = (available as f64 * budget.budget_fraction) as u64;
 
     let ceiling = trained
@@ -482,6 +527,28 @@ pub fn resolve_max_context_with(
     };
 
     let kv_bytes = kv_bytes_for_context_with(arch, resolved, quant);
+
+    // The `LoadGuard::Custom` ceiling is checked BEFORE the budget and
+    // regardless of headroom -- mirroring `catalog::recommend::fit::
+    // verdict_for`'s identical ordering for the same tier, which is what
+    // makes the two share a budget by construction rather than by
+    // coincidence. It bounds `counted` (slot cache + KV, what the engine
+    // ALLOCATES), never the mapped resident core: refusing on that would
+    // reject a 13 GB install on a 16 GB machine for the size of weights this
+    // engine streams rather than pins.
+    if let Some(cap) = budget.hard_cap {
+        let counted = committed.slot_cache.saturating_add(kv_bytes);
+        if counted > cap {
+            return Err(ContextRefused::OverCap(ContextOverCap {
+                requested: resolved,
+                counted,
+                cap,
+                kv_bytes,
+                slot_cache: committed.slot_cache,
+            }));
+        }
+    }
+
     // `refuses` is false on `Off` alone. A budget without a refusal is the
     // whole content of that tier: the arithmetic still runs and still sizes
     // `Auto`, and a caller who names a window too large for the machine gets
@@ -493,8 +560,8 @@ pub fn resolve_max_context_with(
             available,
             reserve: budget.reserve_bytes,
             physical,
-            committed,
-            largest_fitting: largest_context_within(arch, available),
+            committed: committed_total,
+            largest_fitting: largest_context_within_with(arch, available, quant),
         }));
     }
 
@@ -516,7 +583,7 @@ pub fn resolve_max_context_with(
             resolved,
             capped_by,
             largest_fitting: if known_machine {
-                largest_context_within(arch, available)
+                largest_context_within_with(arch, available, quant)
             } else {
                 MAX_SUPPORTED_CONTEXT
             },
@@ -532,15 +599,104 @@ pub fn resolve_max_context_with(
     })
 }
 
+/// What an install commits, split by TERM rather than folded into one
+/// number.
+///
+/// The split exists for [`resolve_max_context_with`]'s hard-cap check: a
+/// [`crate::LoadGuard::Custom`] ceiling bounds `slot_cache + kv_bytes`
+/// ("counted", what the engine ALLOCATES), never `resident + slot_cache`
+/// ("mapped" and "counted" conflated) -- `catalog::recommend::fit`'s module
+/// doc draws the same line for the same reason, and a cap checked against
+/// the wrong sum would refuse an install for the size of its MAPPED weights,
+/// which the whole point of streaming is to not count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CommittedBytes {
+    /// The mapped resident weight region: the writer's small core on a
+    /// streamed MoE install, the whole checkpoint on a dense one.
+    pub resident: u64,
+    /// The routed-expert slot cache. Zero on a dense install, which has no
+    /// layout to resolve one against.
+    pub slot_cache: u64,
+}
+
+impl CommittedBytes {
+    /// `resident + slot_cache`: what [`LoadGuard::available`]'s subtraction
+    /// and [`ContextTooLarge::committed`] both read -- everything the
+    /// install has already spent before any KV.
+    ///
+    /// [`LoadGuard::available`]: crate::LoadGuard::available
+    pub fn total(&self) -> u64 {
+        self.resident.saturating_add(self.slot_cache)
+    }
+
+    /// A resident-only breakdown, for a caller with no slot policy to
+    /// resolve against: a dense install (no layout at all), or a fixture
+    /// pinning a single figure the way every case in
+    /// `context_policy_tests.rs` did before this type existed.
+    pub fn resident_only(resident: u64) -> Self {
+        Self {
+            resident,
+            slot_cache: 0,
+        }
+    }
+}
+
+/// [`committed_bytes`]'s replacement for a caller that HAS a slot policy in
+/// hand -- every production caller does, by the time it reads the install
+/// size. Resolves the routed-expert slot cache to what THIS open will
+/// actually request, mirroring `real_forward_init.rs`'s own arithmetic
+/// exactly (`ExpertCacheSlots::resolve`, capped at `experts_per_layer`)
+/// rather than assuming `Auto` climbs to the top of `ALLOWED_CACHE_SLOTS`.
+///
+/// A dense install (no `packed_experts/layout.json`) resolves to zero slot
+/// cache, matching [`ExpertCacheSlots::resolve`]'s own dense case.
+///
+/// [`ExpertCacheSlots::resolve`]: crate::ExpertCacheSlots::resolve
+pub fn committed_breakdown(
+    model_dir: &Path,
+    physical: u64,
+    slots: crate::ExpertCacheSlots,
+) -> CommittedBytes {
+    let resident = std::fs::metadata(model_dir.join("model_weights.bin"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let slot_cache = crate::load_packed_experts_layout(
+        model_dir,
+        crate::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .map(|layout| {
+        let bytes_per_slot: u64 = layout.layers.iter().map(|l| l.expert_stride).sum();
+        let experts_per_layer = layout.experts_per_layer.max(1);
+        let resolved = slots
+            .resolve(physical, resident, bytes_per_slot)
+            .min(experts_per_layer);
+        bytes_per_slot.saturating_mul(resolved as u64)
+    })
+    .unwrap_or(0);
+    CommittedBytes {
+        resident,
+        slot_cache,
+    }
+}
+
 /// Bytes an install commits before any KV is allocated: the mapped resident
 /// weight region, plus the LARGEST routed-expert slot cache
 /// [`crate::ExpertCacheSlots::Auto`] could choose.
 ///
+/// **Superseded by [`committed_breakdown`] for every production caller**,
+/// which resolves the slot cache to what THIS open will actually request
+/// rather than assuming the worst case; this stays for a caller sizing an
+/// install before it has decided on a slot policy at all (this crate's own
+/// tests, and any future caller in the same position).
+///
 /// **The slot term is why this is not just the weight file's size.** On a
 /// streamed MoE install the two are far apart: Gemma 4's `model_weights.bin`
 /// is 1.26 GiB while its expert table is 12 GB, of which the cache pins
-/// `slots x sum(expert_stride)` -- about 3.0 GiB at the top of
-/// `ALLOWED_CACHE_SLOTS`. Counting the mapped file alone lets an explicit
+/// `slots x sum(expert_stride)` -- roughly 12 GiB at the current top of
+/// `ALLOWED_CACHE_SLOTS` (128; this was "about 3.0 GiB" before that constant
+/// widened past 32 for `qwen4_exp`'s finer-grained experts, and the figure
+/// here is stated relative to the constant rather than as a number that will
+/// go stale again the next time it moves). Counting the mapped file alone lets an explicit
 /// `--max-context` claim memory the slot cache is about to take, and the two
 /// policies then both spend it. On a DENSE install there is no layout file
 /// and the term is zero, which is correct: nothing streams.
