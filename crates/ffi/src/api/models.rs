@@ -393,8 +393,7 @@ pub unsafe extern "C" fn ts_hf_token_validate_json(
 #[no_mangle]
 pub unsafe extern "C" fn ts_hf_endpoint_get(out: *mut *mut c_char) -> c_int {
     guard_result(|| {
-        let endpoint =
-            std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
+        let endpoint = catalog::hf_endpoint();
         strings::emit(&endpoint, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
@@ -408,10 +407,10 @@ pub unsafe extern "C" fn ts_hf_endpoint_set(endpoint: *const c_char) -> c_int {
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         match ep {
             Some(url) if !url.trim().is_empty() => {
-                std::env::set_var("HF_ENDPOINT", url.trim());
+                catalog::set_hf_endpoint_override(Some(url.trim().to_string()));
             }
             _ => {
-                std::env::remove_var("HF_ENDPOINT");
+                catalog::set_hf_endpoint_override(None);
             }
         }
         Ok(())

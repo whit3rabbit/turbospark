@@ -124,7 +124,14 @@ impl Store {
             .filter(|t| !t.is_empty())
     }
 
-    /// Write the Hugging Face token to this store's `hf_token` file.
+    /// Write the Hugging Face token to this store's `hf_token` file, at mode
+    /// 0600 from the moment it exists (Unix): the file is created with that
+    /// mode already set, rather than written at the process umask and
+    /// tightened afterward, so there is no window -- however brief -- where
+    /// a secret sits world-readable on a shared machine. A failure to apply
+    /// the mode is a hard error rather than an ignored one, since silently
+    /// leaving the file at the default mode is exactly the outcome this
+    /// exists to prevent.
     pub fn set_hf_token(&self, token: &str) -> Result<(), String> {
         let trimmed = token.trim();
         if trimmed.is_empty() {
@@ -133,12 +140,32 @@ impl Store {
         std::fs::create_dir_all(&self.root)
             .map_err(|e| format!("creating store directory {}: {e}", self.root.display()))?;
         let path = self.hf_token_path();
-        std::fs::write(&path, format!("{trimmed}\n"))
-            .map_err(|e| format!("writing Hugging Face token to {}: {e}", path.display()))?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&path)
+                .map_err(|e| format!("opening {} at mode 0600: {e}", path.display()))?;
+            // `mode()` above only takes effect when this call is what
+            // CREATES the file; a token file left over from a build before
+            // this fix would otherwise keep its old, more permissive mode
+            // untouched. Setting it again here operates on the already-open
+            // handle rather than the path, so there is no reopen and no
+            // window between checking and acting on it either.
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("restricting {} to mode 0600: {e}", path.display()))?;
+            file.write_all(format!("{trimmed}\n").as_bytes())
+                .map_err(|e| format!("writing Hugging Face token to {}: {e}", path.display()))?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&path, format!("{trimmed}\n"))
+                .map_err(|e| format!("writing Hugging Face token to {}: {e}", path.display()))?;
         }
         Ok(())
     }

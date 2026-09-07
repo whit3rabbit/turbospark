@@ -98,7 +98,7 @@ pub unsafe extern "C" fn ts_server_start(
         .map_err(|e| (abi::TS_ERR_OPEN, e))?;
         if let Some(endpoint) = &options.hf_endpoint {
             if !endpoint.trim().is_empty() {
-                std::env::set_var("HF_ENDPOINT", endpoint.trim());
+                catalog::set_hf_endpoint_override(Some(endpoint.trim().to_string()));
             }
         }
         // Attached AFTER the bind, through the same call a later attach

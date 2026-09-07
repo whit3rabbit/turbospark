@@ -20,12 +20,42 @@
 
 use serde::Deserialize;
 
-/// The base URL for Hugging Face endpoints: `$HF_ENDPOINT`, defaulting to `https://huggingface.co`.
+/// An in-process override for [`hf_endpoint`], set by [`set_hf_endpoint_override`].
+///
+/// This exists instead of `std::env::set_var`/`remove_var` because this
+/// crate's callers mutate the endpoint from a GUI thread (`ts_hf_endpoint_set`,
+/// a user switching mirrors in settings) while `hf_endpoint()` is read from
+/// worker threads for the whole life of a multi-minute install or probe walk
+/// -- a data race on the process environment table with no synchronization,
+/// which several libc implementations document as unsound under concurrent
+/// access. A `RwLock` around a plain value has no such hazard.
+static HF_ENDPOINT_OVERRIDE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// The base URL for Hugging Face endpoints. Prefers the in-process override
+/// set via [`set_hf_endpoint_override`], falling back to `$HF_ENDPOINT`
+/// (read once at process start by most callers, so this still honors a
+/// mirror set before this crate ever runs), defaulting to
+/// `https://huggingface.co`.
 pub fn hf_endpoint() -> String {
+    if let Ok(guard) = HF_ENDPOINT_OVERRIDE.read() {
+        if let Some(url) = guard.as_ref() {
+            return url.trim_end_matches('/').to_string();
+        }
+    }
     std::env::var("HF_ENDPOINT")
         .unwrap_or_else(|_| "https://huggingface.co".to_string())
         .trim_end_matches('/')
         .to_string()
+}
+
+/// Sets (`Some`) or clears (`None`) the in-process override [`hf_endpoint`]
+/// prefers over `$HF_ENDPOINT`. The synchronized replacement for mutating
+/// the process environment directly; see [`hf_endpoint`]'s doc for why that
+/// matters here specifically.
+pub fn set_hf_endpoint_override(value: Option<String>) {
+    if let Ok(mut guard) = HF_ENDPOINT_OVERRIDE.write() {
+        *guard = value;
+    }
 }
 
 /// A repository coordinate: `owner/name` at a revision.

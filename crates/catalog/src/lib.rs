@@ -39,7 +39,7 @@ pub use catalog::{Catalog, SCHEMA_VERSION};
 pub use entry::{
     CatalogEntry, EntryKind, Measured, MtpSource, Sidecars, Source, SourceKind, Status,
 };
-pub use hf::{hf_endpoint, Client, PopularRepo, RepoFile, RepoRef};
+pub use hf::{hf_endpoint, set_hf_endpoint_override, Client, PopularRepo, RepoFile, RepoRef};
 pub use install::{
     gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,
     InstallPlan, Installed, VISION_SIDECAR_FILES,
