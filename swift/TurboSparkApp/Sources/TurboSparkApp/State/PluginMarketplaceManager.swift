@@ -230,7 +230,7 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
                     reason: "Entry '\(entry.name)' uses a relative source, which needs a materialized marketplace checkout (git, github or directory source). A bare URL marketplace can list it but not install it.")
             }
             // `metadata.pluginRoot` is the base for relative sources.
-            let manifest = try readManifestIfPossible(from: checkoutDirectory)
+            let manifest = readManifestIfPossible(from: checkoutDirectory)
             var base = checkoutDirectory
             if let pluginRoot = manifest?.pluginRoot {
                 base = checkoutDirectory.appendingPathComponent(pluginRoot)

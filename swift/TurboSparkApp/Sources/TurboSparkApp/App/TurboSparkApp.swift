@@ -365,7 +365,18 @@ struct TurboSparkApp: App {
         MenuBarExtra(
             "TurboSpark",
             systemImage: model.server != nil ? "bolt.fill" : "bolt",
-            isInserted: $model.showMenuBarItem
+            // Guard writes to prevent an infinite re-render loop: MenuBarExtra
+            // on macOS writes back its insertion state on each scene graph evaluation.
+            // Directly passing $model.showMenuBarItem fires objectWillChange on
+            // unchanged values and spins the main thread at 100% CPU.
+            isInserted: Binding(
+                get: { model.showMenuBarItem },
+                set: { newValue in
+                    if model.showMenuBarItem != newValue {
+                        model.showMenuBarItem = newValue
+                    }
+                }
+            )
         ) {
             // A THIRD scene: the same reason the Settings scene above injects
             // its own theme applies here, and the menu bar's own text and

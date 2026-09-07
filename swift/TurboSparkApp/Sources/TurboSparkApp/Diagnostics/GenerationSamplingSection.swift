@@ -161,7 +161,7 @@ struct GenerationSamplingSection: View {
         }
         .disabled(model.isRunning)
         .onAppear(perform: syncScopeWithSelection)
-        .onChange(of: model.selectedChatID) { _ in syncScopeWithSelection() }
+        .onChange(of: model.selectedChatID) { syncScopeWithSelection() }
     }
 
     // MARK: - Scope

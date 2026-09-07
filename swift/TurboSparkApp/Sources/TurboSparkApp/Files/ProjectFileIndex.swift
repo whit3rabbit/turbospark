@@ -24,10 +24,10 @@ final class ProjectFileIndex {
     /// How long a root's listing is trusted. Deliberately short: a rebuild
     /// is one bounded directory walk, and offering a file that is gone reads
     /// as a broken feature in a way a briefly stale popup never does.
-    static let freshnessInterval: TimeInterval = 20
+    nonisolated static let freshnessInterval: TimeInterval = 20
 
-    static let maxEntries = 2000
-    static let maxDepth = 8
+    nonisolated static let maxEntries = 2000
+    nonisolated static let maxDepth = 8
 
     private var cache: [String: (date: Date, entries: [ProjectFileEntry])] = [:]
     private var inFlight: [String: Task<[ProjectFileEntry], Never>] = [:]

@@ -13,7 +13,7 @@ enum MentionResolver {
     /// so an email address never matches), and the quoted form carries paths
     /// with spaces. Group 1 is the token body with `@` and any quotes
     /// stripped.
-    private static let mentionPattern = "(?:^|\\s)@((?:\"[^\"]*\")|[^\\s]+)"
+    private nonisolated static let mentionPattern = "(?:^|\\s)@((?:\"[^\"]*\")|[^\\s]+)"
 
     /// Cheap pre-check so the regex runs only on drafts that could hold one.
     nonisolated static func draftContainsMentions(_ draft: String) -> Bool {

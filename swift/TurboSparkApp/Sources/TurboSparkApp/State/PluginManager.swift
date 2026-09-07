@@ -180,7 +180,7 @@ public final class PluginManager: @unchecked Sendable {
 
         // 3. The versioned install caches, ours then Claude Code's.
         let ourLedger = ledgerInstallPaths(root: turboSparkRoot)
-        for (marketplace, plugin, version, url) in cachePluginDirectories(in: turboSparkRoot) {
+        for (marketplace, _, version, url) in cachePluginDirectories(in: turboSparkRoot) {
             loadPlugin(
                 at: url, origin: .marketplace, marketplaceName: marketplace,
                 fallbackVersion: ourLedger[url.standardizedFileURL.path]?.version ?? version,
