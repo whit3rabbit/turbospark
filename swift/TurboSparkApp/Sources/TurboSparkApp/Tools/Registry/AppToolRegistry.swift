@@ -340,6 +340,9 @@ public enum AppToolRegistry {
                 let res = try TodoWriteExecutor.execute(arguments: call.arguments, chatID: chatID)
                 output = res.output
 
+            case "memory", "remember":
+                output = try MemoryToolExecutor.execute(arguments: call.arguments, project: project)
+
             case "agent", "subagent", "task":
                 guard let prompt = call.arguments["prompt"]
                     ?? call.arguments["task"]

@@ -159,35 +159,74 @@ private struct MessageRowView: View {
         speechManager.isSpeaking && speechManager.speakingMessageID == message.id
     }
 
+    /// The ordinary user bubble. Split out of `body` when `#` quick-saves
+    /// arrived: a transcript row holding a `<user-memory-input>` wrap is a
+    /// user message too, and rendering it as a bubble showed raw tags.
+    private var standardUserMessageRow: some View {
+        HStack(alignment: .top, spacing: 0) {
+            Spacer(minLength: 48)
+            VStack(alignment: .trailing, spacing: 6) {
+                CollapsibleMessageContentView(
+                    text: message.content,
+                    isUser: true
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: Color.black.opacity(0.03), radius: 3, x: 0, y: 1)
+
+                if isHovered || isCurrentlySpeakingThis {
+                    MessageActionBarView(
+                        text: message.content,
+                        messageID: message.id,
+                        date: message.createdAt
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                }
+            }
+        }
+    }
+
+    /// A `#` quick-save, shown as the memory note it is (Claude Code renders
+    /// the same shape as a badged memory row, not as a chat bubble).
+    private func memoryQuickSaveRow(_ memoryText: String) -> some View {
+        HStack {
+            Spacer(minLength: 48)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "brain")
+                    .themedFont(.small, weight: .semibold)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .accessibilityHidden(true)
+                Text("Saved to memory")
+                    .themedFont(.small, weight: .semibold)
+                Text(memoryText)
+                    .themedFont(.small)
+                    .foregroundStyle(theme.metadataForeground)
+                    .lineLimit(3)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(TurboSparkTheme.accentColor.opacity(0.25), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if message.role == .user {
-                HStack(alignment: .top, spacing: 0) {
-                    Spacer(minLength: 48)
-                    VStack(alignment: .trailing, spacing: 6) {
-                        CollapsibleMessageContentView(
-                            text: message.content,
-                            isUser: true
-                        )
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .shadow(color: Color.black.opacity(0.03), radius: 3, x: 0, y: 1)
-
-                        if isHovered || isCurrentlySpeakingThis {
-                            MessageActionBarView(
-                                text: message.content,
-                                messageID: message.id,
-                                date: message.createdAt
-                            )
-                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                        }
-                    }
+                if let memoryText = UserMemoryInputMessage.parse(message.content) {
+                    memoryQuickSaveRow(memoryText)
+                } else {
+                    standardUserMessageRow
                 }
             } else {
                 VStack(alignment: .leading, spacing: 10) {

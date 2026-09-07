@@ -243,6 +243,23 @@ live network).
     repository.
   - **Marketplace commit SHAs.** Installs record `gitCommitSha: nil` and
     pin the ref only.
+  - **Auto-memory (the Swift app), landed 2026-09-06
+    (`docs/SWIFT_MEMORY.md`).** Shipped: the per-project memory directory
+    with a `MEMORY.md` index injected every turn (200 lines / 25,000 bytes,
+    self-describing truncation), frontmatter topic files in Claude Code's
+    four-type taxonomy, a `memory` tool (save/read/forget) whose slug
+    coercion IS the containment boundary, `#` quick-save, and a `/memory`
+    meta command. Deliberately not taken from Claude Code: the end-of-turn
+    background extraction subagent (memories are written model-driven
+    through the tool instead), the LLM relevance side-query over the
+    frontmatter manifest (the index is always in context here), git-root
+    keying (memory dirs key on the resolved project root, so two worktrees
+    of one repo do NOT share a directory), and `#` writing to CLAUDE.md
+    with a destination picker (here it appends to the memory store, so it
+    never edits a repository file unbidden). The CLAUDE.md-family discovery
+    upgrade (per-directory walk, `rules/` dirs, `@path` imports) is a
+    separate unbuilt feature; `ProjectRuleDetector` still snapshots at
+    project creation.
 
 ## Phase 5 (model-io, streaming)
 

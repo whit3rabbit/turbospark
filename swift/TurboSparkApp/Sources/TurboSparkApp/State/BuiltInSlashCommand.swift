@@ -41,6 +41,11 @@ struct BuiltInSlashCommand: Identifiable, Equatable, Hashable {
             iconName: "rectangle.compress.vertical",
             kind: .metaCommand, fixedAgentName: nil),
         BuiltInSlashCommand(
+            name: "memory", aliases: [],
+            summary: "Open this project's memory folder",
+            iconName: "brain",
+            kind: .metaCommand, fixedAgentName: nil),
+        BuiltInSlashCommand(
             name: "explore", aliases: [],
             summary: "Search the codebase with a subagent",
             iconName: "magnifyingglass",
@@ -73,11 +78,23 @@ struct BuiltInSlashCommand: Identifiable, Equatable, Hashable {
     }
 
     /// Whether the draft IS a meta command (`/name` exactly, or `/name` with
-    /// a space and arguments). Only `compact` today; the drift test pins
-    /// that, so a second one is a conscious edit of `run()`'s dispatcher.
+    /// a space and arguments). Two today (`compact`, `memory`); the drift
+    /// test pins the COUNT and each dispatcher arm, so a third one is a
+    /// conscious edit of `run()`.
     static func isMetaCommand(_ draft: String) -> Bool {
         all.contains { command in
             guard command.kind == .metaCommand else { return false }
+            return draft == "/\(command.name)" || draft.hasPrefix("/\(command.name) ")
+        }
+    }
+
+    /// Whether the draft is the `/memory` meta command specifically, keyed
+    /// off the table so the row and `run()`'s dispatch cannot drift apart.
+    /// It lives ABOVE `canRun`'s guard: memory commands never generate, so
+    /// they work with no model loaded, unlike `/compact`.
+    static func isMemoryCommand(_ draft: String) -> Bool {
+        all.contains { command in
+            guard command.kind == .metaCommand, command.name == "memory" else { return false }
             return draft == "/\(command.name)" || draft.hasPrefix("/\(command.name) ")
         }
     }

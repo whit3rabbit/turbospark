@@ -15,8 +15,23 @@ import TurboSpark
 /// events -- and the file had grown to 684 lines holding both.
 extension AppModel {
     public func run() {
-        guard canRun, session != nil else { return }
         let userDraft = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // The memory commands NEVER GENERATE, so they sit above the `canRun`
+        // guard and work with no model loaded -- the point of a quick-save.
+        // Everything below needs the session. A `#` draft is not a slash
+        // command and never reaches the meta gate or a hook; `/memory` is a
+        // meta command dispatched by name off the shared table.
+        if UserMemoryInputMessage.isQuickSaveDraft(userDraft) {
+            handleMemoryQuickSave(userDraft)
+            return
+        }
+        if BuiltInSlashCommand.isMemoryCommand(userDraft) {
+            handleMemoryCommand()
+            return
+        }
+
+        guard canRun, session != nil else { return }
 
         // A meta-command is not a prompt, and it is handled before everything
         // else here for the same reason the agent slash commands are handled
@@ -24,8 +39,9 @@ extension AppModel {
         // hook sees it. The hook receives prompt content, and a maintenance
         // command is not content -- unlike an agent command, which IS a
         // prompt and must be hookable. The names live in the shared
-        // `BuiltInSlashCommand` table; the drift test pins there being
-        // exactly one meta command, so a second one edits this dispatcher.
+        // `BuiltInSlashCommand` table; the drift test pins the meta count
+        // and every dispatcher arm, so a new one edits this dispatcher.
+        // (`/memory` was dispatched above: it does not need the session.)
         if BuiltInSlashCommand.isMetaCommand(userDraft) {
             handleCompactCommand(userDraft)
             return

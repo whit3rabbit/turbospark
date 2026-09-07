@@ -23,6 +23,11 @@ public enum AppToolCatalog {
     /// Interactive questions, plan mode, findings, skills, and feedback tools.
     public static let planningInteractiveTools: [OpenAITool] = PlanningInteractiveToolDefinitions.all + SkillToolDefinitions.all
 
+    /// Persistent project memory. Computed: `MemoryToolDefinitions.all` is
+    /// empty while the memory feature is off, so the gate is read every time
+    /// a tool list is built rather than once at static init.
+    public static var memoryTools: [OpenAITool] { MemoryToolDefinitions.all }
+
     /// Automation, cron, monitoring, and notifications tools.
     public static let automationTools: [OpenAITool] = WorkflowCronDefinitions.all + MonitoringNotificationDefinitions.all
 
@@ -49,6 +54,7 @@ public enum AppToolCatalog {
         tools.append(contentsOf: projectArtifactTools)
         tools.append(contentsOf: mcpTools)
         tools.append(contentsOf: planningInteractiveTools)
+        tools.append(contentsOf: memoryTools)
         tools.append(contentsOf: automationTools)
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: nil).map { $0.openAITool }
         tools.append(contentsOf: custom)
@@ -73,6 +79,7 @@ public enum AppToolCatalog {
             l.append(contentsOf: webTools)
             l.append(contentsOf: mcpTools)
             l.append(contentsOf: planningInteractiveTools)
+            l.append(contentsOf: memoryTools)
             list = l
 
         case .researcher:
@@ -82,6 +89,7 @@ public enum AppToolCatalog {
             l.append(contentsOf: projectArtifactTools)
             l.append(contentsOf: mcpTools)
             l.append(contentsOf: planningInteractiveTools)
+            l.append(contentsOf: memoryTools)
             list = l
 
         case .autonomous:
@@ -94,6 +102,7 @@ public enum AppToolCatalog {
             l.append(contentsOf: webTools)
             l.append(contentsOf: taskAgentTools)
             l.append(contentsOf: mcpTools)
+            l.append(contentsOf: memoryTools)
             list = l
         }
 
@@ -123,7 +132,7 @@ public enum AppToolCatalog {
             return .mcp
         }
         switch name {
-        case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "apply_patch", "applypatch", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills":
+        case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "apply_patch", "applypatch", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills", "memory", "remember":
             return .fileWrite
         case "bash", "run_command", "repl", "shell", "exec", "terminal", "bashoutput", "bash_output", "killshell", "kill_shell", "enterworktree", "enter_worktree", "exitworktree", "exit_worktree":
             return .terminal

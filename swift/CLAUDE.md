@@ -1523,6 +1523,31 @@ so going through `make` recompiles the whole app every single time. Use
     draws its own label needs `.labelsHidden()`; Gotcha 23 recorded that on
     one field and the Engine pane reintroduced it on seven.
 
+57. **AUTO-MEMORY HAS FOUR LOAD-BEARING JOINTS, AND EACH ONE FAILS SILENTLY
+    WHEN REBUILT WRONG** (2026-09-06, `docs/SWIFT_MEMORY.md` is the feature
+    page). The system: a per-project memory directory holding a `MEMORY.md`
+    index injected every turn plus topic files the model writes through the
+    `memory` tool, keyed under `~/.turbospark/memory/projects/<key>/memory/`.
+    One: **the topic NAME is the containment boundary.** The tool takes a
+    name, never a path, and `MemoryStore.slug` reduces anything to a legal
+    kebab stem -- that, not `PathContainment`, is why no permission carve-out
+    was needed; if a future caller ever passes a path-shaped string to the
+    store, the store's `isValidTopicName` re-check is the only thing left.
+    Two: **the memory commands live ABOVE `run()`'s `canRun` guard** because
+    they never generate -- move `/memory` or the `#` quick-save below it and
+    they silently stop working with no model loaded, the exact state a user
+    meets on first launch. Three: **the enable gate is a static**
+    (`MemoryStore.shared.isModelEnabled`, mirrored from
+    `AppModel.memoryEnabled` by `didSet`) because `AppToolCatalog` and
+    `SubagentRunner` are static surfaces with no model in hand -- same shape
+    as `CommandGate.vetoEnabled`; and the prompt section must be injected by
+    the ONE `MemoryPromptBuilder.section` into BOTH assemblers, or half this
+    app's runs go memory-blind. Four: **`MemoryStore.defaultBase()`
+    redirects under a test runner**, because prompt ASSEMBLY creates the
+    directory as a side effect -- drop that and every test building a prompt
+    for a project mkdirs inside the user's real `~/.turbospark`, the exact
+    failure `AppStorageRoot`'s header is about.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments that

@@ -98,7 +98,7 @@ final class ComposerAutocompleteTests: XCTestCase {
 
     func testEmptyPrefixOffersAllBuiltIns() {
         let rows = ComposerAutocompleteEngine.slashCandidates(prefix: "", skills: [])
-        XCTAssertEqual(rows.map(\.title), ["/agent", "/compact", "/explore", "/plan", "/review"])
+        XCTAssertEqual(rows.map(\.title), ["/agent", "/compact", "/explore", "/memory", "/plan", "/review"])
     }
 
     func testDisabledAndModelOnlySkillsAreNotOffered() {
@@ -275,14 +275,22 @@ final class ComposerAutocompleteTests: XCTestCase {
             "the parser recognizes a command the registry never recorded")
     }
 
-    func testMetaCommandsAreExactlyCompact() {
+    func testMetaCommandsAreExactlyCompactAndMemory() {
         XCTAssertEqual(
             BuiltInSlashCommand.all.filter { $0.kind == .metaCommand }.map(\.name),
-            ["compact"])
+            ["compact", "memory"])
         XCTAssertTrue(BuiltInSlashCommand.isMetaCommand("/compact"))
         XCTAssertTrue(BuiltInSlashCommand.isMetaCommand("/compact 10"))
         XCTAssertFalse(BuiltInSlashCommand.isMetaCommand("/compactify"))
         XCTAssertFalse(BuiltInSlashCommand.isMetaCommand("/compactify now"))
+        // `/memory` is table-driven both at the gate and in `run()`'s
+        // dispatcher: the row and the matcher below move together or a test
+        // here reddens.
+        XCTAssertTrue(BuiltInSlashCommand.isMemoryCommand("/memory"))
+        XCTAssertTrue(BuiltInSlashCommand.isMemoryCommand("/memory extra"))
+        XCTAssertFalse(BuiltInSlashCommand.isMemoryCommand("/memorize"))
+        XCTAssertFalse(BuiltInSlashCommand.isMemoryCommand("/memories"))
+        XCTAssertTrue(BuiltInSlashCommand.isMetaCommand("/memory"))
     }
 
     func testRegistryNamesAndAliasesAreUnique() {

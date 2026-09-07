@@ -80,6 +80,16 @@ extension AppModel {
             """)
         }
 
+        // The auto-memory section rides beside the project rules, and the
+        // same builder feeds the subagent assembler -- a section added to
+        // one assembler and not the other silently applies to half the
+        // runs. Memory is project-scoped by design (the directory is keyed
+        // on the project root), so the projectless early return above is
+        // also the memory gate, exactly as it is for project skills.
+        if MemoryStore.shared.isModelEnabled, let root = project.rootDirectoryURL, !root.path.isEmpty {
+            sections.append(MemoryPromptBuilder.section(store: MemoryStore.shared, projectRoot: root))
+        }
+
         let activeMcpServers = AppToolCatalogMcp.visibleServers(global: globalMcpServers, project: project)
         // The skill listing rides INSIDE the tool addendum, embedded in the
         // `skill` tool's description. There is deliberately no second

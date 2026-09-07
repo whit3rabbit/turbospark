@@ -81,6 +81,7 @@ extension AppModel {
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
         self.autoCompactEnabled = settings.autoCompact
+        self.memoryEnabled = settings.memoryEnabled
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
         // The pinned port is a plain preference; the server API key is a
@@ -178,7 +179,8 @@ extension AppModel {
             serverAutoStartOnLaunch: serverAutoStartOnLaunch,
             keepServerRunningInBackground: keepServerRunningInBackground,
             serverEmbeddingModel: serverEmbeddingModelInput,
-            hfEndpoint: hfEndpointInput
+            hfEndpoint: hfEndpointInput,
+            memoryEnabled: memoryEnabled
         )
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not

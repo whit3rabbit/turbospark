@@ -141,6 +141,7 @@ extension AppToolRegistry {
         "ctxinspect", "ctx_inspect",
         "enterworktree", "enter_worktree",
         "exitworktree", "exit_worktree",
+        "memory", "remember",
         "call_mcp_tool", "callmcptool", "mcp_tool",
         "listmcpresources", "list_mcp_resources", "list_resources",
         "readmcpresource", "read_mcp_resource", "read_resource"
@@ -168,6 +169,7 @@ extension AppToolRegistry {
         "proposeskills", "propose_skills",
         "enterworktree", "enter_worktree",
         "exitworktree", "exit_worktree",
+        "memory", "remember",
         "call_mcp_tool", "callmcptool", "mcp_tool",
         "listmcpresources", "list_mcp_resources", "list_resources",
         "readmcpresource", "read_mcp_resource", "read_resource"

@@ -124,6 +124,13 @@ public final class AppModel: ObservableObject {
     /// Whether older turns are summarized automatically as the prompt
     /// approaches the context window (context compaction).
     @Published public var autoCompactEnabled: Bool = true
+    /// Whether the model sees the auto-memory section and the `memory` tool
+    /// (docs/SWIFT_MEMORY.md). The `didSet` mirrors the value into
+    /// `MemoryStore.shared`, the static surface `AppToolCatalog` and
+    /// `SubagentRunner` read -- neither holds an `AppModel`.
+    @Published public var memoryEnabled: Bool = true {
+        didSet { MemoryStore.shared.isModelEnabled = memoryEnabled }
+    }
     /// Trailing message rows that stay verbatim after a compaction.
     @Published public var compactionKeepRecentTurns: Int = 2
     /// Whether a compaction summarizer is running right now, auto or manual.

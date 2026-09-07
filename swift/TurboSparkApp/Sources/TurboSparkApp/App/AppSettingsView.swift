@@ -169,6 +169,8 @@ public struct AppSettingsView: View {
             McpSettingsPaneView(model: model)
         case .skills:
             SkillsSettingsPaneView(model: model)
+        case .memory:
+            MemorySettingsPaneView(model: model)
         case .agents:
             AgentsSettingsPaneView(model: model)
         case .plugins:

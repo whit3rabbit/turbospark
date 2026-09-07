@@ -77,6 +77,13 @@ public enum SubagentRunner {
                 let trimmedRules = project.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
                 sections.append("## Project Specific Context\n\(trimmedRules)")
             }
+            // The same memory section the main assembler appends, from the
+            // same builder. A subagent that could not see or save memories
+            // would diverge from its parent about what this project already
+            // knows -- the divergence this file's header exists to warn of.
+            if MemoryStore.shared.isModelEnabled, let rootURL = project.rootDirectoryURL, !rootURL.path.isEmpty {
+                sections.append(MemoryPromptBuilder.section(store: MemoryStore.shared, projectRoot: rootURL))
+            }
         }
 
         // 3. Filtered Tool definitions
