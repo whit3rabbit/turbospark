@@ -39,6 +39,8 @@ mod attention_decode;
 #[cfg(target_os = "macos")]
 mod attention_indexed;
 #[cfg(target_os = "macos")]
+mod attention_tq;
+#[cfg(target_os = "macos")]
 mod bytes;
 #[cfg(target_os = "macos")]
 mod context;
@@ -83,6 +85,10 @@ mod kv_cache;
 #[cfg(target_os = "macos")]
 mod kv_cache_mem;
 #[cfg(target_os = "macos")]
+mod kv_quant_tables;
+#[cfg(target_os = "macos")]
+mod kv_quantize;
+#[cfg(target_os = "macos")]
 mod logit_softmax;
 #[cfg(target_os = "macos")]
 mod moe_decode;
@@ -119,6 +125,10 @@ pub use attention_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use attention_indexed::{attention_decode_indexed, encode_attention_decode_indexed};
+#[cfg(target_os = "macos")]
+pub use attention_tq::{
+    encode_attention_decode_indexed_tq, encode_attention_decode_tq, TqAttentionScratch,
+};
 #[cfg(target_os = "macos")]
 pub use bytes::{read_f32_buffer, read_f32_buffer_at};
 #[cfg(target_os = "macos")]
@@ -207,6 +217,10 @@ pub use gdn_state::{GdnSnapshot, GdnStateManager};
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
 pub use kv_cache::{KvCacheManager, KvView, LayerKind};
+#[cfg(target_os = "macos")]
+pub use kv_quant_tables::{KvQuantTables, TqSideTables};
+#[cfg(target_os = "macos")]
+pub use kv_quantize::encode_kv_quantize_tq;
 #[cfg(target_os = "macos")]
 pub use logit_softmax::{encode_logit_softcap_softmax, logit_softcap_softmax};
 #[cfg(target_os = "macos")]

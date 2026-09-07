@@ -15,6 +15,8 @@ mod ffn_hist;
 #[cfg(target_os = "macos")]
 mod kv_prefix;
 #[cfg(target_os = "macos")]
+mod kv_write;
+#[cfg(target_os = "macos")]
 mod moe_prefill_pipeline;
 mod pacing;
 mod power;
@@ -77,11 +79,12 @@ pub use encoder::{cosine_similarity, EncoderRunner};
 // this is where a reader of the decode engine expects to find them named.
 #[cfg(target_os = "macos")]
 pub use model_io::{
-    committed_bytes, gdn_state_bytes, kv_bytes_for_context, largest_context_within,
-    resolve_max_context, session_pool_bytes, ContextCap, ContextFloorUnmet, ContextPlan,
-    ContextRefused, ContextTooLarge, ExpertCacheSlots, GuardBudget, LoadGuard, LoadPolicy,
-    MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES,
-    HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_bytes, gdn_state_bytes, kv_bytes_for_context, kv_bytes_for_context_with,
+    largest_context_within, largest_context_within_with, resolve_max_context,
+    resolve_max_context_with, session_pool_bytes, session_pool_bytes_with, ContextCap,
+    ContextFloorUnmet, ContextPlan, ContextRefused, ContextTooLarge, ExpertCacheSlots, GuardBudget,
+    KvQuant, LoadGuard, LoadPolicy, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 
 pub use error::RuntimeError;

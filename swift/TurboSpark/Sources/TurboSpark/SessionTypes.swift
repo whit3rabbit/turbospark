@@ -47,6 +47,12 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let vision: Vision
     /// Special token identifiers for tokenizer inspection.
     public let specialTokens: SpecialTokens
+    /// The RESOLVED `kvBits` selection: `"off"`, `"2"`, `"3"`, `"4"`, or
+    /// `"3.5 (K3/V4)"` when the two widths differ. Unlike `speculation`
+    /// there is no auto-detect here: a named width either opens this
+    /// session or `TurboSparkSession.init` throws, so what was asked for
+    /// and what this session runs at are always the same value.
+    public let kvBits: String
 
     /// The reasoning levels this checkpoint accepts. **BUILD A PICKER FROM
     /// THIS AND FROM NOTHING ELSE.**

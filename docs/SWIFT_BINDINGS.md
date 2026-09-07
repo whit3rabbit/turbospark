@@ -139,6 +139,7 @@ options.steeringScale = 0.5                // default 1.0; 0.0 is identity
 options.steeringLayers = "20:45"           // 0-based inclusive layer range
 options.steeringTarget = 0.0               // for .clamp mode (default 0.0)
 options.steeringGate = 0.0                 // activation threshold >= 0
+options.kvBits = .threePointFive           // or .off (default), .two, .three, .four
 
 let session = try await TurboSparkSession(modelPath: "gemma4", options: options)
 ```
@@ -213,6 +214,15 @@ steering. Steering modifiers (`steeringMode`, `steeringScale`, `steeringLayers`,
 `steeringTarget`, `steeringGate`) require a `steering` path and throw if passed
 alone.
 
+**`kvBits: .off` is the default and is what every release before this option
+existed produced byte for byte.** TurboQuant KV-cache quantization
+(`docs/TRUBOQUANT.md`) reduces the per-token memory a session's KV cache
+costs, at `.two`/`.three`/`.threePointFive`/`.four` bits per coordinate.
+Unlike speculation there is no auto-detect: an unsupported family or
+`head_dim` throws from `init` by name rather than silently opening at FP16,
+so a caller asking for quantization either gets it or learns why not --
+never a session that quietly measures the wrong footprint.
+
 ### Reading what you actually got
 
 ```swift
@@ -243,6 +253,7 @@ info.specialTokens.endOfTurnId  // e.g. 151645 or nil
 info.specialTokens.stopTokenIds // [151643, 151645]
 info.specialTokens.thinkStartId // e.g. 151648 or nil
 info.specialTokens.thinkEndId   // e.g. 151649 or nil
+info.kvBits                     // "off", "2", "3", "4", or "3.5 (K3/V4)"
 ```
 
 
@@ -1032,7 +1043,8 @@ int main(void) {
   "steeringScale": 0.5,
   "steeringLayers": "20:45",
   "steeringTarget": 0.0,
-  "steeringGate": 0.0
+  "steeringGate": 0.0,
+  "kvBits": "3.5"
 }
 ```
 
@@ -1062,6 +1074,13 @@ no floor.
 `steeringLayers` accepts `"START:END"` (0-based inclusive layer range).
 `steeringTarget` and `steeringGate` accept finite numbers.
 
+`kvBits` accepts `"off"`, `"2"`, `"3"`, `"3.5"`, `"4"`, `null` or absence.
+Null and absence mean `"off"`, which is what every release before this key
+existed produced byte for byte. `"3.5"` splits into K3/V4, mlx-vlm's own
+convention for its one fractional width. An unsupported family or
+`head_dim` is an error rather than a silent fallback to FP16 -- see
+`docs/TRUBOQUANT.md`.
+
 `ts_session_info_json` reports what they resolved to:
 
 ```json
@@ -1076,7 +1095,8 @@ no floor.
     "stopTokenIds": [151643, 151645],
     "thinkStartId": 151648,
     "thinkEndId": 151649
-  }
+  },
+  "kvBits": "3.5 (K3/V4)"
 }
 ```
 

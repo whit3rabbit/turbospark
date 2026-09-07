@@ -132,3 +132,60 @@ fn steering_scalars_validate_bounds() {
     assert_eq!(steering_gate(Some(0.5)).unwrap(), 0.5);
     assert!(steering_gate(Some(-0.1)).is_err());
 }
+
+#[test]
+fn an_absent_kv_bits_is_off() {
+    // The DEFAULT, and what every release before this option existed
+    // produced byte for byte.
+    assert_eq!(kv_bits(&None).unwrap(), model_io::KvQuant::Off);
+}
+
+#[test]
+fn every_documented_kv_bits_width_round_trips() {
+    for (spelling, expected) in [
+        ("off", model_io::KvQuant::Off),
+        (
+            "2",
+            model_io::KvQuant::TurboQuant {
+                k_bits: 2,
+                v_bits: 2,
+            },
+        ),
+        (
+            "3",
+            model_io::KvQuant::TurboQuant {
+                k_bits: 3,
+                v_bits: 3,
+            },
+        ),
+        (
+            "3.5",
+            model_io::KvQuant::TurboQuant {
+                k_bits: 3,
+                v_bits: 4,
+            },
+        ),
+        (
+            "4",
+            model_io::KvQuant::TurboQuant {
+                k_bits: 4,
+                v_bits: 4,
+            },
+        ),
+    ] {
+        assert_eq!(
+            kv_bits(&Some(spelling.to_string())).unwrap(),
+            expected,
+            "failed for kvBits {spelling:?}"
+        );
+    }
+}
+
+#[test]
+fn a_kv_bits_misspelling_is_an_error_rather_than_a_silent_off() {
+    // `"5"` should be heard about, for `speculation`'s reason above: quietly
+    // falling back to `off` would turn a typo into a session measuring the
+    // wrong footprint and believing it asked for quantization.
+    assert!(kv_bits(&Some("5".to_string())).is_err());
+    assert!(kv_bits(&Some("2.5".to_string())).is_err());
+}

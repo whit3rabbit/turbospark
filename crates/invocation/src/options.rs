@@ -260,6 +260,15 @@ pub const OPTIONS: &[OptionDecl] = &[
         usage_hint: "decode rate cap, greater than 0 (default: uncapped, or the efficiency profile's reading speed)",
     },
     OptionDecl {
+        flag: "--kv-bits",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "TurboQuant KV-cache quantization: off, 2, 3, 3.5, or 4 (default off; \
+                     an unsupported head_dim or family REFUSES the flag at open rather than \
+                     falling back to FP16)",
+    },
+    OptionDecl {
         flag: "--quiet",
         takes_value: false,
         is_required: false,

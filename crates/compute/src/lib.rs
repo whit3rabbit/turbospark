@@ -22,6 +22,12 @@ pub mod gdn;
 /// `qwen4_exp`'s hyper-connection mix (PORT-LOCAL; not `HyperConnectionConfig`'s
 /// Sinkhorn-normalised mHC).
 pub mod hyper_connection;
+/// TurboQuant KV-cache codec: per-row norm, randomized Hadamard rotation,
+/// Lloyd-Max codebook quantization (ported from mlx-vlm's
+/// `_TurboQuantMSECodec`, see `docs/TRUBOQUANT.md`).
+pub mod kv_quant;
+/// CPU reference for causal attention over TurboQuant-quantized K/V rows.
+pub mod kv_quant_attention;
 /// Mixture-of-Experts (MoE) routing and FFN compute kernels.
 pub mod moe;
 /// `qwen4_exp`'s PLE (per-layer n-gram embedding) gate (PORT-LOCAL).
@@ -68,6 +74,12 @@ pub use encoder::{
 pub use gating::{sigmoid_gate_mul, sigmoid_scalar_mul, split_q_gate};
 pub use gdn::{gated_norm_sigmoid, sigmoid, silu, softplus, GdnDims, GdnReference, GDN_RMS_EPS};
 pub use hyper_connection::{hc_inject_add, hc_mix};
+pub use kv_quant::{
+    codebook, dequantize_row, midpoints, pack_lsb_first, packed_words, quantize_index,
+    quantize_row, rht_forward, rht_inverse, sign_vector, unpack_lsb_first, QuantizedRow, KEY_SEED,
+    NORM_EPS, VALUE_SEED,
+};
+pub use kv_quant_attention::{causal_attention_tq, TqTables};
 pub use moe::{apply_streamed_routed, gelu_tanh, run_ffn};
 pub use ple::{dequant_ngram_row, dilated_conv_step, ple_gate};
 pub use qsa_indexer::{pool_blocks_mean, score_blocks, select_blocks};

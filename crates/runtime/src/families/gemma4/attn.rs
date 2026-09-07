@@ -1,5 +1,6 @@
 //! Attention and router pass encoding for Gemma 4 decode flow.
 
+use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::RealForwardError;
@@ -71,8 +72,13 @@ impl RealForwardRunner {
             layer_tensor(layer, "self_attn.v_proj.weight")
         };
         let o_name = layer_tensor(layer, "self_attn.o_proj.weight");
-        let (k_buf, k_off) = self.kv.k_slot(layer, position);
-        let (v_buf, v_off) = self.kv.v_slot(layer, position);
+        // FP16 layer: straight into the cache slot. TurboQuant-quantized
+        // layer (full attention only -- SWA layers are never quantized, so
+        // `is_full == false` always takes the FP16 arm regardless of
+        // `--kv-bits`): into the staging row, normed/RoPE'd there exactly
+        // as below, then `encode_kv_commit` quantizes it into the cache.
+        let (k_buf, k_off) = kv_write_target(&self.kv, &self.scratch, KvHalf::K, layer, position);
+        let (v_buf, v_off) = kv_write_target(&self.kv, &self.scratch, KvHalf::V, layer, position);
         encode_gemv_any(
             &mut self.context,
             pass,
@@ -93,7 +99,7 @@ impl RealForwardRunner {
             kv_dim,
             hidden,
             (&self.scratch.normed, 0),
-            (k_buf, k_off as u64),
+            (k_buf, k_off),
         )?;
         encode_gemv_any(
             &mut self.context,
@@ -104,7 +110,7 @@ impl RealForwardRunner {
             kv_dim,
             hidden,
             (&self.scratch.normed, 0),
-            (v_buf, v_off as u64),
+            (v_buf, v_off),
         )?;
 
         let q_norm = norm_view(
@@ -133,9 +139,9 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_bf16w_perhead(
             &mut self.context,
             pass,
-            (k_buf, k_off as u64),
+            (k_buf, k_off),
             k_norm,
-            (k_buf, k_off as u64),
+            (k_buf, k_off),
             num_kv_l,
             head_dim_l,
             RMS_EPS,
@@ -144,8 +150,8 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_no_scale_perhead(
             &mut self.context,
             pass,
-            (v_buf, v_off as u64),
-            (v_buf, v_off as u64),
+            (v_buf, v_off),
+            (v_buf, v_off),
             num_kv_l,
             head_dim_l,
             RMS_EPS,
@@ -174,7 +180,7 @@ impl RealForwardRunner {
         gpu::encode_rope_proportional_neox(
             &mut self.context,
             pass,
-            (k_buf, k_off as u64),
+            (k_buf, k_off),
             position as u32,
             num_kv_l,
             head_dim_l,
@@ -192,14 +198,27 @@ impl RealForwardRunner {
                 if ring > 0 && seq_len > ring { ring } else { 0 },
             )
         };
-        gpu::encode_attention_decode(
+        // No-op on an FP16 (or SWA) layer; quantizes the normed, RoPE'd
+        // staging row into the cache on a TurboQuant-quantized one.
+        encode_kv_commit(
+            &mut self.context,
+            pass,
+            &self.kv,
+            &self.scratch,
+            layer,
+            position,
+            head_dim_l,
+            num_kv_l,
+        )?;
+        encode_attention_any(
             &mut self.context,
             pass,
             (&self.scratch.q, 0),
-            k_buf,
-            v_buf,
-            &self.scratch.attn,
+            &self.kv,
+            &self.scratch,
             (&self.scratch.attn_out, 0),
+            layer,
+            position,
             head_dim_l,
             num_heads,
             num_kv_l,
@@ -209,8 +228,7 @@ impl RealForwardRunner {
             attn_scale,
             // Gemma has no attention sinks; only `gpt-oss` does.
             None,
-        )
-        .map_err(gpu_err)?;
+        )?;
         encode_gemv_any(
             &mut self.context,
             pass,

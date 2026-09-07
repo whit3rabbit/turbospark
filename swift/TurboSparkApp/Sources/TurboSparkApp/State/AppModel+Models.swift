@@ -127,7 +127,12 @@ extension AppModel {
         return fitRecommendationsByAlias()[alias]
     }
 
-    public func buildOpenOptions() -> OpenOptions {
+    /// - Parameter modelPath: the install about to be opened, for the
+    ///   `.auto` kv-bits eligibility check below. Defaults to `selected?.path`
+    ///   for every existing call site that already has one; `setModelURL`
+    ///   passes the raw path it is about to open instead, since it has no
+    ///   `InstalledModel` in hand at the point it calls this.
+    public func buildOpenOptions(modelPath: String? = nil) -> OpenOptions {
         var options = OpenOptions()
         if maxContextTokens > 0 {
             options.maxContext = .fixed(UInt32(maxContextTokens))
@@ -145,6 +150,22 @@ extension AppModel {
         }
         options.speculation = runtimeOptions.speculation.speculation
         options.speculativeDrafter = runtimeOptions.speculativeDrafter.drafter
+        // `.auto` asks for 4-bit ONLY on a checkpoint the manifest itself
+        // says would accept it (`ModelFeatureDescriptor.kvQuantEligible`,
+        // mirroring the engine's own `--kv-bits` refusal rule) -- an
+        // explicit width bypasses the check and is sent unconditionally,
+        // same as any other named request in this app.
+        switch runtimeOptions.kvBits {
+        case .auto:
+            let path = modelPath ?? selected?.path ?? ""
+            if ModelFeatureDescriptor.supportsKvQuant(atInstallPath: path) {
+                options.kvBits = .four
+            }
+        case .off:
+            break
+        default:
+            options.kvBits = runtimeOptions.kvBits.kvBits
+        }
         if runtimeOptions.maxTokensPerSec > 0 {
             options.maxTokensPerSec = runtimeOptions.maxTokensPerSec
         }
@@ -208,7 +229,7 @@ extension AppModel {
         defer { opening = false }
 
         do {
-            let options = buildOpenOptions()
+            let options = buildOpenOptions(modelPath: model.path)
             session = try await TurboSparkSession(modelPath: model.path, options: options)
             selected = model
             modelPathText = model.path
@@ -300,7 +321,7 @@ extension AppModel {
             // loading indicator never rendered (state#11).
             defer { self.opening = false }
             do {
-                let options = self.buildOpenOptions()
+                let options = self.buildOpenOptions(modelPath: path)
                 self.session = try await TurboSparkSession(modelPath: path, options: options)
                 self.refreshModels()
                 // `refreshModels` runs `reconcileSelection`, which rewrites

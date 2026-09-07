@@ -26,11 +26,12 @@ pub fn run_model_mode(
     drafter: Option<bool>,
     shaping: turbospark_bench::real_model::ProtocolShaping,
     prefill_chunk: Option<usize>,
+    kv_quant: runtime::KvQuant,
 ) -> std::process::ExitCode {
     use turbospark_bench::memory::AppMemorySampler;
     use turbospark_bench::protocol::{swift_footer, PROTOCOL_CASES};
     use turbospark_bench::real_model::{
-        open_model_runner_for_protocol_speculative, run_protocol_case_speculating,
+        open_model_runner_for_protocol_speculative_kv_quant, run_protocol_case_speculating,
     };
 
     // `--case` runs exactly one case in this process, which is the frozen
@@ -92,10 +93,11 @@ pub fn run_model_mode(
         },
         (Some(n), false) => runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Fixed(n)),
     };
-    let (mut runner, tok, params) = match open_model_runner_for_protocol_speculative(
+    let (mut runner, tok, params) = match open_model_runner_for_protocol_speculative_kv_quant(
         std::path::Path::new(install_dir),
         slots,
         policies,
+        kv_quant,
     ) {
         Ok(triple) => triple,
         Err(e) => {
@@ -115,11 +117,12 @@ pub fn run_model_mode(
     // and 12). The oracles print theirs beside the ceiling for the same
     // reason.
     println!(
-        "  family={} context={} max_new={} expert_cache_slots={}",
+        "  family={} context={} max_new={} expert_cache_slots={} kv_bits={}",
         params.family.as_str(),
         params.max_context,
         params.max_new,
-        slots
+        slots,
+        kv_quant.label()
     );
     // The RESOLVED power pair, for the same reason and one worse: an arm of
     // a `scripts/power.sh` A/B is named entirely outside this process, so
@@ -322,6 +325,7 @@ pub fn run_model_mode(
     _drafter: Option<bool>,
     _shaping: turbospark_bench::real_model::ProtocolShaping,
     _prefill_chunk: Option<usize>,
+    _kv_quant: runtime::KvQuant,
 ) -> std::process::ExitCode {
     eprintln!("--model requires macOS (Metal)");
     std::process::ExitCode::from(2)

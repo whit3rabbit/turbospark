@@ -14,6 +14,7 @@ use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::museglimmer::layer_tensor;
 use crate::families::museglimmer::state::{RealMuseState, QK_SCALE_FACTOR, RMS_EPS};
+use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 
@@ -39,10 +40,12 @@ pub(crate) fn encode_attention_block(
     let kv_dim = (num_kv * head_dim) as usize;
     let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
 
-    // K and V are written STRAIGHT INTO the cache slot by the GEMV, which is
-    // what keeps the decode path zero-copy.
-    let (k_buf, k_off) = kv.k_slot(layer, position);
-    let (v_buf, v_off) = kv.v_slot(layer, position);
+    // K and V are written STRAIGHT INTO the cache slot by the GEMV on an
+    // FP16 layer, which is what keeps the decode path zero-copy; on a
+    // TurboQuant-quantized layer they go into the FP16 staging row instead
+    // (`crate::kv_write`'s doc).
+    let (k_buf, k_off) = kv_write_target(kv, scratch, KvHalf::K, layer, position);
+    let (v_buf, v_off) = kv_write_target(kv, scratch, KvHalf::V, layer, position);
     encode_gemv_any(
         context,
         pass,
@@ -55,8 +58,8 @@ pub(crate) fn encode_attention_block(
         (&scratch.q, 0),
     )?;
     for (suffix, out) in [
-        ("k_proj.weight", (k_buf, k_off as u64)),
-        ("v_proj.weight", (v_buf, v_off as u64)),
+        ("k_proj.weight", (k_buf, k_off)),
+        ("v_proj.weight", (v_buf, v_off)),
     ] {
         encode_gemv_any(
             context,
@@ -92,10 +95,7 @@ pub(crate) fn encode_attention_block(
     // ONE `RMSNormNoScale` and applies it to `queries` and `keys` only;
     // adding v "by analogy" is silent (`docs/NEW_MODEL.md` Phase 0 says so of
     // exactly this, in the other direction -- Gemma norms three).
-    for (data, heads) in [
-        ((&scratch.q, 0u64), num_heads),
-        ((k_buf, k_off as u64), num_kv),
-    ] {
+    for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
         gpu::encode_rms_norm_no_scale_perhead(context, pass, data, data, heads, head_dim, RMS_EPS)
             .map_err(gpu_err)?;
     }
@@ -127,10 +127,7 @@ pub(crate) fn encode_attention_block(
         == 1;
     if !is_full {
         let theta = arch.rope_theta as f32;
-        for (data, heads) in [
-            ((&scratch.q, 0u64), num_heads),
-            ((k_buf, k_off as u64), num_kv),
-        ] {
+        for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
             gpu::encode_rope_proportional_neox(
                 context,
                 pass,
@@ -159,14 +156,22 @@ pub(crate) fn encode_attention_block(
         )
     };
 
-    gpu::encode_attention_decode(
+    // On a TurboQuant-quantized layer, quantize the staging row into the
+    // real cache slot now that it is normed and RoPE'd -- a no-op on an
+    // FP16 layer (`crate::kv_write`'s doc).
+    encode_kv_commit(
+        context, pass, kv, scratch, layer, position, head_dim, num_kv,
+    )?;
+
+    encode_attention_any(
         context,
         pass,
         (&scratch.q, 0),
-        k_buf,
-        v_buf,
-        &scratch.attn,
+        kv,
+        scratch,
         (&scratch.attn_out, 0),
+        layer,
+        position,
         head_dim,
         num_heads,
         num_kv,
@@ -175,8 +180,7 @@ pub(crate) fn encode_attention_block(
         active_ring,
         arch.attention_scale as f32,
         None,
-    )
-    .map_err(gpu_err)?;
+    )?;
 
     // THE GATE, applied to the attention output BEFORE `o_proj`. The
     // reference is `output * sigmoid(gate)` then `o_proj(...)`; applying it

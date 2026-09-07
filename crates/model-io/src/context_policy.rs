@@ -29,7 +29,7 @@
 
 use std::path::Path;
 
-use crate::{ArchConfig, LoadPolicy};
+use crate::{ArchConfig, KvQuant, LoadPolicy};
 
 /// Bytes per FP16 KV element. `KvCacheManager` stores K and V as FP16.
 const FP16_SIZE: u64 = 2;
@@ -248,9 +248,20 @@ pub struct ContextPlan {
 /// cost per token is decided by its FULL layers alone, and why Gemma 4 (5
 /// full layers of 30) costs 20 KiB per token where a dense 7B costs 128.
 pub fn kv_bytes_for_context(arch: &ArchConfig, context: u32) -> u64 {
+    kv_bytes_for_context_with(arch, context, KvQuant::Off)
+}
+
+/// [`kv_bytes_for_context`], honoring `quant`. The two are identical when
+/// `quant` is [`KvQuant::Off`] -- every existing caller and every frozen
+/// digest goes through that path unchanged.
+///
+/// Per-layer strides come from [`crate::kv_layer_strides`] rather than the
+/// two fixed `swa_stride`/`full_stride` terms `kv_bytes_for_context` used
+/// before this existed, because K and V can cost different numbers of bytes
+/// under TurboQuant (K3/V4 packs to different word counts) where they never
+/// did under FP16 alone.
+pub fn kv_bytes_for_context_with(arch: &ArchConfig, context: u32, quant: KvQuant) -> u64 {
     let context = context as u64;
-    let swa_stride = arch.num_kv_heads as u64 * arch.head_dim as u64 * FP16_SIZE;
-    let full_stride = arch.num_full_kv_heads as u64 * arch.full_head_dim as u64 * FP16_SIZE;
     let ring_capacity = (arch.sliding_window as u64 + MAX_PREFILL_CHUNK_TOKENS).max(1);
 
     // A compressed-attention install gives EVERY layer a placeholder, not
@@ -261,14 +272,17 @@ pub fn kv_bytes_for_context(arch: &ArchConfig, context: u32) -> u64 {
     }
 
     let mut bytes = 0u64;
-    for &mask in &arch.full_attention_layer_mask {
-        let (capacity, stride) = match mask {
-            2 => continue,
-            0 => (context.min(ring_capacity), swa_stride),
-            _ => (context, full_stride),
+    for (layer, &mask) in arch.full_attention_layer_mask.iter().enumerate() {
+        if mask == 2 {
+            continue;
+        }
+        let capacity = if mask == 0 {
+            context.min(ring_capacity)
+        } else {
+            context
         };
-        // K and V, hence the doubling.
-        bytes = bytes.saturating_add(capacity.saturating_mul(stride).saturating_mul(2));
+        let (k_stride, v_stride) = crate::kv_layer_strides(arch, layer, quant);
+        bytes = bytes.saturating_add(capacity.saturating_mul(k_stride.saturating_add(v_stride)));
     }
     bytes
 }
@@ -308,9 +322,20 @@ const FP32_SIZE: u64 = 4;
 /// therefore commits nothing extra, which is what keeps the default
 /// (`--session-slots 1`) a true no-op on this budget.
 pub fn session_pool_bytes(arch: &ArchConfig, context: u32, session_slots: u32) -> u64 {
+    session_pool_bytes_with(arch, context, session_slots, KvQuant::Off)
+}
+
+/// [`session_pool_bytes`], honoring `quant` in the sized KV term.
+pub fn session_pool_bytes_with(
+    arch: &ArchConfig,
+    context: u32,
+    session_slots: u32,
+    quant: KvQuant,
+) -> u64 {
     let extra_slots = u64::from(session_slots.saturating_sub(1));
-    extra_slots
-        .saturating_mul(kv_bytes_for_context(arch, context).saturating_add(gdn_state_bytes(arch)))
+    extra_slots.saturating_mul(
+        kv_bytes_for_context_with(arch, context, quant).saturating_add(gdn_state_bytes(arch)),
+    )
 }
 
 /// The largest context whose KV fits `budget`, rounded down to a multiple of
@@ -323,11 +348,19 @@ pub fn session_pool_bytes(arch: &ArchConfig, context: u32, session_slots: u32) -
 /// model whose layers are ALL sliding-window has a KV cost that stops
 /// growing and would otherwise have no largest fitting context at all.
 pub fn largest_context_within(arch: &ArchConfig, budget: u64) -> u32 {
-    if kv_bytes_for_context(arch, CONTEXT_GRANULARITY) > budget {
+    largest_context_within_with(arch, budget, KvQuant::Off)
+}
+
+/// [`largest_context_within`], honoring `quant`. [`kv_bytes_for_context_with`]
+/// stays monotone non-decreasing in the context under TurboQuant exactly as
+/// it is under FP16 (quantizing a row never makes it bigger), so the same
+/// bisection applies unchanged.
+pub fn largest_context_within_with(arch: &ArchConfig, budget: u64, quant: KvQuant) -> u32 {
+    if kv_bytes_for_context_with(arch, CONTEXT_GRANULARITY, quant) > budget {
         return 0;
     }
     let (mut lo, mut hi) = (CONTEXT_GRANULARITY, MAX_SUPPORTED_CONTEXT);
-    if kv_bytes_for_context(arch, hi) <= budget {
+    if kv_bytes_for_context_with(arch, hi, quant) <= budget {
         return hi;
     }
     // Invariant: `lo` fits and `hi` does not.
@@ -337,7 +370,7 @@ pub fn largest_context_within(arch: &ArchConfig, budget: u64) -> u32 {
         if mid <= lo {
             break;
         }
-        if kv_bytes_for_context(arch, mid) <= budget {
+        if kv_bytes_for_context_with(arch, mid, quant) <= budget {
             lo = mid;
         } else {
             hi = mid;
@@ -395,6 +428,32 @@ pub fn resolve_max_context(
     committed: u64,
     policy: &LoadPolicy,
 ) -> Result<ContextPlan, ContextRefused> {
+    resolve_max_context_with(
+        request,
+        arch,
+        trained,
+        default_context,
+        physical,
+        committed,
+        policy,
+        KvQuant::Off,
+    )
+}
+
+/// [`resolve_max_context`], honoring `quant`: every KV estimate below (the
+/// suggestion, the refusal arithmetic, the largest-fitting report) goes
+/// through the `_with` siblings above instead of the FP16-only ones.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_max_context_with(
+    request: MaxContext,
+    arch: &ArchConfig,
+    trained: Option<u32>,
+    default_context: u32,
+    physical: u64,
+    committed: u64,
+    policy: &LoadPolicy,
+    quant: KvQuant,
+) -> Result<ContextPlan, ContextRefused> {
     // **`physical == 0` means the probe is unavailable, not that the machine
     // has no memory**, which is what `runtime::physical_memory` answers off
     // macOS. Reading it as an empty budget would refuse every explicit
@@ -410,7 +469,7 @@ pub fn resolve_max_context(
     let ceiling = trained
         .unwrap_or(default_context)
         .min(MAX_SUPPORTED_CONTEXT);
-    let by_memory = largest_context_within(arch, comfortable);
+    let by_memory = largest_context_within_with(arch, comfortable, quant);
     let suggested = if known_machine {
         by_memory.min(ceiling)
     } else {
@@ -422,7 +481,7 @@ pub fn resolve_max_context(
         MaxContext::Auto => suggested,
     };
 
-    let kv_bytes = kv_bytes_for_context(arch, resolved);
+    let kv_bytes = kv_bytes_for_context_with(arch, resolved, quant);
     // `refuses` is false on `Off` alone. A budget without a refusal is the
     // whole content of that tier: the arithmetic still runs and still sizes
     // `Auto`, and a caller who names a window too large for the machine gets

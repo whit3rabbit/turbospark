@@ -25,6 +25,7 @@
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::gptoss::{layer_tensor, RealGptOssState};
+use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 use crate::real_forward_utils::norm_view;
@@ -51,11 +52,13 @@ pub(crate) fn encode_attention_block(
     let kv_dim = (num_kv * head_dim) as usize;
     let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
 
-    // K and V go STRAIGHT INTO the cache slot, which is what keeps the decode
-    // path zero-copy. Their biases and RoPE are then applied in place, at that
-    // same offset, so the cache holds the finished rows.
-    let (k_buf, k_off) = kv.k_slot(layer, position);
-    let (v_buf, v_off) = kv.v_slot(layer, position);
+    // K and V go STRAIGHT INTO the cache slot on an FP16 layer, which is what
+    // keeps the decode path zero-copy; on a TurboQuant-quantized layer they
+    // go into the FP16 staging row instead (`crate::kv_write`'s doc). Their
+    // biases and RoPE are then applied in place, at that same target, so the
+    // eventual cache row (staging or slot) holds the finished values.
+    let (k_buf, k_off) = kv_write_target(kv, scratch, KvHalf::K, layer, position);
+    let (v_buf, v_off) = kv_write_target(kv, scratch, KvHalf::V, layer, position);
 
     encode_gemv_any(
         context,
@@ -69,8 +72,8 @@ pub(crate) fn encode_attention_block(
         (&scratch.q, 0),
     )?;
     for (suffix, out) in [
-        ("k_proj.weight", (k_buf, k_off as u64)),
-        ("v_proj.weight", (v_buf, v_off as u64)),
+        ("k_proj.weight", (k_buf, k_off)),
+        ("v_proj.weight", (v_buf, v_off)),
     ] {
         encode_gemv_any(
             context,
@@ -91,18 +94,15 @@ pub(crate) fn encode_attention_block(
     // of the bias, which is a small, position-dependent, entirely wrong term.
     for (suffix, elems, out) in [
         ("q_proj.bias", q_dim, (&scratch.q, 0u64)),
-        ("k_proj.bias", kv_dim, (k_buf, k_off as u64)),
-        ("v_proj.bias", kv_dim, (v_buf, v_off as u64)),
+        ("k_proj.bias", kv_dim, (k_buf, k_off)),
+        ("v_proj.bias", kv_dim, (v_buf, v_off)),
     ] {
         let bias = norm_view(weights, index, &name(suffix), elems)?;
         gpu::encode_bias_add(context, pass, out, bias, elems as u32).map_err(gpu_err)?;
     }
 
     // V IS NOT ROTATED. Only q and k carry position.
-    for (data, heads) in [
-        ((&scratch.q, 0u64), num_heads),
-        ((k_buf, k_off as u64), num_kv),
-    ] {
+    for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
         gpu::encode_rope_neox_freqs(
             context,
             pass,
@@ -138,6 +138,13 @@ pub(crate) fn encode_attention_block(
         )
     };
 
+    // On a TurboQuant-quantized layer, quantize the staging row into the
+    // real cache slot now that it is normed and RoPE'd -- a no-op on an
+    // FP16 layer (`crate::kv_write`'s doc).
+    encode_kv_commit(
+        context, pass, kv, scratch, layer, position, head_dim, num_kv,
+    )?;
+
     // ONE SINK PER QUERY HEAD, checked for length at open. It joins the
     // softmax denominator in the COMBINE pass, behind `FC_ATTN_HAS_SINKS`
     // -- a function constant rather than a uniform, because an unbound
@@ -150,14 +157,15 @@ pub(crate) fn encode_attention_block(
         &layer_tensor(layer, "self_attn.sinks.weight"),
         num_heads as usize,
     )?;
-    gpu::encode_attention_decode(
+    encode_attention_any(
         context,
         pass,
         (&scratch.q, 0),
-        k_buf,
-        v_buf,
-        &scratch.attn,
+        kv,
+        scratch,
         (&scratch.attn_out, 0),
+        layer,
+        position,
         head_dim,
         num_heads,
         num_kv,
@@ -166,8 +174,7 @@ pub(crate) fn encode_attention_block(
         active_ring,
         arch.attention_scale as f32,
         Some(sinks),
-    )
-    .map_err(gpu_err)?;
+    )?;
 
     encode_gemv_any(
         context,

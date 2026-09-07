@@ -342,6 +342,60 @@ impl LoadGuard {
     }
 }
 
+/// TurboQuant KV-cache quantization selection. The mirror of
+/// `model_io::KvQuant`, spelled again here for the reason `MaxContext` and
+/// `ExpertCacheSlots` are: this crate is pure and may not depend on
+/// `model_io`. `crates/cli`'s mapping pins the two spellings against each
+/// other, and both accept exactly `off|2|3|3.5|4`.
+///
+/// **Unlike `MaxContext`/`ExpertCacheSlots`, this is NOT a sensing default.**
+/// `Off` is the default and is exactly what every release before this flag
+/// existed produced, so no frozen memory-oracle or quality-gate row moves for
+/// a caller who does not opt in (`docs/TRUBOQUANT.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KvBits {
+    /// FP16 everywhere. The default.
+    #[default]
+    Off,
+    /// TurboQuant at `k_bits`/`v_bits`. Only reached through
+    /// [`KvBits::parse`], which is the four widths `model_io::KvQuant::parse`
+    /// accepts -- `"3.5"` splits into K3/V4, mlx-vlm's own convention for its
+    /// one fractional width.
+    TurboQuant {
+        /// Bits per key-row coordinate.
+        k_bits: u8,
+        /// Bits per value-row coordinate.
+        v_bits: u8,
+    },
+}
+
+impl KvBits {
+    /// Parse a selection from its documented spelling. Returns `None` for
+    /// any text outside the fixed set.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "off" => Some(Self::Off),
+            "2" => Some(Self::TurboQuant {
+                k_bits: 2,
+                v_bits: 2,
+            }),
+            "3" => Some(Self::TurboQuant {
+                k_bits: 3,
+                v_bits: 3,
+            }),
+            "3.5" => Some(Self::TurboQuant {
+                k_bits: 3,
+                v_bits: 4,
+            }),
+            "4" => Some(Self::TurboQuant {
+                k_bits: 4,
+                v_bits: 4,
+            }),
+            _ => None,
+        }
+    }
+}
+
 /// A fully populated, validated invocation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InvocationRequest {
@@ -435,6 +489,8 @@ pub struct InvocationRequest {
     /// How hard the model is asked to think, rendered into the prompt by the
     /// checkpoint's own chat template.
     pub reasoning: ReasoningEffort,
+    /// TurboQuant KV-cache quantization selection; see [`KvBits`].
+    pub kv_bits: KvBits,
     /// Whether incidental output is suppressed.
     pub quiet: bool,
 }

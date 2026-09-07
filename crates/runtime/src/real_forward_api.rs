@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use model_io::{ArchConfig, ExpertCacheSlots};
+use model_io::{ArchConfig, ExpertCacheSlots, KvQuant};
 
 use crate::real_forward::{RealForwardRunner, DEFAULT_MAX_CONTEXT, EXPERT_CACHE_SLOTS};
 use crate::real_forward_types::{PhaseCounters, RealForwardError};
@@ -550,6 +550,12 @@ impl RealForwardRunner {
             // row must not acquire by detection, same reasoning as the two
             // pins above.
             1,
+            // Pinned OFF for AGENTS.md Gotcha 35's reason, restated for a
+            // third knob: `--kv-bits` moves KV bytes and (through the
+            // codec) numerics, so a caller measuring a footprint or a
+            // digest through this entry point must not acquire it by
+            // detection. `open_with_kv_quant` is the explicit way in.
+            KvQuant::Off,
         )
     }
 
@@ -576,6 +582,7 @@ impl RealForwardRunner {
             speculation,
             crate::steering::SteeringPolicy::off(),
             1,
+            KvQuant::Off,
         )
     }
 
@@ -605,6 +612,7 @@ impl RealForwardRunner {
             crate::families::qwen::DraftPolicies::from_env(),
             crate::steering::SteeringPolicy::off(),
             1,
+            KvQuant::Off,
         )
     }
 
@@ -630,6 +638,7 @@ impl RealForwardRunner {
             speculation,
             crate::steering::SteeringPolicy::off(),
             1,
+            KvQuant::Off,
         )
     }
 
@@ -694,6 +703,36 @@ impl RealForwardRunner {
         steering: crate::steering::SteeringPolicy,
         session_slots: usize,
     ) -> Result<Self, RealForwardError> {
+        Self::open_with_kv_quant(
+            dir,
+            expecting,
+            max_context,
+            slots,
+            speculation,
+            steering,
+            session_slots,
+            KvQuant::Off,
+        )
+    }
+
+    /// [`RealForwardRunner::open_with_slot_policy_speculation_steering_and_sessions`]
+    /// carrying a `--kv-bits` selection too. The widest sibling: every
+    /// earlier `open_with_*` form pins [`KvQuant::Off`] explicitly (AGENTS.md
+    /// Gotcha 35's reasoning, restated for this knob in
+    /// [`Self::open_with_options`]'s doc), so this is the one entry point
+    /// that can acquire TurboQuant KV quantization at all. `turbospark-check`
+    /// and `turbospark-server` are its callers.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_with_kv_quant(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        slots: ExpertCacheSlots,
+        speculation: crate::families::qwen::DraftPolicies,
+        steering: crate::steering::SteeringPolicy,
+        session_slots: usize,
+        kv_quant: KvQuant,
+    ) -> Result<Self, RealForwardError> {
         Self::open_inner(
             dir,
             expecting,
@@ -703,6 +742,7 @@ impl RealForwardRunner {
             speculation,
             steering,
             session_slots,
+            kv_quant,
         )
     }
 
@@ -763,6 +803,7 @@ impl RealForwardRunner {
             crate::families::qwen::DraftPolicies::off(),
             crate::steering::SteeringPolicy::off(),
             1,
+            KvQuant::Off,
         )
     }
 }

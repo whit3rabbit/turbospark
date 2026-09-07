@@ -188,6 +188,12 @@ void ts_string_free(char *s);
  *   visionSidecar     string | null (path to a standalone vision-tower
  *                       sidecar install to attach to a text-only trunk).
  *                       null means use the trunk's own tower, if it has one.
+ *   kvBits            "off" | "2" | "3" | "3.5" | "4" | null
+ *                       (default off, which is what every release before this
+ *                       key existed produced byte for byte). TurboQuant
+ *                       KV-cache quantization. "3.5" splits into K3/V4. An
+ *                       unsupported family or head_dim REFUSES this call by
+ *                       name rather than silently opening at FP16.
  *
  * Opening is expensive: it maps gigabytes and compiles Metal pipelines.
  * Open once and keep the handle.
@@ -255,6 +261,7 @@ int32_t ts_session_release_vision(const TsSession *s);
  *     "speculation": { "block", "drafter", "reason" },
  *     "vision": { "active", "imageTokenId", "reason", "source",
  *                 "sidecarPath" },
+ *     "kvBits",
  *     "specialTokens": { "bosId", "eosId", "padId", "endOfTurnId",
  *                       "stopTokenIds", "thinkStartId", "thinkEndId" } }
  *
@@ -330,6 +337,11 @@ int32_t ts_session_release_vision(const TsSession *s);
  * a sampled turn decodes sequentially whatever this says -- silently, and
  * by design: this binding's own sampling default is 0.2, so a per-turn
  * warning would fire on the normal case. Send temperature 0 to speculate.
+ *
+ * kvBits is the RESOLVED "off" | "2" | "3" | "4" | "3.5 (K3/V4)", and unlike
+ * speculation there is no auto-detect to report here: a named width either
+ * opens this session or ts_session_open() fails, so what a caller asked for
+ * and what this session runs at are always the same value.
  */
 int32_t ts_session_info_json(const TsSession *s, char **out);
 

@@ -493,6 +493,52 @@ fn reasoning_flag_defaults_to_off_and_parses_documented_levels() {
 }
 
 #[test]
+fn kv_bits_flag_defaults_to_off_and_parses_documented_widths() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert_eq!(d.kv_bits, runtime::KvQuant::Off);
+
+    for (arg, expected) in [
+        ("off", runtime::KvQuant::Off),
+        (
+            "2",
+            runtime::KvQuant::TurboQuant {
+                k_bits: 2,
+                v_bits: 2,
+            },
+        ),
+        (
+            "3",
+            runtime::KvQuant::TurboQuant {
+                k_bits: 3,
+                v_bits: 3,
+            },
+        ),
+        (
+            "3.5",
+            runtime::KvQuant::TurboQuant {
+                k_bits: 3,
+                v_bits: 4,
+            },
+        ),
+        (
+            "4",
+            runtime::KvQuant::TurboQuant {
+                k_bits: 4,
+                v_bits: 4,
+            },
+        ),
+    ] {
+        let p = parse(&["--model", "/tmp/m", "--kv-bits", arg])
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.kv_bits, expected, "failed for --kv-bits {arg}");
+    }
+
+    assert!(parse(&["--model", "/tmp/m", "--kv-bits", "5"]).is_err());
+    assert!(parse(&["--model", "/tmp/m", "--kv-bits", "2.5"]).is_err());
+}
+
+#[test]
 fn prefix_reuse_flag_defaults_to_on_and_parses_on_off() {
     let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
     assert!(d.prefix_reuse);

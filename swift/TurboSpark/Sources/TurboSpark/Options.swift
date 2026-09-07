@@ -114,6 +114,35 @@ public struct OpenOptions: Encodable, Sendable {
         }
     }
 
+    /// TurboQuant KV-cache quantization width. `nil` (the default) is `off`,
+    /// which is what every release before this option existed produced byte
+    /// for byte. An unsupported family or `head_dim` throws from
+    /// `TurboSparkSession.init` by name rather than silently opening at
+    /// FP16 -- see `docs/TRUBOQUANT.md`.
+    public enum KvBits: Encodable, Sendable {
+        /// FP16 everywhere. The default.
+        case off
+        /// K2/V2.
+        case two
+        /// K3/V3.
+        case three
+        /// K3/V4, mlx-vlm's own split for its one fractional width.
+        case threePointFive
+        /// K4/V4.
+        case four
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .off: try c.encode("off")
+            case .two: try c.encode("2")
+            case .three: try c.encode("3")
+            case .threePointFive: try c.encode("3.5")
+            case .four: try c.encode("4")
+            }
+        }
+    }
+
     /// The edit applied along a control vector.
     public enum SteeringMode: String, Encodable, Sendable {
         /// Suppress activations along the control vector.
@@ -162,6 +191,8 @@ public struct OpenOptions: Encodable, Sendable {
     public var steeringGate: Double?
     /// Path to a standalone vision-tower directory (.gturbo-vision). nil for default.
     public var visionSidecar: String?
+    /// TurboQuant KV-cache quantization. `nil` means `.off`.
+    public var kvBits: KvBits?
 
     /// Creates options for opening a model session.
     public init(
@@ -179,7 +210,8 @@ public struct OpenOptions: Encodable, Sendable {
         steeringLayers: String? = nil,
         steeringTarget: Double? = nil,
         steeringGate: Double? = nil,
-        visionSidecar: String? = nil
+        visionSidecar: String? = nil,
+        kvBits: KvBits? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
@@ -196,6 +228,7 @@ public struct OpenOptions: Encodable, Sendable {
         self.steeringTarget = steeringTarget
         self.steeringGate = steeringGate
         self.visionSidecar = visionSidecar
+        self.kvBits = kvBits
     }
 }
 

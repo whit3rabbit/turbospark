@@ -16,6 +16,7 @@ pub mod encoder_config;
 mod error;
 mod expert_cache_policy;
 mod install_receipt;
+mod kv_quant;
 mod load_guard;
 mod manifest;
 mod ngram_hash;
@@ -38,10 +39,11 @@ pub use arch_config::{
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 pub use context_policy::{
-    committed_bytes, gdn_state_bytes, kv_bytes_for_context, largest_context_within,
-    resolve_max_context, session_pool_bytes, ContextCap, ContextFloorUnmet, ContextPlan,
-    ContextRefused, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
-    CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_bytes, gdn_state_bytes, kv_bytes_for_context, kv_bytes_for_context_with,
+    largest_context_within, largest_context_within_with, resolve_max_context,
+    resolve_max_context_with, session_pool_bytes, session_pool_bytes_with, ContextCap,
+    ContextFloorUnmet, ContextPlan, ContextRefused, ContextTooLarge, MaxContext,
+    CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 pub use encoder_config::{EncoderConfig, EncoderQuantization};
 pub use error::ModelError;
@@ -51,6 +53,9 @@ pub use install_receipt::{
     validate_manifest_binding as validate_install_receipt_manifest_binding,
     FileEntry as InstallReceiptFileEntry, ModelIntegrityPolicy, VerifiedInstallReceipt,
     DEFAULT_MAX_BYTES as INSTALL_RECEIPT_DEFAULT_MAX_BYTES,
+};
+pub use kv_quant::{
+    kv_layer_strides, layer_is_quantized, rht_supported, tq_packed_words, tq_row_bytes, KvQuant,
 };
 pub use load_guard::{GuardBudget, LoadGuard, LoadPolicy};
 pub use manifest::{

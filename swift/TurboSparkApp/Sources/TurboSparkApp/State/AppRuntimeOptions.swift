@@ -214,6 +214,70 @@ public enum AppSpeculativeDrafterOption: String, CaseIterable, Identifiable, Sen
     }
 }
 
+/// TurboQuant KV-cache quantization width configuration.
+///
+/// **`.auto` IS NOT THE ENGINE'S `KvQuant` -- there is no such case there.**
+/// `--kv-bits` REFUSES at open by name when a checkpoint's `head_dim` is not
+/// a power of two in 32...512, or when every eligible layer is excluded by
+/// the last-full-attention-layer rule (`docs/TRUBOQUANT.md`), and a refused
+/// open takes the whole session down with it -- there is no soft "fall back
+/// to off" inside the engine the way `--speculative auto` has one. So `.auto`
+/// here means "ask for 4-bit, the one width the assessment calls safe, but
+/// only on a checkpoint `ModelFeatureDescriptor.supportsKvQuant` already says
+/// would accept it" -- resolved CLIENT-SIDE in `AppModel.buildOpenOptions()`
+/// against the install's own manifest, before the option is even built, so
+/// this app never sends a request the engine would refuse for a default
+/// nobody asked for. An EXPLICIT width is sent unconditionally and refused
+/// exactly like any other named request in this app (the same shape
+/// `AppSpeculationOption.block2/4/8` already have against an install with no
+/// drafter): a user who chose 2-bit on purpose should see the refusal, not
+/// have it silently swallowed.
+public enum AppKvBitsOption: String, CaseIterable, Identifiable, Sendable {
+    /// 4-bit when the checkpoint supports it, off otherwise. The default.
+    case auto = "auto"
+    /// Never quantize the KV cache.
+    case off = "off"
+    /// K2/V2.
+    case two = "2"
+    /// K3/V3.
+    case three = "3"
+    /// K3/V4, TurboQuant's own split for its one fractional rate.
+    case threePointFive = "3.5"
+    /// K4/V4.
+    case four = "4"
+
+    /// Unique string identifier.
+    public var id: String { rawValue }
+
+    /// Human-readable menu display label.
+    public var menuLabel: String {
+        switch self {
+        case .auto: return "Auto (4-bit when supported)"
+        case .off: return "Off"
+        case .two: return "2-bit"
+        case .three: return "3-bit"
+        case .threePointFive: return "3.5-bit (K3/V4)"
+        case .four: return "4-bit"
+        }
+    }
+
+    /// Converts to the underlying TurboSpark open option, for an install
+    /// this app has already checked (or the caller has decided not to
+    /// check) is eligible. `.auto` resolves to 4-bit HERE -- the eligibility
+    /// gate is a separate, earlier decision made against the install's own
+    /// manifest, not something this accessor can see.
+    public var kvBits: OpenOptions.KvBits? {
+        switch self {
+        case .auto: return .four
+        case .off: return nil
+        case .two: return .two
+        case .three: return .three
+        case .threePointFive: return .threePointFive
+        case .four: return .four
+        }
+    }
+}
+
 /// Activation steering operation modes.
 public enum AppSteeringModeOption: String, CaseIterable, Identifiable, Sendable {
     /// Suppress target activations.
@@ -285,6 +349,12 @@ public struct AppRuntimeOptions: Equatable, Sendable {
     public var speculation: AppSpeculationOption = .auto
     /// Selected speculative drafter architecture.
     public var speculativeDrafter: AppSpeculativeDrafterOption = .auto
+    /// TurboQuant KV-cache quantization width. `.auto` (the default) asks
+    /// for 4-bit only on a checkpoint `ModelFeatureDescriptor.supportsKvQuant`
+    /// already says would accept it, and stays off otherwise -- see
+    /// `AppKvBitsOption`'s own doc for why that check happens here rather
+    /// than being left to the engine's open-time refusal.
+    public var kvBits: AppKvBitsOption = .auto
     /// Maximum tokens per second rate cap (0 for uncapped).
     public var maxTokensPerSec: Double = 0
     /// Filesystem path to steering control vector file.
@@ -309,6 +379,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         minAutoContextTokens: UInt32 = 0,
         speculation: AppSpeculationOption = .auto,
         speculativeDrafter: AppSpeculativeDrafterOption = .auto,
+        kvBits: AppKvBitsOption = .auto,
         maxTokensPerSec: Double = 0,
         steeringPath: String? = nil,
         steeringMode: AppSteeringModeOption = .ablate,
@@ -324,6 +395,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         self.minAutoContextTokens = minAutoContextTokens
         self.speculation = speculation
         self.speculativeDrafter = speculativeDrafter
+        self.kvBits = kvBits
         self.maxTokensPerSec = maxTokensPerSec
         self.steeringPath = steeringPath
         self.steeringMode = steeringMode

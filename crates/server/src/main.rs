@@ -68,6 +68,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.prefix_reuse,
         args.session_slots,
         args.vision_sidecar.as_deref().map(std::path::Path::new),
+        args.kv_bits,
     )?;
     // Both sized figures are the RESOLVED ones, never `args`: under `auto`
     // the request carries no number, and each has to be readable beside any
@@ -150,6 +151,12 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
     }
     if args.reasoning != tokenizer::ReasoningEffort::Off {
         eprintln!("  default reasoning: {}", args.reasoning.as_str());
+    }
+    // Reported only when NOT off, matching the reasoning line above: this
+    // flag does not RESOLVE against the machine the way the two sized knobs
+    // do, so there is no suggestion to surface on the common (off) path.
+    if args.kv_bits.is_on() {
+        eprintln!("  kv-bits: {}", args.kv_bits.label());
     }
     // THE LENGTH, NEVER THE TEXT. A deployment prompt is often the operator's
     // policy or persona and a server log is not where it belongs, but a line

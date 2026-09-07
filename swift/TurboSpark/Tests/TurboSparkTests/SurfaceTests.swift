@@ -454,7 +454,8 @@ final class SurfaceTests: XCTestCase {
                 "stopTokenIds": [151643, 151645],
                 "thinkStartId": 151648,
                 "thinkEndId": 151649
-            }
+            },
+            "kvBits": "off"
         }
         """
         let info = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
@@ -465,6 +466,7 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(info.specialTokens.stopTokenIds, [151643, 151645])
         XCTAssertEqual(info.specialTokens.thinkStartId, 151648)
         XCTAssertEqual(info.specialTokens.thinkEndId, 151649)
+        XCTAssertEqual(info.kvBits, "off")
         XCTAssertEqual(info.reasoningEfforts, [.off, .low, .medium, .xhigh])
         XCTAssertFalse(
             info.reasoningEfforts.contains(.high),
@@ -499,7 +501,8 @@ final class SurfaceTests: XCTestCase {
             "specialTokens": {
                 "bosId": null, "eosId": null, "padId": null, "endOfTurnId": null,
                 "stopTokenIds": [], "thinkStartId": null, "thinkEndId": null
-            }
+            },
+            "kvBits": "off"
         }
         """
         let info = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
@@ -609,6 +612,33 @@ final class SurfaceTests: XCTestCase {
         let json = String(decoding: data, as: UTF8.self)
         XCTAssertTrue(json.contains("stopTokens"))
         XCTAssertTrue(json.contains("151643"))
+    }
+
+    /// Every documented spelling round-trips, and `nil` is omitted rather
+    /// than encoded as `null` -- matching every other optional field on
+    /// `OpenOptions`, and what lets an absent key mean "off" on the Rust
+    /// side without a caller having to spell it.
+    func testKvBitsSpellingsEncodeToTheDocumentedStrings() throws {
+        var options = OpenOptions()
+        XCTAssertFalse(
+            String(decoding: try JSONEncoder().encode(options), as: UTF8.self).contains("kvBits"),
+            "an absent kvBits must be OMITTED, not encoded as null"
+        )
+
+        for (kvBits, expected) in [
+            (OpenOptions.KvBits.off, "\"off\""),
+            (.two, "\"2\""),
+            (.three, "\"3\""),
+            (.threePointFive, "\"3.5\""),
+            (.four, "\"4\""),
+        ] {
+            options.kvBits = kvBits
+            let json = String(decoding: try JSONEncoder().encode(options), as: UTF8.self)
+            XCTAssertTrue(
+                json.contains("\"kvBits\":\(expected)"),
+                "expected kvBits \(expected) in \(json)"
+            )
+        }
     }
 
     /// Tests that new C ABI symbols in turbospark.h link and handle null arguments.
@@ -975,7 +1005,8 @@ final class SurfaceTests: XCTestCase {
             "specialTokens": {
                 "bosId": null, "eosId": null, "padId": null, "endOfTurnId": null,
                 "stopTokenIds": [], "thinkStartId": null, "thinkEndId": null
-            }
+            },
+            "kvBits": "off"
         }
         """
         return try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))

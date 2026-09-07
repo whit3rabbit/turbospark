@@ -137,6 +137,7 @@ than one, is a parse error.
 | `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `TURBOSPARK_PREFILL_CHUNK` environment variable overrides when set |
 | `--power-profile` | `performance\|balanced\|efficiency` | `performance` (or `efficiency` under Low Power Mode) | decode rate governance |
 | `--max-tokens-per-sec` | float `> 0` | uncapped (or the efficiency profile's reading speed) | hard decode rate cap |
+| `--kv-bits` | `off\|2\|3\|3.5\|4` | `off` | TurboQuant KV-cache quantization width; `3.5` splits K3/V4. An unsupported `head_dim` or an install this decode flow does not carry the codec for REFUSES at open by name rather than silently running FP16; see [`docs/TRUBOQUANT.md`](TRUBOQUANT.md) |
 
 ### Speculative decoding
 
@@ -299,6 +300,7 @@ while a generation is in flight. `/v1/responses` is stateless: it refuses
 | `--max-tokens-per-sec` | float `> 0` | uncapped | same as `turbospark-check`'s |
 | `--speculative` | `off\|auto`, or `1`-`15` | `auto` | resolved ONCE at process open, not per request; acceptance is exact only at temperature 0, so a request sampled above that falls back to sequential decode silently |
 | `--speculative-drafter` | `auto\|mtp\|dflash` | `auto` | same as `turbospark-check`'s |
+| `--kv-bits` | `off\|2\|3\|3.5\|4` | `off` | same as `turbospark-check`'s, resolved once at open for every request the process serves |
 | `--guardrails` | `on\|off` | `on` | tool-call rescue, argument validation, one retry (see [`docs/FORGE_GUARDRAILS.md`](FORGE_GUARDRAILS.md)); a request carrying `tools` is BUFFERED rather than streamed while this is on, since a verdict needs the whole turn -- a request without tools streams exactly as it always did |
 | `--reasoning` | `off\|low\|medium\|high\|xhigh` | `off` | default reasoning effort when a request omits `reasoning_effort` |
 | `--system` | text, repeatable | none | default system prompt for requests that carry no `system` or `developer` message of their own. Repeats join with a newline. THE CALLER WINS: a request that sends its own is left exactly as it arrived, so the two can never produce two system turns (which three of the five fallback renderers refuse outright). Applied at the one point every wire format funnels through, so it reaches `/v1/chat/completions`, `/v1/messages`, `/v1/responses` and `/api/chat` alike, and is counted by `/v1/messages/count_tokens`. `/v1/completions` renders no chat template and is unaffected |
@@ -383,6 +385,7 @@ See [`docs/BENCHMARKING.md`](BENCHMARKING.md) for background and baseline number
 | `--speculative` | `off\|auto`, or block size `> 0` | `off` | speculative decoding (defaults off to preserve sampled protocol numbers) |
 | `--speculative-drafter` | `auto\|mtp\|dflash` | `auto` | drafter to drive under `--speculative` |
 | `--shaping` | `protocol\|greedy` | `protocol` | `protocol` uses the protocol's fixed temperature/top-k/top-p; `greedy` samples argmax |
+| `--kv-bits` | `off\|2\|3\|3.5\|4` | `off` | TurboQuant KV-cache quantization width; OFF BY DEFAULT so every frozen memory-oracle and quality-gate row in this crate stays valid without the flag (see `crates/bench/CLAUDE.md` and AGENTS.md Gotcha 35) |
 
 ```sh
 # Run full protocol benchmark against Gemma 4
