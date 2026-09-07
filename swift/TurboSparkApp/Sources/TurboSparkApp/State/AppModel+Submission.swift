@@ -31,7 +31,18 @@ extension AppModel {
             return
         }
 
-        guard canRun, session != nil else { return }
+        // **A BUSY CHAT QUEUES THE DRAFT INSTEAD OF DROPPING THE KEYPRESS**
+        // (Claude Code's message queue). When the only failing `canRun`
+        // terms are the busy ones -- a turn in flight, an awaited hook, an
+        // approval card -- the draft is parked and sent from a turn tail.
+        // Everything else (no session, an open in flight, an empty draft)
+        // refuses exactly as before.
+        if !canRun {
+            guard canQueue, session != nil else { return }
+            enqueueCurrentDraft(chatID: selectedChatID)
+            return
+        }
+        guard session != nil else { return }
 
         // A meta-command is not a prompt, and it is handled before everything
         // else here for the same reason the agent slash commands are handled
@@ -86,6 +97,9 @@ extension AppModel {
                 if !self.generating { self.isCancellationPending = false }
             }
             self.stopHookReentryCount = 0
+            // Retry/Edit park response variants immediately before their own
+            // turn; an ordinary submission must never inherit a stale one.
+            self.pendingResponseVariants[submissionChatID] = nil
 
             // **`@path` MENTIONS RESOLVE FIRST**, before the attachments are
             // read and before the hook: each resolvable token becomes an
@@ -235,7 +249,14 @@ extension AppModel {
             self.chats[chatIndex].draftAttachments = []
             self.chats[chatIndex].updatedAt = Date()
 
-            var contentForModel = fullUserContent
+            // Invisible-character sanitization sits at the model boundary:
+            // tag characters, bidi overrides, and friends are invisible in
+            // the UI but real token content to the model, so they are
+            // stripped here and the SANITIZED text is what gets stored
+            // below, keeping the transcript equal to what the model read.
+            // (`UnicodeSanitization`'s own doc carries the scope decision:
+            // prompts only, never tool output.)
+            var contentForModel = UnicodeSanitization.sanitize(fullUserContent)
             if let context = verdict.additionalContext, !context.isEmpty {
                 contentForModel += "\n\n<hook_context>\n\(context)\n</hook_context>"
             }

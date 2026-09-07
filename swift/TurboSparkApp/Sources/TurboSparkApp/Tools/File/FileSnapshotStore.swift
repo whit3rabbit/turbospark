@@ -66,6 +66,27 @@ public actor FileSnapshotStore {
         return currentHash != recordedHash
     }
 
+    /// Whether the file has a recorded snapshot at all.
+    ///
+    /// `isStale` deliberately answers false for an untracked file, which is
+    /// the right default for EDIT (nothing read, nothing to compare) but
+    /// wrong for a destructive WRITE over an existing file the model never
+    /// read: there the absence of a snapshot is the hazard, not safety.
+    /// Callers that need the distinction ask this first.
+    public func isTracked(url: URL) -> Bool {
+        snapshots[url.standardizedFileURL.path] != nil
+    }
+
+    /// Forgets a file's snapshot. Called after a patch deletes the file, so
+    /// the store does not keep a hash for a path that no longer exists (and
+    /// so a later file of the same path starts untracked, not "fresh
+    /// against a dead hash").
+    public func removeSnapshot(url: URL) {
+        let path = url.standardizedFileURL.path
+        guard snapshots.removeValue(forKey: path) != nil else { return }
+        insertionOrder.removeAll { $0 == path }
+    }
+
     /// Clears recorded snapshots. Called when the active project changes, so
     /// a stale-write check cannot carry a hash from one workspace into
     /// another.

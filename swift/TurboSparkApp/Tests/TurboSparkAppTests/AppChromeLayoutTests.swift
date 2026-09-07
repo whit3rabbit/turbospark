@@ -12,6 +12,7 @@ import XCTest
 final class AppChromeLayoutTests: XCTestCase {
     private let artifactID = UUID()
     private let attachmentID = UUID()
+    private let htmlPreviewID = UUID()
 
     // MARK: - Precedence
 
@@ -56,6 +57,51 @@ final class AppChromeLayoutTests: XCTestCase {
         XCTAssertFalse(AppRightColumnClaimant.none.isArtifact)
     }
 
+    // MARK: - The inline html preview claimant
+
+    func testAnInlinePreviewClaimsTheColumnAboveTheFilePreviewAndTheInspector() {
+        let claimant = AppRightColumnClaimant.resolve(
+            openArtifactID: nil,
+            htmlPreviewID: htmlPreviewID,
+            previewAttachmentID: attachmentID,
+            isInspectorVisible: true)
+
+        XCTAssertEqual(claimant, .htmlPreview(htmlPreviewID))
+    }
+
+    func testAnAutoOpenedArtifactStillOutranksAnInlinePreview() {
+        // The ladder is the belt: the setters keep an artifact and a
+        // preview from ever being set together, and the order that does
+        // fire keeps the turn-driven panel from being displaced by a stale
+        // click.
+        let claimant = AppRightColumnClaimant.resolve(
+            openArtifactID: artifactID,
+            htmlPreviewID: htmlPreviewID,
+            previewAttachmentID: nil,
+            isInspectorVisible: false)
+
+        XCTAssertEqual(claimant, .artifact(artifactID))
+    }
+
+    func testAnInlinePreviewIsAPreviewPaneTheInspectorShortcutMustClose() {
+        // The shortcut closes what the user can see, whichever preview kind
+        // it is; `.htmlPreview` joining the ladder must not drop out of it.
+        XCTAssertTrue(AppRightColumnClaimant.htmlPreview(htmlPreviewID).isPreviewPane)
+        XCTAssertTrue(AppRightColumnClaimant.artifact(artifactID).isPreviewPane)
+        XCTAssertTrue(AppRightColumnClaimant.filePreview(attachmentID).isPreviewPane)
+        XCTAssertFalse(AppRightColumnClaimant.inspector.isPreviewPane)
+        XCTAssertFalse(AppRightColumnClaimant.none.isPreviewPane)
+    }
+
+    func testTheInlinePreviewTakesTheArtifactPanelWidth() {
+        // Both web-backed claims are the same panel at the same width; a
+        // different width would mean the two ladders disagree about what a
+        // preview is.
+        XCTAssertEqual(
+            AppChromeLayout.rightColumnWidth(.htmlPreview(htmlPreviewID)),
+            AppChromeLayout.artifactPanelWidth)
+    }
+
     // MARK: - Widths
 
     func testTheMinimumWidthGrowsByExactlyTheArtifactPanelWhenItIsTheClaimant() {
@@ -90,20 +136,5 @@ final class AppChromeLayoutTests: XCTestCase {
         XCTAssertEqual(
             AppChromeLayout.rightColumnWidth(.inspector, isExpandedWorktree: true),
             AppChromeLayout.expandedInspectorWidth)
-    }
-
-    func testTheNewMinimumAgreesWithTheOldOneOnTheCasesTheyShare() {
-        // The Bool-shaped overload is still live at its one call site until
-        // RootView moves; the two must not disagree about an inspector.
-        XCTAssertEqual(
-            AppChromeLayout.minimumWindowWidth(
-                isChatSidebarVisible: true, rightColumn: .inspector),
-            AppChromeLayout.minimumWindowWidth(
-                isChatSidebarVisible: true, isInspectorVisible: true))
-        XCTAssertEqual(
-            AppChromeLayout.minimumWindowWidth(
-                isChatSidebarVisible: false, rightColumn: .none),
-            AppChromeLayout.minimumWindowWidth(
-                isChatSidebarVisible: false, isInspectorVisible: false))
     }
 }

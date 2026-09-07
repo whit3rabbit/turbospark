@@ -153,10 +153,82 @@ private struct MessageRowView: View {
     @ObservedObject var model: AppModel
     let message: AppChatMessage
     @State private var isHovered = false
+    @State private var branchTarget: AppModel.BranchTarget?
     @ObservedObject private var speechManager = AppSpeechSynthesizer.shared
 
     private var isCurrentlySpeakingThis: Bool {
         speechManager.isSpeaking && speechManager.speakingMessageID == message.id
+    }
+
+    /// Variant navigation reads; the bar hides the switcher on "1 / 1".
+    private var variantPosition: (position: Int, count: Int) {
+        model.variantPosition(of: message)
+    }
+
+    private func stepVariant(_ delta: Int) {
+        model.stepVariant(of: message.id, delta: delta)
+    }
+
+    private var canEditThisInPlace: Bool {
+        model.canEditInPlace(message)
+    }
+
+    private var canBranchThis: Bool {
+        model.canBranch(message)
+    }
+
+    /// Opens an ```html fence in the sandboxed preview panel. Inline bytes:
+    /// the fence is not a file, so nothing joins the artifact archive.
+    private var previewHTML: (String) -> Void {
+        { model.openHTMLPreview(title: "HTML preview", html: $0) }
+    }
+
+    /// One chip per artifact this message's tool calls produced, anchored by
+    /// `AppArtifact.toolCallID` -- the field exists for exactly this row.
+    /// Clicking reopens the panel, which is the only manual way back to a
+    /// file artifact the auto-open already showed once.
+    @ViewBuilder
+    private var artifactChips: some View {
+        let callIDs = Set(message.toolCalls.map(\.id))
+        let rows = model.selectedChat.artifacts.filter { artifact in
+            artifact.toolCallID.map(callIDs.contains) == true
+        }
+        ForEach(rows) { artifact in
+            Button {
+                model.openArtifact(id: artifact.id)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: artifact.symbolName)
+                        .themedFont(points: 10, weight: .semibold)
+                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .accessibilityHidden(true)
+                    Text(artifact.fileName)
+                        .themedFont(points: 11, weight: .medium)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(artifact.formatLabel)
+                        .themedCode(.tiny)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Image(systemName: "sidebar.right")
+                        .themedFont(points: 9)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.5)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open \(artifact.fileName) in the artifact panel")
+            .accessibilityLabel("Open artifact \(artifact.fileName)")
+        }
     }
 
     /// The ordinary user bubble. Split out of `body` when `#` quick-saves
@@ -184,11 +256,32 @@ private struct MessageRowView: View {
                     MessageActionBarView(
                         text: message.content,
                         messageID: message.id,
-                        date: message.createdAt
+                        date: message.createdAt,
+                        variantStep: variantPosition.count > 1 ? { stepVariant($0) } : nil,
+                        variantPosition: variantPosition.position,
+                        variantCount: variantPosition.count,
+                        editAction: canEditThisInPlace ? { _ = model.beginEdit(messageID: message.id) } : nil,
+                        branchAction: canBranchThis
+                            ? { branchTarget = AppModel.BranchTarget(id: message.id, originalText: message.content) }
+                            : nil,
+                        actionsDisabled: model.isRunning
                     )
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
             }
+        }
+    }
+
+    /// The row while its in-place editor is open. The composer holds its
+    /// own draft text, so a Cancelled commit leaves the row as it was.
+    private var editingUserMessageRow: some View {
+        HStack(alignment: .top, spacing: 0) {
+            Spacer(minLength: 48)
+            MessageEditComposerView(
+                initialText: message.content,
+                onSave: { model.commitEdit(messageID: message.id, newText: $0) },
+                onCancel: { model.cancelEdit() }
+            )
         }
     }
 
@@ -225,6 +318,8 @@ private struct MessageRowView: View {
             if message.role == .user {
                 if let memoryText = UserMemoryInputMessage.parse(message.content) {
                     memoryQuickSaveRow(memoryText)
+                } else if model.editingMessageID == message.id {
+                    editingUserMessageRow
                 } else {
                     standardUserMessageRow
                 }
@@ -256,14 +351,23 @@ private struct MessageRowView: View {
                             let matchResult = message.toolResults.first(where: { $0.callID == call.id })
                             ToolCallCardView(model: model, call: call, result: matchResult)
                         }
+                        artifactChips
                     }
 
                     if !message.content.isEmpty && message.toolCalls.isEmpty {
-                        CollapsibleMessageContentView(text: message.content, isUser: false, maxHeight: 380)
+                        CollapsibleMessageContentView(
+                            text: message.content,
+                            isUser: false,
+                            maxHeight: 380,
+                            onPreviewHTML: previewHTML)
                     } else if !message.content.isEmpty {
                         let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !trimmed.starts(with: "<tool_call>") && !trimmed.starts(with: "Invoking tool") {
-                            CollapsibleMessageContentView(text: message.content, isUser: false, maxHeight: 380)
+                            CollapsibleMessageContentView(
+                                text: message.content,
+                                isUser: false,
+                                maxHeight: 380,
+                                onPreviewHTML: previewHTML)
                         }
                     }
 
@@ -272,7 +376,13 @@ private struct MessageRowView: View {
                             MessageActionBarView(
                                 text: message.content,
                                 messageID: message.id,
-                                date: message.createdAt
+                                date: message.createdAt,
+                                variantStep: variantPosition.count > 1 ? { stepVariant($0) } : nil,
+                                variantPosition: variantPosition.position,
+                                variantCount: variantPosition.count,
+                                retryAction: model.canRetry(response: message)
+                                    ? { _ = model.regenerateResponse() } : nil,
+                                actionsDisabled: model.isRunning
                             )
                             Spacer()
                         }
@@ -289,6 +399,17 @@ private struct MessageRowView: View {
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
+        }
+        .sheet(item: $branchTarget) { target in
+            BranchEditSheet(
+                originalText: target.originalText,
+                chatTitle: model.selectedChat.title,
+                onCreate: { newText in
+                    branchTarget = nil
+                    _ = model.branchFrom(messageID: target.id, editedText: newText)
+                },
+                onCancel: { branchTarget = nil }
+            )
         }
     }
 }

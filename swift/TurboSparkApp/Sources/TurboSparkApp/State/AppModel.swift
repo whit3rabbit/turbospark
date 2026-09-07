@@ -26,6 +26,39 @@ public final class AppModel: ObservableObject {
     /// visibility flag that could disagree with it.
     @Published public var previewAttachmentID: UUID? = nil
 
+    /// Artifact currently shown in the right-hand artifact panel, if any.
+    ///
+    /// Same one-flag rule as `previewAttachmentID`. The three right-column
+    /// claimants clear each other in their setters
+    /// (`AppModel+ArtifactPanel`), never by ordering in a view.
+    @Published public var openArtifactID: UUID? = nil
+
+    /// Inline HTML preview from a chat fence's "Preview" click.
+    ///
+    /// Bytes in MEMORY and never persisted: the artifact archive stores paths
+    /// and metadata rather than bytes (`AppArtifact`), and a fence is not a
+    /// file on disk at all. Ghost chats keep their ghosting for free -- there
+    /// is nothing on disk to seal or leak. Mutate only through
+    /// `openHTMLPreview`/`dismissHTMLPreview` so the claimant invariant
+    /// holds.
+    @Published public var htmlPreview: ArtifactHTMLPreview? = nil
+
+    /// Network grants for the sandboxed web panel, by grant key.
+    ///
+    /// In-memory on purpose: a grant survives a panel close within the
+    /// session but a relaunch asks again, which is the safe direction for a
+    /// switch whose whole job is to be deliberate. Keys are namespaced by
+    /// source (`artifact:` + contentKey, `html:` + content hash) so a rewritten
+    /// file or an edited fence never inherits the old grant.
+    var artifactNetworkGrants: [String: Bool] = [:]
+
+    /// Artifacts whose panel has already auto-opened.
+    ///
+    /// `AppArtifact.upsert` keeps ids stable across rewrites precisely so
+    /// this set stays honest: a file rewritten three times pops the panel
+    /// once, not once per write.
+    var autoOpenedArtifactIDs: Set<UUID> = []
+
     // Model management
     /// Models currently installed locally on disk.
     @Published public var installed: [InstalledModel] = []
@@ -248,6 +281,10 @@ public final class AppModel: ObservableObject {
     /// while its chat was busy, parked per chat until a turn tail can inject
     /// them (Claude Code's pending-notification queue).
     var pendingTaskNotifications: [UUID: [String]] = [:]
+    /// Prompts submitted while their chat was busy, parked per chat and
+    /// sent from a turn tail (Claude Code's message queue). Published for
+    /// the composer's queued-count pill; in-memory only, never persisted.
+    @Published public var pendingUserMessages: [UUID: [QueuedUserPrompt]] = [:]
     /// The spawned `Task` per background agent id. Deliberately NOT a child
     /// of `runTask`: an unstructured `Task` inherits no cancellation, which
     /// is the whole point -- chat Stop must not kill an agent the model was
@@ -257,6 +294,23 @@ public final class AppModel: ObservableObject {
     /// `killed` rather than `cancelled`.
     var killedBackgroundAgentIDs: Set<String> = []
     var nextBackgroundAgentID = 1
+
+    // Message editing state
+    /// The transcript row currently open in the in-place edit composer, or
+    /// nil. Pure UI state: set by `beginEdit`, cleared on commit and cancel,
+    /// never persisted.
+    @Published public var editingMessageID: UUID? = nil
+    /// Response variants parked by Retry and Edit, keyed by chat. The
+    /// replaced prose response waits here and is seeded as the NEXT
+    /// assistant message's `alternates` the moment one commits
+    /// (`finishProseTurn`), or onto a cancelled turn's partial append
+    /// (`finishCancelled`). Both consumers REMOVE their entry; a turn that
+    /// came back as tool calls drops it (variants describe a prose reply,
+    /// and seeding one onto a chain of tool rows would swap content under
+    /// live tool cards); an ordinary submission clears it up front. Without
+    /// those three exits a stale entry would graft old text onto a turn it
+    /// was never written for.
+    var pendingResponseVariants: [UUID: [AppChatMessage]] = [:]
 
     // Multi-chat State
     /// All user chat conversations.
@@ -334,6 +388,10 @@ public final class AppModel: ObservableObject {
     @Published public var diagnostics: AppDiagnostics?
     /// Estimated token count of the current prompt draft.
     @Published public var estimatedPromptTokens: Int = 0
+    /// Per-component breakdown of what the context window holds. Nil until
+    /// the first estimate after a session loads; refreshed by the same
+    /// debounced task that writes `estimatedPromptTokens`.
+    @Published public var contextUsageSummary: ContextUsageSummary?
     /// System thermal and memory telemetry readings.
     @Published public var telemetry: SystemTelemetry?
     /// Active error banner message, if any.
@@ -373,6 +431,10 @@ public final class AppModel: ObservableObject {
     @Published public var seed: UInt64 = 0
     /// Comma-separated list of custom stop sequences.
     @Published public var stopSequences: String = ""
+    /// Named sampling snapshots saved from the Inspector's Generation
+    /// Sampling section, applied into whichever scope is being edited. See
+    /// `AppSamplingSettings`.
+    @Published public var samplingPresets: [AppSamplingPreset] = []
     /// User-authored system prompt applied to every turn that has no per-chat
     /// prompt of its own. Empty means none, which is what this app did before
     /// the field existed.

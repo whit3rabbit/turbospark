@@ -7,14 +7,23 @@ public struct CollapsibleMessageContentView: View {
     public let text: String
     public var isUser: Bool = false
     public var maxHeight: CGFloat = 220
+    /// Forwarded to the markdown renderer's ```html fences. Nil hides the
+    /// Preview buttons, which is right everywhere except the transcript.
+    public var onPreviewHTML: ((String) -> Void)?
 
     @State private var isExpanded: Bool = false
     @State private var contentHeight: CGFloat = 0
 
-    public init(text: String, isUser: Bool = false, maxHeight: CGFloat = 220) {
+    public init(
+        text: String,
+        isUser: Bool = false,
+        maxHeight: CGFloat = 220,
+        onPreviewHTML: ((String) -> Void)? = nil
+    ) {
         self.text = text
         self.isUser = isUser
         self.maxHeight = maxHeight
+        self.onPreviewHTML = onPreviewHTML
     }
 
     private var isClamped: Bool {
@@ -90,7 +99,7 @@ public struct CollapsibleMessageContentView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            ChatMessageMarkdownView(text)
+            ChatMessageMarkdownView(text, onPreviewHTML: onPreviewHTML)
         }
     }
 }

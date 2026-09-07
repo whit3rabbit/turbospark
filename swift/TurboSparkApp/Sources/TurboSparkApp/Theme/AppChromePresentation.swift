@@ -52,18 +52,5 @@ public enum AppChromeLayout {
     /// The zoom button's right edge sits near x = 66 and the rail is 52 wide,
     /// so 26 puts the first control at 78.
     public static let trafficLightClearance: CGFloat = 26
-
-    public static func minimumWindowWidth(
-        isChatSidebarVisible: Bool,
-        isInspectorVisible: Bool,
-        isExpandedInspector: Bool = false
-    ) -> CGFloat {
-        let currentInspectorWidth = isExpandedInspector ? expandedInspectorWidth : inspectorWidth
-        return navigationRailWidth
-            + dividerWidth
-            + primaryMinimumWidth
-            + (isChatSidebarVisible ? chatSidebarWidth + dividerWidth : 0)
-            + (isInspectorVisible ? currentInspectorWidth + dividerWidth : 0)
-    }
 }
 

@@ -96,6 +96,20 @@ extension AppModel {
                     ChatMessage(role: .tool, content: "<\(tag)>\n\(res.output)\n</\(tag)>"))
             }
         }
+        // **SYSTEM REMINDERS ARE ASSEMBLY-TIME, NEVER STORED** (see
+        // `SystemReminders`). Appended to the model-bound copy of the last
+        // user turn, which is where the current step's prompt ends anyway.
+        // The persisted transcript row keeps exactly what the user sent, so
+        // a reminder that qualified on step 3 leaves no residue when it no
+        // longer qualifies on step 4.
+        if let reminder = SystemReminders.reminder(
+            todos: chats[chatIndex].todos,
+            messages: turnMessages(for: chatID),
+            planModeActive: PlanModeExecutor.isPlanModeActive(for: chatID)) {
+            if let lastUser = history.lastIndex(where: { $0.role == .user }) {
+                history[lastUser].content += "\n\n\(reminder)"
+            }
+        }
         return insertingSummaryInjection(history, summary: compaction.summary)
     }
 
@@ -119,19 +133,29 @@ extension AppModel {
         }
     }
 
-    public func updateTokenEstimate() {
-        guard let session else {
-            estimatedPromptTokens = 0
-            return
+    /// The next turn's prompt as the exact estimator and the context
+    /// breakdown both see it: the flat message list the template render
+    /// counts, plus the same content in labeled pieces for per-section
+    /// counting, plus the one thing neither count can see (attachments,
+    /// priced at the characters-per-token approximation).
+    ///
+    /// ONE builder, two consumers, for the same reason the estimate and
+    /// `buildAppendOnlyHistory` were already kept on one path: the meter and
+    /// the breakdown cannot be allowed to describe different conversations.
+    func buildEstimateParts() -> (
+        history: [ChatMessage], pieces: [ContextUsagePiece], attachmentTokens: Int
+    ) {
+        var history: [ChatMessage] = []
+        var pieces: [ContextUsagePiece] = []
+        let sections = buildSystemPromptSections(
+            for: turnProject(chatID: selectedChatID),
+            // BY CHAT rather than by index: `selectedChat` falls back to the
+            // transient draft, which is not in `chats` and has no index.
+            userPrompt: resolvedUserSystemPrompt(chat: selectedChat))
+        let systemContent = sections.map(\.content).joined(separator: "\n\n")
+        if !systemContent.isEmpty {
+            history.append(ChatMessage(role: .system, content: systemContent))
         }
-        // **THIS ESTIMATE IS A FLOOR ON A TURN CARRYING IMAGES, NOT A
-        // COUNT.** `countTokens` renders the template and encodes it, and the
-        // template emits ONE marker per image whatever its size -- the
-        // expansion to that page's merged-token count happens later, in the
-        // engine's splice, which needs the preprocessed grid. So an image
-        // turn is undercounted by roughly a page's worth of positions. The
-        // images are passed anyway so the estimate tracks what is actually
-        // sent rather than a different conversation.
         // **THE SYSTEM MESSAGE COUNTS, AND IT DID NOT USED TO.** This estimate
         // omitted it entirely, which was a small undercount while the prompt
         // was project-derived and Chat mode had none at all. A user-authored
@@ -140,20 +164,41 @@ extension AppModel {
         // and the meter exists to tell a user how close to the window they
         // are. Assembled the same way `buildAppendOnlyHistory` does, so the
         // two cannot describe different conversations.
-        var history: [ChatMessage] = []
-        let systemContent = buildSystemPrompt(
-            for: turnProject(chatID: selectedChatID),
-            // BY CHAT rather than by index: `selectedChat` falls back to the
-            // transient draft, which is not in `chats` and has no index.
-            userPrompt: resolvedUserSystemPrompt(chat: selectedChat))
-        if !systemContent.isEmpty {
-            history.append(ChatMessage(role: .system, content: systemContent))
+        //
+        // The breakdown slices the system message back into labeled groups;
+        // the exact count always sees the joined form above.
+        func joined(_ kinds: [AppModel.SystemPromptSection]) -> String {
+            sections.filter { kinds.contains($0.section) }.map(\.content).joined(separator: "\n\n")
         }
+        let systemPiece = joined([.userPrompt, .agentPrompt, .workspace, .projectRules])
+        if !systemPiece.isEmpty {
+            pieces.append(ContextUsagePiece(kind: .system, label: "System prompt", content: systemPiece))
+        }
+        let memoryPiece = joined([.memory])
+        if !memoryPiece.isEmpty {
+            pieces.append(ContextUsagePiece(kind: .memory, label: "Memory", content: memoryPiece))
+        }
+        let toolsPiece = joined([.tools])
+        if !toolsPiece.isEmpty {
+            pieces.append(ContextUsagePiece(kind: .tools, label: "Tools & skills", content: toolsPiece))
+        }
+        let mcpPiece = joined([.mcpServers])
+        if !mcpPiece.isEmpty {
+            pieces.append(ContextUsagePiece(kind: .tools, label: "MCP servers", content: mcpPiece))
+        }
+
         // Same boundary skip and same injection the prompt builder applies
         // (both through `insertingSummaryInjection`), so the meter prices
         // the prompt that would actually be sent rather than the
         // uncompacted one.
+        //
+        // **THE IMAGE PATHS ARE PASSED EVEN THOUGH THE COUNT IS A FLOOR.**
+        // A render emits ONE marker per image whatever its size; the
+        // expansion to that page's merged-token count happens later, in the
+        // engine's splice. The paths ride along anyway so the estimate
+        // tracks the conversation that is actually sent.
         let compaction = compactionState(chatID: selectedChatID)
+        var conversationParts: [String] = []
         for (rowIndex, msg) in selectedTurnMessages.enumerated() {
             if rowIndex < compaction.boundary { continue }
             guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { continue }
@@ -162,11 +207,39 @@ extension AppModel {
                     role: msg.role,
                     content: msg.content,
                     images: msg.imagePaths.map(ChatImage.path)))
+            if !msg.content.isEmpty {
+                conversationParts.append(msg.content)
+            }
+        }
+        let conversationPiece = conversationParts.joined(separator: "\n\n")
+        if !conversationPiece.isEmpty {
+            pieces.append(
+                ContextUsagePiece(kind: .conversation, label: "Conversation", content: conversationPiece))
         }
         history = insertingSummaryInjection(history, summary: compaction.summary)
+        if let summary = compaction.summary, !summary.isEmpty {
+            pieces.append(
+                ContextUsagePiece(kind: .summary, label: "Compaction summary", content: summary))
+        }
         if !promptText.isEmpty {
             history.append(ChatMessage(role: .user, content: promptText))
+            pieces.append(ContextUsagePiece(kind: .draft, label: "Draft", content: promptText))
         }
+
+        // Attachments ride in no ChatMessage (one template marker per image
+        // is all a render emits), so they are approximated at the same
+        // characters-per-token the headline has always used for them.
+        let attachmentCharacters = promptAttachments.reduce(0) { $0 + $1.characterCount }
+        return (history, pieces, attachmentCharacters / 4)
+    }
+
+    public func updateTokenEstimate() {
+        guard let session else {
+            estimatedPromptTokens = 0
+            contextUsageSummary = nil
+            return
+        }
+        let parts = buildEstimateParts()
 
         // **DEBOUNCED, AND SKIPPED WHILE GENERATING.** `promptText`'s setter
         // calls this on every keystroke, and `countTokens` dispatches onto
@@ -180,11 +253,21 @@ extension AppModel {
         tokenEstimateTask = Task {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
-            if let count = try? await session.countTokens(history, reasoning: self.reasoning) {
+            var exact: Int?
+            if let count = try? await session.countTokens(parts.history, reasoning: self.reasoning) {
                 if !Task.isCancelled {
                     self.estimatedPromptTokens = count
                 }
+                exact = count
             }
+            // The breakdown rides the SAME task and snapshot as the exact
+            // count, so the ring, the status bar and the popover can never
+            // be looking at different conversations.
+            await self.countAndStoreContextUsage(
+                pieces: parts.pieces,
+                attachmentTokens: parts.attachmentTokens,
+                exactTokens: exact,
+                session: session)
         }
     }
 }

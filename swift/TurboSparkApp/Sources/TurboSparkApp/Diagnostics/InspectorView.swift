@@ -15,7 +15,10 @@ struct InspectorView: View {
                 modelSection
                 memoryAndPowerSection
                 steeringSection
-                generationSection
+                // Its own struct, not an extension computed property: it
+                // carries @State (the edit scope and the preset name field),
+                // which an extension property on InspectorView cannot hold.
+                GenerationSamplingSection(model: model)
                 telemetrySection
                 RunnerDiagnosticsSection(diagnostics: model.diagnostics)
             }

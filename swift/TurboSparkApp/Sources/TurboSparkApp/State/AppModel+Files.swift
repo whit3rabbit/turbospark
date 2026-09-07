@@ -110,8 +110,15 @@ extension AppModel {
     }
 
     /// Shows the given attachment in the right-hand preview pane.
+    ///
+    /// An explicit click, so it takes the column from every turn-driven
+    /// panel: both other claimants clear here, and they clear this one in
+    /// theirs (`AppModel+ArtifactPanel`). `AppRightColumnClaimant.resolve`
+    /// is only the belt for a writer that forgets.
     public func showPreview(attachmentID: UUID) {
         previewAttachmentID = attachmentID
+        openArtifactID = nil
+        htmlPreview = nil
     }
 
     /// Closes the preview pane.

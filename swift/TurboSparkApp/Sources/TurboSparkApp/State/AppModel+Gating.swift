@@ -56,6 +56,40 @@ extension AppModel {
         !generating && !submitting && !opening && !hasPendingCall && hasSession && hasInput
     }
 
+    /// Whether a submitted prompt would be QUEUED rather than dropped.
+    ///
+    /// The message-queue contract (`AppModel+Queue.swift`): when the ONLY
+    /// reason `canRun` is false is that something is already running --
+    /// a turn, an awaited hook, or an approval card -- Send keeps working
+    /// and parks the draft. Anything else (no session, an open in flight,
+    /// an empty draft) refuses exactly as before; in particular `opening`
+    /// queues nothing, because nothing drains the queue at the END of an
+    /// open, and a prompt parked there would sit forever.
+    public var canQueue: Bool {
+        Self.canQueueTerms(
+            generating: generating,
+            submitting: submitting,
+            hasPendingCall: pendingToolCall != nil,
+            hasSession: session != nil,
+            hasInput: !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !promptAttachments.isEmpty)
+    }
+
+    /// `canQueue`'s terms, pure for the same testability reason as
+    /// `canRunTerms`: the busy terms are a DISJUNCTION here, which is the
+    /// shape a truth-table test wants spelled out.
+    static func canQueueTerms(
+        generating: Bool, submitting: Bool, hasPendingCall: Bool,
+        hasSession: Bool, hasInput: Bool
+    ) -> Bool {
+        hasSession && hasInput && (generating || submitting || hasPendingCall)
+    }
+
+    /// Whether Send/Return should do SOMETHING: run, or queue behind the
+    /// running work. This is the predicate the composer's key handler and
+    /// the Generate menu item are gated on.
+    public var canRunOrQueue: Bool { canRun || canQueue }
+
     /// Whether the turn can be stopped.
     ///
     /// **THREE STATES COUNT, NOT ONE** (state#33). `generating` is the

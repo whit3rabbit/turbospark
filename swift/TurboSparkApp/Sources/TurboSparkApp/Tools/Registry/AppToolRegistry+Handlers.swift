@@ -50,8 +50,26 @@ public enum AppFileReadLimits {
 extension AppToolRegistry {
     /// Resolves a caller-supplied relative path against the project root, and
     /// REFUSES anything that leaves it.
+    ///
+    /// **ONE ABSOLUTE-PATH EXCEPTION: THE SPILL ROOT.** Spilled shell
+    /// output (`ShellOutputFormatting.compactWithSpill`) lives under
+    /// Application Support, never inside the project, and its whole point
+    /// is that the model can go back to read it -- so an absolute path is
+    /// accepted when, and only when, it resolves under the spill root.
+    /// Symlinks are resolved on BOTH sides before the prefix compare, the
+    /// same discipline `PathContainment` uses for the project root, so a
+    /// symlink planted in the spill directory cannot pivot the check
+    /// elsewhere.
     static func resolveSecurePath(relPath: String, rootURL: URL) throws -> URL {
         let cleaned = relPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("/") {
+            let candidate = URL(fileURLWithPath: cleaned)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            if ShellOutputFormatting.isUnderSpillRoot(candidate) {
+                return candidate
+            }
+        }
         guard !cleaned.hasPrefix("/"), !cleaned.hasPrefix("~") else {
             throw NSError(
                 domain: "TurboSparkTool", code: 13,
@@ -116,7 +134,14 @@ extension AppToolRegistry {
         // than re-reading the file: the old call took a second full copy of
         // every file the model read, for a hash of bytes this frame was
         // already holding.
-        await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: content)
+        //
+        // Spill files are skipped: they are not project files, they are
+        // read-only references, and a session that greps a few big logs
+        // through read_file must not evict half the project's real hashes
+        // from the store's 512-entry cache.
+        if !ShellOutputFormatting.isUnderSpillRoot(targetURL) {
+            await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: content)
+        }
         let allLines = content.components(separatedBy: "\n")
 
         let sLine = max(1, startLine ?? 1)
@@ -152,6 +177,26 @@ extension AppToolRegistry {
     static func writeFile(relPath: String, content: String, rootURL: URL) async throws -> String {
         let targetURL = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         try AppToolSandbox.validateWritePath(targetURL, rootURL: rootURL)
+        // **AN OVERWRITE OF AN EXISTING FILE IS GATED ON HAVING READ IT.**
+        // `edit_file` refuses through the snapshot hash and its own
+        // old_string match; `write_file` replaces the whole content, so
+        // without a gate here it is the one tool that can silently clobber
+        // a file the user changed (or that the model never saw) this
+        // session. A file that does not exist is the ordinary create path
+        // and is never gated.
+        if FileManager.default.fileExists(atPath: targetURL.path) {
+            let tracked = await FileSnapshotStore.shared.isTracked(url: targetURL)
+            let stale = tracked
+                ? await FileSnapshotStore.shared.isStale(url: targetURL)
+                : true
+            if !tracked || stale {
+                throw NSError(domain: "TurboSparkTool", code: 25, userInfo: [
+                    NSLocalizedDescriptionKey: "File '\(relPath)' exists but has not been read this "
+                        + "session, or has changed since it was last read. Use read_file on it first, "
+                        + "then write."
+                ])
+            }
+        }
         let dirURL = targetURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
         try content.write(to: targetURL, atomically: true, encoding: .utf8)

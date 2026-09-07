@@ -137,6 +137,19 @@ setting reaches a subagent turn or a compaction summary. Compaction does that
 on purpose. Subagents arguably should inherit the user's settings, which is
 an open item below.
 
+Added 2026-09-07 (per-chat sampling), two keys with named consumers:
+
+| Key | Store | Consumer |
+|---|---|---|
+| `samplingPresets` | `settings.json` (`[AppSamplingPreset]`) | `AppModel+Sampling.swift`'s CRUD (`upsertSamplingPreset` / `deleteSamplingPreset`) and the Inspector's Generation Sampling section. Decoded element-lenient like `steeringPresets`. |
+| `samplingOverride` | `chats_archive.json`, per chat row (`AppSamplingSettings?`) | `effectiveSamplingSettings(chatID:)` via `samplingOptions(chatID:)` in `executeGenerationTurn`; nil means the app-wide fields above. Decoded leniently in `AppChat.init(from:)`. |
+
+Both clamp on decode (`AppSamplingSettings.clamped()`): `topK` and
+`maxNewTokens` become `UInt32` at the use site, and the per-chat path
+reaches that conversion without the app-wide path's `clampedSetting` load
+guard, so an out-of-range value in a hand-edited file would trap the
+process rather than error.
+
 ## 3. Appearance settings, field by field
 
 | Field | Finding | Disposition |
@@ -175,6 +188,13 @@ Done 2026-09-06:
   rows come from `KeyboardShortcutCatalog`, whose navigation section is
   derived from `AppNavigationSection`, and a test holds it against the rail.
   The pane says shortcuts are fixed, because no rebinding exists.
+  Since 2026-09-07 the rows also carry alternate chords
+  (`KeyboardShortcutRow.altKeys`, rendered as "also ..."): the
+  unsloth-studio-compatible chords fire beside the advertised ones from
+  `AlternateShortcutBridge` (Cmd-Shift-O new chat, Cmd-Shift-[ and
+  Cmd-Shift-] chat cycling, Cmd-B sidebar toggle, Ctrl-1..Ctrl-5 rail
+  sections), and "Keyboard Shortcuts..." with Cmd-/ is a real View-menu
+  item opening this pane. swift/CLAUDE.md Gotcha 59 has the constraints.
 - Models and Storage: "Configure Custom Path" toggled only its own caption,
   and a `@State` path input was written once and never read. Both removed.
 - Skills: the detail pane rendered "Allowed Tools and Permissions" with a
@@ -341,6 +361,33 @@ generated shape. The key itself was already end to end -- `--api-key` on
 `turbospark-server`, `TURBOSPARK_API_KEY`, the Keychain store and the
 Engine pane's duplicate field predate this -- so these are affordances on
 an existing setting, not a new one.
+
+Done 2026-09-07 (per-chat sampling controls and presets): the Inspector's
+Generation Sampling section moved into `GenerationSamplingSection.swift`
+(it needs `@State`, which an extension computed property on `InspectorView`
+cannot hold) and gained an "Edits apply to" picker over "App defaults" and
+"This chat", explicit rather than Unsloth Studio's implicit
+"edits belong to the open conversation" -- Studio's sheet sits beside one
+thread, this Inspector is always open, and a silent chat-local edit would
+read as an app-wide one. Selecting "This chat" displays the app-wide values
+and the first edit seeds the chat's override from them; a "Remove Override"
+row (the system-prompt sheet's "Use Default" sibling) clears it. A chat
+override is a COMPLETE snapshot (`AppSamplingSettings`), not per-key
+optionals, so resolution is one branch; `executeGenerationTurn` now calls
+`samplingOptions(chatID:)` instead of reading the globals, which makes the
+subagent-sampling entry above's "both callers share `samplingOptions()`"
+wording stale -- `samplingOptions()` remains as the subagent provider's
+form, since a subagent launch carries no chat id. Presets (apply into the
+scope being edited, save under a name overwriting a same-named preset,
+delete from a row context menu) persist in `samplingPresets`, section 2's
+table. Reasoning stays app-wide on purpose: it already has per-model
+memory, and Studio's own presets exclude it too. `SamplingOptionsTests`
+pins override-whole-snapshot (including `maxNewTokens`, which the turn path
+used to read off the global property directly), fallback, removal, and that
+the global builder ignores overrides; `AppSamplingSettingsTests` pins the
+decode clamps, the archive tolerance (a wrong-typed override costs the
+override, not the chat), preset round-trips, and that editing a draft chat
+materializes the row.
 
 Cleared after checking, so nobody re-derives them: the Profiles caption about
 isolation is accurate (skills and agents resolve through

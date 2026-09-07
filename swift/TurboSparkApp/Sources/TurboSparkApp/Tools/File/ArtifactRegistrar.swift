@@ -52,15 +52,19 @@ public enum ArtifactRegistrar {
     /// rather than through a live tool call (Gotcha 26's `ServerStatusRows`
     /// lesson).
     ///
-    /// **Markdown from anywhere, everything else only when the model
-    /// presented it deliberately.** A `write_file` on `src/lib.rs` is not an
-    /// artifact: auto-popping a panel per source edit fights the worktree
-    /// pane and trains the user to close it. A `.docx` reaches the panel
-    /// through SendUserFile, which is the tool that means "look at this".
+    /// **Markdown and HTML from anywhere, everything else only when the
+    /// model presented it deliberately.** A `write_file` on `src/lib.rs` is
+    /// not an artifact: auto-popping a panel per source edit fights the
+    /// worktree pane and trains the user to close it. A `.docx` reaches the
+    /// panel through SendUserFile, which is the tool that means "look at
+    /// this". HTML joins markdown because both are documents the panel
+    /// RENDERS rather than shows as source, and because the panel is where
+    /// an html write becomes worth anything at all.
     ///
-    /// The markdown test reads `AppArtifactRenderKind.markdownExtensions`,
-    /// the same set the panel renders from, so a format cannot become
-    /// registrable without becoming renderable in the same edit.
+    /// Both tests read the panel's own extension sets
+    /// (`AppArtifactRenderKind.markdownExtensions` / `.htmlExtensions`), so a
+    /// format cannot become registrable without becoming renderable in the
+    /// same edit.
     public static func artifactCandidates(from files: [ProducedFile]) -> [ProducedFile] {
         files.filter { file in
             switch file.origin {
@@ -69,6 +73,7 @@ public enum ArtifactRegistrar {
             case .fileWrite:
                 let ext = file.url.pathExtension.lowercased()
                 return AppArtifactRenderKind.markdownExtensions.contains(ext)
+                    || AppArtifactRenderKind.htmlExtensions.contains(ext)
             }
         }
     }

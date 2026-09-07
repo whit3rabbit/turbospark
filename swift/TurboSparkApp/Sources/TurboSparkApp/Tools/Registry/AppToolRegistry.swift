@@ -186,7 +186,7 @@ public enum AppToolRegistry {
                 guard let patchText = call.arguments["patch_text"] ?? call.arguments["patchText"] ?? call.arguments["patch"] else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'patch_text' argument."])
                 }
-                let result = try ApplyPatchExecutor.apply(patchText: patchText, rootURL: rootURL)
+                let result = try await ApplyPatchExecutor.apply(patchText: patchText, rootURL: rootURL)
                 output = result.summary
                 for op in result.applied where op.type != "delete" {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(

@@ -120,7 +120,10 @@ struct PromptComposerEditor: View {
                             if press.modifiers.contains(.shift) {
                                 return .ignored
                             }
-                            if model.canRun {
+                            // CanRunOrQueue, not canRun: a Return during a
+                            // running turn QUEUES the draft (Claude Code's
+                            // message queue) instead of dying here.
+                            if model.canRunOrQueue {
                                 model.run()
                                 return .handled
                             }

@@ -38,6 +38,122 @@ enum ShellOutputFormatting {
         return head + "\n... [\(removed) chars truncated] ...\n" + tail
     }
 
+    // MARK: - Spill files
+
+    /// How many spilled files the spill root keeps. Older ones are pruned
+    /// on each write; the cap exists so a session of huge builds cannot
+    /// accumulate gigabytes of logs the model will never re-read.
+    static let maximumSpillFiles = 20
+
+    /// The directory spilled output is written under, inside the app's
+    /// Application Support. Created on demand.
+    static var spillRootURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("TurboSpark", isDirectory: true)
+            .appendingPathComponent("spill", isDirectory: true)
+    }
+
+    /// Whether `url` lives under the spill root. This is the predicate the
+    /// `read_file` path allowlist is built on (`resolveSecurePath` refuses
+    /// absolute paths everywhere else), so it resolves symlinks and
+    /// standardizes both sides before the prefix compare, exactly as
+    /// `PathContainment` does for project roots.
+    static func isUnderSpillRoot(_ url: URL) -> Bool {
+        let root = spillRootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let candidate = url.standardizedFileURL.resolvingSymlinksInPath().path
+        return candidate == root || candidate.hasPrefix(root + "/")
+    }
+
+    /// Compaction PLUS recovery: text over the model cap is compacted as
+    /// before, and the FULL text is written to a spill file the model can
+    /// go back to. Claude Code reference: `src/utils/toolResultStorage.ts`
+    /// persists oversized tool results rather than dropping their middle;
+    /// this is the same idea for shell output, where the dropped middle of
+    /// a long build or test log is precisely where the interesting failure
+    /// often is not -- but the tail is, and a `grep` over the spill file
+    /// finds the rest.
+    ///
+    /// Under the cap this is exactly `compact(stripANSI(...))` and writes
+    /// nothing. Over it, the returned string names the spill path and how
+    /// to read it. The spill receives what survived the PIPE cap (1 MB per
+    /// stream, `ProcessExecutor`), which is the memory bound; this layer
+    /// only bounds the context window.
+    ///
+    /// `spillName` makes the file DETERMINISTIC: the same name is
+    /// overwritten each call instead of accumulating timestamped copies.
+    /// This is what the background-shell snapshot passes, because the model
+    /// polls that output repeatedly and one spill file per shell is the
+    /// right shape there.
+    static func compactWithSpill(
+        _ text: String, label: String, spillName: String? = nil
+    ) -> String {
+        guard text.count > maxModelOutputChars else { return text }
+        let compacted = compact(text)
+        guard let spilledPath = writeSpillFile(text, label: label, name: spillName) else {
+            return compacted + "\n[Output over the \(maxModelOutputChars) char display cap; "
+                + "spilling the full text to disk failed. Re-run with narrower scope, "
+                + "e.g. tail(1) or grep(1) on the source.]"
+        }
+        return compacted
+            + "\n[Full output (\(text.count) chars) saved to \(spilledPath.path). "
+            + "Read it with read_file (absolute paths under the spill directory are allowed), "
+            + "or search it from the shell, e.g. grep -n <pattern> \(spilledPath.path).]"
+    }
+
+    /// Writes one spill file and prunes old ones. Returns nil when the
+    /// write failed; callers fall back to plain compaction with a note.
+    /// A non-nil `name` is used verbatim (one deterministic file, each
+    /// call overwriting); otherwise the name is timestamped.
+    private static func writeSpillFile(_ text: String, label: String, name: String?) -> URL? {
+        let fm = FileManager.default
+        let root = spillRootURL
+        let fileName: String
+        if let name {
+            let safe = name.components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .joined(separator: "-")
+            fileName = "\(safe.isEmpty ? "output" : safe).txt"
+        } else {
+            let safeLabel = label
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .prefix(24)
+                .joined(separator: "-")
+            let stamp = String(format: "%010.0f", NSDate().timeIntervalSince1970 * 100)
+            fileName = "\(stamp)-\(safeLabel.isEmpty ? "output" : safeLabel).txt"
+        }
+        let fileURL = root.appendingPathComponent(fileName)
+        do {
+            try fm.createDirectory(at: root, withIntermediateDirectories: true)
+            try text.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            return nil
+        }
+        pruneSpillFiles(root: root, keeping: maximumSpillFiles)
+        return fileURL
+    }
+
+    /// Keeps the `keeping` newest files under `root` by modification date.
+    static func pruneSpillFiles(root: URL, keeping: Int) {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])
+        else { return }
+        guard contents.count > keeping else { return }
+        let sorted = contents.sorted { lhs, rhs in
+            let lDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            let rDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            return lDate > rDate
+        }
+        for victim in sorted.dropFirst(keeping) {
+            try? fm.removeItem(at: victim)
+        }
+    }
+
     /// Exit codes that carry a conventional meaning distinct from failure.
     ///
     /// `grep` exits 1 when nothing matched, `diff` 1 when files differ, and

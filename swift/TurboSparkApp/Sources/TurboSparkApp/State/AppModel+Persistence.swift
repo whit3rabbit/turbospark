@@ -47,6 +47,7 @@ extension AppModel {
         self.seedEnabled = settings.seedEnabled
         self.seed = settings.seed
         self.stopSequences = settings.stopSequences
+        self.samplingPresets = settings.samplingPresets
         self.defaultSystemPrompt = settings.defaultSystemPrompt
         self.pluginEnableState = settings.enabledPlugins
         self.runtimeOptions.powerProfile = AppPowerProfileOption(rawValue: settings.powerProfile) ?? .auto
@@ -144,6 +145,7 @@ extension AppModel {
             seedEnabled: seedEnabled,
             seed: seed,
             stopSequences: stopSequences,
+            samplingPresets: samplingPresets,
             powerProfile: runtimeOptions.powerProfile.rawValue,
             loadGuard: runtimeOptions.loadGuard.rawValue,
             loadGuardCustomBytes: runtimeOptions.loadGuardCustomBytes,

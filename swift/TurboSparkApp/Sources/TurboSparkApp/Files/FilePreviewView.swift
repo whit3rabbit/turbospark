@@ -224,9 +224,10 @@ struct FilePreviewView: View {
     }
 }
 
-/// PDFKit page view. `autoScales` is what makes the document fit the narrow
-/// preview column rather than opening at 100% and needing a scroll to see.
-private struct PDFDocumentView: NSViewRepresentable {
+/// PDFKit page view, shared with the artifact panel. `autoScales` is what
+/// makes the document fit the narrow preview column rather than opening at
+/// 100% and needing a scroll to see.
+struct PDFDocumentView: NSViewRepresentable {
     let url: URL
 
     func makeNSView(context: Context) -> PDFView {

@@ -11,30 +11,37 @@ import Foundation
 public enum AppRightColumnClaimant: Equatable, Sendable {
     case none
     case artifact(UUID)
+    /// An inline fence preview (`AppModel.htmlPreview`): bytes held in
+    /// memory, opened by an explicit click on a "Preview" button.
+    case htmlPreview(UUID)
     case filePreview(UUID)
     case inspector
 
-    /// Precedence: artifact, then file preview, then inspector.
+    /// Precedence: artifact, then the two explicit-click previews, then
+    /// inspector.
     ///
     /// **This ladder is the belt and not the braces.** The braces are an
     /// invariant in the SETTERS -- `openArtifact(id:)` clears the preview and
     /// `showPreview(attachmentID:)` clears the artifact -- so at most one of
-    /// the first two is ever set and the order between them almost never
+    /// the first three is ever set and the order between them almost never
     /// fires. That is deliberate, and it is Gotcha 26's rule ("there is no
     /// second flag that could disagree") applied here: the ladder exists so
-    /// the UI still resolves to something sane if a future writer forgets the
-    /// invariant, and so the whole question is testable without a window.
+    /// the UI still resolves to something sane if a future writer forgets
+    /// the invariant, and so the whole question is testable without a
+    /// window.
     ///
-    /// Artifact above preview for the case where it does fire: an artifact
-    /// panel opens as a RESULT of the turn the user is watching, while a
-    /// preview is opened by an explicit click, and a click has already
-    /// cleared the artifact by the time this is read.
+    /// Artifact above the previews for the case where it does fire: an
+    /// artifact panel opens as a RESULT of the turn the user is watching,
+    /// while a preview is opened by an explicit click, and a click has
+    /// already cleared the artifact by the time this is read.
     public static func resolve(
         openArtifactID: UUID?,
+        htmlPreviewID: UUID? = nil,
         previewAttachmentID: UUID?,
         isInspectorVisible: Bool
     ) -> AppRightColumnClaimant {
         if let openArtifactID { return .artifact(openArtifactID) }
+        if let htmlPreviewID { return .htmlPreview(htmlPreviewID) }
         if let previewAttachmentID { return .filePreview(previewAttachmentID) }
         if isInspectorVisible { return .inspector }
         return .none
@@ -49,6 +56,16 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
     public var isArtifact: Bool {
         if case .artifact = self { return true }
         return false
+    }
+
+    /// Whether ANY web/file preview the inspector shortcut must close before
+    /// toggling. Both previews are explicit clicks; the shortcut closes what
+    /// the user can see, whichever kind it is.
+    public var isPreviewPane: Bool {
+        switch self {
+        case .artifact, .htmlPreview, .filePreview: return true
+        case .none, .inspector: return false
+        }
     }
 }
 
@@ -70,7 +87,7 @@ extension AppChromeLayout {
     ) -> CGFloat {
         switch claimant {
         case .none: return 0
-        case .artifact: return artifactPanelWidth
+        case .artifact, .htmlPreview: return artifactPanelWidth
         case .filePreview: return inspectorWidth
         case .inspector: return inspectorWidth(isExpanded: isExpandedWorktree)
         }

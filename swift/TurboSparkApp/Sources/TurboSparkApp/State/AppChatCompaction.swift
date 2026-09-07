@@ -219,7 +219,10 @@ extension AppModel {
 
     /// Writes compaction state through the same primitive as every other
     /// transcript mutation, so ghost chats re-seal and ordinary ones persist.
-    private func setStoredCompaction(chatIndex: Int, summary: String?, boundary: Int) {
+    /// Internal rather than private: `clampStoredCompaction` (message
+    /// editing) writes through the same ghost-aware primitive rather than
+    /// restating its two arms.
+    func setStoredCompaction(chatIndex: Int, summary: String?, boundary: Int) {
         let chatID = chats[chatIndex].id
         if chats[chatIndex].isGhost {
             mutateGhostPayload(for: chatID) {

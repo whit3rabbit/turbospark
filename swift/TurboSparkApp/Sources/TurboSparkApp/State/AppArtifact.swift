@@ -11,6 +11,9 @@ import Foundation
 /// render as an empty text view (`swift/CLAUDE.md` Gotcha 23).
 public enum AppArtifactRenderKind: String, Codable, Sendable {
     case markdown
+    /// Rendered by the sandboxed web panel (`ArtifactWebView`), never by
+    /// loading the file into anything with broader reach.
+    case html
     case text
     case image
     case pdf
@@ -25,11 +28,16 @@ public enum AppArtifactRenderKind: String, Codable, Sendable {
     /// added here becomes registrable and renderable in the same edit.
     public static let markdownExtensions: Set<String> = ["md", "markdown", "mdx"]
 
+    /// The extensions the web panel renders. Read by the artifact policy the
+    /// same way `markdownExtensions` is: registrable and renderable is one
+    /// edit, never two.
+    public static let htmlExtensions: Set<String> = ["html", "htm"]
+
     /// Extensions shown as monospaced source rather than as prose.
     public static let plainTextExtensions: Set<String> = [
         "txt", "log", "json", "yaml", "yml", "toml", "csv", "xml", "ini",
         "swift", "rs", "py", "c", "cpp", "h", "hpp", "js", "ts", "tsx",
-        "go", "rb", "sh", "zsh", "sql", "html", "css", "metal",
+        "go", "rb", "sh", "zsh", "sql", "css", "metal",
     ]
 
     /// Derived from the file name, never restated per call site (Gotcha 22).
@@ -40,6 +48,7 @@ public enum AppArtifactRenderKind: String, Codable, Sendable {
     public static func forFileName(_ fileName: String) -> AppArtifactRenderKind {
         let ext = (fileName as NSString).pathExtension.lowercased()
         if markdownExtensions.contains(ext) { return .markdown }
+        if htmlExtensions.contains(ext) { return .html }
         if ext == "pdf" { return .pdf }
         if AppPromptAttachment.imageFileExtensions.contains(ext) { return .image }
         if plainTextExtensions.contains(ext) { return .text }
@@ -181,6 +190,7 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
     public var formatLabel: String {
         switch renderKind {
         case .markdown: return "Markdown"
+        case .html: return "HTML"
         case .pdf: return "PDF"
         case .image: return "Image"
         case .text: return fileExtension.isEmpty ? "Text" : fileExtension.uppercased()

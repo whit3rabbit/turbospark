@@ -12,7 +12,7 @@ struct KeyboardShortcutsSettingsPaneView: View {
             ForEach(KeyboardShortcutCatalog.sections) { section in
                 Section(section.title) {
                     ForEach(section.rows) { row in
-                        shortcutRow(label: row.label, shortcut: row.keys)
+                        shortcutRow(label: row.label, shortcut: row.keys, alt: row.altKeys)
                     }
                 }
             }
@@ -27,11 +27,16 @@ struct KeyboardShortcutsSettingsPaneView: View {
         .padding(16)
     }
 
-    private func shortcutRow(label: String, shortcut: String) -> some View {
+    private func shortcutRow(label: String, shortcut: String, alt: String?) -> some View {
         HStack {
             Text(label)
                 .font(theme.ui(.base))
             Spacer()
+            if let alt {
+                Text("also \(alt)")
+                    .font(theme.code(.small))
+                    .foregroundStyle(.secondary)
+            }
             Text(shortcut)
                 .font(theme.code(.small))
                 .padding(.horizontal, 6)

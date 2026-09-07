@@ -108,9 +108,10 @@ final class ArtifactRegistryTests: XCTestCase {
 
     // MARK: - Policy
 
-    func testOnlyMarkdownAndPresentedFilesBecomeArtifacts() {
+    func testRenderableDocumentsAndPresentedFilesBecomeArtifacts() {
         let files = [
             produced("/tmp/p/notes.md", origin: .fileWrite),
+            produced("/tmp/p/page.html", origin: .fileWrite),
             produced("/tmp/p/src/lib.rs", origin: .fileWrite),
             produced("/tmp/p/report.docx", origin: .sentToUser, tool: "send_user_file"),
             produced("/tmp/p/plan.md", origin: .plan, tool: "exit_plan_mode"),
@@ -119,12 +120,31 @@ final class ArtifactRegistryTests: XCTestCase {
         let names = ArtifactRegistrar.artifactCandidates(from: files)
             .map { $0.url.lastPathComponent }
 
-        XCTAssertEqual(names, ["notes.md", "report.docx", "plan.md"])
+        XCTAssertEqual(names, ["notes.md", "page.html", "report.docx", "plan.md"])
         XCTAssertFalse(names.contains("lib.rs"), "a source edit must not pop a panel")
+    }
+
+    func testHTMLJoinsMarkdownAsAnAutoRegisteredWriteButCSSStaysSource() {
+        let files = [
+            produced("/tmp/p/index.html", origin: .fileWrite),
+            produced("/tmp/p/style.css", origin: .fileWrite),
+        ]
+
+        let names = ArtifactRegistrar.artifactCandidates(from: files)
+            .map { $0.url.lastPathComponent }
+
+        // Both sets are read by the SAME policy, and each names a set the
+        // panel renders from: html is a page, css is source text.
+        XCTAssertEqual(names, ["index.html"])
     }
 
     func testMarkdownIsRecognisedRegardlessOfCase() {
         let files = [produced("/tmp/p/README.MD", origin: .fileWrite)]
+        XCTAssertEqual(ArtifactRegistrar.artifactCandidates(from: files).count, 1)
+    }
+
+    func testHTMLIsRecognisedRegardlessOfCase() {
+        let files = [produced("/tmp/p/INDEX.HTML", origin: .fileWrite)]
         XCTAssertEqual(ArtifactRegistrar.artifactCandidates(from: files).count, 1)
     }
 
@@ -159,10 +179,28 @@ final class ArtifactRegistryTests: XCTestCase {
 
     func testTheRenderKindIsDerivedFromTheExtension() {
         XCTAssertEqual(AppArtifactRenderKind.forFileName("plan.md"), .markdown)
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("page.html"), .html)
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("page.htm"), .html)
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("PAGE.HTML"), .html)
         XCTAssertEqual(AppArtifactRenderKind.forFileName("notes.txt"), .text)
         XCTAssertEqual(AppArtifactRenderKind.forFileName("shot.png"), .image)
         XCTAssertEqual(AppArtifactRenderKind.forFileName("paper.pdf"), .pdf)
         XCTAssertEqual(AppArtifactRenderKind.forFileName("report.docx"), .opaque)
+    }
+
+    func testHTMLIsARenderKindAndNoLongerASourceKind() {
+        // One list with one reader: "html" living in BOTH sets would make
+        // the extension render two ways depending on which check ran first.
+        XCTAssertFalse(
+            AppArtifactRenderKind.plainTextExtensions.contains("html"),
+            "html cannot be both a rendered page and monospaced source")
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("page.html"), .html)
+    }
+
+    func testAnHTMLArtifactLabelsItselfHTML() {
+        let row = artifact("/tmp/p/page.html")
+        XCTAssertEqual(row.renderKind, .html)
+        XCTAssertEqual(row.formatLabel, "HTML")
     }
 
     func testAGhostPlanRendersAsMarkdownDespiteHavingNoFileName() {

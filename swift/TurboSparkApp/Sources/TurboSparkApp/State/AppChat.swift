@@ -186,6 +186,19 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     /// Paths rather than bytes: the engine reads the file itself, and the
     /// archive is rewritten whole on every keystroke of the draft.
     public var imagePaths: [String]
+    /// Inactive earlier versions of this message, oldest first.
+    ///
+    /// The struct's own fields ARE the active version, so every existing
+    /// reader (prompt assembly, the transcript, the sidebar preview) keeps
+    /// reading the row it always read; edit and retry push the replaced
+    /// fields here and variant navigation swaps them back. A pushed copy is
+    /// FLATTENED (its own `alternates` dropped) so the archive stays one
+    /// level deep, and every version keeps its own `createdAt`, which is
+    /// what gives the switcher its stable oldest-first order without a
+    /// stored position field. The transcript row's own `id` never changes
+    /// across a swap: it is the ForEach identity, and following the active
+    /// version's id would rebuild the row mid-navigation.
+    public var alternates: [AppChatMessage]
     /// Timestamp when this message turn was created.
     public var createdAt: Date
 
@@ -199,6 +212,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         toolCalls: [AppToolCall] = [],
         toolResults: [AppToolResult] = [],
         imagePaths: [String] = [],
+        alternates: [AppChatMessage] = [],
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -209,6 +223,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         self.toolCalls = toolCalls
         self.toolResults = toolResults
         self.imagePaths = imagePaths
+        self.alternates = alternates
         self.createdAt = createdAt
     }
 
@@ -244,6 +259,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         toolCalls = try container.decodeLossyArray(AppToolCall.self, forKey: .toolCalls)
         toolResults = try container.decodeLossyArray(AppToolResult.self, forKey: .toolResults)
         imagePaths = try container.decodeIfPresent([String].self, forKey: .imagePaths) ?? []
+        alternates = try container.decodeLossyArray(AppChatMessage.self, forKey: .alternates)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
@@ -287,6 +303,15 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     /// `chats.json` written before this field existed; the store has no
     /// migration step and relies on that.
     public var systemPrompt: String?
+    /// THIS conversation's own sampling knobs, overriding the app-wide
+    /// Generation Sampling settings.
+    ///
+    /// `nil` means "use the app-wide settings"; a snapshot is COMPLETE
+    /// rather than per-key optional, so resolution is "this chat or the app
+    /// defaults" and never a mix. OPTIONAL so the decoder accepts a
+    /// `chats_archive.json` written before this field existed; the store has
+    /// no migration step and relies on that, exactly as `systemPrompt` does.
+    public var samplingOverride: AppSamplingSettings?
     /// Bounded execution state, when the project runs in SKILL.state mode.
     /// Per chat rather than per project: it describes one agent run.
     public var skillState: AppSkillState?
@@ -317,6 +342,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         contextSummary: String? = nil,
         compactedMessageCount: Int = 0,
         systemPrompt: String? = nil,
+        samplingOverride: AppSamplingSettings? = nil,
         skillState: AppSkillState? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -333,6 +359,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.contextSummary = contextSummary
         self.compactedMessageCount = compactedMessageCount
         self.systemPrompt = systemPrompt
+        self.samplingOverride = samplingOverride
         self.skillState = skillState
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -363,6 +390,15 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         // per-chat system prompt survived until relaunch and then silently
         // reverted to the app-wide default.
         systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
+        // **THE DECODER LINE IS THE FIELD.** `systemPrompt` above shipped
+        // without its read-back line once, and every per-chat prompt silently
+        // reverted to the default at relaunch. The lenient form (not plain
+        // `decodeIfPresent`) because a wrong-typed value must cost THIS
+        // override, not the chat: a throw here fails the row, and
+        // `decodeLossyArray` at the archive level would drop the whole
+        // conversation over one hand-edited key.
+        samplingOverride = ((try? container.decodeIfPresent(
+            AppSamplingSettings.self, forKey: .samplingOverride)) ?? nil)
         skillState = try container.decodeIfPresent(AppSkillState.self, forKey: .skillState)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()

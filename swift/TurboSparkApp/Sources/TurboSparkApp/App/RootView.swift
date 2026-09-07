@@ -19,6 +19,7 @@ struct RootView: View {
     private var isInspectorVisible = false
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @State private var isChatSearchPresented = false
 
     private var effectiveReduceMotion: Bool {
         appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
@@ -49,7 +50,7 @@ struct RootView: View {
         .frame(
             minWidth: AppChromeLayout.minimumWindowWidth(
                 isChatSidebarVisible: isChatSidebarVisible && showsChatSidebar,
-                isInspectorVisible: isInspectorVisible || model.previewAttachment != nil),
+                rightColumn: rightColumnClaimant),
             minHeight: AppChromeLayout.minimumHeight)
         .clipped()
         .background(Color(nsColor: .windowBackgroundColor))
@@ -57,9 +58,25 @@ struct RootView: View {
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isChatSidebarVisible)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isInspectorVisible)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.previewAttachmentID)
+        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.openArtifactID)
+        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.htmlPreviewID)
         .overlay(alignment: .top) {
             ToastOverlayView(model: model)
                 .padding(.top, AppChromeLayout.topBarHeight + 10)
+        }
+        .overlay {
+            // The Search Chats palette. Sits above every pane so Cmd+K
+            // works from any section.
+            if isChatSearchPresented {
+                ChatSearchOverlayView(model: model, isPresented: $isChatSearchPresented)
+            }
+        }
+        .overlay {
+            // The unsloth-compatible alternate chords (Cmd+Shift+O, Cmd+B,
+            // Ctrl+1..5). Mounted at the window root like the palette above
+            // so they work from any section, including while the prompt
+            // editor is first responder.
+            AlternateShortcutBridge(model: model, toggleSidebar: { isChatSidebarVisible.toggle() })
         }
         .sheet(isPresented: Binding(
             get: { !model.pendingMcpApprovals.isEmpty },
@@ -75,11 +92,18 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             isChatSidebarVisible.toggle()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .showChatSearch)) { _ in
+            isChatSearchPresented.toggle()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
-            // The preview owns the right column while it is open, so the same
-            // key has to be able to close it: otherwise the shortcut silently
-            // toggles a pane the user cannot see.
-            if model.previewAttachment != nil {
+            // A preview pane owns the right column while it is open, so the
+            // same key has to be able to close it: otherwise the shortcut
+            // silently toggles a pane the user cannot see. All three
+            // preview claimants close; the inspector is only reached when
+            // none of them does.
+            if rightColumnClaimant.isPreviewPane {
+                model.dismissArtifact()
+                model.dismissHTMLPreview()
                 model.dismissPreview()
             } else {
                 isInspectorVisible.toggle()
@@ -135,39 +159,84 @@ struct RootView: View {
         .frame(maxHeight: .infinity)
     }
 
+    /// Who owns the right column right now, resolved in ONE place.
+    ///
+    /// This used to be an `if/else if` chain reading two AppModel properties
+    /// directly; the third claimant (`htmlPreview`) is what made the chain a
+    /// decision worth naming (`AppRightColumnClaimant`).
+    private var rightColumnClaimant: AppRightColumnClaimant {
+        AppRightColumnClaimant.resolve(
+            openArtifactID: model.openArtifactID,
+            htmlPreviewID: model.htmlPreviewID,
+            previewAttachmentID: model.previewAttachmentID,
+            isInspectorVisible: isInspectorVisible)
+    }
+
     @ViewBuilder
     private var rightColumn: some View {
-        if let attachment = model.previewAttachment {
+        switch rightColumnClaimant {
+        case .none:
+            EmptyView()
+        case .artifact(let id):
             verticalHairline
-
-            FilePreviewView(model: model, attachment: attachment)
-                .frame(width: AppChromeLayout.inspectorWidth)
-                .frame(maxHeight: .infinity)
-                .clipped()
-                .layoutPriority(1)
-                .zIndex(1)
-                .transition(effectiveReduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
-        } else if isInspectorVisible {
-            verticalHairline
-
-            let isExpandedWorktree = (model.interactionMode == .projects && model.worktree?.isExpandedSplitMode == true)
-            let currentWidth = AppChromeLayout.inspectorWidth(isExpanded: isExpandedWorktree)
-
-            Group {
-                if model.interactionMode == .projects, let worktree = model.worktree {
-                    WorktreeView(model: model, worktree: worktree)
-                } else {
-                    InspectorView(model: model)
-                }
+            rightPane(width: AppChromeLayout.artifactPanelWidth) {
+                ArtifactPanelView(model: model, source: .artifact(id))
             }
-            .frame(width: currentWidth)
+        case .htmlPreview:
+            verticalHairline
+            rightPane(width: AppChromeLayout.artifactPanelWidth) {
+                ArtifactPanelView(model: model, source: .inlinePreview)
+            }
+        case .filePreview:
+            // The claimant is keyed on the id; the attachment lookup can
+            // still miss (a detached draft). Missing falls through to the
+            // inspector exactly as the old `if let` chain did.
+            if let attachment = model.previewAttachment {
+                verticalHairline
+                rightPane(width: AppChromeLayout.inspectorWidth) {
+                    FilePreviewView(model: model, attachment: attachment)
+                }
+            } else if isInspectorVisible {
+                inspectorColumn
+            }
+        case .inspector:
+            inspectorColumn
+        }
+    }
+
+    /// Shared chrome for every right-column pane: hairline-adjacent, fixed
+    /// width, trailing slide-in.
+    private func rightPane<W: View>(
+        width: CGFloat,
+        @ViewBuilder content: () -> W
+    ) -> some View {
+        content()
+            .frame(width: width)
             .frame(maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
             .clipped()
             .layoutPriority(1)
             .zIndex(1)
             .transition(effectiveReduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+    }
+
+    private var inspectorColumn: some View {
+        let isExpandedWorktree = (model.interactionMode == .projects && model.worktree?.isExpandedSplitMode == true)
+        let currentWidth = AppChromeLayout.inspectorWidth(isExpanded: isExpandedWorktree)
+
+        return Group {
+            if model.interactionMode == .projects, let worktree = model.worktree {
+                WorktreeView(model: model, worktree: worktree)
+            } else {
+                InspectorView(model: model)
+            }
         }
+        .frame(width: currentWidth)
+        .frame(maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipped()
+        .layoutPriority(1)
+        .zIndex(1)
+        .transition(effectiveReduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
     }
 
     private var verticalHairline: some View {

@@ -3,17 +3,24 @@ import Foundation
 /// Unified diff and patch parser and applicator for Swift workspace tools.
 public enum ApplyPatchExecutor {
     /// Applies a unified diff patch string sequentially against files in the workspace root.
-    public static func apply(patchText: String, rootURL: URL) throws -> ApplyPatchOutput {
+    ///
+    /// Async because of the freshness bookkeeping, not the file I/O: the
+    /// snapshot store is an actor, and each successful operation must
+    /// record (or forget) its hash there or the NEXT tool call on the same
+    /// file reads stale -- `edit_file`'s check would then refuse every
+    /// post-patch edit until the model re-read a file this patch had just
+    /// written.
+    public static func apply(patchText: String, rootURL: URL) async throws -> ApplyPatchOutput {
         var appliedOps: [AppliedPatchOperation] = []
         var diffSummaries: [GitDiffSummary] = []
-        
+
         let lines = patchText.components(separatedBy: .newlines)
         var currentFile: String?
         var currentHunkLines: [String] = []
         var isNewFile = false
         var isDeleteFile = false
-        
-        func flushCurrentFile() throws {
+
+        func flushCurrentFile() async throws {
             // Reset ALL per-file state on every exit path, including the
             // early return below. Without this, `isDeleteFile` from a file
             // whose `currentFile` was never set (e.g. because the delete
@@ -33,7 +40,27 @@ public enum ApplyPatchExecutor {
 
             if isDeleteFile {
                 if FileManager.default.fileExists(atPath: secureURL.path) {
+                    // The delete branch is the one place a patch has NO
+                    // content-level protection: there are no context lines
+                    // to verify, so the removal happens whatever is on
+                    // disk. The snapshot store is the only freshness check
+                    // available, so a file the model has read and that has
+                    // since changed on disk is refused, mirroring
+                    // `edit_file`/`writeFile`. An untracked file (never
+                    // read this session) still deletes: refusing that
+                    // would make `git diff | apply_patch` flows impossible
+                    // to express, and the patch itself is the user's
+                    // instruction there.
+                    if await FileSnapshotStore.shared.isTracked(url: secureURL),
+                        await FileSnapshotStore.shared.isStale(url: secureURL) {
+                        throw NSError(domain: "TurboSparkTool", code: 24, userInfo: [
+                            NSLocalizedDescriptionKey: "File '\(fileRelPath)' has been modified on disk "
+                                + "since it was last read, so the patch's delete was refused. "
+                                + "Re-read the file and regenerate the patch."
+                        ])
+                    }
                     try FileManager.default.removeItem(at: secureURL)
+                    await FileSnapshotStore.shared.removeSnapshot(url: secureURL)
                     appliedOps.append(AppliedPatchOperation(type: "delete", resource: fileRelPath, target: secureURL.path))
                     diffSummaries.append(GitDiffSummary(
                         filename: fileRelPath,
@@ -56,6 +83,7 @@ public enum ApplyPatchExecutor {
                 try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
                 let text = contentLines.joined(separator: "\n")
                 try text.write(to: secureURL, atomically: true, encoding: .utf8)
+                await FileSnapshotStore.shared.recordSnapshot(url: secureURL, content: text)
                 appliedOps.append(AppliedPatchOperation(type: "add", resource: fileRelPath, target: secureURL.path))
                 diffSummaries.append(GitDiffSummary(
                     filename: fileRelPath,
@@ -73,6 +101,15 @@ public enum ApplyPatchExecutor {
                 }
                 let updatedText = try applyHunkLines(original: originalText, hunkLines: currentHunkLines)
                 try updatedText.write(to: secureURL, atomically: true, encoding: .utf8)
+                // No staleness gate on the update branch, on purpose: its
+                // hunk context lines are verified against the file
+                // (`applyHunkLines` throws on any mismatch), which is a
+                // STRONGER freshness check than the snapshot hash -- it
+                // proves the patched region matches what the patch was
+                // generated from, whatever else changed elsewhere. Record
+                // the result so the next tool call on this file compares
+                // against the post-patch bytes.
+                await FileSnapshotStore.shared.recordSnapshot(url: secureURL, content: updatedText)
                 appliedOps.append(AppliedPatchOperation(type: "update", resource: fileRelPath, target: secureURL.path))
                 diffSummaries.append(GitDiffSummary(
                     filename: fileRelPath,
@@ -87,7 +124,7 @@ public enum ApplyPatchExecutor {
 
         for line in lines {
             if line.hasPrefix("diff --git ") {
-                try flushCurrentFile()
+                try await flushCurrentFile()
             } else if line.hasPrefix("--- ") {
                 let pathPart = line.replacingOccurrences(of: "--- ", with: "").trimmingCharacters(in: .whitespaces)
                 if pathPart == "/dev/null" {
@@ -113,8 +150,8 @@ public enum ApplyPatchExecutor {
             }
         }
         
-        try flushCurrentFile()
-        
+        try await flushCurrentFile()
+
         let summary = "Applied patch to \(appliedOps.count) file(s):\n" + appliedOps.map { "  \($0.type.uppercased()) \($0.resource)" }.joined(separator: "\n")
         return ApplyPatchOutput(applied: appliedOps, files: diffSummaries, summary: summary)
     }

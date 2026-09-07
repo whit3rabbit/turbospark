@@ -10,16 +10,20 @@ import TurboSpark
 /// `AppModel+AgentLoop` takes over once a tool call is parsed out of the
 /// reply.
 extension AppModel {
-    /// The user's sampling preferences (temperature, top-k, top-p,
+    /// The APP-WIDE sampling preferences (temperature, top-k, top-p,
     /// repetition penalty, seed, stop sequences), as a fresh `GenerateOptions`
     /// with everything else at its default.
     ///
-    /// Split out of `executeGenerationTurn` so `SubagentRunner` -- an `enum`
-    /// with no `AppModel` to read (`swift/CLAUDE.md` Gotcha 46) -- can be
-    /// handed the same values through `AppToolRegistry.subagentSamplingOptionsProvider`
-    /// rather than running every subagent turn at a hardcoded
-    /// `temperature: 0.2` regardless of what the user set
-    /// (`docs/SWIFT_SETTINGS_AUDIT.md`). Deliberately excludes `reasoning`
+    /// The main chat loop no longer reads this: `executeGenerationTurn` uses
+    /// `samplingOptions(chatID:)` (`AppModel+Sampling.swift`), which honors a
+    /// chat's own override. What remains here is the subagent surface --
+    /// `SubagentRunner`, an `enum` with no `AppModel` to read
+    /// (`swift/CLAUDE.md` Gotcha 46), is handed these same values through
+    /// `AppToolRegistry.subagentSamplingOptionsProvider` rather than running
+    /// every subagent turn at a hardcoded `temperature: 0.2` regardless of
+    /// what the user set (`docs/SWIFT_SETTINGS_AUDIT.md`). A subagent launch
+    /// carries no chat id, so it deliberately reads the app-wide settings and
+    /// not the originating chat's override. Deliberately excludes `reasoning`
     /// and `maxNewTokens`: both callers set those themselves, since a
     /// subagent's own turn budget is an architectural choice about its tool
     /// loop rather than a sampling preference.
@@ -96,16 +100,15 @@ extension AppModel {
             ? buildSkillStateHistory(chatIndex: chatIndex, project: turnProject)
             : buildAppendOnlyHistory(chatIndex: chatIndex, project: turnProject)
 
-        var options = samplingOptions()
+        // Per-chat sampling: the chat's own override when it carries one,
+        // the app-wide settings otherwise. Resolved from `chatID`, never the
+        // selection (state#17's rule for every per-turn read), and captured
+        // ONCE here so a scope edit mid-turn cannot move a running turn.
+        // `maxNewTokens` arrives folded in, already clamped against the
+        // `UInt32` conversion this read used to do by hand (state#35).
+        var options = samplingOptions(chatID: chatID)
         options.reasoning = reasoning
-        // `UInt32(clamping:)`, never `UInt32(_:)`: the plain conversion TRAPS
-        // (kills the process, no error, no log) on any value above
-        // `UInt32.max`, and this one is loaded straight out of a JSON file a
-        // user or a future release can write (state#35). `clampedSetting` on
-        // load is the other half; this is the one that cannot trap whatever
-        // reaches it.
-        let requestedNewTokens = UInt32(clamping: max(1, maxNewTokens))
-        options.maxNewTokens = requestedNewTokens
+        let requestedNewTokens = options.maxNewTokens
 
         runTask = Task {
             do {
@@ -238,6 +241,15 @@ extension AppModel {
                         let generatedReasoning = self.outputReasoningText
                         let parsedCalls = self.extractToolCalls(
                             from: generatedContent, project: turnProject)
+                        // A retried or edited turn that came back as tool
+                        // calls cannot carry the parked variants: they
+                        // describe a PROSE reply, and seeding one onto a
+                        // chain of tool rows would let variant navigation
+                        // swap content under live tool cards. Dropped
+                        // rather than seeded.
+                        if !parsedCalls.isEmpty {
+                            self.pendingResponseVariants[turnChatID] = nil
+                        }
 
                         // One helper for the four dispatch sites below. An
                         // all-agent batch runs its calls concurrently
@@ -336,18 +348,38 @@ extension AppModel {
             // chat was busy; this tail is the first idle moment after, under
             // the same epoch guard that says no newer turn owns the state.
             // The drain re-checks idleness and may start the next turn here.
+            //
+            // **QUEUED USER PROMPTS DRAIN FIRST.** A prompt the user typed
+            // mid-turn is the older intent; the notification waits one more
+            // tail rather than reverse the order the user saw. (The
+            // notification drain re-checks idleness, so a queue drain that
+            // started a turn parks it cleanly.)
+            self.drainPendingUserMessagesIfIdle(chatID: turnChatID)
             self.drainPendingTaskNotificationsIfIdle(chatID: turnChatID)
         }
     }
 
     private func finishProseTurn(content: String, reasoning: String, result: GenerationResult, chatID: UUID, step: Int, project: AppProject?) async {
+        // Variants parked by Retry/Edit land on the first committed prose
+        // reply of the turn they belong to, and are consumed exactly once:
+        // removeValue here is what keeps a stale entry from grafting old
+        // text onto some later turn.
+        let parkedVariants = self.pendingResponseVariants.removeValue(forKey: chatID) ?? []
         self.mutateTurnMessages(for: chatID) { messages in
-            messages.append(AppChatMessage(
+            var message = AppChatMessage(
                 role: .assistant,
                 content: content,
                 reasoning: reasoning,
                 stopReason: result.stopReason.rawValue
-            ))
+            )
+            if !parkedVariants.isEmpty {
+                message.alternates = parkedVariants.map { variant in
+                    var flat = variant
+                    flat.alternates = []
+                    return flat
+                }
+            }
+            messages.append(message)
         }
         _ = await self.dispatchStopAndContinueIfBlocked(
             chatID: chatID, resumeStep: step + 1, project: project)

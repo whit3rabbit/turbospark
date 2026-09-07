@@ -110,6 +110,13 @@ struct TurboSparkApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
 
+                // The Keyboard Shortcuts pane's own entry point, matching
+                // unsloth studio's Cmd+/ for its shortcuts tab.
+                Button("Keyboard Shortcuts...") {
+                    model.openSettings(tab: .shortcuts)
+                }
+                .keyboardShortcut("/", modifiers: .command)
+
                 Divider()
 
                 Picker("Status Bar Benchmarks", selection: $appearanceManager.statusBarViewMode) {
@@ -156,6 +163,12 @@ struct TurboSparkApp: App {
 
                 Divider()
 
+                Button("Search Chats...") {
+                    NotificationCenter.default.post(name: .showChatSearch, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: .command)
+                .accessibilityHint("Searches previous chats by keyword")
+
                 Button("Focus Prompt") {
                     NotificationCenter.default.post(name: .focusPrompt, object: nil)
                 }
@@ -168,9 +181,11 @@ struct TurboSparkApp: App {
             }
 
             CommandMenu("Generation") {
-                Button("Generate Response") { model.run() }
+                // CanRunOrQueue, not canRun: mid-turn the item QUEUES the
+                // draft, so the label says which one it will do.
+                Button(model.canRun ? "Generate Response" : "Queue Message") { model.run() }
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!model.canRun)
+                    .disabled(!model.canRunOrQueue)
 
                 Button("Cancel Generation") { model.cancel() }
                     .keyboardShortcut(".", modifiers: .command)
@@ -284,5 +299,9 @@ extension Notification.Name {
 
     /// Posted to request opening the settings window on a specific tab.
     public static let openSettingsTab = Notification.Name("TurboSpark.openSettingsTab")
+
+    /// Posted by the Cmd+K command; RootView listens to it and toggles the
+    /// "Search Chats" overlay.
+    static let showChatSearch = Notification.Name("TurboSpark.showChatSearch")
 }
 

@@ -92,7 +92,10 @@ extension AppModel {
                 lastKnownByteSize: (try? FileManager.default.attributesOfItem(atPath: file.url.path)[.size] as? Int),
                 lastKnownModified: (try? FileManager.default.attributesOfItem(atPath: file.url.path)[.modificationDate] as? Date)
             )
-            AppArtifact.upsert(artifact, into: &chats[index].artifacts)
+            // The SURVIVING row comes back, id stable across rewrites, which
+            // is what the once-only auto-open decision has to read.
+            let row = AppArtifact.upsert(artifact, into: &chats[index].artifacts)
+            maybeAutoOpenArtifact(row)
         }
         chats[index].updatedAt = now
         persistChats()
@@ -144,14 +147,16 @@ extension AppModel {
     /// something to lose. An empty draft is left alone: a chat row that
     /// appears when the window opens, before the user has typed anything, is
     /// noise -- and `createChat` reuses an empty selected chat anyway, so
-    /// nothing accumulates.
+    /// nothing accumulates. A per-chat sampling override counts as content:
+    /// an Inspector edit on a brand-new chat is exactly "something to lose"
+    /// with an empty prompt.
     @discardableResult
     func materializeDraftChatIfNeeded() -> Bool {
         guard selectedChatIndex == nil else { return false }
         let draft = activeDraftChat
         let hasContent =
             !draft.draft.isEmpty || !draft.draftAttachments.isEmpty || !draft.todos.isEmpty
-            || !draft.messages.isEmpty
+            || !draft.messages.isEmpty || draft.samplingOverride != nil
         guard hasContent else { return false }
         // A draft that predates a project selection carries none, and this is
         // the last point before it becomes a real row (state#79).
@@ -281,6 +286,11 @@ extension AppModel {
         if chats[index].isGhost {
             ghostVault.wipe(for: id)
         }
+        // A deleted chat's queued drafts are discarded WITH it: the user's
+        // deletion is the older intent, and a prompt parked for a chat with
+        // no row would sit in `pendingUserMessages` forever (nothing else
+        // removes entries keyed by a dead chat).
+        pendingUserMessages[id] = nil
         chats.remove(at: index)
         if chats.isEmpty {
             selectedChatID = UUID()

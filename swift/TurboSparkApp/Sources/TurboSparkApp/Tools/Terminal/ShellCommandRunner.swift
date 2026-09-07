@@ -98,7 +98,8 @@ enum ShellCommandRunner {
         // finish is not a success string. Thrown, so `isError` follows, with
         // whatever output the command managed to produce.
         if result.timedOut {
-            let partial = combined.isEmpty ? "" : "\n" + ShellOutputFormatting.compact(combined)
+            let partial = combined.isEmpty
+                ? "" : "\n" + ShellOutputFormatting.compactWithSpill(combined, label: command)
             throw NSError(
                 domain: "TurboSparkTool", code: 42,
                 userInfo: [NSLocalizedDescriptionKey:
@@ -117,7 +118,7 @@ enum ShellCommandRunner {
                     domain: "TurboSparkTool", code: 40,
                     userInfo: [NSLocalizedDescriptionKey:
                         "Command failed (exit \(result.exitCode)):\n"
-                            + ShellOutputFormatting.compact(combined)])
+                            + ShellOutputFormatting.compactWithSpill(combined, label: command)])
             }
         }
 
@@ -125,7 +126,7 @@ enum ShellCommandRunner {
             ? (result.exitCode == 0
                 ? "(Command finished: success)"
                 : "(Command finished: exit code \(result.exitCode))")
-            : ShellOutputFormatting.compact(combined)
+            : ShellOutputFormatting.compactWithSpill(combined, label: command)
         if !notes.isEmpty {
             output += "\n(" + notes.joined(separator: "; ") + ")"
         }

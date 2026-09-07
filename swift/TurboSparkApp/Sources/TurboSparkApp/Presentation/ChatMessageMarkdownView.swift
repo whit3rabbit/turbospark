@@ -5,15 +5,20 @@ import SwiftUI
 /// Renders markdown-formatted chat message content using MarkdownUI.
 public struct ChatMessageMarkdownView: View {
     public let text: String
+    /// Called when an ```html fence's Preview button is clicked. Nil (the
+    /// default) hides the button, which is what every non-transcript usage
+    /// wants: only the chat rows can open the panel.
+    public var onPreviewHTML: ((String) -> Void)?
     @Environment(\.appTheme) private var theme
 
-    public init(_ text: String) {
+    public init(_ text: String, onPreviewHTML: ((String) -> Void)? = nil) {
         self.text = text
+        self.onPreviewHTML = onPreviewHTML
     }
 
     public var body: some View {
         Markdown(text)
-            .markdownTheme(.turboSpark(ui: theme.uiFontDescriptor, code: theme.codeFontDescriptor))
+            .markdownTheme(.turboSpark(ui: theme.uiFontDescriptor, code: theme.codeFontDescriptor, onPreviewHTML: onPreviewHTML))
             .id("\(theme.uiFontDescriptor.family)-\(theme.uiFontDescriptor.size)-\(theme.uiFontDescriptor.weight)-\(theme.codeFontDescriptor.family)-\(theme.codeFontDescriptor.size)-\(theme.codeFontDescriptor.weight)")
             .foregroundStyle(theme.foreground)
             .textSelection(.enabled)
@@ -35,7 +40,11 @@ extension Theme {
     /// size now comes from the user's UI font setting. Everything under it
     /// (`.code`'s `.em(0.88)`, etc.) stays relative, so it scales along with
     /// the base rather than needing its own bump.
-    public static func turboSpark(ui: AppFontDescriptor, code: AppFontDescriptor) -> Theme {
+    public static func turboSpark(
+        ui: AppFontDescriptor,
+        code: AppFontDescriptor,
+        onPreviewHTML: ((String) -> Void)? = nil
+    ) -> Theme {
         Theme()
         .text {
             FontFamily(ui.markdownFamily)
@@ -94,7 +103,8 @@ extension Theme {
         .codeBlock { configuration in
             CodeBlockContainer(
                 language: configuration.language,
-                code: configuration.content
+                code: configuration.content,
+                onPreviewHTML: onPreviewHTML
             ) {
                 configuration.label
                     .relativeLineSpacing(.em(0.225))
@@ -158,13 +168,25 @@ extension AppFontDescriptor {
     }
 }
 
-/// Container view for fenced code blocks featuring a language tag and copy-to-clipboard action.
+/// Container view for fenced code blocks featuring a language tag, copy and
+/// (for html) a sandboxed-preview action.
 private struct CodeBlockContainer<Content: View>: View {
     let language: String?
     let code: String
+    var onPreviewHTML: ((String) -> Void)?
     @ViewBuilder let content: () -> Content
 
     @State private var isCopied = false
+
+    /// Which language tags the Preview button offers. Only a complete HTML
+    /// document is worth a panel; a fragment renders, which is acceptable,
+    /// but an svg fence is deliberately NOT here: it is inline artwork in
+    /// the prose, not a page.
+    private var isPreviewableHTML: Bool {
+        guard onPreviewHTML != nil else { return false }
+        let tag = language?.lowercased()
+        return tag == "html" || tag == "htm"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -179,6 +201,23 @@ private struct CodeBlockContainer<Content: View>: View {
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
+                if isPreviewableHTML {
+                    Button {
+                        onPreviewHTML?(code)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "eye")
+                                .accessibilityHidden(true)
+                            Text("Preview", bundle: .module)
+                        }
+                        .themedFont(.tiny, weight: .medium)
+                        .foregroundStyle(Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open this HTML in the sandboxed preview panel")
+                    .accessibilityLabel("Preview \(language ?? "html") block")
+                    .accessibilityHint("Opens the block in the sandboxed preview panel")
+                }
                 Button {
                     copyCode()
                 } label: {

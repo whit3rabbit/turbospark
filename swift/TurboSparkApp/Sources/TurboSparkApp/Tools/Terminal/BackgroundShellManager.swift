@@ -233,10 +233,13 @@ final class BackgroundShellManager: @unchecked Sendable {
     }
 
     /// A one-shot status snapshot: the summary line plus the compacted
-    /// output so far.
+    /// output so far. Over the model cap the full buffer is spilled under
+    /// the shell's own id, so repeated polls overwrite ONE file rather
+    /// than accumulating one per poll.
     func outputSnapshot(_ record: BackgroundShellRecord) -> String {
-        let text = ShellOutputFormatting.compact(
-            ShellOutputFormatting.stripANSI(record.outputBuffer.text))
+        let text = ShellOutputFormatting.compactWithSpill(
+            ShellOutputFormatting.stripANSI(record.outputBuffer.text),
+            label: record.command, spillName: "shell-\(record.id)")
         if text.isEmpty {
             return record.summaryLine + "\n(No output yet)"
         }

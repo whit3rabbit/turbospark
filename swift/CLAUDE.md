@@ -1548,6 +1548,53 @@ so going through `make` recompiles the whole app every single time. Use
     for a project mkdirs inside the user's real `~/.turbospark`, the exact
     failure `AppStorageRoot`'s header is about.
 
+58. **CHAT SEARCH EXCLUDES GHOSTS BY THE FLAG, AND ITS DIALOG KEYS ARE
+    WINDOW-LEVEL SHORTCUTS, NOT A KEY MONITOR** (2026-09-07,
+    `docs/SWIFT_CHAT_SEARCH.md` is the feature page). `Cmd+K` opens a
+    palette over previous chats (`ChatSearch`, pure; `ChatSearchOverlayView`,
+    the surface). Two decisions the next change can silently undo. One: the
+    ghost exclusion is `!chat.isGhost` in `buildDocuments`, never an
+    emptiness check -- a ghost row carries no plaintext TODAY, but the
+    exclusion must not depend on that, because a search match would leak
+    that a temporary chat exists; the pin
+    (`ChatSearchTests.testGhostChatsNeverProduceDocumentsEvenWhenTheyCarryMessages`)
+    carries a ghost fixture WITH messages for exactly that reason. Two: the
+    palette's arrows/Return/Esc are hidden buttons with
+    `.keyboardShortcut`s, because a window-level shortcut keeps firing while
+    the search field is first responder and a monitor or `onMoveCommand`
+    does not; do not "simplify" them into focus-following handlers or the
+    arrows go back to moving the text cursor. And the sidebar's
+    "Filter chats..." field deliberately still matches title + preview only
+    -- the dialog is the deep search, so widening the sidebar filter is a
+    product decision, not a bug fix.
+
+59. **THE MENUS SHOW ONE CHORD PER ACTION, SO AN ALTERNATE CHORD IS A HIDDEN
+    BUTTON, NOT A SECOND MENU ITEM** (2026-09-07,
+    `AlternateShortcutBridge.swift`). unsloth studio's shortcut scheme
+    shares several actions with this app under different chords: its new
+    chat is Cmd+Shift+O where the Chat menu says Cmd+N, its sidebar toggle
+    is Cmd+B where View says Ctrl+Cmd+S, its chat cycling is Cmd+Shift+[
+    and Cmd+Shift+] where ours is Cmd+[ and Cmd+], and its workspace keys
+    are Ctrl+1..9 where the rail is Cmd+1..5. The reconciliation is
+    ADDITIVE: the menus keep the chords they have always shown, and the
+    unsloth chords fire as window-level hidden buttons mounted by
+    `RootView` -- the Gotcha 58 mechanism, so they keep working while the
+    prompt editor is first responder. Three things the next change can get
+    wrong. A SwiftUI menu item carries exactly one shortcut, so "also bind
+    Cmd+Shift+O" cannot be a second `.keyboardShortcut` on the existing
+    item -- the choice is a visible duplicate menu row or a hidden button,
+    and the hidden button does not clutter the menu. Every bridge button's
+    `.disabled` must mirror the menu command it shadows (`isRunning` for
+    new chat, `isRunning || orderedChats.isEmpty` for the cycle pair), or
+    the alternate reaches an action the advertised key refuses. And the
+    pane's rows carry the alternates in `KeyboardShortcutRow.altKeys` with
+    the catalog tests holding each pair: a bridge chord without a row, or a
+    row without a bridge chord, is the pane lying again -- the failure the
+    catalog was built to end (`docs/SWIFT_SETTINGS_AUDIT.md`). The pane's
+    own entry point is real, not an alternate: a "Keyboard Shortcuts..."
+    View-menu item with Cmd+/, the unsloth shortcuts-tab chord, routed
+    through `openSettings(tab: .shortcuts)`.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments that
@@ -1662,6 +1709,12 @@ learn what it meant by grepping for other mentions of it. What each covers:
 | 109 | `SkillParser`: a block scalar indented by ONE space ended the description (state#56's failure with a different trigger, and a `name:` in the reparsed prose renames the skill); `allowed-tools:` and `paths:` did not accept a block-scalar marker, producing a one-element list whose entry is the literal `\|`; and `parseInlineArray` split on every comma, cutting `Bash(git commit -m 'a, b')` in half. |
 | 110 | `AppPromptPreset.all` was a `var`, so every access read the bundle and decoded JSON, from SwiftUI bodies that run per keystroke -- and an empty array decodes SUCCESSFULLY, so a `[]` in the resource rendered no quick actions rather than falling back. |
 | 111 | `latestObservation` called `taskMessage` (a scan from the front) inside a loop over the messages from the back, i.e. quadratic -- in the one prompt shape whose entire purpose is to be O(1) in step count. |
+| 112 | The turn tail drains in ORDER, and both drains re-check idleness: queued USER prompts first (`drainPendingUserMessagesIfIdle`), then `<task-notification>`s. The user's mid-turn prompt is the older intent, and whichever drain starts a turn makes the other park until the next tail. The drain also fires ONLY from a turn tail and only when the chat is selected, so a prompt parked for a background chat waits for that chat to be frontmost -- if you add a second drain trigger, keep the first-entry-only rule, because the drain goes through `run()` and two entries in the composer would interleave with the user's typing. |
+| 113 | System reminders are ASSEMBLY-TIME and never stored: `SystemReminders.reminder` is appended to the model-bound copy of the last user message inside `buildAppendOnlyHistory`, and the transcript row keeps what the user sent. Any state the reminder depends on must therefore be readable at assembly time from the row plus process state (that is why todo staleness scans messages instead of carrying a counter, and why plan mode reads `PlanModeExecutor`'s static registry). The SKILL.state history path gets no reminders on purpose; adding them there defeats the O(1) bound. |
+| 114 | `resolveSecurePath` accepts an absolute path under exactly ONE root: the spill root (`ShellOutputFormatting.isUnderSpillRoot`, symlink-resolved on both sides). Every new "the model should be able to read X" feature wants to widen that exception; widen the PREDICATE with the same containment discipline or not at all. Sibling trap in `UnicodeSanitization`: its `hasInvisibleCharacters` probe gates NFKC away from clean text, and the gate is what keeps ordinary CJK input byte-identical -- stripping without the probe, or probing with a normalizing scan, rewrites the user's full-width punctuation. |
 
+| 115 | The web preview sandbox has TWO independent gates and neither can do the other's job: `WKContentRuleList` is the only lever that reaches subresource loads (img/script/fetch never traverse the navigation delegate), and the delegate is what stops a main-frame self-navigation. Loading before the rules finish compiling opens an unblocked window, so the first offline load WAITS for `ArtifactContentRuleList`. The network grant is keyed on CONTENT (`contentKey` for a file, an html hash for a fence), never on the artifact id: id-keyed, an unapproved page rides in on a rewrite. Inline fence previews live in `AppModel.htmlPreview` in memory only -- the archive stores paths and metadata, never bytes. |
+| 116 | `estimatedContextTokens` still added `transcriptChars/4` on top of `estimatedPromptTokens` AFTER the latter became the exact count of the assembled prompt -- the transcript was in the sum twice, overstating the fill by roughly a quarter of the conversation. Invisible while the meter was a status row; wrong the moment the context ring's 70/90 tiers keyed on it. Now `attachmentChars/4 + estimatedPromptTokens`, because attachments are the one thing the exact count cannot see (a render emits one marker per image). |
+| 117 | The system prompt IS the join of its sections: `buildSystemPrompt` folds `buildSystemPromptSections`, and the context breakdown groups those same tagged sections into pieces (`buildEstimateParts`). One builder, three consumers -- a prompt whose slices are re-derived anywhere else WILL disagree with the prompt about what is being sent, which is state#31/#32's "two builders, two stories" shape one layer up. |
 Add the next number here when you add the marker, or the index rots the way
 the numbering did.

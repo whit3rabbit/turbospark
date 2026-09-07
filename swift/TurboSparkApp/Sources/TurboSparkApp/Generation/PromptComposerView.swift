@@ -31,6 +31,7 @@ struct PromptComposerView: View {
                     acceptAutocomplete()
                 }
             }
+            QueuedPromptsSection(model: model)
             PromptComposerEditor(
                 model: model, promptFocused: $promptFocused, autocomplete: autocomplete)
             if model.isInGhostChat {
@@ -229,5 +230,59 @@ struct PromptComposerView: View {
             model.promptText += " " + text
         }
         promptFocused = true
+    }
+}
+
+/// The chat's queued prompts, shown between the composer's attachments and
+/// its editor while a turn is running.
+///
+/// Claude Code reference: the REPL's queued-input row (`messageQueueManager`
+/// consumers). Each pill is a parked draft; clicking one PULLS IT BACK into
+/// the composer for editing (`restoreQueuedMessage` removes it from the
+/// queue as it restores), because a queued prompt the user can no longer
+/// correct is a trap -- the drain will send it verbatim.
+private struct QueuedPromptsSection: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        let queued = model.queuedMessages(for: model.selectedChatID)
+        if !queued.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(queued) { entry in
+                    Button {
+                        model.restoreQueuedMessage(id: entry.id)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "text.badge.clock")
+                                .accessibilityHidden(true)
+                            Text(entry.text.isEmpty
+                                ? "(attachment only)"
+                                : String(entry.text.prefix(80)))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 0)
+                            Image(systemName: "pencil")
+                                .accessibilityHidden(true)
+                        }
+                        .themedFont(.small)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(theme.composerBackground.opacity(0.6))
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Queued message. Click to edit it before it sends.")
+                    .help("Queued: sends after the current turn. Click to edit it now.")
+                }
+                Text("Queued behind the running turn; drains when it finishes.",
+                     bundle: .module)
+                    .themedFont(points: 10)
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 }

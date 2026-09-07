@@ -664,3 +664,80 @@ deliberately NOT `taskstop`, which is the task-list system's verb.
 Tests: `SubagentProgressTests`, `SubagentBatchRoutingTests`,
 `BackgroundAgentTests` (plus the pre-existing Subagent* suites, which pin
 the gate and the hooks).
+
+## 13. Oversized shell output: the spill file
+
+Claude Code reference: `src/utils/toolResultStorage.ts`, reduced to the one
+path where this app's output regularly overflows. Three caps stack, and
+only the third used to be survivable: the PIPE cap (`ProcessExecutor`'s
+1 MB per stream, the memory bound), the model cap
+(`ShellOutputFormatting.maxModelOutputChars`, 30,000, head 20k + tail 8k),
+and -- new -- what happens to the middle.
+
+`compactWithSpill(_:label:spillName:)` is `compact` plus recovery: over
+the cap, the FULL ANSI-stripped text is written under
+`~/Library/Application Support/TurboSpark/spill/` and the model-facing
+string names the path with instructions (read_file, or `grep`/`sed` from
+the shell). Under the cap it is exactly the old compaction and writes
+nothing. Callers: the three foreground sites in `ShellCommandRunner`
+(success, failure, timeout) and the background-shell snapshot, which
+passes `spillName:` so repeated polls OVERWRITE one file per shell instead
+of accumulating one per poll. The newest 20 files are kept, pruned on
+write.
+
+**The spill root is the ONE absolute-path exception in
+`resolveSecurePath`**, so the model can read_file the file back. The
+predicate is `ShellOutputFormatting.isUnderSpillRoot`, which resolves
+symlinks on both sides before the prefix compare -- the same discipline as
+`PathContainment`. Widening that exception to anything else is a security
+decision, not a convenience. Spill reads skip the snapshot store (they are
+not project files and must not evict real hashes from its 512 entries).
+Tests: `ShellSpillTests`.
+
+## 14. Freshness on every destructive write
+
+Claude Code reference: the Edit/Write freshness rules. `edit_file` always
+had hash-based staleness (`FileSnapshotStore`); the two paths that could
+silently clobber a file the user changed mid-session did not.
+
+- `write_file` over an EXISTING file now requires that the file is
+  tracked AND fresh (`AppToolRegistry+Handlers.writeFile`): refusing with
+  "has not been read this session, or has changed since it was last
+  read". Creating a new file is never gated. The store is hash-based, not
+  mtime-based, and records the content it was already handed (no re-read).
+- `apply_patch`'s delete branch gates the same way, because a delete hunk
+  has NO context lines to verify -- it is the one patch shape with no
+  content-level protection. The update branch stays exempt ON PURPOSE:
+  `applyHunkLines` verifies every context/removal line against the file,
+  which proves the patched region matches what the patch was generated
+  from, a stronger check than any hash. Its doc comment records that so
+  nobody "fixes" the asymmetry.
+- Every successful patch operation records (delete: removes) its snapshot,
+  so `edit_file`/`write_file` right after a patch compare against the
+  POST-patch bytes instead of refusing everything until a re-read.
+
+Tests: `FileFreshnessTests`.
+
+## 15. Invisible-character sanitization on prompts
+
+Claude Code reference: `src/utils/sanitization.ts` (the HackerOne #3086545
+Unicode tag-character injection). `UnicodeSanitization.sanitize` strips
+`\p{Cf} \p{Co} \p{Cn}` plus the reference's explicit fallback ranges from
+prompt content at the model boundary in `run()`; the SANITIZED text is
+what gets stored, so the transcript and what the model read never
+diverge.
+
+**The probe gate is the deliberate departure from the reference and it is
+load-bearing for CJK.** The reference NFKC-normalizes every prompt;
+NFKC visibly rewrites full-width punctuation (U+FF0C becomes U+002C
+and friends), which would corrupt ordinary Chinese and Japanese input. Here `hasInvisibleCharacters` gates the whole pipeline:
+no dangerous scalar anywhere in the string means the string returns
+untouched, and only a string that already carries one pays for NFKC. The
+attack payload needs no normalization to catch -- tag characters and bidi
+overrides arrive already inside the stripped classes.
+
+Scope is PROMPTS ONLY: the same Cf class carries ZWJ, which is
+legitimate inside emoji sequences and Indic/Arabic shaping, and tool
+output is user-visible through its tool card anyway. Applying the strip
+to tool output would corrupt real content to guard a visible channel.
+Tests: `UnicodeSanitizationTests`.

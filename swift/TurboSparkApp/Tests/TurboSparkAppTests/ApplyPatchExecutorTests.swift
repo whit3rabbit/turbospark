@@ -17,7 +17,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
 
     // MARK: - T3: stale isDeleteFile must not survive into the next file
 
-    func testDeletingOneFileDoesNotDeleteTheNextFileInTheSamePatch() throws {
+    func testDeletingOneFileDoesNotDeleteTheNextFileInTheSamePatch() async throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -43,7 +43,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
         +let x = 2
         """
 
-        let output = try ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
+        let output = try await ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: toDelete.path), "old.txt should have been deleted.")
         // The actual regression: Package.swift must still EXIST and must
@@ -58,7 +58,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
 
     // MARK: - T4: hunks must apply at their stated offset, not at index 0
 
-    func testEditAtANonZeroOffsetAppliesAtTheCorrectLine() throws {
+    func testEditAtANonZeroOffsetAppliesAtTheCorrectLine() async throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -77,7 +77,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
         -line7
         +REPLACED
         """
-        _ = try ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
+        _ = try await ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
 
         let result = try String(contentsOf: file, encoding: .utf8)
         let resultLines = result.components(separatedBy: "\n")
@@ -86,7 +86,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
         XCTAssertEqual(resultLines[7], "line8")
     }
 
-    func testStaleContextIsRejectedRatherThanAppliedBlindly() throws {
+    func testStaleContextIsRejectedRatherThanAppliedBlindly() async throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -104,7 +104,12 @@ final class ApplyPatchExecutorTests: XCTestCase {
         +REPLACED
         """
 
-        XCTAssertThrowsError(try ApplyPatchExecutor.apply(patchText: patch, rootURL: root)) { error in
+        // `XCTAssertThrowsError` takes a non-async autoclosure, so an
+        // `await`ing call has to use do/catch instead.
+        do {
+            _ = try await ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
+            XCTFail("Expected a context-mismatch error")
+        } catch {
             let msg = (error as NSError).localizedDescription
             XCTAssertTrue(msg.contains("mismatch") || msg.contains("changed"), "Expected a context-mismatch error, got: \(msg)")
         }
@@ -114,7 +119,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
         XCTAssertEqual(unchanged, original)
     }
 
-    func testMultipleHunksInOneFileEachApplyAtTheirOwnOffset() throws {
+    func testMultipleHunksInOneFileEachApplyAtTheirOwnOffset() async throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -133,7 +138,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
         -line9
         +SECOND
         """
-        _ = try ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
+        _ = try await ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
 
         let resultLines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
         XCTAssertEqual(resultLines[1], "FIRST")
@@ -142,7 +147,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
         XCTAssertEqual(resultLines[9], "line10")
     }
 
-    func testNewFileCreationStillWorks() throws {
+    func testNewFileCreationStillWorks() async throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -155,7 +160,7 @@ final class ApplyPatchExecutorTests: XCTestCase {
         +hello
         +world
         """
-        _ = try ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
+        _ = try await ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
 
         let created = root.appendingPathComponent("new.txt")
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.path))

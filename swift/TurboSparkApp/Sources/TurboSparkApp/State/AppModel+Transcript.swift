@@ -59,16 +59,27 @@ extension AppModel {
             || backgroundAgentRuns.values.contains { $0.chatID == nil || $0.chatID == selectedChatID }
     }
 
-    /// Rough token count of everything that would be sent on the next turn.
+    /// Token count of everything that would be sent on the next turn.
     ///
-    /// A four-characters-per-token approximation over the committed transcript
-    /// plus the live estimate of the draft. It is a STATUS reading and never a
-    /// budget: the real window fit is decided by `fitConversationWindow` on the
-    /// engine side against the real tokenizer.
+    /// `estimatedPromptTokens` is the EXACT count of the assembled prompt
+    /// (system message, transcript after the compaction boundary, summary,
+    /// draft), so the only thing it misses is attachments: a render emits
+    /// one marker per image, and their page-token expansion happens in the
+    /// engine's splice. Those are priced at the four-characters-per-token
+    /// approximation, which is the whole sum here.
+    ///
+    /// **THE TRANSCRIPT'S OWN chars/4 TERM IS GONE, AND IT WAS DOUBLE
+    /// COUNTING (state#116).** `estimatedPromptTokens` already included every
+    /// transcript
+    /// row exactly; adding the approximation on top overstated the fill by
+    /// roughly a quarter of the transcript, which pushed this meter -- and
+    /// now the context ring -- toward yellow and red well before the real
+    /// trigger. It is a STATUS reading and never a budget: the real window
+    /// fit is decided by `fitConversationWindow` on the engine side against
+    /// the real tokenizer.
     public var estimatedContextTokens: Int {
-        let transcriptCharacters = selectedTurnMessages.reduce(0) { $0 + $1.content.count }
         let attachmentCharacters = promptAttachments.reduce(0) { $0 + $1.characterCount }
-        return transcriptCharacters / 4 + attachmentCharacters / 4 + estimatedPromptTokens
+        return attachmentCharacters / 4 + estimatedPromptTokens
     }
 
     /// Resolved context token limit when in automatic mode.

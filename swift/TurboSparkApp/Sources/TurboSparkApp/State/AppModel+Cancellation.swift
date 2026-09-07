@@ -27,13 +27,28 @@ extension AppModel {
         let targetID = chatID ?? selectedChatID
         let targetProject = turnProject(chatID: targetID)
         if !outputText.isEmpty || !outputReasoningText.isEmpty {
+            // A Retry/Edit turn stopped mid-flight still owes its variants
+            // an answer: the partial reply becomes the active version (its
+            // stop reason marks it as unfinished) and the replaced one is
+            // kept beside it. Consumed here for the same once-only reason
+            // `finishProseTurn` consumes it.
+            let parkedVariants =
+                self.pendingResponseVariants.removeValue(forKey: targetID) ?? []
             mutateTurnMessages(for: targetID) {
-                $0.append(AppChatMessage(
+                var message = AppChatMessage(
                     role: .assistant,
-                    content: outputText,
-                    reasoning: outputReasoningText,
+                    content: self.outputText,
+                    reasoning: self.outputReasoningText,
                     stopReason: reason
-                ))
+                )
+                if !parkedVariants.isEmpty {
+                    message.alternates = parkedVariants.map { variant in
+                        var flat = variant
+                        flat.alternates = []
+                        return flat
+                    }
+                }
+                $0.append(message)
             }
             outputText = ""
             outputReasoningText = ""

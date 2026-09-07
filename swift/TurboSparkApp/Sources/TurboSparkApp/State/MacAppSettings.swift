@@ -69,6 +69,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var seed: UInt64
     /// Comma-separated custom stop sequence tokens/strings.
     public var stopSequences: String
+    /// Named sampling snapshots saved from the Inspector's Generation
+    /// Sampling section. Applying one stamps its values into the scope being
+    /// edited (a chat override or the app-wide defaults). Nothing ships a
+    /// preset, so this is empty until the user saves one.
+    public var samplingPresets: [AppSamplingPreset]
     /// GPU power profile setting ("auto", "low", "high").
     public var powerProfile: String
     /// Speculative decoding mode ("off", "auto", or integer token budget).
@@ -204,6 +209,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         seedEnabled: Bool = false,
         seed: UInt64 = 0,
         stopSequences: String = "",
+        samplingPresets: [AppSamplingPreset] = [],
         powerProfile: String = "auto",
         loadGuard: String = "relaxed",
         loadGuardCustomBytes: UInt64 = 0,
@@ -256,6 +262,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.seedEnabled = seedEnabled
         self.seed = seed
         self.stopSequences = stopSequences
+        self.samplingPresets = samplingPresets
         self.powerProfile = powerProfile
         self.speculation = speculation
         self.speculativeDrafter = speculativeDrafter
@@ -319,6 +326,10 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.seedEnabled = c.decodeLenient(Bool.self, forKey: .seedEnabled, fallback: false)
         self.seed = c.decodeLenient(UInt64.self, forKey: .seed, fallback: 0)
         self.stopSequences = c.decodeLenient(String.self, forKey: .stopSequences, fallback: "")
+        // ELEMENT-level tolerance like `steeringPresets` below (state#45):
+        // one bad preset must not fall the whole list back to `[]`.
+        self.samplingPresets = c.decodeLenientElements(
+            AppSamplingPreset.self, forKey: .samplingPresets)
         self.powerProfile = c.decodeLenient(String.self, forKey: .powerProfile, fallback: "auto")
         self.speculation = c.decodeLenient(String.self, forKey: .speculation, fallback: "auto")
         self.speculativeDrafter = c.decodeLenient(String.self, forKey: .speculativeDrafter, fallback: "auto")

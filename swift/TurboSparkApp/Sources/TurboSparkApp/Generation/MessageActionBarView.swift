@@ -2,13 +2,37 @@ import AppKit
 import SwiftUI
 
 /// Floating action bar containing copy, share, read out loud, and timestamp actions for a message.
+///
+/// The optional actions are the message-editing affordances (`AppModel+
+/// MessageEditing.swift`): variant navigation, in-place edit, branch, and
+/// retry. Each is nil where it does not apply -- the row decides, so this
+/// view stays a dumb pill strip.
 struct MessageActionBarView: View {
     let text: String
     let messageID: UUID
     let date: Date
+    /// Steps to a neighbouring version of this message. Rendered with the
+    /// position/count when the message has more than one version.
+    var variantStep: ((Int) -> Void)? = nil
+    var variantPosition: Int = 1
+    var variantCount: Int = 1
+    /// Opens the in-place editor (the last real user prompt).
+    var editAction: (() -> Void)? = nil
+    /// Opens the branch editor (an earlier user prompt).
+    var branchAction: (() -> Void)? = nil
+    /// Regenerates this response (the last prose reply).
+    var retryAction: (() -> Void)? = nil
+    /// Greyed while a turn runs; the model-side guards refuse anyway, this
+    /// is the affordance half.
+    var actionsDisabled: Bool = false
 
     var body: some View {
         HStack(spacing: 6) {
+            if variantCount > 1, let variantStep {
+                MessageVariantSwitcherView(
+                    position: variantPosition, count: variantCount, step: variantStep)
+            }
+
             MessageCopyButton(text: text)
 
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -16,8 +40,61 @@ struct MessageActionBarView: View {
                 MessageSpeechButton(text: text, messageID: messageID)
             }
 
+            if let editAction {
+                MessagePillActionButton(
+                    icon: "pencil", label: "Edit",
+                    help: "Edit this message and regenerate the reply",
+                    disabled: actionsDisabled, action: editAction)
+            }
+
+            if let branchAction {
+                MessagePillActionButton(
+                    icon: "arrow.triangle.branch", label: "Branch",
+                    help: "Edit this message in a branched copy of the conversation",
+                    disabled: actionsDisabled, action: branchAction)
+            }
+
+            if let retryAction {
+                MessagePillActionButton(
+                    icon: "arrow.clockwise", label: "Retry",
+                    help: "Generate a new reply to the same prompt",
+                    disabled: actionsDisabled, action: retryAction)
+            }
+
             MessageTimestampBadge(date: date)
         }
+    }
+}
+
+/// The shared pill button the editing affordances render as. Matches the
+/// existing copy/share pills' look without restating them.
+struct MessagePillActionButton: View {
+    let icon: String
+    let label: String
+    let help: String
+    let disabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .themedFont(points: 11, weight: .medium)
+                    .accessibilityHidden(true)
+                Text(label)
+                    .themedFont(.tiny, weight: .medium)
+            }
+            .foregroundStyle(Color.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
+        .help(help)
+        .accessibilityLabel("\(label) message")
     }
 }
 

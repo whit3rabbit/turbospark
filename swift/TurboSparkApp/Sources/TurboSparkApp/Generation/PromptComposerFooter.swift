@@ -62,6 +62,10 @@ struct PromptComposerFooter: View {
 
     private var trailing: some View {
         HStack(spacing: 6) {
+            // First, not last: `clearAction` below is conditional on the
+            // draft, and the ring should not change position with it.
+            ContextUsageRingView(model: model)
+
             clearAction
 
             PromptAudioInputButton(promptFocused: promptFocused)
