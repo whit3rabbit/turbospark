@@ -54,11 +54,20 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
     );
     check!("attentionKEqV", a.attention_k_eq_v, e.attention_k_eq_v);
     check!("hiddenActivation", a.hidden_activation, e.hidden_activation);
+    // `as u8` narrows silently: a manifest value of 257 would read as 1, and
+    // a negative one would wrap into a plausible-looking mask byte instead
+    // of being refused as the corrupt input it is.
     let actual_mask: Vec<u8> = a
         .full_attention_layer_mask
         .iter()
-        .map(|&v| v as u8)
-        .collect();
+        .map(|&v| {
+            u8::try_from(v).map_err(|_| ModelError::ArchMismatch {
+                field: "fullAttentionLayerMask".to_string(),
+                expected: "each entry in 0..=255".to_string(),
+                actual: v.to_string(),
+            })
+        })
+        .collect::<Result<Vec<u8>, ModelError>>()?;
     check!(
         "fullAttentionLayerMask",
         actual_mask,

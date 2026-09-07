@@ -236,6 +236,17 @@ impl NgramTableLayout {
         if self.head_vocab_sizes.iter().any(|v| *v <= 0) {
             return bad("a head vocabulary size is not positive".to_string());
         }
+        // Every offset must be non-negative -- `ple_ngram_rows` casts it
+        // straight to `u64` with no check of its own, so a negative value
+        // would wrap into a huge row index rather than erroring -- and the
+        // array must be ASCENDING, which is what lets the `used` check below
+        // examine only the LAST entry instead of every one.
+        if self.head_offsets.iter().any(|&o| o < 0) {
+            return bad("a head offset is negative".to_string());
+        }
+        if !self.head_offsets.windows(2).all(|w| w[0] <= w[1]) {
+            return bad("head_offsets is not ascending".to_string());
+        }
         // The offsets partition the row space, so the last head's offset plus
         // its size is the used height. It may be UNDER `rows` -- the total is
         // padded up to `make_ngram_vocab_size_divisible_by` and then split

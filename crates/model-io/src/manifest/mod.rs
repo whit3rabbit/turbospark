@@ -80,7 +80,10 @@ pub fn validate(m: &Manifest, expected: &ArchConfig) -> Result<(), ModelError> {
     }
     if m.flags.get("turboQuantKV") == Some(&true) {
         return Err(ModelError::IndexCorrupt {
-            detail: "manifest requests removed TurboQuant KV runtime support".to_string(),
+            detail: "manifest.flags.turboQuantKV is not a real flag this port reads; TurboQuant \
+                     KV-cache quantization is controlled by --kv-bits at open, not by a \
+                     manifest flag"
+                .to_string(),
         });
     }
     crate::arch_validation::validate_arch(&m.arch, expected)?;
@@ -136,10 +139,16 @@ pub fn validate(m: &Manifest, expected: &ArchConfig) -> Result<(), ModelError> {
 /// experts in one file.
 const VISION_FILES: [&str; 2] = ["packed_vision/layout.json", "packed_vision/blobs.bin"];
 
-/// The page size this format's writer aligns `expertStride` to. Hardcoded
-/// rather than queried from the OS: both macOS/arm64 and Linux/x86_64 (the
-/// platforms this workspace targets) use 4 KiB pages, and the manifest
-/// format itself has no per-install page size field to validate against.
+/// A FLOOR on the alignment `expertStride` must respect, not the real page
+/// size. Apple Silicon macOS actually uses 16 KiB pages (see
+/// `resident_buffer.rs`'s `page_size_bytes`, which DOES query the OS for the
+/// mmap alignment that genuinely has to match it) and the writer aligns to
+/// that exact figure (`GTURBO_PAGE_BYTES = 16_384`), so every real install's
+/// stride is already a multiple of 16 KiB and therefore of the 4 KiB
+/// checked here. Left at 4096 rather than raised to 16_384 without having
+/// checked every install already on disk against the stricter bound; the
+/// manifest format itself has no per-install page size field to validate
+/// against in either case.
 fn page_size_bytes() -> u64 {
     4096
 }

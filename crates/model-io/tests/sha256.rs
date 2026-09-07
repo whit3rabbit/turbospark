@@ -31,6 +31,32 @@ fn hash_file_matches_hash_data_and_is_chunk_size_independent() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A zero-length read buffer's `read()` always returns `Ok(0)` regardless of
+/// what the file holds, so `chunk_bytes: 0` used to report the EMPTY-file
+/// hash for any file rather than erroring or reading its real content.
+#[test]
+fn a_zero_chunk_size_still_hashes_the_real_content() {
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-sha256-zero-chunk-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("data.bin");
+    let content = vec![0x5au8; 10_000];
+    std::fs::File::create(&path)
+        .unwrap()
+        .write_all(&content)
+        .unwrap();
+
+    let expected = hash_data(&content);
+    let empty_file_hash = hash_data(&[]);
+    let got = hash_file(&path, 0).unwrap();
+    assert_eq!(got, expected);
+    assert_ne!(got, empty_file_hash);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn verify_file_rejects_checksum_mismatch() {
     let dir = std::env::temp_dir().join(format!("turbospark-sha256-verify-{}", std::process::id()));
