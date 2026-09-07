@@ -107,8 +107,10 @@ pub(crate) struct VisionScratch {
     /// worth, reused across every tile of the page rather than sized for the
     /// whole thing.
     pub(crate) h1: gpu::MetalBuffer,
-    /// Rope frequency rows, `[seq, head_dim / 2]` FP16, one row per patch
-    /// shared by every head.
+    /// Rope frequency rows, `[seq, head_dim / 2]` F32 (AGENTS.md/CLAUDE.md
+    /// B7: the angle at pair 0 equals the raw patch coordinate and reaches
+    /// the tens on a wide grid, where FP16's step is a real, avoidable
+    /// error), one row per patch shared by every head.
     pub(crate) freqs: gpu::MetalBuffer,
     /// The interpolated position rows, `[seq, hidden]` FP16, added to the
     /// patch embedding. Uploaded rather than gathered: see
@@ -131,6 +133,12 @@ pub(crate) struct VisionScratch {
 /// FP16 bytes for `elems` elements.
 fn fp16(elems: usize) -> u64 {
     (elems as u64) * 2
+}
+
+/// F32 bytes for `elems` elements. Only `freqs` is F32 (AGENTS.md/CLAUDE.md
+/// B7); every other scratch buffer here is FP16.
+fn f32_bytes(elems: usize) -> u64 {
+    (elems as u64) * 4
 }
 
 /// Row tile for the MLP's `fc1 -> gelu -> fc2` (`crate::vision::block`'s
@@ -162,7 +170,7 @@ pub(crate) fn scratch_bytes(shape: &VisionShape, seq: usize, tile: usize) -> u64
     let merged = seq / shape.patches_per_token();
     let h1_rows = tile.min(seq);
     fp16(seq * shape.patch_dim)
-        + fp16(seq * (shape.head_dim / 2))
+        + f32_bytes(seq * (shape.head_dim / 2))
         + fp16(seq * h)
         // x, normed(+attn), q(+proj), k(+m1), v -- five physical allocations
         // (Part B2's buffer aliasing; see the module doc). `m1`'s own term is
@@ -186,7 +194,7 @@ impl VisionScratch {
         seq: usize,
         tile_rows: usize,
         rows: &[half::f16],
-        freqs: &[half::f16],
+        freqs: &[f32],
         pos: &[half::f16],
     ) -> Result<Self, RealForwardError> {
         if seq == 0 {

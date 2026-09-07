@@ -15,7 +15,7 @@ use crate::bytes::{f32_bytes, u32_bytes};
 use crate::context::{GpuError, MetalContext, PassEncoder};
 use crate::kv_quant_tables::KvQuantTables;
 
-use crate::attention_decode::chunks_for;
+use crate::attention_decode::{chunks_for, MAX_DECODE_ATTENTION_HEAD_DIM};
 
 const SOURCE: &str = include_str!("shaders/attention_tq.metal");
 const THREADS_PER_GROUP: u64 = 256;
@@ -79,6 +79,7 @@ pub fn encode_attention_decode_tq(
     sinks: Option<(&metal::Buffer, u64)>,
 ) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
+    assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
     assert!(kv_start < seq_len);
     assert_eq!(tables.full_head_dim as u32, head_dim);
 
@@ -164,10 +165,19 @@ pub fn encode_attention_decode_indexed_tq(
     tables: &KvQuantTables,
 ) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
+    assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
     assert_eq!(tables.full_head_dim as u32, head_dim);
+    assert!(
+        n_sel > 0,
+        "indexed TQ attention needs at least one selected position"
+    );
+    assert!(
+        positions.0.length() >= positions.1 + n_sel as u64 * 4,
+        "positions buffer too small for n_sel"
+    );
 
-    let num_chunks = chunks_for(n_sel.max(1));
-    let chunk_len = n_sel.max(1).div_ceil(num_chunks);
+    let num_chunks = chunks_for(n_sel);
+    let chunk_len = n_sel.div_ceil(num_chunks);
 
     let k_bits = tables.k.bits as u32;
     let v_bits = tables.v.bits as u32;

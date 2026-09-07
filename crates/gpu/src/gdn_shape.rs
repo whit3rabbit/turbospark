@@ -48,6 +48,12 @@ impl GdnShape {
                 self.value_head_dim
             ));
         }
+        if self.num_v_heads == 0 {
+            // AGENTS.md/CLAUDE.md S12: the `% num_k_heads` check below
+            // passes `0 % anything == 0`, so a zero `num_v_heads` slipped
+            // through this validator with no message naming it.
+            return bad("num_v_heads must be positive".to_string());
+        }
         if self.num_k_heads == 0 || self.num_v_heads % self.num_k_heads != 0 {
             return bad(format!(
                 "num_v_heads {} must be a multiple of num_k_heads {}",

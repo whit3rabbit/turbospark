@@ -20,7 +20,7 @@ use half::f16;
 
 use crate::attention_decode::{
     attention_constants_key, attention_function_constants, chunks_for, AttentionScratch,
-    SOURCE as ATTENTION_SOURCE,
+    MAX_DECODE_ATTENTION_HEAD_DIM, SOURCE as ATTENTION_SOURCE,
 };
 use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_bytes};
 use crate::context::{GpuError, MetalContext, PassEncoder};
@@ -59,6 +59,7 @@ pub fn encode_attention_decode_indexed(
     scale: f32,
 ) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
+    assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
     assert!(
         n_sel > 0,
         "indexed attention needs at least one selected position"
@@ -67,7 +68,7 @@ pub fn encode_attention_decode_indexed(
         positions.0.length() >= positions.1 + n_sel as u64 * 4,
         "positions buffer too small for n_sel"
     );
-    let min_kv_bytes = (n_sel * num_kv_heads * head_dim) as u64 * 2;
+    let min_kv_bytes = n_sel as u64 * num_kv_heads as u64 * head_dim as u64 * 2;
     assert!(k_buffer.length() >= min_kv_bytes, "K buffer too small");
     assert!(v_buffer.length() >= min_kv_bytes, "V buffer too small");
 

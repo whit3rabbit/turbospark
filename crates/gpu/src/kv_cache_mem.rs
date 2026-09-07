@@ -15,7 +15,7 @@ pub(crate) fn page_size_bytes() -> usize {
 }
 
 pub(crate) fn write_into(buffer: &metal::Buffer, offset: usize, bytes: &[u8]) {
-    assert!(offset + bytes.len() <= buffer.length() as usize);
+    assert!(offset.checked_add(bytes.len()).unwrap() <= buffer.length() as usize);
     // SAFETY: `buffer` is a live shared-storage `MTLBuffer`; the range
     // [offset, offset + bytes.len()) is inside its allocation (asserted
     // above). The caller sequences this against GPU reads the same way the

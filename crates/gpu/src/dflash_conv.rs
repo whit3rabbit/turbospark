@@ -59,6 +59,14 @@ pub fn encode_dflash_grouped_conv(
     side: u32,
     out_scale: f32,
 ) -> Result<(), GpuError> {
+    // AGENTS.md/CLAUDE.md S12: `hidden / DFLASH_GROUP_SIZE` truncates on a
+    // non-multiple, and the top channels would then read the next tap's
+    // columns -- a plausible, wrong drafter with no error anywhere.
+    if hidden % DFLASH_GROUP_SIZE != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "dflash conv hidden {hidden} must be a multiple of DFLASH_GROUP_SIZE ({DFLASH_GROUP_SIZE})"
+        )));
+    }
     let groups = hidden / DFLASH_GROUP_SIZE;
     let delta_row_stride = 2 * DFLASH_TAPS * groups;
     let delta_col_base = side * DFLASH_TAPS * groups;
@@ -69,7 +77,9 @@ pub fn encode_dflash_grouped_conv(
         &FunctionConstantValues::new(),
         b"",
     )?;
-    let grid = (count as u64).div_ceil(THREADS_PER_GROUP) * THREADS_PER_GROUP;
+    // AGENTS.md/CLAUDE.md S12: floored at 1, matching rope.rs's own
+    // convention, rather than dispatching a zero grid at count == 0.
+    let grid = (count as u64).div_ceil(THREADS_PER_GROUP).max(1) * THREADS_PER_GROUP;
     pass.encode_threads_3d(
         &pipeline,
         &[
@@ -118,7 +128,9 @@ pub fn encode_dflash_copy_rows(
         &FunctionConstantValues::new(),
         b"",
     )?;
-    let grid = (count as u64).div_ceil(THREADS_PER_GROUP) * THREADS_PER_GROUP;
+    // AGENTS.md/CLAUDE.md S12: floored at 1, matching rope.rs's own
+    // convention, rather than dispatching a zero grid at count == 0.
+    let grid = (count as u64).div_ceil(THREADS_PER_GROUP).max(1) * THREADS_PER_GROUP;
     let src_stride = hidden;
     pass.encode_threads_3d(
         &pipeline,

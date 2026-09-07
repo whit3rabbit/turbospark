@@ -12,7 +12,10 @@ const SOURCE: &str = include_str!("shaders/hyper.metal");
 const THREADS_PER_GROUP: u64 = 256;
 
 fn grid_for(count: u32) -> u64 {
-    (count as u64).div_ceil(THREADS_PER_GROUP) * THREADS_PER_GROUP
+    // AGENTS.md/CLAUDE.md S12: floored at 1, matching rope.rs's own
+    // convention -- a `count == 0` caller still dispatches one
+    // (harmless, bounds-checked-empty) threadgroup rather than zero.
+    (count as u64).div_ceil(THREADS_PER_GROUP).max(1) * THREADS_PER_GROUP
 }
 
 /// `mixed[h] = mean over c in [0, C) of w[c*H+h] * normed[c*H+h]`.

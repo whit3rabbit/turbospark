@@ -312,8 +312,21 @@ pub(crate) fn routed_layouts_from_layout(
 /// and its phase-2 down projection reads weight bytes with 4-byte loads, so
 /// `down`'s offset must be 4-byte aligned. A GGUF blob has only the three
 /// weight runs -- its scales live inside the blocks -- so the six companion
-/// offsets resolve to zero and the GGUF kernels never read them. The GGUF
-/// kernels read bytes one at a time, so no alignment applies to them.
+/// offsets resolve to zero for every type except MXFP4 and the GGUF kernels
+/// never read them there. The GGUF kernels read the block bytes one at a
+/// time, so no alignment applies to those.
+///
+/// **MXFP4 is the exception, and it is not covered by either clause above.**
+/// `gpt-oss` writes real `gate_biases`/`up_biases`/`down_biases` sub-tensors
+/// beside its three MXFP4 weight runs (the family carries per-expert
+/// biases), and `moe_gguf.metal` reads each one through a `device const
+/// float*` cast (Gotcha 29's per-type rule: MXFP4 rows are ODD-length, byte
+/// for byte, so nothing about the blob layout guarantees 4-byte alignment
+/// the way the affine writer's own layout does). The writer packs
+/// sub-tensors back to back with no padding, so a bias offset is 4-byte
+/// aligned only when the preceding tensor's own byte count happens to be a
+/// multiple of 4 -- true on `gpt-oss-20b` (2,880 rows) and not guaranteed on
+/// a differently-shaped MXFP4 checkpoint.
 pub(crate) fn moe_offsets_from_layout(
     layout: &model_io::PackedExpertsLayout,
 ) -> Result<Vec<gpu::MoeExpertOffsets>, RealForwardError> {
@@ -355,7 +368,123 @@ pub(crate) fn moe_offsets_from_layout(
                     l.layer, offsets.down_w
                 )));
             }
+            if !planar {
+                for (role, offset) in [
+                    ("gate", offsets.gate_b),
+                    ("up", offsets.up_b),
+                    ("down", offsets.down_b),
+                ] {
+                    if offset != 0 && offset % 4 != 0 {
+                        return Err(RealForwardError::Unsupported(format!(
+                            "layer {} {role} bias offset {offset} is not 4-byte aligned \
+                             (MXFP4's `device const float*` bias read requires it)",
+                            l.layer
+                        )));
+                    }
+                }
+            }
             Ok(offsets)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::moe_offsets_from_layout;
+    use model_io::{ExpertEntry, LayerLayout, PackedExpertsLayout, SubTensorEntry};
+    use std::collections::BTreeMap;
+
+    fn sub(offset: u64) -> SubTensorEntry {
+        SubTensorEntry {
+            offset,
+            size: 4,
+            dtype: "mxfp4".to_string(),
+        }
+    }
+
+    /// A GGUF-shaped (non-planar) layer: three weight runs plus, as MXFP4
+    /// does, three bias runs. `gate_biases` sits at offset 2 mod 4, which
+    /// AGENTS.md/CLAUDE.md B2 says the writer can produce for any MXFP4
+    /// checkpoint whose preceding tensor's byte count is not itself a
+    /// multiple of 4 (real `gpt-oss-20b` happens to be 4-aligned by luck of
+    /// its row count; this fixture is deliberately not).
+    fn misaligned_mxfp4_layout() -> PackedExpertsLayout {
+        let mut subs = BTreeMap::new();
+        subs.insert("gate".to_string(), sub(0));
+        subs.insert("up".to_string(), sub(100));
+        subs.insert("down".to_string(), sub(200));
+        subs.insert("gate_biases".to_string(), sub(302));
+        subs.insert("up_biases".to_string(), sub(320));
+        subs.insert("down_biases".to_string(), sub(340));
+        PackedExpertsLayout {
+            expert_stride: 400,
+            num_layers: 1,
+            experts_per_layer: 1,
+            layers: vec![LayerLayout {
+                layer: 0,
+                file: "layer_00.bin".to_string(),
+                expert_stride: 400,
+                experts: vec![ExpertEntry {
+                    expert: 0,
+                    offset: 0,
+                    size: 400,
+                    sub_tensors: subs,
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn a_misaligned_mxfp4_bias_offset_is_refused() {
+        let layout = misaligned_mxfp4_layout();
+        let err = moe_offsets_from_layout(&layout).expect_err("2-mod-4 bias offset must refuse");
+        let msg = err.to_string();
+        assert!(msg.contains("gate"), "{msg}");
+        assert!(msg.contains("4-byte aligned"), "{msg}");
+    }
+
+    #[test]
+    fn a_4_byte_aligned_mxfp4_bias_offset_is_accepted() {
+        let mut layout = misaligned_mxfp4_layout();
+        for name in ["gate_biases", "up_biases", "down_biases"] {
+            layout.layers[0].experts[0]
+                .sub_tensors
+                .get_mut(name)
+                .unwrap()
+                .offset &= !3;
+        }
+        let offsets = moe_offsets_from_layout(&layout).expect("4-byte-aligned offsets are fine");
+        assert_eq!(offsets.len(), 1);
+    }
+
+    /// A GGUF blob with NO bias planes at all (every GGUF type before MXFP4)
+    /// must stay accepted: the zero-offset companion sentinel is not itself
+    /// a misalignment.
+    #[test]
+    fn a_gguf_layer_with_no_bias_planes_is_unaffected() {
+        let mut subs = BTreeMap::new();
+        subs.insert("gate".to_string(), sub(0));
+        subs.insert("up".to_string(), sub(100));
+        subs.insert("down".to_string(), sub(200));
+        let layout = PackedExpertsLayout {
+            expert_stride: 300,
+            num_layers: 1,
+            experts_per_layer: 1,
+            layers: vec![LayerLayout {
+                layer: 0,
+                file: "layer_00.bin".to_string(),
+                expert_stride: 300,
+                experts: vec![ExpertEntry {
+                    expert: 0,
+                    offset: 0,
+                    size: 300,
+                    sub_tensors: subs,
+                }],
+            }],
+        };
+        let offsets = moe_offsets_from_layout(&layout).expect("no bias planes is fine");
+        assert_eq!(offsets[0].gate_b, 0);
+        assert_eq!(offsets[0].up_b, 0);
+        assert_eq!(offsets[0].down_b, 0);
+    }
 }

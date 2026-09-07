@@ -225,7 +225,7 @@ pub struct CommittedPass {
 // The allow is for objc's `sel_impl!`, whose expansion carries a
 // `cfg(feature = "cargo-clippy")` this crate does not declare.
 #[allow(unexpected_cfgs)]
-fn warn_on_command_buffer_error(command_buffer: &metal::CommandBufferRef) {
+pub(crate) fn warn_on_command_buffer_error(command_buffer: &metal::CommandBufferRef) {
     use metal::objc::{msg_send, sel, sel_impl};
     let status = command_buffer.status();
     if status == metal::MTLCommandBufferStatus::Completed {

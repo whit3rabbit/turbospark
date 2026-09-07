@@ -124,8 +124,20 @@ pub fn encode_rope_neox_subdim(
     rotary_dim: u32,
     theta: f32,
 ) -> Result<(), GpuError> {
-    assert!(rotary_dim % 2 == 0, "rotary_dim must be even");
-    assert!(rotary_dim <= head_dim, "rotary_dim cannot exceed head_dim");
+    // AGENTS.md/CLAUDE.md S8: `GpuError::PipelineCreate` for a shape
+    // violation is this crate's existing spelling (`vision.rs`,
+    // `gdn_shape.rs::validate`), not a mis-selected variant -- a bad
+    // checkpoint should refuse to dispatch, not abort the process.
+    if rotary_dim % 2 != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_neox_subdim rotary_dim {rotary_dim} must be even"
+        )));
+    }
+    if rotary_dim > head_dim {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_neox_subdim rotary_dim {rotary_dim} cannot exceed head_dim {head_dim}"
+        )));
+    }
     let pipeline = context.pipeline(
         SOURCE,
         "rope_neox_subdim",
@@ -175,8 +187,17 @@ pub fn encode_rope_mrope_interleaved(
     section: (u32, u32, u32),
     theta: f32,
 ) -> Result<(), GpuError> {
-    assert!(rotary_dim % 2 == 0, "rotary_dim must be even");
-    assert!(rotary_dim <= head_dim, "rotary_dim cannot exceed head_dim");
+    // AGENTS.md/CLAUDE.md S8: see `encode_rope_neox_subdim`'s identical pair.
+    if rotary_dim % 2 != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_mrope_interleaved rotary_dim {rotary_dim} must be even"
+        )));
+    }
+    if rotary_dim > head_dim {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_mrope_interleaved rotary_dim {rotary_dim} cannot exceed head_dim {head_dim}"
+        )));
+    }
     let pipeline = context.pipeline(
         SOURCE,
         "rope_mrope_interleaved",

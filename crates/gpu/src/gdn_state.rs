@@ -30,15 +30,31 @@ pub struct GdnStateManager {
 }
 
 impl GdnStateManager {
-    /// Allocates and initializes recurrent state and conv tail buffers for all linear layers.
+    /// Allocates and initializes recurrent state and conv tail buffers for
+    /// all linear layers, at `dilation` 1 -- the width every production
+    /// caller of THIS manager uses today (Qwen 3.6's and `qwen4_exp`'s own
+    /// GDN mask-2 layers; `qwen4_exp`'s dilated PLE conv binds its own
+    /// separately-sized tail rather than going through here).
     pub fn new(device: &Device, config: &ArchConfig) -> Self {
+        Self::new_with_dilation(device, config, 1)
+    }
+
+    /// [`Self::new`] at an explicit `dilation` (AGENTS.md/CLAUDE.md S9):
+    /// `encode_gdn_conv_decode`'s own contract is a `(taps - 1) * dilation`
+    /// row tail, which this manager's sizing had never carried past 1 --
+    /// latent rather than reachable today, since the one dilated caller
+    /// (`families/qwen4/ple.rs`) manages its own tail buffer instead of
+    /// this manager's.
+    pub fn new_with_dilation(device: &Device, config: &ArchConfig, dilation: usize) -> Self {
         let la = &config.linear_attention;
         let state_bytes = la.num_v_heads as usize
             * la.value_head_dim as usize
             * la.key_head_dim as usize
             * FP32_SIZE;
-        let conv_tail_bytes =
-            (la.conv_kernel_size.max(1) - 1) as usize * la.qkv_dim() as usize * FP16_SIZE;
+        let conv_tail_bytes = (la.conv_kernel_size.max(1) - 1) as usize
+            * dilation.max(1)
+            * la.qkv_dim() as usize
+            * FP16_SIZE;
 
         let num_layers = config.num_layers as usize;
         let mut states = Vec::with_capacity(num_layers);

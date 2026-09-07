@@ -442,3 +442,27 @@ fn the_real_qwen4_exp_shape_matches_the_cpu_reference() {
     let gpu = to_f32(&run_indexed_gpu(&mut context, &s, &q, &k, &v, &positions));
     assert_close(&gpu, &cpu, 4e-3, "real shape");
 }
+
+/// AGENTS.md/CLAUDE.md B3: same shader-array ceiling as
+/// `attention_decode_parity.rs`'s guard, on the indexed sibling
+/// (`attention_indexed.metal`'s `kIdxAttnMaxHeadDim`).
+#[test]
+#[should_panic]
+fn a_head_dim_past_the_shader_ceiling_is_refused() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let head_dim = 513usize;
+    let q = vec![f16::from_f32(0.1); head_dim];
+    let k = vec![f16::from_f32(0.05); head_dim];
+    let v = vec![f16::from_f32(1.0); head_dim];
+    let _ = attention_decode_indexed(
+        &mut context,
+        &q,
+        &k,
+        &v,
+        &[0u32],
+        head_dim as u32,
+        1,
+        1,
+        1.0 / (head_dim as f32).sqrt(),
+    );
+}

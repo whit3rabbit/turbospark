@@ -481,6 +481,7 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
             (&y_buf, 0),
             d_dim as u32,
             f_dim as u32,
+            top_k as u32,
             use_silu,
         )
         .expect("phase2");
@@ -521,6 +522,17 @@ fn all_eight_slots_participate() {
     run_case(Q8_0, false, GGUF_FIXED_SLOTS);
 }
 
+/// AGENTS.md/CLAUDE.md B1: `top_k` past [`GGUF_FIXED_SLOTS`] must be
+/// REFUSED, never silently truncated. Before the guard, phase 1 would
+/// happily dispatch nine slots' worth of rows while phase 2 kept reducing
+/// only the first eight -- fluent, finite, wrong. This asserts the refusal
+/// fires rather than the truncation.
+#[test]
+#[should_panic]
+fn nine_slots_panics_rather_than_silently_truncating() {
+    run_case(Q8_0, false, GGUF_FIXED_SLOTS + 1);
+}
+
 #[test]
 fn the_q4_k_decode_pair_matches_the_cpu_reference() {
     run_case(Q4K, false, 2);
@@ -548,6 +560,15 @@ fn the_iq3_xxs_over_iq4_nl_expert_matches_the_cpu_reference() {
 #[test]
 fn all_eight_iq3_xxs_slots_participate() {
     run_case(IQ3_MIX, false, GGUF_FIXED_SLOTS);
+}
+
+/// See `nine_slots_panics_rather_than_silently_truncating`: the IQ pair's
+/// own phase 1 (`encode_moe_phase1_iq3_xxs`) is a separate dispatch with its
+/// own bound check, so it needs its own guard rather than inheriting Q8_0's.
+#[test]
+#[should_panic]
+fn nine_iq_slots_panics_rather_than_silently_truncating() {
+    run_case(IQ3_MIX, false, GGUF_FIXED_SLOTS + 1);
 }
 
 /// The candidate's layer 29: IQ4_XS gate/up over a Q8_0 down. Also the case
@@ -623,6 +644,17 @@ fn the_silu_activation_constant_reaches_the_mxfp4_kernels() {
 #[test]
 fn all_eight_mxfp4_slots_participate() {
     run_case(MXFP4, false, GGUF_FIXED_SLOTS);
+}
+
+/// See `nine_slots_panics_rather_than_silently_truncating`. MXFP4's phase 2
+/// already masks compute for `sg_idx >= top_k` within its fixed 8
+/// simdgroups (`crates/gpu/CLAUDE.md` Gotcha 3), which makes `top_k` in
+/// `1..=8` correct -- but a `top_k` past 8 has no ninth simdgroup to mask
+/// TO, so it must still be refused rather than silently dropping slots 8+.
+#[test]
+#[should_panic]
+fn nine_mxfp4_slots_panics_rather_than_silently_truncating() {
+    run_case(MXFP4, false, GGUF_FIXED_SLOTS + 1);
 }
 
 /// The two constants the MSL copy of the format restates, held against the

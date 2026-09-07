@@ -111,6 +111,27 @@ fn refuses_an_architecture_with_no_indexer() {
     let _ = QsaIndexerCacheManager::new(context.device(), &arch, 32);
 }
 
+/// AGENTS.md/CLAUDE.md S11: `pooled_blocks` is sized at exactly one row
+/// per block; a checkpoint declaring `index_kv_heads != 1` must be refused
+/// at construction, not silently normalized to 1 by a `.max(1)`.
+#[test]
+#[should_panic(expected = "index_kv_heads == 1")]
+fn refuses_an_architecture_with_index_kv_heads_above_one() {
+    let context = MetalContext::new().unwrap();
+    let mut arch = qwen4_style_arch();
+    arch.compressed_attention.index_kv_heads = 2;
+    let _ = QsaIndexerCacheManager::new(context.device(), &arch, 32);
+}
+
+#[test]
+#[should_panic(expected = "index_kv_heads == 1")]
+fn refuses_an_architecture_with_index_kv_heads_zero() {
+    let context = MetalContext::new().unwrap();
+    let mut arch = qwen4_style_arch();
+    arch.compressed_attention.index_kv_heads = 0;
+    let _ = QsaIndexerCacheManager::new(context.device(), &arch, 32);
+}
+
 #[test]
 #[should_panic(expected = "not a QSA layer")]
 fn raw_keys_view_panics_for_a_non_qsa_layer() {

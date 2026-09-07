@@ -93,15 +93,33 @@ axis cannot reach a frozen memory-oracle or quality-gate row by accident
 real-forward test suite gained a `real_forward_<family>_kv_quant.rs`
 fixture-level suite.
 
-**What is still owed.** `crates/bench/tests/kv_quant_probe.rs` is the
-real-install measurement probe (peak footprint delta and perplexity delta
-per width, against `TURBOSPARK_KV_QUANT_INSTALL_DIR`) -- written and
-compiling, not yet run against real hardware. The standard real-model
-smoke (`AGENTS.md`'s greedy-then-sampled pair, with `--kv-bits` set) is
-also owed on an actual install; nothing in this repository's sandboxed
-development environment can run either. Until both have run once per
-family, treat every width above `off` as implemented-and-untested rather
-than verified.
+**RUN 2026-09-07** on the real `~/models/qwen38-27b.gturbo` install (M4
+Max, AC), `TURBOSPARK_KV_QUANT_INSTALL_DIR=~/models/qwen38-27b.gturbo
+cargo test -p turbospark-bench --test kv_quant_probe --release --
+--ignored --nocapture`:
+
+| width | peak MiB | delta         | ref ppl | ppl delta |
+|-------|----------|---------------|---------|-----------|
+| off   | 631.5    | (baseline)    | 4.9432  | (baseline)|
+| 2     | 523.1    | -108.4 (-17.2%) | 4.9452 | +0.0020 |
+| 3     | 511.3    | -120.1 (-19.0%) | 4.9854 | +0.0422 |
+| 3.5   | 448.2    | -183.3 (-29.0%) | 4.9675 | +0.0243 |
+| 4     | 624.8    | -6.7 (-1.1%)    | 4.9617 | +0.0185 |
+
+All five widths finite, perplexity delta small and monotone-ish across
+widths. Read the MiB delta per the probe's own note: this is measured at
+the protocol's own context window on a family where KV dominates the
+counted footprint (Gotcha 40), so it is not a footprint ceiling and does
+not transfer to a family where KV is a smaller share. `--kv-bits 4`'s
+-1.1% is real but small at this window; it would read larger at a longer
+context, where KV is a bigger fraction of `phys_footprint`.
+
+**RUN 2026-09-07**, same session: `AGENTS.md`'s greedy-then-sampled pair,
+`--kv-bits 4`, both installs. All four runs reached `stop=MaxTokens` with
+no error, and the text stayed coherent through 400 new tokens on both
+models (gemma4 42.5/42.3 tok/s greedy/sampled, qwen38-27b 18.2/18.4).
+`--kv-bits off` byte-identical to `HEAD~1` (a two-binary diff) is still
+owed and not run this session.
 
 ## The original assessment (2026-08-15)
 

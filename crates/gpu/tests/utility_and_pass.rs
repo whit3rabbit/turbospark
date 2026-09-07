@@ -791,3 +791,100 @@ fn multi_row_edits_each_row_and_nothing_between_them() {
         );
     }
 }
+
+/// AGENTS.md/CLAUDE.md doc-rot: the case above uses three IDENTICAL rows
+/// (deliberately, to pin that identical rows report identical
+/// coefficients), which means a row-reduction bug reading across into a
+/// NEIGHBOURING row is invisible there -- the neighbour holds the same
+/// data either way. This scales each row differently so a cross-row read
+/// reads a wrong number rather than a coincidentally-plausible one, and
+/// checks each row against ITS OWN scaled reference.
+#[test]
+fn distinctly_scaled_rows_do_not_read_into_each_other() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let rows = 3usize;
+    let stride = STEER_D + 7;
+    let d = steer_direction();
+    let row = steer_row();
+    // 1x, 2x, 3x: no two rows share a scale, so a lane reading the wrong
+    // row's data produces a value that matches neither its own row nor an
+    // adjacent one by coincidence.
+    let scales = [1.0f32, 2.0f32, 3.0f32];
+
+    let sentinel = f16::from_f32(-9.0);
+    let mut flat = Vec::with_capacity(rows * stride);
+    for &scale in &scales {
+        for &v in &row {
+            flat.push(f16::from_f32(v.to_f32() * scale));
+        }
+        flat.extend(std::iter::repeat_n(sentinel, stride - STEER_D));
+    }
+
+    let x_buf = context.new_buffer_with_data(&to_le(&flat));
+    let d_buf = context.new_buffer_with_data(&to_le(&d));
+    let coeff_buf = context.new_output_buffer((rows * 4) as u64);
+
+    let params = turbospark_gpu::SteerParams {
+        d_len: STEER_D as u32,
+        rows: rows as u32,
+        row_stride: stride as u32,
+        mode: foundation::SteeringMode::Ablate,
+        alpha: 0.6,
+        inv_norm: turbospark_compute::inv_norm(&as_f32(&d)),
+        target: 0.0,
+        gate_threshold: 0.0,
+    };
+
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_steer_direction(
+        &mut context,
+        &pass,
+        (&x_buf, 0),
+        (&d_buf, 0),
+        (&coeff_buf, 0),
+        &params,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+
+    let got = read_halfs(&x_buf, rows * stride);
+    for (r, &scale) in scales.iter().enumerate() {
+        let scaled_row: Vec<f16> = row
+            .iter()
+            .map(|v| f16::from_f32(v.to_f32() * scale))
+            .collect();
+        let want = steer_reference_on(&scaled_row, foundation::SteeringMode::Ablate, 0.6, 0.0, 0.0);
+        let base = r * stride;
+        assert_steer_close(&got[base..base + STEER_D], &want, &format!("row {r}"));
+        for g in STEER_D..stride {
+            assert_eq!(
+                got[base + g].to_bits(),
+                sentinel.to_bits(),
+                "row {r} spilled into the gap at {g}"
+            );
+        }
+    }
+
+    // Distinctly-scaled rows must report DISTINCT coefficients (each row
+    // carries a different amount of the direction), the mirror of the
+    // identical-rows case's own assertion.
+    let coeffs = turbospark_gpu::read_f32_buffer(&coeff_buf, rows);
+    for r in 1..rows {
+        assert_ne!(
+            coeffs[r], coeffs[0],
+            "row {r} reported the same coefficient as row 0 despite a different scale"
+        );
+    }
+}
+
+/// AGENTS.md/CLAUDE.md T5 / crates/gpu/CLAUDE.md Gotcha 6: `PassEncoder`
+/// ends encoding on drop, and that is load-bearing rather than tidy --
+/// dropping an encoder Metal never received `endEncoding` on aborts the
+/// process from `-[_MTLCommandEncoder dealloc]`. This pins that dropping
+/// an uncommitted pass does not abort.
+#[test]
+fn dropping_an_uncommitted_pass_does_not_abort() {
+    let context = MetalContext::new().expect("Metal device");
+    let pass = context.begin_pass();
+    drop(pass);
+}

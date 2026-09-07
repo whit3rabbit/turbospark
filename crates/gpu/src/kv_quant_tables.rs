@@ -23,6 +23,14 @@ pub struct TqSideTables {
     pub midpoints: metal::Buffer,
     pub bits: u8,
     pub levels: u32,
+    /// The `head_dim` these tables were built for (AGENTS.md/CLAUDE.md B3):
+    /// `kv_quantize.rs::encode_kv_quantize_tq` takes a `TqSideTables` alone,
+    /// not the parent `KvQuantTables`, so it needs its own copy of the
+    /// dimension to assert against rather than trusting the caller's
+    /// `head_dim` argument agrees -- the same check
+    /// `encode_attention_decode_tq` already makes against
+    /// `KvQuantTables::full_head_dim` on its side.
+    pub dim: usize,
 }
 
 impl TqSideTables {
@@ -48,6 +56,7 @@ impl TqSideTables {
             ),
             bits,
             levels: 1u32 << bits,
+            dim,
         }
     }
 }

@@ -154,23 +154,39 @@ pub fn encode_gdn_in_proj(
     a_out: (&metal::Buffer, u64),
     b_out: (&metal::Buffer, u64),
 ) -> Result<(), GpuError> {
+    // AGENTS.md/CLAUDE.md S8: `GpuError::PipelineCreate` for a shape
+    // violation is this crate's existing spelling (`vision.rs`,
+    // `gdn_shape.rs::validate`) -- a bad checkpoint should refuse to
+    // dispatch, not abort the process.
     let n = qkv.cols;
-    assert_eq!(n % 64, 0, "hidden size must be a multiple of 64");
-    for m in [z, a, b] {
-        assert_eq!(m.cols, n, "all four input projections share one x");
+    if n % 64 != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "gdn_in_proj hidden size {n} must be a multiple of 64"
+        )));
     }
-    assert_eq!(
-        a.rows, b.rows,
-        "a and b both project one row per value head"
-    );
+    for m in [z, a, b] {
+        if m.cols != n {
+            return Err(GpuError::PipelineCreate(format!(
+                "gdn_in_proj: all four input projections must share one x, got {} against {n}",
+                m.cols
+            )));
+        }
+    }
+    if a.rows != b.rows {
+        return Err(GpuError::PipelineCreate(format!(
+            "gdn_in_proj: a and b both project one row per value head, got {} and {}",
+            a.rows, b.rows
+        )));
+    }
     // The row body reads packed weights through a `ushort*`: the repacker
     // guarantees 2-byte sub-tensor alignment but not 4-byte.
     for m in [qkv, z, a, b] {
-        assert_eq!(
-            m.weights_offset % 2,
-            0,
-            "gdn_in_proj_gemv_simd needs 2-aligned weight offsets"
-        );
+        if m.weights_offset % 2 != 0 {
+            return Err(GpuError::PipelineCreate(format!(
+                "gdn_in_proj_gemv_simd needs 2-aligned weight offsets, got {}",
+                m.weights_offset
+            )));
+        }
     }
 
     let (qkv_rows, z_rows, ab_rows, n32) =

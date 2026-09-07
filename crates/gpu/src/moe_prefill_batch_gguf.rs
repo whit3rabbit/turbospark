@@ -125,7 +125,7 @@ pub fn encode_moe_prefill_phase1_mxfp4(
 ) -> Result<(), GpuError> {
     assert_eq!(d_dim as usize % MXFP4_BLOCK_ELEMS, 0);
     assert_eq!(f_dim as usize % MXFP4_BLOCK_ELEMS, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= crate::moe_gguf::PHASE2_FIXED_SLOTS);
     let pipeline = context.pipeline(
         SOURCE,
         PHASE1_MXFP4,
@@ -185,7 +185,7 @@ pub fn encode_moe_prefill_phase2_fused_mxfp4(
     has_bias: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim as usize % MXFP4_BLOCK_ELEMS, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= crate::moe_gguf::PHASE2_FIXED_SLOTS);
     let pipeline = context.pipeline(
         SOURCE,
         PHASE2_MXFP4,

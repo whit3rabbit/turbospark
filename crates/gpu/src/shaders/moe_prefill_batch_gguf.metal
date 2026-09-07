@@ -65,6 +65,10 @@ kernel void moe_prefill_phase1_routes_mxfp4(
     const uint f = rowg % FF;
     const MoePrefillRoute r = routes[route_index];
 
+    // AGENTS.md/CLAUDE.md S3: `r.slot` is a device-supplied index into a
+    // fixed-size argument-buffer array; an out-of-range slot from a
+    // corrupted or mis-encoded route reads past `routed.blob`'s end.
+    if (r.slot >= kMaxPrefillExpertBindings) return;
     device const uint8_t* base = routed.blob[r.slot];
     const ExpertOffsets re = routed_offsets;
     const uint row_bytes = mxfp4_row_bytes(DD);
@@ -128,21 +132,33 @@ kernel void moe_prefill_phase2_fused_mxfp4(
     if (sg_idx < KK) {
         const uint pair = t * KK + sg_idx;
         const MoePrefillRoute r = routes[pair];
-        device const uint8_t* base = routed.blob[r.slot];
-        const ExpertOffsets re = routed_offsets;
-        float value = dequant_mxfp4_row_simd(
-            base + re.down_W_off + d * mxfp4_row_bytes(FF),
-            acts + pair * FF, FF, lane);
-        // PER SLOT AND INSIDE THE ROUTING WEIGHT: it is that expert's own
-        // bias on that expert's own output, so llama.cpp adds it to the
-        // expert result BEFORE the weighted sum. Hoisting it out of the
-        // reduce would apply one expert's bias to every token and scale it
-        // by the wrong weight.
-        if (has_bias != 0u && lane == 0) {
-            device const float* db = (device const float*)(base + re.down_b_off);
-            value += db[d];
+        // AGENTS.md/CLAUDE.md S3: `r.slot` is a device-supplied index into a
+        // fixed-size argument-buffer array. `sg_idx` (hence `r.slot`) can
+        // differ across simdgroups of this ONE threadgroup, so an early
+        // `return` here would let some threads skip the unconditional
+        // `threadgroup_barrier` below while others reach it -- Metal's
+        // divergent-barrier-participation UB. Mask the compute instead,
+        // falling back to the same zero contribution the padding arm below
+        // already uses.
+        if (r.slot < kMaxPrefillExpertBindings) {
+            device const uint8_t* base = routed.blob[r.slot];
+            const ExpertOffsets re = routed_offsets;
+            float value = dequant_mxfp4_row_simd(
+                base + re.down_W_off + d * mxfp4_row_bytes(FF),
+                acts + pair * FF, FF, lane);
+            // PER SLOT AND INSIDE THE ROUTING WEIGHT: it is that expert's own
+            // bias on that expert's own output, so llama.cpp adds it to the
+            // expert result BEFORE the weighted sum. Hoisting it out of the
+            // reduce would apply one expert's bias to every token and scale
+            // it by the wrong weight.
+            if (has_bias != 0u && lane == 0) {
+                device const float* db = (device const float*)(base + re.down_b_off);
+                value += db[d];
+            }
+            if (lane == 0) partial[sg_idx] = float(routing_w[pair]) * value;
+        } else if (lane == 0) {
+            partial[sg_idx] = 0.0f;
         }
-        if (lane == 0) partial[sg_idx] = float(routing_w[pair]) * value;
     } else if (lane == 0) {
         // Padding mirrors the decode kernel's zero-padded routing weights
         // past top_k: +0.0f added in the same rank positions. `gpt-oss` is

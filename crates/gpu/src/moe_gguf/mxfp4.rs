@@ -95,7 +95,7 @@ pub fn encode_moe_phase1_mxfp4(
     act: Mxfp4Activation,
 ) -> Result<(), GpuError> {
     assert_eq!(d_dim as usize % MXFP4_BLOCK_ELEMS, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= super::PHASE2_FIXED_SLOTS);
     let pipeline = context.pipeline(
         SOURCE,
         "moe_phase1_gate_up_act_mxfp4",
@@ -183,7 +183,7 @@ pub fn encode_moe_phase2_mxfp4(
     has_bias: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim as usize % MXFP4_BLOCK_ELEMS, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= super::PHASE2_FIXED_SLOTS);
     let pipeline = context.pipeline(
         SOURCE,
         "moe_phase2_down_reduce_k8_mxfp4",

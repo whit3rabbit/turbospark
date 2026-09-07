@@ -122,6 +122,7 @@ mod vision;
 #[cfg(target_os = "macos")]
 pub use attention_decode::{
     attention_decode, attention_decode_buffers, encode_attention_decode, AttentionScratch,
+    MAX_DECODE_ATTENTION_HEAD_DIM,
 };
 #[cfg(target_os = "macos")]
 pub use attention_indexed::{attention_decode_indexed, encode_attention_decode_indexed};
@@ -234,6 +235,7 @@ pub use moe_gguf::{
     encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl,
     encode_moe_phase2_mxfp4, encode_moe_phase2_q4_k, encode_moe_phase2_q6_k,
     encode_moe_phase2_q8_0, mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
+    PHASE2_FIXED_SLOTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{

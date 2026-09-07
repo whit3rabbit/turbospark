@@ -58,6 +58,27 @@ fn classifies_layer_kinds_from_the_mask() {
     assert_eq!(cache.layer_kind(1), LayerKind::Full);
 }
 
+/// AGENTS.md/CLAUDE.md S1: a model with ONE mask-3/4 (compressed) layer
+/// used to give EVERY layer a placeholder buffer, including a mask-0/1
+/// full-attention layer sitting beside it -- which then read
+/// `LayerKind::Compressed` and had no real per-token KV storage at all.
+/// This pins that a mixed mask keeps the full layer's real cache.
+#[test]
+fn a_mixed_full_and_compressed_mask_keeps_the_full_layer_real() {
+    let context = MetalContext::new().unwrap();
+    let arch = toy_arch(vec![1, 3]); // full, compressed
+    let cache = KvCacheManager::new(context.device(), &arch, 32, false, None, 8, None).unwrap();
+    assert_eq!(cache.layer_kind(0), LayerKind::Full);
+    assert_eq!(cache.layer_kind(1), LayerKind::Compressed);
+    assert_eq!(cache.capacity(0), 32);
+    assert_eq!(cache.capacity(1), 0);
+    // Before the fix, layer 0 (mask 1, full) was ALSO misclassified as
+    // `Compressed` whenever any other layer was, and `k_slot` panics with
+    // "layer kind has no KV slots" on a `Compressed` layer -- exactly the
+    // panic a real per-token write to layer 0 must not hit.
+    let _ = cache.k_slot(0, 0);
+}
+
 #[test]
 fn stride_matches_kv_heads_times_head_dim_times_two() {
     let context = MetalContext::new().unwrap();

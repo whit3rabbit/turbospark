@@ -66,6 +66,10 @@ kernel void moe_prefill_phase1_routes_int4(
     const uint f = rowg % FF;
     const MoePrefillRoute r = routes[route_index];
 
+    // AGENTS.md/CLAUDE.md S3: `r.slot` is a device-supplied index into a
+    // fixed-size argument-buffer array; an out-of-range slot from a
+    // corrupted or mis-encoded route reads past `routed.blob`'s end.
+    if (r.slot >= kMaxPrefillExpertBindings) return;
     device const uint8_t* base = routed.blob[r.slot];
     const ExpertOffsets re = routed_offsets;
     const float2 gu = moe_int4_gate_up_rows_simd_dev_vec_u16load(
@@ -120,14 +124,27 @@ kernel void moe_prefill_phase2_fused_int4(
     if (sg_idx < KK) {
         const uint pair = t * KK + sg_idx;
         const MoePrefillRoute r = routes[pair];
-        device const uint8_t* base = routed.blob[r.slot];
-        const ExpertOffsets re = routed_offsets;
-        const float value = moe_int4_gemv_row_simd_dev_vec(
-            base + re.down_W_off,
-            (device const bfloat*)(base + re.down_s_off),
-            (device const bfloat*)(base + re.down_b_off),
-            acts + pair * FF, d, FF, lane);
-        if (lane == 0) partial[sg_idx] = float(routing_w[pair]) * value;
+        // AGENTS.md/CLAUDE.md S3: `r.slot` is a device-supplied index into a
+        // fixed-size argument-buffer array. `sg_idx` (hence `r.slot`) can
+        // differ across simdgroups of this ONE threadgroup, so an early
+        // `return` here would let some threads skip the unconditional
+        // `threadgroup_barrier` below while others reach it -- Metal's
+        // divergent-barrier-participation UB, the exact hazard
+        // `moe_phase2_down_reduce_k8_mxfp4`'s masked-compute comment
+        // documents avoiding. Mask the compute instead, falling back to
+        // the same zero contribution the padding arm below already uses.
+        if (r.slot < kMaxPrefillExpertBindings) {
+            device const uint8_t* base = routed.blob[r.slot];
+            const ExpertOffsets re = routed_offsets;
+            const float value = moe_int4_gemv_row_simd_dev_vec(
+                base + re.down_W_off,
+                (device const bfloat*)(base + re.down_s_off),
+                (device const bfloat*)(base + re.down_b_off),
+                acts + pair * FF, d, FF, lane);
+            if (lane == 0) partial[sg_idx] = float(routing_w[pair]) * value;
+        } else if (lane == 0) {
+            partial[sg_idx] = 0.0f;
+        }
     } else if (lane == 0) {
         // Padding mirrors the decode kernel's zero-padded routing weights
         // past top_k: +0.0f added in the same rank positions.

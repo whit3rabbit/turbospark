@@ -104,6 +104,19 @@ fn rejects_architectures_without_compressed_attention_layers() {
     let _ = Dsv4StateManager::new(context.device(), &arch, 64);
 }
 
+/// AGENTS.md/CLAUDE.md S10: `window_slot` computes `position %
+/// ring_capacity`; a zero `sliding_window` must be refused at construction
+/// (loud, attributable) rather than panicking lazily on the first decode
+/// step's modulo-by-zero.
+#[test]
+#[should_panic(expected = "nonzero sliding_window")]
+fn rejects_a_zero_sliding_window() {
+    let context = MetalContext::new().unwrap();
+    let mut arch = toy_dsv4_arch();
+    arch.sliding_window = 0;
+    let _ = Dsv4StateManager::new(context.device(), &arch, 64);
+}
+
 #[test]
 fn window_ring_position_math() {
     let context = MetalContext::new().unwrap();

@@ -234,8 +234,29 @@ rows. Setup is in the test's own header. Measured 2026-08-28:
 | block 26 | 0.99999383 |
 | merger | **0.99999334** |
 
-**That merger figure is AT the reference's own FP16-vs-FP32 floor of
-0.999993** for this tower, not above it. There is no gap left to attribute.
+That merger figure was AT the reference's own FP16-vs-FP32 floor of
+0.999993 for this tower, not above it -- with no gap left to attribute, on
+the assumption that everything upstream of the merger was already exact.
+
+**RE-MEASURED 2026-09-07 after AGENTS.md/CLAUDE.md B7** (the tower's RoPE
+angle table stopped being narrowed to FP16 before the GPU dispatch -- the
+angle at pair 0 equals the raw patch coordinate and this checkpoint's real
+80x64 grid reaches into the tens, where FP16's step was a real, measurable
+error rather than storage noise). The gap the 2026-08-28 row assumed away
+was there:
+
+| stage | cosine (2026-08-28) | cosine (2026-09-07, post-B7) |
+|---|---|---|
+| patch embed + pos | 0.99999995 | 0.99999995 |
+| block 0 | 0.99999970 | 0.99999977 |
+| block 26 | 0.99999383 | 0.99999843 |
+| merger | 0.99999334 | **0.99999801** |
+
+Patch embedding is unmoved (upstream of any rope application, as the
+"four stages" mutation table below already established). Every stage from
+block 0 onward moved closer to 1.0, and the merger figure is now clearly
+ABOVE the 0.999993 floor rather than pinned to it -- B7 was real,
+measurable numerics, not a cosmetic cleanup.
 
 **Stage 3, `crates/runtime/tests/vision_inject_synthetic.rs`** (1.1 s, no
 network). Ten cases over the same synthetic fixture, covering the two seams

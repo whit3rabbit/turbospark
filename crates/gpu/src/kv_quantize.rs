@@ -3,6 +3,7 @@
 //! both the K and V side of a commit -- callers make two calls, one per
 //! side, each with that side's own [`crate::TqSideTables`].
 
+use crate::attention_decode::MAX_DECODE_ATTENTION_HEAD_DIM;
 use crate::bytes::u32_bytes;
 use crate::context::{GpuError, MetalContext, PassEncoder};
 use crate::kv_quant_tables::TqSideTables;
@@ -34,6 +35,8 @@ pub fn encode_kv_quantize_tq(
     num_kv_heads: u32,
     rows: u32,
 ) -> Result<(), GpuError> {
+    assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
+    assert_eq!(tables.dim, head_dim as usize);
     let packed_words = model_io::tq_packed_words(head_dim as i64, tables.bits) as u32;
     let levels_minus_one = tables.levels.saturating_sub(1);
     let bits = tables.bits as u32;

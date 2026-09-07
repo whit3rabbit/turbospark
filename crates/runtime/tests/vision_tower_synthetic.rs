@@ -367,10 +367,13 @@ fn cpu_tower_with(
         }
     }
 
-    let freqs = quantize(
-        &turbospark_vision_io::rope::vision_rope_freq_rows_default(image.grid, r.head_dim, params)
-            .expect("rope rows"),
-    );
+    // AGENTS.md/CLAUDE.md B7: freqs stays F32 all the way to the GPU buffer
+    // now, so -- unlike every other value here -- this one is NOT rounded
+    // through `quantize` first; the reference has to start from the same
+    // number the engine actually uploads.
+    let freqs =
+        turbospark_vision_io::rope::vision_rope_freq_rows_default(image.grid, r.head_dim, params)
+            .expect("rope rows");
     for w in &blocks {
         x = r.block(&x, w, &freqs, seq);
     }

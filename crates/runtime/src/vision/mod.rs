@@ -538,16 +538,17 @@ impl VisionTower {
             .collect();
         // The `_default` variant, so `VISION_ROPE_THETA` stays a property of
         // the crate that measured it against the reference rather than a
-        // literal restated here.
-        let freqs: Vec<half::f16> = turbospark_vision_io::rope::vision_rope_freq_rows_default(
+        // literal restated here. Kept in F32 all the way to the GPU buffer
+        // (AGENTS.md/CLAUDE.md B7): the angle at pair 0 equals the raw patch
+        // coordinate and reaches the tens on a wide grid, where narrowing to
+        // FP16 here would round it by a real, avoidable amount before the
+        // shader ever sees it.
+        let freqs: Vec<f32> = turbospark_vision_io::rope::vision_rope_freq_rows_default(
             image.grid,
             self.shape.head_dim,
             params,
         )
-        .map_err(|e| RealForwardError::Unsupported(format!("vision rope rows: {e}")))?
-        .into_iter()
-        .map(half::f16::from_f32)
-        .collect();
+        .map_err(|e| RealForwardError::Unsupported(format!("vision rope rows: {e}")))?;
         let table =
             turbospark_vision_io::pos_embed_weights(image.grid, self.shape.pos_side, params)
                 .map_err(|e| {

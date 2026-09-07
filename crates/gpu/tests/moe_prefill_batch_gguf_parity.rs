@@ -497,3 +497,31 @@ fn dropping_a_route_breaks_mxfp4_parity() {
     let (.., got_y) = fixture.batched_pair(None, Some(fixture.routes.len() - 1));
     assert_bits_differ("y", &got_y, &want_y);
 }
+
+/// AGENTS.md/CLAUDE.md S3: `routed.blob[r.slot]` was unbounded in both
+/// phases. A corrupted or mis-encoded route's `slot` past the argument
+/// buffer's `kMaxPrefillExpertBindings` (32) elements must be refused
+/// (masked to a zero contribution, matching the existing padding
+/// convention) rather than reading past the buffer -- which would read
+/// finite garbage from adjacent GPU memory with no error anywhere, or in
+/// the worst case a genuinely out-of-mapped-range pointer. This proves the
+/// guard actually engages: the corrupted route drops its expert's
+/// contribution (same observable shape as `dropping_a_route_...` above)
+/// and the run stays finite rather than reading whatever `routed.blob[999]`
+/// happens to be.
+#[test]
+fn an_out_of_range_slot_is_masked_not_read() {
+    let mut fixture = Fixture::new(128, 128, 4, 6, 12, Mxfp4Activation::GPT_OSS);
+    let (.., want_y) = fixture.decode_pair_sequential();
+    fixture.routes[0].slot = 999;
+    let (got_acts, got_y) = fixture.batched_pair(None, None);
+    assert!(
+        got_acts.iter().all(|&b| f16::from_bits(b).is_finite()),
+        "phase 1 must not read past routed.blob for an out-of-range slot"
+    );
+    assert!(
+        got_y.iter().all(|&b| f16::from_bits(b).is_finite()),
+        "phase 2 must not read past routed.blob for an out-of-range slot"
+    );
+    assert_bits_differ("y", &got_y, &want_y);
+}

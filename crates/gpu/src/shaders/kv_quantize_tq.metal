@@ -67,7 +67,6 @@ void kv_quantize_tq(
     threadgroup float buf[kTqMaxHeadDim];
     threadgroup float reduce_scratch[kTqMaxSimdGroups];
     threadgroup float bcast;
-    threadgroup uint idx_smem[kTqMaxHeadDim];
 
     const uint row = tg_id / num_kv_heads;
     const uint kv_head = tg_id % num_kv_heads;
@@ -114,19 +113,6 @@ void kv_quantize_tq(
     }
     const float rht_scale = rsqrt(float(head_dim));
 
-    // Codebook index: count of midpoints exceeded. `idx_smem` is populated
-    // here and read by every lane during packing, since a lane's packed
-    // word can span indices this lane never computed itself.
-    for (uint i = lid; i < head_dim; i += lsize) {
-        const float rotated = buf[i] * rht_scale;
-        uint count = 0;
-        for (uint m = 0; m < levels_minus_one; ++m) {
-            count += (rotated > midpoints[m]) ? 1u : 0u;
-        }
-        idx_smem[i] = count;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
     // Pack LSB-first via THREADGROUP ATOMIC OR, one thread per SOURCE
     // INDEX -- the direct Metal translation of
     // `turbospark_compute::kv_quant::pack_lsb_first`'s per-index loop
@@ -146,8 +132,22 @@ void kv_quantize_tq(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
+    // AGENTS.md/CLAUDE.md S6: the codebook index (count of midpoints
+    // exceeded) is computed and packed in the SAME loop iteration now,
+    // rather than through a separate `idx_smem` threadgroup array written
+    // by one pass and read back by another. That was dead: this loop and
+    // the removed index-computation loop shared the identical iteration
+    // space (`i = lid; i < head_dim; i += lsize`), so every lane only ever
+    // read the index IT had just computed itself, never a neighbour's --
+    // `idx_smem` bought a 2 KiB array and a `threadgroup_barrier` for a
+    // cross-thread dependency that never existed. The comment it replaces
+    // said otherwise.
     for (uint i = lid; i < head_dim; i += lsize) {
-        const uint value = idx_smem[i];
+        const float rotated = buf[i] * rht_scale;
+        uint value = 0;
+        for (uint m = 0; m < levels_minus_one; ++m) {
+            value += (rotated > midpoints[m]) ? 1u : 0u;
+        }
         const uint bit_offset = i * bits;
         const uint word_idx = bit_offset / 32u;
         const uint offset = bit_offset % 32u;
