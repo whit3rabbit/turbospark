@@ -4,7 +4,11 @@
 //! of `Sources/MferenceServer` (an OpenAI-compatible
 //! `/v1/chat/completions` endpoint), plus an Anthropic `/v1/messages`
 //! endpoint that renders the same generation through `anyllm_translate` so
-//! Anthropic-native clients need no proxy in between. Two backends implement
+//! Anthropic-native clients need no proxy in between. The same core also
+//! serves OpenAI's legacy `/v1/completions` and `/v1/responses`, an
+//! OpenAI-shaped `/v1/embeddings`, and Ollama-compatible `/api/*` routes
+//! (NDJSON rather than SSE); `build_router`'s own route list is the
+//! authoritative one. Two backends implement
 //! [`ChatModel`]: [`ScriptedChatModel`] (portable, fixed logit sequence, what
 //! the tests drive) and [`RealChatModel`] (macOS only, a real
 //! `RealForwardRunner` forward pass against a `.gturbo` install). Model
@@ -35,6 +39,18 @@ pub mod vision;
 /// originated, and reused on `/v1/chat/completions` since ROADMAP M-V8 --
 /// one client-visible mechanism rather than two names for the same signal.
 pub(crate) const DEGRADATION_HEADER: &str = "x-anyllm-degradation";
+
+/// axum 0.7's own default (2 MiB) is smaller than a single base64-encoded
+/// photo: every image this server accepts arrives as JSON body text, so a
+/// realistic multi-image chat request routinely exceeds it and gets a bare
+/// plain-text 413 from the framework -- neither this crate's own JSON error
+/// shape nor the `x-anyllm-degradation` header a too-large-to-serve image
+/// gets everywhere else. 25 MiB is generous for several photos in one
+/// request while still bounding the worst case; `vision::MAX_IMAGES_PER_REQUEST`
+/// bounds image COUNT separately, since a body limit alone does not stop a
+/// request from splitting its budget across an unreasonable number of tiny
+/// images.
+const MAX_REQUEST_BODY_BYTES: usize = 25 * 1024 * 1024;
 
 #[cfg(target_os = "macos")]
 /// Embedding model running encoder forward passes for embeddings.
@@ -170,7 +186,11 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
         .route("/api/chat", post(ollama::chat))
         .route("/api/generate", post(ollama::generate))
         .route("/api/embeddings", post(embeddings::ollama_embeddings))
-        .route("/api/embed", post(embeddings::ollama_embed));
+        .route("/api/embed", post(embeddings::ollama_embed))
+        // Explicit rather than left at axum's 2 MiB default -- see
+        // `MAX_REQUEST_BODY_BYTES`'s own doc. `/health` is unaffected: it
+        // carries no body and is never a member of this router.
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES));
     let protected = match options.api_key {
         Some(key) => protected.layer(axum::middleware::from_fn_with_state(
             auth::ApiKey(key.into()),

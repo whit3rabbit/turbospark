@@ -100,8 +100,22 @@ impl ModelRegistry for SingleModel {
 pub struct StaticRegistry(Vec<Arc<dyn ChatModel>>);
 
 impl StaticRegistry {
-    pub fn new(models: Vec<Arc<dyn ChatModel>>) -> Self {
-        Self(models)
+    /// Refuses a duplicate `model_id()` rather than silently shadowing one
+    /// entry with another: `resolve_among`'s exact-id match returns the
+    /// FIRST hit, so two rows sharing an id would make the second
+    /// permanently unreachable by name, with no error anywhere naming which
+    /// one a request actually landed on.
+    pub fn new(models: Vec<Arc<dyn ChatModel>>) -> Result<Self, String> {
+        let mut seen = std::collections::HashSet::new();
+        for m in &models {
+            if !seen.insert(m.model_id()) {
+                return Err(format!(
+                    "duplicate model id {:?}: two attached models cannot share one id",
+                    m.model_id()
+                ));
+            }
+        }
+        Ok(Self(models))
     }
 }
 
@@ -130,74 +144,70 @@ impl ModelRegistry for StaticRegistry {
 /// mutability (the FFI's `RwLock<HashMap<..>>` one) states the rule once
 /// rather than restating it against its own storage.
 pub fn resolve_among(models: &[Arc<dyn ChatModel>], requested: Option<&str>) -> Resolution {
-    if let Some(name) = requested {
-        if !name.is_empty() {
-            if let Some(hit) = models.iter().find(|m| m.model_id() == name) {
-                return Resolution::Model(Arc::clone(hit));
-            }
-        }
-    }
-    match models {
-        [] => Resolution::Empty,
-        // The fallback. One model attached means there is no ambiguity to
-        // resolve, so an unrecognized name is the caller's label for the
-        // conversation rather than a routing instruction.
-        [only] => Resolution::Model(Arc::clone(only)),
-        several => {
-            // When multiple models are attached, but exactly one is generative
-            // (i.e. not an embedding-only model), default generative chat requests
-            // to that single generative model rather than failing with 404.
-            let gen_models: Vec<_> = several
-                .iter()
-                .filter(|m| !m.supports_embeddings())
-                .collect();
-            if gen_models.len() == 1 {
-                return Resolution::Model(Arc::clone(gen_models[0]));
-            }
-
-            Resolution::Unknown {
-                requested: requested.unwrap_or("").to_string(),
-                available: several.iter().map(|m| m.model_id().to_string()).collect(),
-            }
-        }
-    }
+    resolve_capability(models, requested, false)
 }
 
 /// Resolves `requested` against a slice of attached models for an embedding
-/// request.
-///
-/// An exact id match always wins. Failing that, when EXACTLY ONE attached
-/// model supports embeddings, it serves the request whatever name was
-/// asked for -- there is no ambiguity to resolve, the same reasoning
-/// [`resolve_among`] already applies to a single attached model, scoped
-/// here to the embedding-capable subset. This one rule is what a caller
-/// asking for a well-known default name (`"text-embedding-3-small"`,
-/// `"bge-small"`, ...) needs; a caller asking for genuine garbage gets the
-/// same answer, because with only one candidate there IS no other answer.
-///
-/// With zero or two-or-more embedding-capable candidates there is no
-/// single answer to default to -- picking one anyway would silently serve
-/// the wrong model's (wrong-dimension) vectors with no error -- so this
-/// defers to [`resolve_among`]'s general policy (single attached model, or
-/// a 404 naming what is there) instead of guessing.
+/// request. See [`resolve_capability`] for the shared policy; scoped here to
+/// the embedding-capable subset, which is what lets a caller asking for a
+/// well-known default name (`"text-embedding-3-small"`, `"bge-small"`, ...)
+/// reach the one attached embedding model whatever name it actually carries.
 pub fn resolve_embedding_among(
     models: &[Arc<dyn ChatModel>],
     requested: Option<&str>,
 ) -> Resolution {
+    resolve_capability(models, requested, true)
+}
+
+/// The capability-aware resolution both public entry points share.
+///
+/// **AN EXACT ID MATCH ONLY WINS WHEN THE MATCHED MODEL HAS THE RIGHT
+/// CAPABILITY.** Matching by name alone let a chat request naming an
+/// embedding model's own id reach `RealEncoderModel::with_producer`, which
+/// unconditionally refuses generation -- a `RuntimeError::Producer` that
+/// `status_for` maps to 500, for a request that was never going to succeed
+/// and should have been refused at ROUTING, not deep inside a generation
+/// attempt. A name matching the WRONG kind of model is treated as not
+/// found among what this request type can use, exactly like a name
+/// matching nothing at all.
+///
+/// **THE CAPABLE SUBSET, NEVER THE WHOLE ROSTER, DECIDES THE OTHER TWO
+/// CASES.** Zero capable models is [`Resolution::Empty`] (503): an
+/// embedding request against a chat-only server used to fall through to
+/// `resolve_among`'s single-model default, reach `ChatModel::encode`'s
+/// trait-default refusal, and surface as a 400 -- blaming the caller's
+/// request shape for what is actually a server CONFIGURATION gap (no
+/// embedding model is attached at all). Exactly one capable model is served
+/// whatever name was asked for, the same "no ambiguity" reasoning a lone
+/// attached model already gets. Two or more capable models with no exact
+/// match is [`Resolution::Unknown`], naming only the USABLE ones -- listing
+/// a model of the wrong kind in "did you mean one of these" would send a
+/// caller straight back into this same refusal.
+fn resolve_capability(
+    models: &[Arc<dyn ChatModel>],
+    requested: Option<&str>,
+    want_embedding: bool,
+) -> Resolution {
+    let wants = |m: &Arc<dyn ChatModel>| m.supports_embeddings() == want_embedding;
     if let Some(name) = requested {
         if !name.is_empty() {
-            if let Some(hit) = models.iter().find(|m| m.model_id() == name) {
+            if let Some(hit) = models.iter().find(|m| m.model_id() == name && wants(m)) {
                 return Resolution::Model(Arc::clone(hit));
             }
         }
     }
-    let mut embedding_models = models.iter().filter(|m| m.supports_embeddings());
-    if let Some(only) = embedding_models.next() {
-        if embedding_models.next().is_none() {
-            return Resolution::Model(Arc::clone(only));
-        }
+    let capable: Vec<&Arc<dyn ChatModel>> = models.iter().filter(|m| wants(m)).collect();
+    match capable.as_slice() {
+        [] => Resolution::Empty,
+        // The fallback. One capable model means there is no ambiguity to
+        // resolve, so an unrecognized name is the caller's label for the
+        // conversation rather than a routing instruction.
+        [only] => Resolution::Model(Arc::clone(only)),
+        several => Resolution::Unknown {
+            requested: requested.unwrap_or("").to_string(),
+            available: several.iter().map(|m| m.model_id().to_string()).collect(),
+        },
     }
-    resolve_among(models, requested)
 }
 
 #[cfg(test)]
@@ -350,5 +360,101 @@ mod tests {
             Resolution::Model(m) => assert_eq!(m.model_id(), "bge-small-en-v1.5"),
             _ => panic!("expected embedding request to default to embedding model"),
         }
+    }
+
+    /// F17: a chat request naming an embedding model's OWN id exactly used
+    /// to route there anyway (the name matched), reach
+    /// `ChatModel::with_producer`'s trait-default refusal, and surface as a
+    /// 500 for a request that could never have succeeded. The name must be
+    /// treated as not found among usable chat models, not as a routing
+    /// instruction to a backend that cannot serve the request.
+    #[test]
+    fn a_chat_request_naming_an_embedding_models_own_id_is_not_routed_there() {
+        let models = vec![
+            model_with_embedding("gemma4.gturbo", false),
+            model_with_embedding("bge-small-en-v1.5", true),
+        ];
+        match resolve_among(&models, Some("bge-small-en-v1.5")) {
+            // With exactly one USABLE (chat) model left, the single-model
+            // fallback still serves it -- the exact id just does not win.
+            Resolution::Model(m) => assert_eq!(m.model_id(), "gemma4.gturbo"),
+            Resolution::Unknown { .. } => panic!("expected the fallback chat model, not Unknown"),
+            Resolution::Empty => panic!("expected the fallback chat model, not Empty"),
+        }
+    }
+
+    /// The mirror case: an embedding request naming a CHAT model's exact id
+    /// must not be routed to it either.
+    #[test]
+    fn an_embedding_request_naming_a_chat_models_own_id_is_not_routed_there() {
+        let models = vec![
+            model_with_embedding("gemma4.gturbo", false),
+            model_with_embedding("bge-small-en-v1.5", true),
+        ];
+        match resolve_embedding_among(&models, Some("gemma4.gturbo")) {
+            Resolution::Model(m) => assert_eq!(m.model_id(), "bge-small-en-v1.5"),
+            Resolution::Unknown { .. } => {
+                panic!("expected the fallback embedding model, not Unknown")
+            }
+            Resolution::Empty => panic!("expected the fallback embedding model, not Empty"),
+        }
+    }
+
+    /// F17: an embedding request against a chat-only server used to fall
+    /// through to `resolve_among`'s single-model default, reach
+    /// `ChatModel::encode`'s trait-default refusal, and surface as a 400 --
+    /// blaming the caller's request for a server CONFIGURATION gap. Must be
+    /// `Empty` (503): nothing here can serve this request, and it is not
+    /// the caller's fault.
+    #[test]
+    fn an_embedding_request_against_a_chat_only_registry_is_empty_not_a_client_error() {
+        let models = vec![model_with_embedding("gemma4.gturbo", false)];
+        assert!(matches!(
+            resolve_embedding_among(&models, None),
+            Resolution::Empty
+        ));
+        assert!(matches!(
+            resolve_embedding_among(&models, Some("text-embedding-3-small")),
+            Resolution::Empty
+        ));
+    }
+
+    /// The mirror case: a chat request against an embedding-only server.
+    #[test]
+    fn a_chat_request_against_an_embedding_only_registry_is_empty() {
+        let models = vec![model_with_embedding("bge-small-en-v1.5", true)];
+        assert!(matches!(resolve_among(&models, None), Resolution::Empty));
+    }
+
+    /// A `404` naming the usable models must not offer one of the wrong
+    /// kind: that would send the caller straight back into the same
+    /// refusal.
+    #[test]
+    fn ambiguous_resolution_lists_only_capability_matching_models() {
+        let models = vec![
+            model_with_embedding("a.gturbo", false),
+            model_with_embedding("b.gturbo", false),
+            model_with_embedding("bge-small-en-v1.5", true),
+        ];
+        match resolve_among(&models, Some("nope")) {
+            Resolution::Unknown { available, .. } => {
+                assert_eq!(available, vec!["a.gturbo", "b.gturbo"]);
+            }
+            Resolution::Model(_) => panic!("expected an ambiguous refusal, got Model"),
+            Resolution::Empty => panic!("expected an ambiguous refusal, got Empty"),
+        }
+    }
+
+    #[test]
+    fn a_duplicate_model_id_is_refused_at_construction() {
+        match StaticRegistry::new(vec![model("a.gturbo"), model("a.gturbo")]) {
+            Err(err) => assert!(err.contains("a.gturbo"), "{err}"),
+            Ok(_) => panic!("expected a duplicate-id refusal"),
+        }
+    }
+
+    #[test]
+    fn distinct_model_ids_construct_fine() {
+        assert!(StaticRegistry::new(vec![model("a.gturbo"), model("b.gturbo")]).is_ok());
     }
 }

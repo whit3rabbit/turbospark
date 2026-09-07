@@ -46,12 +46,12 @@ use tokenizer::ReasoningEffort;
 
 use crate::guardrails::run_guarded;
 use crate::handler::{
-    merge_degradation, now_unix, plan, reasoning_effort, status_for, stream_blocking, tool_names,
-    AppState, GenError, Piece, SSE_KEEP_ALIVE,
+    merge_degradation, now_unix, plan, reasoning_effort, request_id, status_for, stream_blocking,
+    tool_names, AppState, GenError, Piece, SSE_KEEP_ALIVE,
 };
 use crate::response::{
-    completion_chunk, completion_response, finish_reason, reasoning_delta, role_delta, text_delta,
-    tool_call_delta,
+    completion_chunk, completion_response, finish_reason_for, reasoning_delta, role_delta,
+    text_delta, tool_call_delta,
 };
 
 pub(crate) use crate::DEGRADATION_HEADER;
@@ -234,7 +234,20 @@ pub async fn count_tokens(
         Ok(p) => p,
         Err(e) => return error_body(StatusCode::BAD_REQUEST, ErrorType::InvalidRequestError, e),
     };
-    Json(serde_json::json!({"input_tokens": planned.prompt_ids.len()})).into_response()
+    let mut response =
+        Json(serde_json::json!({"input_tokens": planned.prompt_ids.len()})).into_response();
+    // F22: an image this backend cannot serve is reported on the SAME
+    // header a real `/v1/messages` call would carry -- `count_tokens`'s
+    // whole reason to reuse `plan` (this function's own doc) is that the
+    // count means what a real call on this request would prefill, and a
+    // real call on an image-carrying request against a text-only install
+    // degrades and says so. Silently counting the text-only tokens with no
+    // note would answer a different question than the one asked.
+    if let Some(note) = merge_degradation(None, planned.dropped_images).and_then(|v| v.parse().ok())
+    {
+        response.headers_mut().insert(DEGRADATION_HEADER, note);
+    }
+    response
 }
 
 async fn full_response(
@@ -260,7 +273,7 @@ async fn full_response(
     };
 
     let openai_response = completion_response(
-        format!("chatcmpl-{}", now_unix()),
+        request_id("chatcmpl-"),
         now_unix(),
         backend_model,
         generated.text,
@@ -297,7 +310,7 @@ fn stream_response(
     }
     let backend_model = openai.model.clone();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let id = format!("chatcmpl-{}", now_unix());
+    let id = request_id("chatcmpl-");
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
@@ -372,7 +385,7 @@ fn stream_response(
                         created,
                         backend_model.clone(),
                         Default::default(),
-                        Some(finish_reason(r.reason)),
+                        Some(finish_reason_for(r.reason, call_index > 0)),
                     ),
                     &mut translator,
                 );
@@ -426,7 +439,7 @@ fn buffered_stream_response(
     cancel: crate::cancel::Cancel,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let id = format!("chatcmpl-{}", now_unix());
+    let id = request_id("chatcmpl-");
     let created = now_unix();
     let backend_model = openai.model.clone();
     let cancel_for_stream = cancel.clone();
@@ -458,6 +471,7 @@ fn buffered_stream_response(
                 if !generated.text.is_empty() {
                     send(chunk(text_delta(generated.text), None), &mut translator);
                 }
+                let has_calls = !generated.calls.is_empty();
                 for (index, call) in generated.calls.into_iter().enumerate() {
                     send(
                         chunk(tool_call_delta(index as u32, call), None),
@@ -467,7 +481,7 @@ fn buffered_stream_response(
                 send(
                     chunk(
                         Default::default(),
-                        Some(finish_reason(generated.decode.reason)),
+                        Some(finish_reason_for(generated.decode.reason, has_calls)),
                     ),
                     &mut translator,
                 );

@@ -168,14 +168,23 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
             system.chars().count()
         );
     }
+    // Parsed and stored (`args.rs`'s `ModelArgs`), but reaching NOTHING past
+    // here: none of the three is threaded into `RealChatModel::open` above,
+    // so printing the value alone would read as this server acting on it.
+    // "accepted, not honoured" is what these flags actually get -- omlx
+    // compatibility means the command line does not error, not that the
+    // feature exists here.
     if let Some(ref ssd) = args.paged_ssd_cache_dir {
-        eprintln!("  paged SSD cache dir: {}", ssd.display());
+        eprintln!(
+            "  paged SSD cache dir: {} (accepted, not honoured)",
+            ssd.display()
+        );
     }
     if let Some(ref hot) = args.hot_cache_max_size {
-        eprintln!("  hot cache max size: {hot}");
+        eprintln!("  hot cache max size: {hot} (accepted, not honoured)");
     }
     if let Some(ref mcp) = args.mcp_config {
-        eprintln!("  mcp config: {}", mcp.display());
+        eprintln!("  mcp config: {} (accepted, not honoured)", mcp.display());
     }
     Ok(Arc::new(model))
 }
@@ -217,9 +226,9 @@ fn open_models_registry(
         (true, Some(emb_arg)) => {
             let chat_model = open_real_model(parsed)?;
             let emb_model = open_real_encoder_model(emb_arg)?;
-            Ok(Arc::new(turbospark_server::registry::StaticRegistry::new(
-                vec![chat_model, emb_model],
-            )))
+            let registry =
+                turbospark_server::registry::StaticRegistry::new(vec![chat_model, emb_model])?;
+            Ok(Arc::new(registry))
         }
         (true, None) => {
             let dir = catalog::resolve_model_arg(&parsed.model);
@@ -284,6 +293,13 @@ async fn main() -> std::process::ExitCode {
                 }
             };
             let api_key = parsed.api_key.clone();
+            // Applied here, once, rather than inside the parser: `args.rs`
+            // reads only `args` (matching `power_profile`'s split), and this
+            // is the one call site that can actually act on it, ahead of
+            // `open_models_registry`'s catalog resolution below.
+            if let Some(endpoint) = &parsed.hf_endpoint {
+                std::env::set_var("HF_ENDPOINT", endpoint);
+            }
             #[cfg(target_os = "macos")]
             match open_models_registry(&parsed) {
                 Ok(reg) => (reg, parsed.port, host, api_key),
@@ -376,6 +392,15 @@ async fn main() -> std::process::ExitCode {
     eprintln!("  POST /v1/messages           (Anthropic)");
     eprintln!("  POST /v1/messages/count_tokens  (Anthropic)");
     eprintln!("  GET  /v1/models");
+    eprintln!("  GET  /v1/models/:model");
+    eprintln!("  POST /v1/embeddings         (OpenAI)");
+    eprintln!("  GET  /api/tags              (Ollama)");
+    eprintln!("  GET  /api/version           (Ollama)");
+    eprintln!("  POST /api/show              (Ollama)");
+    eprintln!("  POST /api/chat              (Ollama)");
+    eprintln!("  POST /api/generate          (Ollama)");
+    eprintln!("  POST /api/embeddings        (Ollama)");
+    eprintln!("  POST /api/embed             (Ollama)");
     if let Err(e) = axum::serve(listener, router).await {
         eprintln!("server error: {e}");
         return std::process::ExitCode::from(1);

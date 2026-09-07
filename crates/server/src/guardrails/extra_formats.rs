@@ -57,9 +57,17 @@
 //! recovered markup cannot mint a call to a tool the caller never granted.
 
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 use regex_lite::Regex;
 use tokenizer::{JsonValue, ParsedToolCall};
+
+/// Compiles `pattern` on first use and caches it in `cell` for the life of
+/// the process, so each of the eight rescue regexes below is built once
+/// rather than once per guarded turn.
+fn cached_regex(cell: &'static OnceLock<Regex>, pattern: &str) -> &'static Regex {
+    cell.get_or_init(|| Regex::new(pattern).expect("rescue regex pattern is valid"))
+}
 
 /// One call recovered by this module, ready for the wire.
 ///
@@ -130,12 +138,16 @@ fn groups<'a>(caps: &regex_lite::Captures<'a>) -> Groups<'a> {
 /// becoming a name. A call with no pairs at all matches nothing here;
 /// forge's strategies find nothing either, and the turn stands as prose.
 fn parse_glm(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
-    let call = Regex::new(
+    static CALL: OnceLock<Regex> = OnceLock::new();
+    static PAIR: OnceLock<Regex> = OnceLock::new();
+    let call = cached_regex(
+        &CALL,
         r"([A-Za-z0-9_\-]{1,64})\s*((?:<arg_key>[\s\S]*?</arg_key>\s*<arg_value>[\s\S]*?</arg_value>\s*)+)",
-    )
-    .ok()?;
-    let pair =
-        Regex::new(r"<arg_key>([\s\S]*?)</arg_key>\s*<arg_value>([\s\S]*?)</arg_value>").ok()?;
+    );
+    let pair = cached_regex(
+        &PAIR,
+        r"<arg_key>([\s\S]*?)</arg_key>\s*<arg_value>([\s\S]*?)</arg_value>",
+    );
     let mut calls = Vec::new();
     for caps in call.captures_iter(text) {
         let g = groups(&caps);
@@ -162,17 +174,30 @@ fn parse_glm(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
 /// pattern -- the invoke blocks are what carries the call, and matching
 /// them alone costs nothing and covers a model that drops its own wrapper.
 fn parse_invoke_parameters(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
-    let block = Regex::new(r#"<invoke\s+name="([A-Za-z0-9_\-]+)"\s*>([\s\S]*?)</invoke>"#).ok()?;
-    let pair = Regex::new(r#"<parameter\s+name="([\s\S]*?)"\s*>([\s\S]*?)</parameter>"#).ok()?;
-    collect_matches(text, &block, &pair, available_tools)
+    static BLOCK: OnceLock<Regex> = OnceLock::new();
+    static PAIR: OnceLock<Regex> = OnceLock::new();
+    let block = cached_regex(
+        &BLOCK,
+        r#"<invoke\s+name="([A-Za-z0-9_\-]+)"\s*>([\s\S]*?)</invoke>"#,
+    );
+    let pair = cached_regex(
+        &PAIR,
+        r#"<parameter\s+name="([\s\S]*?)"\s*>([\s\S]*?)</parameter>"#,
+    );
+    collect_matches(text, block, pair, available_tools)
 }
 
 /// Qwen ChatML parameter XML: `<function=NAME><parameter=KEY>VALUE</parameter>...</function>`,
 /// or JSON inside `<function=NAME>{...}</function>`.
 fn parse_qwen_xml(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
-    let block = Regex::new(r"<function=([A-Za-z0-9_\-]+)>([\s\S]*?)</function>").ok()?;
-    let pair = Regex::new(r"<parameter=([A-Za-z0-9_\-]+)>([\s\S]*?)</parameter>").ok()?;
-    collect_matches(text, &block, &pair, available_tools)
+    static BLOCK: OnceLock<Regex> = OnceLock::new();
+    static PAIR: OnceLock<Regex> = OnceLock::new();
+    let block = cached_regex(&BLOCK, r"<function=([A-Za-z0-9_\-]+)>([\s\S]*?)</function>");
+    let pair = cached_regex(
+        &PAIR,
+        r"<parameter=([A-Za-z0-9_\-]+)>([\s\S]*?)</parameter>",
+    );
+    collect_matches(text, block, pair, available_tools)
 }
 
 /// Gemma DSL: `call:NAME{key:value,...}` or `call:NAME{"key":value,...}`.
@@ -187,7 +212,8 @@ fn parse_qwen_xml(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> 
 /// unbalanced fragment that fails to parse -- silently dropping the whole
 /// call, with no rescue and no error.
 fn parse_gemma(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
-    let head = Regex::new(r"call:([A-Za-z0-9_\-]+)\s*\{").ok()?;
+    static HEAD: OnceLock<Regex> = OnceLock::new();
+    let head = cached_regex(&HEAD, r"call:([A-Za-z0-9_\-]+)\s*\{");
     let allowed: std::collections::HashSet<String> =
         available_tools.iter().map(|&s| s.to_string()).collect();
     let parser = tokenizer::GemmaToolCallParser::new();
@@ -315,10 +341,11 @@ fn collect_matches(
 
 /// Kimi K2: an id and a JSON body, with the name INSIDE the id.
 fn parse_kimi(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
-    let call = Regex::new(
+    static CALL: OnceLock<Regex> = OnceLock::new();
+    let call = cached_regex(
+        &CALL,
         r"<\|tool_call_begin\|>\s*([\w.:\-]+)\s*<\|tool_call_argument_begin\|>([\s\S]*?)<\|tool_call_end\|>",
-    )
-    .ok()?;
+    );
     let mut calls = Vec::new();
     for caps in call.captures_iter(text) {
         let g = groups(&caps);
@@ -363,15 +390,15 @@ fn name_from_kimi_id(id: &str) -> Option<String> {
 fn coerce_value(raw: &str) -> JsonValue {
     let trimmed = raw.trim();
     let Some(first) = trimmed.chars().next() else {
-        return JsonValue::String(raw.to_string());
+        return JsonValue::String(trimmed.to_string());
     };
     if !"{[-0123456789tfn".contains(first) {
-        return JsonValue::String(raw.to_string());
+        return JsonValue::String(trimmed.to_string());
     }
     match JsonValue::parse(trimmed) {
-        Ok(JsonValue::String(_)) => JsonValue::String(raw.to_string()),
+        Ok(JsonValue::String(_)) => JsonValue::String(trimmed.to_string()),
         Ok(value) => value,
-        Err(_) => JsonValue::String(raw.to_string()),
+        Err(_) => JsonValue::String(trimmed.to_string()),
     }
 }
 

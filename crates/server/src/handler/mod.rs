@@ -68,8 +68,56 @@ pub(crate) fn resolve_backend(
     requested: Option<&str>,
     stream: bool,
 ) -> Result<AppState, Response> {
+    finish_resolution(
+        state,
+        state.registry.resolve(requested),
+        tag,
+        requested,
+        stream,
+    )
+}
+
+/// [`resolve_backend`]'s embedding-request counterpart, resolving through
+/// [`crate::registry::ModelRegistry::resolve_embedding`] instead of
+/// `resolve` -- the capability-aware path (`crates/server/CLAUDE.md`'s
+/// registry Gotcha), so an embedding request naming a CHAT model's exact id
+/// is refused rather than routed to a backend whose `encode` is the
+/// trait-default error.
+///
+/// **Not merely a style match with `resolve_backend`.** Before this
+/// existed, `embeddings.rs` called `state.registry.resolve_embedding`
+/// directly, which meant an embedding request never passed through the
+/// observer: no `RequestRouted` event, and any observed server (the FFI
+/// host) got a BARE model with no `ReportingModel` wrapper -- harmless only
+/// because `ReportingModel` did not forward `supports_embeddings`/`encode`
+/// either (fixed alongside this), so the wrapper would have refused
+/// embeddings outright had it ever been reached.
+#[allow(clippy::result_large_err)]
+pub(crate) fn resolve_embedding_backend(
+    state: &crate::ServerState,
+    tag: Option<crate::observe::RequestTag>,
+    requested: Option<&str>,
+) -> Result<AppState, Response> {
+    finish_resolution(
+        state,
+        state.registry.resolve_embedding(requested),
+        tag,
+        requested,
+        false,
+    )
+}
+
+/// The observer-wrapping and error-mapping tail both resolvers share.
+#[allow(clippy::result_large_err)]
+fn finish_resolution(
+    state: &crate::ServerState,
+    resolution: crate::registry::Resolution,
+    tag: Option<crate::observe::RequestTag>,
+    requested: Option<&str>,
+    stream: bool,
+) -> Result<AppState, Response> {
     use crate::registry::Resolution;
-    match state.registry.resolve(requested) {
+    match resolution {
         Resolution::Model(model) => {
             // With no observer, or no id to tie events to, the caller gets
             // the bare model back and nothing is wrapped -- which is every
@@ -116,13 +164,16 @@ pub(crate) fn resolve_backend(
             })),
         )
             .into_response()),
-        // A server can run with nothing attached -- that is the state a host
-        // starts one in before loading anything. 503 rather than 404: the
-        // request is fine and the server is not ready, which is a different
-        // thing for a client's retry logic to see.
+        // A server can run with nothing CAPABLE of this request attached --
+        // either nothing at all, or only models of the wrong kind (a chat
+        // request against an embedding-only server, or vice versa). 503
+        // rather than 404 or 400: the request itself is fine and this
+        // deployment cannot serve it, which is a different thing for a
+        // client's retry logic to see than a bad request or an unknown name.
         Resolution::Empty => Err(error_response(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "no model is loaded; attach one before sending requests".to_string(),
+            "no model capable of this request is loaded; attach one before sending requests"
+                .to_string(),
         )),
     }
 }
@@ -315,7 +366,7 @@ pub async fn chat_completions(
             Err(e) => return gen_error_response(e),
         };
         Json(completion_response(
-            format!("chatcmpl-{}", now_unix()),
+            request_id("chatcmpl-"),
             now_unix(),
             request.model,
             generated.text,
@@ -372,7 +423,7 @@ fn stream_response(
     }
     let model_name = request.model.clone();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let id = format!("chatcmpl-{}", now_unix());
+    let id = request_id("chatcmpl-");
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
@@ -440,7 +491,7 @@ fn stream_response(
                     created,
                     model_name.clone(),
                     Default::default(),
-                    Some(crate::response::finish_reason(r.reason)),
+                    Some(crate::response::finish_reason_for(r.reason, call_index > 0)),
                 ));
                 if include_usage {
                     send(crate::response::usage_chunk(
@@ -452,13 +503,18 @@ fn stream_response(
                     ));
                 }
             }
-            // A failed run is not a completed one: report it as an error
-            // event rather than a fabricated `stop` finish reason.
+            // A failed run is not a completed one: report it as a FRAMED
+            // `error` event -- a client dispatches on the `event:` line, and
+            // a bare `data:` line is indistinguishable from a chunk it does
+            // not recognise. `[DONE]` follows it below, which is worse than
+            // silence: it is the sentinel that says the stream finished
+            // NORMALLY, so a client reading past the error would see success.
             Err(e) => {
                 let body = serde_json::json!({
                     "error": {"message": e.to_string(), "type": "server_error"}
                 });
-                let _ = tx.send(Event::default().data(body.to_string()));
+                let _ = tx.send(Event::default().event("error").data(body.to_string()));
+                return;
             }
         }
         let _ = tx.send(Event::default().data("[DONE]"));
@@ -498,7 +554,7 @@ fn buffered_stream_response(
     cancel: crate::cancel::Cancel,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let id = format!("chatcmpl-{}", now_unix());
+    let id = request_id("chatcmpl-");
     let created = now_unix();
     let model_name = request.model.clone();
     let cancel_for_stream = cancel.clone();
@@ -528,12 +584,16 @@ fn buffered_stream_response(
                 if !generated.text.is_empty() {
                     send(chunk(text_delta(generated.text), None));
                 }
+                let has_calls = !generated.calls.is_empty();
                 for (index, call) in generated.calls.into_iter().enumerate() {
                     send(chunk(tool_call_delta(index as u32, call), None));
                 }
                 send(chunk(
                     Default::default(),
-                    Some(crate::response::finish_reason(generated.decode.reason)),
+                    Some(crate::response::finish_reason_for(
+                        generated.decode.reason,
+                        has_calls,
+                    )),
                 ));
                 if include_usage {
                     send(crate::response::usage_chunk(
@@ -545,8 +605,9 @@ fn buffered_stream_response(
                     ));
                 }
             }
-            // Same contract as the live path: a failed run is not a completed
-            // one, so it is an error event rather than a fabricated `stop`.
+            // Same contract as the live path: a failed run is not a
+            // completed one, so it is a FRAMED `error` event -- never a bare
+            // `data:` line followed by the "finished normally" sentinel.
             Err(e) => {
                 let message = match e {
                     GenError::Runtime(e) => e.to_string(),
@@ -555,7 +616,8 @@ fn buffered_stream_response(
                 let body = serde_json::json!({
                     "error": {"message": message, "type": "server_error"}
                 });
-                let _ = tx.send(Event::default().data(body.to_string()));
+                let _ = tx.send(Event::default().event("error").data(body.to_string()));
+                return;
             }
         }
         let _ = tx.send(Event::default().data("[DONE]"));

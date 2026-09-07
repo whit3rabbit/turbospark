@@ -233,7 +233,7 @@ fn tool_choice_none_suppresses_every_guardrail() {
 fn the_retry_turn_appends_an_assistant_turn_and_a_user_nudge() {
     let request = weather_request(None);
     let before = request.messages.len();
-    let retried = with_retry_turn(&request, "some bad output", "fix it");
+    let retried = with_retry_turn(&request, "some bad output", &[], "fix it");
     assert_eq!(retried.messages.len(), before + 2);
     assert!(matches!(retried.messages[before].role, ChatRole::Assistant));
     assert!(matches!(retried.messages[before + 1].role, ChatRole::User));
@@ -251,9 +251,36 @@ fn an_empty_assistant_turn_is_not_appended() {
     // assistant turn renders as stray markup on several templates.
     let request = weather_request(None);
     let before = request.messages.len();
-    let retried = with_retry_turn(&request, "   ", "fix it");
+    let retried = with_retry_turn(&request, "   ", &[], "fix it");
     assert_eq!(retried.messages.len(), before + 1);
     assert!(matches!(retried.messages[before].role, ChatRole::User));
+}
+
+/// F19: a parsed call whose ARGUMENTS failed validation is the common case
+/// `Verdict::Retry` fires for, and such a call's surrounding text is
+/// typically empty (the whole reply was the call markup). Before this, an
+/// empty `said` with a non-empty `calls` appended NOTHING -- the retry's
+/// nudge followed the caller's own prior turn with no record at all of what
+/// the model had just tried.
+#[test]
+fn a_tool_call_with_no_surrounding_text_still_appends_an_assistant_turn() {
+    let request = weather_request(None);
+    let before = request.messages.len();
+    let call = tokenizer::ParsedToolCall {
+        id: "toolu_0".to_string(),
+        name: "get_weather".to_string(),
+        arguments: tokenizer::JsonValue::parse(r#"{"city": "Oslo"}"#).unwrap(),
+        arguments_json: r#"{"city": "Oslo"}"#.to_string(),
+    };
+    let retried = with_retry_turn(&request, "", std::slice::from_ref(&call), "fix it");
+    assert_eq!(retried.messages.len(), before + 2, "{:?}", retried.messages);
+    assert!(matches!(retried.messages[before].role, ChatRole::Assistant));
+    let tool_calls = retried.messages[before]
+        .tool_calls
+        .as_ref()
+        .expect("the assistant turn must carry the attempted call");
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].function.name, "get_weather");
 }
 
 #[test]
@@ -415,6 +442,30 @@ fn an_unwrapped_invoke_block_is_rescued_too() {
         vec![],
     );
     assert!(matches!(verdict_for(&request, &gen), Verdict::Rescued(_)));
+}
+
+/// A model that pretty-prints its invoke block puts the value on its own
+/// line, indented: `<parameter name="city">\nOslo\n</parameter>`. The
+/// recovered value must be trimmed to `"Oslo"`, or an enum/pattern check in
+/// the request's own schema fails a call whose only fault is whitespace the
+/// model added for readability.
+#[test]
+fn a_parameter_value_with_surrounding_newlines_is_trimmed() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<invoke name=\"get_weather\">\n<parameter name=\"city\">\n  Oslo\n</parameter>\n</invoke>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!(
+            "expected an invoke rescue, got {:?}",
+            verdict_for(&request, &gen)
+        );
+    };
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::String("Oslo".to_string()))
+    );
 }
 
 /// Kimi K2's shape: no name tag anywhere, only the id

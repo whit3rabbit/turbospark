@@ -284,6 +284,18 @@ fn tailnet_host_never_falls_back() {
     assert!(tailnet_host("100.64.0.1;rm -rf /").is_err());
 }
 
+/// The single-field error message used to slice at a raw byte offset
+/// (`&only[..64]`), which panics if byte 64 is not a char boundary.
+/// `"h"` plus thirty-two `"\u{00e9}"` (2 bytes each) puts the 32nd `\u{00e9}` at bytes
+/// 63-64, so byte 64 sits mid-character.
+#[test]
+fn a_non_ascii_boundary_in_the_bad_field_does_not_panic() {
+    let field = format!("h{}", "\u{00e9}".repeat(32));
+    assert!(!field.is_char_boundary(64), "fixture must straddle byte 64");
+    let err = tailnet_host(&field).unwrap_err();
+    assert!(err.contains("not a Tailnet IPv4 address"), "{err}");
+}
+
 // --- directional steering (docs/OBLITERATION.md) --------------------------
 //
 // The CLI's half of these six flags is covered by `crates/invocation`'s parse
@@ -746,6 +758,40 @@ fn omlx_compatibility_extended_flags() {
     );
     assert_eq!(args.hot_cache_max_size.as_deref(), Some("20%"));
     assert_eq!(args.mcp_config, Some(PathBuf::from("/tmp/mcp.json")));
+}
+
+/// F7: `--embedding-model` alone used to be refused with "--model needs a
+/// value" before this parser ever consulted it, even though
+/// `main.rs::open_models_registry`'s `(false, Some(emb_arg))` arm exists
+/// specifically to serve an embedding-only server with no chat model.
+#[test]
+fn embedding_model_alone_is_accepted_with_no_chat_model() {
+    let args = parse(&["--embedding-model", "/tmp/emb"]).unwrap().unwrap();
+    assert!(args.model.is_empty(), "{args:?}");
+    assert_eq!(args.embedding_model.as_deref(), Some("/tmp/emb"));
+}
+
+/// Neither flag at all is still refused, and by name -- this is the case
+/// the fix above must not silently swallow.
+#[test]
+fn neither_model_nor_embedding_model_is_refused() {
+    let err = parse(&["--bind", "loopback"]).unwrap_err();
+    assert!(err.contains("--model"), "{err}");
+    assert!(err.contains("--embedding-model"), "{err}");
+}
+
+/// F21: a `--memory-guard-gb` large enough to overflow a byte count must be
+/// refused rather than silently wrapping (release) or panicking (debug).
+#[test]
+fn an_overflowing_memory_guard_gb_is_refused() {
+    let err = parse(&[
+        "--model",
+        "/tmp/m",
+        "--memory-guard-gb",
+        "18446744073709551615",
+    ])
+    .unwrap_err();
+    assert!(err.contains("--memory-guard-gb"), "{err}");
 }
 
 #[test]

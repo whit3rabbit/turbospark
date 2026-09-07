@@ -180,7 +180,12 @@ fn apply_options(
         // Ollama's -1 means "until the context is full", which is this
         // server's own behaviour when `max_tokens` is absent.
         if v >= 0 {
-            request.max_tokens = Some(v as u32);
+            // SATURATING, not a raw `as u32`: a value past `u32::MAX` would
+            // otherwise wrap to an ARBITRARY smaller (or, past a second
+            // wrap, effectively unbounded-looking) budget via silent
+            // truncation of the high bits, rather than clamping to the
+            // largest budget this server can actually express.
+            request.max_tokens = Some(u32::try_from(v).unwrap_or(u32::MAX));
         }
     }
     // `top_k`, `seed` and `repeat_penalty` have no explicit field on
@@ -278,11 +283,21 @@ fn generate_object(model: &str, response: &str, done: Option<&Generated>) -> ser
 /// `swift/CLAUDE.md` Gotcha 7 is the worked example of what a delta count
 /// measures instead, and these fields are exactly the ones an Ollama client
 /// divides to show tokens per second.
+///
+/// The four `*_duration` fields (nanoseconds, Ollama's own unit) are what
+/// that division actually reads: without them a client has counts and no
+/// denominator, and cannot show a tok/s figure at all. `load_duration` is
+/// honestly `0` -- this server holds one already-open runner for its whole
+/// process lifetime, so there is no per-request load to report, unlike
+/// Ollama's own server which may load a model per request.
 fn merge_counters(object: &mut serde_json::Value, g: &Generated) {
     let map = object.as_object_mut().expect("object literal");
     map.insert(
         "done_reason".to_string(),
-        serde_json::json!(crate::response::finish_reason(g.decode.reason)),
+        serde_json::json!(crate::response::ollama_done_reason(
+            g.decode.reason,
+            !g.calls.is_empty()
+        )),
     );
     map.insert(
         "prompt_eval_count".to_string(),
@@ -292,14 +307,44 @@ fn merge_counters(object: &mut serde_json::Value, g: &Generated) {
         "eval_count".to_string(),
         serde_json::json!(g.decode.new_tokens),
     );
+    let nanos = |secs: f64| (secs * 1_000_000_000.0).round() as u64;
+    map.insert("load_duration".to_string(), serde_json::json!(0));
+    map.insert(
+        "prompt_eval_duration".to_string(),
+        serde_json::json!(nanos(g.decode.prefill_seconds)),
+    );
+    map.insert(
+        "eval_duration".to_string(),
+        serde_json::json!(nanos(g.decode.decode_seconds)),
+    );
+    map.insert(
+        "total_duration".to_string(),
+        serde_json::json!(nanos(g.decode.prefill_seconds + g.decode.decode_seconds)),
+    );
 }
 
 /// An NDJSON body: one JSON object per line, no sentinel, done when the
 /// stream closes.
-fn ndjson(lines: tokio::sync::mpsc::UnboundedReceiver<String>) -> Response {
+///
+/// Wrapped in `CancelOnDrop` for the same reason every SSE construction in
+/// this crate is (Gotcha 25): a disconnect during PREFILL, or during a
+/// reasoning span this wire shape has nowhere to put (both piece kinds this
+/// module drops without a `send` call), means nothing is ever sent before
+/// the client gives up -- the `tx.send(...).is_err()` check inside `run`'s
+/// own `send` closure is a real detector, but only for the case where
+/// something WAS about to be sent. Without this, a client that closes the
+/// connection mid-prefill on a long prompt leaves the generation running to
+/// completion for nobody.
+fn ndjson(
+    lines: tokio::sync::mpsc::UnboundedReceiver<String>,
+    cancel: crate::cancel::Cancel,
+) -> Response {
     use futures::StreamExt;
-    let stream = tokio_stream::wrappers::UnboundedReceiverStream::new(lines)
-        .map(|line| Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(line)));
+    let stream = crate::cancel::CancelOnDrop::new(
+        tokio_stream::wrappers::UnboundedReceiverStream::new(lines),
+        cancel,
+    )
+    .map(|line| Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(line)));
     (
         [(header::CONTENT_TYPE, "application/x-ndjson")],
         axum::body::Body::from_stream(stream),
@@ -472,6 +517,12 @@ async fn run(
         // whatever reason the runtime gave, which is what a client can
         // actually read.
         match result {
+            // Discarded silently, the same contract every other endpoint's
+            // streaming path holds (Gotcha 25): the client that would read
+            // this `done: true` object is the one already gone, and building
+            // one to send into a closed channel is both pointless and (per
+            // `send`, above) itself detected as a failed send.
+            Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
             Ok(decode) => {
                 let g = Generated {
                     text: String::new(),
@@ -498,5 +549,53 @@ async fn run(
         }
     });
 
-    ndjson(rx)
+    ndjson(rx, cancel)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base() -> ChatCompletionRequest {
+        base_request("m".to_string(), Vec::new())
+    }
+
+    /// F23: `num_predict` past `u32::MAX` used to wrap via a raw `as u32`
+    /// cast -- silently truncating the high bits into an ARBITRARY smaller
+    /// budget -- rather than clamping to the largest one this server can
+    /// actually express.
+    #[test]
+    fn num_predict_past_u32_max_saturates_rather_than_wraps() {
+        let mut request = base();
+        let options = serde_json::json!({"num_predict": (u32::MAX as i64) + 1000})
+            .as_object()
+            .unwrap()
+            .clone();
+        apply_options(&options, &mut request);
+        assert_eq!(request.max_tokens, Some(u32::MAX));
+    }
+
+    #[test]
+    fn num_predict_within_range_passes_through_unchanged() {
+        let mut request = base();
+        let options = serde_json::json!({"num_predict": 128})
+            .as_object()
+            .unwrap()
+            .clone();
+        apply_options(&options, &mut request);
+        assert_eq!(request.max_tokens, Some(128));
+    }
+
+    /// Ollama's own "until the context is full" sentinel must still be
+    /// left alone by the saturating cast.
+    #[test]
+    fn num_predict_negative_one_is_still_left_absent() {
+        let mut request = base();
+        let options = serde_json::json!({"num_predict": -1})
+            .as_object()
+            .unwrap()
+            .clone();
+        apply_options(&options, &mut request);
+        assert_eq!(request.max_tokens, None);
+    }
 }

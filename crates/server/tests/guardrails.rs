@@ -253,6 +253,10 @@ async fn a_call_the_decoder_missed_is_rescued_onto_the_wire() {
         content.is_none_or(|c| !c.contains("get_weather")),
         "raw markup leaked as content: {body}"
     );
+    // ChatML has no dedicated tool stop token, so the raw `StopReason` here
+    // is `EndOfTurn` -- but a client's tool-execution loop keys on
+    // `finish_reason == "tool_calls"`, not on which token closed the turn.
+    assert_eq!(body["choices"][0]["finish_reason"], "tool_calls", "{body}");
 }
 
 /// The same rescue over the Anthropic endpoint, which reaches it through a
@@ -294,6 +298,10 @@ async fn the_anthropic_endpoint_rescues_it_as_a_tool_use_block() {
         .filter_map(|b| b["type"].as_str())
         .collect();
     assert!(kinds.contains(&"tool_use"), "{body}");
+    // Same ChatML-has-no-tool-stop-token gap as the OpenAI side: without
+    // `finish_reason_for`, this reached the wire as `stop_reason: "end_turn"`
+    // and Claude Code would never execute the call.
+    assert_eq!(body["stop_reason"], "tool_use", "{body}");
 }
 
 /// With guardrails off the SAME stream comes back as prose, which is what says
@@ -451,10 +459,14 @@ async fn a_tool_request_streams_the_buffered_frames_in_order() {
         .unwrap();
 
     let tool_at = text.find("tool_calls").unwrap_or_else(|| panic!("{text}"));
+    // ChatML has no dedicated tool stop token (crate Gotcha 8), so the
+    // underlying `StopReason` here is `EndOfTurn` -- but a client that
+    // parsed a tool call still needs `finish_reason: "tool_calls"` to know
+    // to execute it, and `finish_reason_for` reports that regardless of
+    // which token closed the turn. No longer hedged against "stop".
     let finish_at = text
         .find("\"finish_reason\":\"tool_calls\"")
-        .or_else(|| text.find("\"finish_reason\":\"stop\""))
-        .unwrap_or_else(|| panic!("no finish chunk in {text}"));
+        .unwrap_or_else(|| panic!("no tool_calls finish chunk in {text}"));
     // Same ordering assertion the Harmony streaming test needs: a call that
     // arrives after the finish chunk is invisible to a client that stops
     // reading there.

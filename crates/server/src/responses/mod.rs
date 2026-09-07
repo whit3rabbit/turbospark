@@ -46,11 +46,12 @@ use tokenizer::ReasoningEffort;
 use self::map::{may_produce_reasoning, responses_to_chat_request, responses_warnings};
 use self::sse::{
     build_response, close_message_events, completed_event, content_part_added_event, created_event,
-    failed_event, function_call_events, open_message_event, text_delta_event,
+    failed_event, function_call_events, function_call_item, message_item, open_message_event,
+    text_delta_event,
 };
 use crate::guardrails::run_guarded;
 use crate::handler::{
-    error_response, now_unix, plan, reasoning_effort, stream_blocking, tool_names, AppState,
+    error_response, plan, reasoning_effort, request_id, stream_blocking, tool_names, AppState,
     GenError, Piece,
 };
 
@@ -79,6 +80,22 @@ pub async fn responses(
         Ok(r) => r,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, e),
     };
+    // Planned here, before ANY of the three paths below (non-streaming, live
+    // streaming, buffered/guarded streaming) are chosen. Without this, only
+    // the live streaming path validated its own request (`stream_response`'s
+    // internal `plan` call below) -- the non-streaming path went straight to
+    // `run_guarded`, whose OWN `plan` call exists for the retry turn and maps
+    // a failure to `GenError::Join` (a 500) on the reasoning that `plan`
+    // already succeeded on the caller's request by the time it is reached
+    // (`crates/server/CLAUDE.md`'s guardrails Gotcha). That reasoning does
+    // not hold here the way it does for `/v1/chat/completions` and
+    // `/v1/messages`, both of which plan before ever calling `run_guarded`.
+    // A malformed request (a bad `reasoning_effort`, a system turn at index
+    // > 0, a remote image URL) must 400 like it does on those two endpoints,
+    // not 500.
+    if let Err(e) = plan(&model, &chat_request) {
+        return error_response(StatusCode::BAD_REQUEST, e);
+    }
     let tools = tool_names(&chat_request);
     let effort = reasoning_effort(&chat_request, model.default_reasoning())
         .unwrap_or_else(|_| model.default_reasoning());
@@ -97,7 +114,7 @@ pub async fn responses(
         guard.defuse();
         match result {
             Ok(generated) => Json(build_response(
-                format!("resp_{}", now_unix()),
+                request_id("resp_"),
                 request_model,
                 generated,
             ))
@@ -131,7 +148,7 @@ fn stream_response(
     };
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let id = format!("resp_{}", now_unix());
+    let id = request_id("resp_");
     let model_name = request_model;
     let cancel_for_task = cancel.clone();
 
@@ -148,8 +165,14 @@ fn stream_response(
         send(created_event(&id, &model_name));
 
         let mut message_open = false;
+        let mut message_item_id = String::new();
         let mut text_acc = String::new();
-        let mut call_index: u32 = 0;
+        // ONE cursor for every item this turn emits, message and function
+        // calls alike -- not a message fixed at index 0 with calls starting
+        // at 1, which put a call-only turn's first call at index 1 with
+        // nothing at 0.
+        let mut output_index: u32 = 0;
+        let mut items: Vec<serde_json::Value> = Vec::new();
 
         let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
         let result = stream_blocking(
@@ -171,20 +194,25 @@ fn stream_response(
                         return;
                     }
                     if !message_open {
-                        send(open_message_event());
-                        send(content_part_added_event());
+                        message_item_id = format!("msg_{output_index}");
+                        send(open_message_event(&message_item_id, output_index));
+                        send(content_part_added_event(&message_item_id, output_index));
                         message_open = true;
                     }
                     text_acc.push_str(&delta);
-                    send(text_delta_event(&delta));
+                    send(text_delta_event(&message_item_id, output_index, &delta));
                 }
                 Piece::Tool(call) => {
                     if message_open {
-                        close_message_events(&send, &text_acc);
+                        close_message_events(&send, &message_item_id, output_index, &text_acc);
+                        items.push(message_item(&text_acc, "completed", &message_item_id));
                         message_open = false;
+                        text_acc.clear();
+                        output_index += 1;
                     }
-                    function_call_events(&send, &call, 1 + call_index);
-                    call_index += 1;
+                    function_call_events(&send, &call, output_index);
+                    items.push(function_call_item(&call, "completed"));
+                    output_index += 1;
                 }
             },
         );
@@ -195,9 +223,10 @@ fn stream_response(
             Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
             Ok(decode) => {
                 if message_open {
-                    close_message_events(&send, &text_acc);
+                    close_message_events(&send, &message_item_id, output_index, &text_acc);
+                    items.push(message_item(&text_acc, "completed", &message_item_id));
                 }
-                send(completed_event(&id, &model_name, &decode));
+                send(completed_event(&id, &model_name, &decode, &items));
             }
             // A failed run is not a completed one: report it as a
             // `response.failed` event rather than a fabricated `completed`
@@ -239,7 +268,7 @@ fn buffered_stream_response(
     cancel: crate::cancel::Cancel,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let id = format!("resp_{}", now_unix());
+    let id = request_id("resp_");
     let model_name = request_model;
     let cancel_for_stream = cancel.clone();
 
@@ -256,16 +285,23 @@ fn buffered_stream_response(
             // Discarded silently, same contract as the live path.
             Ok(generated) if generated.decode.reason == runtime::StopReason::Cancelled => (),
             Ok(generated) => {
+                let mut output_index: u32 = 0;
+                let mut items: Vec<serde_json::Value> = Vec::new();
                 if !generated.text.is_empty() {
-                    send(open_message_event());
-                    send(content_part_added_event());
-                    send(text_delta_event(&generated.text));
-                    close_message_events(&send, &generated.text);
+                    let item_id = format!("msg_{output_index}");
+                    send(open_message_event(&item_id, output_index));
+                    send(content_part_added_event(&item_id, output_index));
+                    send(text_delta_event(&item_id, output_index, &generated.text));
+                    close_message_events(&send, &item_id, output_index, &generated.text);
+                    items.push(message_item(&generated.text, "completed", &item_id));
+                    output_index += 1;
                 }
-                for (index, call) in generated.calls.iter().enumerate() {
-                    function_call_events(&send, call, 1 + index as u32);
+                for call in &generated.calls {
+                    function_call_events(&send, call, output_index);
+                    items.push(function_call_item(call, "completed"));
+                    output_index += 1;
                 }
-                send(completed_event(&id, &model_name, &generated.decode));
+                send(completed_event(&id, &model_name, &generated.decode, &items));
             }
             Err(e) => {
                 let message = match e {

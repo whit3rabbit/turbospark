@@ -60,9 +60,52 @@ pub struct RealChatModel {
     /// server cannot serve an image, and the handler reports the drop either
     /// way. The startup line distinguishes them.
     preprocess_params: Option<turbospark_vision_io::PreprocessParams>,
+    /// [`ChatModel::vision`]'s answer, resolved ONCE here rather than on
+    /// every call. `has_vision_tower` and `vision_config` are both pure
+    /// reads of `arch.vision` (`runtime::real_forward_api`), so the answer
+    /// cannot change after open -- taking the runner mutex on every request
+    /// to re-derive it bought nothing but a lock hold on the async executor.
+    /// `plan` calls this for EVERY request, including a text-only one on a
+    /// vision install, so before this cached, an image-carrying request
+    /// (`count_tokens` included) parked a tokio worker for the whole
+    /// generation holding the lock: enough of them pin every worker and
+    /// `/health` stops answering, which Gotcha 22 says it must not.
+    vision_info: Option<crate::vision::VisionInfo>,
 }
 
 impl RealChatModel {
+    /// Locks the runner, recovering a poisoned mutex rather than propagating
+    /// it -- every call site in this file used this same
+    /// `unwrap_or_else(|poisoned| poisoned.into_inner())` line until now.
+    ///
+    /// **A panicking request can no longer be assumed to leave behind
+    /// something the next request may safely inherit.** The one-line
+    /// recovery was correct back when `run_raw_completion` unconditionally
+    /// reset the producer at entry; since prefix reuse (`--prefix-reuse`,
+    /// on by default) landed, `try_reuse_prefix` only resets when it finds
+    /// no reusable prefix (`raw_completion.rs`), and a panic unwinds past
+    /// both the success path that RECORDS a prefix and the failure path
+    /// that TAINTS one. So a poisoned runner can carry a `kv_prefix` that
+    /// looks valid but describes a generation that never finished, and the
+    /// next request would try to extend it. Recovery therefore resets the
+    /// runner explicitly rather than trusting whatever state the panic left
+    /// behind. It also clears any pending vision map:
+    /// `run_with_images`'s own clear is a plain statement after the
+    /// generation call, so a panic between `set_prompt_vision` and that
+    /// clear would otherwise leave the map installed for the next TEXT
+    /// request (Gotcha 21's failure through a different door).
+    fn locked_runner(&self) -> std::sync::MutexGuard<'_, RealForwardRunner> {
+        match self.runner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                guard.reset();
+                guard.clear_prompt_vision();
+                guard
+            }
+        }
+    }
+
     /// Opens a `.gturbo` install, mirroring the CLI's `open_session`: the
     /// architecture comes from the install's own `manifest.json` and the
     /// tokenizer is expected to be bundled in the same directory.
@@ -315,6 +358,26 @@ impl RealChatModel {
             },
             true,
         )?;
+        // Resolved HERE, before `runner` moves into the `Mutex` below, so
+        // `ChatModel::vision` never has to lock for it: `has_vision_tower`
+        // and `vision_config` are pure reads of a field this checkpoint
+        // fixed at load, and `preprocess_params` is already final by this
+        // point (the budget clamp above is the last thing that can change
+        // it).
+        let vision_info = if runner.has_vision_tower() {
+            let v = runner.vision_config();
+            preprocess_params
+                .clone()
+                .map(|params| crate::vision::VisionInfo {
+                    params,
+                    specials: turbospark_vision_io::VisionSpecialIds {
+                        vision_start: v.vision_start_token_id as i32,
+                        image_pad: v.image_token_id as i32,
+                    },
+                })
+        } else {
+            None
+        };
         Ok(Self {
             tokenizer,
             runner: Mutex::new(runner),
@@ -329,6 +392,7 @@ impl RealChatModel {
             default_reasoning,
             default_system,
             preprocess_params,
+            vision_info,
         })
     }
 
@@ -365,10 +429,7 @@ impl RealChatModel {
                     .to_string(),
             ));
         };
-        let mut runner = self
-            .runner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut runner = self.locked_runner();
 
         let mut embeddings = Vec::with_capacity(images.images.len());
         for (i, image) in images.images.iter().enumerate() {
@@ -435,10 +496,7 @@ impl RealChatModel {
     /// recurrent state for at once, for the startup line. `1` unless
     /// `--session-slots` asked for more.
     pub fn session_pool_size(&self) -> usize {
-        self.runner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .session_pool_size()
+        self.locked_runner().session_pool_size()
     }
 
     /// The resolved context window and the arithmetic behind it, for the
@@ -470,13 +528,11 @@ impl ChatModel for RealChatModel {
         &self,
         f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
     ) -> Result<RawDecodeResult, RuntimeError> {
-        // Poison is recoverable here: a panicking request leaves the runner
-        // with a stale KV cache at worst, and `run_raw_completion` resets the
-        // producer before its first token, so the next request starts clean.
-        let mut runner = self
-            .runner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Poison recovery lives in `locked_runner`: it resets the runner
+        // rather than trusting whatever a panicking request left behind (see
+        // that method's doc for why the old "the next request starts clean"
+        // reasoning stopped holding once prefix reuse landed).
+        let mut runner = self.locked_runner();
         f(&mut *runner)
     }
 
@@ -494,6 +550,14 @@ impl ChatModel for RealChatModel {
 
     fn default_system(&self) -> Option<&str> {
         self.default_system.as_deref()
+    }
+
+    fn vision(&self) -> Option<crate::vision::VisionInfo> {
+        // Resolved once at `open`, never re-derived: see `vision_info`'s own
+        // doc for why taking the runner lock here was both unnecessary and
+        // a liveness hazard (`/health` must answer while this process is
+        // mid-generation, per Gotcha 22).
+        self.vision_info.clone()
     }
 
     /// The speculative loop when this process resolved one AND this request
@@ -514,29 +578,6 @@ impl ChatModel for RealChatModel {
     /// case is noise that trains an operator to ignore the startup line that
     /// matters. Refusing would be worse still: it turns a valid request into
     /// an error for a setting the caller never sent.
-    fn vision(&self) -> Option<crate::vision::VisionInfo> {
-        let runner = self
-            .runner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !runner.has_vision_tower() {
-            return None;
-        }
-        let v = runner.vision_config();
-        Some(crate::vision::VisionInfo {
-            // Read off the INSTALL, never recalled. The pixel budget in
-            // particular has no safe default: the generic library pair is
-            // wrong for this family by a factor of 16 on the ceiling, which
-            // resizes every page to a fraction of its resolution and produces
-            // a correct-looking worse answer (`crates/vision-io` Gotcha 6).
-            params: self.preprocess_params.clone()?,
-            specials: turbospark_vision_io::VisionSpecialIds {
-                vision_start: v.vision_start_token_id as i32,
-                image_pad: v.image_token_id as i32,
-            },
-        })
-    }
-
     fn run_completion(
         &self,
         prompt_ids: &[foundation::TokenId],
@@ -569,10 +610,7 @@ impl ChatModel for RealChatModel {
             // differently, and speculation is checked first above -- the
             // two seams are not composable today, same as the CLI.
             _ => {
-                let mut runner = self
-                    .runner
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut runner = self.locked_runner();
                 if runner.supports_chunked_prefill() {
                     return run_raw_completion_chunked_cancellable(
                         &mut *runner,
@@ -604,10 +642,7 @@ impl ChatModel for RealChatModel {
         // The CONCRETE runner, which is the whole reason this override exists:
         // `SpeculativeProducer` has an associated type and cannot be reached
         // through the `&mut dyn LogitProducer` `with_producer` lends.
-        let mut runner = self
-            .runner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut runner = self.locked_runner();
         run_raw_completion_speculative_cancellable(
             &mut *runner,
             &self.tokenizer,

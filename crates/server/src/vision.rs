@@ -29,6 +29,27 @@
 use anyllm_translate::openai::{ChatContentPart, ChatMessage};
 use turbospark_vision_io::{MropePositions, PreprocessParams, PreprocessedImage, VisionSpecialIds};
 
+/// Above this many image parts in one request, `handler::plan` refuses
+/// before decoding any of them. A body-size limit alone
+/// (`MAX_REQUEST_BODY_BYTES`) bounds total bytes but not COUNT: nothing
+/// stops a request from splitting its budget across an unreasonable number
+/// of tiny images, each paying its own decode, preprocess, and (once a
+/// vision-capable backend is attached) tower-encode cost.
+pub(crate) const MAX_IMAGES_PER_REQUEST: usize = 64;
+
+/// How many image parts one message carries, for the whole-request cap in
+/// `handler::plan` -- counted separately from [`image_bytes`] so the cap can
+/// be checked before any payload is decoded.
+pub(crate) fn image_count(message: &ChatMessage) -> usize {
+    let Some(anyllm_translate::openai::ChatContent::Parts(parts)) = &message.content else {
+        return 0;
+    };
+    parts
+        .iter()
+        .filter(|p| matches!(p, ChatContentPart::ImageUrl { .. }))
+        .count()
+}
+
 /// What a backend needs to know to accept images.
 ///
 /// Read off the INSTALL by the backend rather than assembled here: the pixel
@@ -122,19 +143,34 @@ pub fn decode_data_url(url: &str) -> Result<Vec<u8>, String> {
 /// Split out from the decode so the SHAPE can be checked without paying for
 /// the bytes -- see [`validate_urls`].
 fn split_data_url(url: &str) -> Result<&str, String> {
-    let Some(rest) = url.strip_prefix("data:") else {
+    // Case-INSENSITIVE scheme and `;base64` token match: URI schemes are
+    // case-insensitive by RFC 3986, and a client that sends `DATA:` or
+    // `;BASE64` (both seen from real HTTP libraries that upper-case headers
+    // or URI components) used to be refused as "not a data: URL" for a
+    // spelling this server could serve perfectly well. `url.get(..5)`
+    // rather than `&url[..5]`: it returns `None` instead of panicking when
+    // byte 5 is not a char boundary or the URL is shorter than 5 bytes, so
+    // an arbitrary short or multibyte-prefixed string cannot panic here.
+    let is_data_scheme = url
+        .get(..5)
+        .is_some_and(|s| s.eq_ignore_ascii_case("data:"));
+    if !is_data_scheme {
         return Err(format!(
             "image_url must be a data: URL; this server does not fetch remote images (got {})",
             elide(url)
         ));
-    };
+    }
+    let rest = &url[5..];
     let Some((meta, payload)) = rest.split_once(',') else {
         return Err(
             "malformed data: URL, expected a comma between the media type and the payload"
                 .to_string(),
         );
     };
-    if !meta.split(';').any(|token| token == "base64") {
+    if !meta
+        .split(';')
+        .any(|token| token.eq_ignore_ascii_case("base64"))
+    {
         return Err(format!(
             "data: URL is not base64-encoded (media type {meta:?}); send ;base64 data"
         ));
@@ -146,19 +182,37 @@ fn split_data_url(url: &str) -> Result<&str, String> {
 ///
 /// A data URL can be megabytes, and echoing one into a 400 body makes the
 /// error unreadable and the log unusable.
+///
+/// Truncates by CHARACTER count, not by byte offset: a request-controlled
+/// URL whose byte 60 falls inside a multibyte UTF-8 sequence (a remote-URL
+/// refusal is reachable with an arbitrary client-supplied string) would
+/// panic on a raw `&url[..60]` slice and drop the connection with no
+/// response.
 fn elide(url: &str) -> String {
     const MAX: usize = 60;
-    if url.len() <= MAX {
-        return url.to_string();
+    let mut chars = url.chars();
+    let head: String = chars.by_ref().take(MAX).collect();
+    if chars.next().is_none() {
+        return head;
     }
-    format!("{}... [{} bytes]", &url[..MAX], url.len())
+    format!("{head}... [{} bytes]", url.len())
 }
 
-/// Standard base64, tolerating missing padding and embedded whitespace.
+/// Standard OR URL-safe (RFC 4648 sec. 5, `-`/`_` in place of `+`/`/`)
+/// base64, tolerating missing padding and embedded whitespace.
 ///
-/// Hand-rolled rather than a dependency: it is twenty lines, this is the only
-/// caller in the workspace, and the alternative is a new external crate in a
-/// server that already declines `anyllm_translate`'s heavier features
+/// Both alphabets rather than one: a data URL is JSON-embedded text, not a
+/// URL path or query component, so nothing here needs the URL-safe
+/// alphabet's actual property (no percent-encoding for `+`/`/`) -- but some
+/// client libraries emit it anyway for images, and refusing a byte-for-byte
+/// valid encoding because it used the other of two standard alphabets serves
+/// no one. The two alphabets never collide (`-`/`_` and `+`/`/` are disjoint
+/// symbols for the same six-bit values), so accepting both costs nothing on
+/// the ambiguity a caller might otherwise worry about.
+///
+/// Hand-rolled rather than a dependency: it is twenty-some lines, this is the
+/// only caller in the workspace, and the alternative is a new external crate
+/// in a server that already declines `anyllm_translate`'s heavier features
 /// (Gotcha 4). Whitespace is skipped because a JSON body may carry a wrapped
 /// payload, and padding is optional because both endpoints' clients differ on
 /// whether they send it.
@@ -171,8 +225,8 @@ pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
             b'A'..=b'Z' => c - b'A',
             b'a'..=b'z' => c - b'a' + 26,
             b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
             _ => INVALID,
         }
     };
@@ -270,6 +324,36 @@ mod tests {
         assert!(err.contains("invalid base64"), "{err}");
     }
 
+    /// F25: a URI scheme is case-insensitive by RFC 3986, and `;base64` is
+    /// an ordinary token on the media-type side of the comma with no
+    /// case-sensitivity rule of its own -- but this server used to require
+    /// both spelled exactly lowercase.
+    #[test]
+    fn the_scheme_and_base64_token_are_case_insensitive() {
+        assert_eq!(
+            decode_data_url("DATA:image/png;BASE64,aGVsbG8=").unwrap(),
+            b"hello"
+        );
+        assert_eq!(
+            decode_data_url("Data:image/png;Base64,aGVsbG8=").unwrap(),
+            b"hello"
+        );
+    }
+
+    /// F25: RFC 4648's URL-safe alphabet (`-`/`_` for `+`/`/`) must decode
+    /// the same bytes as the standard one -- some client libraries emit it
+    /// for embedded images even though nothing here needs the property it
+    /// exists for (no percent-encoding of `+`/`/`).
+    #[test]
+    fn the_url_safe_alphabet_decodes_the_same_bytes_as_standard() {
+        // Swapping every `+`/`/` for `-`/`_` in a real standard-base64
+        // payload must decode to the identical bytes.
+        assert_eq!(
+            base64_decode("+/+/").unwrap(),
+            base64_decode("-_-_").unwrap()
+        );
+    }
+
     /// A megabyte data URL must not end up in a 400 body verbatim.
     #[test]
     fn a_long_url_is_elided_in_the_error() {
@@ -277,5 +361,17 @@ mod tests {
         let err = decode_data_url(&long).unwrap_err();
         assert!(err.len() < 200, "error was {} bytes", err.len());
         assert!(err.contains(&format!("{} bytes", long.len())), "{err}");
+    }
+
+    /// `elide` used to slice at a raw byte offset (`&url[..60]`), which
+    /// panics if byte 60 is not a char boundary. `"h"` plus thirty `"\u{00e9}"`
+    /// (2 bytes each) puts the 30th `\u{00e9}` at bytes 59-60, so byte 60 sits
+    /// mid-character -- exactly the case a naive slice cannot survive.
+    #[test]
+    fn a_multibyte_character_straddling_the_truncation_point_does_not_panic() {
+        let url = format!("h{}", "\u{00e9}".repeat(30));
+        assert!(!url.is_char_boundary(60), "fixture must straddle byte 60");
+        let err = decode_data_url(&url).unwrap_err();
+        assert!(err.contains("does not fetch remote"), "{err}");
     }
 }

@@ -24,6 +24,23 @@ pub(crate) fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
+/// A process-wide counter appended to every response id this crate mints,
+/// because `now_unix()` alone is not: two requests finishing in the same
+/// wall-clock SECOND -- which real traffic does constantly, and which a
+/// fast scripted or real backend makes easy to hit even in a test -- would
+/// otherwise mint the identical id, and a client that keys anything on the
+/// id (idempotency, log correlation, a UI list) silently collides them.
+static REQUEST_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `prefix` carries its own trailing separator (`"chatcmpl-"`, `"resp_"`,
+/// `"cmpl-"`), matching each call site's existing spelling; this only adds a
+/// counter suffix after the timestamp, so an id still starts exactly as it
+/// did before.
+pub(crate) fn request_id(prefix: &str) -> String {
+    let n = REQUEST_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{prefix}{}-{n}", now_unix())
+}
+
 fn role_from(role: &ChatRole) -> Role {
     match role {
         ChatRole::System => Role::System,
@@ -69,12 +86,20 @@ pub(crate) fn build_shaping(
     frequency_penalty: Option<f32>,
     extra: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ShapingConfig, String> {
-    // top_k defaults to 64 if unspecified, but can be overridden via `top_k` in extra.
-    let top_k = extra
-        .get("top_k")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32)
-        .unwrap_or(64);
+    // top_k defaults to 64 if unspecified, but can be overridden via `top_k`
+    // in extra. A PRESENT value that is not a non-negative integer fitting
+    // in a u32 is refused rather than silently falling back to the default
+    // -- `.as_u64()` alone cannot tell "absent" from "present but negative
+    // or fractional", and treating a caller's malformed value as though
+    // they had sent nothing hides a client-side bug rather than reporting
+    // it.
+    let top_k = match extra.get("top_k") {
+        None => 64,
+        Some(v) => v
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| format!("top_k must be a non-negative integer, got {v}"))?,
+    };
 
     let repetition_penalty = extra
         .get("repetition_penalty")
@@ -116,6 +141,14 @@ fn build_config(request: &ChatCompletionRequest) -> Result<GenerationConfig, Str
         request.frequency_penalty,
         &request.extra,
     )?;
+
+    // A budget of 0 admits no generated token at all -- a request that
+    // cannot succeed at anything, and one that used to pass straight
+    // through to a wasted prefill-only round trip rather than being refused
+    // up front.
+    if request.max_tokens == Some(0) || request.max_completion_tokens == Some(0) {
+        return Err("max_tokens must be greater than 0".to_string());
+    }
 
     Ok(GenerationConfig {
         shaping,
@@ -352,8 +385,16 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
         // refusing it on a vision install and accepting it on a text-only one
         // would leave a client unable to tell which problem it had. No
         // payload is decoded here.
+        let mut total_images = 0usize;
         for message in &request.messages {
             crate::vision::validate_urls(message)?;
+            total_images += crate::vision::image_count(message);
+        }
+        if total_images > crate::vision::MAX_IMAGES_PER_REQUEST {
+            return Err(format!(
+                "too many images: {total_images} exceeds the {}-image limit per request",
+                crate::vision::MAX_IMAGES_PER_REQUEST
+            ));
         }
         match &vision_info {
             Some(_) => {

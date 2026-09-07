@@ -67,7 +67,7 @@ fn named(id: &str) -> Arc<dyn ChatModel> {
 
 async fn serve(models: Vec<Arc<dyn ChatModel>>) -> String {
     let registry: Arc<dyn turbospark_server::registry::ModelRegistry> =
-        Arc::new(StaticRegistry::new(models));
+        Arc::new(StaticRegistry::new(models).expect("test model ids are unique"));
     let router = build_router(registry);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
