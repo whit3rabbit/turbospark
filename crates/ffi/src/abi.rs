@@ -110,7 +110,10 @@ pub fn guard(body: impl FnOnce() -> c_int) -> c_int {
         Ok(code) => code,
         Err(payload) => fail(
             TS_ERR_PANIC,
-            format!("panic caught at the FFI boundary: {}", panic_detail(payload)),
+            format!(
+                "panic caught at the FFI boundary: {}",
+                panic_detail(payload)
+            ),
         ),
     }
 }
@@ -132,7 +135,10 @@ pub fn guard_value<T>(on_panic: T, body: impl FnOnce() -> T) -> T {
         Err(payload) => {
             fail(
                 TS_ERR_PANIC,
-                format!("panic caught at the FFI boundary: {}", panic_detail(payload)),
+                format!(
+                    "panic caught at the FFI boundary: {}",
+                    panic_detail(payload)
+                ),
             );
             on_panic
         }

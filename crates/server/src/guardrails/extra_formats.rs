@@ -231,7 +231,10 @@ fn parse_gemma(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
         }
         let body = &text[brace_start..body_end];
         if let Some(map) = json_object(body) {
-            calls.push(RawCall { name, arguments: map });
+            calls.push(RawCall {
+                name,
+                arguments: map,
+            });
         }
     }
     (!calls.is_empty()).then_some(calls)
