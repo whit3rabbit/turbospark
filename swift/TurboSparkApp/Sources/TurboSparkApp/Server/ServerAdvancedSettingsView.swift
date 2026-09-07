@@ -107,7 +107,11 @@ struct ServerAdvancedSettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
                     .frame(width: 280)
-                    .disabled(isRunning)
+                    // NOT `.disabled(isRunning)`, unlike its neighbors: the
+                    // catalog effect below applies regardless of whether a
+                    // server happens to be running, and disabling it here
+                    // would just narrow the window in which the two editors
+                    // of this setting disagree rather than closing it.
                     .onChange(of: model.hfEndpointInput) { _, newValue in
                         model.persistSettingsDebounced()
                         // Unlike this pane's other fields, this ONE also

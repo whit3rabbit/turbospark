@@ -305,11 +305,29 @@ a `.task(id:)` keyed on what actually changes it (the folder list in
 `ModelsSettingsPaneView`) rather than on every render, with the existing
 "Rescan Now" button also triggering a manual recompute.
 
-Open, ranked:
+Done 2026-09-06 (HF endpoint, was rank 1, last of the six ranked items):
+`ServerAdvancedSettingsView`'s field persisted `hfEndpointInput` on change
+and stopped there. `HfAuthTokenCardView`'s own editor did the rest --
+calling `TurboSparkCatalog.setHfEndpoint`, which is what every model
+install, probe and browse call reads OUTSIDE server context -- so editing
+through the first field left the catalog on the stale endpoint until the
+next app launch (when `loadSettings()` re-applies it), while the second
+field applied it immediately.
 
-| Rank | Item | Where |
-|---|---|---|
-| 1 | HF endpoint is editable in three places, one disabled while the server runs and one live, and only read at server start plus the download path. | `ServerAdvancedSettingsView`, `HfAuthTokenCardView`. |
+Each editor also inlined its own trim-and-compare for "what counts as the
+default," a second place for the same drift to happen again.
+`HfEndpointResolution.effectiveEndpoint(from:)` is now the one function
+both call, and `ServerAdvancedSettingsView`'s field calls `setHfEndpoint`
+too. It also drops the `.disabled(isRunning)` this pane's other fields
+keep: unlike a port or a memory-guard tier, this setting's catalog effect
+has nothing to do with whether a server happens to be running, so disabling
+it there would only narrow the window in which the two editors disagree
+rather than close it. `HfEndpointResolutionTests.swift` pins the shared
+function.
+
+This closes every item this audit ranked. Section 4's "Cleared after
+checking" list and this section's method (5) still apply to whatever the
+next pass finds.
 
 Cleared after checking, so nobody re-derives them: the Profiles caption about
 isolation is accurate (skills and agents resolve through
