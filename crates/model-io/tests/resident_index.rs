@@ -93,3 +93,82 @@ fn load_rejects_name_range_out_of_bounds() {
     let err = load_resident_index(&path).unwrap_err();
     assert!(matches!(err, ModelError::IndexCorrupt { .. }));
 }
+
+/// `entry_count` near `u64::MAX` must be refused via `checked_mul`/
+/// `checked_add`, never wrap into a small, plausible-looking table size.
+#[test]
+fn load_rejects_an_entry_count_that_overflows_the_table_size() {
+    let mut bytes = build_index_bytes("x");
+    let entry_count_offset = 16;
+    bytes[entry_count_offset..entry_count_offset + 8]
+        .copy_from_slice(&(u64::MAX - 1).to_le_bytes());
+    let path = write_file(&bytes);
+    let err = load_resident_index(&path).unwrap_err();
+    assert!(matches!(err, ModelError::IndexCorrupt { .. }));
+}
+
+/// `indexSize` (and so `indexSize + residentSize`) past the file's actual
+/// length must be refused before it sizes the index-region allocation, not
+/// discovered as a short read partway through.
+#[test]
+fn load_rejects_an_index_size_past_end_of_file() {
+    let mut bytes = build_index_bytes("x");
+    // Declare an indexSize far larger than this (short) file actually is.
+    bytes[0..8].copy_from_slice(&(1u64 << 40).to_le_bytes());
+    let path = write_file(&bytes);
+    let err = load_resident_index(&path).unwrap_err();
+    assert!(matches!(err, ModelError::IndexCorrupt { .. }));
+}
+
+/// An entry whose payload extends past `indexSize + residentSize` is
+/// refused, whatever the entry table itself looks like.
+#[test]
+fn load_rejects_a_payload_past_the_resident_region() {
+    let mut bytes = build_index_bytes("x");
+    // The entry's sizeBytes field sits right after fileOffset (8 bytes in).
+    let size_bytes_offset = HEADER_BYTES + 16;
+    bytes[size_bytes_offset..size_bytes_offset + 8].copy_from_slice(&(4096u64 * 10).to_le_bytes());
+    let path = write_file(&bytes);
+    let err = load_resident_index(&path).unwrap_err();
+    let ModelError::IndexCorrupt { detail } = err else {
+        panic!("expected IndexCorrupt, got {err:?}");
+    };
+    assert!(detail.contains("payload"), "{detail}");
+}
+
+/// A scale plane past the resident region is refused the same way, even
+/// though the payload itself is fine -- each companion is checked
+/// independently.
+#[test]
+fn load_rejects_a_scale_plane_past_the_resident_region() {
+    let mut bytes = build_index_bytes("x");
+    // scaleOffset (8 bytes) then scaleSize (8 bytes), following the four
+    // shape u32s at HEADER_BYTES+24.
+    let scale_offset_offset = HEADER_BYTES + 40;
+    let scale_size_offset = HEADER_BYTES + 48;
+    bytes[scale_offset_offset..scale_offset_offset + 8]
+        .copy_from_slice(&(1u64 << 20).to_le_bytes());
+    bytes[scale_size_offset..scale_size_offset + 8].copy_from_slice(&64u64.to_le_bytes());
+    let path = write_file(&bytes);
+    let err = load_resident_index(&path).unwrap_err();
+    let ModelError::IndexCorrupt { detail } = err else {
+        panic!("expected IndexCorrupt, got {err:?}");
+    };
+    assert!(detail.contains("scale"), "{detail}");
+}
+
+/// `file_offset` below `index_size` -- inside the index region itself,
+/// rather than the resident data past it -- is refused even when the
+/// declared size would otherwise fit inside the file.
+#[test]
+fn load_rejects_a_payload_offset_inside_the_index_region() {
+    let mut bytes = build_index_bytes("x");
+    let file_offset_offset = HEADER_BYTES + 8;
+    bytes[file_offset_offset..file_offset_offset + 8].copy_from_slice(&0u64.to_le_bytes());
+    let path = write_file(&bytes);
+    let err = load_resident_index(&path).unwrap_err();
+    let ModelError::IndexCorrupt { detail } = err else {
+        panic!("expected IndexCorrupt, got {err:?}");
+    };
+    assert!(detail.contains("payload"), "{detail}");
+}

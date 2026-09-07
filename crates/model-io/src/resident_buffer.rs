@@ -29,6 +29,35 @@ impl ResidentBuffer {
             call: "open".to_string(),
             detail: e.to_string(),
         })?;
+        let file_len = file
+            .metadata()
+            .map_err(|e| ModelError::IoFailed {
+                call: "stat".to_string(),
+                detail: e.to_string(),
+            })?
+            .len();
+        // A truncated `model_weights.bin` must fail here with a named
+        // expectation, not SIGBUS on the first touch of the mapping below --
+        // the header-declared length is untrusted input the same way
+        // `resident_index`'s offsets are.
+        let name = file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file_path.display().to_string());
+        let region_end = file_offset.checked_add(resident_size).ok_or_else(|| {
+            ModelError::TensorSizeMismatch {
+                name: name.clone(),
+                expected: resident_size,
+                actual: 0,
+            }
+        })?;
+        if region_end > file_len {
+            return Err(ModelError::TensorSizeMismatch {
+                name,
+                expected: region_end,
+                actual: file_len,
+            });
+        }
         let page_size = page_size_bytes();
         let aligned_offset = (file_offset / page_size) * page_size;
         let slice_shift = (file_offset - aligned_offset) as usize;

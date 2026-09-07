@@ -173,6 +173,18 @@ pub fn load_from(
             .get("layer")
             .and_then(Value::as_u64)
             .ok_or_else(|| corrupt("malformed layer entry"))? as usize;
+        // `PackedExpertsLayout::expert()` and `committed_bytes` index
+        // `layers[layer]` BY POSITION, so a layout whose `layer` fields are
+        // out of order or gapped resolves the wrong blob with no error at
+        // the dispatch site. Refusing here, at load, is the one place that
+        // can name which layer disagreed.
+        if layer_idx != layers.len() {
+            return Err(corrupt(&format!(
+                "layers must appear in order 0..numLayers with no gaps; expected layer \
+                 {} next, found {layer_idx}",
+                layers.len()
+            )));
+        }
         let file = layer_obj
             .get("file")
             .and_then(Value::as_str)
@@ -251,6 +263,16 @@ pub fn load_from(
                     return Err(corrupt("physicalRank out of range"));
                 }
             }
+            // A duplicate id would otherwise overwrite silently, resolving
+            // one of the two blobs to nothing and leaving the OTHER
+            // `expert_id` slot permanently `None` -- caught below as
+            // "missing expert entries" with no hint that the real cause was
+            // a duplicate rather than an omission.
+            if experts[expert_id].is_some() {
+                return Err(corrupt(&format!(
+                    "layer {layer_idx} declares expert {expert_id} more than once"
+                )));
+            }
             experts[expert_id] = Some(ExpertEntry {
                 expert: expert_id,
                 offset,
@@ -267,6 +289,12 @@ pub fn load_from(
             expert_stride: layer_stride,
             experts: experts.into_iter().map(Option::unwrap).collect(),
         });
+    }
+    if layers.len() != num_layers {
+        return Err(corrupt(&format!(
+            "numLayers declares {num_layers} but the layers array has {}",
+            layers.len()
+        )));
     }
 
     Ok(PackedExpertsLayout {

@@ -36,8 +36,8 @@ pub(crate) struct Session {
     /// possibly different one (`crates/ffi/CLAUDE.md` Gotcha 12's rule).
     pub(crate) load_policy: runtime::LoadPolicy,
     /// What this install already commits before KV -- `runtime::
-    /// committed_bytes(model_dir)`, the same value `--max-context`
-    /// resolved against.
+    /// committed_breakdown(model_dir, ..).total()`, the same value
+    /// `--max-context` resolved against.
     pub(crate) committed_bytes: u64,
     /// This session's own KV cache at [`Self::max_context`], i.e.
     /// `ContextPlan::kv_bytes`.
@@ -81,11 +81,28 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         guard: map_load_guard(request.load_guard),
         min_auto_context: request.min_auto_context,
     };
+    // Resolved here, ahead of the open below, so both this call and
+    // `RealForwardRunner::open_with_kv_quant` use the SAME policy: passing
+    // `Auto` to one and a fixed count to the other would size the context
+    // budget against a slot cache this open will not actually request.
+    let expert_cache_slots = match request.expert_cache_slots {
+        invocation::ExpertCacheSlots::Auto => runtime::ExpertCacheSlots::Auto,
+        invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
+    };
+    // `--kv-bits` has to reach this budget too: a quantized KV cache costs
+    // fewer bytes per context than the FP16 estimate `resolve_max_context`
+    // (the non-`_with` wrapper) assumes, which under-admits a window this
+    // machine can actually afford.
+    let kv_quant = map_kv_bits(request.kv_bits);
     // Bound rather than computed inline: the vision pixel budget (Part B3)
     // needs the SAME committed-bytes figure `--max-context` resolved
-    // against, not a second read of the install.
-    let committed = runtime::committed_bytes(model_dir);
-    let plan = runtime::resolve_max_context(
+    // against, not a second read of the install. `committed_breakdown`
+    // resolves the slot cache to what THIS open will actually request,
+    // rather than `committed_bytes`'s worst case, so the `--load-guard
+    // custom` ceiling below is checked against a real allocation.
+    let committed =
+        runtime::committed_breakdown(model_dir, runtime::physical_memory(), expert_cache_slots);
+    let plan = runtime::resolve_max_context_with(
         match request.max_context {
             invocation::MaxContext::Auto => runtime::MaxContext::Auto,
             invocation::MaxContext::Fixed(n) => runtime::MaxContext::Fixed(n),
@@ -96,6 +113,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         runtime::physical_memory(),
         committed,
         &load_policy,
+        kv_quant,
     )
     .map_err(|e| e.to_string())?;
 
@@ -133,15 +151,11 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let asked = map_speculation(request.speculation);
     let choice = resolve_drafter(map_drafter(request.speculative_drafter), model_dir);
     let steering = resolve_steering(request)?;
-    let kv_quant = map_kv_bits(request.kv_bits);
     let mut runner = RealForwardRunner::open_with_kv_quant(
         model_dir,
         arch,
         plan.resolved as usize,
-        match request.expert_cache_slots {
-            invocation::ExpertCacheSlots::Auto => runtime::ExpertCacheSlots::Auto,
-            invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
-        },
+        expert_cache_slots,
         runtime::draft_policies(&choice, asked),
         steering,
         1,
@@ -293,7 +307,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         rate,
         max_context: plan.resolved,
         load_policy,
-        committed_bytes: committed,
+        committed_bytes: committed.total(),
         kv_bytes: plan.kv_bytes,
     })
 }

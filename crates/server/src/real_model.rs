@@ -139,12 +139,26 @@ impl RealChatModel {
         kv_bits: runtime::KvQuant,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
+        // Resolved here, ahead of `committed_breakdown` below, so the same
+        // policy sizes both the context budget and the actual open.
+        let expert_cache_slots_policy = match expert_cache_slots {
+            Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
+            None => runtime::ExpertCacheSlots::Auto,
+        };
         // Bound rather than computed inline: the vision pixel budget (Part
         // B3) needs the SAME committed-bytes figure `max_context` resolved
         // against, and the `--session-slots` refusal below already reads
         // this same install a second time -- one read, three consumers.
-        let committed = runtime::committed_bytes(model_dir);
-        let context = runtime::resolve_max_context(
+        // `committed_breakdown` resolves the slot cache to what THIS open
+        // will actually request, not `committed_bytes`'s worst case, so a
+        // `--load-guard custom` ceiling is checked against a real
+        // allocation.
+        let committed = runtime::committed_breakdown(
+            model_dir,
+            runtime::physical_memory(),
+            expert_cache_slots_policy,
+        );
+        let context = runtime::resolve_max_context_with(
             match max_context {
                 Some(n) => runtime::MaxContext::Fixed(n),
                 None => runtime::MaxContext::Auto,
@@ -155,6 +169,7 @@ impl RealChatModel {
             runtime::physical_memory(),
             committed,
             &load_policy,
+            kv_bits,
         )
         .map_err(|e| e.to_string())?;
         // A quality warning and never an error: RoPE extrapolates rather
@@ -182,7 +197,7 @@ impl RealChatModel {
             let physical = runtime::physical_memory();
             let budget = load_policy.guard.budget();
             if physical > 0 && budget.refuses {
-                let available = load_policy.guard.available(physical, committed);
+                let available = load_policy.guard.available(physical, committed.total());
                 let pool_extra =
                     runtime::session_pool_bytes(&arch, context.resolved, session_slots);
                 let needs = context.kv_bytes.saturating_add(pool_extra);
@@ -228,10 +243,7 @@ impl RealChatModel {
             model_dir,
             arch,
             context.resolved as usize,
-            match expert_cache_slots {
-                Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
-                None => runtime::ExpertCacheSlots::Auto,
-            },
+            expert_cache_slots_policy,
             runtime::draft_policies(&choice, speculation),
             steering,
             session_slots as usize,
@@ -321,7 +333,7 @@ impl RealChatModel {
                 params.min_pixels,
                 load_policy.guard,
                 runtime::physical_memory(),
-                committed,
+                committed.total(),
                 context.kv_bytes,
             ) {
                 Ok(budget) if budget.clamped => {
