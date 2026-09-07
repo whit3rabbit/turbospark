@@ -340,7 +340,7 @@ pub fn encode_attention_decode(
 /// decode loop uses; `attention_decode` (slice K/V) remains for parity
 /// tests.
 #[allow(clippy::too_many_arguments)]
-pub fn attention_decode_buffers(
+pub(crate) fn attention_decode_buffers(
     context: &mut MetalContext,
     q: &[f16],
     k_buffer: &metal::Buffer,

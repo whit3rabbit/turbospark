@@ -53,11 +53,11 @@ pub(crate) fn encode_full_attention_block_batched(
             "--kv-bits is not yet supported with TURBOSPARK_BATCHED_GEMV".to_string(),
         ));
     }
-    if kv.stride(layer) != kv_dim * 2 {
+    if kv.k_stride(layer) != kv_dim * 2 {
         return Err(RealForwardError::Unsupported(format!(
             "layer {layer}: KV stride {} is not {kv_dim} halfs, so a batched projection \
              cannot write M adjacent slots in one dispatch",
-            kv.stride(layer)
+            kv.k_stride(layer)
         )));
     }
     let (k_buf, k_off) = kv.k_slot(layer, start_position);

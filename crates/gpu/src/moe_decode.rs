@@ -25,6 +25,13 @@ const SOURCE: &str = include_str!("shaders/moe.metal");
 const ROWS_PER_THREADGROUP: u64 = 8;
 const THREADS_PER_GROUP: u64 = 256;
 
+/// This module's compiled library, for a caller that needs to reflect one of
+/// ITS functions' argument-buffer layout rather than assume it agrees with
+/// another library's (S7: [`RoutedBlobsBuffer::new_for`]/[`bind_for`]).
+pub fn moe_decode_source() -> &'static str {
+    SOURCE
+}
+
 /// `kMaxStreamedExperts` in the shader: the CEILING both decode kernels'
 /// fixed-size buffers are sized against (16, widened from 8 for
 /// `qwen4_exp`'s top_k=10). Phase 1's dispatch width is proportional to
@@ -112,10 +119,33 @@ pub struct RoutedBlobsBuffer {
 }
 
 impl RoutedBlobsBuffer {
+    /// Reflects `moe_decode::SOURCE`'s own `moe_phase1_gate_up_act_u16load`
+    /// (the vendored INT4-affine pair). Every `moe_gguf` block type shares a
+    /// DIFFERENT library and needs [`Self::new_for`] instead (S7).
     pub fn new(context: &mut MetalContext, use_silu: bool) -> Result<Self, GpuError> {
+        Self::new_for(context, SOURCE, "moe_phase1_gate_up_act_u16load", use_silu)
+    }
+
+    /// The same, reflecting a caller-chosen library and function's
+    /// `RoutedBlobs` argument-buffer layout instead of this module's own.
+    ///
+    /// `RoutedBlobsBuffer` is bound at dispatch time to whichever per-layer
+    /// kernel a `RoutedLayerLayout` resolves (`moe_gguf`'s Q8_0/Q4_K/IQ*/
+    /// MXFP4 pairs, or this module's vendored pair), and reflecting the
+    /// wrong library's layout to build the encoder is an unenforced
+    /// assumption (S7) -- the same reasoning [`crate::RoutedBlobsWideBuffer::new_for`]
+    /// states for its own two known alternatives. `source` must be the same
+    /// `&'static str` constant the matching dispatch passes: the pipeline and
+    /// argument-encoder caches key on its ADDRESS, not its text (Gotcha 1).
+    pub fn new_for(
+        context: &mut MetalContext,
+        source: &'static str,
+        function: &'static str,
+        use_silu: bool,
+    ) -> Result<Self, GpuError> {
         let encoder = context.argument_encoder(
-            SOURCE,
-            "moe_phase1_gate_up_act_u16load",
+            source,
+            function,
             &moe_function_constants(use_silu),
             &constants_key(use_silu),
             0,
@@ -134,16 +164,40 @@ impl RoutedBlobsBuffer {
     /// [`MAX_STREAMED_EXPERTS`]; phase 2 itself only reduces the first
     /// `top_k` of them (`encode_moe_phase2`), so padding past `blobs.len()`
     /// is defensive rather than load-bearing for a single install.
+    ///
+    /// Reflects the same `moe_phase1_gate_up_act_u16load` layout [`Self::new`]
+    /// built the buffer against. Use [`Self::bind_for`] for a buffer created
+    /// with [`Self::new_for`].
     pub fn bind(
         &self,
         context: &mut MetalContext,
         use_silu: bool,
         blobs: &[(&metal::Buffer, u64)],
     ) -> Result<(), GpuError> {
-        assert!(!blobs.is_empty() && blobs.len() <= MAX_STREAMED_EXPERTS);
-        let encoder = context.argument_encoder(
+        self.bind_for(
+            context,
             SOURCE,
             "moe_phase1_gate_up_act_u16load",
+            use_silu,
+            blobs,
+        )
+    }
+
+    /// [`Self::bind`] against a caller-chosen library and function's layout.
+    /// `source`/`function` must be the pair the buffer was created with
+    /// (see [`Self::new_for`]).
+    pub fn bind_for(
+        &self,
+        context: &mut MetalContext,
+        source: &'static str,
+        function: &'static str,
+        use_silu: bool,
+        blobs: &[(&metal::Buffer, u64)],
+    ) -> Result<(), GpuError> {
+        assert!(!blobs.is_empty() && blobs.len() <= MAX_STREAMED_EXPERTS);
+        let encoder = context.argument_encoder(
+            source,
+            function,
             &moe_function_constants(use_silu),
             &constants_key(use_silu),
             0,

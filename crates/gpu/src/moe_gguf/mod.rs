@@ -61,6 +61,17 @@ const SOURCE: &str = concat!(
 const ROWS_PER_THREADGROUP: u64 = 8;
 const THREADS_PER_GROUP: u64 = 256;
 
+/// This module's compiled library (every GGUF block type's phase 1/2 pair,
+/// MXFP4 included), for a caller that needs to reflect one of ITS
+/// functions' `RoutedBlobs` argument-buffer layout rather than the vendored
+/// pair's (S7: `RoutedBlobsBuffer::new_for`/`bind_for` in
+/// [`crate::moe_decode`]). Any one of this library's entry points reflects
+/// the same layout, since they share one struct declaration in one
+/// compilation -- see this module's own doc comment for the concatenation.
+pub fn moe_gguf_source() -> &'static str {
+    SOURCE
+}
+
 /// The width every phase-2 kernel in this module reduces, and (via
 /// `crate::moe_prefill_batch`/`crate::moe_prefill_batch_gguf`) the width
 /// their batched-prefill siblings reduce too: `moe_gguf.metal`'s

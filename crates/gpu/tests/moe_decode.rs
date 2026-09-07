@@ -194,3 +194,29 @@ fn moe_phase1_phase2_match_cpu_reference() {
         );
     }
 }
+
+/// S7: a `RoutedBlobsBuffer` built from ONE `moe_gguf` kernel's argument
+/// encoder is bound at dispatch time to every OTHER GGUF kernel in that
+/// same library (`crates/runtime::real_forward_layout::RoutedBlobLayout::
+/// source_function` picks a representative rather than reflecting each
+/// dispatch's own kernel). That is safe only because every entry point in
+/// `moe_gguf::SOURCE` declares the identical `RoutedBlobs` struct at
+/// argument index 0 -- this is the cheap check that assumption still holds,
+/// so a future GGUF kernel whose layout genuinely diverges fails a
+/// millisecond test here rather than corrupting a routed dispatch silently.
+#[test]
+fn gguf_kernel_pairs_agree_on_the_routed_blobs_argument_buffer_size() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let source = turbospark_gpu::moe_gguf_source();
+    let q8_0 =
+        RoutedBlobsBuffer::new_for(&mut context, source, "moe_phase1_gate_up_act_q8_0", false)
+            .expect("q8_0 arg buffer");
+    let mxfp4 =
+        RoutedBlobsBuffer::new_for(&mut context, source, "moe_phase1_gate_up_act_mxfp4", false)
+            .expect("mxfp4 arg buffer");
+    assert_eq!(
+        q8_0.buffer().length(),
+        mxfp4.buffer().length(),
+        "moe_gguf's phase-1 kernels must agree on the RoutedBlobs argument-buffer layout"
+    );
+}

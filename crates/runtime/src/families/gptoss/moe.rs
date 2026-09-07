@@ -177,7 +177,10 @@ pub(crate) fn encode_gpt_oss_layer_moe(
     // `hidden_activation`, so a layout that somehow resolved to a non-MXFP4
     // kernel gets silu rather than gelu-tanh, which is the nearer wrong
     // answer.
-    routed.bind(context, true, &blob_refs).map_err(gpu_err)?;
+    let (blob_source, blob_function) = routed_layouts[layer].phase1.source_function();
+    routed
+        .bind_for(context, blob_source, blob_function, true, &blob_refs)
+        .map_err(gpu_err)?;
     phases.bind_nanos += t_bind.elapsed().as_nanos() as u64;
 
     for &(buffer, _) in &blob_refs {

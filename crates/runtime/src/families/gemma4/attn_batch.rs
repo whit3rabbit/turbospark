@@ -78,11 +78,11 @@ impl RealForwardRunner {
         // rather than a coincidence: the batched kernel's output is
         // token-major with a row stride of `kv_dim` halfs, and that has to
         // be the cache's own per-token stride.
-        if self.kv.stride(layer) != kv_dim * 2 {
+        if self.kv.k_stride(layer) != kv_dim * 2 {
             return Err(RealForwardError::Unsupported(format!(
                 "layer {layer}: KV stride {} is not {kv_dim} halfs, so a batched projection \
                  cannot write M adjacent slots in one dispatch",
-                self.kv.stride(layer)
+                self.kv.k_stride(layer)
             )));
         }
 

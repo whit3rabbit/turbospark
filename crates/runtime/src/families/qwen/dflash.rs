@@ -193,11 +193,11 @@ impl DflashState {
         .map_err(RealForwardError::Gpu)?;
         let kv_stride = shape.num_kv_heads * shape.head_dim * 2;
         for layer in 0..shape.layers {
-            if kv.stride(layer) != kv_stride {
+            if kv.k_stride(layer) != kv_stride {
                 return Err(RealForwardError::Unsupported(format!(
                     "the drafter's KV stride {} is not the {kv_stride} bytes a batched \
                      projection writes per row",
-                    kv.stride(layer)
+                    kv.k_stride(layer)
                 )));
             }
         }

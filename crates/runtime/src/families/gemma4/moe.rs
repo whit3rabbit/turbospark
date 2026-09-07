@@ -189,8 +189,15 @@ impl RealForwardRunner {
         })?;
         let offsets = &self.moe_offsets[layer];
         let layer_layout = self.routed_layouts[layer];
+        let (blob_source, blob_function) = layer_layout.phase1.source_function();
         routed
-            .bind(&mut self.context, use_silu, &blob_refs)
+            .bind_for(
+                &mut self.context,
+                blob_source,
+                blob_function,
+                use_silu,
+                &blob_refs,
+            )
             .map_err(gpu_err)?;
         self.phases.bind_nanos += t_bind.elapsed().as_nanos() as u64;
 

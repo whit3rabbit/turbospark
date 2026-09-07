@@ -125,11 +125,99 @@ fn matches_cpu_reference_at_four_bits_d256() {
     run_case(256, 4, 2, 1);
 }
 
+/// T3: the name promised a source row wider than what gets quantized, but
+/// `run_case` above always passes `source_row_stride_elems ==
+/// num_kv_heads * dim` -- the packed width, never a real gap -- so the
+/// case never actually varied the stride argument
+/// `encode_kv_quantize_tq` takes. The only production caller
+/// (`crates/runtime`'s `kv_write.rs`) always passes `rows = 1` too, so
+/// nothing here was reachable from a real install either. This gives the
+/// stride argument a fixture that can actually see it get ignored: each
+/// row's buffer is WIDER than `num_kv_heads * dim`, and the gap between
+/// what one row quantizes and the next row's start is filled with a huge
+/// sentinel that must never be read.
 #[test]
 fn a_wider_source_row_stride_is_honoured() {
-    // num_kv_heads=4 but the source buffer is laid out with extra heads
-    // per row than we quantize -- exercised implicitly by having
-    // num_kv_heads > 1 above; this case additionally checks a single
-    // kv_head slice deep inside a wider row.
-    run_case(64, 2, 1, 5);
+    let dim = 64usize;
+    let bits = 2u8;
+    let num_kv_heads = 2usize;
+    let rows = 3usize;
+    let stride_elems = num_kv_heads * dim + 32; // real width + a real gap.
+
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let quant = KvQuant::TurboQuant {
+        k_bits: bits,
+        v_bits: bits,
+    };
+    let tables = KvQuantTables::new(context.device(), dim, quant).expect("tq tables build");
+
+    // Every row's REAL region (the first `num_kv_heads * dim` elements) is
+    // hashed and distinct, exactly as `run_case`'s fixture is. The gap past
+    // it, up to `stride_elems`, is a huge sentinel: reading it as if it
+    // were real data moves the quantized norm and packed words far outside
+    // what the real region alone would produce.
+    let mut input_f32 = vec![0f32; rows * stride_elems];
+    for r in 0..rows {
+        let base = r * stride_elems;
+        for i in 0..(num_kv_heads * dim) {
+            input_f32[base + i] =
+                (((r * num_kv_heads * dim + i) as f32) * 0.913 + 0.37).sin() * 3.0;
+        }
+        for i in (num_kv_heads * dim)..stride_elems {
+            input_f32[base + i] = 1.0e6;
+        }
+    }
+    let input_f16 = to_f16(&input_f32);
+
+    let src_buffer = context.new_buffer_with_data(&half_bytes(&input_f16));
+    let packed_words = model_io::tq_packed_words(dim as i64, bits) as usize;
+    let dst_bytes = (rows * num_kv_heads * (1 + packed_words) * 4) as u64;
+    let dst_buffer = context.new_output_buffer(dst_bytes);
+
+    let pass = context.begin_pass();
+    encode_kv_quantize_tq(
+        &mut context,
+        &pass,
+        (&src_buffer, 0),
+        stride_elems as u32,
+        (&dst_buffer, 0),
+        &tables.k,
+        dim as u32,
+        num_kv_heads as u32,
+        rows as u32,
+    )
+    .expect("dispatch succeeds");
+    pass.commit_and_wait();
+
+    let gpu_rows = read_packed_rows(&dst_buffer, rows * num_kv_heads, packed_words);
+
+    let signs = sign_vector(dim, KEY_SEED);
+    let cb = codebook(dim, bits);
+    let mp = midpoints(&cb);
+
+    for r in 0..rows {
+        for h in 0..num_kv_heads {
+            let idx = r * num_kv_heads + h;
+            let row_base = r * stride_elems + h * dim;
+            let x_f16: Vec<f32> = input_f16[row_base..row_base + dim]
+                .iter()
+                .map(|v| v.to_f32())
+                .collect();
+            let cpu = quantize_row(&x_f16, &signs, &mp, bits);
+
+            let (gpu_norm, gpu_words) = &gpu_rows[idx];
+            let rel = (gpu_norm - cpu.norm).abs() / cpu.norm.max(1e-6);
+            assert!(
+                rel < 1e-4,
+                "strided: row={r} head={h}: norm gpu={gpu_norm} cpu={} \
+                 (a mismatch here means the gap's sentinel reached the output)",
+                cpu.norm
+            );
+            assert_eq!(
+                gpu_words, &cpu.words,
+                "strided: row={r} head={h}: packed words differ\ngpu={gpu_words:?}\ncpu={:?}",
+                cpu.words
+            );
+        }
+    }
 }
