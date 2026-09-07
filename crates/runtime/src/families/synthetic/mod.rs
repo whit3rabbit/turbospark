@@ -99,6 +99,20 @@ impl RealForwardRunner {
         if self.real.is_some() {
             return self.produce_real_gemma4(token, position, logits);
         }
+        // This fallback ALIASES K and V (`encode_synthetic_layer` passes
+        // the SAME buffer as both), which TurboQuant cannot express: K and
+        // V are quantized against DIFFERENT sign vectors and codebooks
+        // (`KEY_SEED` vs `VALUE_SEED`) even at equal bit widths, so a
+        // shared physical row can hold at most one of them correctly.
+        // Refused by name rather than silently writing plausible garbage
+        // into whichever codec lost the race.
+        if self.kv.quant_tables().is_some() {
+            return Err(RealForwardError::Unsupported(
+                "--kv-bits is not supported on the synthetic short-name fallback flow, which \
+                 aliases K and V into one buffer"
+                    .to_string(),
+            ));
+        }
         let hidden = self.arch.hidden_size as usize;
         let inter = self.arch.intermediate_size as usize;
         let num_heads = self.arch.num_heads as u32;

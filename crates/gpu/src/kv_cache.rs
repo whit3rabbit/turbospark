@@ -8,16 +8,23 @@
 //! the parallel per-layer arrays stay non-optional, matching the Swift
 //! original. Their real state lives in [`crate::gdn_state::GdnStateManager`]
 //! (linear layers) or a future DSV4 state manager (compressed layers).
+//!
+//! **TurboQuant KV-cache quantization** (`--kv-bits`) is the one thing
+//! that makes K and V strides genuinely DIFFERENT on some layers (K3/V4
+//! packs to different word counts than a shared FP16 stride ever could),
+//! which is why this manager tracks `k_strides`/`v_strides` as two arrays
+//! rather than one shared `strides`. [`Self::new`] is the `KvQuant::Off`
+//! wrapper around [`Self::new_with_kv_quant`], so every pre-existing
+//! caller and every frozen digest goes through the identical FP16-only
+//! path unchanged. See `docs/TRUBOQUANT.md`.
 
 use metal::{Device, MTLResourceOptions};
-use model_io::ArchConfig;
+use model_io::{ArchConfig, KvQuant};
 
 use crate::context::GpuError;
-use crate::kv_cache_mem::{advise_dontneed, page_size_bytes, write_into};
+use crate::kv_cache_mem::{page_size_bytes, write_into};
+use crate::kv_quant_tables::KvQuantTables;
 
-/// Which attention variant a layer runs, sourced from
-/// `ArchConfig.full_attention_layer_mask` (0 = swa, 1 = full, 2 = linear,
-/// 3/4 = DeepSeek V4 CSA/HCA, both `Compressed` here).
 /// Which attention variant a layer runs, sourced from
 /// `ArchConfig.full_attention_layer_mask` (0 = swa, 1 = full, 2 = linear,
 /// 3/4 = DeepSeek V4 CSA/HCA, both `Compressed` here).
@@ -39,15 +46,13 @@ pub struct KvView<'a> {
     pub buffer: &'a metal::Buffer,
     /// Byte offset of logical position 0. Always 0 under linear storage.
     pub offset: usize,
-    /// Bytes per token (`num_kv_heads * head_dim * size_of::<f16>()`).
+    /// Bytes per token for the half (K or V) this view reads.
     pub stride: usize,
     /// Number of valid positions written so far.
     pub valid_token_count: usize,
     /// Ring start slot. 0 under linear storage.
     pub start_slot: usize,
 }
-
-const FP16_SIZE: usize = 2;
 
 /// KV cache manager orchestrating per-layer Metal buffers for token generation.
 pub struct KvCacheManager {
@@ -56,7 +61,8 @@ pub struct KvCacheManager {
     num_layers: usize,
     k_buffers: Vec<metal::Buffer>,
     v_buffers: Vec<metal::Buffer>,
-    strides: Vec<usize>,
+    k_strides: Vec<usize>,
+    v_strides: Vec<usize>,
     kinds: Vec<LayerKind>,
     capacity_tokens: Vec<usize>,
     position: usize,
@@ -64,11 +70,19 @@ pub struct KvCacheManager {
     /// [`Self::max_safe_rewind`] can derive the ring's slack. Zero when the
     /// model has no SWA layers.
     swa_window: usize,
+    /// `Some((k_bits, v_bits))` for a layer TurboQuant quantizes
+    /// ([`model_io::layer_is_quantized`]), `None` otherwise -- including
+    /// every layer when `kv_quant` was [`KvQuant::Off`].
+    quant: Vec<Option<(u8, u8)>>,
+    /// The codebooks, midpoints and sign vectors every quantized layer
+    /// shares. `None` when no layer quantizes.
+    tables: Option<KvQuantTables>,
 }
 
 #[allow(clippy::too_many_arguments)]
 impl KvCacheManager {
     /// Allocates KV cache buffers for all model layers based on architecture and context limits.
+    /// The [`KvQuant::Off`] wrapper around [`Self::new_with_kv_quant`].
     pub fn new(
         device: &Device,
         config: &ArchConfig,
@@ -78,15 +92,45 @@ impl KvCacheManager {
         max_prefill_chunk_tokens: usize,
         fp16_ring_capacity_override: Option<usize>,
     ) -> Result<Self, GpuError> {
+        Self::new_with_kv_quant(
+            device,
+            config,
+            max_context,
+            fp16_ring_enabled,
+            sliding_window,
+            max_prefill_chunk_tokens,
+            fp16_ring_capacity_override,
+            KvQuant::Off,
+        )
+    }
+
+    /// [`Self::new`], honoring `kv_quant`. Every quantized layer's K and V
+    /// buffers are sized from [`model_io::kv_layer_strides`] -- the same
+    /// per-layer arithmetic `context_policy`'s `kv_bytes_for_context_with`
+    /// uses to ESTIMATE this manager's footprint before it ever opens, so
+    /// the two cannot silently disagree about what a session will commit.
+    ///
+    /// Panics if `kv_quant` is on and `config.full_head_dim` fails
+    /// [`model_io::rht_supported`] -- callers must refuse `--kv-bits` by
+    /// name before reaching here (see `real_forward_init`'s
+    /// `kv_quant_unsupported_reason`), the same contract
+    /// [`KvQuantTables::new`] states.
+    pub fn new_with_kv_quant(
+        device: &Device,
+        config: &ArchConfig,
+        max_context: usize,
+        fp16_ring_enabled: bool,
+        sliding_window: Option<usize>,
+        max_prefill_chunk_tokens: usize,
+        fp16_ring_capacity_override: Option<usize>,
+        kv_quant: KvQuant,
+    ) -> Result<Self, GpuError> {
         assert!(max_context > 0, "max_context must be positive");
         assert!(
             max_prefill_chunk_tokens > 0,
             "max_prefill_chunk_tokens must be positive"
         );
 
-        let swa_stride = config.num_kv_heads as usize * config.head_dim as usize * FP16_SIZE;
-        let full_stride =
-            config.num_full_kv_heads as usize * config.full_head_dim as usize * FP16_SIZE;
         let swa_capacity = max_context.min(
             fp16_ring_capacity_override
                 .unwrap_or(
@@ -99,12 +143,16 @@ impl KvCacheManager {
         let num_layers = config.num_layers as usize;
         let mut k_buffers = Vec::with_capacity(num_layers);
         let mut v_buffers = Vec::with_capacity(num_layers);
-        let mut strides = Vec::with_capacity(num_layers);
+        let mut k_strides = Vec::with_capacity(num_layers);
+        let mut v_strides = Vec::with_capacity(num_layers);
         let mut kinds = Vec::with_capacity(num_layers);
         let mut capacity_tokens = Vec::with_capacity(num_layers);
+        let mut quant = Vec::with_capacity(num_layers);
 
         let all_placeholder = config.has_compressed_attention_layers();
         let mut linear_placeholder: Option<metal::Buffer> = None;
+
+        let tables = KvQuantTables::new(device, config.full_head_dim as usize, kv_quant);
 
         for layer in 0..num_layers {
             let mask_value = config.full_attention_layer_mask[layer];
@@ -122,33 +170,51 @@ impl KvCacheManager {
                 };
                 k_buffers.push(placeholder.clone());
                 v_buffers.push(placeholder);
-                strides.push(0);
+                k_strides.push(0);
+                v_strides.push(0);
                 kinds.push(if mask_value == 2 {
                     LayerKind::Linear
                 } else {
                     LayerKind::Compressed
                 });
                 capacity_tokens.push(0);
+                quant.push(None);
                 continue;
             }
             let is_full = mask_value != 0;
-            let stride = if is_full { full_stride } else { swa_stride };
+            let (k_stride, v_stride) = model_io::kv_layer_strides(config, layer, kv_quant);
+            let layer_quant =
+                if model_io::layer_is_quantized(kv_quant, mask_value, layer, num_layers) {
+                    match kv_quant {
+                        KvQuant::TurboQuant { k_bits, v_bits } => Some((k_bits, v_bits)),
+                        KvQuant::Off => {
+                            unreachable!("layer_is_quantized is false whenever kv_quant is Off")
+                        }
+                    }
+                } else {
+                    None
+                };
             let capacity = if fp16_ring_enabled && !is_full {
                 swa_capacity
             } else {
                 max_context
             };
-            let length = (capacity * stride) as u64;
+            let k_length = capacity as u64 * k_stride;
+            let v_length = capacity as u64 * v_stride;
 
-            k_buffers.push(device.new_buffer(length.max(1), MTLResourceOptions::StorageModeShared));
-            v_buffers.push(device.new_buffer(length.max(1), MTLResourceOptions::StorageModeShared));
-            strides.push(stride);
+            k_buffers
+                .push(device.new_buffer(k_length.max(1), MTLResourceOptions::StorageModeShared));
+            v_buffers
+                .push(device.new_buffer(v_length.max(1), MTLResourceOptions::StorageModeShared));
+            k_strides.push(k_stride as usize);
+            v_strides.push(v_stride as usize);
             kinds.push(if is_full {
                 LayerKind::Full
             } else {
                 LayerKind::Swa
             });
             capacity_tokens.push(capacity);
+            quant.push(layer_quant);
         }
 
         Ok(Self {
@@ -157,11 +223,14 @@ impl KvCacheManager {
             num_layers,
             k_buffers,
             v_buffers,
-            strides,
+            k_strides,
+            v_strides,
             kinds,
             capacity_tokens,
             position: 0,
             swa_window: sliding_window.unwrap_or(config.sliding_window as usize),
+            quant,
+            tables,
         })
     }
 
@@ -175,9 +244,33 @@ impl KvCacheManager {
         self.kinds[layer]
     }
 
-    /// Bytes per token for `layer` (K and V share the same stride).
+    /// Bytes per token for `layer`'s K side. Equal to [`Self::v_stride`] on
+    /// every FP16 layer; the two can differ on a TurboQuant-quantized one
+    /// (K and V bit widths need not match, e.g. K3/V4).
     pub fn stride(&self, layer: usize) -> usize {
-        self.strides[layer]
+        self.k_strides[layer]
+    }
+
+    /// Bytes per token for `layer`'s K side.
+    pub fn k_stride(&self, layer: usize) -> usize {
+        self.k_strides[layer]
+    }
+
+    /// Bytes per token for `layer`'s V side.
+    pub fn v_stride(&self, layer: usize) -> usize {
+        self.v_strides[layer]
+    }
+
+    /// `Some((k_bits, v_bits))` when `layer` is TurboQuant-quantized,
+    /// `None` otherwise (every layer, when `kv_quant` was
+    /// [`KvQuant::Off`]).
+    pub fn layer_quant(&self, layer: usize) -> Option<(u8, u8)> {
+        self.quant[layer]
+    }
+
+    /// The shared codebook/sign tables, when any layer quantizes.
+    pub fn quant_tables(&self) -> Option<&KvQuantTables> {
+        self.tables.as_ref()
     }
 
     /// Physical token capacity for `layer`.
@@ -194,9 +287,14 @@ impl KvCacheManager {
         }
     }
 
-    /// Returns total buffer byte length for key or value buffer at `layer`.
+    /// Returns total K buffer byte length at `layer`.
     pub fn buffer_length(&self, layer: usize) -> usize {
-        self.capacity_tokens[layer] * self.strides[layer]
+        self.capacity_tokens[layer] * self.k_strides[layer]
+    }
+
+    /// Returns total V buffer byte length at `layer`.
+    pub fn v_buffer_length(&self, layer: usize) -> usize {
+        self.capacity_tokens[layer] * self.v_strides[layer]
     }
 
     /// Write target for this layer's K projection at `position`.
@@ -208,7 +306,7 @@ impl KvCacheManager {
         self.validate_range(position, 1);
         (
             &self.k_buffers[layer],
-            self.physical_slot(layer, position) * self.strides[layer],
+            self.physical_slot(layer, position) * self.k_strides[layer],
         )
     }
 
@@ -222,23 +320,39 @@ impl KvCacheManager {
         self.validate_range(position, 1);
         (
             &self.v_buffers[layer],
-            self.physical_slot(layer, position) * self.strides[layer],
+            self.physical_slot(layer, position) * self.v_strides[layer],
         )
     }
 
-    /// Host-writes one token's K row (`stride(layer)` bytes) into the
+    /// Host-writes one token's K row (`k_stride(layer)` bytes) into the
     /// layer's persistent K buffer at `position`'s physical slot. Shared
     /// storage mode makes this a plain memcpy into unified memory — O(1)
     /// per token, replacing any full-history re-upload. (The deeper form,
     /// a kernel writing its projection output straight into the slot,
     /// comes with encoder-level dispatch batching.)
+    ///
+    /// Refuses a TurboQuant-quantized layer by name: its row is never an
+    /// in-place raw-byte target, only `encode_kv_quantize_tq` writes it
+    /// (through `crate::kv_quantize::encode_kv_quantize_tq`), after the
+    /// projection has been normed and RoPE'd on a staging row. A caller
+    /// reaching this method for such a layer skipped that commit path.
     pub fn write_k(&self, layer: usize, position: usize, bytes: &[u8]) {
+        assert!(
+            self.quant[layer].is_none(),
+            "write_k: layer {layer} is TurboQuant-quantized; write through \
+             kv_quantize::encode_kv_quantize_tq instead"
+        );
         let (buffer, offset) = self.k_slot(layer, position);
         write_into(buffer, offset, bytes);
     }
 
     /// Host-writes one token's V row; see [`KvCacheManager::write_k`].
     pub fn write_v(&self, layer: usize, position: usize, bytes: &[u8]) {
+        assert!(
+            self.quant[layer].is_none(),
+            "write_v: layer {layer} is TurboQuant-quantized; write through \
+             kv_quantize::encode_kv_quantize_tq instead"
+        );
         let (buffer, offset) = self.v_slot(layer, position);
         write_into(buffer, offset, bytes);
     }
@@ -254,7 +368,7 @@ impl KvCacheManager {
         KvView {
             buffer: &self.k_buffers[layer],
             offset: 0,
-            stride: self.strides[layer],
+            stride: self.k_strides[layer],
             valid_token_count,
             start_slot: self.ring_start_slot(layer, valid_token_count),
         }
@@ -271,7 +385,7 @@ impl KvCacheManager {
         KvView {
             buffer: &self.v_buffers[layer],
             offset: 0,
-            stride: self.strides[layer],
+            stride: self.v_strides[layer],
             valid_token_count,
             start_slot: self.ring_start_slot(layer, valid_token_count),
         }
@@ -290,65 +404,6 @@ impl KvCacheManager {
             "advance would exceed max_context"
         );
         self.position += count;
-    }
-
-    /// How many tokens [`Self::rewind_by`] can drop and still leave every
-    /// layer's readable window intact. `usize::MAX` when nothing rings.
-    ///
-    /// A full-attention layer stores position `p` at slot `p` and is read
-    /// over `[0, position)`, so a rewind only shrinks the range and any
-    /// count is safe. A ring layer stores at `p % capacity` and is read
-    /// over the last `swa_window` positions, so writing `k` tokens past a
-    /// point overwrites the `k` slots holding positions `[p-k-capacity,
-    /// p-capacity)`. Rewinding to `p-k` then needs `[p-k-window, p-k)`, and
-    /// those survive exactly when `capacity >= window + k`.
-    ///
-    /// The slack is real rather than lucky: `new` sizes a ring at
-    /// `sliding_window + max_prefill_chunk_tokens`, so the chunk budget is
-    /// also the rewind budget. A ring that was never allowed to wrap
-    /// (`capacity == max_context`) has no constraint at all.
-    pub fn max_safe_rewind(&self) -> usize {
-        let mut budget = usize::MAX;
-        for layer in 0..self.num_layers {
-            if self.ring_capacity(layer) == 0 || self.capacity_tokens[layer] >= self.max_context {
-                continue;
-            }
-            budget = budget.min(self.capacity_tokens[layer].saturating_sub(self.swa_window));
-        }
-        budget
-    }
-
-    /// Moves the cursor back `count` tokens, discarding the rows written at
-    /// `[position - count, position)`. Rows are addressed by ABSOLUTE
-    /// position and views are cut at `valid_token_count`, so nothing has to
-    /// be erased: the next writes overwrite the same slots.
-    ///
-    /// This is the attention half of a speculative-decoding rollback (the
-    /// recurrent half is `GdnStateManager::restore`). Panics rather than
-    /// silently corrupting when a ring layer's window would lose rows; see
-    /// [`Self::max_safe_rewind`].
-    pub fn rewind_by(&mut self, count: usize) {
-        assert!(count <= self.position, "rewind below position 0");
-        let budget = self.max_safe_rewind();
-        assert!(
-            count <= budget,
-            "rewind of {count} exceeds the ring slack of {budget}: a sliding-window \
-             layer would read rows this generation has already overwritten"
-        );
-        self.position -= count;
-    }
-
-    /// Drops all cached positions and returns physical pages to the OS via
-    /// `MADV_DONTNEED`, so a finished generation does not keep its KV
-    /// resident into the next turn.
-    pub fn reset(&mut self) {
-        self.position = 0;
-        let page_size = page_size_bytes();
-        let mut advised: Vec<*const std::ffi::c_void> = Vec::new();
-        for layer in 0..self.num_layers {
-            advise_dontneed(&self.k_buffers[layer], page_size, &mut advised);
-            advise_dontneed(&self.v_buffers[layer], page_size, &mut advised);
-        }
     }
 
     fn validate_range(&self, start: usize, count: usize) {
@@ -383,3 +438,6 @@ impl KvCacheManager {
         }
     }
 }
+
+#[path = "kv_cache_rewind.rs"]
+mod kv_cache_rewind;

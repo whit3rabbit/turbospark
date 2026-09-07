@@ -107,6 +107,10 @@ pub fn session_for_testing_named(
             // absence of a capability rather than a refusal a caller could
             // act on -- which is why `reason` stays null here too.
             vision: wire::VisionInfo::default(),
+            // A scripted producer's KV cache does not exist to quantize, so
+            // this reads exactly what a real session with `kvBits` absent
+            // would: `off`.
+            kv_bits: "off".to_string(),
             special_tokens: wire::SpecialTokensInfo {
                 bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
                 eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),

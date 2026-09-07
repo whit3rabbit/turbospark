@@ -93,6 +93,7 @@ impl RealChatModel {
         prefix_reuse: bool,
         session_slots: u32,
         vision_sidecar: Option<&Path>,
+        kv_bits: runtime::KvQuant,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         // Bound rather than computed inline: the vision pixel budget (Part
@@ -180,20 +181,20 @@ impl RealChatModel {
         // -- two copies would name different causes the first time they
         // disagreed.
         let choice = runtime::resolve_drafter(drafter, model_dir);
-        let mut runner =
-            RealForwardRunner::open_with_slot_policy_speculation_steering_and_sessions(
-                model_dir,
-                arch,
-                context.resolved as usize,
-                match expert_cache_slots {
-                    Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
-                    None => runtime::ExpertCacheSlots::Auto,
-                },
-                runtime::draft_policies(&choice, speculation),
-                steering,
-                session_slots as usize,
-            )
-            .map_err(|e| e.to_string())?;
+        let mut runner = RealForwardRunner::open_with_kv_quant(
+            model_dir,
+            arch,
+            context.resolved as usize,
+            match expert_cache_slots {
+                Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
+                None => runtime::ExpertCacheSlots::Auto,
+            },
+            runtime::draft_policies(&choice, speculation),
+            steering,
+            session_slots as usize,
+            kv_bits,
+        )
+        .map_err(|e| e.to_string())?;
         // A request continues from the previous request's KV wherever the
         // prompts agree, instead of re-prefilling the whole transcript
         // (`crates/runtime/CLAUDE.md` Gotcha 30). Set once at open, like every

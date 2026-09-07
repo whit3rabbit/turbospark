@@ -93,8 +93,8 @@ fn usage_text_enumerates_every_declared_option_with_a_default_or_allowed_value_d
     );
     let other_options = OPTIONS.len() - required_and_mode_options.len();
     assert_eq!(
-        other_options, 31,
-        "expected thirty-one remaining documented options"
+        other_options, 32,
+        "expected thirty-two remaining documented options"
     );
 }
 

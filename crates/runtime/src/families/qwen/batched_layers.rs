@@ -41,6 +41,18 @@ pub(crate) fn encode_full_attention_block_batched(
     let name =
         |suffix: &str| prefixed_layer_tensor(TRUNK_PREFIX, layer, &format!("self_attn.{suffix}"));
 
+    // `--kv-bits` is not wired to this M-row GEMM path (`crate::kv_write`'s
+    // module doc): it writes K/V straight into the cache via a batched
+    // projection and bypasses `kv_write_target`/`encode_kv_commit` entirely.
+    // The stride check two lines below would ALSO catch a quantized layer
+    // (its packed row is narrower than `kv_dim` FP16 halfs), but that
+    // message reads as a shape bug rather than as this feature, so refuse
+    // by name first.
+    if kv.layer_quant(layer).is_some() {
+        return Err(RealForwardError::Unsupported(
+            "--kv-bits is not yet supported with TURBOSPARK_BATCHED_GEMV".to_string(),
+        ));
+    }
     if kv.stride(layer) != kv_dim * 2 {
         return Err(RealForwardError::Unsupported(format!(
             "layer {layer}: KV stride {} is not {kv_dim} halfs, so a batched projection \

@@ -11,6 +11,7 @@
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::llama::{layer_tensor, RealLlamaState};
+use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 
@@ -36,11 +37,15 @@ pub(crate) fn encode_attention_block(
     let kv_dim = (num_kv * head_dim) as usize;
     let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
 
-    // K and V are written STRAIGHT INTO the cache slot by the GEMV, which is
-    // what makes the decode path zero-copy; there is no separate V buffer to
-    // alias, unlike Gemma's `attention_k_eq_v` layers.
-    let (k_buf, k_off) = kv.k_slot(layer, position);
-    let (v_buf, v_off) = kv.v_slot(layer, position);
+    // K and V are written STRAIGHT INTO the cache slot by the GEMV on an
+    // FP16 layer (zero-copy decode; no separate V buffer to alias, unlike
+    // Gemma's `attention_k_eq_v` layers), or into a staging row on a
+    // TurboQuant-quantized one -- `kv_write_target` picks which, and
+    // everything below (the projection, the optional qk-norm, RoPE) runs
+    // identically either way. `encode_kv_commit` quantizes staging into the
+    // cache afterward; it is a no-op on an FP16 layer.
+    let (k_buf, k_off) = kv_write_target(kv, scratch, KvHalf::K, layer, position);
+    let (v_buf, v_off) = kv_write_target(kv, scratch, KvHalf::V, layer, position);
     encode_gemv_any(
         context,
         pass,
@@ -53,8 +58,8 @@ pub(crate) fn encode_attention_block(
         (&scratch.q, 0),
     )?;
     for (suffix, out) in [
-        ("k_proj.weight", (k_buf, k_off as u64)),
-        ("v_proj.weight", (v_buf, v_off as u64)),
+        ("k_proj.weight", (k_buf, k_off)),
+        ("v_proj.weight", (v_buf, v_off)),
     ] {
         encode_gemv_any(
             context,
@@ -79,7 +84,7 @@ pub(crate) fn encode_attention_block(
         };
         for (data, heads, suffix) in [
             ((&scratch.q, 0u64), num_heads, "q_norm.weight"),
-            ((k_buf, k_off as u64), num_kv, "k_norm.weight"),
+            ((k_buf, k_off), num_kv, "k_norm.weight"),
         ] {
             gpu::encode_rms_norm_bf16w_perhead(
                 context,
@@ -98,10 +103,7 @@ pub(crate) fn encode_attention_block(
     // One theta for every layer: this architecture publishes `rope.freq_base`
     // and no `freq_base_swa`, so `arch_from_gguf` sets both fields from it.
     let theta = arch.full_rope_theta as f32;
-    for (data, heads) in [
-        ((&scratch.q, 0u64), num_heads),
-        ((k_buf, k_off as u64), num_kv),
-    ] {
+    for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
         gpu::encode_rope_proportional_neox(
             context,
             pass,
@@ -115,14 +117,21 @@ pub(crate) fn encode_attention_block(
         .map_err(gpu_err)?;
     }
 
-    gpu::encode_attention_decode(
+    // No-op on an FP16 layer; quantizes the (now normed and RoPE'd) staging
+    // row into the cache on a TurboQuant-quantized one.
+    encode_kv_commit(
+        context, pass, kv, scratch, layer, position, head_dim, num_kv,
+    )?;
+
+    encode_attention_any(
         context,
         pass,
         (&scratch.q, 0),
-        k_buf,
-        v_buf,
-        &scratch.attn,
+        kv,
+        scratch,
         (&scratch.attn_out, 0),
+        layer,
+        position,
         head_dim,
         num_heads,
         num_kv,
@@ -133,8 +142,7 @@ pub(crate) fn encode_attention_block(
         0,
         arch.attention_scale as f32,
         None,
-    )
-    .map_err(gpu_err)?;
+    )?;
     encode_gemv_any(
         context,
         pass,

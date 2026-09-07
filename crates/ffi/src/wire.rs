@@ -91,6 +91,26 @@ pub fn load_guard(value: &Option<serde_json::Value>) -> Result<model_io::LoadGua
     }
 }
 
+/// Reads a `kvBits` selection: `"off"` (or `null`/absent), `"2"`, `"3"`,
+/// `"3.5"`, or `"4"`.
+///
+/// Absent and `null` mean `off`, matching every other option here -- and,
+/// more importantly, because `off` is what this binding did before the
+/// option existed and what every frozen footprint row describes. An
+/// unrecognized STRING is an error rather than a silent fallback, for
+/// `load_guard`'s reason: quietly honouring a typo as `off` is the exact
+/// trap this function exists to avoid, and unlike a fallback engine
+/// PARAMETER, a caller who asked for quantization and silently got FP16
+/// would measure the wrong memory footprint and believe it was the
+/// requested one.
+pub fn kv_bits(value: &Option<String>) -> Result<model_io::KvQuant, String> {
+    match value {
+        None => Ok(model_io::KvQuant::Off),
+        Some(s) => model_io::KvQuant::parse(&s.to_ascii_lowercase())
+            .map_err(|_| format!("kvBits must be off, 2, 3, 3.5 or 4, got {s:?}")),
+    }
+}
+
 /// Arguments to `ts_recommend_json`. One field today, and a JSON blob rather
 /// than a second `uint32_t` for the reason this crate takes every other
 /// options bag as JSON: a knob added here is a field rather than an ABI
@@ -172,6 +192,12 @@ pub struct OpenOptions {
     /// text-only trunk (vision memory sidecar, Part A4). Absent or `null`
     /// means use the trunk's own tower, if it has one.
     pub vision_sidecar: Option<String>,
+    /// `"off"` | `"2"` | `"3"` | `"3.5"` | `"4"`. Absent means `"off"`, which
+    /// is what every release before this option existed produced byte for
+    /// byte. An unsupported family or `head_dim` REFUSES `ts_session_open`
+    /// by name rather than silently opening at FP16 -- see
+    /// `docs/TRUBOQUANT.md`.
+    pub kv_bits: Option<String>,
 }
 
 /// What a session resolved about directional steering, once, at open.
@@ -557,6 +583,12 @@ pub struct SessionInfo {
     pub speculation: SpeculationInfo,
     pub vision: VisionInfo,
     pub special_tokens: SpecialTokensInfo,
+    /// The RESOLVED `kvBits` selection: `"off"`, `"2"`, `"3"`, `"4"`, or
+    /// `"3.5 (K3/V4)"` when the two widths differ. Not "requested" and
+    /// "resolved" the way speculation is -- there is no auto-detect here,
+    /// a named width either opens or the call fails, so what a caller asked
+    /// for and what this session runs at are always the same value.
+    pub kv_bits: String,
 }
 
 /// Arguments to `ts_server_start`. `{}` is valid and means "an OS-assigned

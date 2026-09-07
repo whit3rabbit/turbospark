@@ -22,6 +22,7 @@ struct EngineSettingsPaneView: View {
             reasoningEffortSection
             guardrailsSection
             speculationSection
+            kvBitsSection
             inProcessServerSection
         }
         .formStyle(.grouped)
@@ -301,6 +302,50 @@ struct EngineSettingsPaneView: View {
                     model.persistSettingsDebounced()
                 }
             }
+        }
+    }
+
+    /// **READS BACK WHAT THE LOADED SESSION ACTUALLY RESOLVED, RATHER THAN
+    /// RESTATING THE SETTING.** `Auto` can and does mean "off" on an install
+    /// whose `head_dim` or layer mask does not qualify
+    /// (`ModelFeatureDescriptor.supportsKvQuant`), and a picker that only
+    /// showed the SETTING would look identical whether or not the request
+    /// actually reached the engine -- the exact "badge that cannot fail"
+    /// shape `swift/CLAUDE.md` Gotcha 22 catalogs. `session.info.kvBits` is
+    /// the RESOLVED value (`"off"`, `"4"`, `"3.5 (K3/V4)"`, ...), reported
+    /// once at open, so this row can only ever say what actually happened.
+    private var kvBitsSection: some View {
+        Section("TurboQuant KV-Cache Quantization") {
+            Picker("KV-Cache Width", selection: $model.runtimeOptions.kvBits) {
+                ForEach(AppKvBitsOption.allCases) { opt in
+                    Text(opt.menuLabel).tag(opt)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.kvBits) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            if let info = model.session?.info {
+                HStack {
+                    Text("Resolved")
+                    Spacer()
+                    Text(info.kvBits)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(
+                "Quantizes the attention KV cache to shrink its memory footprint at longer "
+                    + "contexts, at a small, width-dependent quality cost (docs/TRUBOQUANT.md). "
+                    + "Auto asks for 4-bit -- the width with the smallest measured quality "
+                    + "impact -- only on checkpoints whose head dimension and layer layout "
+                    + "support it, and stays off on every other install. Takes effect on the "
+                    + "next model load."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

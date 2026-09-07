@@ -6,7 +6,7 @@
 
 use foundation::runtime_config::DEFAULT_CHUNK_SIZE;
 use turbospark_invocation::{
-    parse, ExpertCacheSlots, MaxContext, Mode, ParseFailure, ParseOutcome, PrefillChunk,
+    parse, ExpertCacheSlots, KvBits, MaxContext, Mode, ParseFailure, ParseOutcome, PrefillChunk,
     ReadAheadMode, ReasoningEffort,
 };
 
@@ -59,6 +59,10 @@ fn documented_defaults_are_applied() {
     // No sidecar unless one is named: a text-only session on a text-only
     // trunk pays nothing for this feature.
     assert_eq!(req.vision_sidecar, None);
+    // Off, not a sensing default: this is the flag whose whole point is that
+    // an opt-out caller reproduces the exact bytes every release before it
+    // existed produced (docs/TRUBOQUANT.md).
+    assert_eq!(req.kv_bits, KvBits::Off);
 }
 
 #[test]

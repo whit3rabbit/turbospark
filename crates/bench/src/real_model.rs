@@ -54,7 +54,8 @@ impl CaseResult {
 
 pub use crate::real_model_open::{
     open_model_runner, open_model_runner_for_protocol, open_model_runner_for_protocol_speculative,
-    open_model_runner_speculative, open_model_runner_steered, open_model_runner_with_context,
+    open_model_runner_for_protocol_speculative_kv_quant, open_model_runner_speculative,
+    open_model_runner_steered, open_model_runner_with_context,
 };
 pub use crate::real_model_params::{protocol_parameters, ProtocolParameters};
 

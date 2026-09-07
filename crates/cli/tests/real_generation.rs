@@ -119,6 +119,61 @@ fn real_naming_gemma4_install_generates() {
     assert!(stderr.contains("[stop="), "unexpected stderr: {stderr}");
 }
 
+/// `--kv-bits` threads all the way from the parser through
+/// `open_session`'s `open_with_kv_quant` call to a real forward pass, and
+/// the resolved-request block and the diagnostic line both show the parsed
+/// value.
+#[test]
+fn kv_bits_flag_threads_through_to_a_real_forward_pass() {
+    let dir = temp_dir();
+    for name in [
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+    ] {
+        std::fs::copy(tokenizer_fixture_dir().join(name), dir.join(name)).unwrap();
+    }
+    let tok = tokenizer::MfTokenizer::load_from_dir(&dir).expect("tokenizer loads");
+    repack::build_synthetic_gemma4_real_install(
+        &dir,
+        tok.vocab_size as i64,
+        2,
+        2,
+        2,
+        8,
+        "cli-kv-bits",
+    )
+    .expect("real-naming install writes");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_turbospark-check"))
+        .args([
+            "--model",
+            dir.to_str().unwrap(),
+            "--prompt",
+            "hi",
+            "--max-new",
+            "3",
+            "--kv-bits",
+            "3.5",
+        ])
+        .output()
+        .expect("binary should run");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("generating (real forward pass"));
+    assert!(
+        stdout.contains("kv_bits: TurboQuant"),
+        "resolved request must show the parsed value: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("kv-bits: 3.5 (K3/V4)"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(stderr.contains("[stop="), "unexpected stderr: {stderr}");
+}
+
 #[test]
 fn messages_file_mode_generates_through_the_chat_template() {
     let dir = install_with_tokenizer("cli-messages-file");

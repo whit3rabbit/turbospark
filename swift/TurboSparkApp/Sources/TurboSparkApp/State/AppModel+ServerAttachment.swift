@@ -33,7 +33,7 @@ extension AppModel {
             defer { serverBusy = false }
             do {
                 let session = try await TurboSparkSession(
-                    modelPath: model.path, options: buildOpenOptions())
+                    modelPath: model.path, options: buildOpenOptions(modelPath: model.path))
                 // **THE SERVER CAN BE STOPPED WHILE THIS OPEN IS IN FLIGHT**
                 // (state#72). `stopServer()` has no `serverBusy` guard on
                 // purpose (state#28 needs it reachable during a bind), and it

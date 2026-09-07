@@ -194,7 +194,17 @@ pub fn open_model_runner_for_protocol(
     model_dir: &Path,
     slots: usize,
 ) -> Result<(RealForwardRunner, MfTokenizer, ProtocolParameters), String> {
-    open_model_runner_for_protocol_speculative(model_dir, slots, runtime::DraftPolicies::off())
+    open_model_runner_for_protocol_speculative_kv_quant(
+        model_dir,
+        slots,
+        runtime::DraftPolicies::off(),
+        // EXPLICIT, not a default: every memory oracle and quality gate
+        // reaches this wrapper, and a frozen peak or digest that silently
+        // acquired TurboQuant quantization would be a different measurement
+        // wearing the old row's name (this file's own precedent for
+        // `speculation`, one parameter over).
+        runtime::KvQuant::Off,
+    )
 }
 
 /// [`open_model_runner_for_protocol`] with a drafter.
@@ -212,6 +222,32 @@ pub fn open_model_runner_for_protocol_speculative(
     slots: usize,
     speculation: runtime::DraftPolicies,
 ) -> Result<(RealForwardRunner, MfTokenizer, ProtocolParameters), String> {
+    open_model_runner_for_protocol_speculative_kv_quant(
+        model_dir,
+        slots,
+        speculation,
+        runtime::KvQuant::Off,
+    )
+}
+
+/// [`open_model_runner_for_protocol_speculative`] carrying a `--kv-bits`
+/// selection.
+///
+/// A SEPARATE entry point rather than a parameter on the callers above, for
+/// the reason `open_model_runner_speculative`/`open_model_runner_steered`
+/// already are (AGENTS.md Gotcha 35 and crate Gotcha 5): every MEASURING
+/// caller in this crate -- both memory oracles, all six quality gates --
+/// reaches `open_model_runner_for_protocol` (which passes `KvQuant::Off`
+/// explicitly, never as an inherited default) and therefore cannot acquire
+/// TurboQuant quantization by widening a shared signature. Only
+/// `turbospark-bench --model --kv-bits ...`'s live comparison path calls
+/// this one.
+pub fn open_model_runner_for_protocol_speculative_kv_quant(
+    model_dir: &Path,
+    slots: usize,
+    speculation: runtime::DraftPolicies,
+    kv_quant: runtime::KvQuant,
+) -> Result<(RealForwardRunner, MfTokenizer, ProtocolParameters), String> {
     let arch = repack::peek_manifest_arch(model_dir)?;
     let params = protocol_parameters(arch.family);
     let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
@@ -220,12 +256,15 @@ pub fn open_model_runner_for_protocol_speculative(
             model_dir.display()
         )
     })?;
-    let runner = RealForwardRunner::open_with_options_and_speculation(
+    let runner = RealForwardRunner::open_with_kv_quant(
         model_dir,
         arch,
         params.max_context as usize,
-        slots,
+        runtime::ExpertCacheSlots::Fixed(slots),
         speculation,
+        runtime::SteeringPolicy::off(),
+        1,
+        kv_quant,
     )
     .map_err(|e| e.to_string())?;
     Ok((runner, tokenizer, params))

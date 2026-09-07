@@ -74,7 +74,7 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     };
     if first == "--model" {
-        const USAGE: &str = "usage: turbospark-bench --model <install-dir> [--case <id>] [--expert-cache-slots N] [--prefill-chunk off|auto|N] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]";
+        const USAGE: &str = "usage: turbospark-bench --model <install-dir> [--case <id>] [--expert-cache-slots N] [--prefill-chunk off|auto|N] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--kv-bits off|2|3|3.5|4]";
         let Some(install_dir) = args.next() else {
             eprintln!("{USAGE}");
             return std::process::ExitCode::from(2);
@@ -104,6 +104,12 @@ fn main() -> std::process::ExitCode {
         // here would silently retire all of them. `None` is off; `Some(n)`
         // is a resolved chunk size.
         let mut prefill_chunk: Option<usize> = None;
+        // DEFAULTS OFF, EXPLICITLY, matching every other axis here: every
+        // frozen row in this crate was measured at FP16, so an implicit
+        // default of anything else would silently retire all of them. Unlike
+        // the sensing defaults `turbospark-check`/`turbospark-server` use for
+        // this flag, a measurement tool has to be told (AGENTS.md Gotcha 35).
+        let mut kv_bits = runtime::KvQuant::Off;
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--case" => match args.next() {
@@ -199,6 +205,13 @@ fn main() -> std::process::ExitCode {
                         return std::process::ExitCode::from(2);
                     }
                 },
+                "--kv-bits" => match args.next().as_deref().map(runtime::KvQuant::parse) {
+                    Some(Ok(q)) => kv_bits = q,
+                    _ => {
+                        eprintln!("--kv-bits must be one of off|2|3|3.5|4");
+                        return std::process::ExitCode::from(2);
+                    }
+                },
                 other => {
                     eprintln!("unexpected argument {other:?}; {USAGE}");
                     return std::process::ExitCode::from(2);
@@ -245,6 +258,7 @@ fn main() -> std::process::ExitCode {
             drafter,
             shaping,
             prefill_chunk,
+            kv_bits,
         );
     }
     let tokenizer_dir = first;

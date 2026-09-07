@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use model_io::{ArchConfig, ExpertCacheSlots, ResidentBuffer};
+use model_io::{ArchConfig, ExpertCacheSlots, KvQuant, ResidentBuffer};
 
 use crate::real_forward::{RealForwardRunner, MAX_PREFILL_CHUNK_TOKENS, PACKED_LAYOUT_MAX_BYTES};
 use crate::real_forward_layout::{
@@ -20,6 +20,7 @@ impl RealForwardRunner {
         speculation: crate::families::qwen::DraftPolicies,
         steering: crate::steering::SteeringPolicy,
         session_slots: usize,
+        kv_quant: KvQuant,
     ) -> Result<Self, RealForwardError> {
         // A vision sidecar directory (vision memory sidecar, Part A2) is not
         // a model install -- it declares `numLayers: 0` and has no trunk
@@ -41,6 +42,11 @@ impl RealForwardRunner {
             ));
         }
         crate::real_forward_init::validate_arch_config(&expecting)?;
+        if let Some(reason) =
+            crate::real_forward_init::kv_quant_unsupported_reason(&expecting, kv_quant)
+        {
+            return Err(RealForwardError::Unsupported(reason));
+        }
 
         model_io::load_manifest(dir, &expecting, model_io::DEFAULT_MAX_BYTES)
             .map_err(RealForwardError::Model)?;
@@ -95,7 +101,7 @@ impl RealForwardRunner {
         let weights = gpu::ResidentGpuWeights::wrap(context.device(), buffer)
             .map_err(RealForwardError::Gpu)?;
 
-        let kv = gpu::KvCacheManager::new(
+        let kv = gpu::KvCacheManager::new_with_kv_quant(
             context.device(),
             &expecting,
             max_context,
@@ -103,9 +109,10 @@ impl RealForwardRunner {
             None,
             MAX_PREFILL_CHUNK_TOKENS,
             fp16_ring_capacity_override,
+            kv_quant,
         )
         .map_err(RealForwardError::Gpu)?;
-        let scratch = DecodeScratch::new(&context, &expecting);
+        let scratch = DecodeScratch::new(&context, &expecting, kv_quant);
 
         let (streamers, slot_buffers, experts_layout, resolved_slots, mapped) =
             crate::real_forward_init::open_expert_streamers(
@@ -358,7 +365,7 @@ impl RealForwardRunner {
         let parked_slots = session_slots.saturating_sub(1);
         let mut pool_slots = Vec::with_capacity(parked_slots);
         for _ in 0..parked_slots {
-            let kv = gpu::KvCacheManager::new(
+            let kv = gpu::KvCacheManager::new_with_kv_quant(
                 runner.context.device(),
                 &runner.arch,
                 max_context,
@@ -366,6 +373,7 @@ impl RealForwardRunner {
                 None,
                 MAX_PREFILL_CHUNK_TOKENS,
                 fp16_ring_capacity_override,
+                kv_quant,
             )
             .map_err(RealForwardError::Gpu)?;
             let gdn = runner

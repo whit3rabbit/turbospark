@@ -49,6 +49,44 @@ pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealFor
     Ok(())
 }
 
+/// Why `--kv-bits` cannot open this install, or `None` when it can.
+///
+/// [`gpu::KvQuantTables::new`] and [`gpu::KvCacheManager::new_with_kv_quant`]
+/// both PANIC on an unsupported head_dim rather than returning a `Result`
+/// (see their own docs): they are lower-level contracts that assume the
+/// caller already checked, and this is that check, translated into the
+/// `RealForwardError::Unsupported` every other open-time refusal in this
+/// file uses.
+pub(crate) fn kv_quant_unsupported_reason(
+    expecting: &ArchConfig,
+    kv_quant: model_io::KvQuant,
+) -> Option<String> {
+    if !kv_quant.is_on() {
+        return None;
+    }
+    if !model_io::rht_supported(expecting.full_head_dim) {
+        return Some(format!(
+            "--kv-bits needs a full head_dim that is a power of two in 32..=512; this install's \
+             is {} (see docs/TRUBOQUANT.md)",
+            expecting.full_head_dim
+        ));
+    }
+    let num_layers = expecting.num_layers as usize;
+    let has_eligible_layer = expecting
+        .full_attention_layer_mask
+        .iter()
+        .enumerate()
+        .any(|(layer, &mask)| model_io::layer_is_quantized(kv_quant, mask, layer, num_layers));
+    if !has_eligible_layer {
+        return Some(
+            "--kv-bits has nothing to quantize on this install: every full-attention layer is \
+             excluded by the last-layer rule, or there are no full-attention layers at all"
+                .to_string(),
+        );
+    }
+    None
+}
+
 pub(crate) type ExpertStreamersResult = (
     Vec<Option<streaming::PreadExpertStreamer>>,
     Vec<Vec<gpu::MetalBuffer>>,
