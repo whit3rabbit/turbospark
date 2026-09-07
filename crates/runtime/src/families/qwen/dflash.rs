@@ -84,6 +84,18 @@ pub(crate) struct DflashState {
     pub(crate) logits: gpu::MetalBuffer,
 }
 
+/// The DFlash2 MoE-refusal message, shared by the `Auto` and `Fixed` arms of
+/// `DflashState::build`: no published MoE checkpoint of this architecture
+/// ships a DFlash2 drafter, whatever block was asked for.
+fn dflash_moe_unsupported(num_experts: i64) -> String {
+    format!(
+        "{MOE_SPECULATION_BLOCKER_MARKER}: this install routes to {num_experts} experts, and no \
+         published MoE checkpoint of this architecture ships a DFlash2 drafter (the \
+         published one targets the dense half). The batched routed verify itself \
+         runs, so this is a checkpoint gap and not a missing kernel"
+    )
+}
+
 impl DflashState {
     /// Returns `None` when no drafter was asked for; ERRORS when one was
     /// asked for and the install cannot serve it, exactly `MtpState`'s
@@ -103,24 +115,16 @@ impl DflashState {
                     return Ok(None);
                 }
                 if arch.num_experts != 0 {
-                    return Err(RealForwardError::Unsupported(format!(
-                        "{MOE_SPECULATION_BLOCKER_MARKER}: this install routes to {} experts, and no \
-                         published MoE checkpoint of this architecture ships a DFlash2 drafter (the \
-                         published one targets the dense half). The batched routed verify itself \
-                         runs, so this is a checkpoint gap and not a missing kernel",
-                        arch.num_experts
+                    return Err(RealForwardError::Unsupported(dflash_moe_unsupported(
+                        arch.num_experts,
                     )));
                 }
                 DFLASH_SERVING_BLOCK
             }
             DflashDraftPolicy::Fixed(block) => {
                 if arch.num_experts != 0 {
-                    return Err(RealForwardError::Unsupported(format!(
-                        "{MOE_SPECULATION_BLOCKER_MARKER}: this install routes to {} experts, and no \
-                         published MoE checkpoint of this architecture ships a DFlash2 drafter (the \
-                         published one targets the dense half). The batched routed verify itself \
-                         runs, so this is a checkpoint gap and not a missing kernel",
-                        arch.num_experts
+                    return Err(RealForwardError::Unsupported(dflash_moe_unsupported(
+                        arch.num_experts,
                     )));
                 }
                 if !install_has_dflash(index) {

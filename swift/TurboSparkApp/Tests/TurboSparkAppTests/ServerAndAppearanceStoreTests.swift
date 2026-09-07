@@ -98,7 +98,7 @@ final class ServerAndAppearanceStoreTests: XCTestCase {
         XCTAssertTrue(AppSettingsView.SettingsTab.engine.keywords.contains("fan"))
     }
 
-    /// `docs/SWIFT_SETTINGS_AUDIT.md`'s settings-search item: the keyword
+    /// `swift/docs/SWIFT_SETTINGS_AUDIT.md`'s settings-search item: the keyword
     /// lists drift from the panes they describe. Each of these names a
     /// control that is really in that pane (checked against the pane's own
     /// source) and was missing from its tab's keywords before this test was

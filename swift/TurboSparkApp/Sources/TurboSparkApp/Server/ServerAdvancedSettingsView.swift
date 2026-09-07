@@ -10,7 +10,7 @@ import TurboSpark
 /// endpoint is the exception: it ALSO feeds `TurboSparkCatalog`'s own HF
 /// client, which every install/probe/browse call reads outside server
 /// context entirely, so it stays enabled and applies live
-/// (`HfEndpointResolution`, `docs/SWIFT_SETTINGS_AUDIT.md`).
+/// (`HfEndpointResolution`, `swift/docs/SWIFT_SETTINGS_AUDIT.md`).
 struct ServerAdvancedSettingsView: View {
     @ObservedObject var model: AppModel
     @State private var portText: String = ""
@@ -159,7 +159,7 @@ struct ServerAdvancedSettingsView: View {
                         // `HfAuthTokenCardView`'s own mirror-endpoint editor
                         // applied it live -- two editors of the same
                         // setting disagreeing about when it takes effect
-                        // (`docs/SWIFT_SETTINGS_AUDIT.md`).
+                        // (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
                         try? TurboSparkCatalog.setHfEndpoint(HfEndpointResolution.effectiveEndpoint(from: newValue))
                     }
             }

@@ -76,7 +76,11 @@ struct PromptComposerPlusMenu: View {
             Button {
                 onAttachFolder()
             } label: {
-                Label("Add Folder...", systemImage: "folder.badge.plus")
+                Label {
+                    Text("Add Folder…", bundle: .module)
+                } icon: {
+                    Image(systemName: "folder.badge.plus")
+                }
             }
 
             Button {

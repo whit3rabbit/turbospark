@@ -169,7 +169,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// to and therefore leaves their behaviour unchanged.
     public var defaultSystemPrompt: String
     /// User-scope plugin enable state, keyed `<plugin>@<origin>`
-    /// (`docs/SWIFT_PLUGINS.md`). Absent means enabled: an installed plugin
+    /// (`swift/docs/SWIFT_PLUGINS.md`). Absent means enabled: an installed plugin
     /// that nothing disabled runs. Claude Code's own setting is consulted
     /// only for its interop plugins and only when neither this nor a
     /// project's map answers.
@@ -190,7 +190,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Hugging Face mirror endpoint override ($HF_ENDPOINT), e.g. https://hf-mirror.com.
     public var hfEndpoint: String
     /// Whether the model sees the auto-memory section and the `memory` tool
-    /// (docs/SWIFT_MEMORY.md). On by default, like Claude Code's
+    /// (swift/docs/SWIFT_MEMORY.md). On by default, like Claude Code's
     /// `autoMemoryEnabled`.
     public var memoryEnabled: Bool
 

@@ -68,6 +68,19 @@ extension AppModel {
     /// the step cap belongs to the workspace the loop is running in, and the
     /// selection is free to move while a call waits for approval.
     func continueOrStop(afterStep currentStep: Int, chatID: UUID, project: AppProject?) async {
+        // **A STEER DELIVERS AT THE NEXT STEP BOUNDARY, AND RESETS THE
+        // ALLOWANCE ONCE FOR THE BATCH** (opencode v2's default `steer`
+        // mode; `deliverSteersAtBoundary` carries the reasoning). A user's
+        // fresh input supersedes both the step cap and the Stop evaluation
+        // this boundary would otherwise reach: the loop continues from a
+        // fresh step 0 with the steer in the transcript, and no `Stop` hook
+        // is consulted about a turn the user just added to. Entries that
+        // arrive during the FINAL step catch no boundary here and remain
+        // the tail drain's.
+        if await deliverSteersAtBoundary(chatID: chatID, project: project) {
+            continueAgentLoop(step: 0, chatID: chatID)
+            return
+        }
         let maxSteps = project?.maxAutonomousSteps ?? 5
         if currentStep + 1 < maxSteps {
             continueAgentLoop(step: currentStep + 1, chatID: chatID)

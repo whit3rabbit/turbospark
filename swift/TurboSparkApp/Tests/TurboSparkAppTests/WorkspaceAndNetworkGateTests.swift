@@ -296,4 +296,25 @@ final class WorkspaceAndNetworkGateTests: XCTestCase {
         XCTAssertTrue(decoded.output.contains("truncated"), "truncation must be visible, not silent")
         XCTAssertEqual(decoded.callID, result.callID, "every other field survives the round trip")
     }
+
+    /// Head-only truncation turned every oversized log into the same opening
+    /// lines; the cut is head-AND-tail, so the END of the output (where a
+    /// build summary or the terminal error lives) survives too.
+    func testATruncatedResultKeepsTheTailAsWellAsTheHead() throws {
+        let headMarker = "HEAD-MARKER-BEGIN"
+        let tailMarker = "TAIL-MARKER-END"
+        let output = headMarker + String(repeating: "m", count: 2_000_000) + tailMarker
+        let result = AppToolResult(callID: UUID(), output: output)
+
+        let decoded = try JSONDecoder().decode(
+            AppToolResult.self, from: try JSONEncoder().encode(result))
+
+        XCTAssertTrue(decoded.output.hasPrefix(headMarker), "the head must survive the cut")
+        XCTAssertTrue(decoded.output.hasSuffix(tailMarker), "the tail must survive the cut")
+        // And the omission marker sits BETWEEN them, per the head+tail law.
+        let markerRange = try XCTUnwrap(decoded.output.range(of: "... (tool output truncated"))
+        let tailRange = try XCTUnwrap(decoded.output.range(of: tailMarker))
+        XCTAssertGreaterThan(markerRange.lowerBound, decoded.output.startIndex, "the marker follows the head")
+        XCTAssertLessThan(markerRange.upperBound, tailRange.lowerBound, "the marker precedes the tail")
+    }
 }

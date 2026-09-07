@@ -165,7 +165,7 @@ struct ChatSearchOverlayView: View {
 
     private var footer: some View {
         HStack {
-            Text("Up/Down to navigate, Enter to open, Esc to close")
+            Text("Up/Down to navigate, Enter to open, Esc to close", bundle: .module)
                 .font(theme.ui(points: 10))
                 .foregroundStyle(.tertiary)
             Spacer(minLength: 0)

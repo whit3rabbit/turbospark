@@ -8,7 +8,7 @@ public struct ToastOverlayView: View {
 
     /// The app preference over the system one, the same resolution
     /// `RootView` uses. Reading the environment alone ignored the Reduce
-    /// motion setting entirely (`docs/SWIFT_SETTINGS_AUDIT.md`).
+    /// motion setting entirely (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
     private var reduceMotion: Bool {
         appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
     }

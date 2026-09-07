@@ -119,4 +119,63 @@ final class StoreDurabilityTests: XCTestCase {
                 at: AppStorageRoot.directory.appendingPathComponent(name))
         }
     }
+
+    // MARK: - crash-orphaned tool calls are repaired at load
+
+    /// A force-quit mid-turn freezes a call in `.running` or
+    /// `.pendingApproval` on disk. `reconcilingOrphanedToolCalls` gives each
+    /// its live-path terminal twin plus the synthetic result the live path
+    /// would have recorded, so the model never sees a dangling call.
+    private func chatWith(_ messages: [AppChatMessage]) -> [AppChat] {
+        [AppChat(title: "t", messages: messages)]
+    }
+
+    func testAStuckRunningCallLoadsAsFailedWithASyntheticResult() {
+        let call = AppToolCall(name: "run_command", status: .running)
+        let repaired = AppModel.reconcilingOrphanedToolCalls(
+            chatWith([AppChatMessage(role: .assistant, content: "", toolCalls: [call])]))
+
+        let repairedCall = repaired[0].messages[0].toolCalls[0]
+        XCTAssertEqual(repairedCall.status, .failed)
+        let results = repaired[0].messages[0].toolResults
+        XCTAssertEqual(results.count, 1, "A dangling call needs the result row prompt assembly pairs with it.")
+        XCTAssertEqual(results[0].callID, repairedCall.id)
+        XCTAssertTrue(results[0].isError)
+        XCTAssertTrue(results[0].output.contains("quit"))
+    }
+
+    func testAStuckPendingApprovalCallLoadsAsDenied() {
+        let call = AppToolCall(name: "write_file", status: .pendingApproval)
+        let repaired = AppModel.reconcilingOrphanedToolCalls(
+            chatWith([AppChatMessage(role: .assistant, content: "", toolCalls: [call])]))
+
+        let repairedCall = repaired[0].messages[0].toolCalls[0]
+        XCTAssertEqual(repairedCall.status, .denied)
+        XCTAssertEqual(repaired[0].messages[0].toolResults.count, 1)
+        XCTAssertTrue(repaired[0].messages[0].toolResults[0].isError)
+    }
+
+    func testTerminalCallsAreUntouchedAndResultRowsAreNotDuplicated() {
+        let done = AppToolCall(name: "read_file", status: .completed)
+        let stuck = AppToolCall(name: "run_command", status: .running)
+        let existing = AppToolResult(callID: stuck.id, output: "partial output", isError: false)
+        let message = AppChatMessage(
+            role: .assistant, content: "", toolCalls: [done, stuck], toolResults: [existing])
+        let repaired = AppModel.reconcilingOrphanedToolCalls(chatWith([message]))[0].messages[0]
+
+        XCTAssertEqual(repaired.toolCalls[0].status, .completed)
+        XCTAssertEqual(repaired.toolCalls[1].status, .failed)
+        XCTAssertEqual(repaired.toolResults.count, 1, "An existing result row is kept, not shadowed by a synthetic one.")
+        XCTAssertEqual(repaired.toolResults[0].output, "partial output")
+    }
+
+    func testAlternatesAreRepairedToo() {
+        let stuck = AppToolCall(name: "run_command", status: .running)
+        let alternate = AppChatMessage(role: .assistant, content: "old", toolCalls: [stuck])
+        let repaired = AppModel.reconcilingOrphanedToolCalls(
+            chatWith([AppChatMessage(role: .assistant, content: "new", alternates: [alternate])]))
+
+        XCTAssertEqual(repaired[0].messages[0].alternates[0].toolCalls[0].status, .failed)
+        XCTAssertEqual(repaired[0].messages[0].alternates[0].toolResults.count, 1)
+    }
 }

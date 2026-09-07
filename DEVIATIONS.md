@@ -244,7 +244,7 @@ live network).
   - **Marketplace commit SHAs.** Installs record `gitCommitSha: nil` and
     pin the ref only.
   - **Auto-memory (the Swift app), landed 2026-09-06
-    (`docs/SWIFT_MEMORY.md`).** Shipped: the per-project memory directory
+    (`swift/docs/SWIFT_MEMORY.md`).** Shipped: the per-project memory directory
     with a `MEMORY.md` index injected every turn (200 lines / 25,000 bytes,
     self-describing truncation), frontmatter topic files in Claude Code's
     four-type taxonomy, a `memory` tool (save/read/forget) whose slug

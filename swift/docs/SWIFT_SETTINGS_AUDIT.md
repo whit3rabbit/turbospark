@@ -268,6 +268,21 @@ Still open: the catalog covers 196 keys against several hundred distinct
 language until someone writes the missing translations. That is a content
 gap, not a mechanism bug, and out of scope for this pass.
 
+Done 2026-09-07 (localization standardization pass, extends this item): the
+catalog grew to 235 keys with the menu bar localized in full (six
+`CommandMenu`s via `Text(_:bundle:)` labels -- the key-only initializers
+resolve against `Bundle.main` and were English under every language), the
+always-English stragglers fixed (memory pane, skills badge, search footer,
+scenario line, welcome prompts, the shortcuts pane's "also %@" found by the
+new source scan), and the `Add Folder...`/`Add Folder…` duplicate key
+merged. `LocalizationParityTests` now enforces the content invariant the
+original diagnosis left open: full key x language parity, format-specifier
+parity (subset rule for plurals, where omitting the count is legitimate),
+plural structure, key hygiene, the `bundle: .module` source scan, and
+greetings.json coverage. The pipeline and its rules live in
+`swift/docs/SWIFT_LOCALIZATION.md`. The content gap sentence above is now
+measured and guarded rather than merely noted; the gap itself remains open.
+
 Done 2026-09-06 (settings search, was rank 1): the "keywords already drift"
 half is fixed -- cross-referenced every pane's real `Section`/`Toggle`/`Text`
 labels against its tab's `keywords` and added what a user would type for a

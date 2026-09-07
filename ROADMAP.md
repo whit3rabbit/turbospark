@@ -230,7 +230,7 @@ System architecture extensions, platform ports, and developer tooling.
 - **Files to Touch**:
   - `swift/TurboSparkApp/Sources/TurboSparkApp/Plugins/PluginMarketplaceManager.swift`
   - `swift/TurboSparkApp/Sources/TurboSparkApp/Plugins/PluginManifest.swift`
-  - `docs/SWIFT_PLUGINS.md`
+  - `swift/docs/SWIFT_PLUGINS.md`
 
 #### 2. Multi-Direction Steering & Automated Alpha Calibration
 - **Objective**: Support simultaneous application of multiple steering vectors with per-vector scales and layer masks; implement automated alpha calibration to detect semantic steering collapse thresholds.

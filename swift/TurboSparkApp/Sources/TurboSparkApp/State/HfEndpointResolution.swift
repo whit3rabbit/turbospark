@@ -12,7 +12,7 @@ import Foundation
 /// server context. Editing the SAME setting from that field left the
 /// catalog on the stale endpoint until the next app launch, while
 /// `HfAuthTokenCardView`'s editor applied it immediately
-/// (`docs/SWIFT_SETTINGS_AUDIT.md`).
+/// (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
 enum HfEndpointResolution {
     static let defaultEndpoint = "https://huggingface.co"
 

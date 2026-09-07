@@ -74,7 +74,7 @@ extension AppToolRegistry {
     /// `agent` TOOL. A provider for `activeSessionProvider`'s reason: every
     /// subagent turn ran at a hardcoded `temperature: 0.2` regardless of this
     /// setting until this provider existed
-    /// (`docs/SWIFT_SETTINGS_AUDIT.md`), and `AppModel.samplingOptions()` is
+    /// (`swift/docs/SWIFT_SETTINGS_AUDIT.md`), and `AppModel.samplingOptions()` is
     /// the one place that reads it.
     public static var subagentSamplingOptionsProvider: (@Sendable @MainActor () -> GenerateOptions)?
 

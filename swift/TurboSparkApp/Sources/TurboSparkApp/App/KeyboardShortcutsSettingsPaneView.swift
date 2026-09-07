@@ -33,7 +33,7 @@ struct KeyboardShortcutsSettingsPaneView: View {
                 .font(theme.ui(.base))
             Spacer()
             if let alt {
-                Text("also \(alt)")
+                Text("also \(alt)", bundle: .module)
                     .font(theme.code(.small))
                     .foregroundStyle(.secondary)
             }

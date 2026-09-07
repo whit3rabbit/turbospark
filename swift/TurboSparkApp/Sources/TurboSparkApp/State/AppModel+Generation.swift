@@ -21,7 +21,7 @@ extension AppModel {
     /// (`swift/CLAUDE.md` Gotcha 46), is handed these same values through
     /// `AppToolRegistry.subagentSamplingOptionsProvider` rather than running
     /// every subagent turn at a hardcoded `temperature: 0.2` regardless of
-    /// what the user set (`docs/SWIFT_SETTINGS_AUDIT.md`). A subagent launch
+    /// what the user set (`swift/docs/SWIFT_SETTINGS_AUDIT.md`). A subagent launch
     /// carries no chat id, so it deliberately reads the app-wide settings and
     /// not the originating chat's override. Deliberately excludes `reasoning`
     /// and `maxNewTokens`: both callers set those themselves, since a

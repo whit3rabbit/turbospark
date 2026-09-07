@@ -52,7 +52,7 @@ public struct AppearancePreferencesCardView: View {
             // 3. Dock icon. The manager's `didSet` re-renders the icon, so
             // this row is the whole feature: the preference had persisted and
             // applied for months with no control anywhere to change it
-            // (`docs/SWIFT_SETTINGS_AUDIT.md`).
+            // (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
             preferenceRow(
                 title: "Dock icon",
                 description: "Choose the icon TurboSpark shows in the Dock"

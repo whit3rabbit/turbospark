@@ -10,7 +10,7 @@
 # `swift build -v`: the raw 600+ KiB JSON sits there and no `.lproj`
 # directory exists anywhere in the output, so every one of the 21 languages
 # was inert regardless of what any `Text(...)` call site passed as `bundle:`
-# (`docs/SWIFT_SETTINGS_AUDIT.md` item 1). `xcstringstool` is the same
+# (`swift/docs/SWIFT_SETTINGS_AUDIT.md` item 1). `xcstringstool` is the same
 # private tool Xcode's build phase calls; running it here reproduces exactly
 # what Xcode would have produced.
 #

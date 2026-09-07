@@ -180,10 +180,23 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         try container.encode(durationSeconds, forKey: .durationSeconds)
 
         if output.utf8.count > Self.maximumPersistedOutputBytes {
-            let kept = String(decoding: output.utf8.prefix(Self.maximumPersistedOutputBytes), as: UTF8.self)
+            // Head-plus-tail with the omission marker in the middle, rather
+            // than head-only: the END of an oversized output is usually the
+            // part worth reading (a build summary, the error a long log was
+            // building toward), and a head-only cut rendered every verbose
+            // log as the same opening lines. The total stays inside the
+            // budget, so the archive bound this encode exists for is
+            // unchanged. Slicing on utf8 and decoding lossily is safe at a
+            // partial character.
+            let budget = Self.maximumPersistedOutputBytes
+            let head = String(decoding: output.utf8.prefix(budget * 3 / 4), as: UTF8.self)
+            let tail = String(decoding: output.utf8.suffix(budget / 4), as: UTF8.self)
+            let omittedKB = (output.utf8.count - budget) / 1_024
             try container.encode(
-                kept + "\n... (tool output truncated in the saved transcript at "
-                    + "\(Self.maximumPersistedOutputBytes / 1_024) KB)",
+                head
+                    + "\n... (tool output truncated in the saved transcript: "
+                    + "\(max(omittedKB, 1)) KB omitted here; the transcript keeps the head and the tail only)...\n"
+                    + tail,
                 forKey: .output)
         } else {
             try container.encode(output, forKey: .output)

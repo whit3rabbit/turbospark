@@ -4,7 +4,7 @@ import Foundation
 // (claude-code-build1/src/plugins). A plugin is a directory whose manifest
 // lives at `.claude-plugin/plugin.json` -- or nowhere, in which case one is
 // synthesized from the convention directories. It contributes skills,
-// slash commands, agents, hooks and MCP servers; docs/SWIFT_PLUGINS.md is
+// slash commands, agents, hooks and MCP servers; swift/docs/SWIFT_PLUGINS.md is
 // the map of what this port supports versus parses-and-reports.
 
 /// Where one installed plugin came from. The order these are listed in

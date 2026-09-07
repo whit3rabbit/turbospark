@@ -103,7 +103,7 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
     /// Permission for background workflow and cron automation.
     public var automation: AppToolPermission
     /// Persisted MCP ALLOW rules in `mcp__server` / `mcp__server__tool`
-    /// syntax (`docs/SWIFT_TOOLS.md`). A matching call skips the ask prompt
+    /// syntax (`swift/docs/SWIFT_TOOLS.md`). A matching call skips the ask prompt
     /// but never the high-risk gate.
     public var mcpAllowRules: [String]
     /// Persisted MCP DENY rules in the same syntax. A matching call is
@@ -352,7 +352,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     /// transcript (docs/SKILL_STATE.md). Opt-in: off leaves the loop unchanged.
     public var skillStateEnabled: Bool
     /// Project-scope plugin enable state, keyed `<plugin>@<origin>`
-    /// (`docs/SWIFT_PLUGINS.md`). Overrides the user setting: a project may
+    /// (`swift/docs/SWIFT_PLUGINS.md`). Overrides the user setting: a project may
     /// turn off a plugin it does not trust without turning it off everywhere.
     public var enabledPlugins: [String: Bool]
     /// MCP servers from the project's own config files the user has

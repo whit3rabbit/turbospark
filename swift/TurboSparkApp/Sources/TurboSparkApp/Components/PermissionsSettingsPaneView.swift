@@ -177,7 +177,11 @@ public struct PermissionsSettingsPaneView: View {
                 Button {
                     permissionsManager.addCustomFolder()
                 } label: {
-                    Label("Add Folder...", systemImage: "plus")
+                    Label {
+                        Text("Add Folder…", bundle: .module)
+                    } icon: {
+                        Image(systemName: "plus")
+                    }
                         .themedFont(.small)
                 }
                 .buttonStyle(.bordered)

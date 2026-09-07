@@ -71,7 +71,7 @@ when this file gets updated relative to the version bump and the tag.
   (`AppModel.switchToProfile`), because every store hangs off a cached
   `static let` root. Deletion moves the folder to the Trash. Launch
   overrides: `-TurboSparkProfile <id>` and `TURBOSPARK_PROFILE`.
-  `docs/SWIFT_PROFILES.md`.
+  `swift/docs/SWIFT_PROFILES.md`.
 - `crates/runtime`: chunked prefill for the `qwen4_exp` family
   (`families/qwen4/prefill.rs`), the seventh `ChunkedPrefillRunner` and the
   same "step 1" shape as the other six -- the existing per-token kernels

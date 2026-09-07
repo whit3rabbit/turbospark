@@ -3,7 +3,7 @@ import XCTest
 
 @testable import TurboSparkApp
 
-/// `docs/SWIFT_SETTINGS_AUDIT.md`'s subagent-sampling item: every subagent
+/// `swift/docs/SWIFT_SETTINGS_AUDIT.md`'s subagent-sampling item: every subagent
 /// turn ran at a hardcoded `temperature: 0.2` regardless of the user's own
 /// Engine settings. `AppModel.samplingOptions()` is the one place both the
 /// main chat loop (`executeGenerationTurn`) and every `SubagentRunner.run`

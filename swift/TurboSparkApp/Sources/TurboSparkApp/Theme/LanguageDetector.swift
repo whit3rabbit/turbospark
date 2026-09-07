@@ -7,7 +7,7 @@ import Foundation
 /// Three siblings this type used to carry -- a keyboard-language-code
 /// reader, an on-device text-language detector, and a free-function RTL
 /// check duplicating `AppLanguage.isRTL` -- had no production caller at all
-/// (`docs/SWIFT_SETTINGS_AUDIT.md`): each looks like it was scaffolded for a
+/// (`swift/docs/SWIFT_SETTINGS_AUDIT.md`): each looks like it was scaffolded for a
 /// feature (auto-selecting the app language from the keyboard, flipping
 /// text direction per message) that was never wired to a call site, and
 /// their only callers were their own tests. Deleted rather than kept as

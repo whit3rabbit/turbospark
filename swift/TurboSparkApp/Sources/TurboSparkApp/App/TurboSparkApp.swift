@@ -69,191 +69,283 @@ struct TurboSparkApp: App {
         .defaultSize(width: 1280, height: 760)
         .windowResizability(.contentMinSize)
         .commands {
-            CommandMenu("View") {
+            // Menu-bar chrome takes its text from `Text(_:bundle:)` labels
+            // rather than bare `LocalizedStringKey`s: the string catalog lives
+            // in `Bundle.module`, and the key-only initializers
+            // (`Button("Chat")`, `CommandMenu("View")`) resolve against
+            // `Bundle.main`, which carries no strings in a SwiftPM build --
+            // they would render English under every language.
+            CommandMenu(Text("View", bundle: .module)) {
 
-                Button("Chat") {
+                Button {
                     model.activeSection = .chat
+                } label: {
+                    Text("Chat", bundle: .module)
                 }
                 .keyboardShortcut("1", modifiers: .command)
 
-                Button("Files") {
+                Button {
                     model.activeSection = .files
+                } label: {
+                    Text("Files", bundle: .module)
                 }
                 .keyboardShortcut("2", modifiers: .command)
 
-                Button("Installed Models") {
+                Button {
                     model.activeSection = .modelManager
+                } label: {
+                    Text("Installed Models", bundle: .module)
                 }
                 .keyboardShortcut("3", modifiers: .command)
 
-                Button("Discover Models") {
+                Button {
                     model.activeSection = .modelHub
+                } label: {
+                    Text("Discover Models", bundle: .module)
                 }
                 .keyboardShortcut("4", modifiers: .command)
 
                 // The rail's tooltip had advertised this since the section
                 // was appended (`AppSection.shortcutKey`), with nothing bound.
-                Button("Server") {
+                Button {
                     model.activeSection = .server
+                } label: {
+                    Text("Server", bundle: .module)
                 }
                 .keyboardShortcut("5", modifiers: .command)
 
                 Divider()
 
-                Button("Toggle Chat Sidebar") {
+                Button {
                     NotificationCenter.default.post(name: .toggleChatSidebar, object: nil)
+                } label: {
+                    Text("Toggle Chat Sidebar", bundle: .module)
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
 
-                Button("Toggle Inspector") {
+                Button {
                     NotificationCenter.default.post(name: .toggleInspector, object: nil)
+                } label: {
+                    Text("Toggle Inspector", bundle: .module)
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
 
                 // The Keyboard Shortcuts pane's own entry point, matching
                 // unsloth studio's Cmd+/ for its shortcuts tab.
-                Button("Keyboard Shortcuts...") {
+                Button {
                     model.openSettings(tab: .shortcuts)
+                } label: {
+                    Text("Keyboard Shortcuts...", bundle: .module)
                 }
                 .keyboardShortcut("/", modifiers: .command)
 
                 Divider()
 
-                Picker("Status Bar Benchmarks", selection: $appearanceManager.statusBarViewMode) {
+                Picker(selection: $appearanceManager.statusBarViewMode) {
                     ForEach(StatusBarViewMode.allCases) { mode in
                         Label(mode.label, systemImage: mode.systemImage).tag(mode)
                     }
+                } label: {
+                    Text("Status Bar Benchmarks", bundle: .module)
                 }
 
                 Divider()
 
-                Button("Make Text Bigger") {
+                Button {
                     appearanceManager.makeTextBigger()
+                } label: {
+                    Text("Make Text Bigger", bundle: .module)
                 }
                 .keyboardShortcut("+", modifiers: .command)
 
-                Button("Make Text Smaller") {
+                Button {
                     appearanceManager.makeTextSmaller()
+                } label: {
+                    Text("Make Text Smaller", bundle: .module)
                 }
                 .keyboardShortcut("-", modifiers: .command)
 
-                Button("Default Text Size") {
+                Button {
                     appearanceManager.resetTextSize()
+                } label: {
+                    Text("Default Text Size", bundle: .module)
                 }
                 .keyboardShortcut("0", modifiers: .command)
             }
 
 
-            CommandMenu("Chat") {
-                Button("New Chat") { model.createChat() }
-                    .keyboardShortcut("n", modifiers: .command)
-                    .disabled(model.isRunning)
+            CommandMenu(Text("Chat", bundle: .module)) {
+                Button {
+                    model.createChat()
+                } label: {
+                    Text("New Chat", bundle: .module)
+                }
+                .keyboardShortcut("n", modifiers: .command)
+                .disabled(model.isRunning)
 
-                Button("New Temporary Chat") { model.enterGhostChat() }
-                    .keyboardShortcut("n", modifiers: [.command, .shift])
-                    .disabled(model.isRunning)
+                Button {
+                    model.enterGhostChat()
+                } label: {
+                    Text("New Temporary Chat", bundle: .module)
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(model.isRunning)
 
-                Button("Previous Chat") { model.selectPreviousChat() }
-                    .keyboardShortcut("[", modifiers: .command)
-                    .disabled(model.isRunning || model.orderedChats.isEmpty)
+                Button {
+                    model.selectPreviousChat()
+                } label: {
+                    Text("Previous Chat", bundle: .module)
+                }
+                .keyboardShortcut("[", modifiers: .command)
+                .disabled(model.isRunning || model.orderedChats.isEmpty)
 
-                Button("Next Chat") { model.selectNextChat() }
-                    .keyboardShortcut("]", modifiers: .command)
-                    .disabled(model.isRunning || model.orderedChats.isEmpty)
+                Button {
+                    model.selectNextChat()
+                } label: {
+                    Text("Next Chat", bundle: .module)
+                }
+                .keyboardShortcut("]", modifiers: .command)
+                .disabled(model.isRunning || model.orderedChats.isEmpty)
 
                 Divider()
 
-                Button("Search Chats...") {
+                Button {
                     NotificationCenter.default.post(name: .showChatSearch, object: nil)
+                } label: {
+                    Text("Search Chats...", bundle: .module)
                 }
                 .keyboardShortcut("k", modifiers: .command)
-                .accessibilityHint("Searches previous chats by keyword")
+                .accessibilityHint(Text("Searches previous chats by keyword", bundle: .module))
 
-                Button("Focus Prompt") {
+                Button {
                     NotificationCenter.default.post(name: .focusPrompt, object: nil)
+                } label: {
+                    Text("Focus Prompt", bundle: .module)
                 }
                 .keyboardShortcut("l", modifiers: .command)
-                .accessibilityHint("Moves keyboard focus to the prompt editor")
+                .accessibilityHint(Text("Moves keyboard focus to the prompt editor", bundle: .module))
 
-                Button("Clear Chat History") { model.clearOutput() }
-                    .keyboardShortcut("k", modifiers: [.command, .shift])
-                    .disabled(model.isRunning || !model.hasOutputTranscript)
+                Button {
+                    model.clearOutput()
+                } label: {
+                    Text("Clear Chat History", bundle: .module)
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+                .disabled(model.isRunning || !model.hasOutputTranscript)
             }
 
-            CommandMenu("Generation") {
+            CommandMenu(Text("Generation", bundle: .module)) {
                 // CanRunOrQueue, not canRun: mid-turn the item QUEUES the
                 // draft, so the label says which one it will do.
-                Button(model.canRun ? "Generate Response" : "Queue Message") { model.run() }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!model.canRunOrQueue)
+                Button {
+                    model.run()
+                } label: {
+                    model.canRun
+                        ? Text("Generate Response", bundle: .module)
+                        : Text("Queue Message", bundle: .module)
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!model.canRunOrQueue)
 
-                Button("Cancel Generation") { model.cancel() }
-                    .keyboardShortcut(".", modifiers: .command)
-                    .disabled(!model.canCancel)
+                Button {
+                    model.cancel()
+                } label: {
+                    Text("Cancel Generation", bundle: .module)
+                }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(!model.canCancel)
 
-                Button("Cancel Model Installation") { model.cancelInstall() }
-                    .disabled(!model.canCancelInstall)
+                Button {
+                    model.cancelInstall()
+                } label: {
+                    Text("Cancel Model Installation", bundle: .module)
+                }
+                .disabled(!model.canCancelInstall)
             }
 
-            CommandMenu("Model") {
-                Button("Choose Model Folder...") {
+            CommandMenu(Text("Model", bundle: .module)) {
+                Button {
                     ModelLocationPicker.choose(for: model)
+                } label: {
+                    Text("Choose Model Folder...", bundle: .module)
                 }
                 .disabled(model.isRunning || model.isInstallingModel)
 
-                Button("Load Model", action: model.loadModel)
-                    .disabled(!model.canLoadModel)
+                Button {
+                    model.loadModel()
+                } label: {
+                    Text("Load Model", bundle: .module)
+                }
+                .disabled(!model.canLoadModel)
 
-                Button("Reload Model", action: model.reloadModel)
-                    .disabled(!model.canReloadModel)
+                Button {
+                    model.reloadModel()
+                } label: {
+                    Text("Reload Model", bundle: .module)
+                }
+                .disabled(!model.canReloadModel)
 
-                Button("Unload Model", action: model.unloadModel)
-                    .disabled(!model.canUnloadModel)
+                Button {
+                    model.unloadModel()
+                } label: {
+                    Text("Unload Model", bundle: .module)
+                }
+                .disabled(!model.canUnloadModel)
             }
 
-            CommandMenu("Profile") {
+            CommandMenu(Text("Profile", bundle: .module)) {
                 // Switching is a save-and-relaunch, so every entry here ends
                 // the process once `switchToProfile` has flushed and saved.
                 ForEach([UserProfileStore.defaultProfile] + model.profiles) { profile in
-                    Button(profile.id == model.currentProfile.id
-                            ? "\(profile.name) (current)"
-                            : "Switch to \(profile.name)") {
+                    Button {
                         model.switchToProfile(profile)
+                    } label: {
+                        profile.id == model.currentProfile.id
+                            ? Text("\(profile.name) (current)", bundle: .module)
+                            : Text("Switch to \(profile.name)", bundle: .module)
                     }
                     .disabled(profile.id == model.currentProfile.id || !model.canSwitchProfile)
                 }
 
                 Divider()
 
-                Button("New Profile...") {
+                Button {
                     model.openSettings(tab: .profiles)
+                } label: {
+                    Text("New Profile...", bundle: .module)
                 }
             }
 
-            CommandMenu("Appearance") {
-                Picker("Appearance", selection: $appearanceManager.appearance) {
+            CommandMenu(Text("Appearance", bundle: .module)) {
+                Picker(selection: $appearanceManager.appearance) {
                     ForEach(AppAppearance.allCases) { appearance in
                         Label(appearance.label, systemImage: appearance.systemImage)
                             .tag(appearance)
                     }
+                } label: {
+                    Text("Appearance", bundle: .module)
                 }
 
                 Divider()
 
-                Picker("Text Size", selection: $appearanceManager.textSize) {
+                Picker(selection: $appearanceManager.textSize) {
                     ForEach(AppTextSize.allCases) { size in
                         Text(size.label)
                             .tag(size)
                     }
+                } label: {
+                    Text("Text Size", bundle: .module)
                 }
 
                 Divider()
 
-                Picker("Language", selection: $languageRawValue) {
+                Picker(selection: $languageRawValue) {
                     ForEach(AppLanguage.allCases) { language in
                         Text(language.label)
                             .tag(language.rawValue)
                     }
+                } label: {
+                    Text("Language", bundle: .module)
                 }
             }
         }
@@ -278,7 +370,7 @@ struct TurboSparkApp: App {
             // A THIRD scene: the same reason the Settings scene above injects
             // its own theme applies here, and the menu bar's own text and
             // icons were reading `ResolvedAppTheme.fallback` for the life of
-            // the feature (docs/SWIFT_SETTINGS_AUDIT.md item 7).
+            // the feature (swift/docs/SWIFT_SETTINGS_AUDIT.md item 7).
             ServerMenuBarView(model: model)
                 .appThemed()
         }

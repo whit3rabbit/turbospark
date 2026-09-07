@@ -379,11 +379,11 @@ impl RealForwardRunner {
                     .to_string(),
             ));
         }
-        if runner.resid_capture.is_some()
-            && runner.real_mtp.is_some()
-            && runner.real_dflash.is_none()
-        {
-            if let Some(msg) = crate::resid_capture::capture_blocker(true, false) {
+        if runner.resid_capture.is_some() {
+            if let Some(msg) = crate::resid_capture::capture_blocker(
+                runner.real_mtp.is_some(),
+                runner.real_dflash.is_some(),
+            ) {
                 return Err(RealForwardError::Unsupported(msg));
             }
         }

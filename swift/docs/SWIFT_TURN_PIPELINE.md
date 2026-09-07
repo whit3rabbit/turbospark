@@ -3,8 +3,10 @@
 Two mechanisms that sit between the composer and a turn, both ported from
 Claude Code's `src/utils` at this app's scale: the message QUEUE
 (`messageQueueManager.ts`) and system REMINDERS (`attachments.ts`). They
-are documented together because they share one drain point -- the tail of a
-generation turn -- and one rule about what may start a turn from it.
+are documented together because they share the drain points of a
+generation turn -- the agent loop's step boundaries and, at the tail, the
+idle moment before the next turn -- and one rule about what may start a
+turn from them.
 
 Read this before touching `AppModel+Queue.swift`, `SystemReminders.swift`,
 the `canQueue`/`canRunOrQueue` gating, or the drain calls at the
@@ -46,10 +48,62 @@ The contract, in order:
   never persisted, the same exposure class as the composer itself; ghost
   chats queue like any other.
 
-Known edge, deliberately accepted: the drain fires only from a turn tail
-AND only when the chat is selected (`canInjectTaskNotification`'s
-`selectedChatID == chatID` term). A prompt parked for a chat the user
-switches away from waits there until that chat is frontmost at some
+Known edge, deliberately accepted: the tail drain fires only when the chat
+is selected (`canInjectTaskNotification`'s `selectedChatID == chatID`
+term). A prompt parked for a chat the user switches away from waits there
+until that chat is frontmost at some future tail. The steer boundary drain
+below has no such term and is not gated on the selection at all.
+
+## Steer delivery at step boundaries
+
+Second delivery point, added 2026-09-07, ported from opencode v2's session
+contract (`specs/v2/session.md`), where it is the DEFAULT delivery mode:
+`steer` delivers parked input at the next safe step boundary of a RUNNING
+turn, while `queue` waits for idle. Claude Code behaves the same way, and
+the reason is the UX: a user who types "stop, use Python instead" into a
+twenty-step agent turn wants the running turn to incorporate it, not to
+watch the original instruction finish first.
+
+The boundary is `continueOrStop(afterStep:chatID:project:)`
+(`AppModel+AgentLoop.swift`), which every tool outcome funnels through, and
+the drain is `deliverSteersAtBoundary` (`AppModel+Queue.swift`):
+
+- Order between the two points: BOUNDARY first, tail second. Entries that
+  arrive during the final step catch no boundary and remain the tail
+  drain's, exactly as before. With no queue the boundary drain is a
+  nil check and `continueOrStop` behaves as it always did.
+- The gate: no `pendingToolCall` (an approval card means the loop is
+  parked BETWEEN steps, and delivery waits for the boundary the approved
+  or denied call lands on) and no pending cancel (a steer must not outrun
+  the Stop).
+- The assembly mirrors `run()`'s submission body on purpose -- mention
+  resolution first, then attachments off the restored row, then the hook,
+  then sanitization -- minus the turn lifecycle around it. The draft was
+  captured at enqueue time, the chat exists and is titled, and the next
+  step's `buildAppendOnlyHistory` carries the appended user row to the
+  model naturally.
+- Hook semantics: `UserPromptSubmit` fires per steered entry (ghost chats
+  dispatch none, `run()`'s no-trace rule). A block or
+  `continue: false` RE-PARKS the entry at the front and stops the batch,
+  closest to `run()`'s "nothing appended, draft kept": the pill can still
+  pull it back, and the tail drain later submits it through `run()`,
+  where the same verdict becomes the ordinary error. Later entries stay
+  ahead of anything enqueued during the awaits, so order is preserved.
+- Batch rule: every entry goes at one boundary, and the step allowance
+  resets ONCE for the batch (`continueAgentLoop(step: 0)`), so fresh user
+  input also supersedes the step cap and the Stop consultation at the
+  same boundary -- no `Stop` hook is asked about a turn the user just
+  added to.
+- The boundary drain is NOT gated on chat selection, unlike the tail
+  drain: the turn is running in its own chat, and a steer lands in the
+  transcript rather than in visible UI, so `canInjectTaskNotification`'s
+  selection term does not apply.
+
+Tests: the steer cases in `MessageQueueTests` (delivery, order, the two
+gates, attachment inlining) and
+`testAQueuedSteerAtTheCapBoundaryDeliversAndSkipsTheStopConsultation` in
+`AgentLoopLifecycleTests`, which pins the seam through `denyPendingToolCall`
+with a blocking Stop hook as the discriminator. All mutation-checked.
 future tail.
 
 ## System reminders
@@ -87,5 +141,7 @@ and a per-turn reminder would defeat the bound it exists for.
 ## Tests
 
 `MessageQueueTests` (predicate term matrix, enqueue/restore/drain,
-deletion), `SystemRemindersTests` (the fire/no-fire matrix and the
-transcript-untouched assertion). All mutation-checked.
+deletion, and the steer boundary cases), `AgentLoopLifecycleTests` (the
+steer-beats-Stop seam at the step cap), `SystemRemindersTests` (the
+fire/no-fire matrix and the transcript-untouched assertion). All
+mutation-checked.

@@ -12,7 +12,7 @@ public struct ModelsSettingsPaneView: View {
     /// enumerator, stat-ing every entry -- real I/O, not a property read. It
     /// used to run inline in `body`, so SwiftUI re-ran the walk on every body
     /// evaluation this view received for any reason
-    /// (`docs/SWIFT_SETTINGS_AUDIT.md`).
+    /// (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
     @State private var lmStudioModelCount: Int = 0
 
     public init(model: AppModel) {
@@ -30,7 +30,7 @@ public struct ModelsSettingsPaneView: View {
     /// The engine's own store. There is no setting for this on purpose: the
     /// catalog installer on the Rust side writes here and the binding exposes
     /// no destination, so a "Change..." button used to persist a path that
-    /// nothing installed to (`docs/SWIFT_SETTINGS_AUDIT.md`). Extra folders
+    /// nothing installed to (`swift/docs/SWIFT_SETTINGS_AUDIT.md`). Extra folders
     /// are SCANNED, not written, and live in the section below.
     private var turboSparkStorePath: String {
         ModelStorageManager.defaultTurboSparkModelsDirectory

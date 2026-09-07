@@ -158,7 +158,7 @@ public final class AppModel: ObservableObject {
     /// approaches the context window (context compaction).
     @Published public var autoCompactEnabled: Bool = true
     /// Whether the model sees the auto-memory section and the `memory` tool
-    /// (docs/SWIFT_MEMORY.md). The `didSet` mirrors the value into
+    /// (swift/docs/SWIFT_MEMORY.md). The `didSet` mirrors the value into
     /// `MemoryStore.shared`, the static surface `AppToolCatalog` and
     /// `SubagentRunner` read -- neither holds an `AppModel`.
     @Published public var memoryEnabled: Bool = true {

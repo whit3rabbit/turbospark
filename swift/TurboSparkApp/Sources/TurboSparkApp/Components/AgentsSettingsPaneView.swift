@@ -272,7 +272,7 @@ public struct AgentsSettingsPaneView: View {
                         // No "Model Override" row: `agent.model` is parsed
                         // and read by nothing, a subagent runs on whatever is
                         // loaded, and the row sat between two that ARE
-                        // enforced (`docs/SWIFT_SETTINGS_AUDIT.md`).
+                        // enforced (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
                         if let disallowed = agent.disallowedTools, !disallowed.isEmpty {
                             GridRow {
                                 Text("Disallowed Tools:", bundle: .module)

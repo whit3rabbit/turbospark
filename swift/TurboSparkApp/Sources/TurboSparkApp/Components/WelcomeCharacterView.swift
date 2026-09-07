@@ -81,9 +81,9 @@ public struct WelcomeHeroView: View {
                 }
             }
             .buttonStyle(.plain)
-            .help(LocalizedStringKey("Click to change greeting phrase"))
+            .help(Text("Click to change greeting phrase", bundle: .module))
 
-            Text(LocalizedStringKey("How can I help you today?"))
+            Text("How can I help you today?", bundle: .module)
                 .font(theme.ui(points: 15))
                 .foregroundStyle(.secondary)
         }

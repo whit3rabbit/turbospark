@@ -295,7 +295,7 @@ private struct MessageRowView: View {
                     .themedFont(.small, weight: .semibold)
                     .foregroundStyle(TurboSparkTheme.accentColor)
                     .accessibilityHidden(true)
-                Text("Saved to memory")
+                Text("Saved to memory", bundle: .module)
                     .themedFont(.small, weight: .semibold)
                 Text(memoryText)
                     .themedFont(.small)

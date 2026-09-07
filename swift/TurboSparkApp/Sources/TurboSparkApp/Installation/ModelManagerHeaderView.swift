@@ -58,7 +58,11 @@ struct ModelManagerHeaderView: View {
             Button {
                 ModelLocationPicker.choose(for: model)
             } label: {
-                Label("Add Folder...", systemImage: "folder.badge.plus")
+                Label {
+                    Text("Add Folder…", bundle: .module)
+                } icon: {
+                    Image(systemName: "folder.badge.plus")
+                }
                     .themedFont(points: 11, weight: .medium)
                     .frame(height: 22)
                     .padding(.horizontal, 8)

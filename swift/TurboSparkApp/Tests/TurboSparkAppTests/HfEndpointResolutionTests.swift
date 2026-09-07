@@ -2,7 +2,7 @@ import XCTest
 
 @testable import TurboSparkApp
 
-/// `docs/SWIFT_SETTINGS_AUDIT.md`'s HF endpoint item: the Server Advanced
+/// `swift/docs/SWIFT_SETTINGS_AUDIT.md`'s HF endpoint item: the Server Advanced
 /// field and `HfAuthTokenCardView`'s own editor each inlined their own
 /// trim-and-compare for "what counts as the default endpoint," and the
 /// Server Advanced one never called `TurboSparkCatalog.setHfEndpoint` at

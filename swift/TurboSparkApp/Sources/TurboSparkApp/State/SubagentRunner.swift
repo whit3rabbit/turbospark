@@ -320,7 +320,7 @@ public enum SubagentRunner {
             // The caller's sampling preferences (temperature, top-k, top-p,
             // repetition penalty, seed, stop sequences), which every subagent
             // turn ignored until this parameter existed
-            // (`docs/SWIFT_SETTINGS_AUDIT.md`). `maxNewTokens` is still this
+            // (`swift/docs/SWIFT_SETTINGS_AUDIT.md`). `maxNewTokens` is still this
             // run's OWN turn budget rather than the interactive chat's reply
             // length: a subagent runs many turns of tool use, which is a
             // different quantity than one user-facing answer.

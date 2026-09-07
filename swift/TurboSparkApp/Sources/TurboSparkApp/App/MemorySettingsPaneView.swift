@@ -72,7 +72,7 @@ struct MemorySettingsPaneView: View {
                 }
             } else {
                 HStack {
-                    Text("No project attached. The shared memory root:")
+                    Text("No project attached. The shared memory root:", bundle: .module)
                         .font(theme.ui(.small))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -90,7 +90,7 @@ struct MemorySettingsPaneView: View {
                 let entries = MemoryStore.parseIndex(
                     MemoryStore.shared.loadIndex(forProjectRoot: root))
                 if entries.isEmpty {
-                    Text("Nothing yet. The model saves memories as it learns durable facts; you can save one with `#` followed by text.")
+                    Text("Nothing yet. The model saves memories as it learns durable facts; you can save one with `#` followed by text.", bundle: .module)
                         .font(theme.ui(.small))
                         .foregroundStyle(.secondary)
                 } else {
@@ -114,7 +114,7 @@ struct MemorySettingsPaneView: View {
                     }
                 }
             } else {
-                Text("Attach a project to see its memories.")
+                Text("Attach a project to see its memories.", bundle: .module)
                     .font(theme.ui(.small))
                     .foregroundStyle(.secondary)
             }

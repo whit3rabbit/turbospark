@@ -434,4 +434,64 @@ final class AgentLoopLifecycleTests: XCTestCase {
         var wasCancelled = false
         func markCancelled() { wasCancelled = true }
     }
+
+    // MARK: - steer delivery beats the Stop consultation at a boundary
+
+    /// `continueOrStop` is the seam where a queued prompt is delivered
+    /// MID-TURN (opencode v2's `steer` mode). The discriminating observable
+    /// at the step CAP is which user turn appears: with a steer queued, the
+    /// steer is delivered and the Stop hooks are never consulted; without
+    /// the seam, the same boundary reaches `dispatchStopAndContinueIfBlocked`
+    /// and the hook's reason becomes the next user turn instead. A blocking
+    /// Stop hook is what makes the difference visible without a live session.
+    func testAQueuedSteerAtTheCapBoundaryDeliversAndSkipsTheStopConsultation() async throws {
+        let appModel = AppModel()
+        let chat = AppChat(title: "one")
+        appModel.chats = [chat]
+        appModel.selectedChatID = chat.id
+
+        let (project, cleanup) = try makeProject(name: "P", marker: "m.txt", maxAutonomousSteps: 1)
+        defer { cleanup() }
+        appModel.projects = [project]
+        appModel.selectedProjectID = project.id
+
+        let store = AppHookStore.shared
+        let hook = AppHookCommand(
+            name: "Cap Probe",
+            event: .stop,
+            type: .command,
+            command:
+                "echo '{\"decision\":\"block\",\"reason\":\"step cap reached and Stop was asked\"}'",
+            sourceType: .custom
+        )
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
+
+        appModel.promptText = "use Python instead"
+        appModel.enqueueCurrentDraft(chatID: chat.id)
+
+        let call = AppToolCall(name: "run_command", arguments: ["command": "ls"], category: .terminal)
+        appModel.pendingToolCall = call
+        appModel.pendingToolCallChatID = chat.id
+        appModel.pendingToolCallStep = 0  // maxAutonomousSteps is 1, so 0 is the last one
+        appModel.pendingToolCallProject = project
+
+        appModel.denyPendingToolCall(id: call.id)
+        try await waitUntil {
+            appModel.queuedMessages(for: chat.id).isEmpty
+                && !appModel.chats[0].messages.isEmpty
+        }
+
+        XCTAssertTrue(
+            appModel.chats[0].messages.contains {
+                $0.role == .user && $0.content == "use Python instead"
+            },
+            "The queued prompt must be delivered at the boundary, into the running turn.")
+        XCTAssertFalse(
+            appModel.chats[0].messages.contains {
+                $0.content.contains("step cap reached")
+            },
+            "Fresh user input supersedes the Stop consultation at the same boundary.")
+        XCTAssertTrue(appModel.queuedMessages(for: chat.id).isEmpty)
+    }
 }

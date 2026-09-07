@@ -213,7 +213,7 @@ public struct SkillsSettingsPaneView: View {
                 // Scope badge
                 scopeBadgeView(scope: skill.scope)
 
-                // Shadowing disclosure (SWIFT_SKILLS.md 3B): a USER skill a
+                // Shadowing disclosure (swift/docs/SWIFT_SKILLS.md 3B): a USER skill a
                 // project skill currently overrides by name. Precedence
                 // without the disclosure makes the user skill look broken --
                 // it resolves to nothing while sitting right there, enabled.
@@ -269,7 +269,7 @@ public struct SkillsSettingsPaneView: View {
         HStack(spacing: 3) {
             Image(systemName: "arrow.2.squarepath")
                 .themedFont(points: 8)
-            Text("Shadowed")
+            Text("Shadowed", bundle: .module)
                 .themedFont(points: 9, weight: .semibold)
         }
         .padding(.horizontal, 6)

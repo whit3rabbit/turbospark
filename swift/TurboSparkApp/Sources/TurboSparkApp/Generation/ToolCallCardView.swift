@@ -475,7 +475,7 @@ struct ToolCallCardView: View {
                         .themedFont(.base)
                         .foregroundStyle(.primary)
 
-                    Text("Scenario: " + f.failureScenario)
+                    Text("Scenario: \(f.failureScenario)", bundle: .module)
                         .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }

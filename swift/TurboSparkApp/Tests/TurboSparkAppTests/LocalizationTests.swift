@@ -1,7 +1,7 @@
 import XCTest
 @testable import TurboSparkApp
 
-/// Guards `docs/SWIFT_SETTINGS_AUDIT.md` item 1's localization fix.
+/// Guards `swift/docs/SWIFT_SETTINGS_AUDIT.md` item 1's localization fix.
 ///
 /// `swift build`/`swift run` never compile a `.xcstrings` catalog -- only
 /// Xcode's own build phase does, and this package has no Xcode project -- so

@@ -19,7 +19,7 @@ extension AppModel {
 
     /// Toggles a plugin at USER scope and persists it. Project-scope
     /// overrides are set per project in the project archive and win over
-    /// this; see `docs/SWIFT_PLUGINS.md` for the cascade.
+    /// this; see `swift/docs/SWIFT_PLUGINS.md` for the cascade.
     public func setPluginEnabled(_ plugin: LoadedPlugin, _ enabled: Bool) {
         pluginEnableState[plugin.id] = enabled
         persistSettings()

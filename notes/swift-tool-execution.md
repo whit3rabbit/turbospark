@@ -3,7 +3,7 @@ uuid: "8e1f5553-7073-4050-8396-6c6a02917eea"
 title: "TurboSparkApp: tool execution and containment"
 summary: "The permission gate lives in the two agent-loop CALLERS, never in AppToolRegistry.execute. A direct call to execute is ungated. run_command has no path, so for shell the gate is the whole containment story"
 tags: ["swift", "app", "tools", "security"]
-source: "docs/SWIFT_TOOLS.md, swift/CLAUDE.md Gotchas 11, 30, 32"
+source: "swift/docs/SWIFT_TOOLS.md, swift/CLAUDE.md Gotchas 11, 30, 32"
 created: "2026-09-05"
 updated: "2026-09-05"
 depends_on: ["73c2c625-6312-4bc9-931d-fc1f1391506c"]

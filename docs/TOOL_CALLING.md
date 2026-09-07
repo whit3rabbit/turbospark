@@ -143,5 +143,5 @@ family's shape rather than its exact bytes.
 - `docs/FORGE_GUARDRAILS.md`: the verdict, the retry, the buffering, and
   what is deliberately not taken from `forge-guardrails`.
 - `docs/STREAMING.md`: the `TurnSplitter` the native tier streams through.
-- `docs/SWIFT_TOOLS.md`: the Swift app's tool execution, which the Swift
+- `swift/docs/SWIFT_TOOLS.md`: the Swift app's tool execution, which the Swift
   rescue engine feeds.

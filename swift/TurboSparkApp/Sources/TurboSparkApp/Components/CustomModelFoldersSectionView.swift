@@ -11,7 +11,7 @@ struct CustomModelFoldersSectionView: View {
     /// a `FileManager.enumerator`, stat-ing every entry -- real I/O, not a
     /// property read. It used to run inline in `body`, so SwiftUI re-ran the
     /// walk, for every configured folder, on every body evaluation this view
-    /// received for any reason (`docs/SWIFT_SETTINGS_AUDIT.md`). `.task(id:)`
+    /// received for any reason (`swift/docs/SWIFT_SETTINGS_AUDIT.md`). `.task(id:)`
     /// below reruns this exactly when the folder list changes.
     @State private var scannedCounts: [String: Int] = [:]
 
@@ -24,7 +24,11 @@ struct CustomModelFoldersSectionView: View {
                 Button {
                     addCustomFolder()
                 } label: {
-                    Label("Add Folder...", systemImage: "plus")
+                    Label {
+                        Text("Add Folder…", bundle: .module)
+                    } icon: {
+                        Image(systemName: "plus")
+                    }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)

@@ -387,7 +387,7 @@ struct EngineSettingsPaneView: View {
 
             if let info = model.session?.info {
                 HStack {
-                    Text("Resolved")
+                    Text("Resolved", bundle: .module)
                     Spacer()
                     Text(info.kvBits)
                         .font(.caption.monospaced())

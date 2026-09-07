@@ -136,6 +136,8 @@ final class MessageQueueTests: XCTestCase {
 
     // MARK: - deletion
 
+    // MARK: - deletion
+
     func testDeletingTheChatDiscardsItsQueue() {
         let chatID = makeChat()
         appModel.promptText = "doomed"
@@ -146,5 +148,87 @@ final class MessageQueueTests: XCTestCase {
 
         XCTAssertTrue(appModel.queuedMessages(for: chatID).isEmpty,
                       "A deleted chat's parked drafts are discarded with it.")
+    }
+
+    // MARK: - steer delivery at a step boundary
+
+    /// The boundary drain appends MID-TURN (opencode v2's `steer` mode):
+    /// every entry reaches the transcript in queue order, the queue
+    /// empties, and the composer is untouched -- a steer is not a draft
+    /// restore.
+    func testABoundaryDeliveryAppendsEveryEntryInOrderAndEmptiesTheQueue() async {
+        let chatID = makeChat()
+        appModel.promptText = "first"
+        appModel.enqueueCurrentDraft(chatID: chatID)
+        appModel.promptText = "second"
+        appModel.enqueueCurrentDraft(chatID: chatID)
+
+        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+
+        XCTAssertTrue(delivered)
+        XCTAssertTrue(appModel.queuedMessages(for: chatID).isEmpty)
+        let messages = appModel.chats[0].messages
+        XCTAssertEqual(messages.count, 2)
+        XCTAssertEqual(messages[0].role, .user)
+        XCTAssertEqual(messages[0].content, "first")
+        XCTAssertEqual(messages[1].content, "second")
+        XCTAssertEqual(appModel.promptText, "")
+    }
+
+    func testABoundaryDeliveryWithNothingQueuedReturnsFalse() async {
+        let chatID = makeChat()
+
+        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+
+        XCTAssertFalse(delivered)
+        XCTAssertTrue(appModel.chats[0].messages.isEmpty)
+    }
+
+    func testABoundaryDeliveryWaitsWhileAnApprovalCardIsUp() async {
+        let chatID = makeChat()
+        appModel.promptText = "steered"
+        appModel.enqueueCurrentDraft(chatID: chatID)
+        appModel.pendingToolCall = AppToolCall(name: "run_command")
+
+        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+
+        XCTAssertFalse(delivered, "An approval card means the loop is parked, not at a boundary.")
+        XCTAssertEqual(appModel.queuedMessages(for: chatID).count, 1,
+                       "The entry stays parked for the boundary the approval lands on.")
+        XCTAssertTrue(appModel.chats[0].messages.isEmpty)
+    }
+
+    func testABoundaryDeliveryDoesNotRunAgainstACancelledTurn() async {
+        let chatID = makeChat()
+        appModel.promptText = "too late"
+        appModel.enqueueCurrentDraft(chatID: chatID)
+        appModel.isCancellationPending = true
+
+        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+
+        XCTAssertFalse(delivered, "A steer must not outrun the Stop the user just pressed.")
+        XCTAssertEqual(appModel.queuedMessages(for: chatID).count, 1)
+    }
+
+    func testASteerInlinesTextAttachmentsTheWayRunDoes() async {
+        let chatID = makeChat()
+        appModel.promptText = "read this"
+        appModel.chats[0].draftAttachments = [
+            AppPromptAttachment(
+                fileName: "notes.txt", formatLabel: "TXT",
+                extractedText: "the payload", wasTruncatedDuringExtraction: false)
+        ]
+        appModel.enqueueCurrentDraft(chatID: chatID)
+
+        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+
+        XCTAssertTrue(delivered)
+        let content = appModel.chats[0].messages[0].content
+        XCTAssertTrue(content.contains("read this"))
+        XCTAssertTrue(content.contains("--- Attachment: notes.txt (TXT) ---"),
+                      "The queued attachment rides the steer, not just the text.")
+        XCTAssertTrue(content.contains("the payload"))
+        // The moved-out attachments are consumed, not left on the row.
+        XCTAssertTrue(appModel.chats[0].draftAttachments.isEmpty)
     }
 }

@@ -336,7 +336,17 @@ mod tests {
     /// three-family sample -- is what lets a new family inherit an answer
     /// nobody gave it (AGENTS.md Gotchas 24, 37 and 39, and `crates/bench`
     /// Gotcha 16's no-wildcard-arm rule).
-    const EVERY_FAMILY: &[ModelFamily] = &ModelFamily::ALL;
+    const EVERY_FAMILY: &[ModelFamily] = &[
+        ModelFamily::Gemma4,
+        ModelFamily::QwenGdnMoe,
+        ModelFamily::DeepseekV4Flash,
+        ModelFamily::Llama,
+        ModelFamily::Qwen3Moe,
+        ModelFamily::GptOss,
+        ModelFamily::QwenGdnDense,
+        ModelFamily::MuseGlimmer,
+        ModelFamily::Qwen4Exp,
+    ];
 
     #[test]
     fn mapped_residency_is_served_on_gemma4_and_refused_by_name_everywhere_else() {

@@ -3,7 +3,7 @@ import SwiftUI
 /// Applies a themed font without requiring the call site to declare
 /// `@Environment(\.appTheme)` itself.
 ///
-/// `docs/SWIFT_SETTINGS_AUDIT.md` section 1 traced why the font picker moved
+/// `swift/docs/SWIFT_SETTINGS_AUDIT.md` section 1 traced why the font picker moved
 /// 232 call sites and left 809 untouched: every one of those reads
 /// `\.appTheme` explicitly through `ResolvedAppTheme.ui(_:weight:)` /
 /// `.code(_:weight:)`, which is a correct but easy modifier to skip under a

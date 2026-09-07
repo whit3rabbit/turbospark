@@ -3,7 +3,7 @@ uuid: "a0863529-2ab6-4386-ab12-7465356d5bc8"
 title: "TurboSparkApp: skills marketplace and discovery"
 summary: "SKILL.md files at ~/.turbospark/skills or <project>/.turbospark/skills, precedence project-over-user by name. Discovers Claude Code, Cursor, and OpenClaw skills automatically, no migration"
 tags: ["swift", "app", "skills"]
-source: "docs/SWIFT_SKILLS.md"
+source: "swift/docs/SWIFT_SKILLS.md"
 created: "2026-09-05"
 updated: "2026-09-05"
 depends_on: ["7b3eeef2-d664-48a7-9b54-9b250768029e"]

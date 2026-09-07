@@ -5,7 +5,7 @@ import SwiftUI
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Settings pane for installed plugins: the same surfaces Claude Code's
 /// `/plugins` panel manages, adapted to this app's settings style. Docs:
-/// docs/SWIFT_PLUGINS.md.
+/// swift/docs/SWIFT_PLUGINS.md.
 @MainActor
 public struct PluginSettingsPaneView: View {
     @ObservedObject var model: AppModel

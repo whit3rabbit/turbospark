@@ -20,6 +20,7 @@ the ABI contract itself.
 
 ```
 swift/
++-- docs/                            # feature architecture, audit & reference docs for TurboSparkApp
 +-- TurboSpark/                      # the binding (library)
 |   +-- Package.swift                # platforms .macOS(.v13); unsafeFlags -L
 |   +-- Sources/CTurboSpark/         # module.modulemap (committed)
@@ -73,7 +74,7 @@ swift/
     |   |                            # TurboSparkTheme, AppChromePresentation,
     |   |                            # PointerCursorModifier, ThemeCodePreviewView
     |   +-- Tools/                   # everything a tool call passes through;
-    |   |   |                        # docs/SWIFT_TOOLS.md is the map
+    |   |   |                        # swift/docs/SWIFT_TOOLS.md is the map
     |   |   +-- Registry/            # AppToolRegistry (+Handlers, +Vocabulary),
     |   |   |                        # AppToolTypes, AppToolCatalog: the five
     |   |   |                        # files adding a tool touches
@@ -135,7 +136,7 @@ hardcoded outside `AppStorageRoot`. `MarketplaceGit` routes through
 `ProcessExecutor`, checks every step, and takes its directory as a parameter.
 
 **THE PLUGIN SYSTEM IS A PORT OF CLAUDE CODE'S, AND ITS TWO DEVIATIONS ARE
-DECISIONS, NOT GAPS.** `docs/SWIFT_PLUGINS.md` is the map: manifest at
+DECISIONS, NOT GAPS.** `swift/docs/SWIFT_PLUGINS.md` is the map: manifest at
 `.claude-plugin/plugin.json`, contributions named `plugin:`-namespaced
 skills/commands/agents and `plugin:<plugin>:<server>` MCP servers, an
 enable cascade of project over user over Claude Code's own setting, and a
@@ -834,7 +835,7 @@ so going through `make` recompiles the whole app every single time. Use
     no root and still work, which is the case the fallback was really
     reaching for. (`askuserquestion`, `taskcreate` and `tasklist` were in that
     rootless group until 2026-09-04, when their canned no-op arms were removed
-    as the T5 class of Gotcha 32 and `docs/SWIFT_TOOLS.md` section 9.)
+    as the T5 class of Gotcha 32 and `swift/docs/SWIFT_TOOLS.md` section 9.)
 
 31. **A CLASS INITIALIZER THAT THROWS PART-WAY DOES NOT RUN `deinit`, SO A C
     HANDLE ACQUIRED BEFORE THE THROW LEAKS IN FULL.** `TurboSparkSession.init`
@@ -1403,7 +1404,7 @@ so going through `make` recompiles the whole app every single time. Use
     Three things are parsed and deliberately not acted on, which is worth
     knowing before reading their absence as a bug: `suppressOutput` has
     nothing to suppress here, `hookSpecificOutput.retry` on `PermissionDenied`
-    is inert, and prompt/agent hooks never run. `docs/SWIFT_TOOLS.md` is the
+    is inert, and prompt/agent hooks never run. `swift/docs/SWIFT_TOOLS.md` is the
     home for all five divergences.
 
 52. **TWO SETTINGS SURFACES MOVED OFF THEIR OLD STORES, AND ONE OF THEM HAS
@@ -1446,7 +1447,7 @@ so going through `make` recompiles the whole app every single time. Use
 
 54. **COMPACTION MAKES THE PROMPT DISAGREE WITH THE TRANSCRIPT BY EXACTLY
     THE BOUNDARY, AND THE GHOST HALF OF THAT STATE IS CONTENT.**
-    (`docs/SWIFT_COMPACTION.md`, added 2026-09-06.) Context compaction
+    (`swift/docs/SWIFT_COMPACTION.md`, added 2026-09-06.) Context compaction
     summarizes rows at or before `AppChat.compactedMessageCount` and never
     deletes them, so there are exactly TWO assembly points that skip the
     boundary and inject the summary -- `buildAppendOnlyHistory` and
@@ -1495,7 +1496,7 @@ so going through `make` recompiles the whole app every single time. Use
     THAT EDITS IT, AND THE 2026-09-06 AUDIT FOUND SEVEN THAT WERE NOT.**
     Gotcha 36's rule ("grep for the accessor, not for the setting") applied
     to every `MacAppSettings` key, every `AppearanceManager` field and every
-    control in thirteen panes. `docs/SWIFT_SETTINGS_AUDIT.md` is the home for
+    control in thirteen panes. `swift/docs/SWIFT_SETTINGS_AUDIT.md` is the home for
     the tables and the open list. What it found, in the order that costs the
     most to rediscover: `prefillEnabled` round-tripped through
     `settings.json` with no reader and no `OpenOptions` field to reach;
@@ -1524,7 +1525,7 @@ so going through `make` recompiles the whole app every single time. Use
     one field and the Engine pane reintroduced it on seven.
 
 57. **AUTO-MEMORY HAS FOUR LOAD-BEARING JOINTS, AND EACH ONE FAILS SILENTLY
-    WHEN REBUILT WRONG** (2026-09-06, `docs/SWIFT_MEMORY.md` is the feature
+    WHEN REBUILT WRONG** (2026-09-06, `swift/docs/SWIFT_MEMORY.md` is the feature
     page). The system: a per-project memory directory holding a `MEMORY.md`
     index injected every turn plus topic files the model writes through the
     `memory` tool, keyed under `~/.turbospark/memory/projects/<key>/memory/`.
@@ -1550,7 +1551,7 @@ so going through `make` recompiles the whole app every single time. Use
 
 58. **CHAT SEARCH EXCLUDES GHOSTS BY THE FLAG, AND ITS DIALOG KEYS ARE
     WINDOW-LEVEL SHORTCUTS, NOT A KEY MONITOR** (2026-09-07,
-    `docs/SWIFT_CHAT_SEARCH.md` is the feature page). `Cmd+K` opens a
+    `swift/docs/SWIFT_CHAT_SEARCH.md` is the feature page). `Cmd+K` opens a
     palette over previous chats (`ChatSearch`, pure; `ChatSearchOverlayView`,
     the surface). Two decisions the next change can silently undo. One: the
     ghost exclusion is `!chat.isGhost` in `buildDocuments`, never an
@@ -1590,10 +1591,39 @@ so going through `make` recompiles the whole app every single time. Use
     pane's rows carry the alternates in `KeyboardShortcutRow.altKeys` with
     the catalog tests holding each pair: a bridge chord without a row, or a
     row without a bridge chord, is the pane lying again -- the failure the
-    catalog was built to end (`docs/SWIFT_SETTINGS_AUDIT.md`). The pane's
+    catalog was built to end (`swift/docs/SWIFT_SETTINGS_AUDIT.md`). The pane's
     own entry point is real, not an alternate: a "Keyboard Shortcuts..."
     View-menu item with Cmd+/, the unsloth shortcuts-tab chord, routed
     through `openSettings(tab: .shortcuts)`.
+
+60. **A COMMAND-MENU ITEM WRITTEN THE NATURAL WAY IS ENGLISH UNDER EVERY
+    LANGUAGE, AND NOTHING IN THE BUILD STOPS IT** (2026-09-07,
+    `TurboSparkApp.swift` commands block). `Button("New Thing") { ... }`,
+    `CommandMenu("View")`, `Picker("Text Size", ...)`, `.help("...")` and
+    `.accessibilityHint("...")` all take a `LocalizedStringKey` that
+    resolves against `Bundle.main` -- which carries no strings in a
+    SwiftPM build -- and NONE of them has a `bundle:` parameter. Only
+    `Text` does, so every one of those titles goes through a label:
+    `CommandMenu(Text("View", bundle: .module))`, `Button { ... } label: {
+    Text("New Thing", bundle: .module) }`, `Picker(selection:) { } label: {
+    ... }`. The menu bar was converted in full exactly because it reads as
+    localized chrome while every item was English-only. The localization
+    source scan (`LocalizationParityTests`) covers `Text("` and
+    `LocalizedStringKey("` literals but NOT `Button("`/`Picker("`/`Label("`
+    -- there are ~300 deliberately unbundled `Label` sites, so a scan wide
+    enough to catch a new menu item would drown in known-English ones --
+    meaning a menu item added the natural way compiles, works, and ships
+    English-only with everything green. `swift/docs/SWIFT_LOCALIZATION.md` is the
+    page to read before touching that surface. The same pass left two
+    reusable lessons. The plural-structure gate collected its failure list
+    and then asserted only the fixture count, so one mutation check
+    (flatten one language's plural) survived six green tests and exposed
+    the never-asserted array -- a survivor whose mutation applied is a
+    missing test, again. And the source scan reproduces the settings-audit
+    substring lesson within a week: `Text(` matches inside
+    `onInsertPromptText(` and `noExtractableText(`, so both the grep that
+    finds offenders and the Swift scanner that guards them need the
+    non-identifier boundary check.
 
 ## The `state#N` ledger
 

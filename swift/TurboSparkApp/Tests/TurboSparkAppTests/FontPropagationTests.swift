@@ -1,7 +1,7 @@
 import XCTest
 @testable import TurboSparkApp
 
-/// Guards the font propagation fix in `docs/SWIFT_SETTINGS_AUDIT.md` section 1:
+/// Guards the font propagation fix in `swift/docs/SWIFT_SETTINGS_AUDIT.md` section 1:
 /// 972 of 1,206 `.font(...)` call sites read a hardcoded semantic or fixed
 /// size instead of `\.appTheme`, so the font, weight and text-size pickers
 /// moved 232 sites and left the rest frozen. Every hardcoded site was

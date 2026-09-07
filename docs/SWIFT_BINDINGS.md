@@ -1253,7 +1253,7 @@ every message with the 11.6x prefill win sitting unreachable one file away.
   header is hand-written
 - [`crates/ffi/include/turbospark.h`](../crates/ffi/include/turbospark.h):
   the canonical contract
-- [`docs/KEYBOARD_SHORTCUTS.md`](KEYBOARD_SHORTCUTS.md): keyboard shortcuts and accessibility navigation reference for the SwiftUI app
+- [`swift/docs/KEYBOARD_SHORTCUTS.md`](../swift/docs/KEYBOARD_SHORTCUTS.md): keyboard shortcuts and accessibility navigation reference for the SwiftUI app
 - [`docs/MODELS.md`](MODELS.md): the catalog, the probe, and what `pull`
   does
 - [`docs/GTURBO.md`](GTURBO.md): the install format a session opens

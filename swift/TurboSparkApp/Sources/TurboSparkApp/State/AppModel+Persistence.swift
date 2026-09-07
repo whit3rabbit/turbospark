@@ -202,9 +202,67 @@ extension AppModel {
     /// `@Published` state on read (state#7). Fixing it up front, once, at
     /// the one place `chats` is genuinely being (re)established keeps that
     /// getter pure.
+    /// Repairs tool calls left mid-flight by an unclean exit, before the
+    /// loaded chats reach the UI.
+    ///
+    /// **A CRASH MID-TURN PERSISTS A CALL THAT NEVER FINISHED.**
+    /// `persistChats()` writes at message-append and status-change points, so
+    /// a force-quit while a call executes or waits for approval lands an
+    /// archive whose row reads `.running` or `.pendingApproval` -- and
+    /// nothing in-memory resets either on the next launch: the transcript
+    /// shows a spinner that never stops or an approval affordance no button
+    /// can resolve, and the prompt assembly replays a `toolCalls` row with
+    /// no matching result (the result is appended only on completion). The
+    /// repair gives each state its live-path terminal twin -- `.failed` and
+    /// `.denied` respectively, with the synthetic result row the live path
+    /// would have recorded -- so the next turn shows the model an honest
+    /// record instead of a dangling call. Alternates are repaired too: an
+    /// edited or retried row carries its own stuck versions.
+    ///
+    /// Load-time only, deliberately: mid-turn `.running` rows on disk are the
+    /// CORRECT live state, and the repair is for the state they freeze into
+    /// when no process is left to finish them.
+    nonisolated static func reconcilingOrphanedToolCalls(_ chats: [AppChat]) -> [AppChat] {
+        func repair(_ message: AppChatMessage) -> AppChatMessage {
+            var message = message
+            message.alternates = message.alternates.map(repair)
+            var results = message.toolResults
+            for index in message.toolCalls.indices {
+                switch message.toolCalls[index].status {
+                case .running:
+                    message.toolCalls[index].status = .failed
+                    if !results.contains(where: { $0.callID == message.toolCalls[index].id }) {
+                        results.append(AppToolResult(
+                            callID: message.toolCalls[index].id,
+                            output: "Interrupted: the app quit before this call finished, "
+                                + "and no result was recorded.",
+                            isError: true))
+                    }
+                case .pendingApproval:
+                    message.toolCalls[index].status = .denied
+                    if !results.contains(where: { $0.callID == message.toolCalls[index].id }) {
+                        results.append(AppToolResult(
+                            callID: message.toolCalls[index].id,
+                            output: "Tool execution denied: the app quit before this call was approved.",
+                            isError: true))
+                    }
+                case .completed, .denied, .failed:
+                    break
+                }
+            }
+            message.toolResults = results
+            return message
+        }
+        return chats.map { chat in
+            var chat = chat
+            chat.messages = chat.messages.map(repair)
+            return chat
+        }
+    }
+
     func loadChats() {
         let archive = AppChatFileStore.load()
-        self.chats = archive.chats
+        self.chats = Self.reconcilingOrphanedToolCalls(archive.chats)
         if archive.chats.isEmpty || archive.chats.contains(where: { $0.id == archive.selectedChatID }) {
             self.selectedChatID = archive.selectedChatID
         } else {

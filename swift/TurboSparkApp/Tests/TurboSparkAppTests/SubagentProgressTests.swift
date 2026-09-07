@@ -3,7 +3,7 @@ import XCTest
 @testable import TurboSparkApp
 
 /// The subagent progress seam and the `agent` tool's result contract
-/// (docs/SWIFT_TOOLS.md section 12): the event bracket, the run state a
+/// (swift/docs/SWIFT_TOOLS.md section 12): the event bracket, the run state a
 /// card renders from, and the trailer + no-output sentence the parent
 /// reads. All reachable without a model session -- the no-session run is
 /// the shortest path through `run` that still emits the full event bracket.

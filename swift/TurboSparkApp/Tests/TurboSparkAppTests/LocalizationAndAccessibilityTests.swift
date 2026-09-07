@@ -7,7 +7,7 @@ import XCTest
 final class LocalizationAndAccessibilityTests: XCTestCase {
     /// `Localization/Localizable.xcstrings`, found without going through a
     /// bundle. It moved out of `Sources/TurboSparkApp/Resources/` in the
-    /// font/localization pass (`docs/SWIFT_SETTINGS_AUDIT.md` item 1): it is
+    /// font/localization pass (`swift/docs/SWIFT_SETTINGS_AUDIT.md` item 1): it is
     /// a build INPUT for `scripts/compile-strings.sh`, not a runtime
     /// resource, so it is never bundled and `Bundle.module` can no longer
     /// find it. `#filePath` reaches the checked-in source directly, the same

@@ -64,7 +64,7 @@ swift-lib:
 # app actually reads. `swift build`/`swift run` never do this themselves --
 # only Xcode's own build phase compiles a String Catalog, and this package
 # has no Xcode project -- so without it every localized string is dead JSON
-# sitting unused in the resource bundle (docs/SWIFT_SETTINGS_AUDIT.md item 1).
+# sitting unused in the resource bundle (swift/docs/SWIFT_SETTINGS_AUDIT.md item 1).
 compile-strings:
 	./scripts/compile-strings.sh
 
