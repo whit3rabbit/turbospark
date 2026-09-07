@@ -8,10 +8,9 @@ which lists a tool name has to appear in, and which tests pin the result.
 
 It does not restate what other pages own. `docs/PERMISSION_GATE.md` owns the
 terminal command classifier and every number about it, and its "Where it
-hooks" section is the decision ladder for a shell command. `swift/CLAUDE.md`
-Gotchas 11, 29, and 30 record why the gate and the containment have the shape
-they do, and its `state#N` ledger is the incident history behind every
-parenthesised `state#` below.
+hooks" section is the decision ladder for a shell command. Section 16 below
+is this page's own Gotchas, and `swift/docs/SWIFT_STATE_LEDGER.md` is the
+incident history behind every parenthesised `state#` on this page.
 
 All paths on this page are relative to
 `swift/TurboSparkApp/Sources/TurboSparkApp/` unless they start with `Tests/`
@@ -411,6 +410,8 @@ touches a chat rather than the filesystem.
 - `Projects`, `Artifact`, `REPL`, and `Workflow` are schema definitions
   without local engines and are filtered out by `isImplemented` rather
   than stubbed (T5).
+- A shell command ending in a line continuation splices `ShellCwdTracker`'s
+  cwd-capture suffix into its own arguments. Documented rather than fixed.
 
 ## 10. Installing an MCP server from a catalog
 
@@ -741,3 +742,108 @@ legitimate inside emoji sequences and Indic/Arabic shaping, and tool
 output is user-visible through its tool card anyway. Applying the strip
 to tool output would corrupt real content to guard a visible channel.
 Tests: `UnicodeSanitizationTests`.
+
+## 16. Gotchas
+
+**`resolveSecurePath` did not check containment until 2026-08-28, and its
+name said it did.** It standardized the caller's path and appended it to
+the root, which resolves `..` correctly and then follows it out: measured
+against a root of `/Users/me/proj`, `../../../../etc/passwd` came out as
+`/etc/passwd`. It now refuses absolute and `~` paths up front and compares
+the resolved target against the resolved root, symlinks included on both
+sides, so a link inside the project pointing outside it is refused too.
+The root also has to be resolved as well as the target, or a project under
+a symlinked path (`/tmp` is one on macOS) fails its own containment test.
+
+**That containment fix was true of the MECHANISM and false of the
+CONFIGURATION every real project ran under until 2026-08-30.** The sheet
+that creates a project seeded `terminal: .allow` while every other default
+site agreed on `.ask` (`AppProjectPermissions.standard`), so every project
+any user ever made ran model-proposed shell commands with no prompt. All
+four sites now read `AppProjectPermissions.newProjectDefault`; a fifth
+site spelling its own default is what that constant exists to make
+visible.
+
+**A denylist over a string bound for `/bin/zsh -c` is the wrong shape, not
+an incomplete list.** `ToolRiskClassifier` used to match ~20 regexes
+against raw command text, and under `.auto` mode anything not `.high` risk
+is allowed -- so the classifier's real output was binary: does this run
+unwatched. `rm -rf ~/Documents` matched. `r""m -rf ~/Documents` did not,
+and zsh runs them identically. Nor did `eval $(printf ...)`,
+`$'\x72m' -rf ~`, `CMD=rm; $CMD -rf ~`, or `` `echo rm` -rf ~ ``. 18 of 23
+corpus strings in `TerminalRiskGateTests` scored `.low` or `.safe` against
+the old code, each one an edit away from a pattern that WAS caught.
+
+The gate is now positive: `TerminalCommandClassifier.isAutoApprovable`
+runs a command only when it is a single simple invocation (no
+`| ; & $ \` < > ( ) { }` anywhere, no quote/backslash/`=` in the head
+word) AND its program is on a read/build allowlist. The denylist stays,
+because a matched pattern names a specific reason for the approval sheet
+and the allowlist's generic one is worse to show a user.
+
+Two traps found by tuning it. Rejecting quotes ANYWHERE fails
+`git commit -m 'msg'`, `grep -rn 'struct' src/` and `find . -name '*.swift'` --
+quotes hide a head word and mean nothing in an argument, so the check is
+per position. And `python3` is on the allowlist because `.auto` promises
+to run `python3 -m pytest`, which makes the inline-code-flag rejection
+(`-c`, `-e`, `--eval`, `--command`, scoped to interpreters so `grep -e`
+still works) the ONLY thing keeping that entry safe.
+
+`TerminalCommandClassifier.isCollapsible` reads the FIRST WORD only and is
+presentation, never a gate: it scored `cat README && python3 -c '...'` as
+`.safe`. It and `isAutoApprovable` are kept apart so a display tweak
+cannot widen the gate again.
+
+**A projectless chat has no workspace, and there is no defensible
+default.** `AppToolRegistry.execute` used to root a chat with no project
+at `FileManager.default.homeDirectoryForCurrentUser`, narrower than the
+`currentDirectoryPath` of `/` it replaced in the way that counts least:
+`resolveSecurePath`'s containment check passes for
+`~/Library/Application Support`, browser profiles, shell history and every
+token on disk. Path-taking and process-spawning tools are refused by name
+now (`workspaceRootedToolNames`); `skill`, `todowrite` and `agent` need no
+root and still work, which is the case the fallback was really reaching
+for. (`askuserquestion`, `taskcreate` and `tasklist` were in that rootless
+group until 2026-09-04, when their canned no-op arms were removed as the
+T5 class above.)
+
+**An unimplemented transport must throw, not return a success string.**
+`McpClientEngine.callToolViaSSE` used to return the literal
+`"SSE remote tool execution completed."` for every call without issuing a
+request, and `discoverToolsViaSSE` built a `URLRequest`, never sent it,
+and returned `[]` -- which reads as "this server publishes no tools." So
+an SSE server config reported every tool call as having succeeded: the
+model was told an external action happened and the transcript showed a
+green result. Same class as the fabricated "Executed successfully" T5 was
+fixed for, one layer over. Both arms throw and name the transport now, and
+`McpRemoteTransportFields.unavailableNotice` discloses the refusal at
+configuration time, in the editor sheet, rather than only at the first
+tool call. The picker's arm was deliberately NOT relabelled "Streamable
+HTTP" to match another client's UI: a better name on a throwing stub is a
+capability claim.
+
+Two smaller fixes landed with it. MCP stdio children used to be seeded
+from `ProcessInfo.processInfo.environment`, handing a third-party server
+binary every credential the app was launched with; they get `PATH`,
+`HOME`, `LANG`, `TMPDIR`, any host variable the config NAMES in
+`envPassthrough`, plus the config's own `env` now -- an allowlist of
+names, never a wildcard. And `resolveExecutablePath` used to return
+`/usr/bin/env` for anything it could not find, moving the lookup to spawn
+time where nothing could observe or report it; it searches `PATH` itself
+and returns nil now, so an unresolvable command is an error naming
+itself.
+
+**The app's guardrails setting did not reach the served path, and the two
+enforcement points are easy to conflate.** `ForgeGuardrailsEngine` runs in
+the agent loop over a reply this app read itself; every HTTP client of the
+in-process server bypassed it entirely and got `ChatModel::guardrails()`'s
+trait default. So a user who set "Always Off" and pointed a client at the
+server got guardrails anyway, with nothing saying so. `ServerOptions.guardrails`
+(2026-09-05) carries it, and `serverStartedGuardrails` records what the
+START used rather than what the setting says NOW -- a server resolves its
+guardrails once and keeps them, so reporting the live setting would claim
+a change that did not happen. A server started before the value was
+tracked reports `unknown`, not `on`. `.select` resolves to ON for a server
+(it means "decide per project or per chat," and a server request has
+neither). See root `CLAUDE.md` Gotcha 24 for the OTHER thing this app
+calls "guardrails" (memory-loading tiers, not tool calls).

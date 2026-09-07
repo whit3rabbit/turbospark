@@ -1,414 +1,233 @@
 # Swift app settings audit
 
-Audited 2026-09-06. This page is the HOME for what the TurboSparkApp settings
-surface promises against what it delivers: every persisted key traced to its
-consumers, every pane control checked for a real effect, and the font
-complaint diagnosed to its cause. Read it before adding a setting, before
-trusting a control that looks wired, and before proposing the font rewrite.
-The method is `swift/CLAUDE.md` Gotcha 36's rule applied to the whole surface:
-grep for the ACCESSOR, never for the setting.
+What the TurboSparkApp settings surface promises against what it delivers:
+every persisted key traced to its consumers, every pane control checked for
+a real effect. Most findings below are fixed; this page keeps the ones
+still open, the root-cause explanations worth not re-deriving, and the
+method for re-running the audit. Read it before adding a setting, before
+trusting a control that looks wired, and before proposing another pass at
+the font system.
+
+The method: grep for the ACCESSOR, never for the setting. Section 5 spells
+it out.
 
 Two stores hold everything. `State/MacAppSettings.swift` writes
-`settings.json` and `Theme/AppearanceSettings.swift` writes `appearance.json`,
-both under `AppStorageRoot`. Thirteen tabs edit them.
+`settings.json` and `Theme/AppearanceSettings.swift` writes
+`appearance.json`, both under `AppStorageRoot`
+(`swift/docs/SWIFT_STORAGE.md`). Thirteen tabs edit them.
 
-## 1. Why font changes do not apply
+Two other surfaces moved off their old stores (2026-09-05/06) and neither
+is tested the same way. The server API key lives in the login Keychain
+(`ServerKeychain.swift`, service `TurboSpark.server`,
+`kSecAttrAccessibleAfterFirstUnlock`) rather than in `settings.json`; an
+empty string deletes the item, and a Keychain error degrades to "no key
+restored" rather than failing the load. `ServerKeychain` itself is
+UNTESTED, because a round-trip test would write into the host user's real
+keychain -- stated here so its absence reads as a decision. And
+`AppearanceManager` moved from `UserDefaults` (11 keys and 2 JSON blobs) to
+`appearance.json`, with a one-way migration that reads the legacy keys
+only when the file is absent and removes them only after the first
+successful save.
 
-The pipeline is correct and this was checked end to end. `ResolvedAppTheme`
-takes every font input, is `Equatable` over all of them, and `AppThemeInjector`
-observes `AppearanceManager`. Both scenes inject it (`RootView.swift`,
-`TurboSparkApp.swift`'s `Settings` scene). The transcript reads it
-(`ChatMessageMarkdownView`). All twelve bundled TTFs register and all four
-weights resolve, measured at runtime.
+## 1. Font propagation
 
-The defect is call-site coverage. Counted over `Sources/TurboSparkApp`:
+Fixed 2026-09-06. The root cause: 81 files used raw `.font(...)` calls that
+never read `\.appTheme`, so the font/theme injector's container-level
+`.font(theme.uiFont)` was overridden by any explicit child `.font(...)`.
+`Installation/`, `Diagnostics/`, `Files/` and `Server/` had zero themed
+calls; the Skills, Permissions, MCP, Hooks and Agents panes were entirely
+hardcoded. Text Size was ALSO applied by three mechanisms that disagreed
+(themed sites moved by `AppTextSize.scale`, semantic sites moved about one
+point through `.dynamicTypeSize`, fixed-size sites did not move at all).
 
-| Pattern | Count |
-|---|---|
-| `theme.ui(` and `theme.code(` | 232 |
-| `.font(.caption)`, `.body`, `.headline` and the other semantic styles | 737 |
-| `.font(.system(size:))` at a fixed point size | 235 |
-| `NSFont.` | 12 |
-
-81 files contain `.font(` and never read `\.appTheme`, which is 809 of 1,230
-font calls. The injector's container-level `.font(theme.uiFont)` is overridden
-by any explicit `.font(...)` on a child. `Installation/`, `Diagnostics/`,
-`Files/` and `Server/` have zero themed calls. The Skills, Permissions, MCP,
-Hooks and Agents panes are entirely hardcoded, so the tabs beside the font
-picker do not move when it changes. The rail, top bar, status bar and chat
-sidebar are fully themed, which is why some of the window does update and
-the rest does not.
-
-Text Size is applied by three mechanisms that disagree:
-
-| Site kind | Family, weight, size stepper | Text Size |
-|---|---|---|
-| 232 themed sites | move | move by `AppTextSize.scale` (1.0, 1.15, 1.30) |
-| 737 semantic sites | no effect | move about one point through `.dynamicTypeSize` |
-| 235 fixed-size sites | no effect | no effect |
-
-`AppTextSize.standard` maps to `.xLarge` dynamic type, so the semantic half
-already renders one notch above the themed half at the Default setting.
-
-Smaller confirmed items in the same area:
-
-- `MenuBarExtra` has no `.appThemed()`, and `ToastOverlayView` and
-  `ProjectMcpApprovalSheet` consume no theme.
-- `CodeBlockContainer`'s language tag and Copy button use `.caption2` while
-  the block body is themed.
-- The export renderers (`ResponseMarkdownRenderer`,
-  `InstructionTranscriptDocumentController`) use `NSFont.systemFont`.
-- `ChatMessageMarkdownView` forces a full `.id` rebuild on any font change,
-  which drops selection and scroll position.
-- Only one test, `testMarkdownRenderingWithCustomFont`, asserts that a
-  rendered surface follows the font setting.
-
-### Fix, done 2026-09-06
-
-`Theme/ThemedFont.swift` adds the modifier family: `.themedFont(.small)`,
-`.themedFont(points: 11, weight: .medium)`, `.themedCode(.small)`, each
-reading `\.appTheme` itself so a call site needs no environment declaration.
-The 972 hardcoded sites converted by a two-pass script against the fixed map
-this section originally proposed (`.caption2` to `.tiny`, `.caption` and
-`.subheadline` to `.small`, `.body` and `.callout` to `.base`, `.headline` to
-`.base` at semibold, `.title3`/`.title2`/`.title` unchanged, `.largeTitle` to
-`.hero`, `.system(size: N, weight: W)` to `points: N`, `.monospaced()` to the
-code variant), plus by hand for the dozen sites the script's patterns did not
-cover (a top-level ternary switching between two whole font expressions, one
-badge view whose `Font`-typed computed property became an `AppFontStep`
-one). 245 `theme.ui(`/`theme.code(` sites plus 974 `themedFont(`/`themedCode(`
-sites now read the theme. 14 do not, and are the audit's own deliberate
-exceptions -- the two per-mode theme preview cards
-(`ThemeCodePreviewView.swift`, `ThemeTypographyPreviewView.swift`, which
-resolve a SPECIFIC mode's font rather than the ambient one, by design) and
-the font-family picker's own preview rows (`AppearancePreferencesCardView.swift`,
-which preview a candidate the user has not chosen yet). The 12 `NSFont.`
-sites in the export renderers are unchanged: SwiftUI's `Font` has no bearing
-on an `NSAttributedString` render target.
-
-The scene-level `.dynamicTypeSize(appearanceManager.textSize.dynamicTypeSize)`
-is gone from both scenes in `TurboSparkApp.swift`, and
-`AppTextSize.dynamicTypeSize` (and its "one notch above baseline" comment)
-is deleted with it: every themed site now scales through
-`AppFontDescriptor`'s own size, which was always the more precise of the two
-mechanisms this section's table compared. This is item 2 as well as the rest
-of item 1.
+`Theme/ThemedFont.swift` is the fix: a modifier family
+(`.themedFont(.small)`, `.themedCode(.small)`) that reads `\.appTheme`
+itself, so a call site needs no environment declaration. 972 hardcoded
+sites converted; 14 remain by design (the two per-mode theme preview cards
+and the font-family picker's own preview rows, which must show a SPECIFIC
+mode or a candidate the user has not chosen yet, not the ambient theme).
+The scene-level `.dynamicTypeSize` modifier is gone; every themed site
+scales through `AppFontDescriptor`'s own size now, the more precise of the
+two mechanisms.
 
 `FontPropagationTests.swift` is the regression guard: it walks every file
 under `Sources/TurboSparkApp`, and any file whose text contains `.font(`
 without also containing `themedFont`, `themedCode` or `theme.` fails the
-build (mutation-checked: an injected `.font(.caption)` in an otherwise
-font-free file reddens it). The exempt list above is explicit in the test,
-by relative path and by reason, so a change to one of those four files is a
-visible diff rather than a silent widening of the exemption.
+build. The exempt list is explicit in the test, by relative path and by
+reason, so a change to one of those files is a visible diff rather than a
+silent widening of the exemption.
 
-Two zero-caller theme accessors this section flagged turned out to be the
-exact `NSApp.effectiveAppearance` bug Gotcha 36 (`swift/CLAUDE.md`) already
-fixed once, left behind as a second copy: `TurboSparkTheme.metadataForeground(contrast:)`
-and `.borderStrokeOpacity(contrast:)` are deleted rather than wired up, since
+**Two zero-caller theme accessors this audit found were a second copy of
+the SAME `NSApp.effectiveAppearance` bug the resolution fix below closes.**
+`TurboSparkTheme.metadataForeground(contrast:)` and
+`.borderStrokeOpacity(contrast:)` were deleted rather than wired up, since
 the correct replacements (`ResolvedAppTheme`'s instance members of the same
-names) already have every real call site. `ResolvedAppTheme.background` (a
-stored field, never read anywhere including the test suite) is deleted too.
-`ResolvedAppTheme.textSize` and the instance `.borderStrokeOpacity` are kept:
-both are exercised by `AppearanceSettingsTests`, which is a real consumer
-even though no view has wired them into a control yet. This is item 8.
+names) already had every real call site.
+
+### The `NSApp.effectiveAppearance` resolution bug
+
+`NSApp.effectiveAppearance` is APPLICATION-level, while
+`.preferredColorScheme` sets the WINDOW's, so all seven `TurboSparkTheme`
+accessors branching on the former drew light chrome out of `darkConfig`
+when the app was forced to Light on a dark system -- dark accent, dark
+background, dark contrast. `ThemeCodePreviewView` had the identical bug
+with `isDark` ALREADY IN SCOPE, so both its Light and Dark cards showed
+whichever mode happened to be active. The fix is `ResolvedAppTheme`, an
+`Equatable` environment value injected once by `RootView`; being in the
+environment is what makes it reactive, since a static computed var
+re-reads its inputs but tells SwiftUI nothing changed. `effectiveIsDark`
+(the getter behind the four font accessors, carrying the same bug) is
+deleted; the getters read `lightConfig`, documented as always equal.
+
+### Two packaging traps, and both fail silently
+
+`Package.swift` declares `.process("Resources")`, and that rule FLATTENS
+subdirectories: bundled fonts land at the resource bundle's root, not
+under `Fonts/`, exactly as `Resources/Logos/*.svg` do (measured in both the
+`.build` bundle and the shipped `.app`). That also rules out an
+`Info.plist` `ATSApplicationFontsPath`, which only looks directly under
+`Contents/Resources` and never inside the nested `.bundle` -- and which
+`swift run` has no plist for anyway (`swift/CLAUDE.md` Gotcha 12).
+Register through `CTFontManagerRegisterFontsForURL` at `.process` scope
+instead.
+
+`??` is the wrong operator for the subdirectory fallback:
+`Bundle.urls(forResourcesWithExtension:subdirectory:)` returns an EMPTY
+ARRAY rather than nil for a missing subdirectory, so a nil-coalescing
+chain never falls through, zero faces register, and nothing logs an
+error.
+
+**The test for that skipped twice before it could fail.** Its `XCTSkipIf`
+was keyed first on `registerBundledFonts()`'s return value and then on
+`bundledFontURLs` -- both computed by the code under test, so a broken
+lookup and an empty directory were the same zero and the case went GREEN
+(skipped) under mutation both times. It keys on the checked-in files via
+`#filePath` now, and the mutation reddens. General rule: a skip condition
+derived from the thing under test cannot tell "nothing to do" from "it is
+broken."
 
 ## 2. Persisted settings, field by field
 
 Every `MacAppSettings` field was traced from `AppModel+Persistence.swift`'s
 `loadSettings()` to a consumer outside the store and outside the pane that
-edits it. The 47 fields not listed below all reach one: the sampling fields
-reach `AppModel+Generation.swift`'s `GenerateOptions`, the runtime fields
-reach `buildOpenOptions` in `AppModel+Models.swift`, the steering fields
-funnel through `resolvedSteeringPreset`, and the server, compaction, ghost,
-plugin and guardrail fields each have a named reader. Three did not.
+edits it. The 47 fields not listed below all reach one: the sampling
+fields reach `AppModel+Generation.swift`'s `GenerateOptions`, the runtime
+fields reach `buildOpenOptions` in `AppModel+Models.swift`, the steering
+fields funnel through `resolvedSteeringPreset`, and the server, compaction,
+ghost, plugin and guardrail fields each have a named reader. Three did
+not, all fixed 2026-09-06:
 
 | Field | Finding | Disposition |
 |---|---|---|
-| `prefillEnabled` | Loaded, saved, declared on `AppRuntimeOptions`, read by nothing. `OpenOptions` in the binding has no prefill field, so it could never reach the engine. | Deleted 2026-09-06. |
-| `modelsDirectory` | Edited by the Models pane's "Change..." button and read only by that pane. Catalog installs go to the engine's store and the binding exposes no destination. | Deleted 2026-09-06. The pane shows the store path read-only. |
-| `commandAdvisoryVeto` | Consumed by `CommandGate` and reachable from nowhere but a hand edit of `settings.json`. | Toggle added 2026-09-06 in Files & Permissions, with the measured reason it is off by default. |
+| `prefillEnabled` | No consumer; `OpenOptions` in the binding has no prefill field. | Deleted. |
+| `modelsDirectory` | Edited by the Models pane's "Change..." button and read only by that pane; catalog installs have no configurable destination. | Deleted. The pane shows the store path read-only. |
+| `commandAdvisoryVeto` | Consumed by `CommandGate` and reachable from nowhere but a hand edit of `settings.json`. | Toggle added, off by default (see `swift/docs/SWIFT_TOOLS.md`). |
 
-Two things worth knowing about the fields that are wired. `expertCacheSlots`
-and the six raw steering knobs are editable only in the Inspector, not in any
-Settings tab. And `SubagentRunner` and `AppChatCompaction` each build their
-own `GenerateOptions` with a fixed temperature and budget, so no sampling
-setting reaches a subagent turn or a compaction summary. Compaction does that
-on purpose. Subagents arguably should inherit the user's settings, which is
-an open item below.
+`expertCacheSlots` and the six raw steering knobs are editable only in the
+Inspector, not in any Settings tab. `SubagentRunner` and
+`AppChatCompaction` each build their own `GenerateOptions` with a fixed
+temperature and budget; compaction does that on purpose.
 
-Added 2026-09-07 (per-chat sampling), two keys with named consumers:
-
-| Key | Store | Consumer |
-|---|---|---|
-| `samplingPresets` | `settings.json` (`[AppSamplingPreset]`) | `AppModel+Sampling.swift`'s CRUD (`upsertSamplingPreset` / `deleteSamplingPreset`) and the Inspector's Generation Sampling section. Decoded element-lenient like `steeringPresets`. |
-| `samplingOverride` | `chats_archive.json`, per chat row (`AppSamplingSettings?`) | `effectiveSamplingSettings(chatID:)` via `samplingOptions(chatID:)` in `executeGenerationTurn`; nil means the app-wide fields above. Decoded leniently in `AppChat.init(from:)`. |
-
-Both clamp on decode (`AppSamplingSettings.clamped()`): `topK` and
-`maxNewTokens` become `UInt32` at the use site, and the per-chat path
-reaches that conversion without the app-wide path's `clampedSetting` load
-guard, so an out-of-range value in a hand-edited file would trap the
+Per-chat sampling (added 2026-09-07): `samplingPresets` in `settings.json`
+(app-wide presets, CRUD through `AppModel+Sampling.swift`) and
+`samplingOverride` in each chat row of `chats_archive.json`
+(`AppSamplingSettings?`, nil meaning "use the app-wide fields").
+`executeGenerationTurn` reads `effectiveSamplingSettings(chatID:)`. Both
+clamp on decode (`AppSamplingSettings.clamped()`); the per-chat path
+reaches the `UInt32` conversion without the app-wide path's load-guard
+clamp, so an out-of-range value in a hand-edited archive would trap the
 process rather than error.
 
 ## 3. Appearance settings, field by field
 
 | Field | Finding | Disposition |
 |---|---|---|
-| `dockIcon` | Persisted and rendered (all four variants draw) with no picker anywhere, so it was stuck at the default for the life of the feature. | Picker added 2026-09-06. |
-| `reduceMotion` | Honoured by `RootView`'s pane transitions only. `ToastOverlayView` and the top bar's phase indicator read the system `accessibilityReduceMotion` directly. | Both read the app preference since 2026-09-06. |
-| per-mode font rows | `ThemeConfigCardView` showed UI and Code font rows on both the Light and Dark cards, but `setUIFont` and `setCodeFont` write both configs, so a per-mode font was never representable. | Rows removed 2026-09-06. The Preferences card holds the one set of font controls. |
-| theme Import | On a clipboard that was not a theme, Import silently applied the TurboSpark preset. | Reports "Not a theme" and changes nothing since 2026-09-06. `ThemeModeConfig.fromClipboardJSON` is the pure decoder and is tested. |
-| `effectiveIsDark` | Read `NSApp.effectiveAppearance`, the exact bug Gotcha 36 removed from `TurboSparkTheme`, as the getter behind the four font accessors. Harmless only while the both-configs invariant held. | Deleted 2026-09-06. The getters read `lightConfig`, documented as always equal. |
-| `installedFamilies()` | Enumerated `NSFontManager.shared.availableFontFamilies` on every injector body pass, once per streamed token. | Memoized 2026-09-06. A font installed while the app runs appears after relaunch. |
+| `dockIcon` | Persisted and rendered with no picker anywhere. | Picker added. |
+| `reduceMotion` | Honoured by `RootView`'s pane transitions only; two other surfaces read the system flag directly. | Both read the app preference now. |
+| per-mode font rows | `setUIFont`/`setCodeFont` write both configs, so a per-mode font was never representable. | Rows removed. One set of font controls. |
+| theme Import | A non-theme clipboard silently applied the TurboSpark preset. | Reports "Not a theme," changes nothing. |
+| `installedFamilies()` | Enumerated `NSFontManager` on every injector body pass, once per streamed token. | Memoized. |
 | `translucentSidebar`, `usePointerCursors`, `statusBarViewMode`, `diffMarkers`, `contrast`, the three hex colors | Each has a control and a reader. | No action. |
-| `ResolvedAppTheme.borderStrokeOpacity`, `.background`, `.textSize`, `TurboSparkTheme.metadataForeground(contrast:)`, `TurboSparkTheme.borderStrokeOpacity(contrast:)` | Zero callers. | Left in place. The font conversion is the likely consumer. |
+| `ResolvedAppTheme.borderStrokeOpacity`, `.background`, `.textSize` | Zero callers. | Left in place; the font conversion is the likely consumer. |
 
 ## 4. Pane findings
 
-Done 2026-09-06:
+All fixed 2026-09-06 unless noted. Compact facts only; grep the pane name
+if the mechanism matters.
 
-- Engine: seven `TextField`s passed a title with no `.labelsHidden()`, which
-  on macOS is a visible label rather than a placeholder (Gotcha 23). One was
-  byte-identical to the "Uncapped" field the Inspector had already fixed. The
-  Inspector's stop-sequences field had the same gap. All eight hide their
-  labels now, and the section caption no longer claims every field mirrors
-  the Inspector.
-- Server Advanced: the memory guard picker hardcoded four of the five tiers
-  and omitted Custom, so after choosing Custom in Models and Storage it
-  rendered blank and any touch discarded the ceiling. It iterates the enum
-  now. The reasoning picker bound `$model.reasoning` directly, skipping
-  `setReasoning` and the per-model memory from state#96, and offered all five
-  levels against Gotcha 9. It uses the Engine pane's binding and option
-  source now. The port field turned "8O80" and "70000" into 0 and captioned
-  it "automatic". `ServerPortInput.parse` refuses both with a reason, and is
-  tested.
-- Keyboard Shortcuts: the rail advertised Cmd-5 for Server with nothing
-  bound. The binding exists now. The pane omitted New Temporary Chat
-  (Shift-Cmd-N) and Add Files (Cmd-U) and misnamed Clear Chat History. The
-  rows come from `KeyboardShortcutCatalog`, whose navigation section is
-  derived from `AppNavigationSection`, and a test holds it against the rail.
-  The pane says shortcuts are fixed, because no rebinding exists.
-  Since 2026-09-07 the rows also carry alternate chords
-  (`KeyboardShortcutRow.altKeys`, rendered as "also ..."): the
-  unsloth-studio-compatible chords fire beside the advertised ones from
-  `AlternateShortcutBridge` (Cmd-Shift-O new chat, Cmd-Shift-[ and
-  Cmd-Shift-] chat cycling, Cmd-B sidebar toggle, Ctrl-1..Ctrl-5 rail
-  sections), and "Keyboard Shortcuts..." with Cmd-/ is a real View-menu
-  item opening this pane. swift/CLAUDE.md Gotcha 59 has the constraints.
-- Models and Storage: "Configure Custom Path" toggled only its own caption,
-  and a `@State` path input was written once and never read. Both removed.
-- Skills: the detail pane rendered "Allowed Tools and Permissions" with a
-  green shield per entry, one scroll below a comment explaining that
-  `allowed-tools` is enforced by nothing (state#48). Removed. The pane greyed
-  a disabled skill with no way to re-enable it, since the only toggle was in
-  the composer menu. An Enabled switch sits in the detail header now.
-- Agents: the "Model Override" row displayed `agent.model`, which nothing
-  reads, and is gone. The slash-command hint is shown only for an enabled
-  agent, since the command refuses a disabled one (state#93).
-- Hooks: a fresh install with no hooks read `No hooks found matching ''`.
-  The empty state says "No hooks configured" and offers Add Hook.
-- MCP: the header said "Plugins and MCPs" under a tab titled MCP Servers,
-  three non-interactive count pills tinted one as selected, and an icon
-  ternary had identical arms. All three fixed.
-- Plugins: the option fields drew their title twice. Hidden on the field.
+- **Engine / Inspector**: seven `TextField`s passed a title with no
+  `.labelsHidden()`, which on macOS is a visible label rather than a
+  placeholder. All hidden now.
+- **Server Advanced**: the memory guard picker hardcoded four of five
+  tiers (no Custom) and rendered blank after choosing Custom elsewhere; it
+  iterates the enum now. The reasoning picker bypassed `setReasoning` and
+  offered levels the checkpoint refuses; it shares the Engine pane's
+  binding now (`swift/docs/SWIFT_SESSION_CAPABILITIES.md`). The port field
+  turned "8O80" and "70000" into 0 captioned "automatic";
+  `ServerPortInput.parse` refuses both with a reason.
+- **Keyboard Shortcuts**: the rail advertised Cmd-5 for Server with
+  nothing bound (fixed), and omitted New Temporary Chat and Add Files. The
+  rows are derived from `KeyboardShortcutCatalog` against a test now.
+  Alternate chords (unsloth compatibility, 2026-09-07) are documented in
+  `swift/docs/KEYBOARD_SHORTCUTS.md`.
+- **Models and Storage**: a "Configure Custom Path" toggle moved only its
+  own caption; a `@State` path input was written once and never read.
+  Both removed.
+- **Skills**: the detail pane advertised "Allowed Tools and Permissions"
+  enforcement that does not exist (`state#48`); removed. A disabled skill
+  had no re-enable path outside the composer menu; an Enabled switch sits
+  in the detail header now.
+- **Agents**: a "Model Override" row displayed a field nothing reads; gone.
+- **Hooks**: an empty state read `No hooks found matching ''`; now says
+  "No hooks configured."
+- **MCP**: a header/tab title mismatch, three non-interactive count pills
+  tinted one as selected, and an icon ternary with identical arms; all
+  fixed.
+- **Plugins**: option fields drew their title twice; hidden on the field.
+- **Localization**: the language picker's root cause and fix are the
+  subject of `swift/docs/SWIFT_LOCALIZATION.md`, not restated here.
+- **Settings search**: cross-referenced every pane's real control labels
+  against its tab's `keywords`; the newest control at audit time
+  (`commandAdvisoryVeto`) had no keyword entry, which is the general
+  failure mode -- a keyword list drifts the moment a control is added.
+  `ServerAndAppearanceStoreTests.testSettingsKeywordsCoverRecentlyAddedControls`
+  pins it. Search still matches only the tab title and this hand-typed
+  list, never rendered pane content; real content-indexing search is a
+  separate, larger feature.
+- **Subagent sampling**: every subagent turn ran at a hardcoded
+  `temperature: 0.2` regardless of the Engine pane's setting.
+  `AppModel.samplingOptions()` is now the one place that reads sampling
+  settings from the user's live values, shared by both `AppModel`-context
+  call sites and, through `AppToolRegistry.subagentSamplingOptionsProvider`,
+  the two `AppToolRegistry` call sites. `maxNewTokens` stays a
+  subagent-owned `2048` on purpose: a tool-use turn budget is an
+  architectural choice, not a sampling preference.
+- **`LanguageDetector`**: `currentKeyboardLanguage()`, `detectTextLanguage(_:)`
+  and `isRTL(languageCode:)` had zero production callers and are deleted.
+  `currentKeyboardLayoutName()` stays; `GeneralSettingsPaneView` reads it
+  for an informational row.
+- **`scanModels` in a view body**: `ModelStorageManager.scanModels` walks
+  the target directory with real I/O and ran inline in `body`, re-running
+  on every SwiftUI re-evaluation. Both call sites cache the count in
+  `@State`, recomputed by a `.task(id:)` keyed on what actually changes it.
+- **HF endpoint**: two editors (Server Advanced, the auth-token card) each
+  wrote the endpoint their own way, so editing through the first left the
+  catalog stale until the next launch. `HfEndpointResolution.effectiveEndpoint(from:)`
+  is the one function both call now.
+- **Server key generate/copy**: Generate fills the API key field from
+  `ServerAPIKeyGenerator.generate()`; Copy writes the trimmed effective key
+  to the clipboard.
+- **Per-chat sampling controls** (2026-09-07): the Inspector's Generation
+  Sampling section gained an "Edits apply to" picker over "App defaults"
+  and "This chat," explicit rather than implicit, because the Inspector is
+  always open (unlike a per-thread sheet) and a silent chat-local edit
+  would read as an app-wide one. A chat override is a COMPLETE snapshot,
+  not per-key optionals. Reasoning stays app-wide on purpose (it already
+  has per-model memory).
 
-Done 2026-09-06 (font propagation pass, see section 1's "Fix, done" note for
-the detail): the modifier family and scripted conversion (was rank 1), Text
-Size unification (was rank 2), theming `MenuBarExtra` and the toast overlay
-(was rank 7), and the dead theme accessors (was rank 8).
-
-Done 2026-09-06 (language picker, was rank 1): reproduced, and the root
-cause runs deeper than "zero `Text` calls pass `bundle: .module`."
-`swift build`/`swift run` -- the only way this app is ever built, since it
-has no Xcode project -- copy `Localizable.xcstrings` into the resource
-bundle VERBATIM. There is no SwiftPM build phase for the String Catalog
-format, only Xcode's own "Compile String Catalogs" step has one, so every
-one of the 21 languages was dead JSON regardless of what any call site
-passed as `bundle:`. Confirmed directly: a `swift build -v` on the
-untouched tree shows the raw 600+ KiB file being copied, and no `.lproj`
-directory exists anywhere in the build output at any `swift-tools-version`.
-
-The fix runs Xcode's own compiler ahead of the SwiftPM build rather than
-reimplementing it. `scripts/compile-strings.sh` calls `xcstringstool
-compile` (the same private tool the Xcode build phase calls, found via
-`xcrun --find`) against `Localization/Localizable.xcstrings` -- moved out of
-`Sources/TurboSparkApp/Resources/`, since it is a build INPUT and not a
-runtime resource -- and writes the per-language `.lproj` output directly
-into `Resources/`, which `Package.swift`'s `.process("Resources")` rule
-already bundles: SwiftPM DOES understand a plain `<language>.lproj` folder,
-unlike the `.xcstrings` source format one level up. `make compile-strings`
-is a new Makefile target. `swift-app`, `swift-app-build`, `swift-app-release`
-and `scripts/make-app-bundle.sh` (the actual release path) all depend on it,
-so the DMG a tag push produces is not exempt.
-`Tests/TurboSparkAppTests/LocalizationTests.swift` is the regression guard:
-it resolves a known key through the compiled French bundle and asserts every
-`AppLanguage` case has a compiled `.lproj`, comparing through
-`Bundle.preferredLocalizations` rather than a raw path lookup, because
-`xcstringstool` lowercases its output folder names (`pt-br.lproj`,
-`zh-hans.lproj`) while `AppLanguage`'s raw values keep the mixed-case BCP-47
-spelling (`pt-BR`, `zh-Hans`) that the real locale-matching resolves
-case-insensitively -- a naive path-equality test would redden on exactly the
-region- and script-tagged languages while the app runs them correctly.
-
-The second half survives from the original diagnosis: of 1,120 `Text(...)`
-calls, 686 were a literal `LocalizedStringKey` (549 bare, 137 interpolated)
-and none passed `bundle:`. All 686 do now (674 converted by script, 12 by
-hand where a nested ternary's own quotes made the regex unsafe to trust).
-The other 434 are `Text(String)` calls over dynamic content and are
-untouched by design -- that overload takes no `bundle:` parameter at all.
-One script mistake worth recording because it reproduces easily: a first
-pass matched `Text(` as a SUBSTRING, corrupting `onInsertPromptText(...)`
-and an enum case named `...noExtractableText(...)` into invalid calls
-carrying a `bundle:` argument nothing declares. Caught by the next build
-(it does not compile), reverted, and the real fix required requiring a
-non-identifier character immediately before `Text(`.
-
-Still open: the catalog covers 196 keys against several hundred distinct
-`Text(...)` literals in the app, so most strings display in English in every
-language until someone writes the missing translations. That is a content
-gap, not a mechanism bug, and out of scope for this pass.
-
-Done 2026-09-07 (localization standardization pass, extends this item): the
-catalog grew to 235 keys with the menu bar localized in full (six
-`CommandMenu`s via `Text(_:bundle:)` labels -- the key-only initializers
-resolve against `Bundle.main` and were English under every language), the
-always-English stragglers fixed (memory pane, skills badge, search footer,
-scenario line, welcome prompts, the shortcuts pane's "also %@" found by the
-new source scan), and the `Add Folder...`/`Add Folder…` duplicate key
-merged. `LocalizationParityTests` now enforces the content invariant the
-original diagnosis left open: full key x language parity, format-specifier
-parity (subset rule for plurals, where omitting the count is legitimate),
-plural structure, key hygiene, the `bundle: .module` source scan, and
-greetings.json coverage. The pipeline and its rules live in
-`swift/docs/SWIFT_LOCALIZATION.md`. The content gap sentence above is now
-measured and guarded rather than merely noted; the gap itself remains open.
-
-Done 2026-09-06 (settings search, was rank 1): the "keywords already drift"
-half is fixed -- cross-referenced every pane's real `Section`/`Toggle`/`Text`
-labels against its tab's `keywords` and added what a user would type for a
-control that is really there. The concrete example: `permissions.keywords`
-had no entry for "Command Classifier Veto," a toggle added the SAME DAY as
-this audit item, so the newest addition was already unreachable by search
-before anyone typed a second query. `ServerAndAppearanceStoreTests
-.testSettingsKeywordsCoverRecentlyAddedControls` pins that case and three
-others. The "never pane content" half is UNCHANGED: search still matches
-only the tab title and this hand-typed list, never the text actually
-rendered in a pane, and building real content-indexing search is a
-separate, larger feature this pass does not attempt.
-
-Done 2026-09-06 (subagent sampling, was rank 2): every subagent turn ran at
-a hardcoded `temperature: 0.2` regardless of the Engine pane's setting.
-`AppModel.samplingOptions()` (`AppModel+Generation.swift`) is now the one
-place that reads temperature, top-k, top-p, repetition penalty, seed and
-stop sequences from the user's live settings, extracted out of
-`executeGenerationTurn` so both callers share it rather than drifting the
-way `SubagentRunner`'s system-prompt assembler already had (`swift/CLAUDE.md`
-Gotcha 46). `SubagentRunner.run`/`runBody` take a `samplingOptions:
-GenerateOptions` parameter now. The two `AppModel`-context call sites
-(`AppModel+Subagents.swift`, `AppModel+Agents.swift`) pass
-`samplingOptions()` directly, and the two `AppToolRegistry` call sites (the
-`agent` tool, the skill-invokes-agent path) read it through a new
-`AppToolRegistry.subagentSamplingOptionsProvider`, the same provider-closure
-pattern `userSystemPromptProvider` already uses for the identical reason
-(`SubagentRunner` is an `enum` with no `AppModel` to ask). `maxNewTokens`
-stays a subagent-owned `2048` on purpose: a subagent's own tool-use turn
-budget is an architectural choice, not a sampling preference, and is a
-different quantity than how long a user wants one chat reply to run.
-`SamplingOptionsTests.swift` pins the extraction, the disabled-toggle
-behavior (a toggle left off must reach the engine's own default, not the
-stored-but-unused number), and that constructing an `AppModel` installs the
-provider.
-
-Done 2026-09-06 (`LanguageDetector`, was rank 2): `currentKeyboardLanguage()`,
-`detectTextLanguage(_:)` and `isRTL(languageCode:)` had zero production
-callers (each reached only from its own test) and are deleted. Each reads
-like a scaffold for a feature -- auto-selecting the app language from the
-keyboard, flipping text direction per message -- that was never wired to a
-call site. `currentKeyboardLayoutName()` stays: `GeneralSettingsPaneView`
-reads it for the "Active Keyboard Layout" informational row, which is the
-"fourth is display-only" half of this item. `import NaturalLanguage`
-dropped with `detectTextLanguage`, its only user in the file.
-
-Done 2026-09-06 (`scanModels` in a view body, was rank 3): fixed in both
-named files. `ModelStorageManager.scanModels` walks the whole target
-directory with a `FileManager` enumerator, stat-ing every entry -- real I/O,
-not a property read -- and it ran inline in `body`, so SwiftUI re-ran the
-walk, once per configured folder, on every body evaluation either view
-received for ANY reason. Both now cache the count in `@State`, recomputed by
-a `.task(id:)` keyed on what actually changes it (the folder list in
-`CustomModelFoldersSectionView`, the LM Studio path and detection toggle in
-`ModelsSettingsPaneView`) rather than on every render, with the existing
-"Rescan Now" button also triggering a manual recompute.
-
-Done 2026-09-06 (HF endpoint, was rank 1, last of the six ranked items):
-`ServerAdvancedSettingsView`'s field persisted `hfEndpointInput` on change
-and stopped there. `HfAuthTokenCardView`'s own editor did the rest --
-calling `TurboSparkCatalog.setHfEndpoint`, which is what every model
-install, probe and browse call reads OUTSIDE server context -- so editing
-through the first field left the catalog on the stale endpoint until the
-next app launch (when `loadSettings()` re-applies it), while the second
-field applied it immediately.
-
-Each editor also inlined its own trim-and-compare for "what counts as the
-default," a second place for the same drift to happen again.
-`HfEndpointResolution.effectiveEndpoint(from:)` is now the one function
-both call, and `ServerAdvancedSettingsView`'s field calls `setHfEndpoint`
-too. It also drops the `.disabled(isRunning)` this pane's other fields
-keep: unlike a port or a memory-guard tier, this setting's catalog effect
-has nothing to do with whether a server happens to be running, so disabling
-it there would only narrow the window in which the two editors disagree
-rather than close it. `HfEndpointResolutionTests.swift` pins the shared
-function.
-
-This closes every item this audit ranked. Section 4's "Cleared after
-checking" list and this section's method (5) still apply to whatever the
-next pass finds.
-
-Done 2026-09-06 (server key generate and copy): the API key field in Server
-Advanced gained two buttons beside it. Generate fills the field from
-`ServerAPIKeyGenerator.generate()` (`sk-` plus a lowercased UUID) and is
-disabled while a server runs, with the field it fills, since the key is
-read at start; Copy writes the trimmed effective key
-(`AppModel.serverAPIKey(from:)`, the value the server actually checks) to
-the clipboard and stays enabled while a server runs, because handing the
-live key to a client is its purpose. `ServerAPIKeyGeneratorTests` pins the
-generated shape. The key itself was already end to end -- `--api-key` on
-`turbospark-server`, `TURBOSPARK_API_KEY`, the Keychain store and the
-Engine pane's duplicate field predate this -- so these are affordances on
-an existing setting, not a new one.
-
-Done 2026-09-07 (per-chat sampling controls and presets): the Inspector's
-Generation Sampling section moved into `GenerationSamplingSection.swift`
-(it needs `@State`, which an extension computed property on `InspectorView`
-cannot hold) and gained an "Edits apply to" picker over "App defaults" and
-"This chat", explicit rather than Unsloth Studio's implicit
-"edits belong to the open conversation" -- Studio's sheet sits beside one
-thread, this Inspector is always open, and a silent chat-local edit would
-read as an app-wide one. Selecting "This chat" displays the app-wide values
-and the first edit seeds the chat's override from them; a "Remove Override"
-row (the system-prompt sheet's "Use Default" sibling) clears it. A chat
-override is a COMPLETE snapshot (`AppSamplingSettings`), not per-key
-optionals, so resolution is one branch; `executeGenerationTurn` now calls
-`samplingOptions(chatID:)` instead of reading the globals, which makes the
-subagent-sampling entry above's "both callers share `samplingOptions()`"
-wording stale -- `samplingOptions()` remains as the subagent provider's
-form, since a subagent launch carries no chat id. Presets (apply into the
-scope being edited, save under a name overwriting a same-named preset,
-delete from a row context menu) persist in `samplingPresets`, section 2's
-table. Reasoning stays app-wide on purpose: it already has per-model
-memory, and Studio's own presets exclude it too. `SamplingOptionsTests`
-pins override-whole-snapshot (including `maxNewTokens`, which the turn path
-used to read off the global property directly), fallback, removal, and that
-the global builder ignores overrides; `AppSamplingSettingsTests` pins the
-decode clamps, the archive tolerance (a wrong-typed override costs the
-override, not the chat), preset round-trips, and that editing a draft chat
-materializes the row.
-
-Cleared after checking, so nobody re-derives them: the Profiles caption about
-isolation is accurate (skills and agents resolve through
-`UserProfileStore.userScopeSubdirectory`), `/v1/embeddings` is a real route
-and is listed in `ServerEndpointCatalog`, and every control in the Safety and
-Permissions panes reaches a consumer.
+Cleared after checking, so nobody re-derives them: the Profiles caption
+about isolation is accurate, `/v1/embeddings` is a real listed route, and
+every control in the Safety and Permissions panes reaches a consumer.
 
 ## 5. How to re-run this audit
 
@@ -419,6 +238,5 @@ setting. For a control, find the bound property and apply the same rule.
 For a button, read its action, and for a caption, check the claim against
 the code it describes.
 
-The counts in section 1 come from grepping `theme.ui(`, `theme.code(` and
-the `.font(` patterns over `Sources/TurboSparkApp`. They are the numbers to
-re-take after the font conversion.
+The font counts in section 1 come from grepping `theme.ui(`, `theme.code(`
+and the `.font(` patterns over `Sources/TurboSparkApp`.

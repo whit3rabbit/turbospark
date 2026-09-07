@@ -73,3 +73,34 @@ TurboSparkApp provides complete keyboard-driven navigation, command menus, and V
    - Adaptive brand accents meet WCAG 2.1 AA contrast requirements across standard Aqua and DarkAqua appearances (minimum 4.5:1 ratio).
    - Automatically adapts when macOS Increased Contrast / Accessibility High Contrast modes are active (scaling past 9.5:1 contrast).
 
+## Alternate chords (unsloth studio compatibility)
+
+Added 2026-09-07 (`AlternateShortcutBridge.swift`). unsloth studio's
+shortcut scheme shares several actions with this app under different
+chords: its new chat is Cmd-Shift-O where the Chat menu says Cmd-N, its
+sidebar toggle is Cmd-B where View says Ctrl-Cmd-S, its chat cycling is
+Cmd-Shift-[ and Cmd-Shift-] where ours is Cmd-[ and Cmd-], and its
+workspace keys are Ctrl-1..9 where the rail is Cmd-1..5.
+
+**The menus show one chord per action, so an alternate chord is a hidden
+button, not a second menu item.** A SwiftUI menu item carries exactly one
+shortcut, so "also bind Cmd-Shift-O" cannot be a second `.keyboardShortcut`
+on the existing item -- the choice is a visible duplicate menu row or a
+hidden button, and the hidden button does not clutter the menu. The
+reconciliation is ADDITIVE: the menus keep the chords they have always
+shown, and the unsloth chords fire as window-level hidden buttons mounted
+by `RootView`, the same mechanism the chat search dialog uses
+(`swift/docs/SWIFT_CHAT_SEARCH.md`), so they keep working while the prompt
+editor is first responder.
+
+Three things the next change can get wrong. Every bridge button's
+`.disabled` must mirror the menu command it shadows (`isRunning` for new
+chat, `isRunning || orderedChats.isEmpty` for the cycle pair), or the
+alternate reaches an action the advertised key refuses. The rows above
+carry the alternates in `KeyboardShortcutRow.altKeys`, and a catalog test
+holds each pair: a bridge chord without a row, or a row without a bridge
+chord, is this page lying again. And the pane's own entry point is real,
+not an alternate: "Keyboard Shortcuts..." on the View menu, Cmd-/ (also
+the unsloth shortcuts-tab chord), routed through
+`openSettings(tab: .shortcuts)`.
+

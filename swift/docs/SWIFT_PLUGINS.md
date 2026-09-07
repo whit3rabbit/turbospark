@@ -155,6 +155,22 @@ Code, enforced in `PluginVariableExpander`:
    app draws the line where `TolerantDecoding` does: a file that will not
    parse is fatal, a field that will not convert is a field.
 
+## Adding a contribution surface
+
+Wire it through `PluginManager+Contributions` and give it the namespaced
+name (`<plugin>:<name>`, or `plugin:<plugin>:<server>` for MCP). A bare
+name would collide with user content, and `executeMcpCall`'s precedence
+rule assumes namespacing is what prevents collisions there. Every manager
+takes injectable roots, so a new surface is testable without touching
+`~`; do not introduce a hardcoded plugin path.
+
+`McpClientEngine.resolveExecutablePath` is the one answer to "can this
+command be launched," called both by the spawn and by
+`McpMarketplaceManager` before it will install a catalog entry (see
+`swift/docs/SWIFT_TOOLS.md` section 10). A second lookup would drift, and
+the one that drifted would accept a server the spawn then refuses --
+reported at the first tool call rather than at install time.
+
 ## Out of scope (parsed or absent, on purpose)
 
 Dependency closure and demotion, auto-update, enterprise policy/managed
