@@ -20,15 +20,23 @@ use tokenizer::ParsedToolCall;
 
 /// OpenAI-style stop-reason mapping: `stop` (a stop string or a normal EOS),
 /// `length` (max tokens reached), or `tool_calls`.
+///
+/// Only reachable from a caller that never parses tool calls out of the
+/// stream (`/v1/completions`, which carries no `tools` field at all); every
+/// other caller must use [`finish_reason_for`] instead, because this mapping
+/// alone cannot see a tool call parsed on a dialect with no tool stop token.
 pub fn finish_reason(reason: runtime::StopReason) -> FinishReason {
     match reason {
         runtime::StopReason::MaxTokens => FinishReason::Length,
         runtime::StopReason::ToolCalls => FinishReason::ToolCalls,
-        // `Cancelled` is `stop` because OpenAI has no other spelling for it,
-        // and it is UNREACHABLE from this server today: nothing here calls
-        // the cancellable entry points, so no generation this crate drives
-        // can produce it. Named rather than left to a wildcard so a future
-        // per-request cancel has to come past this line and decide.
+        // `Cancelled` is `stop` because OpenAI has no other spelling for it.
+        // The cancellable entry points ARE in use throughout this crate
+        // (`cancel.rs`), but every caller checks for `Cancelled` and
+        // discards the result before it reaches a mapping like this one
+        // (`crates/server/CLAUDE.md` Gotcha 25) -- so this arm is reachable
+        // in principle and unobserved in practice. Named rather than left
+        // to a wildcard so a caller that stops discarding it has to come
+        // past this line and decide.
         runtime::StopReason::EndOfTurn
         | runtime::StopReason::Eos
         | runtime::StopReason::StopString
@@ -36,10 +44,43 @@ pub fn finish_reason(reason: runtime::StopReason) -> FinishReason {
     }
 }
 
+/// The stop-reason mapping every tool-capable caller must use.
+///
+/// `StopReason::ToolCalls` only fires on a dialect whose stop set has a
+/// dedicated tool-stop token (Gemma and Harmony, crate Gotcha 8); ChatML,
+/// DeepSeek, and every guardrails-rescued call end the turn in `EndOfTurn`
+/// with the parsed call sitting beside the text, which `finish_reason` alone
+/// cannot see. `has_calls` is checked FIRST and wins regardless of the raw
+/// stop reason, because Claude Code and the OpenAI SDK's tool-execution loop
+/// key on `stop_reason == "tool_use"` / `finish_reason == "tool_calls"`, and
+/// a turn that produced a parsed call must report it that way whichever
+/// token closed the turn.
+pub fn finish_reason_for(reason: runtime::StopReason, has_calls: bool) -> FinishReason {
+    if has_calls {
+        return FinishReason::ToolCalls;
+    }
+    finish_reason(reason)
+}
+
+/// Ollama's `done_reason` has no spelling for a tool call -- its `/api/chat`
+/// and `/api/generate` clients never parse `"tool_calls"` there -- so a
+/// call-terminated turn reports `"stop"` like any other completed
+/// generation, and only a genuine token-budget truncation reports `"length"`.
+pub fn ollama_done_reason(reason: runtime::StopReason, has_calls: bool) -> &'static str {
+    match finish_reason_for(reason, has_calls) {
+        FinishReason::Length => "length",
+        _ => "stop",
+    }
+}
+
 /// One parsed tool call as an OpenAI `tool_calls` entry. `arguments_json` is
 /// the exact text the dialect parser accepted, so nothing here re-serializes
 /// the arguments and no key order or number formatting can drift.
-fn tool_call(call: ParsedToolCall) -> ToolCall {
+///
+/// `pub(crate)` so `guardrails::with_retry_turn` can build the SAME shape
+/// for a retried turn's assistant message as this module builds for the
+/// client-facing response -- one conversion, not two that could drift.
+pub(crate) fn tool_call(call: ParsedToolCall) -> ToolCall {
     ToolCall {
         id: call.id,
         call_type: "function".to_string(),
@@ -95,6 +136,7 @@ pub fn completion_response(
     prompt_tokens: u32,
     completion_tokens: u32,
 ) -> ChatCompletionResponse {
+    let has_calls = !calls.is_empty();
     ChatCompletionResponse {
         id,
         object: "chat.completion".to_string(),
@@ -102,7 +144,7 @@ pub fn completion_response(
         choices: vec![Choice {
             index: 0,
             message: assistant_message(text, reasoning, calls),
-            finish_reason: Some(finish_reason(reason)),
+            finish_reason: Some(finish_reason_for(reason, has_calls)),
             logprobs: None,
         }],
         usage: Some(ChatUsage {

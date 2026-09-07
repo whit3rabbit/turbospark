@@ -3,8 +3,9 @@
 HTTP server (`turbospark-server`) on Axum, speaking four wire formats against
 one or more local backends: OpenAI `/v1/chat/completions`, legacy
 `/v1/completions`, and `/v1/responses`; Anthropic `/v1/messages` and
-`/v1/messages/count_tokens`; Ollama `/api/{tags,version,show,chat,generate}`;
-`/v1/models`; and a lock-free `GET /health`. Which backend serves a request
+`/v1/messages/count_tokens`; Ollama
+`/api/{tags,version,show,chat,generate,embeddings,embed}`; `/v1/models` and
+`/v1/models/:model`; `/v1/embeddings`; and a lock-free `GET /health`. Which backend serves a request
 is `registry.rs`'s decision (Gotcha 28). Every generation endpoint
 supports non-streaming and Server-Sent Events (SSE) streaming output;
 `count_tokens` never generates at all. `--api-key` adds opt-in
@@ -43,12 +44,15 @@ crates/server/
 |   |   +-- sse.rs              # Response building and typed SSE event sequence
 |   |   \-- tests.rs            # Unit tests for mapping and serialization
 |   +-- guardrails.rs           # Tool-call rescue, argument validation, the retry loop
+|   |   +-- extra_formats.rs    # Rescue strategies for GLM/MiniMax/Kimi/Qwen-XML/Gemma tool-call markup
 |   |   \-- tests.rs            # Unit tests for the verdict (pure, no model)
 |   +-- registry.rs             # ModelRegistry: which backend serves a request (Gotcha 28)
 |   +-- observe.rs              # ServerEvent/ServerObserver, and the run_completion decorator (Gotcha 29)
 |   +-- ollama.rs               # Ollama-compatible routes; NDJSON rather than SSE (Gotcha 30)
+|   +-- embeddings.rs           # /v1/embeddings + Ollama /api/{embeddings,embed}: encoding format, dimensions, size caps
 |   +-- model.rs                # ChatModel trait and the ScriptedChatModel backend
 |   +-- real_model.rs           # RealChatModel: RealForwardRunner backend (macOS only)
+|   +-- encoder_model.rs        # RealEncoderModel: embedding-only backend over the same runner (macOS only)
 |   +-- response.rs             # Constructors for the OpenAI response & SSE chunk envelopes
 |   +-- response_tests.rs       # Unit tests for response and chunk serialization
 |   \-- vision.rs               # Image decoding and vision token injection mapping
@@ -57,6 +61,7 @@ crates/server/
     +-- cancellation.rs         # Drop a streaming response mid-generation, assert it stopped short
     +-- chat_completions.rs     # Integration tests for the OpenAI endpoint
     +-- completions.rs          # Integration tests for /v1/completions, incl. the not-templated assertion
+    +-- embeddings_api.rs       # Integration tests for /v1/embeddings and the Ollama embedding routes
     +-- guardrails.rs           # Rescue/validate/retry end to end, both endpoints, no model
     +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
     +-- images.rs               # Integration tests for vision and image endpoints
@@ -67,6 +72,8 @@ crates/server/
     +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
     +-- registry.rs             # routing by model id, and the single-model fallback
     +-- responses.rs            # Integration tests for /v1/responses, incl. the exact SSE event-order assertion
+    +-- streaming_error_framing.rs  # A mid-stream failure is framed as an SSE/NDJSON error event, never a bare drop
+    +-- system_prompt.rs        # The deployment-wide default system prompt, and what suppresses it per endpoint
     \-- fixtures/               # Test tokenizer fixtures for integration tests
 ```
 

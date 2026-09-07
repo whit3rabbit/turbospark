@@ -26,6 +26,17 @@ fn prompt(model: &AppState, body: serde_json::Value) -> String {
     model.tokenizer().decode(&planned.prompt_ids, false)
 }
 
+/// F20: two ids minted within the same wall-clock second must still differ.
+#[test]
+fn request_id_does_not_collide_within_the_same_second() {
+    let ids: std::collections::HashSet<String> =
+        (0..1000).map(|_| request_id("chatcmpl-")).collect();
+    assert_eq!(ids.len(), 1000, "some ids collided");
+    for id in &ids {
+        assert!(id.starts_with("chatcmpl-"), "{id}");
+    }
+}
+
 fn weather_tool() -> serde_json::Value {
     serde_json::json!({
         "type": "function",
@@ -333,6 +344,43 @@ fn presence_and_frequency_penalty_no_longer_trigger_a_degradation_warning() {
         "presence_penalty": 0.1, "frequency_penalty": -0.1
     }));
     assert_eq!(openai_request_warnings(&request), None);
+}
+
+/// F23: a budget of 0 admits no generated token at all and used to pass
+/// straight through to a wasted prefill-only round trip.
+#[test]
+fn max_tokens_zero_is_refused() {
+    let model = state();
+    let req = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 0
+    }));
+    assert!(plan(&model, &req).is_err());
+}
+
+/// F23: a PRESENT but invalid `top_k` (negative, or not an integer) used to
+/// be indistinguishable from an ABSENT one -- both silently fell back to the
+/// default of 64, hiding a client-side bug rather than reporting it.
+#[test]
+fn a_negative_top_k_is_refused_rather_than_silently_defaulted() {
+    let model = state();
+    let req = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}],
+        "top_k": -5
+    }));
+    match plan(&model, &req) {
+        Err(err) => assert!(err.contains("top_k"), "{err}"),
+        Ok(_) => panic!("expected a top_k refusal"),
+    }
+}
+
+/// An absent `top_k` still defaults to 64, unaffected by the fix above.
+#[test]
+fn an_absent_top_k_still_defaults() {
+    let model = state();
+    let req = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}]
+    }));
+    assert!(plan(&model, &req).is_ok());
 }
 
 #[test]

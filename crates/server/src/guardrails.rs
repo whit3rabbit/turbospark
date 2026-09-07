@@ -285,29 +285,52 @@ pub(crate) fn inspect(
 
 /// The failed turn plus a nudge, as two more messages on a cloned request.
 ///
-/// The assistant turn carries the text the model produced so it can see what
-/// it got wrong; the nudge is a `user` turn because that is the only role
-/// every checkpoint's template renders as an instruction to act on.
+/// The assistant turn carries the text AND any tool calls the model
+/// produced, so it can see what it got wrong. `calls` matters most exactly
+/// when `said` is empty: a parsed call whose ARGUMENTS failed validation is
+/// the common case this path exists for, and such a call's surrounding text
+/// is typically empty (the whole reply was the call markup) -- without
+/// `calls`, that turn pushed NOTHING, and the retry's nudge followed the
+/// caller's own prior `user` turn with no assistant turn between them at
+/// all, so the model had no record of what it had just tried.
+///
+/// The nudge is a `user` turn because that is the only role every
+/// checkpoint's template renders as an instruction to act on.
 fn with_retry_turn(
     request: &ChatCompletionRequest,
     said: &str,
+    calls: &[ParsedToolCall],
     nudge: &str,
 ) -> ChatCompletionRequest {
     let mut retried = request.clone();
-    let message = |role: ChatRole, text: &str| ChatMessage {
-        role,
-        content: Some(ChatContent::Text(text.to_string())),
+    if !said.trim().is_empty() || !calls.is_empty() {
+        retried.messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            content: (!said.is_empty()).then(|| ChatContent::Text(said.to_string())),
+            name: None,
+            tool_calls: (!calls.is_empty()).then(|| {
+                calls
+                    .iter()
+                    .cloned()
+                    .map(crate::response::tool_call)
+                    .collect()
+            }),
+            tool_call_id: None,
+            refusal: None,
+            reasoning_content: None,
+            thinking_blocks: None,
+        });
+    }
+    retried.messages.push(ChatMessage {
+        role: ChatRole::User,
+        content: Some(ChatContent::Text(nudge.to_string())),
         name: None,
         tool_calls: None,
         tool_call_id: None,
         refusal: None,
         reasoning_content: None,
         thinking_blocks: None,
-    };
-    if !said.trim().is_empty() {
-        retried.messages.push(message(ChatRole::Assistant, said));
-    }
-    retried.messages.push(message(ChatRole::User, nudge));
+    });
     retried
 }
 
@@ -383,7 +406,7 @@ pub(crate) async fn run_guarded(
                     return Ok(generated);
                 }
                 budget -= 1;
-                attempt = with_retry_turn(&attempt, &generated.text, &nudge);
+                attempt = with_retry_turn(&attempt, &generated.text, &generated.calls, &nudge);
             }
         }
     }

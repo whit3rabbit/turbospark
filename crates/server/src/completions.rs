@@ -27,7 +27,9 @@ use futures::stream::{Stream, StreamExt};
 use runtime::{GenerationConfig, RawDecodeProgress, RawDecodeResult};
 use serde::Deserialize;
 
-use crate::handler::{build_shaping, error_response, now_unix, status_for, stop_strings, AppState};
+use crate::handler::{
+    build_shaping, error_response, now_unix, request_id, status_for, stop_strings, AppState,
+};
 use crate::response::finish_reason;
 
 const SSE_KEEP_ALIVE: Duration = Duration::from_secs(15);
@@ -89,6 +91,9 @@ fn build_config(request: &CompletionRequest) -> Result<GenerationConfig, String>
         None,
         &request.extra,
     )?;
+    // A budget of 0 admits no generated token at all -- refused up front
+    // rather than passed through to a wasted prefill-only round trip,
+    // matching the chat endpoints' own `max_tokens` handling.
     if request.max_tokens == Some(0) {
         return Err("max_tokens must be greater than 0".to_string());
     }
@@ -185,7 +190,7 @@ fn stream_response(
     cancel: crate::cancel::Cancel,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let id = format!("cmpl-{}", now_unix());
+    let id = request_id("cmpl-");
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
@@ -226,14 +231,16 @@ fn stream_response(
                 };
                 send(String::new(), Some(reason));
             }
-            // A failed run is not a completed one: report it as an error
-            // event rather than a fabricated `stop` finish reason, matching
-            // the chat endpoints' contract.
+            // A failed run is not a completed one: report it as a FRAMED
+            // `error` event, matching the chat endpoints' contract -- never
+            // a bare `data:` line followed by the "finished normally"
+            // `[DONE]` sentinel.
             Err(e) => {
                 let body = serde_json::json!({
                     "error": {"message": e.to_string(), "type": "server_error"}
                 });
-                let _ = tx.send(Event::default().data(body.to_string()));
+                let _ = tx.send(Event::default().event("error").data(body.to_string()));
+                return;
             }
         }
         let _ = tx.send(Event::default().data("[DONE]"));
@@ -304,7 +311,7 @@ pub async fn completions(
         guard.defuse();
         match result {
             Ok((text, decode)) => Json(text_completion_full(
-                format!("cmpl-{}", now_unix()),
+                request_id("cmpl-"),
                 now_unix(),
                 request.model,
                 text,
@@ -408,6 +415,14 @@ mod tests {
     fn max_tokens_is_read_when_present() {
         let r = request(serde_json::json!({"model": "m", "prompt": "hi", "max_tokens": 5}));
         assert_eq!(build_config(&r).unwrap().max_new_tokens, 5);
+    }
+
+    /// F23: a budget of 0 admits no generated token at all and used to pass
+    /// straight through to a wasted prefill-only round trip.
+    #[test]
+    fn max_tokens_zero_is_refused() {
+        let r = request(serde_json::json!({"model": "m", "prompt": "hi", "max_tokens": 0}));
+        assert!(build_config(&r).is_err());
     }
 
     #[test]

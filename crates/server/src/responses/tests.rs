@@ -127,6 +127,61 @@ fn top_p_tool_choice_and_stop_arrive_via_extra() {
     assert!(!chat.extra.contains_key("stop"));
 }
 
+/// The Responses-native forced-tool shape is FLAT
+/// (`{"type":"function","name":...}`), unlike Chat Completions' nested
+/// `{"type":"function","function":{"name":...}}`. Deserializing the flat
+/// shape straight into `ChatToolChoice` fails silently under `.ok()`, which
+/// is how a forced call used to vanish with no error and the model answered
+/// in prose instead of calling the tool it was told to.
+#[test]
+fn a_flat_forced_tool_choice_is_recognised() {
+    let r = request(json!({
+        "model": "m", "input": "hi",
+        "tool_choice": {"type": "function", "name": "get_weather"}
+    }));
+    let chat = responses_to_chat_request(&r).unwrap();
+    match chat.tool_choice {
+        Some(ChatToolChoice::Named(named)) => {
+            assert_eq!(named.function.name, "get_weather");
+        }
+        other => panic!("expected a named tool choice, got {other:?}"),
+    }
+}
+
+/// The nested Chat Completions shape must still work for a client that sends
+/// it directly against this endpoint.
+#[test]
+fn a_nested_forced_tool_choice_is_also_recognised() {
+    let r = request(json!({
+        "model": "m", "input": "hi",
+        "tool_choice": {"type": "function", "function": {"name": "get_weather"}}
+    }));
+    let chat = responses_to_chat_request(&r).unwrap();
+    match chat.tool_choice {
+        Some(ChatToolChoice::Named(named)) => {
+            assert_eq!(named.function.name, "get_weather");
+        }
+        other => panic!("expected a named tool choice, got {other:?}"),
+    }
+}
+
+/// An unparseable `tool_choice`, `stop`, or `top_p` must 400 rather than be
+/// silently dropped -- the `.ok()` this replaced made a malformed value
+/// indistinguishable from an absent one.
+#[test]
+fn an_unparseable_tool_choice_stop_or_top_p_is_refused() {
+    let bad_tool_choice = request(json!({
+        "model": "m", "input": "hi", "tool_choice": {"type": "function"}
+    }));
+    assert!(responses_to_chat_request(&bad_tool_choice).is_err());
+
+    let bad_stop = request(json!({"model": "m", "input": "hi", "stop": 5}));
+    assert!(responses_to_chat_request(&bad_stop).is_err());
+
+    let bad_top_p = request(json!({"model": "m", "input": "hi", "top_p": "high"}));
+    assert!(responses_to_chat_request(&bad_top_p).is_err());
+}
+
 #[test]
 fn max_output_tokens_becomes_max_tokens() {
     let r = request(json!({"model": "m", "input": "hi", "max_output_tokens": 200}));

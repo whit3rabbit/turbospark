@@ -253,6 +253,18 @@ impl crate::ChatModel for ReportingModel {
     fn default_system(&self) -> Option<&str> {
         self.inner.default_system()
     }
+    // DELEGATED for the same reason `default_system` is: the trait defaults
+    // to `false` / a refusal, and an observed embedding model wrapped in
+    // this decorator would answer every embeddings request as though it
+    // could not embed at all, the moment an observer was configured
+    // (registry capability checks read `supports_embeddings` to decide
+    // whether a model can serve a request in the first place).
+    fn supports_embeddings(&self) -> bool {
+        self.inner.supports_embeddings()
+    }
+    fn encode(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, String> {
+        self.inner.encode(texts)
+    }
     fn with_producer(
         &self,
         f: &mut dyn FnMut(

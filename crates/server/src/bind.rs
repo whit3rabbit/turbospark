@@ -27,9 +27,13 @@ pub fn tailnet_host(output: &str) -> Result<String, String> {
                 .to_string(),
         ),
         [only] if is_tailscale_ipv4(only) => Ok((*only).to_string()),
+        // Truncated by CHARACTER count, not by byte offset: a raw
+        // `&only[..64]` panics if byte 64 falls inside a multibyte UTF-8
+        // sequence, which arbitrary subprocess output is not guaranteed to
+        // avoid.
         [only] => Err(format!(
             "tailscale reported \"{}\", which is not a Tailnet IPv4 address",
-            &only[..only.len().min(64)]
+            only.chars().take(64).collect::<String>()
         )),
         many => Err(format!(
             "tailscale reported {} IPv4 addresses; refusing to guess which to bind",

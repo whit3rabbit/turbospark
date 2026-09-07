@@ -26,10 +26,10 @@ pub(crate) fn reasoning_item(text: &str) -> Value {
     })
 }
 
-pub(crate) fn message_item(text: &str, status: &str) -> Value {
+pub(crate) fn message_item(text: &str, status: &str, id: &str) -> Value {
     json!({
         "type": "message",
-        "id": "msg_0",
+        "id": id,
         "role": "assistant",
         "status": status,
         "content": [{"type": "output_text", "text": text, "annotations": []}],
@@ -60,7 +60,7 @@ pub(crate) fn build_response(id: String, model: String, generated: Generated) ->
         output.push(reasoning_item(&generated.reasoning));
     }
     if !generated.text.is_empty() {
-        output.push(message_item(&generated.text, "completed"));
+        output.push(message_item(&generated.text, "completed", "msg_0"));
     }
     for call in &generated.calls {
         output.push(function_call_item(call, "completed"));
@@ -114,7 +114,17 @@ pub(crate) fn created_event(id: &str, model: &str) -> Event {
     )
 }
 
-pub(crate) fn completed_event(id: &str, model: &str, decode: &runtime::RawDecodeResult) -> Event {
+/// `output` carries the assembled item list, matching `build_response`'s
+/// non-streaming shape -- the official SDK reads `response.output_text` off
+/// this field, and a `response.completed` event with none of it forces a
+/// client to reassemble the answer from the delta stream it may not have
+/// buffered.
+pub(crate) fn completed_event(
+    id: &str,
+    model: &str,
+    decode: &runtime::RawDecodeResult,
+    output: &[Value],
+) -> Event {
     sse_event(
         "response.completed",
         vec![(
@@ -122,6 +132,7 @@ pub(crate) fn completed_event(id: &str, model: &str, decode: &runtime::RawDecode
             json!({
                 "id": id, "object": "response", "model": model,
                 "status": response_status(decode.reason),
+                "output": output,
                 "usage": {
                     "input_tokens": decode.prompt_tokens,
                     "output_tokens": decode.new_tokens,
@@ -142,25 +153,25 @@ pub(crate) fn failed_event(message: &str) -> Event {
     )
 }
 
-pub(crate) fn open_message_event() -> Event {
+pub(crate) fn open_message_event(item_id: &str, output_index: u32) -> Event {
     sse_event(
         "response.output_item.added",
         vec![
-            ("output_index", json!(0)),
+            ("output_index", json!(output_index)),
             (
                 "item",
-                json!({"id": "msg_0", "type": "message", "role": "assistant", "status": "in_progress", "content": []}),
+                json!({"id": item_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}),
             ),
         ],
     )
 }
 
-pub(crate) fn content_part_added_event() -> Event {
+pub(crate) fn content_part_added_event(item_id: &str, output_index: u32) -> Event {
     sse_event(
         "response.content_part.added",
         vec![
-            ("item_id", json!("msg_0")),
-            ("output_index", json!(0)),
+            ("item_id", json!(item_id)),
+            ("output_index", json!(output_index)),
             ("content_index", json!(0)),
             (
                 "part",
@@ -170,12 +181,12 @@ pub(crate) fn content_part_added_event() -> Event {
     )
 }
 
-pub(crate) fn text_delta_event(delta: &str) -> Event {
+pub(crate) fn text_delta_event(item_id: &str, output_index: u32, delta: &str) -> Event {
     sse_event(
         "response.output_text.delta",
         vec![
-            ("item_id", json!("msg_0")),
-            ("output_index", json!(0)),
+            ("item_id", json!(item_id)),
+            ("output_index", json!(output_index)),
             ("content_index", json!(0)),
             ("delta", json!(delta)),
         ],
@@ -186,12 +197,24 @@ pub(crate) fn text_delta_event(delta: &str) -> Event {
 /// `response.output_item.done`, in that order -- the closing mirror of
 /// `open_message_event` / `content_part_added_event`, both of which this
 /// pairs with (see `crates/server/CLAUDE.md` Gotcha 24).
-pub(crate) fn close_message_events(send: &impl Fn(Event), text: &str) {
+///
+/// `item_id` and `output_index` identify WHICH message item this closes --
+/// text resumed after a tool call is a NEW item with its own id and index,
+/// never a reopening of one already closed (F4: a shared "msg_0" id/index 0
+/// for every message segment made `output_text.done` carry the OLD text
+/// concatenated with the new, since both segments wrote into one
+/// accumulator that was never cleared between them).
+pub(crate) fn close_message_events(
+    send: &impl Fn(Event),
+    item_id: &str,
+    output_index: u32,
+    text: &str,
+) {
     send(sse_event(
         "response.output_text.done",
         vec![
-            ("item_id", json!("msg_0")),
-            ("output_index", json!(0)),
+            ("item_id", json!(item_id)),
+            ("output_index", json!(output_index)),
             ("content_index", json!(0)),
             ("text", json!(text)),
         ],
@@ -199,8 +222,8 @@ pub(crate) fn close_message_events(send: &impl Fn(Event), text: &str) {
     send(sse_event(
         "response.content_part.done",
         vec![
-            ("item_id", json!("msg_0")),
-            ("output_index", json!(0)),
+            ("item_id", json!(item_id)),
+            ("output_index", json!(output_index)),
             ("content_index", json!(0)),
             (
                 "part",
@@ -211,8 +234,8 @@ pub(crate) fn close_message_events(send: &impl Fn(Event), text: &str) {
     send(sse_event(
         "response.output_item.done",
         vec![
-            ("output_index", json!(0)),
-            ("item", message_item(text, "completed")),
+            ("output_index", json!(output_index)),
+            ("item", message_item(text, "completed", item_id)),
         ],
     ));
 }

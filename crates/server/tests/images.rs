@@ -74,6 +74,94 @@ async fn a_remote_image_url_is_refused_on_the_openai_endpoint() {
     assert!(text.contains("does not fetch remote"), "{text}");
 }
 
+/// A refused URL whose byte 60 lands inside a multibyte character must still
+/// 400 rather than panic. `vision::elide` used to slice at a raw byte offset
+/// (`&url[..60]`) to shorten the URL for the error body; `"h"` (1 byte)
+/// followed by thirty `"\u{00e9}"` (2 bytes each, UTF-8 `0xC3 0xA9`) puts the 30th
+/// `\u{00e9}` at bytes 59-60, so byte offset 60 sits mid-character and a naive slice
+/// there panics and drops the connection with no response at all.
+#[tokio::test]
+async fn a_non_ascii_boundary_in_a_refused_url_does_not_panic() {
+    let base = spawn_server().await;
+    let url = format!("https://example.com/h{}", "\u{00e9}".repeat(30));
+    let body = serde_json::json!({
+        "model": "m", "max_tokens": 4,
+        "messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": url}},
+            {"type": "text", "text": "what is this?"}
+        ]}]
+    });
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let text = response.text().await.unwrap();
+    assert!(text.contains("does not fetch remote"), "{text}");
+}
+
+/// F16: axum's own default body limit (2 MiB) is smaller than a single
+/// base64-encoded photo. A ~4 MiB request -- well past that default, still
+/// comfortably under this server's own 25 MiB ceiling -- must not be
+/// rejected outright; before the explicit `DefaultBodyLimit` override, this
+/// got a bare plain-text 413 from the framework rather than this crate's
+/// own JSON error shape or a real answer.
+#[tokio::test]
+async fn a_request_past_axums_old_default_body_limit_is_not_rejected() {
+    let base = spawn_server().await;
+    let padding = "x".repeat(4 * 1024 * 1024);
+    let body = serde_json::json!({
+        "model": "m", "max_tokens": 4,
+        "messages": [{"role": "user", "content": format!("hi {padding}")}]
+    });
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        response.status(),
+        413,
+        "a ~4 MiB request must not hit axum's old 2 MiB default"
+    );
+}
+
+/// F16: a request splitting its budget across an unreasonable number of
+/// tiny images must be refused by count, independent of the total body
+/// size limit -- a body-size cap alone does not bound how many separate
+/// decode/preprocess (and, on a vision install, tower-encode) attempts one
+/// request can trigger.
+#[tokio::test]
+async fn too_many_images_in_one_request_is_refused() {
+    let base = spawn_server().await;
+    let parts: Vec<serde_json::Value> = (0..65)
+        .map(|_| {
+            serde_json::json!({
+                "type": "image_url",
+                "image_url": {"url": format!("data:image/png;base64,{TINY_PNG}")}
+            })
+        })
+        .collect();
+    let mut content = parts;
+    content.push(serde_json::json!({"type": "text", "text": "what are these?"}));
+    let body = serde_json::json!({
+        "model": "m", "max_tokens": 4,
+        "messages": [{"role": "user", "content": content}]
+    });
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let text = response.text().await.unwrap();
+    assert!(text.contains("too many images"), "{text}");
+}
+
 /// The SAME refusal through the Anthropic endpoint, which reaches it by a
 /// different route: `translate_request` maps a `url` image source onto the
 /// OpenAI `image_url` shape, so one decoder serves both.
@@ -178,6 +266,39 @@ async fn a_text_only_backend_reports_the_dropped_image_on_anthropic() {
         .headers()
         .get("x-anyllm-degradation")
         .expect("a dropped image must be reported")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(header.contains("no vision tower"), "{header}");
+}
+
+/// F22: `count_tokens` reuses `plan` precisely so the count means what a
+/// real `/v1/messages` call on this request would prefill (this module's
+/// own doc on `count_tokens`) -- so an image this backend cannot serve must
+/// be reported on the SAME header a real call would carry, not silently
+/// dropped from the count with no note.
+#[tokio::test]
+async fn count_tokens_reports_the_dropped_image_too() {
+    let base = spawn_server().await;
+    let body = serde_json::json!({
+        "model": "claude-sonnet-4-6",
+        "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": TINY_PNG}},
+            {"type": "text", "text": "what is this?"}
+        ]}]
+    });
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/messages/count_tokens"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let header = response
+        .headers()
+        .get("x-anyllm-degradation")
+        .expect("a dropped image must be reported on count_tokens too")
         .to_str()
         .unwrap()
         .to_string();

@@ -4,6 +4,7 @@
 //! `handler::plan` shapes and renders, and computes the `x-anyllm-degradation`
 //! warning header values (see `crates/server/CLAUDE.md` Gotcha 24).
 
+use anyllm_translate::openai::chat_completions::{NamedFunction, NamedToolChoice};
 use anyllm_translate::openai::responses::{ResponsesInput, ResponsesRequest};
 use anyllm_translate::openai::{
     ChatCompletionRequest, ChatContent, ChatMessage, ChatRole, ChatTool, ChatToolChoice,
@@ -157,6 +158,35 @@ pub(crate) fn flat_tool_to_chat_tool(tool: &Value) -> Result<ChatTool, String> {
     })
 }
 
+/// A Responses `tool_choice` forcing a specific function is FLAT
+/// (`{"type":"function","name":"get_weather"}`), where Chat Completions
+/// nests the name under its own `function` key
+/// (`{"type":"function","function":{"name":"get_weather"}}`) --
+/// `ChatToolChoice`'s own `Deserialize` fails on the flat shape (neither of
+/// its two variants matches an object with no `function` key), which is
+/// exactly how `serde_json::from_value(..).ok()` used to make a forced call
+/// vanish with no error. Converted to the nested shape before falling back
+/// to Chat Completions' own, so a client sending either spelling on this
+/// endpoint gets the tool it asked for.
+fn tool_choice_from_responses(value: Value) -> Result<ChatToolChoice, String> {
+    if let Value::String(s) = &value {
+        return Ok(ChatToolChoice::Simple(s.clone()));
+    }
+    if let Value::Object(obj) = &value {
+        if obj.get("type").and_then(|t| t.as_str()) == Some("function") {
+            if let Some(name) = obj.get("name").and_then(|n| n.as_str()) {
+                return Ok(ChatToolChoice::Named(NamedToolChoice {
+                    choice_type: "function".to_string(),
+                    function: NamedFunction {
+                        name: name.to_string(),
+                    },
+                }));
+            }
+        }
+    }
+    serde_json::from_value(value.clone()).map_err(|e| format!("invalid tool_choice ({e}): {value}"))
+}
+
 /// Folds a Responses request down onto the `ChatCompletionRequest`
 /// `handler::plan` already renders and shapes -- one template path, one
 /// shaping path, for all three generation endpoints this crate serves.
@@ -216,17 +246,32 @@ pub(crate) fn responses_to_chat_request(
     // `handler::plan` and `build_config` read, and removed from what is
     // forwarded so nothing reads a Responses-shaped value through the wrong
     // key twice.
+    //
+    // Each is PROPAGATED rather than `.ok()`-swallowed: a value that fails to
+    // parse is a malformed request, not one silently missing the field --
+    // `.ok()` here used to mean a caller's forced `tool_choice` was dropped
+    // with no error anywhere, and the model answered in prose instead of
+    // calling the tool it was told to.
     let mut extra = request.extra.clone();
-    let top_p = extra
-        .remove("top_p")
-        .and_then(|v| v.as_f64())
-        .map(|f| f as f32);
-    let stop = extra
-        .remove("stop")
-        .and_then(|v| serde_json::from_value::<Stop>(v).ok());
-    let tool_choice = extra
-        .remove("tool_choice")
-        .and_then(|v| serde_json::from_value::<ChatToolChoice>(v).ok());
+    let top_p = match extra.remove("top_p") {
+        Some(v) => Some(
+            v.as_f64()
+                .map(|f| f as f32)
+                .ok_or_else(|| format!("top_p must be a number, got {v}"))?,
+        ),
+        None => None,
+    };
+    let stop = match extra.remove("stop") {
+        Some(v) => Some(
+            serde_json::from_value::<Stop>(v.clone())
+                .map_err(|e| format!("invalid stop ({e}): {v}"))?,
+        ),
+        None => None,
+    };
+    let tool_choice = match extra.remove("tool_choice") {
+        Some(v) => Some(tool_choice_from_responses(v)?),
+        None => None,
+    };
 
     Ok(ChatCompletionRequest {
         model: request.model.clone(),

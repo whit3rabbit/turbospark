@@ -59,16 +59,32 @@ fn unauthorized() -> Response {
         .into_response()
 }
 
+/// `x-api-key` first (`x-api-key` is checked BEFORE `Authorization: Bearer`
+/// -- crate Gotcha 26), and empty is treated as ABSENT rather than as a
+/// value to compare against the real key: a stray empty `x-api-key` header
+/// (a proxy or client library default) used to shadow a valid `Authorization:
+/// Bearer` sent alongside it, since `Some("")` short-circuited the `or_else`
+/// before that header was ever read.
+///
+/// The `Bearer` scheme is matched CASE-INSENSITIVELY, per RFC 7235 (the
+/// scheme token is case-insensitive; only the credentials that follow are
+/// not) -- a client sending `bearer` or `BEARER` used to be refused outright
+/// by a literal `"Bearer "` prefix match.
 fn presented_key<B>(request: &Request<B>) -> Option<&str> {
     let headers = request.headers();
     headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
         .or_else(|| {
             headers
                 .get(axum::http::header::AUTHORIZATION)
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
+                .and_then(|v| {
+                    let (scheme, token) = v.split_once(' ')?;
+                    scheme.eq_ignore_ascii_case("bearer").then_some(token)
+                })
+                .filter(|v| !v.is_empty())
         })
 }
 
@@ -142,5 +158,29 @@ mod tests {
     fn no_relevant_header_at_all_presents_nothing() {
         let request = Request::builder().body(()).unwrap();
         assert_eq!(presented_key(&request), None);
+    }
+
+    /// F13: an empty `x-api-key` (a proxy or client library default) must
+    /// not shadow a valid `Authorization: Bearer` sent alongside it.
+    #[test]
+    fn an_empty_x_api_key_falls_through_to_bearer() {
+        let request = Request::builder()
+            .header("x-api-key", "")
+            .header("authorization", "Bearer real-key")
+            .body(())
+            .unwrap();
+        assert_eq!(presented_key(&request), Some("real-key"));
+    }
+
+    /// F13: RFC 7235 makes the scheme token case-insensitive.
+    #[test]
+    fn the_bearer_scheme_is_case_insensitive() {
+        for scheme in ["Bearer", "bearer", "BEARER", "BeArEr"] {
+            let request = Request::builder()
+                .header("authorization", format!("{scheme} real-key"))
+                .body(())
+                .unwrap();
+            assert_eq!(presented_key(&request), Some("real-key"), "{scheme}");
+        }
     }
 }
