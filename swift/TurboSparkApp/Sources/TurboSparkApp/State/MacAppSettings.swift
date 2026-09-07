@@ -77,6 +77,10 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var speculation: String
     /// Speculative drafter engine ("auto", "mtp", "dflash").
     public var speculativeDrafter: String
+    /// TurboQuant KV-cache quantization width ("auto", "off", "2", "3",
+    /// "3.5", or "4"). "auto" (the default) asks for 4-bit only on a
+    /// checkpoint that supports it and stays off otherwise.
+    public var kvBits: String
     /// Output generation rate cap in tokens/second (0 = uncapped).
     public var maxTokensPerSec: Double
     /// File path to steering vector tensor file.
@@ -187,6 +191,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         minAutoContextTokens: UInt32 = 0,
         speculation: String = "auto",
         speculativeDrafter: String = "auto",
+        kvBits: String = "auto",
         maxTokensPerSec: Double = 0,
         steeringPath: String = "",
         steeringMode: String = "ablate",
@@ -228,6 +233,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.powerProfile = powerProfile
         self.speculation = speculation
         self.speculativeDrafter = speculativeDrafter
+        self.kvBits = kvBits
         self.maxTokensPerSec = maxTokensPerSec
         self.steeringPath = steeringPath
         self.steeringMode = steeringMode
@@ -283,6 +289,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.powerProfile = c.decodeLenient(String.self, forKey: .powerProfile, fallback: "auto")
         self.speculation = c.decodeLenient(String.self, forKey: .speculation, fallback: "auto")
         self.speculativeDrafter = c.decodeLenient(String.self, forKey: .speculativeDrafter, fallback: "auto")
+        self.kvBits = c.decodeLenient(String.self, forKey: .kvBits, fallback: "auto")
         self.maxTokensPerSec = c.decodeLenient(Double.self, forKey: .maxTokensPerSec, fallback: 0)
         self.steeringPath = c.decodeLenient(String.self, forKey: .steeringPath, fallback: "")
         self.steeringMode = c.decodeLenient(String.self, forKey: .steeringMode, fallback: "ablate")

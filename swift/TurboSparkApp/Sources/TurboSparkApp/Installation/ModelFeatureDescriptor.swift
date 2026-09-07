@@ -97,6 +97,22 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// is open, `resolve` takes `info.steering.supported` instead, which is
     /// the engine answering rather than this app agreeing with it.
     public let isSteeringReady: Bool
+    /// Whether `--kv-bits` would be ACCEPTED at open on this install, read
+    /// from `manifest.json` alone with no session open.
+    ///
+    /// **A CLIENT-SIDE MIRROR OF THE ENGINE'S OWN REFUSAL RULE, NOT AN
+    /// ESTIMATE.** `--kv-bits` REFUSES the whole `ts_session_open` call by
+    /// name when a checkpoint's `head_dim` is not a power of two in
+    /// 32...512, or when every eligible layer is excluded by the
+    /// last-full-attention-layer rule (`docs/TRUBOQUANT.md`,
+    /// `model_io::rht_supported` and `model_io::layer_is_quantized`) --
+    /// there is no soft "opens anyway, reports unsupported" path the way
+    /// steering has one. `AppKvBitsOption.auto` reads THIS before ever
+    /// building an `OpenOptions.kvBits`, so the app never sends a request
+    /// the engine would refuse for a default nobody asked for; an
+    /// explicit width bypasses this and is sent (and refused, if wrong)
+    /// unconditionally, the same as any other named request in this app.
+    public let supportsKvQuant: Bool
     public let hasLinearAttention: Bool
     public let supportsChunkedPrefill: Bool
     public let supportsReasoning: Bool
@@ -152,6 +168,49 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     private static let knownMoEFamilies: Set<String> = [
         "gemma4", "qwen36", "qwen3moe", "qwen35moe", "gptoss", "mixtral"
     ]
+
+    /// Pure mirror of `model_io::rht_supported` + `model_io::layer_is_quantized`'s
+    /// "does any layer qualify" check, taking the same three facts those
+    /// Rust functions take. Kept in exact correspondence with them --
+    /// `docs/TRUBOQUANT.md` is the doc anchor on the Rust side.
+    ///
+    /// `rht_supported`: `fullHeadDim` must be a power of two in 32...512.
+    /// `layer_is_quantized`'s eligibility rule: every layer counts when the
+    /// stack is two layers deep or fewer; otherwise every FULL-ATTENTION
+    /// layer (`mask == 1`) counts except the last one. `false` on any input
+    /// this cannot read -- refusing to default ON is the safe direction
+    /// when the answer is unknown, matching every other `nil`-means-unknown
+    /// field on this descriptor (U3).
+    static func kvQuantEligible(
+        fullHeadDim: Int?, fullAttentionLayerMask: [Int]?, numLayers: Int?
+    ) -> Bool {
+        guard let fullHeadDim, fullHeadDim >= 32, fullHeadDim <= 512,
+              fullHeadDim & (fullHeadDim - 1) == 0
+        else { return false }
+        guard let numLayers, numLayers > 0, let mask = fullAttentionLayerMask
+        else { return false }
+        return mask.enumerated().contains { layer, value in
+            value == 1 && (numLayers <= 2 || layer + 1 < numLayers)
+        }
+    }
+
+    /// The same check for a caller with only a path in hand (no
+    /// `InstalledModel`/`CatalogEntry` to build a full descriptor from),
+    /// e.g. `AppModel.setModelURL`'s manually-typed path. Reads
+    /// `manifest.json` directly; `false` when it cannot.
+    public static func supportsKvQuant(atInstallPath path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        let manifestURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            .appendingPathComponent("manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arch = json["arch"] as? [String: Any]
+        else { return false }
+        return Self.kvQuantEligible(
+            fullHeadDim: arch["fullHeadDim"] as? Int,
+            fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],
+            numLayers: arch["numLayers"] as? Int)
+    }
 
     // MARK: - Resolution
 
@@ -234,6 +293,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         var manifestVocab: Int? = nil
         var manifestExperts: Int? = nil
         var manifestTopK: Int? = nil
+        var supportsKvQuant = false
 
         if !path.isEmpty {
             let manifestURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).appendingPathComponent("manifest.json")
@@ -246,6 +306,10 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
                     manifestVocab = arch["vocabSize"] as? Int
                     manifestExperts = arch["numExperts"] as? Int
                     manifestTopK = arch["topKExperts"] as? Int
+                    supportsKvQuant = Self.kvQuantEligible(
+                        fullHeadDim: arch["fullHeadDim"] as? Int,
+                        fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],
+                        numLayers: manifestLayers)
                 }
             }
         }
@@ -369,6 +433,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             quantFormat: quant,
             storageSource: source,
             isSteeringReady: isSteeringReady,
+            supportsKvQuant: supportsKvQuant,
             hasLinearAttention: hasLinearAttention,
             supportsChunkedPrefill: supportsChunkedPrefill,
             supportsReasoning: supportsReasoning,
