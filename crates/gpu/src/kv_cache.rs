@@ -149,14 +149,21 @@ impl KvCacheManager {
         let mut capacity_tokens = Vec::with_capacity(num_layers);
         let mut quant = Vec::with_capacity(num_layers);
 
-        let all_placeholder = config.has_compressed_attention_layers();
         let mut linear_placeholder: Option<metal::Buffer> = None;
 
         let tables = KvQuantTables::new(device, config.full_head_dim as usize, kv_quant);
 
         for layer in 0..num_layers {
             let mask_value = config.full_attention_layer_mask[layer];
-            if mask_value == 2 || all_placeholder {
+            // AGENTS.md/CLAUDE.md S1: keyed on THIS layer's own mask value
+            // alone. A model with one mask-3/4 (compressed) layer used to
+            // give EVERY layer a placeholder here, including mask-0/1 full-
+            // attention ones -- which then read `LayerKind::Compressed`
+            // (the `else` arm below, since `mask_value == 2` is false for
+            // them) and panic on the first `k_slot`/`v_slot` call, because
+            // that layer has real per-token KV rows and no placeholder can
+            // stand in for them.
+            if mask_value == 2 || mask_value == 3 || mask_value == 4 {
                 let placeholder = match &linear_placeholder {
                     Some(existing) => existing.clone(),
                     None => {

@@ -262,10 +262,23 @@ fn rope_2d_matches_the_cpu_reference() {
     let half = head_dim / 2;
 
     let qkv: Vec<f32> = wave(seq * heads * head_dim, 0.4, 3.0);
-    let freqs: Vec<f32> = (0..seq * half).map(|i| (i as f32) * 0.017 - 1.0).collect();
+    // AGENTS.md/CLAUDE.md B7: angles spanning 0..120, the range a real wide
+    // grid's pair-0 angle (== the raw patch coordinate) actually reaches --
+    // the old -1.0..~-0.4 range was both too narrow to exercise FP16's
+    // ~0.0625 step near 100 AND, being rounded through `half_of` on both the
+    // GPU input and the CPU reference below, could not have seen the gap
+    // this fixture exists to catch even at a wider range.
+    let freqs: Vec<f32> = (0..seq * half).map(|i| (i as f32) * 2.03).collect();
+    assert!(
+        freqs.iter().cloned().fold(0.0f32, f32::max) > 100.0,
+        "fixture must reach the range where FP16's step is coarse"
+    );
 
     let qkv_buf = context.new_buffer_with_data(&to_le(&half_of(&qkv)));
-    let freq_buf = context.new_buffer_with_data(&to_le(&half_of(&freqs)));
+    // `freqs` is F32 on the wire now (B7), unlike `qkv`: no `to_le`/`half_of`
+    // round-trip, and the buffer holds the exact bytes the CPU reference
+    // below reasons about.
+    let freq_buf = context.new_buffer_with_data(&freqs);
 
     let pass = context.begin_pass();
     encode_vision_rope_2d(
@@ -281,11 +294,14 @@ fn rope_2d_matches_the_cpu_reference() {
     pass.commit_and_wait();
     let gpu = read_f16(&qkv_buf, seq * heads * head_dim);
 
+    // The reference runs on the FP16-rounded `qkv` (the kernel never sees
+    // the f32 original -- same discipline as every other case in this file)
+    // but on the UNROUNDED `freqs`, because that is what the kernel now
+    // actually reads.
     let qr: Vec<f32> = half_of(&qkv).iter().map(|v| v.to_f32()).collect();
-    let fr: Vec<f32> = half_of(&freqs).iter().map(|v| v.to_f32()).collect();
     let mut cpu = vec![0.0f32; qr.len()];
     for token in 0..seq {
-        let row = &fr[token * half..(token + 1) * half];
+        let row = &freqs[token * half..(token + 1) * half];
         for head in 0..heads {
             let base = (token * heads + head) * head_dim;
             let rotated = rope_vision_2d(&qr[base..base + head_dim], row);
@@ -299,6 +315,37 @@ fn rope_2d_matches_the_cpu_reference() {
         "worst {err} at {at}: gpu {} cpu {}",
         gpu[at],
         cpu[at]
+    );
+}
+
+/// AGENTS.md/CLAUDE.md B7: the fixture above compares the GPU kernel against
+/// a CPU reference fed the SAME (now unrounded) angles the kernel reads, so
+/// it cannot by itself prove that keeping `freqs` in F32 was the right call
+/// -- it would pass identically against a kernel that still narrowed to
+/// FP16, as long as the CPU side matched. This is the case that can see it:
+/// it runs the CPU reference twice, once at the true F32 angles and once
+/// through an explicit FP16 round-trip, and asserts the two answers
+/// actually diverge by more than the ordinary FP16 storage bound at this
+/// magnitude -- proving there is real information in the extra precision
+/// for a fixture like the one above to lose if the kernel regressed.
+#[test]
+fn fp16_would_have_lost_real_precision_at_this_magnitude() {
+    let head_dim = 72usize;
+    let half = head_dim / 2;
+    let one_head: Vec<f32> = wave(head_dim, 0.4, 3.0);
+    let freqs_f32: Vec<f32> = (0..half).map(|i| 60.0 + i as f32 * 2.03).collect();
+    let freqs_f16: Vec<f32> = half_of(&freqs_f32).iter().map(|v| v.to_f32()).collect();
+
+    let out_f32 = rope_vision_2d(&one_head, &freqs_f32);
+    let out_f16 = rope_vision_2d(&one_head, &freqs_f16);
+
+    let (err, _) = worst(&out_f32, &out_f16);
+    assert!(
+        err > fp16_bound(&out_f32),
+        "narrowing freqs to FP16 must move the rotated output past ordinary \
+         FP16 storage noise at this magnitude, or B7's fix bought nothing \
+         measurable: err={err} bound={}",
+        fp16_bound(&out_f32)
     );
 }
 
@@ -321,7 +368,9 @@ fn rope_2d_shares_one_freq_row_across_heads() {
     let freqs: Vec<f32> = (0..seq * half).map(|i| 0.3 + i as f32 * 0.21).collect();
 
     let qkv_buf = context.new_buffer_with_data(&to_le(&half_of(&qkv)));
-    let freq_buf = context.new_buffer_with_data(&to_le(&half_of(&freqs)));
+    // B7: freqs is F32 on the wire, matching what `encode_vision_rope_2d`
+    // now actually binds.
+    let freq_buf = context.new_buffer_with_data(&freqs);
     let pass = context.begin_pass();
     encode_vision_rope_2d(
         &mut context,

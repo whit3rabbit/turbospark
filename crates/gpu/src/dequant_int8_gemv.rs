@@ -163,6 +163,11 @@ pub fn dequant_int8_gemv_resident(
     x: &[f16],
 ) -> Result<Vec<f16>, GpuError> {
     assert_eq!(x.len(), w.cols);
+    // AGENTS.md/CLAUDE.md S4: this file's other two dispatches (`n % 64`
+    // at line 60, `w.cols % 64` at line 132) both assert this; a non-
+    // multiple-of-64 `cols` truncates the shader's `N/64` group count and
+    // silently drops the row tail.
+    assert_eq!(w.cols % 64, 0, "N must be a multiple of 64");
     let x_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(x));
     let y_buffer = context.new_output_buffer((w.rows * std::mem::size_of::<u16>()) as u64);
 

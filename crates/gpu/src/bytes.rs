@@ -45,6 +45,12 @@ pub fn u16_slice_to_le_bytes(values: &[u16]) -> Vec<u8> {
 
 /// Reads `len` `f16` elements back from a completed Metal CPU/GPU shared buffer.
 pub fn read_half_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f16> {
+    // AGENTS.md/CLAUDE.md B5: this sibling of `read_f32_buffer_at` had no
+    // bounds check at all before this line.
+    assert!(
+        len.checked_mul(std::mem::size_of::<u16>()).unwrap() <= buffer.length() as usize,
+        "read_half_buffer reads past the buffer"
+    );
     let ptr = buffer.contents() as *const u16;
     // SAFETY: `buffer` was allocated with `len * size_of::<u16>()` bytes in
     // shared storage mode by the caller, and the GPU command buffer that
@@ -67,8 +73,9 @@ pub fn read_f32_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f32> {
 /// than bytes so a caller cannot pass a byte offset by mistake and read a
 /// misaligned window that still returns finite numbers.
 pub fn read_f32_buffer_at(buffer: &metal::Buffer, first: usize, len: usize) -> Vec<f32> {
+    let end = first.checked_add(len).unwrap();
     assert!(
-        (first + len) * std::mem::size_of::<f32>() <= buffer.length() as usize,
+        end.checked_mul(std::mem::size_of::<f32>()).unwrap() <= buffer.length() as usize,
         "read_f32_buffer_at reads past the buffer"
     );
     let ptr = buffer.contents() as *const f32;

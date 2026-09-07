@@ -5,8 +5,8 @@
 //! big kernels: gated-FFN activation multiplies and the residual add.
 //!
 //! `sigmoid_gate_mul_fp16`, `sigmoid_scalar_mul_fp16`, and
-//! `split_q_gate_fp16` (all Qwen 3.6-specific) are vendored but not yet
-//! dispatched — no Qwen path exists in this port yet.
+//! `split_q_gate_fp16` (all Qwen 3.6-specific) are dispatched from
+//! `families/qwen/` (three or more production call sites each).
 
 use foundation::SteeringMode;
 use metal::FunctionConstantValues;
@@ -18,7 +18,10 @@ const SOURCE: &str = include_str!("shaders/utility.metal");
 const THREADS_PER_GROUP: u64 = 256;
 
 fn grid_for(count: u32) -> u64 {
-    (count as u64).div_ceil(THREADS_PER_GROUP) * THREADS_PER_GROUP
+    // AGENTS.md/CLAUDE.md S12: floored at 1, matching rope.rs's own
+    // convention -- a `count == 0` caller still dispatches one
+    // (harmless, bounds-checked-empty) threadgroup rather than zero.
+    (count as u64).div_ceil(THREADS_PER_GROUP).max(1) * THREADS_PER_GROUP
 }
 
 fn encode_elementwise(
@@ -316,14 +319,26 @@ pub fn encode_steer_direction(
     coeff: (&metal::Buffer, u64),
     params: &SteerParams,
 ) -> Result<(), GpuError> {
-    assert!(params.d_len > 0, "steering direction is empty");
-    assert!(params.rows > 0, "steering dispatch has no rows");
-    assert!(
-        params.row_stride >= params.d_len,
-        "steering row stride {} is shorter than the direction ({}), so rows would overlap",
-        params.row_stride,
-        params.d_len
-    );
+    // AGENTS.md/CLAUDE.md S8: `GpuError::PipelineCreate` for a shape
+    // violation is this crate's existing spelling (`vision.rs`,
+    // `gdn_shape.rs::validate`) -- a bad steering direction should refuse
+    // to dispatch, not abort the process.
+    if params.d_len == 0 {
+        return Err(GpuError::PipelineCreate(
+            "steering direction is empty".to_string(),
+        ));
+    }
+    if params.rows == 0 {
+        return Err(GpuError::PipelineCreate(
+            "steering dispatch has no rows".to_string(),
+        ));
+    }
+    if params.row_stride < params.d_len {
+        return Err(GpuError::PipelineCreate(format!(
+            "steering row stride {} is shorter than the direction ({}), so rows would overlap",
+            params.row_stride, params.d_len
+        )));
+    }
 
     let pipeline = context.pipeline(
         SOURCE,

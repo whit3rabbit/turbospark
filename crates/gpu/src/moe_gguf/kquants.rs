@@ -24,7 +24,7 @@ pub fn encode_moe_phase1_q4_k(
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(d_dim as usize % crate::Q4_K_BLOCK_ELEMS, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= super::PHASE2_FIXED_SLOTS);
     encode_phase1(
         context,
         pass,
@@ -42,7 +42,10 @@ pub fn encode_moe_phase1_q4_k(
 
 /// Phase 2 over Q4_K expert blobs: `y[d] = residual[d] + sum_slot
 /// routing_w[slot] * down_d(acts[slot])`, reducing all eight slots
-/// unconditionally (see the vendored sibling's contract).
+/// unconditionally (a FIXED width, unlike the vendored sibling's own phase
+/// 2, which was widened to reduce a runtime `top_k` up to `MAX_STREAMED_EXPERTS`
+/// -- AGENTS.md/CLAUDE.md Gotcha 13). `top_k` must not
+/// exceed [`super::PHASE2_FIXED_SLOTS`].
 #[allow(clippy::too_many_arguments)]
 pub fn encode_moe_phase2_q4_k(
     context: &mut MetalContext,
@@ -55,6 +58,7 @@ pub fn encode_moe_phase2_q4_k(
     y: (&metal::Buffer, u64),
     d_dim: u32,
     f_dim: u32,
+    top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim as usize % crate::Q4_K_BLOCK_ELEMS, 0);
@@ -70,6 +74,7 @@ pub fn encode_moe_phase2_q4_k(
         y,
         d_dim,
         f_dim,
+        top_k,
         use_silu,
     )
 }
@@ -93,7 +98,7 @@ pub fn encode_moe_phase1_q8_0(
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(d_dim as usize % crate::Q8_0_BLOCK_ELEMS, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= super::PHASE2_FIXED_SLOTS);
     encode_phase1(
         context,
         pass,
@@ -111,7 +116,10 @@ pub fn encode_moe_phase1_q8_0(
 
 /// Phase 2 over Q8_0 expert blobs: `y[d] = residual[d] + sum_slot
 /// routing_w[slot] * down_d(acts[slot])`, reducing all eight slots
-/// unconditionally (see the vendored sibling's contract).
+/// unconditionally (a FIXED width, unlike the vendored sibling's own phase
+/// 2, which was widened to reduce a runtime `top_k` up to `MAX_STREAMED_EXPERTS`
+/// -- AGENTS.md/CLAUDE.md Gotcha 13). `top_k` must not
+/// exceed [`super::PHASE2_FIXED_SLOTS`].
 #[allow(clippy::too_many_arguments)]
 pub fn encode_moe_phase2_q8_0(
     context: &mut MetalContext,
@@ -124,6 +132,7 @@ pub fn encode_moe_phase2_q8_0(
     y: (&metal::Buffer, u64),
     d_dim: u32,
     f_dim: u32,
+    top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim as usize % crate::Q8_0_BLOCK_ELEMS, 0);
@@ -139,6 +148,7 @@ pub fn encode_moe_phase2_q8_0(
         y,
         d_dim,
         f_dim,
+        top_k,
         use_silu,
     )
 }
@@ -152,7 +162,8 @@ pub fn encode_moe_phase2_q8_0(
 /// shipped without an embedding or MoE sibling, and a checkpoint that needs
 /// one fails at the dispatch site by name.
 ///
-/// `f_dim` must be a whole number of 256-element superblocks.
+/// `f_dim` must be a whole number of 256-element superblocks. `top_k` must
+/// not exceed [`super::PHASE2_FIXED_SLOTS`].
 #[allow(clippy::too_many_arguments)]
 pub fn encode_moe_phase2_q6_k(
     context: &mut MetalContext,
@@ -165,6 +176,7 @@ pub fn encode_moe_phase2_q6_k(
     y: (&metal::Buffer, u64),
     d_dim: u32,
     f_dim: u32,
+    top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim as usize % crate::Q6_K_BLOCK_ELEMS, 0);
@@ -180,6 +192,7 @@ pub fn encode_moe_phase2_q6_k(
         y,
         d_dim,
         f_dim,
+        top_k,
         use_silu,
     )
 }

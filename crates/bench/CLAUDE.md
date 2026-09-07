@@ -26,6 +26,7 @@ crates/bench/
 |   +-- gptoss_memory_oracle.rs # Memory oracle for gpt-oss-20b, at 8192 context AND a 3072 budget
 |   +-- gptoss_quality_gate.rs  # Quality gate for gpt-oss-20b; pins the template's date
 |   +-- iq3_quality_gate.rs     # Quality gate for IQ3 quantized models
+|   +-- kv_quant_probe.rs   # --kv-bits on a real checkpoint: footprint delta, perplexity, determinism (docs/TRUBOQUANT.md)
 |   +-- logit_dump.rs       # Full-vocab logit dump for the cross-engine KLD (scripts/kld{,_llamacpp,_mlx_affine}.py)
 |   +-- mapped_expert_probe.rs # What phys_footprint charges for an mmap Metal wrapped and the GPU read
 |   +-- memory_oracle.rs    # Memory oracle asserting peak footprint ceiling & steady state (Gemma 4)
@@ -51,6 +52,7 @@ crates/bench/
 |   +-- qwen3moe_memory_oracle.rs # Memory oracle for Qwen3-30B-A3B (`qwen3moe`)
 |   +-- qwen3moe_quality_gate.rs  # Quality gate for Qwen3-30B-A3B
 |   +-- qwen4exp_memory_oracle.rs # Memory oracle for qwen4_exp (Qwen3.8-Flash-Next), 2 of 3 cases, 2048 context
+|   +-- qwen4exp_qsa_probe.rs # qwen4_exp QSA above the indexer budget: sparse vs force-dense KL, on the real install
 |   +-- qwen4exp_quality_gate.rs  # Quality gate for qwen4_exp; frozen row, see docs/QWEN4_EXP.md
 |   +-- rollback_probe.rs   # RollbackPoint state restoration probe
 |   +-- steering_probe.rs   # Live steering: inert at alpha 0, and a real edit above the floor
@@ -58,7 +60,8 @@ crates/bench/
 |   +-- ternary_memory_oracle.rs # Its oracle; the peak is Qwen3.8's on HALF the weights (Gotcha 40)
 |   +-- ternary_quality_gate.rs # Quality gate for Ternary-Bonsai-27B (2-bit), the same family's third checkpoint
 |   +-- vision_logit_dump.rs # Vision model cross-engine logit dump
-|   \-- vision_memory_oracle.rs # Memory oracle for vision models
+|   +-- vision_memory_oracle.rs # Memory oracle for vision models
+|   \-- vision_sidecar_opener.rs # open_model_runner_with_context_and_vision_sidecar on synthetic installs (no real model needed)
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures
     |   \-- assistant-reference.txt
@@ -461,7 +464,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    describing one run, with nothing structural keeping them in step, is the
    count-that-rots shape. `oracle_common::assert_agrees_with_catalog(alias,
    BASELINES, context, slots)` is the tie, called from a three-line `#[test]`
-   in each of the eight oracle targets: it needs no install and no GPU, so a
+   in each of the twelve oracle targets: it needs no install and no GPU, so a
    contradiction reddens on the edit rather than the next time somebody has a
    13 GB install on disk.
 

@@ -168,3 +168,28 @@ fn matches_cpu_reference_for_a_single_kv_head_at_position_zero() {
     assert!(err < 0.01, "err = {err}");
     assert_eq!(gpu.len(), 4);
 }
+
+/// AGENTS.md/CLAUDE.md B3: `attention.metal`'s `kAttnMaxHeadDim` is a
+/// hard-coded 512-element array. Nothing checked `head_dim` against it
+/// before this guard, so a 513-wide head silently overran the shader's
+/// fixed-size scratch. This must refuse rather than dispatch.
+#[test]
+#[should_panic]
+fn a_head_dim_past_the_shader_ceiling_is_refused() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let head_dim = 513usize;
+    let q = vec![f16::from_f32(0.1); head_dim];
+    let k = vec![f16::from_f32(0.05); head_dim];
+    let v = vec![f16::from_f32(1.0); head_dim];
+    let _ = attention_decode(
+        &mut context,
+        &q,
+        &k,
+        &v,
+        head_dim as u32,
+        1,
+        1,
+        1,
+        1.0 / (head_dim as f32).sqrt(),
+    );
+}

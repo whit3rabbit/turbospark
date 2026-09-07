@@ -279,3 +279,72 @@ fn identity_positions_match_dense_attention_tq() {
         "identity indexed dispatch should match dense: err={err}"
     );
 }
+
+/// AGENTS.md/CLAUDE.md B3: `attention_tq.metal`'s `kTqAttnMaxHeadDim` array
+/// ceiling, mirroring `attention_decode_parity.rs`'s guard for the dense
+/// kernel. `dim` must still be `rht_supported` (a power of two in 32..=512)
+/// for `KvQuantTables::new` to build at all, so this exercises the largest
+/// legal width rather than something past it -- the point is that the new
+/// `head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM` assert does not regress a
+/// legal dispatch at the boundary. `crates/streaming`/`real_forward_init`'s
+/// `rht_supported` gate is what actually stops a checkpoint from reaching
+/// this dispatch above 512 in production.
+#[test]
+fn dim_512_the_widest_rht_supported_width_still_dispatches() {
+    run_dense_case(512, 1, 1, 2, 4, 4);
+}
+
+/// AGENTS.md/CLAUDE.md B4: `encode_attention_decode_indexed_tq` used to
+/// accept `n_sel == 0` by masking it to 1 for the CHUNK COUNT only
+/// (`chunks_for(n_sel.max(1))`), then passing the raw `n_sel` (still 0) to
+/// the shader as the loop bound -- every lane's partial stayed at its
+/// initial `(m=-inf, d=0, o=0)` and the combine pass divided 0/0 into NaN.
+/// This calls the encoder directly (not through a slice-taking wrapper) so
+/// the positions buffer is a real, non-empty allocation and the panic this
+/// test expects is the new `n_sel > 0` guard, not an unrelated zero-length
+/// buffer failure.
+#[test]
+#[should_panic]
+fn zero_selected_positions_is_refused() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let dim = 32usize;
+    let tables = KvQuantTables::new(
+        context.device(),
+        dim,
+        KvQuant::TurboQuant {
+            k_bits: 4,
+            v_bits: 4,
+        },
+    )
+    .expect("tq tables build");
+
+    let q_buffer = context.new_buffer_with_data(&half_bytes(&to_f16(&vec![0.1f32; dim])));
+    let k_packed_words = model_io::tq_packed_words(dim as i64, 4) as usize;
+    let v_packed_words = model_io::tq_packed_words(dim as i64, 4) as usize;
+    let k_buffer = context.new_buffer_with_data(&vec![0u8; (1 + k_packed_words) * 4]);
+    let v_buffer = context.new_buffer_with_data(&vec![0u8; (1 + v_packed_words) * 4]);
+    // A real, non-empty positions buffer: this test is about `n_sel`, the
+    // separate argument the shader actually loops over, never about buffer
+    // length.
+    let positions_buffer = context.new_buffer_with_data(&[0u32]);
+    let scratch = TqAttentionScratch::new(&context, 1, dim as u32);
+    let out_buffer = context.new_output_buffer((dim * 2) as u64);
+
+    let pass = context.begin_pass();
+    let _ = encode_attention_decode_indexed_tq(
+        &mut context,
+        &pass,
+        (&q_buffer, 0),
+        &k_buffer,
+        &v_buffer,
+        (&positions_buffer, 0),
+        0,
+        &scratch,
+        (&out_buffer, 0),
+        dim as u32,
+        1,
+        1,
+        1.0 / (dim as f32).sqrt(),
+        &tables,
+    );
+}

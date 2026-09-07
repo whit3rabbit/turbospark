@@ -49,6 +49,17 @@ const MAX_CHUNKS: u32 = 16;
 /// threadgroups whose loop never executes.
 const MIN_POSITIONS_PER_CHUNK: u32 = 16;
 
+/// The decode-attention shader family's own per-lane/threadgroup array
+/// ceiling: `attention.metal`'s `kAttnMaxHeadDim`, `attention_indexed.metal`'s
+/// `kIdxAttnMaxHeadDim`, `attention_tq.metal`'s `kTqAttnMaxHeadDim` and
+/// `kv_quantize_tq.metal`'s `kTqMaxHeadDim` are all 512, and none of this
+/// module's six dispatch entry points checked it (AGENTS.md/CLAUDE.md B3): a
+/// `head_dim` above 512 overruns those fixed-size arrays silently rather
+/// than being refused. Named distinctly from `vision::MAX_ATTENTION_HEAD_DIM`
+/// (128, that tower's own register-tile ceiling) so the two cannot be
+/// confused at a call site or collide as crate-root re-exports.
+pub const MAX_DECODE_ATTENTION_HEAD_DIM: u32 = 512;
+
 /// Splits `[kv_start, seq_len)` across threadgroups.
 ///
 /// `attention_decode_partial` dispatches exactly `num_q_heads *
@@ -164,6 +175,7 @@ pub fn attention_decode(
     assert_eq!(k.len(), (seq_len * num_kv_heads * head_dim) as usize);
     assert_eq!(v.len(), (seq_len * num_kv_heads * head_dim) as usize);
     assert_eq!(num_q_heads % num_kv_heads, 0);
+    assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
 
     let k_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(k));
     let v_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(v));
@@ -241,6 +253,7 @@ pub fn encode_attention_decode(
     sinks: Option<(&metal::Buffer, u64)>,
 ) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
+    assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
     assert!(kv_start < seq_len);
     assert!(
         ring_capacity == 0 || seq_len - kv_start <= ring_capacity,
@@ -251,7 +264,7 @@ pub fn encode_attention_decode(
     } else {
         seq_len
     };
-    let kv_bytes = (stored_tokens * num_kv_heads * head_dim) as u64 * 2;
+    let kv_bytes = stored_tokens as u64 * num_kv_heads as u64 * head_dim as u64 * 2;
     assert!(k_buffer.length() >= kv_bytes, "K buffer too small");
     assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
 
@@ -340,7 +353,7 @@ pub fn attention_decode_buffers(
 ) -> Result<Vec<f16>, GpuError> {
     assert_eq!(q.len(), (num_q_heads * head_dim) as usize);
     assert_eq!(num_q_heads % num_kv_heads, 0);
-    let kv_bytes = (seq_len * num_kv_heads * head_dim) as u64 * 2;
+    let kv_bytes = seq_len as u64 * num_kv_heads as u64 * head_dim as u64 * 2;
     assert!(k_buffer.length() >= kv_bytes, "K buffer too small");
     assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
 

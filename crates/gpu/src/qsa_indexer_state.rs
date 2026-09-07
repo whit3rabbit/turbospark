@@ -71,7 +71,19 @@ impl QsaIndexerCacheManager {
         assert!(max_context > 0, "max_context must be positive");
 
         let index_head_dim = ca.index_head_dim as usize;
-        let index_kv_heads = ca.index_kv_heads.max(1) as usize;
+        // AGENTS.md/CLAUDE.md S11: `pooled_blocks` is sized at exactly ONE
+        // row per block (`pooled_stride` below has no `index_kv_heads`
+        // factor, matching `qsa_indexer.rs:156`'s own raw-key addressing at
+        // `head_dim * 2`), and `families/qwen4/state.rs` already refuses
+        // any other value at open. `.max(1)` used to silently accept 0 (and
+        // any value above 1) here instead of refusing by name, one
+        // constructor away from that assumption.
+        assert_eq!(
+            ca.index_kv_heads, 1,
+            "QsaIndexerCacheManager requires index_kv_heads == 1, got {}",
+            ca.index_kv_heads
+        );
+        let index_kv_heads = ca.index_kv_heads as usize;
         let compress_ratio = ca.csa_compress_rate as usize;
         assert!(index_head_dim > 0, "index_head_dim must be positive");
         assert!(compress_ratio > 0, "csa_compress_rate must be positive");

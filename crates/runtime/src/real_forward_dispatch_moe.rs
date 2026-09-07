@@ -88,16 +88,20 @@ pub(crate) fn encode_moe_phase2_any(
 ) -> Result<(), gpu::GpuError> {
     match layout {
         RoutedBlobLayout::GgufQ8_0 => gpu::encode_moe_phase2_q8_0(
-            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
+            use_silu,
         ),
         RoutedBlobLayout::GgufQ4K => gpu::encode_moe_phase2_q4_k(
-            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
+            use_silu,
         ),
         RoutedBlobLayout::GgufQ6K => gpu::encode_moe_phase2_q6_k(
-            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
+            use_silu,
         ),
         RoutedBlobLayout::GgufIq4Nl => gpu::encode_moe_phase2_iq4_nl(
-            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
+            use_silu,
         ),
         // MXFP4 masks compute at a FIXED dispatch width rather than sizing
         // the dispatch to top_k the way the Affine arm below does (`gpt-oss`

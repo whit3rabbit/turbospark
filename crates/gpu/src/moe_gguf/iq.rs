@@ -22,7 +22,7 @@ pub fn encode_moe_phase1_iq3_xxs(
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(d_dim as usize % crate::IQ3_XXS_BLOCK_ELEMS, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= super::PHASE2_FIXED_SLOTS);
     encode_phase1(
         context,
         pass,
@@ -55,7 +55,7 @@ pub fn encode_moe_phase1_iq4_xs(
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(d_dim as usize % crate::IQ4_XS_BLOCK_ELEMS, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= super::PHASE2_FIXED_SLOTS);
     encode_phase1(
         context,
         pass,
@@ -76,6 +76,7 @@ pub fn encode_moe_phase1_iq4_xs(
 /// the pair above).
 ///
 /// `f_dim` must be a whole number of 32-element blocks, as for Q8_0.
+/// `top_k` must not exceed [`super::PHASE2_FIXED_SLOTS`].
 #[allow(clippy::too_many_arguments)]
 pub fn encode_moe_phase2_iq4_nl(
     context: &mut MetalContext,
@@ -88,6 +89,7 @@ pub fn encode_moe_phase2_iq4_nl(
     y: (&metal::Buffer, u64),
     d_dim: u32,
     f_dim: u32,
+    top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim as usize % crate::IQ4_NL_BLOCK_ELEMS, 0);
@@ -103,6 +105,7 @@ pub fn encode_moe_phase2_iq4_nl(
         y,
         d_dim,
         f_dim,
+        top_k,
         use_silu,
     )
 }

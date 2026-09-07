@@ -4,7 +4,7 @@
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use turbospark_gpu::{rms_norm_no_scale, MetalContext};
+use turbospark_gpu::{encode_rms_norm_no_scale, rms_norm_no_scale, MetalContext};
 
 #[test]
 fn matches_cpu_reference_within_fp16_tolerance() {
@@ -23,6 +23,55 @@ fn matches_cpu_reference_within_fp16_tolerance() {
         &gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(),
         &cpu,
     );
+    assert!(
+        err < turbospark_compute::Tolerance::FP16_REDUCTION,
+        "err = {err}"
+    );
+}
+
+/// AGENTS.md/CLAUDE.md S12: `encode_rms_norm_no_scale` (the PRODUCTION
+/// encoder, dispatched via a `PassEncoder`) used to hard-code a 256-thread
+/// dispatch regardless of `D`, while this file's other case
+/// (`rms_norm_no_scale`, a separate one-shot wrapper the parity tests
+/// drive) already used `THREADS_PER_GROUP.min(d)` -- so a D < 256 case run
+/// through the wrapper never actually exercised the width production
+/// dispatches at that size. Real installs were unaffected only because
+/// every real hidden size is >= 1152; this calls the encoder directly so
+/// the narrower width itself is pinned on real hardware.
+#[test]
+fn encoder_matches_cpu_reference_at_a_width_under_one_threadgroup() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let d = 64usize;
+    let x_f32: Vec<f32> = (0..d).map(|i| ((i as f32) - 32.0) * 0.07).collect();
+    let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
+    let weight = vec![1.0f32; d];
+    let eps = 1e-6f32;
+    let cpu = turbospark_compute::rms_norm(&x_f32, &weight, eps);
+
+    let to_le =
+        |v: &[f16]| -> Vec<u8> { v.iter().flat_map(|x| x.to_bits().to_le_bytes()).collect() };
+    let x_buf = context.new_buffer_with_data(&to_le(&x_f16));
+    let out_buf = context.new_output_buffer((d * 2) as u64);
+
+    let pass = context.begin_pass();
+    encode_rms_norm_no_scale(
+        &mut context,
+        &pass,
+        (&x_buf, 0),
+        (&out_buf, 0),
+        d as u32,
+        eps,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    let gpu: Vec<f32> = turbospark_gpu::read_buffer_f16(&out_buf, 0, d)
+        .iter()
+        .map(|v| v.to_f32())
+        .collect();
+
+    assert_eq!(gpu.len(), cpu.len());
+    let err = turbospark_compute::max_abs_diff(&gpu, &cpu);
     assert!(
         err < turbospark_compute::Tolerance::FP16_REDUCTION,
         "err = {err}"

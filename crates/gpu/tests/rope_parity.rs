@@ -54,6 +54,63 @@ fn matches_cpu_reference_within_fp16_tolerance() {
     );
 }
 
+/// AGENTS.md/CLAUDE.md B6: every library here compiles under default fast
+/// math, and `rope.metal`'s `apply_neox_pair` calls bare `cos`/`sin` with
+/// the angle equal to the raw position at pair 0. No existing fixture
+/// exercises a position past 137, while every family here decodes past
+/// 8,192. This measures whether fast-math argument reduction actually
+/// diverges from `f32::cos`/`f32::sin`'s full reduction at realistic decode
+/// positions; it is not assumed to fail.
+#[test]
+fn matches_cpu_reference_at_large_positions() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let num_tokens = 1u32;
+    let num_heads = 2u32;
+    let head_dim = 8u32;
+    let rotated_pairs = 4u32;
+    let theta = 10000.0f32;
+
+    let len = (num_tokens * num_heads * head_dim) as usize;
+    let input_f32: Vec<f32> = (0..len)
+        .map(|i| (i as f32 - len as f32 / 2.0) * 0.05)
+        .collect();
+    let input_f16: Vec<f16> = input_f32.iter().map(|&v| f16::from_f32(v)).collect();
+
+    for &position in &[50_000u32, 100_000u32] {
+        let cpu = turbospark_compute::rope_neox(
+            &input_f32,
+            num_tokens as usize,
+            num_heads as usize,
+            head_dim as usize,
+            rotated_pairs as usize,
+            position as usize,
+            theta,
+        );
+        let gpu = rope_proportional_neox(
+            &mut context,
+            &input_f16,
+            position,
+            num_tokens,
+            num_heads,
+            head_dim,
+            rotated_pairs,
+            theta,
+        )
+        .expect("GPU dispatch succeeds");
+
+        assert_eq!(gpu.len(), cpu.len());
+        let err = turbospark_compute::max_abs_diff(
+            &gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(),
+            &cpu,
+        );
+        assert!(
+            err < turbospark_compute::Tolerance::FP16_REDUCTION,
+            "position={position} err={err}"
+        );
+    }
+}
+
 #[test]
 fn zero_position_is_identity() {
     let mut context = MetalContext::new().expect("Metal device available on this machine");

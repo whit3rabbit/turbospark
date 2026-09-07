@@ -57,7 +57,11 @@ pub fn encode_rms_norm_no_scale(
         &[(x.0, 0, x.1), (out.0, 1, out.1)],
         &[(u32_bytes(&d), 2), (f32_bytes(&eps), 3)],
         1,
-        THREADS_PER_GROUP,
+        // AGENTS.md/CLAUDE.md S12: matches the per-head/grouped siblings'
+        // `.min(dim)` dispatch width. A no-op for every real install (`d`
+        // is always the model's hidden size, >= 1152 here); only a
+        // synthetic fixture at `d < 256` could ever see this move.
+        THREADS_PER_GROUP.min(d.max(1) as u64),
     );
     Ok(())
 }
@@ -82,7 +86,9 @@ pub fn encode_rms_norm_bf16w(
         &[(x.0, 0, x.1), (weight.0, 1, weight.1), (out.0, 2, out.1)],
         &[(u32_bytes(&d), 3), (f32_bytes(&eps), 4)],
         1,
-        THREADS_PER_GROUP,
+        // AGENTS.md/CLAUDE.md S12: see `encode_rms_norm_no_scale`'s
+        // identical note.
+        THREADS_PER_GROUP.min(d.max(1) as u64),
     );
     Ok(())
 }
@@ -122,7 +128,9 @@ pub fn encode_rms_norm_bf16w_centered(
         &[(x.0, 0, x.1), (weight.0, 1, weight.1), (out.0, 2, out.1)],
         &[(u32_bytes(&d), 3), (f32_bytes(&eps), 4)],
         1,
-        THREADS_PER_GROUP,
+        // AGENTS.md/CLAUDE.md S12: see `encode_rms_norm_no_scale`'s
+        // identical note.
+        THREADS_PER_GROUP.min(d.max(1) as u64),
     );
     Ok(())
 }

@@ -229,9 +229,12 @@ fn gpu_block_with(
             &v.iter().map(|&f| f16::from_f32(f)).collect::<Vec<f16>>(),
         ))
     };
+    // B7: `freqs` is F32 on the wire, unlike every other tensor this block
+    // reads -- no FP16 narrowing here.
+    let upload_f32 = |context: &MetalContext, v: &[f32]| context.new_buffer_with_data(v);
 
     let h_buf = upload(context, x);
-    let freq_buf = upload(context, freqs);
+    let freq_buf = upload_f32(context, freqs);
     let n1_w = upload(context, &w.norm1_w);
     let n1_b = upload(context, &w.norm1_b);
     let qkv_w = upload(context, &w.qkv_w);
@@ -398,11 +401,11 @@ fn block_inputs() -> (Vec<f32>, Vec<f32>, BlockWeights) {
     let x = weights(SEQ * HIDDEN, 2.0, 1.5);
     // Frequency rows as `turbospark_vision_io::vision_rope_freq_rows` emits
     // them: one row of `head_dim / 2` per token, shared by every head.
-    let freqs = quantize(
-        &(0..SEQ * HEAD_DIM / 2)
-            .map(|i| (i as f32) * 0.011)
-            .collect::<Vec<f32>>(),
-    );
+    // Not run through `quantize` (B7): `freqs` stays F32 all the way to the
+    // kernel now, unlike every other tensor `block_inputs` builds.
+    let freqs: Vec<f32> = (0..SEQ * HEAD_DIM / 2)
+        .map(|i| (i as f32) * 0.011)
+        .collect();
     (x, freqs, BlockWeights::new())
 }
 
@@ -523,12 +526,11 @@ fn rope_reaches_q_and_k_but_not_v() {
     let mut context = MetalContext::new().expect("Metal device");
     let (x, _, w) = block_inputs();
 
-    // Frequencies large enough that a rotation is unmistakable.
-    let freqs: Vec<f32> = quantize(
-        &(0..SEQ * HEAD_DIM / 2)
-            .map(|i| 0.3 + (i as f32) * 0.05)
-            .collect::<Vec<f32>>(),
-    );
+    // Frequencies large enough that a rotation is unmistakable. Not run
+    // through `quantize` (B7): see `block_inputs`.
+    let freqs: Vec<f32> = (0..SEQ * HEAD_DIM / 2)
+        .map(|i| 0.3 + (i as f32) * 0.05)
+        .collect();
     let cpu = cpu_block(&x, &w, &freqs);
     let gpu = gpu_block(&mut context, &x, &w, &freqs);
     assert!(

@@ -167,6 +167,14 @@ void vision_gelu_erf_fp16(
 // two-dimensional position and no single scalar encodes it. `freqs` is
 // `[seq, head_dim/2]`, shared by every head of a token.
 //
+// `freqs` is F32, not FP16 (AGENTS.md/CLAUDE.md B7): the angle at pair 0
+// equals the raw patch coordinate, so on a wide grid it can reach the tens,
+// where FP16's step (~0.0625 near 100) rounds the angle by up to half a
+// step and moves that pair's cos/sin by a comparable amount -- a real,
+// avoidable error, since this table is a host-computed buffer with no
+// checkpoint tensor behind it (unlike `qkv`, whose FP16 storage is real
+// production width and is not narrowed further here).
+//
 // `qkv` is laid out `[seq, heads, head_dim]`, which is what the qkv
 // projection writes and what the attention kernel below reads, so no
 // transpose happens between them.
@@ -174,7 +182,7 @@ void vision_gelu_erf_fp16(
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void vision_rope_2d_fp16(
     device half*        qkv       [[buffer(0)]],
-    device const half*  freqs     [[buffer(1)]],
+    device const float* freqs     [[buffer(1)]],
     constant uint&      seq       [[buffer(2)]],
     constant uint&      heads     [[buffer(3)]],
     constant uint&      head_dim  [[buffer(4)]],
@@ -186,7 +194,7 @@ void vision_rope_2d_fp16(
     const uint half_dim = head_dim / 2;
     if (pair >= half_dim || head >= heads || token >= seq) return;
 
-    const float angle = float(freqs[uint64_t(token) * half_dim + pair]);
+    const float angle = freqs[uint64_t(token) * half_dim + pair];
     const float c = cos(angle);
     const float s = sin(angle);
 

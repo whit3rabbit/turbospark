@@ -15,6 +15,8 @@
 use metal::{Device, MTLResourceOptions};
 use model_io::ArchConfig;
 
+use crate::kv_cache_mem::{advise_dontneed, page_size_bytes};
+
 const FP16_SIZE: usize = 2;
 
 /// Per-layer bookkeeping the decode loop updates as compressor/indexer
@@ -62,6 +64,14 @@ impl Dsv4StateManager {
         assert!(
             config.has_compressed_attention_layers(),
             "Dsv4StateManager requires at least one CSA/HCA layer"
+        );
+        // AGENTS.md/CLAUDE.md S10: `window_slot` computes `position %
+        // ring_capacity`; a zero `sliding_window` would panic there lazily,
+        // on the first decode step, rather than refusing loudly at
+        // construction where the bad config is easy to attribute.
+        assert!(
+            config.sliding_window > 0,
+            "Dsv4StateManager requires a nonzero sliding_window"
         );
         let ca = &config.compressed_attention;
         let head_dim = config.full_head_dim as usize;
@@ -231,33 +241,6 @@ impl Dsv4StateManager {
         }
         for buffer in self.indexer_prior_ca_gate.iter().flatten() {
             zero_buffer(buffer);
-        }
-    }
-}
-
-fn page_size_bytes() -> usize {
-    4096
-}
-
-fn advise_dontneed(
-    buffer: &metal::Buffer,
-    page_size: usize,
-    seen: &mut Vec<*const std::ffi::c_void>,
-) {
-    let ptr = buffer.contents() as *const std::ffi::c_void;
-    if seen.contains(&ptr) {
-        return;
-    }
-    seen.push(ptr);
-    let len = (buffer.length() as usize / page_size) * page_size;
-    if len > 0 {
-        // SAFETY: `ptr` is the base address of a live `MTLBuffer` allocated
-        // with shared storage mode (CPU-and-GPU-visible, page-aligned by
-        // Metal's allocator), and `len` is rounded down to a whole number
-        // of pages so this never advises past the buffer's own allocation.
-        #[allow(unsafe_code)]
-        unsafe {
-            libc::posix_madvise(ptr as *mut std::ffi::c_void, len, libc::POSIX_MADV_DONTNEED);
         }
     }
 }

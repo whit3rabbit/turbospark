@@ -202,6 +202,7 @@ pub fn encode_moe_prefill_phase1(
 ) -> Result<(), GpuError> {
     assert_eq!(d_dim % 64, 0);
     assert_eq!(f_dim % 64, 0);
+    assert!(top_k as usize <= crate::moe_gguf::PHASE2_FIXED_SLOTS);
     let pipeline = context.pipeline(
         SOURCE,
         "moe_prefill_phase1_routes_int4",
@@ -271,7 +272,7 @@ pub fn encode_moe_prefill_phase2_fused(
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim % 64, 0);
-    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    assert!(top_k as usize <= crate::moe_gguf::PHASE2_FIXED_SLOTS);
     let pipeline = context.pipeline(
         SOURCE,
         "moe_prefill_phase2_fused_int4",

@@ -72,6 +72,25 @@ fn classifies_linear_layers_and_sizes_state() {
     assert_eq!(manager.conv_tail_bytes_per_layer, 3 * qkv_dim * 2);
 }
 
+/// AGENTS.md/CLAUDE.md S9: `encode_gdn_conv_decode`'s own contract is a
+/// `(taps - 1) * dilation` row tail; this manager's sizing had never
+/// carried the `dilation` factor past 1. Latent rather than reachable
+/// today (the one dilated caller manages its own tail separately), but
+/// pinned here so `new_with_dilation` cannot regress silently.
+#[test]
+fn conv_tail_sizing_scales_with_dilation() {
+    let context = MetalContext::new().unwrap();
+    let arch = qwen_style_arch();
+    let manager = GdnStateManager::new_with_dilation(context.device(), &arch, 3);
+
+    let qkv_dim = 2 * 4 * 8 + 4 * 8;
+    // (conv_kernel_size - 1)(3) * dilation(3) * qkv_dim * 2 bytes (FP16).
+    assert_eq!(manager.conv_tail_bytes_per_layer, 3 * 3 * qkv_dim * 2);
+    // The delta-rule state has no `taps` term at all, so dilation must not
+    // move it.
+    assert_eq!(manager.state_bytes_per_layer, 4 * 8 * 8 * 4);
+}
+
 #[test]
 #[should_panic(expected = "not a linear-attention layer")]
 fn state_buffer_panics_for_a_non_linear_layer() {

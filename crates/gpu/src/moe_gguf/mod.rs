@@ -61,6 +61,22 @@ const SOURCE: &str = concat!(
 const ROWS_PER_THREADGROUP: u64 = 8;
 const THREADS_PER_GROUP: u64 = 256;
 
+/// The width every phase-2 kernel in this module reduces, and (via
+/// `crate::moe_prefill_batch`/`crate::moe_prefill_batch_gguf`) the width
+/// their batched-prefill siblings reduce too: `moe_gguf.metal`'s
+/// `moe_phase2_down_reduce_k8_*` kernels (Q4_K, Q8_0, Q6_K, IQ4_NL, and the
+/// masked MXFP4 arm) all declare `threadgroup float partial[8]` and reduce
+/// exactly 8 simdgroups, unlike the vendored INT4-affine pair's own phase 2
+/// (`moe_decode.rs`), which was widened to `MAX_STREAMED_EXPERTS` (16,
+/// AGENTS.md Gotcha 13). A `top_k` past this width is silently truncated:
+/// phase 1 (sized to `top_k * f_dim` rows) writes every slot, and phase 2
+/// reduces only the first 8. Every phase-1 AND phase-2 dispatch in this
+/// module, plus the batched-prefill pair, asserts `top_k` against this
+/// constant rather than `MAX_STREAMED_EXPERTS` for that reason -- refusing
+/// loudly at the point where a wider checkpoint would otherwise decode
+/// fluent, wrong output.
+pub const PHASE2_FIXED_SLOTS: usize = 8;
+
 /// The dispatch every phase-1 kernel shares. Only the kernel name and the
 /// block-size precondition differ between block types; the bindings, the
 /// function constants and the threadgroup shape are identical, and keeping
@@ -101,7 +117,11 @@ pub(crate) fn encode_phase1(
     Ok(())
 }
 
-/// The dispatch both phase-2 kernels share; see [`encode_phase1`].
+/// The dispatch both phase-2 kernels share; see [`encode_phase1`]. Asserts
+/// `top_k` against [`PHASE2_FIXED_SLOTS`] rather than
+/// `MAX_STREAMED_EXPERTS`: these kernels reduce a fixed 8 simdgroups
+/// regardless of the width phase 1 was dispatched at (see that constant's
+/// doc).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_phase2(
     context: &mut MetalContext,
@@ -115,8 +135,10 @@ pub(crate) fn encode_phase2(
     y: (&metal::Buffer, u64),
     d_dim: u32,
     f_dim: u32,
+    top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
+    assert!(top_k as usize <= PHASE2_FIXED_SLOTS);
     let pipeline = context.pipeline(
         SOURCE,
         kernel,
