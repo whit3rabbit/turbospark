@@ -64,6 +64,50 @@ fn get_running_pid() -> Option<i32> {
     }
 }
 
+fn daemon_lock_path() -> PathBuf {
+    run_dir().join("daemon.lock")
+}
+
+/// Acquires an exclusive OS-level lock over the daemon's run directory,
+/// blocking until any other start/stop holding it releases. Held for the
+/// whole check-then-spawn-then-write sequence, which closes the race where
+/// two near-simultaneous starts both observe "not running" and both spawn
+/// a server -- the second call blocks here, and once it gets the lock,
+/// `get_running_pid()` sees the first call's now-running PID and does
+/// nothing. Released automatically when the returned file is dropped
+/// (`flock` is tied to the open file description, not the path).
+#[cfg(unix)]
+fn acquire_daemon_lock() -> Result<fs::File, String> {
+    extern "C" {
+        fn flock(fd: i32, operation: i32) -> i32;
+    }
+    const LOCK_EX: i32 = 2;
+
+    let path = daemon_lock_path();
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("opening daemon lock {}: {e}", path.display()))?;
+    let rc = unsafe {
+        use std::os::unix::io::AsRawFd;
+        flock(file.as_raw_fd(), LOCK_EX)
+    };
+    if rc != 0 {
+        return Err(format!(
+            "acquiring daemon lock {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn acquire_daemon_lock() -> Result<(), String> {
+    Ok(())
+}
+
 /// Inspects whether a background turbospark server daemon is running.
 /// Writes a JSON object to `*out` (free with `ts_string_free`):
 ///   `{"running": true, "pid": 1234, "port": 8080, "endpoint": "http://127.0.0.1:8080/v1", "logPath": "..."}`
@@ -149,14 +193,18 @@ fn extract_port(args: &[String]) -> u16 {
 }
 
 fn start_daemon_internal(args: &[String]) -> Result<(), String> {
+    let run = run_dir();
+    fs::create_dir_all(&run)
+        .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
+    // Held across the whole check-then-spawn-then-write sequence below; see
+    // `acquire_daemon_lock`'s own doc for the race this closes.
+    let _lock = acquire_daemon_lock()?;
+
     if get_running_pid().is_some() {
         return Ok(());
     }
 
-    let run = run_dir();
     let logs = logs_dir();
-    fs::create_dir_all(&run)
-        .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
     fs::create_dir_all(&logs)
         .map_err(|e| format!("creating logs directory {}: {e}", logs.display()))?;
 
@@ -217,6 +265,13 @@ fn start_daemon_internal(args: &[String]) -> Result<(), String> {
 }
 
 fn stop_daemon_internal() -> Result<(), String> {
+    let run = run_dir();
+    fs::create_dir_all(&run)
+        .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
+    // Same lock `start_daemon_internal` holds, so a stop cannot land between
+    // a concurrent start's own check and its pid-file write.
+    let _lock = acquire_daemon_lock()?;
+
     let Some(pid) = get_running_pid() else {
         return Ok(());
     };

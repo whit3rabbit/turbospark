@@ -35,6 +35,49 @@ fn pid_file() -> PathBuf {
     run_dir().join("server.pid")
 }
 
+fn daemon_lock_path() -> PathBuf {
+    run_dir().join("daemon.lock")
+}
+
+/// Acquires an exclusive OS-level lock over the daemon's run directory,
+/// blocking until any other `start`/`stop` holding it releases. Held for
+/// the whole check-then-spawn-then-write sequence, which closes the race
+/// where two near-simultaneous `start` calls both observe "not running"
+/// and both spawn a server: the second call blocks here, and once it gets
+/// the lock, `get_running_pid()` sees the first call's now-running PID and
+/// does nothing. Released automatically when the returned file is
+/// dropped -- `flock` is tied to the open file description, not the path,
+/// so closing the handle is enough.
+///
+/// # Safety
+/// `libc::flock` is safe to call with a valid, open file descriptor.
+#[cfg(unix)]
+fn acquire_daemon_lock() -> Result<fs::File, String> {
+    let path = daemon_lock_path();
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("opening daemon lock {}: {e}", path.display()))?;
+    let rc = unsafe {
+        use std::os::unix::io::AsRawFd;
+        libc::flock(file.as_raw_fd(), libc::LOCK_EX)
+    };
+    if rc != 0 {
+        return Err(format!(
+            "acquiring daemon lock {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn acquire_daemon_lock() -> Result<(), String> {
+    Ok(())
+}
+
 fn meta_file() -> PathBuf {
     run_dir().join("server.meta")
 }
@@ -88,15 +131,19 @@ fn extract_port(args: &[String]) -> u16 {
 
 /// Start the server as a background daemon.
 pub fn start(args: &[String]) -> Result<(), String> {
+    let run = run_dir();
+    fs::create_dir_all(&run)
+        .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
+    // Held across the whole check-then-spawn-then-write sequence below; see
+    // `acquire_daemon_lock`'s own doc for the race this closes.
+    let _lock = acquire_daemon_lock()?;
+
     if let Some(pid) = get_running_pid() {
         println!("turbospark server is already running (PID {pid}).");
         return Ok(());
     }
 
-    let run = run_dir();
     let logs = logs_dir();
-    fs::create_dir_all(&run)
-        .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
     fs::create_dir_all(&logs)
         .map_err(|e| format!("creating logs directory {}: {e}", logs.display()))?;
 
@@ -163,6 +210,13 @@ pub fn start(args: &[String]) -> Result<(), String> {
 
 /// Stop the background daemon if running.
 pub fn stop() -> Result<(), String> {
+    let run = run_dir();
+    fs::create_dir_all(&run)
+        .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
+    // Same lock `start` holds, so a stop cannot land between a concurrent
+    // start's own check and its pid-file write.
+    let _lock = acquire_daemon_lock()?;
+
     let pid = match get_running_pid() {
         Some(p) => p,
         None => {
