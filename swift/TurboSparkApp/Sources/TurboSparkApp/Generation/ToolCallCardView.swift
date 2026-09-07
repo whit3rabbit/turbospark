@@ -392,48 +392,7 @@ struct ToolCallCardView: View {
     private func todoChecklistPreview(_ todos: [TodoItem]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(todos) { item in
-                HStack(alignment: .center, spacing: 8) {
-                    if item.isCompleted {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Color.green)
-                            .themedFont(.small)
-                    } else if item.isInProgress {
-                        TaskProgressFlameIcon(size: 12)
-                    } else if item.isCancelled {
-                        Image(systemName: "minus.circle.fill")
-                            .foregroundStyle(Color.secondary)
-                            .themedFont(.small)
-                    } else {
-                        Image(systemName: "circle")
-                            .foregroundStyle(Color.secondary.opacity(0.7))
-                            .themedFont(.small)
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.content)
-                            .themedFont(.base, weight: item.isInProgress ? .semibold : .regular)
-                            .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                            .strikethrough(item.isCompleted || item.isCancelled, color: .secondary)
-
-                        if item.isInProgress && !item.activeForm.isEmpty && item.activeForm != item.content {
-                            Text(item.activeForm)
-                                .themedFont(.tiny)
-                                .foregroundStyle(TurboSparkTheme.accentColor)
-                        }
-                    }
-
-                    Spacer()
-
-                    if item.isInProgress {
-                        Text("In Progress", bundle: .module)
-                            .themedFont(.tiny, weight: .medium)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.15), in: Capsule())
-                            .foregroundStyle(Color.orange)
-                    }
-                }
-                .padding(.vertical, 2)
+                TodoItemRow(item: item)
             }
         }
         .padding(10)

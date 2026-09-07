@@ -375,8 +375,23 @@ touches a chat rather than the filesystem.
    persists to `chats_archive.json` on the next `persistChats()`.
 4. **Card** (`Generation/ToolCallDiffFormatter.swift`,
    `Generation/ToolCallCardView.swift`): the formatter's `todo` branch
-   builds the "3/5 done" summary and the card view renders the checklist.
-5. **Category**: `.fileWrite`, listed in `category(for:)`. Rootless: it is
+   returns the "3/5 done (1 in progress)" summary from
+   `TodoChecklistSummary.text` (shared with the live panel) and the card
+   renders the checklist through `TodoItemRow`.
+5. **Live panel** (`Generation/TodoChecklistViews.swift`):
+   `TaskChecklistPanelView` sits in the transcript OUTSIDE the streaming row
+   (same placement rationale as `BackgroundAgentsStripView`), reads
+   `model.currentTodos`, and repaints in place on every TodoWrite -- the
+   box the user actually watches while the model marks tasks off. It hides
+   when the list is empty; when every item is completed or cancelled it
+   collapses to the summary line with a chevron to re-expand (viewer-local
+   state, the todos stay persisted). Expanded rows are capped:
+   `TaskChecklistPanelModel.displayItems` always keeps pending,
+   in-progress and cancelled rows and folds the OLDEST completed rows past
+   `settledRowLimit` into a dim "+N completed" line. `TodoItemRow` is the
+   one renderer shared by the card and the panel so their status
+   conventions cannot drift.
+6. **Category**: `.fileWrite`, listed in `category(for:)`. Rootless: it is
    absent from `workspaceRootedToolNames` on purpose.
 
 ## 9. Known gaps

@@ -37,13 +37,9 @@ public enum ToolCallDiffFormatter {
         // 1. Task Management / TodoWrite (checked before write_file/create_file)
         if lowerName.contains("todo") {
             if let parsed = try? TodoWriteExecutor.parseTodos(from: arguments) {
-                let completed = parsed.filter { $0.isCompleted }.count
-                let inProgress = parsed.filter { $0.isInProgress }.count
-                let total = parsed.count
-                let statusSummary = inProgress > 0 ? "\(completed)/\(total) done (1 in progress)" : "\(completed)/\(total) done"
                 return ToolCallSummaryInfo(
                     action: "Tasks",
-                    target: statusSummary
+                    target: TodoChecklistSummary.text(parsed)
                 )
             }
             return ToolCallSummaryInfo(

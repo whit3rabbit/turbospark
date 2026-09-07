@@ -107,6 +107,11 @@ private struct ChatTranscriptView: View {
                         MessageRowView(model: model, message: message)
                     }
 
+                    // The live task checklist sits OUTSIDE the streaming row
+                    // (same rationale as BackgroundAgentsStripView below): it
+                    // must stay visible while the turn runs AND after it ends.
+                    TaskChecklistPanelView(model: model)
+
                     if model.isRunning || !model.outputText.isEmpty || !model.outputReasoningText.isEmpty {
                         ActiveStreamingRowView(
                             model: model,
