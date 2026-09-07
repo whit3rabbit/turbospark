@@ -1,9 +1,11 @@
-//! Public runtime configuration.
+//! Allowed numeric sets and documented defaults for runtime knobs.
 //!
-//! Constrained numeric knobs and policy selectors with documented defaults.
-//! Setting a numeric knob to a value outside its allowed set is a fatal
-//! precondition failure that aborts construction by panicking; there is no
-//! fallback or clamping to a nearby value.
+//! This module is the single home for the allowed-value sets and fixed
+//! defaults that `crates/invocation`, `crates/cli`, `crates/server` and
+//! `crates/runtime` all validate against. It holds no builder and no
+//! `Result`-returning constructor: a caller that wants a value outside an
+//! allowed set has nowhere to go here but the const assertions below, which
+//! catch a default drifting out of its own set at compile time.
 
 /// Allowed cache-slot values.
 ///
@@ -56,202 +58,70 @@ pub const DEFAULT_CHUNK_SIZE: u32 = 128;
 /// as a literal in each.
 pub const DEFAULT_MAX_CONTEXT: u32 = 4096;
 
-/// Cache replacement policy. Variant names are destination-selected and do
-/// not mirror any source token; whether they are user-visible config keys is
-/// an open decision.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum CacheReplacement {
-    /// Documented default mode.
-    #[default]
-    Primary,
-    /// Alternate mode.
-    Alternate,
-}
-
-/// Attention strategy selector. Variant names are destination-selected and do
-/// not mirror any source token. The set is non-exhaustive because the full
-/// documented variant set has not been pinned yet; later slices extend it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum AttentionStrategy {
-    /// Documented default strategy.
-    #[default]
-    Standard,
-}
-
-/// Head projection mode. The two modes are described by the approved spec.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum HeadProjection {
-    /// Combined projection, the documented default.
-    #[default]
-    Combined,
-    /// Separate projection, which can be forced on.
-    Separate,
-}
-
-/// Immutable runtime configuration assembled from overrides plus defaults.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeConfig {
-    cache_slots: u32,
-    chunk_size: u32,
-    cache_replacement: CacheReplacement,
-    prompt_processing_enabled: bool,
-    attention_strategy: AttentionStrategy,
-    head_projection: HeadProjection,
-}
-
-impl RuntimeConfig {
-    /// Start a builder.
-    pub fn builder() -> RuntimeConfigBuilder {
-        RuntimeConfigBuilder::new()
-    }
-
-    /// Configured cache-slot count.
-    pub fn cache_slots(&self) -> u32 {
-        self.cache_slots
-    }
-
-    /// Configured prompt-processing chunk size.
-    pub fn chunk_size(&self) -> u32 {
-        self.chunk_size
-    }
-
-    /// Configured cache replacement policy.
-    pub fn cache_replacement(&self) -> CacheReplacement {
-        self.cache_replacement
-    }
-
-    /// Whether prompt processing is enabled.
-    pub fn prompt_processing_enabled(&self) -> bool {
-        self.prompt_processing_enabled
-    }
-
-    /// Configured attention strategy.
-    pub fn attention_strategy(&self) -> AttentionStrategy {
-        self.attention_strategy
-    }
-
-    /// Configured head projection mode.
-    pub fn head_projection(&self) -> HeadProjection {
-        self.head_projection
-    }
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        RuntimeConfig {
-            cache_slots: DEFAULT_CACHE_SLOTS,
-            chunk_size: DEFAULT_CHUNK_SIZE,
-            cache_replacement: CacheReplacement::default(),
-            prompt_processing_enabled: true,
-            attention_strategy: AttentionStrategy::default(),
-            head_projection: HeadProjection::default(),
+/// Returns whether `value` is a member of `allowed`.
+const fn contains(allowed: &[u32], value: u32) -> bool {
+    let mut i = 0;
+    while i < allowed.len() {
+        if allowed[i] == value {
+            return true;
         }
+        i += 1;
     }
+    false
 }
 
-fn is_allowed(value: u32, allowed: &[u32]) -> bool {
-    allowed.contains(&value)
-}
-
-/// Builder for [`RuntimeConfig`]. Numeric setters panic on out-of-set values.
-#[derive(Debug, Clone, Default)]
-pub struct RuntimeConfigBuilder {
-    cache_slots: Option<u32>,
-    chunk_size: Option<u32>,
-    cache_replacement: Option<CacheReplacement>,
-    prompt_processing_enabled: Option<bool>,
-    attention_strategy: Option<AttentionStrategy>,
-    head_projection: Option<HeadProjection>,
-}
-
-impl RuntimeConfigBuilder {
-    /// Create a builder with no overrides.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set the cache-slot count. Panics unless `value` is one of
-    /// [`ALLOWED_CACHE_SLOTS`].
-    pub fn cache_slots(mut self, value: u32) -> Self {
-        assert!(
-            is_allowed(value, &ALLOWED_CACHE_SLOTS),
-            "cache slots must be one of {:?}; got {value}",
-            ALLOWED_CACHE_SLOTS,
-        );
-        self.cache_slots = Some(value);
-        self
-    }
-
-    /// Set the prompt-processing chunk size. Panics unless `value` is one of
-    /// the allowed sizes.
-    pub fn chunk_size(mut self, value: u32) -> Self {
-        assert!(
-            is_allowed(value, &ALLOWED_CHUNK_SIZES),
-            "chunk size must be one of {:?}; got {value}",
-            ALLOWED_CHUNK_SIZES,
-        );
-        self.chunk_size = Some(value);
-        self
-    }
-
-    /// Set the cache replacement policy.
-    pub fn cache_replacement(mut self, value: CacheReplacement) -> Self {
-        self.cache_replacement = Some(value);
-        self
-    }
-
-    /// Set whether prompt processing is enabled.
-    pub fn prompt_processing_enabled(mut self, value: bool) -> Self {
-        self.prompt_processing_enabled = Some(value);
-        self
-    }
-
-    /// Set the attention strategy.
-    pub fn attention_strategy(mut self, value: AttentionStrategy) -> Self {
-        self.attention_strategy = Some(value);
-        self
-    }
-
-    /// Set the head projection mode.
-    pub fn head_projection(mut self, value: HeadProjection) -> Self {
-        self.head_projection = Some(value);
-        self
-    }
-
-    /// Assemble the configuration, applying documented defaults for any knob
-    /// or selector that was not set.
-    pub fn build(self) -> RuntimeConfig {
-        RuntimeConfig {
-            cache_slots: self.cache_slots.unwrap_or(DEFAULT_CACHE_SLOTS),
-            chunk_size: self.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE),
-            cache_replacement: self.cache_replacement.unwrap_or_default(),
-            prompt_processing_enabled: self.prompt_processing_enabled.unwrap_or(true),
-            attention_strategy: self.attention_strategy.unwrap_or_default(),
-            head_projection: self.head_projection.unwrap_or_default(),
+/// Returns whether `values` is sorted in strictly increasing order.
+/// [`crate::chunk_sizing::resolve_automatic_chunk_size`]'s smallest-covering
+/// search depends on this: it takes the first entry that covers the
+/// requested length, which is only the smallest such entry if the set is
+/// sorted ascending.
+const fn is_sorted_ascending(values: &[u32]) -> bool {
+    let mut i = 1;
+    while i < values.len() {
+        if values[i] <= values[i - 1] {
+            return false;
         }
+        i += 1;
     }
+    true
 }
 
-#[cfg(test)]
-mod tests {
-    //! Light inline checks; exhaustive value-set coverage lives in the
-    //! integration test suite.
-    use super::*;
-
-    #[test]
-    fn defaults_match_documented() {
-        let cfg = RuntimeConfig::default();
-        assert_eq!(cfg.cache_slots(), DEFAULT_CACHE_SLOTS);
-        assert_eq!(cfg.chunk_size(), DEFAULT_CHUNK_SIZE);
-        assert!(cfg.prompt_processing_enabled());
+/// The largest value in `set`. `const fn` so [`crate::prefill::MAX_CHUNK_TOKENS`]
+/// can derive from [`ALLOWED_CHUNK_SIZES`] instead of duplicating its
+/// maximum as a separate literal.
+pub const fn max_of(set: &[u32]) -> u32 {
+    let mut max = set[0];
+    let mut i = 1;
+    while i < set.len() {
+        if set[i] > max {
+            max = set[i];
+        }
+        i += 1;
     }
-
-    #[test]
-    fn builder_without_overrides_equals_default() {
-        assert_eq!(
-            RuntimeConfigBuilder::new().build(),
-            RuntimeConfig::default()
-        );
-    }
+    max
 }
+
+const _: () = assert!(
+    !ALLOWED_CACHE_SLOTS.is_empty(),
+    "ALLOWED_CACHE_SLOTS must not be empty"
+);
+const _: () = assert!(
+    !ALLOWED_CHUNK_SIZES.is_empty(),
+    "ALLOWED_CHUNK_SIZES must not be empty"
+);
+const _: () = assert!(
+    is_sorted_ascending(&ALLOWED_CACHE_SLOTS),
+    "ALLOWED_CACHE_SLOTS must be sorted strictly ascending"
+);
+const _: () = assert!(
+    is_sorted_ascending(&ALLOWED_CHUNK_SIZES),
+    "ALLOWED_CHUNK_SIZES must be sorted strictly ascending"
+);
+const _: () = assert!(
+    contains(&ALLOWED_CACHE_SLOTS, DEFAULT_CACHE_SLOTS),
+    "DEFAULT_CACHE_SLOTS must be one of ALLOWED_CACHE_SLOTS"
+);
+const _: () = assert!(
+    contains(&ALLOWED_CHUNK_SIZES, DEFAULT_CHUNK_SIZE),
+    "DEFAULT_CHUNK_SIZE must be one of ALLOWED_CHUNK_SIZES"
+);

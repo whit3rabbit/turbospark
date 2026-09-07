@@ -10,12 +10,6 @@ live network).
 
 ## Cross-cutting
 
-- **`RuntimeConfiguration` uses a fallible `Result` constructor, not
-  Swift's `precondition` crash**, for one config type — see `crates/core`'s
-  own module docs. Everywhere else that mirrors a Swift `precondition`
-  (e.g. `RuntimeConfig`'s numeric setters), this port kept the fatal-panic
-  contract; see `AGENTS.md` Gotcha 2. This is the one place the two
-  strategies coexist, and it predates this session's work.
 - **Model installation cannot be cancelled, and the GUI's Cancel button
   says so rather than pretending.** `ts_install` blocks its own thread for
   the whole walk and the C ABI exposes no `ts_install_cancel`, so dropping

@@ -2,43 +2,36 @@
 //! tracking whether a chunked prefill runner has left uncommitted KV rows
 //! behind. Ported from `Runtime/Prefill/PrefillRuntimeConfig.swift`.
 //!
-//! This is pure span/state bookkeeping; the GPU-side scratch buffer sizing
-//! (`PrefillChunkScratchLayout`/`Buffers` in the Swift original, sized for
-//! the full attention+MoE tile pipeline) is not ported — it needs a real
-//! forward pass's attention and MoE kernels to size scratch for, neither of
-//! which exists in this port yet (see `DEVIATIONS.md`).
+//! This is pure span/state bookkeeping. The GPU-side scratch buffer sizing
+//! this feeds is `crates/gpu`'s `PrefillChunkScratchLayout`/`Buffers`
+//! (`prefill_scratch.rs`), which computes every intermediate buffer's
+//! element count from an `ArchConfig` and a chunk size; see `DEVIATIONS.md`
+//! for what is dispatched against a real tile pipeline versus what is
+//! layout-only.
 
 use std::fmt;
 
-use crate::runtime_config::ALLOWED_CHUNK_SIZES;
+use crate::runtime_config::{self, ALLOWED_CHUNK_SIZES};
 
-/// Errors occurring during chunked-prefill configuration or execution.
+/// Largest supported prefill chunk. Chunked prefill re-reads each layer's
+/// routed experts once per chunk, so expert I/O scales with
+/// `prompt_tokens / chunk_tokens`; this is the practical ceiling before that
+/// re-read cost dominates. Derived from [`ALLOWED_CHUNK_SIZES`] rather than
+/// stated as a separate literal, so a widened allowed set cannot silently
+/// clamp a value the set itself accepts.
+pub const MAX_CHUNK_TOKENS: usize = runtime_config::max_of(&ALLOWED_CHUNK_SIZES) as usize;
+
+/// Errors occurring during chunked-prefill execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrefillError {
-    /// Chunked prefill is unsupported by the runner backend.
-    ChunkedUnsupported(String),
     /// Runner was left dirty after an uncommitted chunk failure.
     ChunkedRunnerDirty(String),
-    /// Prefill position mismatch between prompt cursor and KV cache.
-    PrefillCursorMismatch(String),
-    /// Seed parameter not supported by prefill implementation.
-    UnsupportedPrefillSeed(String),
-}
-
-impl PrefillError {
-    /// Shared reason text for "chunked mode was requested but the producer
-    /// does not implement chunked prefill".
-    pub const CHUNKED_REQUIRES_CHUNKED_RUNNER_REASON: &'static str =
-        "chunked prefill requires a ChunkedPrefillRunner-backed runtime";
 }
 
 impl fmt::Display for PrefillError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PrefillError::ChunkedUnsupported(reason)
-            | PrefillError::ChunkedRunnerDirty(reason)
-            | PrefillError::PrefillCursorMismatch(reason)
-            | PrefillError::UnsupportedPrefillSeed(reason) => write!(f, "{reason}"),
+            PrefillError::ChunkedRunnerDirty(reason) => write!(f, "{reason}"),
         }
     }
 }
@@ -60,13 +53,13 @@ pub struct PrefillChunkSpan {
 
 /// Splits `token_count` tokens starting at `start_position` into spans of at
 /// most `chunk_tokens` tokens each, in order. Returns an empty plan for zero
-/// tokens. `chunk_tokens` is clamped to `[1, PrefillRuntimeConfig::MAX_CHUNK_TOKENS]`.
+/// tokens. `chunk_tokens` is clamped to `[1, MAX_CHUNK_TOKENS]`.
 pub fn prefill_chunk_spans(
     token_count: usize,
     start_position: usize,
     chunk_tokens: usize,
 ) -> Vec<PrefillChunkSpan> {
-    let chunk = chunk_tokens.clamp(1, PrefillRuntimeConfig::MAX_CHUNK_TOKENS);
+    let chunk = chunk_tokens.clamp(1, MAX_CHUNK_TOKENS);
     if token_count == 0 {
         return Vec::new();
     }
@@ -150,64 +143,6 @@ impl PrefillChunkCommitState {
         Err(PrefillError::ChunkedRunnerDirty(format!(
             "{operation} rejected because a previous chunked prefill wrote KV rows{range} but did not commit; call reset() before reusing the runner"
         )))
-    }
-}
-
-/// Mode selection for chunked prefill execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrefillMode {
-    /// Chunked prefill disabled.
-    Off,
-    /// Chunked prefill enabled.
-    Chunked,
-}
-
-/// The prompt-processing mode and chunk size a chunked prefill runner uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PrefillRuntimeConfig {
-    /// Active prefill mode (Off or Chunked).
-    pub mode: PrefillMode,
-    /// Token capacity limit per prefill chunk.
-    pub chunk_tokens: usize,
-}
-
-impl PrefillRuntimeConfig {
-    /// Largest supported prefill chunk. Chunked prefill re-reads each
-    /// layer's routed experts once per chunk, so expert I/O scales with
-    /// `prompt_tokens / chunk_tokens`; this is the practical ceiling before
-    /// that re-read cost dominates.
-    pub const MAX_CHUNK_TOKENS: usize = 4096;
-
-    /// Constructs disabled prefill runtime configuration.
-    pub fn off() -> Self {
-        Self {
-            mode: PrefillMode::Off,
-            chunk_tokens: 128,
-        }
-    }
-
-    /// Constructs default chunked prefill runtime configuration (128 tokens per chunk).
-    pub fn default_chunked() -> Self {
-        Self::production(128).expect("128 is in ALLOWED_CHUNK_SIZES")
-    }
-
-    /// Builds a chunked config, rejecting a `chunk_tokens` outside the
-    /// runtime-configuration allowed set.
-    pub fn production(chunk_tokens: usize) -> Result<Self, PrefillError> {
-        if !ALLOWED_CHUNK_SIZES.contains(&(chunk_tokens as u32)) {
-            return Err(PrefillError::ChunkedUnsupported(
-                "unsupported prefill chunk size".to_string(),
-            ));
-        }
-        Ok(Self {
-            mode: PrefillMode::Chunked,
-            chunk_tokens,
-        })
-    }
-
-    /// Returns true if chunked prefill mode is enabled.
-    pub fn enabled(&self) -> bool {
-        self.mode == PrefillMode::Chunked
     }
 }
 
@@ -298,14 +233,11 @@ mod tests {
     }
 
     #[test]
-    fn production_rejects_a_disallowed_chunk_size() {
-        assert!(PrefillRuntimeConfig::production(129).is_err());
-    }
-
-    #[test]
-    fn production_accepts_an_allowed_chunk_size() {
-        let config = PrefillRuntimeConfig::production(256).unwrap();
-        assert!(config.enabled());
-        assert_eq!(config.chunk_tokens, 256);
+    fn max_chunk_tokens_is_the_largest_allowed_chunk_size() {
+        assert_eq!(MAX_CHUNK_TOKENS, 4096);
+        assert_eq!(
+            MAX_CHUNK_TOKENS,
+            *ALLOWED_CHUNK_SIZES.iter().max().unwrap() as usize
+        );
     }
 }

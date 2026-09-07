@@ -374,7 +374,7 @@ If a checkpoint uses a type in a role that has no kernel, it passes the manifest
 
 The workspace is organized into modular Rust crates:
 
-- **`crates/core`**: Primitive types, token definitions, and `RuntimeConfig`.
+- **`crates/core`**: Primitive types, token definitions, allowed runtime-knob sets, and the directional-steering mode.
 - **`crates/compute`**: CPU reference kernels for math, quantization (Q8_0, Q4_K, INT4/INT8), norms, RoPE, and sampling.
 - **`crates/gpu`**: macOS Metal shaders and execution pipeline dispatch (macOS only).
 - **`crates/streaming`**: SSD streamer for routed expert weights with LFU/LRU caching.

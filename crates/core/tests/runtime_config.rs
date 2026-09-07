@@ -1,163 +1,24 @@
-//! Integration tests for the runtime configuration value-set contract.
+//! Integration tests for the allowed runtime-knob sets.
 //!
-//! Covers foundation scenarios test-005, test-006, test-007, test-008, and the
-//! value-set edge case. The core crate is referenced by its package name
-//! `turbospark-core` (`turbospark_core`).
+//! The core crate is referenced by its package name `turbospark-core`
+//! (`turbospark_core`).
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use turbospark_core::runtime_config::{
-    AttentionStrategy, CacheReplacement, HeadProjection, RuntimeConfig, RuntimeConfigBuilder,
-    ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CACHE_SLOTS, DEFAULT_CHUNK_SIZE,
-};
+use turbospark_core::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 
 #[test]
-fn each_allowed_cache_slot_is_accepted() {
-    for &value in ALLOWED_CACHE_SLOTS.iter() {
-        let cfg = RuntimeConfig::builder().cache_slots(value).build();
-        assert_eq!(cfg.cache_slots(), value);
+fn allowed_sets_are_nonempty_positive_and_strictly_increasing() {
+    for set in [&ALLOWED_CACHE_SLOTS[..], &ALLOWED_CHUNK_SIZES[..]] {
+        assert!(!set.is_empty());
+        for &value in set {
+            assert!(value > 0);
+        }
+        for pair in set.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "set is not strictly increasing at {pair:?}"
+            );
+        }
     }
-}
-
-#[test]
-fn disallowed_cache_slot_aborts_construction() {
-    // Values just outside the allowed set plus clearly invalid values.
-    // `qwen4_exp`'s Phase 4 widened ALLOWED_CACHE_SLOTS to
-    // [8, 16, 24, 32, 48, 64, 96, 128], so 64 moved from this list into the
-    // allowed one; 40/80/100/127 sit just outside the new rungs instead.
-    let invalid = [
-        0u32,
-        1,
-        7,
-        9,
-        15,
-        17,
-        23,
-        25,
-        31,
-        33,
-        40,
-        47,
-        49,
-        63,
-        65,
-        80,
-        95,
-        97,
-        100,
-        127,
-        129,
-        u32::MAX,
-    ];
-    for &value in invalid.iter() {
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            RuntimeConfig::builder().cache_slots(value).build()
-        }));
-        assert!(
-            result.is_err(),
-            "cache slots {value} should have aborted construction",
-        );
-    }
-}
-
-#[test]
-fn each_allowed_chunk_size_is_accepted() {
-    for &value in ALLOWED_CHUNK_SIZES.iter() {
-        let cfg = RuntimeConfig::builder().chunk_size(value).build();
-        assert_eq!(cfg.chunk_size(), value);
-    }
-}
-
-#[test]
-fn disallowed_chunk_size_aborts_construction() {
-    let invalid = [
-        0u32,
-        1,
-        16,
-        31,
-        33,
-        63,
-        65,
-        127,
-        129,
-        1000,
-        4095,
-        4097,
-        8192,
-        u32::MAX,
-    ];
-    for &value in invalid.iter() {
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            RuntimeConfig::builder().chunk_size(value).build()
-        }));
-        assert!(
-            result.is_err(),
-            "chunk size {value} should have aborted construction",
-        );
-    }
-}
-
-#[test]
-fn default_config_carries_documented_defaults() {
-    let cfg = RuntimeConfig::default();
-    assert_eq!(cfg.cache_slots(), DEFAULT_CACHE_SLOTS);
-    assert_eq!(cfg.chunk_size(), DEFAULT_CHUNK_SIZE);
-    assert_eq!(cfg.cache_replacement(), CacheReplacement::Primary);
-    assert!(cfg.prompt_processing_enabled());
-    assert_eq!(cfg.attention_strategy(), AttentionStrategy::Standard);
-    assert_eq!(cfg.head_projection(), HeadProjection::Combined);
-}
-
-#[test]
-fn builder_with_no_overrides_matches_default() {
-    let built = RuntimeConfigBuilder::new().build();
-    assert_eq!(built, RuntimeConfig::default());
-}
-
-#[test]
-fn identical_overrides_produce_equal_configs() {
-    let a = RuntimeConfig::builder()
-        .cache_slots(32)
-        .chunk_size(2048)
-        .cache_replacement(CacheReplacement::Alternate)
-        .prompt_processing_enabled(false)
-        .attention_strategy(AttentionStrategy::Standard)
-        .head_projection(HeadProjection::Separate)
-        .build();
-    let b = RuntimeConfig::builder()
-        .cache_slots(32)
-        .chunk_size(2048)
-        .cache_replacement(CacheReplacement::Alternate)
-        .prompt_processing_enabled(false)
-        .attention_strategy(AttentionStrategy::Standard)
-        .head_projection(HeadProjection::Separate)
-        .build();
-    assert_eq!(a, b);
-}
-
-#[test]
-fn different_overrides_produce_unequal_configs() {
-    let a = RuntimeConfig::builder().cache_slots(8).build();
-    let b = RuntimeConfig::builder().cache_slots(32).build();
-    assert_ne!(a, b);
-}
-
-// Guards against a builder setter silently dropping an override: each non-default
-// override must be visible through its getter after build, not merely preserve
-// equality between two identically built configs.
-#[test]
-fn non_default_overrides_round_trip_through_getters() {
-    let cfg = RuntimeConfig::builder()
-        .cache_slots(32)
-        .chunk_size(2048)
-        .cache_replacement(CacheReplacement::Alternate)
-        .prompt_processing_enabled(false)
-        .head_projection(HeadProjection::Separate)
-        .build();
-    assert_eq!(cfg.cache_slots(), 32);
-    assert_eq!(cfg.chunk_size(), 2048);
-    assert_eq!(cfg.cache_replacement(), CacheReplacement::Alternate);
-    assert!(!cfg.prompt_processing_enabled());
-    assert_eq!(cfg.head_projection(), HeadProjection::Separate);
 }
 
 #[test]

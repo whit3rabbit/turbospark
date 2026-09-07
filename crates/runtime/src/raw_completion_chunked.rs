@@ -12,8 +12,9 @@ use crate::raw_completion::{
 };
 
 /// Splits `prompt_ids` into fixed-size chunks and hands each whole chunk to
-/// `producer` in one call, then decodes. `chunk_tokens` should come from a
-/// validated [`foundation::PrefillRuntimeConfig`].
+/// `producer` in one call, then decodes. `chunk_tokens` should come from one
+/// of [`foundation::runtime_config::ALLOWED_CHUNK_SIZES`], clamped to
+/// [`foundation::MAX_CHUNK_TOKENS`] by [`foundation::prefill_chunk_spans`].
 #[allow(clippy::too_many_arguments)]
 pub fn run_raw_completion_chunked(
     producer: &mut dyn ChunkedPrefillRunner,

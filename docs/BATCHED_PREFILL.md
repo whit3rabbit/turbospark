@@ -65,7 +65,7 @@ More than a reader expects, and the missing piece is narrower than
 
 | piece | where | state |
 | --- | --- | --- |
-| chunk span arithmetic | `crates/core/src/prefill.rs`, `chunk_sizing.rs` | done, tested |
+| chunk span arithmetic | `crates/core/src/prefill.rs`, `chunk_sizing.rs` | done, tested, wired for the Unknown arm; Known arm unconsumed |
 | the driver loop | `runtime::run_raw_completion_chunked` | done, tested |
 | the producer trait | `runtime::ChunkedPrefillRunner` | defined |
 | scratch sizing + allocation | `crates/gpu/src/prefill_scratch.rs` | done, allocates real buffers, undispatched |

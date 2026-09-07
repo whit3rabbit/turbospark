@@ -194,10 +194,11 @@ mod tests {
         }
     }
 
-    /// Whatever it returns is a value the rest of the engine accepts:
-    /// `RuntimeConfig`'s setters PANIC outside the allowed set rather than
-    /// clamping (AGENTS.md Gotcha 2), so a resolver that invented 20 would
-    /// abort the process somewhere else entirely.
+    /// Whatever it returns is a value the rest of the engine accepts: every
+    /// caller downstream of this resolver assumes membership in
+    /// `ALLOWED_CACHE_SLOTS` (AGENTS.md Gotcha 2) and none of them clamps,
+    /// so a resolver that invented 20 would surface as a mismatch somewhere
+    /// else entirely rather than here.
     #[test]
     fn every_resolved_value_is_in_the_allowed_set() {
         for physical_gib in [1u64, 8, 16, 36, 64, 128, 512] {

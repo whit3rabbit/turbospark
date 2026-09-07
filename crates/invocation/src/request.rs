@@ -175,13 +175,17 @@ impl Default for PrefillChunk {
 
 impl PrefillChunk {
     /// The concrete chunk size a caller consuming this value should use.
-    /// `Auto` resolves to the same default `Fixed` carries: nothing yet
-    /// adapts chunk size to context length, so this is the one place that
-    /// decision lives rather than each consumer re-deciding it.
+    /// `Auto` defers to `foundation`'s automatic chunk-size resolver, which
+    /// today has no input length to resolve against
+    /// (`foundation::InputLength::Unknown`) and so returns the same fixed
+    /// default `Fixed` carries -- but it is the one place an adaptive
+    /// `Known` arm would land, rather than each consumer re-deciding it.
     pub fn resolved(&self) -> u32 {
         match self {
             PrefillChunk::Fixed(n) => *n,
-            PrefillChunk::Auto => DEFAULT_CHUNK_SIZE,
+            PrefillChunk::Auto => {
+                foundation::resolve_automatic_chunk_size(foundation::InputLength::Unknown)
+            }
         }
     }
 }

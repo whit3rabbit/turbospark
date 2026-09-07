@@ -522,8 +522,9 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    22 call sites to bench's 3. Read the crate's own `Cargo.toml` rather than
    carrying a name across from the file you were just in.
 
-2. Runtime configuration numeric setters PANIC on a value outside their allowed set, deliberately. Moved to
-   [crates/core/CLAUDE.md](crates/core/CLAUDE.md) Gotcha 1.
+2. Runtime knobs are validated against const allowed-value sets, and a default
+   drifting out of its own set is a compile error rather than a runtime
+   surprise. Moved to [crates/core/CLAUDE.md](crates/core/CLAUDE.md) Gotcha 1.
 
 3. FP16 is the `half` crate, BF16 is a hand-rolled bit-shift pair. Do not hand-roll FP16. Moved to
    [crates/compute/CLAUDE.md](crates/compute/CLAUDE.md) Gotcha 1.
@@ -582,8 +583,8 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    `Cargo.toml` records why `panic = "abort"` must stay off: two `Drop`
    impls are load-bearing on the unwind path), so a panic that escapes
    `catch_unwind` there is a real hazard rather than a theoretical one.
-   `compute`, `repack`, `runtime`, and `tokenizer`
-   have `#![forbid(unsafe_code)]`. `core`, `gpu`, `invocation`, `selection`,
+   `compute`, `core`, `repack`, `runtime`, and `tokenizer`
+   have `#![forbid(unsafe_code)]`. `gpu`, `invocation`, `selection`,
    `server`, `window-fit`, `cli`, and `bench` currently have no such
    attribute and no workspace-level lint enforces it, so unsafe code is not
    actually compiler-blocked there today, even though none uses any.
@@ -1992,7 +1993,7 @@ Workspace directory structure and crate layout:
 |   +-- catalog        # the model catalog, the HF probe & the install driver
 |   +-- cli            # turbospark-check & turbospark-model binaries (process entry points)
 |   +-- compute        # CPU reference kernels & compute strategy marker
-|   +-- core           # shared primitives (TokenId, LogitValue), RuntimeConfig, chunking
+|   +-- core           # shared primitives (TokenId, LogitValue), allowed runtime-knob sets, chunking
 |   +-- gpu            # Metal pipeline cache & GPU kernel dispatches (macOS only)
 |   +-- invocation     # CLI argument parsing, request assembly & exit status routing
 |   +-- model-io       # manifest validation, packed-expert layout, resident index & mmap

@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `foundation` alias (`fou
 
 ## Safety
 
-- Contains no `unsafe` code, though `#![forbid(unsafe_code)]` is not explicitly set in `lib.rs` (see root `AGENTS.md` Gotcha 9).
+- Contains no `unsafe` code, and `#![forbid(unsafe_code)]` is set in `lib.rs`.
 
 ## Directory & File Structure
 
@@ -16,23 +16,21 @@ crates/core/
 +-- src/
 |   +-- lib.rs              # Library root re-exporting core modules
 |   +-- primitives.rs       # Shared primitive types (TokenId = i32, LogitValue, LogitsView)
-|   +-- runtime_config.rs   # RuntimeConfig, RuntimeConfigBuilder, ALLOWED_* const sets
+|   +-- runtime_config.rs   # Allowed numeric sets, documented defaults, const assertions
 |   +-- chunk_sizing.rs     # Automatic chunk-size resolution algorithm
 |   +-- prefill.rs          # Prefill chunking primitives and iterator logic
-|   +-- steering.rs         # SteeringMode: the directional-steering edit's four modes
-|   \-- error.rs            # Error enum declaration
+|   \-- steering.rs         # SteeringMode: the directional-steering edit's four modes
 \-- tests/
     +-- chunk_sizing.rs     # Unit tests for chunk-size resolution
-    \-- runtime_config.rs   # Unit tests for RuntimeConfig builder validation
+    \-- runtime_config.rs   # Unit tests for the allowed-set contract
 ```
 
 ## Key Modules
 
 - `primitives.rs`: Defines workspace-wide primitives including `pub type TokenId = i32` and `LogitValue`.
-- `runtime_config.rs`: Holds system parameters and allowed sets (`ALLOWED_CACHE_SLOTS = [8, 16, 24, 32, 48, 64, 96, 128]`, `ALLOWED_CHUNK_SIZES = [32, 64, 128, 256, 512, 1024, 2048, 4096]`).
+- `runtime_config.rs`: Allowed numeric sets and documented defaults (`ALLOWED_CACHE_SLOTS = [8, 16, 24, 32, 48, 64, 96, 128]`, `ALLOWED_CHUNK_SIZES = [32, 64, 128, 256, 512, 1024, 2048, 4096]`), plus `const fn` helpers and `const _: () = assert!(...)` blocks that pin each default inside its own set and each set sorted ascending, at compile time.
 - `chunk_sizing.rs`: Implements 3-state resolution rule turning input prompt lengths into allowed chunk sizes.
-- `prefill.rs`: Handles splitting long input token sequences into executable prefill chunks.
-- `error.rs`: Central error type for core initialization failures.
+- `prefill.rs`: Handles splitting long input token sequences into executable prefill chunks; also the home of `MAX_CHUNK_TOKENS`, derived from `ALLOWED_CHUNK_SIZES`'s own maximum.
 - `steering.rs`: `SteeringMode` (`Ablate` / `Add` / `Clamp` / `Renorm`), the
   four edits
   the directional-steering kernel applies to a residual stream row. **`Renorm`

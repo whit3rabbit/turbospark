@@ -3,7 +3,7 @@
 //! Corresponds to behavior-spec test-001, test-002, test-004, test-010,
 //! test-012, test-014, test-016, and test-017.
 
-use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
+use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CHUNK_SIZE};
 use turbospark_invocation::{
     parse, ExpertCacheSlots, InvocationRequest, KvBits, MaxContext, Mode, ParseOutcome,
     PowerProfile, PrefillChunk, ReasoningEffort, Speculation,
@@ -125,6 +125,7 @@ fn automatic_chunk_sizing_keyword_selects_auto() {
         "auto",
     ])));
     assert_eq!(req.prefill_chunk, PrefillChunk::Auto);
+    assert_eq!(req.prefill_chunk.resolved(), DEFAULT_CHUNK_SIZE);
 }
 
 /// The slot flag now takes the same `auto`-or-a-member grammar

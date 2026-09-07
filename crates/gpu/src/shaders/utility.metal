@@ -270,7 +270,7 @@ void bias_add_bf16_fp16(
 constant constexpr uint kSteerMaxSimdGroups = 8;
 
 // These must equal `foundation::SteeringMode::as_u32`. Pinned from the Rust
-// side by `steering_mode_codes_match_the_shader`, because a reordering here
+// side by `steering_mode_codes_are_pinned`, because a reordering here
 // swaps two edits that both decode fluently.
 constant constexpr uint kSteerModeAblate = 0;
 constant constexpr uint kSteerModeAdd    = 1;

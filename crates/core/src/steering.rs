@@ -3,12 +3,9 @@
 //! (`turbospark_gpu::encode_steer_direction`).
 //!
 //! It lives in this leaf crate because those two are the only definitions of
-//! what the kernel computes and neither depends on the other:
-//! `crates/gpu` carries `turbospark-compute` as a DEV-dependency only, so a
-//! mode enum declared in `compute` would be unnameable from the dispatch
-//! module it selects. Both crates depend on `foundation`, so one declaration
-//! here is what keeps the parity test comparing two spellings of one contract
-//! rather than two enums that happen to agree today.
+//! what the kernel computes and both depend on `foundation`: one declaration
+//! here is what keeps the parity test comparing two spellings of one
+//! contract rather than two enums that happen to agree today.
 
 /// Which edit [`crate::steering`]'s four-mode kernel applies to a residual
 /// stream row, given a direction `d` and its precomputed `1 / ||d||`.
@@ -40,10 +37,11 @@
 /// larger corpus.
 ///
 /// The discriminants are the wire values the MSL kernel switches on. They are
-/// pinned by `steering_mode_codes_match_the_shader` in
+/// pinned by `steering_mode_codes_are_pinned` in
 /// `crates/gpu/tests/utility_and_pass.rs`, because a reordering here would
 /// silently swap two edits that both produce fluent output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(u32)]
 pub enum SteeringMode {
     /// Project the direction out of the stream. This is abliteration's
     /// operation, and at `alpha == 1.0` on a unit direction it is exactly the
@@ -56,14 +54,14 @@ pub enum SteeringMode {
     /// docs on [`crate::steering`]). [`Renorm`](Self::Renorm) cannot overflow
     /// either, for a different reason -- see [`Self::can_grow`].
     #[default]
-    Ablate,
+    Ablate = 0,
     /// Add the direction, scaled. Turner et al.'s activation addition, and
     /// what llama.cpp's `--control-vector-scaled` applies.
-    Add,
+    Add = 1,
     /// Pin the coefficient along the unit direction to `target`, whatever it
     /// was. Feature clamping: the edit that holds a concept on regardless of
     /// context, rather than nudging it.
-    Clamp,
+    Clamp = 2,
     /// Norm-preserving projection: [`Ablate`](Self::Ablate), then rescale the
     /// row back to the magnitude it had before.
     ///
@@ -79,7 +77,7 @@ pub enum SteeringMode {
     /// that on its own. It is the RESIDUAL ADD, which is not: shrinking `x`
     /// at every layer amplifies each subsequent sublayer's relative
     /// contribution to the stream.
-    Renorm,
+    Renorm = 3,
 }
 
 /// Every spelling [`SteeringMode::parse`] accepts, in declaration order.
@@ -94,14 +92,11 @@ pub enum SteeringMode {
 pub const STEERING_MODE_NAMES: &[&str] = &["ablate", "add", "clamp", "renorm"];
 
 impl SteeringMode {
-    /// The value the MSL kernel's `mode` uniform switches on.
+    /// The value the MSL kernel's `mode` uniform switches on. This is the
+    /// variant's own `#[repr(u32)]` discriminant, so the wire value sits on
+    /// the variant a reader is already looking at.
     pub const fn as_u32(self) -> u32 {
-        match self {
-            Self::Ablate => 0,
-            Self::Add => 1,
-            Self::Clamp => 2,
-            Self::Renorm => 3,
-        }
+        self as u32
     }
 
     /// Parses the spelling the CLI, the server and the direction file all use.
@@ -166,7 +161,7 @@ mod tests {
 
     /// The discriminants are the wire values the MSL kernel switches on, so a
     /// reorder here silently swaps two edits that both decode fluently.
-    /// `crates/gpu`'s `steering_mode_codes_match_the_shader` pins them against
+    /// `crates/gpu`'s `steering_mode_codes_are_pinned` pins them against
     /// the shader's own constants; this pins them on the side that declares
     /// them, so a reorder reddens without a Metal device.
     #[test]

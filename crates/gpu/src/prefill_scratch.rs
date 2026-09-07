@@ -50,7 +50,7 @@ pub struct PrefillChunkScratchLayout {
 
 impl PrefillChunkScratchLayout {
     /// Maximum chunk token capacity defined by runtime configuration.
-    pub const MAX_CHUNK_TOKENS: usize = foundation::PrefillRuntimeConfig::MAX_CHUNK_TOKENS;
+    pub const MAX_CHUNK_TOKENS: usize = foundation::MAX_CHUNK_TOKENS;
 
     /// Computes prefill scratch buffer layout requirements for given model config and chunk settings.
     pub fn new(

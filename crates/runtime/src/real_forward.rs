@@ -61,8 +61,8 @@ pub use crate::real_forward_rollback::RollbackPoint;
 use crate::real_forward_types::DecodeScratch;
 pub use crate::real_forward_types::{dispatch_profile_report, PhaseCounters, RealForwardError};
 
-/// Matches `RuntimeConfig`'s default `expert_cache_slots`; callers that
-/// want another allowed value pass it to `open_with_options`.
+/// Matches `foundation::DEFAULT_CACHE_SLOTS`; callers that want another
+/// allowed value pass it to `open_with_options`.
 pub(crate) const EXPERT_CACHE_SLOTS: usize = 16;
 /// Mirrors the Swift RuntimeConfiguration default `prefillChunkTokens`
 /// (128). Ring capacity per SWA layer is `min(max_context, sliding_window
