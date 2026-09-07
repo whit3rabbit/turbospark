@@ -146,26 +146,39 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
 
     // -- Prefill, priming the drafter as it goes.
     //
-    // Every prompt token goes through `produce` rather than
-    // `produce_prefill`, which costs a full-vocab GEMV per prompt token that
-    // the sequential path skips. That is deliberate: the drafter reads the
-    // trunk's hidden state for the position just run, and `produce_prefill`
-    // is licensed to skip the output head and everything that feeds it. This
-    // is also the configuration every number in `docs/MTP.md` was measured
-    // in. Cheapening it is a real opportunity and needs the drafter's input
-    // to be shown to survive `skip_head`, which nobody has measured.
+    // Every prompt token but the LAST goes through `produce_prefill`, which
+    // skips the output head -- a full-vocab GEMV per prompt token that
+    // nothing here reads. The sequential loop has always done exactly this
+    // (`run_raw_completion`'s own prefill); the speculative loop used to pay
+    // the head on every token because the drafter reads the trunk's hidden
+    // state, and whether that input survived `skip_head` was unmeasured.
+    // It is measured now, and the answer is PER DRAFTER
+    // (`SpeculativeProducer::supports_headless_prefill`): the DFlash2 taps
+    // are raw layer outputs, captured per layer ahead of the skip early
+    // return, so they are bit-identical either way -- the fixture pins it.
+    // The MTP head reads the POST-FINAL-NORM hidden, which the skip also
+    // skips, so it keeps the headful walk. The LAST token always pays the
+    // head: the first `next` is sampled from its logits.
     //
     // The reused positions are already in the producer's KV -- and, by the
     // drafter guard that allowed the reuse, in the drafter's context KV too
     // -- so both cursors start past them and `history` is seeded with the
     // ids that built them.
+    let headless = producer.supports_headless_prefill();
     let prefill_start = Instant::now();
     let mut position = reused;
     history.extend_from_slice(&prompt_ids[..reused]);
     for (i, &token) in prompt_ids.iter().enumerate().skip(reused) {
-        producer
-            .produce(token, position, &mut logits)
-            .map_err(RuntimeError::Producer)?;
+        let last = i + 1 == prompt_ids.len();
+        if last || !headless {
+            producer
+                .produce(token, position, &mut logits)
+                .map_err(RuntimeError::Producer)?;
+        } else {
+            producer
+                .produce_prefill(token, position, &mut logits)
+                .map_err(RuntimeError::Producer)?;
+        }
         if i + 1 < prompt_ids.len() {
             producer
                 .prime_drafter(prompt_ids[i + 1], i)

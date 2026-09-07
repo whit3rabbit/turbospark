@@ -382,6 +382,21 @@ impl RealForwardRunner {
         //
         // A host copy rather than a blit: `commit_and_wait` has already run,
         // it is `hidden` halfs (10 KiB here), and it needs no kernel.
+        // Row 0's PRE-CLOBBER residual, stashed for `rollback_retaining`'s
+        // `keep_rows == 1` case: the trailing copy below overwrites row 0
+        // with row (batch-1)'s value on the assumption the whole block will
+        // be kept, and when only the confirmed token survives a partial
+        // round (its row IS row 0), there is no OTHER row left holding the
+        // original value to rebuild it from -- unlike every `keep_rows > 1`,
+        // where the kept row sits above row 0 and the trailing copy never
+        // touched it. Only worth keeping when a tape is being recorded;
+        // nothing reads it otherwise.
+        if batch > 1 && batched.verify_tape.is_some() {
+            let row = hidden * 2;
+            self.batched_tape_row0 = Some(gpu::read_buffer_bytes(&scratch.x, 0, row));
+        } else {
+            self.batched_tape_row0 = None;
+        }
         if batch > 1 {
             let row = hidden * 2;
             let last = gpu::read_buffer_bytes(&scratch.x, (batch - 1) * row, row);

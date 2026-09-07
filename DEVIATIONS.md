@@ -1870,9 +1870,53 @@ arm calls `produce_batched` and the sequential arm calls `produce`, so
 identical text across blocks is consistent with any difference between the
 two functions.
 
-Server wiring is absent (`turbospark-server` exposes no speculation at all),
-and one review finding stays unfixed: the unconditional batched-prefill
-scratch in `RealGemmaState`. Its sibling, the per-prompt-token
-`commit_and_wait` in the drafter's priming, was measured on a 2,940-token
-prompt at 0.96x prefill and closed.
+**THREE PIECES OF LOOP MACHINERY WERE ADOPTED 2026-09-06 FROM A THIRD
+REFERENCE, `bstnxbt/dflash-mlx`** (Apache-2.0/MIT, same arXiv 2602.06036
+method; read, not ported, per section 5's rule). The comparison found the
+core drafter at parity and the gaps all AROUND it; what landed:
+
+- **Tape rollback.** The re-verify a partial round used to pay -- a full
+  shortened forward pass rebuilding the accepted prefix -- is gone. The
+  verify records the per-row GDN inputs into a tape
+  (`BatchedScratch`'s `verify_tape`), and `rollback_retaining` keeps the
+  accepted rows' KV in place, restores the block-start snapshot, and
+  replays only the kept rows' recurrence over the tape
+  (`replay_linear_state_batched`). Bit-identical to the old shape, pinned
+  by `retaining_rollback_matches_rollback_plus_reverify` and the MTP twin.
+  This is the term `docs/DFLASH2.md` names as the throughput driver
+  ("throughput tracks the rollback rate"); killing it is what could
+  re-rank the larger blocks, and that re-measurement is owed.
+- **Prefix reuse in the speculative loop.** The loop now runs the
+  sequential loop's own `try_reuse_prefix` contract and records each
+  round's committed prefix (`SpeculativeProducer::record_committed`;
+  `verify` no longer taints). A drafter install reuses only the
+  PURE-CONTINUATION case -- nothing rewound, nothing swapped, the
+  drafter's cursor within the one-row bonus lag of the reuse point -- per
+  the drafter guard in `try_reuse_prefix`, because a drafter's context KV
+  is not part of a session slot and a hole in it drafts over rows nobody
+  wrote.
+- **Headless speculative prefill, DFlash2 only.** The loop's prefill now
+  uses `produce_prefill` (head skipped) on every token but the last when
+  the drafter reads raw layer outputs, which the skip never touches --
+  the measurement the old comment said nobody had taken
+  (`headless_prefill_primes_the_drafter_identically`). The MTP head reads
+  the POST-FINAL-NORM hidden and keeps the headful walk, pinned by
+  `an_mtp_head_is_not_headless_prefill_safe`.
+
+What the reference has that this port did NOT take, with reasons: its
+copyspec n-gram drafter and ddtree tree-attention verify (both disabled for
+the DFlash2 draft class in the reference itself); its M=16 int4 verify
+kernel (our GEMM is already bit-identical to the GEMV, so this is a
+small-M throughput question, unmeasured here); async draft prefetch; and
+its serving default of block 5 (measured here at 2, under the OLD rollback
+cost -- re-measure after the tape). Its prefix cache (L1/L2 snapshots with
+SSD spill) is larger than what landed: only the live-session continuation
+case is served, not cross-request hydration.
+
+The stale sentence this entry used to end on -- "server wiring is absent"
+and a review finding unfixed -- was wrong twice over by the time anyone
+re-read it: the server wiring landed the same day (`docs/DFLASH2.md`
+section 8, item 4) and the batched-prefill scratch finding closed with it
+(item 5). A paragraph is not a gate; both claims had been superseded in
+the page this entry points at.
 

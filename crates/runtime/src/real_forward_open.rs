@@ -172,6 +172,7 @@ impl RealForwardRunner {
             real_mtp: None,
             real_dflash: None,
             batched_tape: None,
+            batched_tape_row0: None,
             real_llama: None,
             real_gpt_oss: None,
             real_muse: None,

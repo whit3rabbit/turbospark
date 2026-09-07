@@ -31,6 +31,7 @@ impl LogitProducer for RealForwardRunner {
         // disagree about what the state holds.
         self.kv_prefix.clear();
         self.batched_tape = None;
+        self.batched_tape_row0 = None;
         self.kv.reset();
         if let Some(qwen) = self.real_qwen.as_mut() {
             qwen.reset();
@@ -85,6 +86,7 @@ impl LogitProducer for RealForwardRunner {
         // in and advances the state they describe, so whatever a previous
         // verify recorded describes nothing after it.
         self.batched_tape = None;
+        self.batched_tape_row0 = None;
         let result = gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
             .map_err(|e| e.to_string());
         // Recorded only on SUCCESS, and after the call: a failed forward may
@@ -370,6 +372,14 @@ impl SpeculativeProducer for RealForwardRunner {
     fn record_committed(&mut self, tokens: &[i32], pos0: usize) {
         self.kv_prefix.record(tokens, pos0);
     }
+
+    fn supports_headless_prefill(&self) -> bool {
+        // DFlash2 only: its aux taps are raw layer outputs, which the
+        // head-skip early return never touches. The MTP head reads the
+        // post-final-norm hidden and must keep the headful walk -- see the
+        // trait method's note.
+        self.real_dflash.is_some()
+    }
 }
 
 impl ChunkedPrefillRunner for RealForwardRunner {
@@ -391,6 +401,7 @@ impl ChunkedPrefillRunner for RealForwardRunner {
         // Same invalidation as `produce`: a chunk pass overwrites the
         // scratch the tape lives in.
         self.batched_tape = None;
+        self.batched_tape_row0 = None;
         let result = self.prefill_chunk_inner(tokens, start_position, logits);
         // The server routes long prompts through here rather than through
         // `produce`, so without this the case prefix reuse exists for would

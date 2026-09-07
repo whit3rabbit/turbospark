@@ -194,6 +194,23 @@ pub trait SpeculativeProducer: LogitProducer {
     /// see the trait note.
     fn rollback(&mut self, point: &Self::Checkpoint);
 
+    /// Whether [`LogitProducer::produce_prefill`] is safe to drive this
+    /// producer's drafter with during a speculative prefill. `false` by
+    /// default.
+    ///
+    /// The question is WHERE the drafter reads the trunk, and the two
+    /// drafters answer it differently (`docs/DFLASH2.md` section 2): the
+    /// DFlash2 taps are RAW layer outputs, captured per layer ahead of the
+    /// head-skip early return, so skipping the head changes nothing they
+    /// see. The MTP head's input is the trunk's POST-FINAL-NORM state --
+    /// exactly what `produce_prefill` skips -- so a headless prefill would
+    /// prime it from the PREVIOUS token's normed hidden: no error, plausible
+    /// proposals, a depressed accept length that reads as a verdict about
+    /// the head.
+    fn supports_headless_prefill(&self) -> bool {
+        false
+    }
+
     /// Record the tokens a round COMMITTED and the verify FED, at `pos0`,
     /// so a later turn can reuse the KV they built (`crate::kv_prefix`).
     /// The batched half of what [`LogitProducer::produce`] records for the

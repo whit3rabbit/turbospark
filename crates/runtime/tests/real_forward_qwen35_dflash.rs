@@ -483,6 +483,58 @@ fn speculative_reuse_fires_on_pure_continuation_and_refuses_a_lagging_drafter() 
     assert_eq!(keep, 0, "a lagging drafter must refuse reuse");
 }
 
+/// THE HEADLESS PREFILL CLAIM, as bytes: a speculative prefill that skips
+/// the output head on every token but the last primes the drafter
+/// bit-identically to the headful walk -- the DFlash2 taps are raw layer
+/// outputs, captured per layer ahead of the skip early return, so the skip
+/// changes nothing they see. Two fresh opens, two walks, one digest. This
+/// is the measurement the loop's old comment said nobody had taken.
+#[test]
+fn headless_prefill_primes_the_drafter_identically() {
+    let dir = build();
+
+    fn walk(runner: &mut RealForwardRunner, headless: bool) -> (i32, String) {
+        let vocab = VOCAB as usize;
+        let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+        for (i, &token) in PROMPT.iter().enumerate() {
+            let last = i + 1 == PROMPT.len();
+            if last || !headless {
+                runner.produce(token, i, &mut logits).expect("produce");
+            } else {
+                runner
+                    .produce_prefill(token, i, &mut logits)
+                    .expect("produce_prefill");
+            }
+            if i + 1 < PROMPT.len() {
+                runner.prime_drafter(PROMPT[i + 1], i).expect("prime");
+            }
+        }
+        let next = argmax(&logits);
+        // The first round's draft logits: what the priming actually fed.
+        let mut proposals = Vec::new();
+        runner
+            .dflash_draft_block(next, PROMPT.len(), &mut proposals)
+            .expect("draft");
+        let mut row = vec![LogitValue::from_f32(0.0); vocab];
+        let mut all = Vec::new();
+        for r in 0..3 {
+            runner.dflash_probe_logits(r, &mut row).expect("probe");
+            all.extend_from_slice(&row);
+        }
+        (next, digest(&all))
+    }
+
+    let mut headful = open(&dir, 2);
+    let (next_a, digest_a) = walk(&mut headful, false);
+    let mut headless = open(&dir, 2);
+    let (next_b, digest_b) = walk(&mut headless, true);
+    assert_eq!(next_a, next_b, "the first sampled token moved");
+    assert_eq!(
+        digest_a, digest_b,
+        "the draft logits moved under the headless prefill"
+    );
+}
+
 /// The drafter refuses an install without `dflash.*` tensors BY NAME under
 /// an explicit ask, matching the MTP head's refusal shape.
 #[test]

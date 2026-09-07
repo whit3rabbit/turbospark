@@ -853,6 +853,52 @@ fn the_draft_after_a_retaining_rollback_matches_the_reverify_shape() {
     assert_eq!(a, b, "the draft after the two rollback shapes diverged");
 }
 
+/// The headless-prefill gate's REASON, as a discriminating pair: the MTP
+/// head reads the trunk's POST-FINAL-NORM hidden, which `produce_prefill`
+/// skips -- so a headless-style prefill primes the head DIFFERENTLY from
+/// the headful one. This is why `SpeculativeProducer::supports_headless_
+/// prefill` is false for the MTP head while true for DFlash2: flipped, the
+/// loop would still run losslessly and every acceptance number would
+/// quietly sink, with nothing reddening but this.
+#[test]
+fn an_mtp_head_is_not_headless_prefill_safe() {
+    ask_for_drafts();
+    let dir = temp_dir("headless");
+    build_with_head(&dir);
+    let mut runner = open(&dir);
+
+    fn draft_after(runner: &mut RealForwardRunner, headless: bool) -> String {
+        let vocab = VOCAB as usize;
+        runner.reset();
+        let mut row = vec![f16::from_f32(0.0); vocab];
+        let mut token = 5i32;
+        for position in 0..4usize {
+            let last = position + 1 == 4;
+            if last || !headless {
+                runner.produce(token, position, &mut row).expect("produce");
+            } else {
+                runner
+                    .produce_prefill(token, position, &mut row)
+                    .expect("produce_prefill");
+            }
+            token = argmax(&row);
+            if position + 1 < 4 {
+                runner.mtp_prime_step(token, position).expect("prime");
+            }
+        }
+        let mut draft = vec![f16::from_f32(0.0); vocab];
+        runner.mtp_draft_step(token, 3, &mut draft).expect("draft");
+        digest(&draft)
+    }
+
+    let headful = draft_after(&mut runner, false);
+    let headless = draft_after(&mut runner, true);
+    assert_ne!(
+        headful, headless,
+        "the MTP draft is blind to the final norm: the headless gate would be pointless"
+    );
+}
+
 /// STEP 4's WHOLE CONTRACT: one batched pass is BIT-IDENTICAL to the same
 /// tokens run one at a time (`docs/MTP_SPECULATIVE.md`).
 /// This is what makes speculative output provably identical to

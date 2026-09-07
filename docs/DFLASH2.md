@@ -185,6 +185,10 @@ concat.
   `llama-model.h`).
 - Blog: `inco.ai/blog/dflash2/` (the method, the two additions, the
   published tables).
+- `bstnxbt/dflash-mlx` (2026-09-06): a third independent implementation,
+  Python/MLX, Apache-2.0/MIT, same arXiv 2602.06036 method. Read for the
+  comparison in section 7's last subsection; several loop pieces were
+  adopted from it and are recorded in `DEVIATIONS.md`.
 - The engine-side decision context: `docs/MTP_SPECULATIVE.md` (the
   composite this drafter must beat, and the rollback term that gates long
   blocks), `docs/SPECULATIVE_DECODING.md` (the MoE-family verdict).
@@ -465,12 +469,16 @@ sorted lists..."); `prose` is the wetlands question the repo's standing smoke
 uses. Both greedy, both byte-identical to the non-speculative stream.
 
 **THROUGHPUT TRACKS THE ROLLBACK RATE AND NOTHING ELSE**, and the mechanism
-is the term `docs/MTP_SPECULATIVE.md` already names: a rejected batched round
-on this recurrent family cannot stop early, so it restores a whole
+is the term `docs/MTP_SPECULATIVE.md` already names: a rejected batched
+round on this recurrent family cannot stop early, so it restores a whole
 gated-DeltaNet snapshot and replays the accepted prefix. The odds of paying
 that rise 9% -> 27% -> 98% across those rows, and the tok/s column falls with
 them. Acceptance itself barely moves with the block; what moves is how often
-a round has to be undone.
+a round has to be undone. **(MECHANISM NOTE, 2026-09-06: the replay half of
+that cost has since been REMOVED -- section 7's tape rollback. This table
+and this sentence describe the engine as measured, under the old cost; the
+rollback RATES remain valid, the per-rollback COST no longer is, and the
+sweep is owed a re-run.)**
 
 **SO THE TRAINED BLOCK IS THE WRONG SERVING BLOCK.** `DFLASH_SERVING_BLOCK`
 is 2, not the trained 8: block 2 wins on both workloads (1.47x against
@@ -615,6 +623,76 @@ and applies them if present, which for this checkpoint are 1.0 / 1.0 / none
 (section 1); and its loader refuses a drafter whose
 `n_embd < top_k * (top_k + 1)`, a constraint of packing the lattice into an
 `n_embd`-wide row that this port's host selector does not have.
+
+### Against the third reference, and what was adopted (2026-09-06)
+
+`bstnxbt/dflash-mlx` is a Python/MLX implementation of the same method
+(778 stars at reading time), and reading it against this port found the
+CORE DRAFTER AT PARITY: identical fc + `hidden_norm` over the five taps,
+identical target-derived context-KV write, one-pass non-causal block
+forward, 2-tap grouped dynamic conv, top-16 codebook selector with
+codebook edge scores, exact greedy prefix acceptance, greedy-only serving
+(sampled requests fall back, as here), INT4/w4 drafter. Its DFlash2 draft
+class serves at a default block of 5 where this port measured 2 -- a
+family of conclusion, not a contradiction. Its 27B speedups (1.34-3x
+against stock `mlx_lm`) sit beside this port's 1.47x ceiling, and the gap
+is explained by the three loop pieces below rather than by any algorithm
+difference.
+
+**ADOPTED, all three recorded in `DEVIATIONS.md`:**
+
+1. **Tape rollback -- the re-verify is gone.** The reference never
+   re-verifies: `recurrent_rollback_cache.py` records a per-step
+   innovation tape (the recurrent layer's inputs per row) during verify,
+   and `restore_after_acceptance` -- called EVERY cycle, not just partial
+   ones -- restores the block-start snapshot, replays only the accepted
+   steps through one kernel, rebuilds the conv state, and trims the KV
+   cursor. This port had named the re-verify as its throughput driver
+   ("throughput tracks the rollback rate and nothing else", section 6)
+   while treating it as inherent: "a recurrent layer cannot be rewound
+   incrementally the way a KV cursor can". The reference refutes that, and
+   the port now agrees: the verify records its per-row GDN inputs
+   (`BatchedScratch`'s `verify_tape`), and `rollback_retaining` keeps the
+   accepted rows' KV, restores the snapshot, and replays the kept rows'
+   recurrence over the tape (`replay_linear_state_batched`). BIT-IDENTICAL
+   to the old rollback-plus-re-verify shape, pinned by
+   `retaining_rollback_matches_rollback_plus_reverify` (DFlash2) and
+   `the_draft_after_a_retaining_rollback_matches_the_reverify_shape`
+   (MTP, which also pins the scratch-row-0 `h_t` contract the re-verify
+   used to serve). The block-sweep table above was measured under the OLD
+   cost; whether blocks 4-8 re-rank now that the rollback term collapsed
+   is OWED and updates `DFLASH_SERVING_BLOCK` only on evidence.
+2. **Prefix reuse in the speculative loop.** The reference snapshots KV,
+   GDN state, drafter features and last logits at prefill end. This port
+   took the narrower piece its own machinery already supported: the loop
+   now runs the sequential loop's `try_reuse_prefix` contract and records
+   each round's committed prefix, and a drafter install reuses only the
+   PURE-CONTINUATION case (`try_reuse_prefix`'s drafter guard -- a
+   drafter's context KV is not part of a session slot, so any rewind or
+   swap would leave it attending over a hole). `verify` no longer taints;
+   the loop's per-round record is the truth.
+3. **Headless speculative prefill, DFlash2 only.** The old prefill comment
+   named the per-token head GEMV "a real opportunity" needing the
+   drafter's input shown to survive `skip_head` -- the reference's whole
+   feature pipeline is chunked-capture based, which is that existence
+   proof. The port's answer is per-drafter: DFlash2's taps are raw layer
+   outputs the skip never touches, so its prefill now runs `produce_prefill`
+   on every token but the last
+   (`headless_prefill_primes_the_drafter_identically` pins it); the MTP
+   head reads the POST-FINAL-NORM hidden the skip also skips, and keeps
+   the headful walk (`an_mtp_head_is_not_headless_prefill_safe` pins the
+   gate's reason).
+
+**SEEN AND NOT TAKEN:** the reference's copyspec n-gram drafter (an
+FNV-indexed 6-token window match with an adaptive A/B gate -- free
+proposals on repetitive output; a real idea, deferred) and its ddtree
+tree-attention verify (top-k branching at low-margin positions -- which
+the reference itself DISABLES for the DFlash2 draft class, so flat
+verification is also its DFlash2 path); an M=16-specialized int4 verify
+kernel (this port's batched GEMM is already bit-identical to its GEMV, so
+the question would be small-M throughput, unmeasured); async draft
+prefetch; and its L1/L2 prefix cache with SSD spill (larger than the
+continuation-only reuse that landed).
 
 ## 8. How to work on this next
 

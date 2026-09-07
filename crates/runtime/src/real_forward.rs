@@ -173,6 +173,13 @@ pub struct RealForwardRunner {
     /// speculative round replay the accepted prefix's recurrent state over
     /// recorded row inputs instead of re-running a whole forward pass.
     pub(crate) batched_tape: Option<crate::real_forward_rollback::VerifyTape>,
+    /// `scratch.x` row 0's bytes from JUST BEFORE `produce_batched`'s own
+    /// trailing copy overwrites them with row `batch - 1`'s residual. Only
+    /// set alongside `batched_tape`, and only needed because a
+    /// `rollback_retaining` call with `keep_rows == 1` has no OTHER row left
+    /// to rebuild row 0 from -- row 0 IS the kept row in that case, and the
+    /// trailing copy already clobbered it by the time the rollback runs.
+    pub(crate) batched_tape_row0: Option<Vec<u8>>,
     /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
     /// is Mixtral-style MoE only; a dense one is refused at build.
     pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,

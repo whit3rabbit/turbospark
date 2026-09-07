@@ -388,6 +388,7 @@ pub(crate) fn replay_linear_state_batched(
     qwen: &RealQwenState,
     batched: &BatchedScratch,
     keep_rows: usize,
+    recorded_batch: usize,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let shape = qwen.shape;
@@ -401,11 +402,16 @@ pub(crate) fn replay_linear_state_batched(
         )
     })?;
     let rows = keep_rows as u32;
-    // The tape's per-slot stride is the scratch's FULL batch, not
-    // `keep_rows`, because that is the stride the recording blit laid
-    // slots down with.
-    let slot_stride_qkv = batched.batch * qkv_dim * 2;
-    let slot_stride_heads = batched.batch * v_heads * 2;
+    // The tape's per-slot stride is the batch the RECORDING pass actually
+    // fed (`recorded_batch`, the verify tape's own `rows`), not the
+    // scratch's fixed max capacity (`batched.batch`). The two agree only
+    // when a round runs at the scratch's full size; `speculative.rs`
+    // legitimately shrinks the round near the end of `max_new_tokens` or
+    // `max_context`, and using the wrong (larger) stride there would read
+    // every slot past 0 from the wrong byte offset -- silent recurrent-state
+    // corruption rather than an error.
+    let slot_stride_qkv = recorded_batch * qkv_dim * 2;
+    let slot_stride_heads = recorded_batch * v_heads * 2;
     let mut slot = 0usize;
     for layer in 0..arch.num_layers as usize {
         if !arch.layer_is_linear(layer) {

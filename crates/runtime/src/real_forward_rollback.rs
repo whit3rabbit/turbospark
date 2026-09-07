@@ -74,6 +74,7 @@ impl RealForwardRunner {
         // rollback replays from the snapshot directly; nothing else should
         // be able to reach for a tape whose pass no longer happened.
         self.batched_tape = None;
+        self.batched_tape_row0 = None;
     }
 
     /// Restores the target to `point` while KEEPING the first `keep_rows`
@@ -157,7 +158,7 @@ impl RealForwardRunner {
         gpu::autorelease_pool(|| {
             let pass = context.begin_pass_labeled("gdn tape replay");
             crate::families::qwen::replay_linear_state_batched(
-                context, &pass, weights, index, &arch, qwen, batched, keep_rows,
+                context, &pass, weights, index, &arch, qwen, batched, keep_rows, tape.rows,
             )?;
             pass.commit_and_wait();
             Ok(())
@@ -168,11 +169,27 @@ impl RealForwardRunner {
         // itself serves at batch > 1 (`produce_batched`'s trailing copy),
         // kept exact here because the re-verify that used to refresh row 0
         // no longer runs.
+        //
+        // `keep_rows == 1` cannot use the "copy row (keep_rows - 1) into row
+        // 0" rebuild every other keep_rows relies on: row (keep_rows - 1) IS
+        // row 0, and `produce_batched`'s own trailing copy already
+        // overwrote it with the LAST proposed row's residual (on the
+        // assumption the whole block would be kept) before this function
+        // ever ran. Reading and writing offset 0 in that case is a no-op
+        // over the wrong value, not a restore -- so this case restores from
+        // the pre-clobber stash `produce_batched` left instead.
         let hidden = self.arch.hidden_size as usize;
         let row_bytes = hidden * 2;
-        let last = gpu::read_buffer_bytes(&scratch.x, (keep_rows - 1) * row_bytes, row_bytes);
-        gpu::write_buffer_bytes(&scratch.x, 0, &last);
+        if keep_rows == 1 {
+            if let Some(saved) = self.batched_tape_row0.as_deref() {
+                gpu::write_buffer_bytes(&scratch.x, 0, saved);
+            }
+        } else {
+            let last = gpu::read_buffer_bytes(&scratch.x, (keep_rows - 1) * row_bytes, row_bytes);
+            gpu::write_buffer_bytes(&scratch.x, 0, &last);
+        }
         self.batched_tape = None;
+        self.batched_tape_row0 = None;
         Ok(())
     }
 
