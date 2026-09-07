@@ -919,8 +919,13 @@ int32_t ts_embedding_encode_json(const char *model_path,
                                  char **out);
 
 /*
- * Computes cosine similarity between two float vectors of length `len`.
- * Returns 0.0 if either pointer is null or len is 0.
+ * Computes the cosine similarity between two float vectors of length `len`.
+ * Both vectors are L2-normalized first, so arbitrary nonzero inputs give a
+ * true cosine in [-1, 1]; a zero vector yields 0.0.
+ * Returns 0.0 if either pointer is null or len is 0, and also when an
+ * internal panic is caught at the boundary (read ts_last_error to see why;
+ * there is no status code here to carry TS_ERR_PANIC through, so the
+ * sentinel is the only signal a caller gets).
  */
 float ts_cosine_similarity(const float *a, const float *b, size_t len);
 

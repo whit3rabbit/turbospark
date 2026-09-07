@@ -33,7 +33,9 @@ public enum TurboSparkEmbedding {
         }.value
     }
 
-    /// Computes cosine similarity between two float vectors of equal length.
+    /// Computes the cosine similarity between two float vectors of equal length.
+    /// Both vectors are L2-normalized first, so arbitrary nonzero inputs give a
+    /// true cosine in [-1, 1]; a zero vector yields 0.0.
     /// Returns 0.0 if either vector is empty or if lengths do not match.
     public static func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
         guard !a.isEmpty, a.count == b.count else { return 0.0 }

@@ -1506,6 +1506,17 @@ fn cosine_similarity_c_surface() {
 
     let sim_ortho = unsafe { ts_cosine_similarity(v1.as_ptr(), v3.as_ptr(), 3) };
     assert!(sim_ortho.abs() < 1e-5);
+
+    // The entry point normalizes, so an arbitrary magnitude gets an honest
+    // angle rather than a raw dot product.
+    let v4 = [5.0f32, 0.0f32, 0.0f32];
+    let sim_scaled = unsafe { ts_cosine_similarity(v4.as_ptr(), v2.as_ptr(), 3) };
+    assert!((sim_scaled - 1.0).abs() < 1e-5);
+    let zero = [0.0f32, 0.0f32, 0.0f32];
+    assert_eq!(
+        unsafe { ts_cosine_similarity(v1.as_ptr(), zero.as_ptr(), 3) },
+        0.0
+    );
 }
 
 #[test]

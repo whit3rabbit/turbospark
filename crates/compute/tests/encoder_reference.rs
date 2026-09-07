@@ -32,6 +32,17 @@ fn test_cosine_similarity() {
     assert!((cosine_similarity(&a, &b) - 1.0).abs() < 1e-6);
     assert!((cosine_similarity(&a, &c) - 0.0).abs() < 1e-6);
     assert!((cosine_similarity(&a, &d) - (-1.0)).abs() < 1e-6);
+
+    // The function normalizes its inputs, so scale does not move a cosine
+    // and an arbitrary vector gets an honest angle rather than a raw dot.
+    let scaled = vec![7.0, 0.0, 0.0];
+    let diagonal = vec![2.0, 2.0, 0.0];
+    assert!((cosine_similarity(&scaled, &a) - 1.0).abs() < 1e-6);
+    assert!((cosine_similarity(&scaled, &c) - 0.0).abs() < 1e-6);
+    assert!((cosine_similarity(&diagonal, &a) - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+
+    // A zero vector has no direction.
+    assert_eq!(cosine_similarity(&a, &[0.0, 0.0, 0.0]), 0.0);
 }
 
 #[test]

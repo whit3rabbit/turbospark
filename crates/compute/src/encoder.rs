@@ -266,8 +266,17 @@ pub fn cls_pool_and_normalize(hidden_states: &[f32], hidden_size: usize) -> Vec<
     cls_token.iter().map(|&v| v * inv_norm).collect()
 }
 
-/// Cosine similarity between two unit-normalized embedding vectors.
+/// Cosine similarity between two vectors of equal length. Both sides are
+/// L2-normalized first, so arbitrary nonzero inputs give a true cosine in
+/// [-1, 1]; a zero vector has no direction and yields 0.0. Vectors from
+/// [`cls_pool_and_normalize`] are already unit, so for encoder embeddings
+/// this stays the dot product it always was.
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len(), "embeddings must match dimension");
-    a.iter().zip(b).map(|(&x, &y)| x * y).sum()
+    let norm_sq = |v: &[f32]| v.iter().map(|&x| x * x).sum::<f32>();
+    let (na, nb) = (norm_sq(a), norm_sq(b));
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    a.iter().zip(b).map(|(&x, &y)| x * y).sum::<f32>() / na.sqrt() / nb.sqrt()
 }

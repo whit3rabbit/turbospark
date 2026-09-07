@@ -57,15 +57,23 @@ pub unsafe extern "C" fn ts_embedding_encode_json(
     })
 }
 
-/// Computes cosine similarity between two float vectors of length `len`.
-/// Returns 0.0 if either pointer is null, len is 0, or an internal panic is
-/// caught at the boundary (read `ts_last_error` to see why; there is no
-/// status code here to carry `TS_ERR_PANIC` through, so the sentinel is the
-/// only signal a caller gets, same as the null/zero-length case).
+/// Computes the cosine similarity between two float vectors of length `len`.
+/// Both vectors are L2-normalized first, so arbitrary nonzero inputs give a
+/// true cosine in [-1, 1]; a zero vector yields 0.0. Returns 0.0 if either
+/// pointer is null, len is 0, or an internal panic is caught at the boundary
+/// (read `ts_last_error` to see why; there is no status code here to carry
+/// `TS_ERR_PANIC` through, so the sentinel is the only signal a caller gets,
+/// same as the null/zero-length case).
 #[no_mangle]
 pub unsafe extern "C" fn ts_cosine_similarity(a: *const f32, b: *const f32, len: usize) -> f32 {
     abi::guard_value(0.0, || {
         if a.is_null() || b.is_null() || len == 0 {
+            return 0.0;
+        }
+        // `from_raw_parts` needs the byte length to fit in `isize`; no real
+        // caller approaches it, but a bad `len` from an FFI caller would
+        // otherwise be undefined behaviour rather than an error.
+        if len > isize::MAX as usize / std::mem::size_of::<f32>() {
             return 0.0;
         }
         let slice_a = std::slice::from_raw_parts(a, len);
