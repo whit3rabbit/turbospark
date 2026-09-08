@@ -99,7 +99,10 @@ public struct CollapsibleMessageContentView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            ChatMessageMarkdownView(text, onPreviewHTML: onPreviewHTML)
+            // Interactive tables (qwen-code parity): a message carrying a
+            // pipe table renders that segment as a sortable, copyable grid;
+            // everything else is the ordinary markdown renderer.
+            MarkdownContentWithTablesView(text: text, onPreviewHTML: onPreviewHTML)
         }
     }
 }

@@ -17,6 +17,61 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertEqual(emerald?.light.accentName, "Emerald")
     }
 
+    /// A fresh install gets Spark Blue, through BOTH doors into the archive.
+    ///
+    /// Decoding `{}` is the honest fixture here: it exercises the memberwise
+    /// defaults and `init(from:)`'s `decodeIfPresent ?? .default*` fallback,
+    /// which is the pair a first launch actually takes. Calling
+    /// `AppearanceFileStore.load()` instead would read (and on save, rewrite)
+    /// the real user's `appearance.json` under `AppStorageRoot`.
+    ///
+    /// **A persisted config still wins**, which is the whole reason this is
+    /// worth pinning: changing the default moves nobody who has ever opened
+    /// the Appearance pane, so the constant below is the only thing that
+    /// decides what a new install looks like.
+    func testAFreshArchiveDefaultsToSparkBlue() throws {
+        let archive = try JSONDecoder().decode(
+            AppearanceArchive.self, from: Data("{}".utf8))
+
+        for (mode, config) in [("light", archive.lightConfig), ("dark", archive.darkConfig)] {
+            XCTAssertEqual(config.preset, "Spark Blue", "\(mode) default preset")
+            XCTAssertEqual(config.accentName, "Spark", "\(mode) default accent name")
+        }
+        XCTAssertEqual(archive.lightConfig.accentHex, "#0E7C99")
+        XCTAssertEqual(archive.darkConfig.accentHex, "#5FD8E8")
+        // The blue cast is load-bearing: a neutral #181818 is what made the
+        // cyan accent read as pasted on.
+        XCTAssertEqual(archive.darkConfig.backgroundHex, "#12151B")
+
+        XCTAssertEqual(archive.lightConfig, ThemeModeConfig.defaultLight)
+        XCTAssertEqual(archive.darkConfig, ThemeModeConfig.defaultDark)
+    }
+
+    /// A preset names a set of colours; it never points at `default*`.
+    ///
+    /// The Codex entry used to BE `light: .defaultLight, dark: .defaultDark`,
+    /// so it was not a preset at all, it was a second name for whatever the
+    /// default happened to be. Changing the default would have silently
+    /// rewritten Codex into Spark Blue and left two identical entries in the
+    /// picker. This is the guard for that shape, not for the values.
+    func testNoPresetAliasesTheDefaultExceptSparkBlue() {
+        for preset in ThemePreset.presets where preset.id != "sparkblue" {
+            XCTAssertNotEqual(
+                preset.light, ThemeModeConfig.defaultLight,
+                "\(preset.name) light tracks the default instead of naming its own colours")
+            XCTAssertNotEqual(
+                preset.dark, ThemeModeConfig.defaultDark,
+                "\(preset.name) dark tracks the default instead of naming its own colours")
+        }
+
+        // Codex specifically, because it is the one that was aliased and the
+        // one users may have persisted.
+        let codex = ThemePreset.presets.first(where: { $0.id == "codex" })
+        XCTAssertEqual(codex?.dark.accentHex, "#F3F4F6")
+        XCTAssertEqual(codex?.dark.backgroundHex, "#181818")
+        XCTAssertEqual(codex?.light.accentHex, "#111827")
+    }
+
     func testColorHexParsingAndFormatting() {
         let hexWhite = "#FFFFFF"
         let colorWhite = Color(hex: hexWhite)
@@ -264,6 +319,76 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertEqual(manager.uiFontSize, 16.0)
         XCTAssertEqual(manager.codeFontSize, 12.0)
         XCTAssertEqual(manager.textSize, .standard)
+    }
+
+    /// `resetToDefaults` restores EVERY published field, not just the ones a
+    /// reset happens to mention: the pane's button claims the whole factory
+    /// theme, so a field left behind would silently survive a reset. The
+    /// comparison baseline is a zero-arg `AppearanceArchive()`, which IS the
+    /// factory defaults, and every field is first moved OFF its default so a
+    /// no-op reset cannot pass.
+    func testResetToDefaultsRestoresEveryField() {
+        let manager = AppearanceManager.shared
+        let saved = (
+            manager.appearance, manager.textSize, manager.lightConfig,
+            manager.darkConfig, manager.statusBarViewMode, manager.usePointerCursors,
+            manager.dockIcon, manager.reduceMotion, manager.uiFontSize,
+            manager.codeFontSize, manager.diffMarkers)
+        defer {
+            manager.appearance = saved.0
+            manager.textSize = saved.1
+            manager.lightConfig = saved.2
+            manager.darkConfig = saved.3
+            manager.statusBarViewMode = saved.4
+            manager.usePointerCursors = saved.5
+            manager.dockIcon = saved.6
+            manager.reduceMotion = saved.7
+            manager.uiFontSize = saved.8
+            manager.codeFontSize = saved.9
+            manager.diffMarkers = saved.10
+        }
+
+        // Move every field away from the factory value. Two fields have
+        // factory values their types cannot step away from with a raw
+        // literal (statusBarViewMode .text, reduceMotion .system), so they
+        // take their non-default cases directly.
+        manager.appearance = .dark
+        manager.textSize = .extraLarge
+        manager.lightConfig = ThemePreset.presets[0].light
+        manager.darkConfig = ThemePreset.presets[0].dark
+        manager.statusBarViewMode = manager.statusBarViewMode == .graphs ? .text : .graphs
+        manager.usePointerCursors = true
+        manager.dockIcon = manager.dockIcon == .codexDark ? .emeraldSpark : .codexDark
+        manager.reduceMotion = manager.reduceMotion == .off ? .on : .off
+        manager.uiFontSize = 21.0
+        manager.codeFontSize = 17.0
+        manager.diffMarkers = manager.diffMarkers == .plusMinus ? .color : .plusMinus
+
+        let factory = AppearanceArchive()
+
+        manager.resetToDefaults()
+
+        XCTAssertEqual(manager.appearance, AppAppearance.resolve(factory.appearance), "appearance")
+        XCTAssertEqual(manager.textSize, AppTextSize.resolve(factory.textSize), "textSize")
+        XCTAssertEqual(manager.lightConfig, factory.lightConfig, "lightConfig")
+        XCTAssertEqual(manager.darkConfig, factory.darkConfig, "darkConfig")
+        XCTAssertEqual(
+            manager.statusBarViewMode, StatusBarViewMode(rawValue: factory.statusBarViewMode),
+            "statusBarViewMode")
+        XCTAssertEqual(manager.usePointerCursors, factory.usePointerCursors, "usePointerCursors")
+        XCTAssertEqual(manager.dockIcon, AppDockIcon(rawValue: factory.dockIcon), "dockIcon")
+        XCTAssertEqual(
+            manager.reduceMotion, ReduceMotionPreference(rawValue: factory.reduceMotion),
+            "reduceMotion")
+        XCTAssertEqual(manager.uiFontSize, factory.uiFontSize, "uiFontSize")
+        XCTAssertEqual(manager.codeFontSize, factory.codeFontSize, "codeFontSize")
+        XCTAssertEqual(manager.diffMarkers, DiffMarkerPreference(rawValue: factory.diffMarkers), "diffMarkers")
+
+        // The fonts ride inside the configs, so the two assertions above
+        // already cover them -- but a reader of this test should not have to
+        // derive that, and a future field split would land here first.
+        XCTAssertEqual(manager.uiFontFamily, factory.lightConfig.uiFontFamily, "uiFontFamily")
+        XCTAssertEqual(manager.codeFontFamily, factory.darkConfig.codeFontFamily, "codeFontFamily")
     }
 
     func testResolvedThemeScalesWithAppTextSize() {

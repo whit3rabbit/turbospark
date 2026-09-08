@@ -269,6 +269,27 @@ public final class AppearanceManager: ObservableObject {
         codeFontSize = 12.0
     }
 
+    /// Restores every appearance field to the factory archive: system mode,
+    /// Spark Blue in both color modes, standard text size, the default fonts
+    /// and sizes, and the shipped preferences. `AppearanceArchive()` IS the
+    /// factory defaults (its memberwise parameters carry them), and each
+    /// assignment fires its `didSet`, so one call persists the whole reset
+    /// and re-renders the dock icon.
+    public func resetToDefaults() {
+        let defaults = AppearanceArchive()
+        appearance = AppAppearance.resolve(defaults.appearance)
+        textSize = AppTextSize.resolve(defaults.textSize)
+        lightConfig = defaults.lightConfig
+        darkConfig = defaults.darkConfig
+        statusBarViewMode = StatusBarViewMode(rawValue: defaults.statusBarViewMode) ?? .text
+        usePointerCursors = defaults.usePointerCursors
+        dockIcon = AppDockIcon(rawValue: defaults.dockIcon) ?? .emeraldSpark
+        reduceMotion = ReduceMotionPreference(rawValue: defaults.reduceMotion) ?? .system
+        uiFontSize = defaults.uiFontSize
+        codeFontSize = defaults.codeFontSize
+        diffMarkers = DiffMarkerPreference(rawValue: defaults.diffMarkers) ?? .color
+    }
+
     /// Builds the code-font descriptor for a mode.
     ///
     /// `isDark` is a PARAMETER. This used to read

@@ -358,6 +358,15 @@ struct ToolCallCardView: View {
 
     private var statusLabel: String {
         if isPendingApproval { return "Needs Approval" }
+        // A classifier-approved call is marked so "who decided this" is
+        // always on the card (`swift/docs/SWIFT_AGENT_MODE.md`).
+        if call.autoApprovedBy == "classifier" {
+            switch call.status {
+            case .running: return "Classifier Approved"
+            case .completed: return "Classifier Approved"
+            default: break
+            }
+        }
         switch call.status {
         case .pendingApproval: return "Needs Approval"
         case .running: return "Running..."
@@ -914,6 +923,26 @@ struct ToolCallCardView: View {
 
     private var approvalPrompt: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let notice = model.pendingToolCallClassifierNotice, isPendingApproval {
+                // Agent mode punted this call to a human: the classifier
+                // was unavailable or is being skipped. Qwen Code renders
+                // the same notice and pairs it with the suspend option.
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "bolt.slash.fill")
+                        .themedFont(points: 11, weight: .semibold)
+                        .foregroundStyle(Color.orange)
+                    Text(notice)
+                        .themedFont(.small)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color.orange.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 6))
+            }
+
             Text("This action requires your confirmation to execute.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.secondary)
@@ -928,6 +957,18 @@ struct ToolCallCardView: View {
                 .tint(isHighRisk ? Color.orange : TurboSparkTheme.accentColor)
                 .help("Approve this tool call once")
                 .accessibilityLabel("Approve once \(call.name)")
+
+                if model.pendingToolCallClassifierNotice != nil, isPendingApproval {
+                    Button {
+                        model.suspendAgentModeForSession()
+                        model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                    } label: {
+                        Label("Suspend Agent Mode", systemImage: "pause.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Approve once and stop using the classifier for the rest of this session")
+                    .accessibilityLabel("Suspend Agent mode for this session and approve once")
+                }
 
                 if call.category == .mcp,
                    let target = McpPermissionRule.targetOfCall(name: call.name, arguments: call.arguments) {

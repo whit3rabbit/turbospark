@@ -110,5 +110,6 @@ final class ServerAndAppearanceStoreTests: XCTestCase {
         XCTAssertTrue(AppSettingsView.SettingsTab.general.keywords.contains("ghost"))
         XCTAssertTrue(AppSettingsView.SettingsTab.engine.keywords.contains("context window"))
         XCTAssertTrue(AppSettingsView.SettingsTab.skills.keywords.contains("triggers"))
+        XCTAssertTrue(AppSettingsView.SettingsTab.appearance.keywords.contains("reset"))
     }
 }

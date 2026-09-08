@@ -120,7 +120,46 @@ public struct ThemeModeConfig: Codable, Equatable, Sendable {
         return try? JSONDecoder().decode(ThemeModeConfig.self, from: data)
     }
 
+    /// The cyan taken from the mascot art (`WelcomeCharacter.png`), so the
+    /// character and the chrome belong to one palette.
+    ///
+    /// The dark background is `#12151B` rather than a neutral `#181818`: the
+    /// slight blue cast is what lets a cyan accent sit on it instead of
+    /// looking pasted on. Codex, the previous default, is still a preset --
+    /// `codexLight`/`codexDark` below are the exact values it shipped with,
+    /// so nothing that applies that preset moves.
     public static let defaultLight = ThemeModeConfig(
+        preset: "Spark Blue",
+        accentName: "Spark",
+        accentHex: "#0E7C99",
+        backgroundHex: "#FFFFFF",
+        foregroundHex: "#1A1C1F",
+        uiFontFamily: "System default",
+        uiFontWeight: "Regular",
+        codeFontFamily: "System default",
+        codeFontWeight: "Regular",
+        translucentSidebar: true,
+        contrast: 50.0
+    )
+
+    public static let defaultDark = ThemeModeConfig(
+        preset: "Spark Blue",
+        accentName: "Spark",
+        accentHex: "#5FD8E8",
+        backgroundHex: "#12151B",
+        foregroundHex: "#F3F5FA",
+        uiFontFamily: "System default",
+        uiFontWeight: "Regular",
+        codeFontFamily: "System default",
+        codeFontWeight: "Regular",
+        translucentSidebar: true,
+        contrast: 65.0
+    )
+
+    /// Codex as it shipped. Named rather than aliased to `defaultLight`,
+    /// which is what it used to be: a preset that tracks whatever the
+    /// default happens to be is not a preset.
+    public static let codexLight = ThemeModeConfig(
         preset: "Codex",
         accentName: "Black",
         accentHex: "#111827",
@@ -134,7 +173,7 @@ public struct ThemeModeConfig: Codable, Equatable, Sendable {
         contrast: 45.0
     )
 
-    public static let defaultDark = ThemeModeConfig(
+    public static let codexDark = ThemeModeConfig(
         preset: "Codex",
         accentName: "White",
         accentHex: "#F3F4F6",
@@ -158,10 +197,16 @@ public struct ThemePreset: Identifiable, Sendable {
 
     public static let presets: [ThemePreset] = [
         ThemePreset(
-            id: "codex",
-            name: "Codex",
+            id: "sparkblue",
+            name: "Spark Blue",
             light: .defaultLight,
             dark: .defaultDark
+        ),
+        ThemePreset(
+            id: "codex",
+            name: "Codex",
+            light: .codexLight,
+            dark: .codexDark
         ),
         ThemePreset(
             id: "turbospark",

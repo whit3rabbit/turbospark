@@ -175,6 +175,7 @@ private struct CodeBlockContainer<Content: View>: View {
     let code: String
     var onPreviewHTML: ((String) -> Void)?
     @ViewBuilder let content: () -> Content
+    @Environment(\.appTheme) private var theme
 
     @State private var isCopied = false
 
@@ -241,9 +242,22 @@ private struct CodeBlockContainer<Content: View>: View {
             Divider()
 
             ScrollView(.horizontal, showsIndicators: true) {
-                content()
-                    .padding(12)
+                // Highlighted when the language is one the native scanner
+                // knows and the block is small enough; the MarkdownUI
+                // rendering otherwise (which is also the streaming path for
+                // big fences, keeping per-token re-renders cheap).
+                if let highlighted = CodeSyntaxHighlighter.highlight(code, language: language) {
+                    Text(highlighted)
+                        .font(theme.code(.base))
+                        // MarkdownUI's code block uses .em(0.225); at the
+                        // base code size that is about three points.
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                } else {
+                    content()
+                }
             }
+            .padding(12)
         }
         .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
