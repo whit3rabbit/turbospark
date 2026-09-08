@@ -30,12 +30,25 @@ public struct ToolRiskAssessment: Codable, Equatable, Sendable {
     public var level: ToolRiskLevel
     public var category: AppToolCategory
     public var reasons: [String]
+    /// Whether this verdict came from a DETERMINISTIC guard (denylist regex,
+    /// structural shell check, sensitive path, sandbox rule) rather than from
+    /// "the static ladder ran out of answer". Agent mode
+    /// (`swift/docs/SWIFT_AGENT_MODE.md`) routes soft asks to the classifier
+    /// and hard ones straight to the approval card; nil means soft, so every
+    /// archive written before the field existed classifies exactly as the
+    /// old behavior would want.
+    public var hardGated: Bool?
     public var isHighRisk: Bool { level == .high }
+    public var isHardGated: Bool { hardGated == true }
 
-    public init(level: ToolRiskLevel, category: AppToolCategory, reasons: [String] = []) {
+    public init(
+        level: ToolRiskLevel, category: AppToolCategory, reasons: [String] = [],
+        hardGated: Bool? = nil
+    ) {
         self.level = level
         self.category = category
         self.reasons = reasons
+        self.hardGated = hardGated
     }
 
     public static var safe: ToolRiskAssessment {
@@ -61,6 +74,7 @@ public struct ToolRiskAssessment: Codable, Equatable, Sendable {
         category = container.decodeTolerant(
             AppToolCategory.self, forKey: .category, fallback: .automation)
         reasons = try container.decodeLossyArray(String.self, forKey: .reasons)
+        hardGated = try container.decodeIfPresent(Bool.self, forKey: .hardGated)
     }
 }
 
@@ -170,7 +184,8 @@ public enum ToolRiskClassifier {
                     return ToolRiskAssessment(
                         level: .high,
                         category: category,
-                        reasons: ["Attempting to read sensitive credential or system path: '\(path)'"]
+                        reasons: ["Attempting to read sensitive credential or system path: '\(path)'"],
+                        hardGated: true
                     )
                 }
             }
@@ -198,7 +213,8 @@ public enum ToolRiskClassifier {
             if reasons.isEmpty {
                 return ToolRiskAssessment(level: .low, category: category, reasons: ["File modification in workspace"])
             } else {
-                return ToolRiskAssessment(level: .high, category: category, reasons: reasons)
+                return ToolRiskAssessment(
+                    level: .high, category: category, reasons: reasons, hardGated: true)
             }
         }
 
@@ -211,7 +227,8 @@ public enum ToolRiskClassifier {
                     return ToolRiskAssessment(
                         level: .high,
                         category: category,
-                        reasons: ["Malformed or unparseable URL: '\(urlString)'"]
+                        reasons: ["Malformed or unparseable URL: '\(urlString)'"],
+                        hardGated: true
                     )
                 }
 
@@ -219,7 +236,8 @@ public enum ToolRiskClassifier {
                     return ToolRiskAssessment(
                         level: .high,
                         category: category,
-                        reasons: ["Accessing private network or cloud metadata endpoint: '\(urlString)'"]
+                        reasons: ["Accessing private network or cloud metadata endpoint: '\(urlString)'"],
+                        hardGated: true
                     )
                 }
 
@@ -233,7 +251,8 @@ public enum ToolRiskClassifier {
                     return ToolRiskAssessment(
                         level: .high,
                         category: category,
-                        reasons: [error.localizedDescription]
+                        reasons: [error.localizedDescription],
+                        hardGated: true
                     )
                 }
 
@@ -313,7 +332,7 @@ public enum ToolRiskClassifier {
         }
 
         if !reasons.isEmpty {
-            return ToolRiskAssessment(level: .high, category: .terminal, reasons: reasons)
+            return ToolRiskAssessment(level: .high, category: .terminal, reasons: reasons, hardGated: true)
         }
 
         // Nothing matched a written-down attack. That is not evidence the
@@ -329,7 +348,8 @@ public enum ToolRiskClassifier {
                         "Command uses shell control characters (pipes, redirection, "
                             + "substitution, quoting or escapes), so what it runs cannot be "
                             + "determined by inspection"
-                    ], for: trimmed))
+                    ], for: trimmed),
+                hardGated: true)
         }
 
         guard TerminalCommandClassifier.isAutoApprovable(trimmed) else {
@@ -352,7 +372,7 @@ public enum ToolRiskClassifier {
         // corpus is rebuilt around allowlist evasion.
         if let veto = CommandGate.veto(for: trimmed) {
             return ToolRiskAssessment(
-                level: .high, category: .terminal, reasons: [veto.reason])
+                level: .high, category: .terminal, reasons: [veto.reason], hardGated: true)
         }
 
         // A single simple invocation of an allowlisted command. `.safe` for

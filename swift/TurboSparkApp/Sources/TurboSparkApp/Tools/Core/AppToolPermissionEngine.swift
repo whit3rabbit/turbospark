@@ -270,18 +270,29 @@ public enum AppToolPermissionEngine {
             }
 
             // 7b. A server imported from a repository config file asks in
-            // auto mode unless auto-approval was explicitly opted into
-            // above. `sourcePath` records that origin for imports from
+            // auto and agent modes unless auto-approval was explicitly opted
+            // into above. `sourcePath` records that origin for imports from
             // every supported format, and without this arm the auto mode's
             // trailing default allowed a cloned `.mcp.json`'s servers to
             // run non-high-risk calls silently the moment they were
             // imported -- the one gap the project approval lifecycle
             // (`AppModel+Mcp`) cannot close on its own for archives saved
             // before it existed.
-            if permissions.mode == .auto, let server = matched, !server.autoApprove,
+            //
+            // **AGENT MODE IS UNDER IT TOO, AND MUST STAY THERE** (see
+            // `swift/docs/SWIFT_AGENT_MODE.md`). Without the `agentAuto`
+            // arm, the ask would fall through to the classifier, and a
+            // cloned config's tool would be judged by a model instead of
+            // by the user -- exactly the silent-execution path this gate
+            // exists to close. The ask is `hardGated` so the agent-mode
+            // router parks it rather than classifying it.
+            if (permissions.mode == .auto || permissions.mode == .agentAuto),
+               let server = matched, !server.autoApprove,
                let source = server.sourcePath, !source.isEmpty {
+                var importAsk = risk
+                importAsk.hardGated = true
                 return .ask(
-                    assessment: risk,
+                    assessment: importAsk,
                     reason: "MCP server '\(server.name)' was imported from a repository config (\(source)) and has not been marked auto-approved.")
             }
         }

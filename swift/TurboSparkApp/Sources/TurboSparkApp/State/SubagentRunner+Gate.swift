@@ -39,7 +39,7 @@ extension SubagentRunner {
     /// `AppModel`'s own dispatch already pointed it at (state#67).
     static func observation(
         for call: AppToolCall, agent: AppAgentDefinition, project: AppProject?,
-        chatID: UUID? = nil, depth: Int = 0
+        chatID: UUID? = nil, depth: Int = 0, session: TurboSparkSession? = nil
     ) async -> ChatMessage {
         if !agent.isToolAllowed(call.name) {
             return errorObservation(
@@ -84,7 +84,9 @@ extension SubagentRunner {
                     + "with no approval UI. Ask the user to run this call in the main "
                     + "conversation.")
         }
-        if let refusal = permissionRefusal(for: call, project: project) {
+        if let refusal = await permissionRefusal(
+            for: call, project: project, session: session, chatID: chatID)
+        {
             return errorObservation(refusal)
         }
 
@@ -153,14 +155,74 @@ extension SubagentRunner {
     /// worse, treating "would have asked" as "may proceed". The terminal
     /// allowlist runs on top of that, so an auto-mode project still only
     /// auto-runs what `isAutoApprovable` accepts.
-    static func permissionRefusal(for call: AppToolCall, project: AppProject?) -> String? {
+    ///
+    /// **AGENT MODE REPLACES THE ASK WITH A VERDICT** (`swift/docs/
+    /// SWIFT_AGENT_MODE.md`). A subagent cannot raise the card Agent mode
+    /// would show, but it CAN ask the classifier -- which is the one form of
+    /// scrutiny that needs no UI. A classifier allow runs; a policy block
+    /// refuses with the same message the main loop feeds its model; an
+    /// unavailable verdict refuses exactly as before. The same routing rules
+    /// apply (`AgentModeRouting`): hard gates and suspended or skipping
+    /// sessions never reach the classifier.
+    static func permissionRefusal(
+        for call: AppToolCall, project: AppProject?,
+        session: TurboSparkSession? = nil, chatID: UUID? = nil
+    ) async -> String? {
+        let askRefusal: (String) -> String = { reason in
+            "Tool '\(call.name)' needs interactive approval (\(reason)), and a subagent "
+                + "runs with no approval UI. Ask the user to run this call in the main "
+                + "conversation, or widen the project's permissions."
+        }
         switch AppToolPermissionEngine.evaluate(call: call, project: project, sessionApproved: false) {
         case .deny(let reason):
             return "Tool '\(call.name)' is denied by project permissions: \(reason)"
-        case .ask(_, let reason):
-            return "Tool '\(call.name)' needs interactive approval (\(reason)), and a subagent "
-                + "runs with no approval UI. Ask the user to run this call in the main "
-                + "conversation, or widen the project's permissions."
+        case .ask(let assessment, let reason):
+            // Rootless subagents resolve like the rootless chat default
+            // (`.auto`), which is what the main loop's router falls back to
+            // as well; only a project can select Agent mode.
+            let mode = project?.permissions.mode ?? AppPermissionMode.auto
+            guard mode == .agentAuto else { return askRefusal(reason) }
+            let sessionID = chatID?.uuidString ?? "subagent"
+            let decision = AgentModeRouting.preClassifierDecision(
+                call: call, assessment: assessment,
+                suspended: await AgentModeGate.shared.isSuspended(sessionID: sessionID),
+                skipClassifier: await AgentModeGate.shared.shouldSkipClassifier(sessionID: sessionID))
+            switch decision {
+            case .manualCard:
+                return askRefusal(reason)
+            case .fastAllow:
+                // The static ladder vouched; the positive allowlist gate
+                // below reads the same allowlist and reaches the same nil.
+                return nil
+            case .classify:
+                let hints = MacAppSettingsFileStore.load().agentModeHints
+                let classifier = LocalModelToolClassifier(
+                    session: session, hints: hints,
+                    workspaceRoot: project?.rootDirectoryPath ?? "")
+                let request = ClassifierRequest(
+                    toolName: call.name, category: call.category,
+                    projectedCall: ToolCallProjection.projectedCall(call),
+                    // No parent transcript is reachable from here; the call
+                    // is judged on policy, which is the conservative reading.
+                    recentUserIntent: "")
+                switch await classifier.classify(request) {
+                case .allow:
+                    await AgentModeGate.shared.recordAllow(sessionID: sessionID)
+                    // **THE CLASSIFIER IS THE POSITIVE GATE IN THIS MODE.**
+                    // Its allow is a context-aware verdict -- strictly more
+                    // scrutiny than `isAutoApprovable`, which is why the
+                    // terminal allowlist gate below is deliberately skipped
+                    // on this return rather than re-refusing what the
+                    // classifier just judged.
+                    return nil
+                case .block(let blockReason):
+                    await AgentModeGate.shared.recordBlock(sessionID: sessionID)
+                    return AgentModeRouting.blockMessage(reason: blockReason)
+                case .unavailable:
+                    await AgentModeGate.shared.recordUnavailable(sessionID: sessionID)
+                    return askRefusal(reason)
+                }
+            }
         case .allow:
             break
         }

@@ -12,6 +12,13 @@ good enough to gate with, and the measurement that says so is reproducible in
 one command. What ships on is a reason string that decorates a verdict already
 heading to the approval sheet. What ships off is the veto.
 
+**The approval question is a different question, and it is answered
+elsewhere.** Classifier-driven AUTO-APPROVAL -- where the decision needs to
+say yes, using the user's recent request as context -- is Agent mode
+(`swift/docs/SWIFT_AGENT_MODE.md`), whose judge is the loaded language model,
+not this logistic regression. Nothing here changes that split: this model may
+only add friction, Agent mode's may grant.
+
 ## Where the artifacts live
 
 | Repository | Contents |

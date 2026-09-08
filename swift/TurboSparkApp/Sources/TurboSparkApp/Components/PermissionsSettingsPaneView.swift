@@ -27,6 +27,7 @@ public struct PermissionsSettingsPaneView: View {
                 customFoldersSection
                 systemPrivacyLinksSection
                 commandGateSection
+                AgentModeHintsSectionView(model: model)
                 securityModelCallout
             }
             .padding(16)
