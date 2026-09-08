@@ -42,7 +42,7 @@ pub use entry::{
 pub use hf::{hf_endpoint, set_hf_endpoint_override, Client, PopularRepo, RepoFile, RepoRef};
 pub use install::{
     gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,
-    InstallPlan, Installed, VISION_SIDECAR_FILES,
+    CancelFlag, InstallPlan, Installed, INSTALL_CANCELLED, VISION_SIDECAR_FILES,
 };
 pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,

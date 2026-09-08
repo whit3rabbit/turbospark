@@ -162,7 +162,16 @@ pub struct Installed {
     pub arch: ArchConfig,
 }
 
-pub use repack::ByteProgressCallback;
+pub use repack::{ByteProgressCallback, CancelFlag};
+
+/// The error text an install returns when its cancel flag fired. A constant
+/// so a caller (the GUI's cancel button) can recognize its own action's
+/// outcome without parsing prose around it.
+pub const INSTALL_CANCELLED: &str = "install cancelled";
+
+fn cancelled<T>() -> Result<T, String> {
+    Err(INSTALL_CANCELLED.to_string())
+}
 
 /// Install `plan` into `dir`.
 ///
@@ -174,18 +183,30 @@ pub fn install(
     client: &Client,
     progress: impl FnMut(&str),
 ) -> Result<Installed, String> {
-    install_with_byte_progress(plan, dir, client, progress, None)
+    install_with_byte_progress(plan, dir, client, progress, None, None)
 }
 
 /// Install `plan` into `dir`, forwarding byte progress updates to `byte_progress`
 /// when provided.
+///
+/// `cancel` makes the walk STOPPABLE: when `CancelFlag::cancel` has been
+/// called, the walk aborts with [`INSTALL_CANCELLED`]. The flag is checked
+/// at every step boundary AND inside every ranged chunk read, so latency is
+/// one chunk window, not one tensor. `None` (the CLI) keeps a walk
+/// unstoppable, exactly as before.
 pub fn install_with_byte_progress(
     plan: &InstallPlan,
     dir: &Path,
     client: &Client,
     mut progress: impl FnMut(&str),
     byte_progress: Option<ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<Installed, String> {
+    if let Some(flag) = cancel {
+        if flag.is_cancelled() {
+            return cancelled();
+        }
+    }
     std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
 
     progress(&format!(
@@ -205,20 +226,37 @@ pub fn install_with_byte_progress(
     // .json`, `config.json`) through this call -- they are its
     // `sidecar_files` -- but needs no tokenizer verification, since a tower
     // has no tokenizer.
-    fetch_sidecars(plan, dir, client, &mut progress, byte_progress.as_ref())?;
+    fetch_sidecars(
+        plan,
+        dir,
+        client,
+        &mut progress,
+        byte_progress.as_ref(),
+        cancel,
+    )?;
     if plan.vision_only {
-        return install_vision_only(plan, dir, client, &mut progress, byte_progress);
+        return install_vision_only(plan, dir, client, &mut progress, byte_progress, cancel);
     }
     verify_tokenizer(dir, &mut progress)?;
 
     // Step 2: the weights.
     let arch = match plan.kind {
-        SourceKind::Gguf => {
-            crate::stream::stream_gguf(plan, dir, client, &mut progress, byte_progress.as_ref())?
-        }
-        SourceKind::Mlx => {
-            crate::stream::stream_mlx(plan, dir, client, &mut progress, byte_progress.as_ref())?
-        }
+        SourceKind::Gguf => crate::stream::stream_gguf(
+            plan,
+            dir,
+            client,
+            &mut progress,
+            byte_progress.as_ref(),
+            cancel,
+        )?,
+        SourceKind::Mlx => crate::stream::stream_mlx(
+            plan,
+            dir,
+            client,
+            &mut progress,
+            byte_progress.as_ref(),
+            cancel,
+        )?,
     };
 
     // Step 3: read it back through the loaders a real run uses. Every
@@ -259,6 +297,7 @@ fn install_vision_only(
     client: &Client,
     progress: &mut impl FnMut(&str),
     byte_progress: Option<ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<Installed, String> {
     let vision = crate::stream::stream_vision_sidecar(
         &plan.weights,
@@ -267,6 +306,7 @@ fn install_vision_only(
         client,
         progress,
         byte_progress.as_ref(),
+        cancel,
     )?;
 
     let (record, _vision) = model_io::load_vision_sidecar(dir)
@@ -308,6 +348,7 @@ fn fetch_sidecars(
     client: &Client,
     progress: &mut impl FnMut(&str),
     byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<(), String> {
     progress(&format!(
         "fetching {} tokenizer sidecar(s) from {}",
@@ -315,6 +356,11 @@ fn fetch_sidecars(
         plan.sidecars
     ));
     for name in &plan.sidecar_files {
+        if let Some(flag) = cancel {
+            if flag.is_cancelled() {
+                return cancelled();
+            }
+        }
         let url = plan.sidecars.file_url(name);
         let bytes = client.get(&url)?;
         if let Some(cb) = byte_progress {

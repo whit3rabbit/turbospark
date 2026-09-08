@@ -192,6 +192,8 @@ pub fn pull(
         client,
         &mut progress,
         Some(byte_callback),
+        // The CLI has no cancel surface: a pull runs until it finishes.
+        None,
     )
     .map_err(|e| {
         pb.finish_and_clear();
@@ -262,6 +264,8 @@ pub fn pull_vision(
         client,
         &mut progress,
         Some(byte_callback),
+        // The CLI has no cancel surface: a pull runs until it finishes.
+        None,
     )
     .map_err(|e| {
         pb.finish_and_clear();

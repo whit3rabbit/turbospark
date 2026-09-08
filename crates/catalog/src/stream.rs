@@ -3,10 +3,43 @@ use std::path::Path;
 use std::sync::Arc;
 
 use model_io::{ArchConfig, ModelFamily, VisionConfig};
-use repack::{ByteProgressCallback, Gemma4Shards, HttpRangeSource, RangeSource, SafetensorsHeader};
+use repack::{
+    ByteProgressCallback, CancelFlag, Gemma4Shards, HttpRangeSource, RangeSource, SafetensorsHeader,
+};
 
 use crate::hf::{Client, RepoRef};
-use crate::install::InstallPlan;
+use crate::install::{InstallPlan, INSTALL_CANCELLED};
+
+/// The one place every `HttpRangeSource` of a walk is built, so the cancel
+/// flag is attached to each of them exactly once. `None` is the CLI's
+/// unstoppable shape, byte-for-byte as before.
+fn range_source(
+    url: String,
+    byte_progress: Option<&ByteProgressCallback>,
+    client: &Client,
+    cancel: Option<&CancelFlag>,
+) -> HttpRangeSource {
+    let source = match byte_progress {
+        Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
+        None => HttpRangeSource::new(url),
+    }
+    .with_optional_token(client.token());
+    match cancel {
+        Some(flag) => source.with_cancel(flag.clone()),
+        None => source,
+    }
+}
+
+/// Step-boundary cancel check for the whole-file GETs (`config.json`, a
+/// shard index) that bypass `HttpRangeSource` and so cannot see the flag
+/// mid-download. Those files are KB-scale, so a boundary check is the
+/// right granularity for them.
+fn check_cancelled(cancel: Option<&CancelFlag>) -> Result<(), String> {
+    match cancel {
+        Some(flag) if flag.is_cancelled() => Err(INSTALL_CANCELLED.to_string()),
+        _ => Ok(()),
+    }
+}
 
 pub(crate) fn stream_gguf(
     plan: &InstallPlan,
@@ -14,17 +47,14 @@ pub(crate) fn stream_gguf(
     client: &Client,
     progress: &mut impl FnMut(&str),
     byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<ArchConfig, String> {
     let file = plan
         .file
         .as_deref()
         .ok_or_else(|| "a gguf install needs a filename".to_string())?;
     let url = plan.weights.file_url(file);
-    let source = match byte_progress {
-        Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
-        None => HttpRangeSource::new(url),
-    }
-    .with_optional_token(client.token());
+    let source = range_source(url, byte_progress, client, cancel);
     let header = repack::fetch_gguf_header(&source)
         .map_err(|e| format!("reading the GGUF header of {file}: {e}"))?;
     let model_id = plan.weights.repo.clone();
@@ -68,7 +98,9 @@ pub(crate) fn stream_mlx(
     client: &Client,
     progress: &mut impl FnMut(&str),
     byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<ArchConfig, String> {
+    check_cancelled(cancel)?;
     let config_text = String::from_utf8(client.get(&plan.weights.file_url("config.json"))?)
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
     let config: serde_json::Value =
@@ -115,7 +147,7 @@ pub(crate) fn stream_mlx(
             "reusing the trunk already installed at {}",
             existing_dir.display()
         ));
-        let head_pairs = fetch_mtp_shards(mtp, client, byte_progress)?;
+        let head_pairs = fetch_mtp_shards(mtp, client, byte_progress, cancel)?;
         let mtp_base_names: Vec<String> = head_pairs
             .iter()
             .flat_map(|(h, _)| h.tensors.keys().cloned())
@@ -125,7 +157,8 @@ pub(crate) fn stream_mlx(
             .iter()
             .map(|(h, s)| (h, s as &dyn RangeSource))
             .collect();
-        let head_shards = Gemma4Shards::new(head_shards_input);
+        let head_shards = Gemma4Shards::new(head_shards_input)
+            .map_err(|e| format!("multi-token-prediction head shards: {e}"))?;
         let model_id = plan.weights.repo.clone();
         repack::graft_qwen_gdn_dense_mtp_head(
             existing_dir,
@@ -162,11 +195,7 @@ pub(crate) fn stream_mlx(
         .iter()
         .map(|name| {
             let url = plan.weights.file_url(name);
-            match byte_progress {
-                Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
-                None => HttpRangeSource::new(url),
-            }
-            .with_optional_token(client.token())
+            range_source(url, byte_progress, client, cancel)
         })
         .collect();
     let mut headers = sources
@@ -193,7 +222,7 @@ pub(crate) fn stream_mlx(
         progress(&format!(
             "fetching the multi-token-prediction head from {mtp}"
         ));
-        for (header, source) in fetch_mtp_shards(mtp, client, byte_progress)? {
+        for (header, source) in fetch_mtp_shards(mtp, client, byte_progress, cancel)? {
             headers.push(header);
             sources.push(source);
         }
@@ -205,7 +234,8 @@ pub(crate) fn stream_mlx(
             .zip(sources.iter())
             .map(|(h, s)| (h, s as &dyn RangeSource))
             .collect(),
-    );
+    )
+    .map_err(|e| format!("checkpoint shards: {e}"))?;
 
     let model_id = plan.weights.repo.clone();
     let report = |stage: &str| progress(&format!("[repack] {stage}"));
@@ -261,19 +291,27 @@ fn fetch_mtp_shards(
     mtp: &RepoRef,
     client: &Client,
     byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<Vec<(SafetensorsHeader, HttpRangeSource)>, String> {
-    let shards = fetch_prefixed_shards(mtp, &[repack::MTP_PREFIX], None, client, byte_progress)
-        .map_err(|e| {
-            // Preserve the original wording for the "nothing matched" case,
-            // which named the head explicitly rather than a generic prefix
-            // list -- nothing tests the string today, but a caller reading a
-            // failed `pull --reuse-trunk-from` error deserves the specific one.
-            if e.contains("declares no tensor under") {
-                format!("{mtp} declares no mtp.* tensor; the catalog row's mtp source is wrong")
-            } else {
-                e
-            }
-        })?;
+    let shards = fetch_prefixed_shards(
+        mtp,
+        &[repack::MTP_PREFIX],
+        None,
+        client,
+        byte_progress,
+        cancel,
+    )
+    .map_err(|e| {
+        // Preserve the original wording for the "nothing matched" case,
+        // which named the head explicitly rather than a generic prefix
+        // list -- nothing tests the string today, but a caller reading a
+        // failed `pull --reuse-trunk-from` error deserves the specific one.
+        if e.contains("declares no tensor under") {
+            format!("{mtp} declares no mtp.* tensor; the catalog row's mtp source is wrong")
+        } else {
+            e
+        }
+    })?;
     Ok(shards.into_iter().map(|(_name, h, s)| (h, s)).collect())
 }
 
@@ -320,7 +358,9 @@ pub(crate) fn fetch_prefixed_shards(
     explicit_file: Option<&str>,
     client: &Client,
     byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<Vec<(String, SafetensorsHeader, HttpRangeSource)>, String> {
+    check_cancelled(cancel)?;
     let index_url = repo.file_url("model.safetensors.index.json");
     let indexed = client.get_optional(&index_url)?;
     let mut shard_names: BTreeSet<String> = match &indexed {
@@ -351,12 +391,9 @@ pub(crate) fn fetch_prefixed_shards(
 
     let mut out = Vec::with_capacity(shard_names.len());
     for shard_name in shard_names {
+        check_cancelled(cancel)?;
         let url = repo.file_url(&shard_name);
-        let source = match byte_progress {
-            Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
-            None => HttpRangeSource::new(url),
-        }
-        .with_optional_token(client.token());
+        let source = range_source(url, byte_progress, client, cancel);
         let mut header = repack::fetch_safetensors_header(&source)
             .map_err(|e| format!("{repo}/{shard_name} header: {e}"))?;
         header
@@ -399,7 +436,9 @@ pub(crate) fn stream_vision_sidecar(
     client: &Client,
     progress: &mut impl FnMut(&str),
     byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
 ) -> Result<VisionConfig, String> {
+    check_cancelled(cancel)?;
     let config_text = String::from_utf8(client.get(&weights.file_url("config.json"))?)
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
     let config: serde_json::Value =
@@ -460,6 +499,7 @@ pub(crate) fn stream_vision_sidecar(
         explicit_file,
         client,
         byte_progress,
+        cancel,
     )?;
     progress(&format!("{} vision shard(s) fetched", fetched.len()));
 
@@ -492,7 +532,8 @@ pub(crate) fn stream_vision_sidecar(
             .zip(sources.iter())
             .map(|(h, s)| (h, s as &dyn RangeSource))
             .collect(),
-    );
+    )
+    .map_err(|e| format!("vision tower shards: {e}"))?;
     let read = repack::read_vision_entries(&shards, &vision_bases, &vision)
         .map_err(|e| format!("reading the vision tower: {e}"))?;
 
