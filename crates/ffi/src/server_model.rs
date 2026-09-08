@@ -33,6 +33,7 @@
 //! same session's direct `ts_generate` calls for no reason a caller could
 //! see.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use runtime::{
@@ -52,6 +53,12 @@ pub(crate) struct FfiChatModel {
     guardrails: turbospark_server::GuardrailConfig,
     default_system: Option<String>,
     default_reasoning: tokenizer::ReasoningEffort,
+    /// Set by `Server::stop` before it blocks on the background thread's
+    /// join. Composed into every cancel predicate this model passes down, so
+    /// a `ts_server_stop` called mid-decode actually ends the request rather
+    /// than the join waiting on it for the request's whole `max_tokens`
+    /// (`server.rs`'s `stop` doc).
+    stopping: Arc<AtomicBool>,
 }
 
 impl FfiChatModel {
@@ -61,6 +68,7 @@ impl FfiChatModel {
         guardrails: turbospark_server::GuardrailConfig,
         default_system: Option<String>,
         default_reasoning: tokenizer::ReasoningEffort,
+        stopping: Arc<AtomicBool>,
     ) -> Self {
         Self {
             core,
@@ -68,23 +76,50 @@ impl FfiChatModel {
             guardrails,
             default_system,
             default_reasoning,
+            stopping,
         }
+    }
+
+    /// The cancel predicate a downstream `run_raw_completion*` call actually
+    /// sees: the request's own `cancel` OR this server having been stopped.
+    /// Neither check is a substitute for the other -- a request-level cancel
+    /// says nothing about the server, and `stopping` says nothing about a
+    /// caller who wants only THIS request to stop.
+    fn cancel_or_stopped<'a>(&'a self, cancel: CancelFlag<'a>) -> impl Fn() -> bool + 'a {
+        move || cancel() || self.stopping.load(Ordering::Acquire)
     }
 
     /// The MODEL's padded head width, never the tokenizer dialect's
     /// constant (AGENTS.md Gotcha 37): two checkpoints can share a dialect
     /// and pad differently. Matches `generate`'s own read of this.
+    ///
+    /// Falls back to the width resolved at open on a poisoned lock, matching
+    /// `lock_engine`'s refuse-rather-than-read-through rule for the
+    /// `Result`-returning paths: a panic left the runner's own state
+    /// unknown, so the reported width is the one thing about it that a
+    /// caught panic cannot have changed.
     fn vocab_size(&self) -> usize {
-        let engine = self
-            .core
-            .engine
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match &*engine {
-            #[cfg(target_os = "macos")]
-            Engine::Real(runner) => runner.vocab_size(),
-            Engine::Scripted(_) => self.core.info.vocab_size,
+        match self.core.engine.lock() {
+            Ok(engine) => match &*engine {
+                #[cfg(target_os = "macos")]
+                Engine::Real(runner) => runner.vocab_size(),
+                Engine::Scripted(_) => self.core.info.vocab_size,
+            },
+            Err(_) => self.core.info.vocab_size,
         }
+    }
+
+    /// The one place this file locks the engine, and the ONLY policy for a
+    /// poisoned lock: refuse, matching `generate`'s and `telemetry`'s own
+    /// rule (`abi.rs`'s module doc) rather than reading through a runner
+    /// whose state a caught panic left unknown. Every mutating or
+    /// `Result`-returning call below goes through this rather than its own
+    /// `lock()`, so the HTTP path cannot come to disagree with the direct
+    /// `ts_generate` path about what a poisoned session means.
+    fn lock_engine(&self) -> Result<std::sync::MutexGuard<'_, Engine>, RuntimeError> {
+        self.core.engine.lock().map_err(|_| {
+            RuntimeError::Producer("the session is poisoned by an earlier panic".to_string())
+        })
     }
 }
 
@@ -117,11 +152,7 @@ impl FfiChatModel {
         on_progress: &mut dyn FnMut(RawDecodeProgress),
     ) -> Result<RawDecodeResult, RuntimeError> {
         let vocab_size = self.vocab_size();
-        let mut engine = self
-            .core
-            .engine
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut engine = self.lock_engine()?;
         let Engine::Real(runner) = &mut *engine else {
             return Err(RuntimeError::Producer(
                 crate::generate::SCRIPTED_HAS_NO_TOWER.to_string(),
@@ -148,6 +179,7 @@ impl FfiChatModel {
             .set_prompt_vision(&embeddings, &images.positions, prompt_ids.len())
             .map_err(|e| RuntimeError::Producer(e.to_string()))?;
 
+        let combined = self.cancel_or_stopped(cancel);
         let result = run_raw_completion_cancellable(
             runner.as_mut(),
             &self.core.tokenizer,
@@ -155,7 +187,7 @@ impl FfiChatModel {
             config,
             self.core.max_context,
             vocab_size,
-            cancel,
+            &combined,
             on_progress,
         );
         runner.clear_prompt_vision();
@@ -181,11 +213,10 @@ impl ChatModel for FfiChatModel {
             if !self.core.info.vision.active {
                 return None;
             }
-            let engine = self
-                .core
-                .engine
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // No `Result` to carry a poison refusal through this trait
+            // method; a poisoned lock reports "no vision" rather than
+            // reading through, matching `vocab_size`'s fallback.
+            let engine = self.core.engine.lock().ok()?;
             let Engine::Real(runner) = &*engine else {
                 return None;
             };
@@ -241,11 +272,7 @@ impl ChatModel for FfiChatModel {
         &self,
         f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
     ) -> Result<RawDecodeResult, RuntimeError> {
-        let mut engine = self
-            .core
-            .engine
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut engine = self.lock_engine()?;
         match &mut *engine {
             #[cfg(target_os = "macos")]
             Engine::Real(runner) => f(runner.as_mut()),
@@ -281,11 +308,8 @@ impl ChatModel for FfiChatModel {
             .core
             .speculation_block
             .filter(|_| config.shaping.is_deterministic());
-        let mut engine = self
-            .core
-            .engine
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let combined = self.cancel_or_stopped(cancel);
+        let mut engine = self.lock_engine()?;
         match (&mut *engine, block) {
             #[cfg(target_os = "macos")]
             (Engine::Real(runner), Some(block)) => run_raw_completion_speculative_cancellable(
@@ -296,7 +320,7 @@ impl ChatModel for FfiChatModel {
                 self.core.max_context,
                 vocab_size,
                 block,
-                cancel,
+                &combined,
                 on_progress,
             ),
             #[cfg(target_os = "macos")]
@@ -310,7 +334,7 @@ impl ChatModel for FfiChatModel {
                         self.core.max_context,
                         vocab_size,
                         foundation::DEFAULT_CHUNK_SIZE as usize,
-                        cancel,
+                        &combined,
                         on_progress,
                     )
                 } else {
@@ -321,7 +345,7 @@ impl ChatModel for FfiChatModel {
                         config,
                         self.core.max_context,
                         vocab_size,
-                        cancel,
+                        &combined,
                         on_progress,
                     )
                 }
@@ -336,9 +360,93 @@ impl ChatModel for FfiChatModel {
                 config,
                 self.core.max_context,
                 vocab_size,
-                cancel,
+                &combined,
                 on_progress,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    use foundation::LogitValue;
+    use runtime::{GenerationConfig, RawDecodeProgress, StopReason};
+    use selection::ShapingConfig;
+    use tokenizer::MfTokenizer;
+    use turbospark_server::ChatModel;
+
+    use super::FfiChatModel;
+
+    fn fixture() -> MfTokenizer {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
+        MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer should load")
+    }
+
+    fn one_hot(vocab: usize, index: usize) -> Vec<LogitValue> {
+        let mut v = vec![LogitValue::from_f32(0.0); vocab];
+        v[index] = LogitValue::from_f32(1.0);
+        v
+    }
+
+    /// `Server::stop` sets `stopping` before it blocks on the background
+    /// thread's join (`server.rs`'s doc). This constructs an `FfiChatModel`
+    /// with that flag already `true` -- exactly the state a request already
+    /// in flight sees -- and a `cancel` closure that never fires on its own,
+    /// so the ONLY thing that can end the run is `stopping`.
+    ///
+    /// A wall-clock test against the real `ts_server_stop` is not reliable
+    /// here: a scripted producer decodes in microseconds, so there is no
+    /// window in which a stop-mid-decode is even observable. This is the
+    /// portable substitute the plan settles for.
+    #[test]
+    fn the_server_stopping_flag_cancels_a_request_within_one_token() {
+        let tokenizer = fixture();
+        let vocab = tokenizer.vocab_size;
+        let id = tokenizer.token_to_id("h").unwrap() as usize;
+        // Enough steps that an uncancelled run would decode for a while;
+        // the assertion below is that this is never approached.
+        let session = crate::testing::session_for_testing(
+            tokenizer,
+            vec![one_hot(vocab, id); 64],
+            vocab,
+            4096,
+        );
+        let core = session.core();
+
+        let stopping = Arc::new(AtomicBool::new(true));
+        let model = FfiChatModel::new(
+            core,
+            "test".to_string(),
+            turbospark_server::GuardrailConfig::default(),
+            None,
+            tokenizer::ReasoningEffort::Off,
+            stopping,
+        );
+
+        let prompt_ids = vec![0i32, 1, 2];
+        let config = GenerationConfig {
+            shaping: ShapingConfig::new(0.0, 0, None, 1.0, None).unwrap(),
+            max_new_tokens: 64,
+            stop_strings: Vec::new(),
+            extra_stop_tokens: Vec::new(),
+            rate: runtime::RateControl::default(),
+        };
+        let never_cancel = || false;
+        let mut on_progress = |_event: RawDecodeProgress| {};
+
+        let result = model
+            .run_completion(&prompt_ids, &config, None, &never_cancel, &mut on_progress)
+            .expect("a stopped run still returns Ok, not Err");
+        assert_eq!(result.reason, StopReason::Cancelled);
+        assert!(
+            result.new_tokens <= 1,
+            "expected the stop flag to be observed within one token, got {} new tokens",
+            result.new_tokens
+        );
     }
 }

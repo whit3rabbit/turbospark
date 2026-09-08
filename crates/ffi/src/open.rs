@@ -173,6 +173,15 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // (`CLAUDE.md` Gotcha 2), reach these spellings with no install on the
     // machine.
     let max_context = sized(&options.max_context, "maxContext")?;
+    // `sized` only proves a non-negative integer, and 0 is one: a session
+    // opened at it allocates fine (`resolve_max_context` passes `Fixed(0)`
+    // through as `resolved = 0`) and then every `ts_generate` fails with
+    // "context overflow ... resolved window is 0", after the multi-GB open
+    // already ran. Refused here, before anything is read from disk, for the
+    // same reason the slot-count check below is.
+    if max_context == Some(0) {
+        return Err("maxContext must be at least 1, or \"auto\"".to_string());
+    }
     // **A SLOT COUNT OUTSIDE THE ALLOWED SET IS A PANIC LATER, IN PROCESS.**
     // `sized` only proves a non-negative integer; `ExpertCacheSlots::Fixed`
     // was built from it unvalidated, and this engine is linked into its host

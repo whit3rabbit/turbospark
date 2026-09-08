@@ -198,6 +198,16 @@ pub unsafe extern "C" fn ts_install(
     result_json: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
+        // Checked before any work: an install streams a whole checkpoint (it
+        // is never written to disk twice) and cannot resume, so a null
+        // out-pointer discovered only after the download completes means
+        // re-streaming the entire thing to try again.
+        if result_json.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "resultJson must not be null".to_string(),
+            ));
+        }
         let alias =
             strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
 
@@ -252,6 +262,15 @@ pub unsafe extern "C" fn ts_install_repo(
     result_json: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
+        // Checked before any work, for `ts_install`'s reason: an install
+        // cannot resume, so a null out-pointer found only at the end means
+        // re-streaming the whole checkpoint to try again.
+        if result_json.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "resultJson must not be null".to_string(),
+            ));
+        }
         let repo =
             strings::required(repo, "repo").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let alias =
@@ -297,6 +316,35 @@ pub unsafe extern "C" fn ts_install_repo(
         .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
         strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
+}
+
+/// Signals every in-flight install walk (`ts_install`, `ts_install_repo`)
+/// to stop. Returns 1 when at least one walk was running and has been
+/// signalled, 0 when nothing was running.
+///
+/// The walk notices at its next step boundary or ranged chunk read --
+/// seconds, not tensor boundaries -- and returns `install cancelled`
+/// through its own callback/error path. Cancellation does NOT resume or
+/// keep progress: the walk dies the same death a network failure gives it,
+/// and the partial install directory is exactly as usable (it is not).
+/// An install in flight when this fires still runs its own completion
+/// path, so a caller that needs to know the walk has exited can compare
+/// `ts_installs_finished` before and after.
+#[no_mangle]
+pub unsafe extern "C" fn ts_install_cancel() -> c_int {
+    if models::cancel_active_installs() > 0 {
+        1
+    } else {
+        0
+    }
+}
+
+/// How many install walks have finished (any outcome) since process start.
+/// Read it twice around a `ts_install_cancel` to confirm the cancelled
+/// walk actually exited rather than being wedged inside a blocking read.
+#[no_mangle]
+pub unsafe extern "C" fn ts_installs_finished() -> u32 {
+    models::installs_finished() as u32
 }
 
 /// Reads the currently resolved Hugging Face token. If a token is found,

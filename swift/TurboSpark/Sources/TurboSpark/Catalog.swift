@@ -317,13 +317,10 @@ public enum TurboSparkCatalog {
     /// backwards in wall-clock order. Take the maximum rather than the last
     /// if you drive a progress bar from them.
     ///
-    /// **AND IT CANNOT BE CANCELLED.** Dropping the consuming task ends
-    /// DELIVERY and nothing else: `ts_install` blocks its thread for the
-    /// whole walk and the C ABI exposes no install-cancel call, so the
-    /// download keeps running to completion or failure on a thread nobody is
-    /// listening to. Do not build a Stop button on this that claims
-    /// otherwise. Making it real needs a `ts_install_cancel` on the Rust side
-    /// first, which does not exist today.
+    /// **CANCELLABLE SINCE `ts_install_cancel` EXISTED ON THE RUST SIDE**
+    /// (`cancelInstall()` below): a cancelled walk dies the same death a
+    /// network failure gives it -- nothing of the partial install is kept,
+    /// and the error carries the "install cancelled" text.
     public static func install(_ alias: String) -> AsyncThrowingStream<InstallEvent, Error> {
         AsyncThrowingStream { continuation in
             // A dedicated thread, not a global queue slot: this blocks for
@@ -352,8 +349,8 @@ public enum TurboSparkCatalog {
     ///
     /// `repo` is `owner/name` or `owner/name@revision`. `alias` is the local name.
     ///
-    /// Cannot resume and CANNOT BE CANCELLED, for the reasons the catalog
-    /// overload above states in full.
+    /// Cannot resume; cancellable through `cancelInstall()`, same as the
+    /// catalog overload above.
     public static func install(
         repo: String,
         alias: String,
@@ -386,6 +383,27 @@ public enum TurboSparkCatalog {
             thread.name = "com.turbospark.install"
             thread.start()
         }
+    }
+
+    /// Signals every in-flight install walk to stop.
+    ///
+    /// Returns true when at least one walk was running and has been
+    /// signalled. The walk does not die ON this call: it fails at its next
+    /// ranged chunk read with the "install cancelled" error, seconds later,
+    /// and keeps nothing (the walk cannot resume, so a cancelled install is
+    /// a dead install, exactly like one that failed on the network).
+    /// Documented safe from any thread.
+    @discardableResult
+    public static func cancelInstall() -> Bool {
+        ts_install_cancel() != 0
+    }
+
+    /// How many install walks have finished (success, failure, or cancel)
+    /// since process start. Read twice around `cancelInstall()` to confirm
+    /// a cancelled walk actually exited rather than being wedged inside a
+    /// blocking read.
+    public static func installsFinished() -> UInt32 {
+        ts_installs_finished()
     }
 }
 

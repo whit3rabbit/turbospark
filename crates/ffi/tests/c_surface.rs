@@ -98,6 +98,29 @@ fn a_null_argument_is_an_error_rather_than_a_crash() {
     assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
     assert!(session.is_null(), "a failed open must not write a handle");
     let _ = &mut out;
+
+    // `ts_generate` can run for minutes; a null `result_json` must be caught
+    // before anything happens, not after a whole turn ran for nothing.
+    let session = endless_session(fixture(), "h", 8);
+    let sink = Sink {
+        events: Mutex::new(Vec::new()),
+    };
+    let messages = c(r#"[{"role":"user","content":"hi"}]"#);
+    let code = unsafe {
+        ts_generate(
+            &session,
+            messages.as_ptr(),
+            ptr::null(),
+            Some(collect),
+            &sink as *const Sink as *mut c_void,
+            ptr::null_mut(),
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(
+        sink.events.lock().unwrap().is_empty(),
+        "no generation should have run before the out-pointer was checked"
+    );
 }
 
 #[test]
@@ -1368,6 +1391,41 @@ fn an_out_of_set_expert_cache_slot_count_is_refused_before_the_model_is_read() {
     );
 }
 
+/// `sized` proves only "a non-negative integer", and 0 is one: an open at it
+/// used to succeed and every subsequent `ts_generate` then failed with
+/// "resolved window is 0", after the multi-GB open already ran. Refused here
+/// instead, before anything is read from disk -- same shape and same reason
+/// as the slot-count check above, and the model path is nonexistent for the
+/// identical reason: options are mapped first, so this is reachable with no
+/// install on the machine.
+#[test]
+fn a_zero_max_context_is_refused_before_the_model_is_read() {
+    let model = CString::new("/nonexistent/model.gturbo").unwrap();
+    let options = CString::new("{\"maxContext\":0}").unwrap();
+    let mut session: *mut Session = ptr::null_mut();
+    let code = unsafe { ts_session_open(model.as_ptr(), options.as_ptr(), &mut session) };
+
+    assert_ne!(code, abi::TS_OK, "maxContext=0 must not open");
+    assert!(session.is_null(), "a failed open must not write a handle");
+    let err = last_error();
+    assert!(
+        err.contains("maxContext"),
+        "the refusal must name the option, not the path: got {err:?}"
+    );
+
+    // The gate-that-cannot-fail check: a legal window must still reach the
+    // model read rather than being caught by this guard.
+    let model = CString::new("/nonexistent/model.gturbo").unwrap();
+    let options = CString::new("{\"maxContext\":1}").unwrap();
+    let mut session: *mut Session = ptr::null_mut();
+    unsafe { ts_session_open(model.as_ptr(), options.as_ptr(), &mut session) };
+    assert!(
+        !last_error().contains("maxContext"),
+        "maxContext=1 is legal and must reach the model read: got {:?}",
+        last_error()
+    );
+}
+
 #[test]
 fn hf_token_c_surface_lifecycle() {
     let tmp = std::env::temp_dir().join(format!("ts_hf_test_{}", std::process::id()));
@@ -1562,5 +1620,5 @@ fn embedding_encode_null_and_invalid_checks() {
     #[cfg(target_os = "macos")]
     assert_eq!(code, abi::TS_ERR_JSON);
     #[cfg(not(target_os = "macos"))]
-    assert_eq!(code, abi::TS_ERR_UNSUPPORTED_PLATFORM);
+    assert_eq!(code, abi::TS_ERR_UNSUPPORTED);
 }

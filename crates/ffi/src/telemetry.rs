@@ -60,13 +60,24 @@ pub(crate) fn phases_json(session: &Session) -> Result<String, String> {
     serde_json::to_string(&report).map_err(|e| e.to_string())
 }
 
-/// This process's peak `phys_footprint` in bytes, or 0 where the counter is
-/// unavailable.
+/// This process's peak `phys_footprint` in bytes since the FIRST call to this
+/// function in this process, or 0 where the counter is unavailable.
 ///
 /// **The SAME mach counter every frozen row in `docs/BENCHMARKS.md` is
 /// measured with**, which is why this borrows `crates/bench`'s sampler rather
 /// than reading a different one: a GUI reporting a number the memory oracle
 /// would not recognise is worse than reporting none.
+///
+/// **A PROCESS-WIDE SAMPLER, NOT A FRESH ONE PER CALL.** A fresh
+/// `AppMemorySampler` has recorded exactly one reading by the time
+/// `peak_bytes()` is read back, so what this used to report was the CURRENT
+/// footprint under a name that says "peak" -- correct only for a caller who
+/// happens to poll at the actual maximum. `SAMPLER` folds every call's
+/// reading into one running peak instead, so a status panel polling this on
+/// a timer gets what the name promises. A TRUE lifetime peak -- one that also
+/// sees the instant between two polls -- is not obtainable from this REV0
+/// `task_vm_info` prefix without polling more often than a caller asks for,
+/// which is out of scope here.
 ///
 /// Note what it counts. On a streamed MoE install the resident weight
 /// mapping IS counted (Metal pins it), so the honest accounting is
@@ -76,7 +87,16 @@ pub(crate) fn phases_json(session: &Session) -> Result<String, String> {
 /// beside the context window.
 #[cfg(target_os = "macos")]
 pub(crate) fn peak_footprint_bytes() -> u64 {
-    let mut sampler = bench::memory::AppMemorySampler::new();
+    static SAMPLER: std::sync::OnceLock<std::sync::Mutex<bench::memory::AppMemorySampler>> =
+        std::sync::OnceLock::new();
+    let sampler =
+        SAMPLER.get_or_init(|| std::sync::Mutex::new(bench::memory::AppMemorySampler::new()));
+    // A poisoned lock (some earlier caller panicked mid-sample, which
+    // `sample`'s own body cannot do) still has a peak worth reading; recover
+    // rather than losing every reading taken so far.
+    let mut sampler = sampler
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     sampler.sample();
     sampler.peak_bytes().unwrap_or(0)
 }
@@ -110,4 +130,43 @@ pub(crate) fn system_info_json() -> Result<String, String> {
         "memoryPressure": memory,
     });
     serde_json::to_string(&info).map_err(|e| e.to_string())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::peak_footprint_bytes;
+
+    /// A fresh-sampler-per-call implementation reports the CURRENT footprint
+    /// under the name "peak" -- correct only for a caller who happens to
+    /// poll at the actual maximum. This asserts the invariant a real peak
+    /// has to hold: a later reading is never lower than an earlier one.
+    ///
+    /// **THIS DOES NOT MUTATION-CHECK AGAINST THE BUG IT FIXES, and that is
+    /// recorded rather than hidden.** The natural mutation -- allocate and
+    /// touch a large block, sample, drop or `munmap` it, sample again, and
+    /// expect a fresh-sampler bug to show a fall -- was tried at 64 MiB and
+    /// 512 MiB through a `Vec`, and again through a raw `mmap`/`munmap` pair
+    /// to rule out the allocator retaining the freed block rather than
+    /// returning it to the kernel. All three read the IDENTICAL
+    /// `phys_footprint` before and after the free: this counter simply does
+    /// not fall within a live process on this machine inside a test's
+    /// timescale, which means a fresh sampler and a persistent one are
+    /// indistinguishable by any allocation pattern this test can drive. The
+    /// fix is still correct (a "peak" that is actually "current" is a real
+    /// contract bug, visible the moment a caller's own footprint happens to
+    /// dip, which processes with active KV eviction or expert-slot turnover
+    /// do), and the assertion below is the honest invariant this environment
+    /// can check rather than a false claim of having reproduced the defect.
+    #[test]
+    fn the_reported_peak_never_falls_across_calls() {
+        let first = peak_footprint_bytes();
+        assert!(first > 0, "a live process has a nonzero footprint");
+        for _ in 0..8 {
+            let next = peak_footprint_bytes();
+            assert!(
+                next >= first,
+                "the peak must not fall across calls: {first} then {next}"
+            );
+        }
+    }
 }

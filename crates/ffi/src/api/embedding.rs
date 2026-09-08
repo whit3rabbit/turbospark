@@ -15,6 +15,15 @@ pub unsafe extern "C" fn ts_embedding_encode_json(
     out: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
+        // Checked before any work: encoding a batch can take a while, and a
+        // null out-pointer discovered only at the end means the encode ran
+        // for nothing.
+        if out.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "out must not be null".to_string(),
+            ));
+        }
         let model_path = strings::required(model_path, "modelPath")
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let texts_json = strings::required(texts_json, "textsJson")
@@ -50,7 +59,7 @@ pub unsafe extern "C" fn ts_embedding_encode_json(
         {
             let _ = (model_path, texts_json, out);
             Err((
-                abi::TS_ERR_UNSUPPORTED_PLATFORM,
+                abi::TS_ERR_UNSUPPORTED,
                 "embedding model inference is supported on macOS only".to_string(),
             ))
         }

@@ -43,7 +43,7 @@ use crate::session::{Engine, Session};
 use crate::wire::{GenerateOptions, GenerateResult, WireMessage};
 
 use prompt::{collect_image_parts, render};
-use vision::{attach_images, clear_vision};
+use vision::attach_images;
 
 fn stop_reason_name(reason: StopReason) -> &'static str {
     match reason {
@@ -135,6 +135,10 @@ pub(crate) fn generate(
     let (rendered_ids, _note) = render(&session.tokenizer, messages, reasoning)?;
     // Shape-checked before the lock, decoded inside it (see `attach_images`).
     let image_parts = collect_image_parts(messages)?;
+    // Depends on `options` alone, so it is checked before the lock and before
+    // any image is touched: a bad sampling option should fail as cheaply as a
+    // misspelled reasoning level, not after an image has been encoded.
+    let shaping = session.shaping(options)?;
 
     // Armed BEFORE the lock is taken, so a Stop pressed between turns cannot
     // cancel the next one before it has produced a token.
@@ -149,11 +153,20 @@ pub(crate) fn generate(
     // `splice_and_walk` expands each marker to that image's merged-token
     // count -- so the budget clamp and every length below have to be taken
     // AFTER this, or a page's worth of positions is missing from both.
-    let prompt_ids = attach_images(&mut engine, session, &rendered_ids, &image_parts)?;
+    //
+    // `vision_scope` clears the injection map on drop -- success, an early
+    // `?` below, or a panic unwinding through -- so a failure between here
+    // and the decode cannot leave it installed for the next turn (see
+    // `VisionScope`'s doc). It also holds the only mutable borrow of `engine`
+    // the rest of this function is allowed to use: everything below reaches
+    // the engine through `vision_scope.engine_mut()` rather than re-borrowing
+    // `engine` directly, which the borrow checker would refuse.
+    let (prompt_ids, mut vision_scope) =
+        attach_images(&mut engine, session, &rendered_ids, &image_parts)?;
     let max_new = clamp_max_new(session, options.max_new_tokens, prompt_ids.len())?;
 
     let config = GenerationConfig {
-        shaping: session.shaping(options)?,
+        shaping,
         max_new_tokens: max_new,
         stop_strings: options.stop.clone(),
         extra_stop_tokens: options
@@ -211,13 +224,13 @@ pub(crate) fn generate(
     // padded head width, which is right only while one model uses each
     // dialect (ChatML's row is Qwen 3.6's 248,320 and Qwen3-30B-A3B is also
     // ChatML at 151,936).
-    let vocab_size = match &*engine {
+    let vocab_size = match vision_scope.engine_mut() {
         #[cfg(target_os = "macos")]
         Engine::Real(runner) => runner.vocab_size(),
         Engine::Scripted(_) => session.info.vocab_size,
     };
     let block = turn_block(session.speculation_block, config.shaping.is_deterministic());
-    let decoded: Result<RawDecodeResult, _> = match (&mut *engine, block) {
+    let decoded: Result<RawDecodeResult, _> = match (vision_scope.engine_mut(), block) {
         // The CONCRETE runner, which is why this sits inside the match:
         // `SpeculativeProducer` has an associated type and cannot be
         // reached through a `&mut dyn LogitProducer`.
@@ -294,16 +307,14 @@ pub(crate) fn generate(
         ),
     };
 
-    // **THE CALLER CONSUMES THE INJECTION MAP, and it is cleared on the
-    // FAILURE path too.** `reset()` deliberately no longer clears it
-    // (`crates/runtime/CLAUDE.md` Gotcha 13: clearing at the generation loop's entry
-    // landed on the map for the very prompt about to be prefilled, so every image
-    // run prefilled placeholder embeddings and read perfectly fluently off a
-    // picture the model had not been shown). So it ends HERE, before the `?`,
-    // or the next turn on this session inherits this turn's spans.
-    if !image_parts.is_empty() {
-        clear_vision(&mut engine);
-    }
+    // **THE CALLER CONSUMES THE INJECTION MAP, and `vision_scope`'s `Drop`
+    // clears it on the FAILURE path too**, same as it does on every other
+    // exit from this function (`reset()` deliberately does not clear it:
+    // `crates/runtime/CLAUDE.md` Gotcha 13, clearing at the generation loop's
+    // entry landed on the map for the very prompt about to be prefilled, so
+    // every image run prefilled placeholder embeddings and read perfectly
+    // fluently off a picture the model had not been shown). Nothing to do
+    // here by hand; the guard is why.
     let result: RawDecodeResult = decoded.map_err(|e| e.to_string())?;
 
     // THE TERMINAL EVENT, after every content/reasoning/tool event and just

@@ -56,6 +56,7 @@
 //! restriction: it is a plain OS-level blocking wait, legal to call from
 //! any thread, async runtime or none.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -83,6 +84,18 @@ pub struct Server {
     /// lose models without rebinding.
     registry: Arc<LiveRegistry>,
     events: Arc<EventRing>,
+    /// Set BEFORE the graceful-shutdown signal is sent, and read from every
+    /// `FfiChatModel` this server has attached (`attach` clones it in).
+    /// Axum's graceful shutdown waits for in-flight connections to finish and
+    /// `Drop` blocks the calling thread on `stop`'s own join, so without this
+    /// a `ts_server_stop` (or a `Server` going out of scope) called while a
+    /// request is decoding blocks for up to that request's whole
+    /// `max_tokens` -- on a GUI's main thread, that reads as a frozen window
+    /// rather than a stop that took a moment. Composed into the cancel
+    /// predicate `run_completion` and `run_with_images` already pass down,
+    /// so a request cut this way reports `stopReason: cancelled`, same as
+    /// `ts_session_cancel` reports for a direct `ts_generate` call.
+    stopping: Arc<AtomicBool>,
     // `Option` so `stop` can be called from both `ts_server_stop` and `Drop`
     // without sending on a closed channel or joining a thread twice.
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
@@ -203,6 +216,7 @@ impl Server {
             started: Instant::now(),
             registry,
             events,
+            stopping: Arc::new(AtomicBool::new(false)),
             shutdown: Some(shutdown_tx),
             thread: Some(thread),
         })
@@ -225,6 +239,7 @@ impl Server {
                 self.guardrails,
                 self.default_system.clone(),
                 self.default_reasoning,
+                Arc::clone(&self.stopping),
             ));
         let id = self.registry.attach(model)?;
         ServerObserver::record(
@@ -304,7 +319,17 @@ impl Server {
 
     /// Signals graceful shutdown and blocks until the background thread has
     /// actually stopped serving. Idempotent: a second call is a no-op.
+    ///
+    /// `stopping` is set BEFORE the shutdown signal is sent, and before the
+    /// join below blocks this thread: axum's graceful shutdown waits for
+    /// in-flight connections, so a request mid-decode would otherwise hold
+    /// this call (and whatever thread called it, e.g. a GUI's main thread via
+    /// `ts_server_stop`) for up to that request's whole `max_tokens`. Every
+    /// `FfiChatModel` this server attached reads the same flag from its
+    /// cancel predicate, so setting it here is what actually ends the
+    /// decode the join is waiting on, not the signal to axum by itself.
     fn stop(&mut self) {
+        self.stopping.store(true, Ordering::Release);
         if let Some(tx) = self.shutdown.take() {
             // A dropped receiver (the thread already exited on its own,
             // e.g. a bind race elsewhere tore the listener down) means

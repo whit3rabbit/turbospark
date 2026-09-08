@@ -27,6 +27,16 @@ pub unsafe extern "C" fn ts_generate(
     result_json: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
+        // Checked before any work: a turn can run for minutes, and a null
+        // out-pointer discovered only at the end means the whole generation
+        // (and any side effect it had, e.g. a KV prefix advanced) already
+        // happened for nothing.
+        if result_json.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "resultJson must not be null".to_string(),
+            ));
+        }
         let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let raw = strings::required(messages_json, "messagesJson")
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;

@@ -42,7 +42,16 @@ fn is_pid_alive(pid: i32) -> bool {
         extern "C" {
             fn kill(pid: i32, sig: i32) -> i32;
         }
-        unsafe { kill(pid, 0) == 0 }
+        // A process owned by another user answers EPERM rather than 0, which
+        // means "alive but not mine to signal", not "dead". Treating EPERM as
+        // dead deletes the pid/meta files out from under a live daemon. EPERM
+        // is 1 on every POSIX target this crate builds for (Linux and the BSD
+        // family, macOS included), so this is read from the OS error rather
+        // than pulled in from `libc` for one constant.
+        const EPERM: i32 = 1;
+        unsafe {
+            kill(pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(EPERM)
+        }
     }
     #[cfg(not(unix))]
     {

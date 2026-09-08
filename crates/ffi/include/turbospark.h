@@ -860,6 +860,26 @@ int32_t ts_install_repo(const char *repo, const char *alias, const char *file,
                         void *userdata, char **result_json);
 
 /*
+ * Signals every in-flight install walk to stop. Returns 1 when at least one
+ * walk was running and has been signalled, 0 when nothing was running.
+ *
+ * The walk notices at its next step boundary or ranged chunk read (seconds,
+ * not tensor boundaries) and fails with the "install cancelled" error, the
+ * same death a network failure gives it: CANNOT RESUME applies, so nothing
+ * of the partial install is kept. Safe to call from any thread while an
+ * install is blocking another one.
+ */
+int32_t ts_install_cancel(void);
+
+/*
+ * How many install walks have finished (success, failure, or cancel) since
+ * process start. Read it twice around ts_install_cancel to confirm a
+ * cancelled walk actually exited rather than being wedged in a blocking
+ * read.
+ */
+uint32_t ts_installs_finished(void);
+
+/*
  * Reads the currently resolved Hugging Face token. If a token is found,
  * writes a newly-allocated string to *out (free with ts_string_free).
  * If no token is set, sets *out to NULL and returns TS_OK.
