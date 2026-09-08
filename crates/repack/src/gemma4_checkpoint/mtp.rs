@@ -38,7 +38,7 @@ use super::config::Gemma4Error;
 use super::narrow::narrow_raw_to_bf16;
 use super::shards::{shape4, Gemma4Shards};
 use crate::repack::quantize_matrix_int4;
-use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec, ResidentTensorSpec};
+use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
 /// The head's resident entries plus what narrowing its norms cost.
 pub struct MtpRead {
@@ -89,22 +89,9 @@ pub fn read_mtp_entries(
                         detail: e.to_string(),
                     }
                 })?;
-                let mut packed = Vec::with_capacity(rows * cols / 2);
-                let mut scales = Vec::new();
-                let mut biases = Vec::new();
-                for row in &quantized {
-                    packed.extend_from_slice(&row.packed);
-                    scales.extend_from_slice(&row.scales);
-                    biases.extend_from_slice(&row.biases);
-                }
-                entries.push(ResidentEntrySpec::Int4(ResidentTensorSpec {
-                    name: name.to_string(),
-                    packed,
-                    scales,
-                    biases,
-                    rows: rows as u32,
-                    cols: cols as u32,
-                }));
+                entries.push(ResidentEntrySpec::Int4(
+                    crate::repack::resident_spec_from_int4_rows(name, &quantized, cols),
+                ));
             }
             // AN RMS NORM. Narrowed, exactly as the trunk's norms are.
             1 => {

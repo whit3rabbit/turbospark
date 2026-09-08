@@ -75,6 +75,20 @@ pub enum GgufHeaderError {
         name: String,
         n_dims: u32,
     },
+    /// A tensor's element count, byte size, or absolute offset overflowed
+    /// `u64` arithmetic. Header-supplied dims and offsets are otherwise
+    /// unchecked, so a hostile or corrupt file can name a product or a sum
+    /// that does not fit rather than one this port can address.
+    Overflow {
+        name: String,
+    },
+    /// A tensor's offset is not a multiple of the header's alignment, which
+    /// the GGUF spec requires.
+    MisalignedTensor {
+        name: String,
+        offset: u64,
+        alignment: u64,
+    },
 }
 
 impl std::fmt::Display for GgufHeaderError {
@@ -127,6 +141,17 @@ impl std::fmt::Display for GgufHeaderError {
             GgufHeaderError::BadDimensions { name, n_dims } => {
                 write!(f, "tensor {name}: {n_dims} dimensions is out of range")
             }
+            GgufHeaderError::Overflow { name } => {
+                write!(f, "tensor {name}: size or offset arithmetic overflowed u64")
+            }
+            GgufHeaderError::MisalignedTensor {
+                name,
+                offset,
+                alignment,
+            } => write!(
+                f,
+                "tensor {name}: offset {offset} is not a multiple of the {alignment}-byte alignment"
+            ),
         }
     }
 }
@@ -232,6 +257,10 @@ impl GgufTensorInfo {
     }
 
     /// Packed byte size, from the element count and the type's block shape.
+    ///
+    /// Every multiplication is checked: `dims` and `offset` come off an
+    /// untrusted header, and an unchecked product wraps in release rather
+    /// than reporting a size this port cannot address.
     pub fn byte_size(&self, name: &str) -> Result<u64, GgufHeaderError> {
         let (block_elems, block_bytes) =
             super::ggml::ggml_type_block(self.ggml_type).ok_or_else(|| {
@@ -243,7 +272,14 @@ impl GgufTensorInfo {
                     None => GgufHeaderError::UnknownType { id: self.ggml_type },
                 }
             })?;
-        let elements = self.element_count();
+        let elements = self
+            .dims
+            .iter()
+            .copied()
+            .try_fold(1u64, |acc, d| acc.checked_mul(d))
+            .ok_or_else(|| GgufHeaderError::Overflow {
+                name: name.to_string(),
+            })?;
         if elements % block_elems != 0 {
             return Err(GgufHeaderError::RaggedTensor {
                 name: name.to_string(),
@@ -251,7 +287,11 @@ impl GgufTensorInfo {
                 block: block_elems,
             });
         }
-        Ok(elements / block_elems * block_bytes)
+        (elements / block_elems)
+            .checked_mul(block_bytes)
+            .ok_or_else(|| GgufHeaderError::Overflow {
+                name: name.to_string(),
+            })
     }
 }
 
@@ -276,9 +316,16 @@ impl GgufHeader {
     /// or `None` if `name` is not present.
     pub fn absolute_range(&self, name: &str) -> Option<Result<(u64, u64), GgufHeaderError>> {
         let info = self.tensors.get(name)?;
-        Some(info.byte_size(name).map(|size| {
-            let start = self.data_region_start + info.offset;
-            (start, start + size)
+        Some(info.byte_size(name).and_then(|size| {
+            let overflow = || GgufHeaderError::Overflow {
+                name: name.to_string(),
+            };
+            let start = self
+                .data_region_start
+                .checked_add(info.offset)
+                .ok_or_else(overflow)?;
+            let end = start.checked_add(size).ok_or_else(overflow)?;
+            Ok((start, end))
         }))
     }
 

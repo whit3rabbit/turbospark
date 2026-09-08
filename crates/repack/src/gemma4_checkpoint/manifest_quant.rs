@@ -153,9 +153,10 @@ pub fn manifest_quant_for(
     };
     // `qwen4_exp`'s router is force-quantized to INT8 at write time
     // regardless of what the checkpoint's own config declares
-    // (`orchestrate.rs`'s `quantize_router_int8`, called because this
-    // family's real checkpoint ships the router raw rather than
-    // U32-prepacked). Its manifest slot states that unconditionally instead
+    // (`narrow.rs`'s `quantize_gating_matrix_int8`, called from
+    // `orchestrate.rs` because this family's real checkpoint ships the
+    // router raw rather than U32-prepacked). Its manifest slot states that
+    // unconditionally instead
     // of trusting `quant.bits_for`, which for this checkpoint reports the
     // model's default width and not the router's -- mirroring the GGUF
     // walk's router slot, which is also a stated fact about the bytes rather

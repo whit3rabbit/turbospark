@@ -190,7 +190,8 @@ fn repacks_the_real_muse_glimmer_30b_checkpoint() {
             .zip(sources.iter())
             .map(|(h, s)| (h, s as &dyn turbospark_repack::RangeSource))
             .collect(),
-    );
+    )
+    .expect("no tensor name collides across shards");
 
     let dir = install_dir();
     eprintln!("installing to {}", dir.display());

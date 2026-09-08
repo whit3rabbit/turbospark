@@ -44,11 +44,16 @@ impl SafetensorsHeader {
     }
 
     /// The absolute file byte range `[start, end)` for `name`'s tensor
-    /// data, or `None` if `name` is not present.
+    /// data, or `None` if `name` is not present, or if the offset would
+    /// overflow `u64` (a header field this parser accepts but cannot
+    /// address is refused here rather than wrapping to a plausible-looking
+    /// range).
     pub fn absolute_range(&self, name: &str) -> Option<(u64, u64)> {
         let info = self.tensors.get(name)?;
         let base = self.data_region_start();
-        Some((base + info.data_offsets.0, base + info.data_offsets.1))
+        let start = base.checked_add(info.data_offsets.0)?;
+        let end = base.checked_add(info.data_offsets.1)?;
+        Some((start, end))
     }
 }
 
@@ -167,6 +172,17 @@ pub fn parse_header(
         }
         let entry: TensorEntry = serde_json::from_value(value)
             .map_err(|e| SafetensorsHeaderError::InvalidJson(format!("{key}: {e}")))?;
+        // The format requires a monotone, non-overlapping range per tensor.
+        // An inverted one reaches `absolute_range` as a plausible-looking
+        // pair and then every unchecked `end - start` downstream of it
+        // (ranged_download's chunking, the expert-blob planner) either
+        // panics in debug or wraps to a huge allocation in release.
+        if entry.data_offsets.0 > entry.data_offsets.1 {
+            return Err(SafetensorsHeaderError::InvalidJson(format!(
+                "{key}: data_offsets end {} before start {}",
+                entry.data_offsets.1, entry.data_offsets.0
+            )));
+        }
         tensors.insert(
             key,
             TensorInfo {

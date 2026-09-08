@@ -119,6 +119,42 @@ fn a_zero_index_is_refused_rather_than_shifted() {
     }
 }
 
+/// `direction.N`'s block index must not be allowed to size a `Vec` off an
+/// attacker-controlled tensor name: `read_set` allocates `highest + 1`
+/// entries, so `direction.18446744073709551614` (which used to abort with a
+/// capacity overflow) and a merely huge-but-finite index must both be
+/// refused rather than attempted.
+#[test]
+fn an_absurdly_large_layer_index_is_refused_rather_than_allocated() {
+    assert!(matches!(
+        layer_index("direction.18446744073709551614", 1),
+        Err(ControlVectorError::LayerIndexTooLarge { .. })
+    ));
+    assert!(matches!(
+        layer_index(&format!("direction.{}", MAX_LAYER_INDEX + 2), 1),
+        Err(ControlVectorError::LayerIndexTooLarge { .. })
+    ));
+    // The boundary itself must still be accepted.
+    assert!(layer_index(&format!("direction.{MAX_LAYER_INDEX}"), 1).is_ok());
+}
+
+/// The end-to-end path: a file naming an absurd block must fail to parse
+/// rather than panic while sizing the layer vector.
+#[test]
+fn parsing_a_vector_with_an_absurd_layer_index_fails_cleanly() {
+    let data: Vec<u8> = (0..8).flat_map(|i| (i as f32).to_le_bytes()).collect();
+    let builder = crate::GgufBuilder::new().tensor(
+        "direction.18446744073709551615",
+        GGML_TYPE_F32,
+        &[8],
+        data,
+    );
+    assert!(matches!(
+        parse_control_vector(&builder.build().0),
+        Err(ControlVectorError::LayerIndexTooLarge { .. })
+    ));
+}
+
 #[test]
 fn a_foreign_tensor_name_is_refused() {
     assert!(matches!(

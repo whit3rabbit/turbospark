@@ -4,10 +4,12 @@
 
 use std::cell::Cell;
 
+use std::collections::BTreeMap;
+
 use turbospark_repack::{
     fetch_gguf_header, ggml_type_block, ggml_type_name, parse_gguf_header, DownloadError,
-    GgufBuilder, GgufHeaderError, GgufValue, RangeSource, GGUF_DEFAULT_MAX_HEADER_BYTES,
-    GGUF_INITIAL_FETCH_BYTES,
+    GgufBuilder, GgufHeader, GgufHeaderError, GgufTensorInfo, GgufValue, RangeSource,
+    GGUF_DEFAULT_MAX_HEADER_BYTES, GGUF_INITIAL_FETCH_BYTES,
 };
 
 /// A fixture exercising every value kind the reader implements, plus three
@@ -250,6 +252,93 @@ fn rejects_an_element_count_that_is_not_whole_blocks() {
     assert!(matches!(
         h.absolute_range("blk.0.attn_q.weight").unwrap(),
         Err(GgufHeaderError::RaggedTensor { block: 32, .. })
+    ));
+}
+
+/// Two dimensions whose product overflows `u64` must be reported as
+/// `Overflow`, not wrapped into a small, plausible-looking element count
+/// that then under-reads the file.
+#[test]
+fn byte_size_rejects_a_dimension_product_that_overflows() {
+    let mut tensors = BTreeMap::new();
+    tensors.insert(
+        "blk.0.huge.weight".to_string(),
+        GgufTensorInfo {
+            ggml_type: 0, // F32
+            dims: vec![u64::MAX, 2],
+            offset: 0,
+        },
+    );
+    let header = GgufHeader {
+        version: 3,
+        metadata: BTreeMap::new(),
+        tensors,
+        alignment: 32,
+        data_region_start: 32,
+    };
+    assert!(matches!(
+        header.absolute_range("blk.0.huge.weight").unwrap(),
+        Err(GgufHeaderError::Overflow { .. })
+    ));
+}
+
+/// An offset near `u64::MAX` plus a small `data_region_start` must not wrap
+/// into a small, in-bounds-looking range; `absolute_range` must report the
+/// overflow rather than silently address the wrong bytes.
+#[test]
+fn absolute_range_rejects_an_offset_that_overflows_the_data_region_start() {
+    let mut tensors = BTreeMap::new();
+    tensors.insert(
+        "blk.0.attn_q.weight".to_string(),
+        GgufTensorInfo {
+            ggml_type: 0, // F32, block size (1, 4)
+            dims: vec![1],
+            offset: u64::MAX - 1,
+        },
+    );
+    let header = GgufHeader {
+        version: 3,
+        metadata: BTreeMap::new(),
+        tensors,
+        alignment: 32,
+        data_region_start: 32,
+    };
+    assert!(matches!(
+        header.absolute_range("blk.0.attn_q.weight").unwrap(),
+        Err(GgufHeaderError::Overflow { .. })
+    ));
+}
+
+/// The spec requires every tensor's offset to be a multiple of the header's
+/// own alignment; a corrupt or hostile file that violates it must be
+/// refused at parse time rather than accepted with a data region that
+/// straddles a tensor's own bytes.
+#[test]
+fn rejects_a_tensor_offset_that_is_not_aligned() {
+    let (mut bytes, _) = GgufBuilder::new()
+        .tensor("blk.0.a.weight", 0, &[1], vec![0u8; 4])
+        .tensor("blk.0.b.weight", 0, &[1], vec![0u8; 4])
+        .build();
+
+    // Patch the second tensor's 8-byte offset field (the last 8 bytes of its
+    // entry, written last) to something not a multiple of the default
+    // 32-byte alignment. It was 32 (the first tensor rounds up to one
+    // alignment unit); shifting it by one keeps it in range but misaligned.
+    let key = b"blk.0.b.weight";
+    let at = bytes
+        .windows(key.len())
+        .position(|w| w == key)
+        .expect("name present");
+    // 8 (name len) + name + 4 (n_dims) + 8 (one dim) + 4 (ggml_type) = start
+    // of the 8-byte offset field.
+    let offset_at = at + key.len() + 4 + 8 + 4;
+    let original = u64::from_le_bytes(bytes[offset_at..offset_at + 8].try_into().unwrap());
+    assert_ne!(original, 0, "fixture must not already sit at offset 0");
+    bytes[offset_at..offset_at + 8].copy_from_slice(&(original + 1).to_le_bytes());
+
+    assert!(matches!(
+        parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES),
+        Err(GgufHeaderError::MisalignedTensor { .. })
     ));
 }
 

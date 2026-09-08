@@ -113,22 +113,9 @@ fn quantize_named(
 ) -> Result<ResidentTensorSpec, OrchestrateError> {
     let data = decode_tensor_f32(header, source, tensor_name)?;
     let quantized = quantize_matrix_int4(&data, rows, cols).map_err(OrchestrateError::Quantize)?;
-    let mut packed = Vec::with_capacity(rows * cols / 2);
-    let mut scales = Vec::with_capacity(rows * cols / 64);
-    let mut biases = Vec::with_capacity(rows * cols / 64);
-    for row in &quantized {
-        packed.extend_from_slice(&row.packed);
-        scales.extend_from_slice(&row.scales);
-        biases.extend_from_slice(&row.biases);
-    }
-    Ok(ResidentTensorSpec {
-        name: spec_name.to_string(),
-        packed,
-        scales,
-        biases,
-        rows: rows as u32,
-        cols: cols as u32,
-    })
+    Ok(crate::repack::resident_spec_from_int4_rows(
+        spec_name, &quantized, cols,
+    ))
 }
 
 /// Walks a real Llama-family checkpoint's tensors (per `dims`) and returns

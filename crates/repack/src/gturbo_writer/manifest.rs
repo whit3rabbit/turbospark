@@ -45,12 +45,22 @@ pub(crate) fn build_manifest_json(
         .chain(vision.iter().map(|s| String::from(*s)))
     {
         let path = dir.join(&relative);
-        let bytes = std::fs::read(&path).map_err(|e| io_err(&path, e))?;
+        // Streamed rather than read whole: `model_weights.bin` alone can be
+        // tens of gigabytes on a real MoE install, and this function already
+        // runs after that file is fully written to disk, so there is no
+        // reason to hold a second full copy of it in memory just to hash it.
+        let size = std::fs::metadata(&path)
+            .map_err(|e| io_err(&path, e))?
+            .len();
+        let sha256 = model_io::hash_file(&path, 1 << 20).map_err(|e| WriterError::Io {
+            path: path.display().to_string(),
+            detail: e.to_string(),
+        })?;
         files.insert(
             relative,
             serde_json::json!({
-                "size": bytes.len() as u64,
-                "sha256": model_io::hash_data(&bytes),
+                "size": size,
+                "sha256": sha256,
             }),
         );
     }

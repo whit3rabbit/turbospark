@@ -1,9 +1,11 @@
 //! Tests for safetensors header parsing and ranged-download planning,
 //! using synthetic byte fixtures (no network needed).
 
+use std::cell::Cell;
+
 use turbospark_repack::{
-    fetch_safetensors_header, parse_header, required_prefix_len, MemoryRangeSource,
-    SafetensorsHeaderError,
+    fetch_safetensors_header, parse_header, required_prefix_len, DownloadError, MemoryRangeSource,
+    RangeSource, SafetensorsHeaderError,
 };
 
 /// Builds a synthetic safetensors file: 8-byte LE header length, then the
@@ -112,6 +114,26 @@ fn parse_header_rejects_a_non_null_non_object_metadata_value() {
     );
 }
 
+/// `data_offsets` end before start reaches `absolute_range` as a
+/// plausible-looking pair and then every unchecked `end - start` downstream
+/// (ranged_download's chunking, the expert-blob planner) either panics or
+/// wraps to a huge allocation. Refused at parse time instead.
+#[test]
+fn parse_header_rejects_an_inverted_data_offsets_range() {
+    let json = r#"{
+        "weight.0": {"dtype": "F32", "shape": [2, 64], "data_offsets": [512, 0]}
+    }"#;
+    let file = build_file(json, 1024);
+    let err = parse_header(&file, 1 << 20).unwrap_err();
+    let SafetensorsHeaderError::InvalidJson(detail) = err else {
+        panic!("expected InvalidJson, got {err:?}");
+    };
+    assert!(
+        detail.contains("weight.0"),
+        "message should name the tensor, got: {detail}"
+    );
+}
+
 #[test]
 fn required_prefix_len_matches_header_len_plus_eight() {
     let file = build_file(sample_header_json(), 1024);
@@ -130,4 +152,78 @@ fn fetch_safetensors_header_over_memory_source_matches_direct_parse() {
     let via_fetch = fetch_safetensors_header(&source).unwrap();
     let via_parse = parse_header(&file, turbospark_repack::DEFAULT_MAX_HEADER_BYTES).unwrap();
     assert_eq!(via_fetch, via_parse);
+}
+
+/// `MemoryRangeSource` is test-only, but every fixture test funnels through
+/// it, so a malformed range (start past end, or past the fixture's own
+/// length) must report `ShortRead` rather than panic on the slice.
+#[test]
+fn memory_range_source_reports_short_read_instead_of_panicking() {
+    let data = vec![1u8, 2, 3, 4];
+    let source = MemoryRangeSource::new(&data);
+
+    assert!(matches!(
+        source.read_range(3, 1),
+        Err(DownloadError::ShortRead { .. })
+    ));
+    assert!(matches!(
+        source.read_range(0, 100),
+        Err(DownloadError::ShortRead { .. })
+    ));
+    assert!(matches!(
+        source.read_range(100, 200),
+        Err(DownloadError::ShortRead { .. })
+    ));
+    // The ordinary case must still work.
+    assert_eq!(source.read_range(1, 3).unwrap(), vec![2u8, 3]);
+}
+
+/// Counts `read_range` calls, so the "reject before the second fetch" claim
+/// is asserted rather than assumed.
+struct CountingSource {
+    data: Vec<u8>,
+    reads: Cell<usize>,
+}
+
+impl RangeSource for CountingSource {
+    fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
+        self.reads.set(self.reads.get() + 1);
+        let start = start as usize;
+        let end = end_exclusive as usize;
+        if end > self.data.len() {
+            return Err(DownloadError::ShortRead {
+                expected: end_exclusive - start as u64,
+                actual: self.data.len().saturating_sub(start) as u64,
+            });
+        }
+        Ok(self.data[start..end].to_vec())
+    }
+}
+
+/// A length prefix declaring 2^40 must be rejected off the FIRST 8-byte
+/// read: `HttpRangeSource::read_range` allocates its whole destination
+/// buffer before any parse runs, so fetching that much before checking it
+/// against the cap would abort a real process (or, at a merely large value,
+/// issue a multi-GB GET).
+#[test]
+fn fetch_safetensors_header_rejects_a_hostile_length_prefix_before_the_second_read() {
+    let mut bytes = vec![0u8; 8];
+    bytes[0..8].copy_from_slice(&(1u64 << 40).to_le_bytes());
+    let source = CountingSource {
+        data: bytes,
+        reads: Cell::new(0),
+    };
+    let err = fetch_safetensors_header(&source).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DownloadError::Header(SafetensorsHeaderError::HeaderTooLarge { .. })
+        ),
+        "expected HeaderTooLarge, got {err:?}"
+    );
+    assert_eq!(
+        source.reads.get(),
+        1,
+        "must reject off the length prefix alone, never issuing the (multi-GB) second read"
+    );
 }

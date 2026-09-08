@@ -236,6 +236,53 @@ fn rejects_a_missing_shape_key() {
     }
 }
 
+/// A required `i64` field above `i64::MAX` must be refused rather than
+/// wrapped into a plausible-looking negative shape.
+#[test]
+fn rejects_a_required_field_that_exceeds_i64() {
+    let (bytes, _) = build_synthetic_gemma4_gguf(SyntheticGgufShape::default());
+    let mut h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    h.metadata.insert(
+        "gemma4.block_count".to_string(),
+        turbospark_repack::GgufValue::U64(u64::MAX),
+    );
+    match arch_from_gguf(&h) {
+        Err(GgufConfigError::BadValue { key, detail }) => {
+            assert_eq!(key, "gemma4.block_count");
+            assert!(detail.contains("i64"), "{detail}");
+        }
+        other => panic!("expected BadValue, got {other:?}"),
+    }
+}
+
+/// A PRESENT optional `i64` field that cannot be read (here: above
+/// `i64::MAX`) must be refused, not silently treated as an ABSENT key with
+/// its default applied. Collapsing the two would read a corrupt or hostile
+/// value as though the checkpoint had simply not published it.
+///
+/// Targets `attention.sliding_window` rather than `nextn_predict_layers`:
+/// the latter is ALSO checked downstream (`mtp_blocks < 0`), so a silently
+/// wrapped negative value would still redden that assertion for an
+/// unrelated reason and the test could not tell the two checks apart. A
+/// wrapped `sliding_window` has no such downstream check -- it would be
+/// accepted and stored as -1 with no error at all.
+#[test]
+fn rejects_an_optional_field_that_is_present_but_exceeds_i64_rather_than_defaulting() {
+    let (bytes, _) = build_synthetic_gemma4_gguf(SyntheticGgufShape::default());
+    let mut h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    h.metadata.insert(
+        "gemma4.attention.sliding_window".to_string(),
+        turbospark_repack::GgufValue::U64(u64::MAX),
+    );
+    match arch_from_gguf(&h) {
+        Err(GgufConfigError::BadValue { key, detail }) => {
+            assert_eq!(key, "gemma4.attention.sliding_window");
+            assert!(detail.contains("i64"), "{detail}");
+        }
+        other => panic!("expected BadValue naming attention.sliding_window, got {other:?}"),
+    }
+}
+
 /// A pattern whose length disagrees with `block_count` must be an error,
 /// not a silently truncated or zero-extended mask.
 #[test]
@@ -253,6 +300,54 @@ fn rejects_a_layer_pattern_of_the_wrong_length() {
         }
         other => panic!("expected BadValue, got {other:?}"),
     }
+}
+
+/// A minimal `qwen35moe` (QwenGdnMoe) header, the family whose
+/// `linear_attention` derivation reads the `ssm.*` keys.
+fn qwen_gdn_moe_header(inner_size: u32, time_step_rank: u32) -> Vec<u8> {
+    let (bytes, _) = GgufBuilder::new()
+        .metadata_str("general.architecture", "qwen35moe")
+        .metadata_u32("qwen35moe.block_count", 1)
+        .metadata_u32("qwen35moe.embedding_length", 64)
+        .metadata_u32("qwen35moe.attention.head_count", 4)
+        .metadata_u32("qwen35moe.attention.head_count_kv", 2)
+        .metadata_u32("qwen35moe.expert_count", 4)
+        .metadata_u32("qwen35moe.expert_used_count", 2)
+        .metadata_u32("qwen35moe.expert_feed_forward_length", 16)
+        .metadata_u32("qwen35moe.full_attention_interval", 4)
+        .metadata_u32("qwen35moe.ssm.group_count", 1)
+        .metadata_u32("qwen35moe.ssm.time_step_rank", time_step_rank)
+        .metadata_u32("qwen35moe.ssm.state_size", 32)
+        .metadata_u32("qwen35moe.ssm.inner_size", inner_size)
+        .metadata_u32("qwen35moe.ssm.conv_kernel", 2)
+        .q8_0_tensor("token_embd.weight", &[64, 256], 1)
+        .build();
+    bytes
+}
+
+/// `value_head_dim` is DERIVED (`ssm.inner_size / ssm.time_step_rank`), not
+/// published, so a file whose `inner_size` is not a whole multiple of
+/// `time_step_rank` must be refused rather than silently floor-divided into
+/// a smaller, plausible-looking head width.
+#[test]
+fn rejects_an_inner_size_that_is_not_a_whole_multiple_of_the_head_count() {
+    let bytes = qwen_gdn_moe_header(130, 4); // 130 / 4 floors to 32, remainder 2
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    match arch_from_gguf(&h) {
+        Err(GgufConfigError::BadValue { key, .. }) => {
+            assert_eq!(key, "qwen35moe.ssm.inner_size");
+        }
+        other => panic!("expected BadValue, got {other:?}"),
+    }
+}
+
+/// The ordinary, evenly-divisible case must still derive correctly.
+#[test]
+fn derives_value_head_dim_when_inner_size_divides_evenly() {
+    let bytes = qwen_gdn_moe_header(128, 4);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let a = arch_from_gguf(&h).expect("arch");
+    assert_eq!(a.linear_attention.value_head_dim, 32);
 }
 
 #[test]

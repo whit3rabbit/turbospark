@@ -77,17 +77,19 @@ pub fn write_gguf_install_streamed(
     }
 
     let (resident, lossy) = transcode::resident_entries(header, source, &arch, &plan.resident)?;
-    let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&resident);
-    drop(resident);
     for (name, count) in &lossy {
         progress(&format!(
             "WARNING {name}: {count} F32 values lost bits narrowing to BF16 \
              (this converter did not upcast from BF16)"
         ));
     }
+    // `resident` is kept alive (not built into a `Vec<u8>` here) so
+    // `finish_streaming` below can write its specs' bytes straight to
+    // `model_weights.bin` rather than through a second, then a third, full
+    // copy of the resident region -- see `resident_writer`'s module doc.
     progress(&format!(
-        "resident region built ({} bytes)",
-        resident_bytes.len()
+        "{} resident tensors ready to stream to disk",
+        resident.len()
     ));
 
     if plan.routed.is_empty() {
@@ -104,7 +106,9 @@ pub fn write_gguf_install_streamed(
         // and it failed at `load_manifest` with `manifest.quant is required`.
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
         writer.set_quant(manifest::gguf_manifest_quant(header, &plan));
-        writer.finish(&arch, model_id, &resident_bytes)?;
+        writer.finish_streaming(&arch, model_id, |w| {
+            crate::resident_writer::write_resident_weights_bin_mixed(&resident, w)
+        })?;
         progress("install written (no routed experts)");
         return Ok(arch);
     }
@@ -143,7 +147,9 @@ pub fn write_gguf_install_streamed(
             blobs.experts.len()
         ));
     }
-    writer.finish(&arch, model_id, &resident_bytes)?;
+    writer.finish_streaming(&arch, model_id, |w| {
+        crate::resident_writer::write_resident_weights_bin_mixed(&resident, w)
+    })?;
     progress("manifest written");
     Ok(arch)
 }

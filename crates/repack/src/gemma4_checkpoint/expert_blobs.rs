@@ -138,6 +138,22 @@ pub fn plan_one_expert_layer(
         let w_per = per(w_bytes.len(), "weight")?;
         let s_per = per(s_bytes.len(), "scales")?;
         let b_per = per(b_bytes.len(), "biases")?;
+        // `w_per` comes purely from the byte range; tie it to the tensor's
+        // OWN declared shape too, or a shard whose `data_offsets` disagree
+        // with `shape` writes a correctly-sized blob at a nonsense logical
+        // shape (`rows`/`cols` below are read from `w.shape`, independently
+        // of `w_per`).
+        let expected_w_per = (w.shape[1] * w.shape[2] * 4) as usize;
+        if w_per != expected_w_per {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!(
+                    "per-expert weight blob is {w_per} bytes, expected {expected_w_per} for \
+                     shape {:?}",
+                    w.shape
+                ),
+            });
+        }
 
         let rows = w.shape[1];
         let cols = w.shape[2] * 8;

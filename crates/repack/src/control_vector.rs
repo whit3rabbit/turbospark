@@ -94,6 +94,13 @@ const LAYER_BASE_KEY: &str = "turbospark.layer_base";
 /// to be ITS convention rather than this port's old one.
 const DEFAULT_LAYER_BASE: u64 = 1;
 
+/// Upper bound on a resolved 0-based block index. `read_set` allocates a
+/// `Vec<Option<LayerDirection>>` of `highest + 1`, so an unbounded
+/// `direction.N` (or a `turbospark.layer_base` chosen to push a small N past
+/// this) is an attacker-controlled allocation size; 4096 sits far above any
+/// model this port runs (the largest is a few hundred blocks).
+const MAX_LAYER_INDEX: usize = 4096;
+
 /// What went wrong reading a control vector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlVectorError {
@@ -122,6 +129,10 @@ pub enum ControlVectorError {
     /// The caller asked to write a direction for block 0, which the format
     /// cannot name (`direction.0` is refused by llama.cpp and here).
     LayerZeroNotExpressible,
+    /// `direction.N`'s block index is absurdly large. No model this port
+    /// runs has more than a few hundred blocks; refusing early avoids
+    /// sizing a `Vec` off an attacker-controlled tensor name.
+    LayerIndexTooLarge { name: String, index: usize },
 }
 
 impl std::fmt::Display for ControlVectorError {
@@ -172,6 +183,11 @@ impl std::fmt::Display for ControlVectorError {
                 "a direction for block 0 cannot be written: the format names blocks from \
                  direction.1 = block 1, and llama.cpp never applies a direction at block \
                  0 at all"
+            ),
+            Self::LayerIndexTooLarge { name, index } => write!(
+                f,
+                "{name}: block index {index} exceeds {MAX_LAYER_INDEX}, far past any real \
+                 model's block count"
             ),
         }
     }
@@ -241,7 +257,14 @@ fn layer_index(name: &str, base: u64) -> Result<usize, ControlVectorError> {
     // written against a different convention, and silently shifting it by one
     // would steer every layer one place off.
     let zero_based = n.checked_sub(1).ok_or(ControlVectorError::ZeroLayerIndex)?;
-    Ok(zero_based + base as usize)
+    let index = zero_based
+        .checked_add(base as usize)
+        .filter(|i| *i <= MAX_LAYER_INDEX)
+        .ok_or_else(|| ControlVectorError::LayerIndexTooLarge {
+            name: name.to_string(),
+            index: zero_based.saturating_add(base as usize),
+        })?;
+    Ok(index)
 }
 
 fn read_set(header: &GgufHeader, bytes: &[u8]) -> Result<SteeringSet, ControlVectorError> {
@@ -272,15 +295,32 @@ fn read_set(header: &GgufHeader, bytes: &[u8]) -> Result<SteeringSet, ControlVec
             Some(_) => {}
         }
 
-        let start = (header.data_region_start + info.offset) as usize;
-        let end = start + n * 4;
-        if end > bytes.len() {
+        // `info.offset` is an untrusted header field; add and multiply
+        // checked rather than wrapping toward a plausible-looking range
+        // that then under-reads or panics on the slice below. An overflow
+        // is reported as `Truncated` with a sentinel `wanted` -- there is
+        // no real byte offset to name, and the file is unreadable either
+        // way.
+        let overflow = || ControlVectorError::Truncated {
+            name: name.clone(),
+            wanted: u64::MAX,
+            len: bytes.len() as u64,
+        };
+        let byte_len = (n as u64).checked_mul(4).ok_or_else(overflow)?;
+        let start_u64 = header
+            .data_region_start
+            .checked_add(info.offset)
+            .ok_or_else(overflow)?;
+        let end_u64 = start_u64.checked_add(byte_len).ok_or_else(overflow)?;
+        if end_u64 > bytes.len() as u64 {
             return Err(ControlVectorError::Truncated {
                 name: name.clone(),
-                wanted: end as u64,
+                wanted: end_u64,
                 len: bytes.len() as u64,
             });
         }
+        let start = start_u64 as usize;
+        let end = end_u64 as usize;
         let values = bytes[start..end]
             .chunks_exact(4)
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))

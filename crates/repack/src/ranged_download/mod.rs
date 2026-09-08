@@ -6,7 +6,7 @@
 mod chunks;
 mod http;
 
-pub use http::{ByteProgressCallback, HttpRangeSource};
+pub use http::{ByteProgressCallback, CancelFlag, HttpRangeSource};
 
 use crate::gguf_header::{
     parse_header as parse_gguf, GgufHeader, GgufHeaderError, DEFAULT_MAX_HEADER_BYTES as GGUF_CAP,
@@ -16,6 +16,9 @@ use crate::safetensors_header::{parse_header, SafetensorsHeader, SafetensorsHead
 #[derive(Debug, Clone, PartialEq)]
 pub enum DownloadError {
     Request(String),
+    /// The walk's own caller asked it to stop (`CancelFlag::cancel`). Not a
+    /// network condition, so the retry ladder must never see it.
+    Cancelled,
     UnexpectedStatus {
         status: u16,
         /// The server's `Retry-After` in seconds, when it sent one. Read at
@@ -40,6 +43,7 @@ impl std::fmt::Display for DownloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DownloadError::Request(detail) => write!(f, "request failed: {detail}"),
+            DownloadError::Cancelled => write!(f, "cancelled by the caller"),
             DownloadError::UnexpectedStatus {
                 status,
                 retry_after,
@@ -102,11 +106,26 @@ pub fn fetch_safetensors_header(
         });
     }
     let header_len = u64::from_le_bytes(prefix[0..8].try_into().unwrap());
-    let full = source.read_range(0, 8 + header_len)?;
-    Ok(parse_header(
-        &full,
-        crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES,
-    )?)
+    // Reject before the second read, not after: `read_range` allocates its
+    // whole destination buffer up front, so a hostile or corrupt length
+    // prefix would otherwise size a multi-GB (or aborting, at 2^40+) fetch
+    // before `parse_header`'s own cap ever runs.
+    let max_bytes = crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES;
+    if header_len > max_bytes {
+        return Err(SafetensorsHeaderError::HeaderTooLarge {
+            header_len,
+            max_bytes,
+        }
+        .into());
+    }
+    let end = 8u64
+        .checked_add(header_len)
+        .ok_or(SafetensorsHeaderError::HeaderTooLarge {
+            header_len,
+            max_bytes,
+        })?;
+    let full = source.read_range(0, end)?;
+    Ok(parse_header(&full, max_bytes)?)
 }
 
 /// First speculative read for [`fetch_gguf_header`]. A real header is
@@ -166,14 +185,17 @@ impl<'a> MemoryRangeSource<'a> {
 
 impl RangeSource for MemoryRangeSource<'_> {
     fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
-        let start = start as usize;
-        let end = end_exclusive as usize;
-        if end > self.data.len() {
+        // Test-only type, but every fixture test funnels through it, so a
+        // panic here on a malformed range (start past end, or past the end
+        // of the fixture) reads as a fixture bug rather than the thing under
+        // test. Checked against the raw u64s before any cast to usize, so an
+        // inverted range cannot underflow `end_exclusive - start` either.
+        if start > end_exclusive || end_exclusive > self.data.len() as u64 {
             return Err(DownloadError::ShortRead {
-                expected: end_exclusive - start as u64,
-                actual: self.data.len().saturating_sub(start) as u64,
+                expected: end_exclusive.saturating_sub(start),
+                actual: (self.data.len() as u64).saturating_sub(start),
             });
         }
-        Ok(self.data[start..end].to_vec())
+        Ok(self.data[start as usize..end_exclusive as usize].to_vec())
     }
 }

@@ -16,8 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbospark_repack::{
     build_resident_weights_bin_mixed, build_synthetic_qwen_gdn_dense_install,
-    graft_qwen_gdn_dense_mtp_head, read_resident_entries, Gemma4Quant, Gemma4Shards,
-    MemoryRangeSource, RangeSource, SafetensorsHeader,
+    build_synthetic_qwen_gdn_dense_install_at_bits, graft_qwen_gdn_dense_mtp_head,
+    read_resident_entries, Gemma4Quant, Gemma4Shards, MemoryRangeSource, RangeSource,
+    SafetensorsHeader,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -57,6 +58,81 @@ fn read_resident_entries_round_trips_a_synthetic_install_byte_for_byte() {
         "reading an install's resident entries back and rebuilding them must reproduce \
          the exact bytes on disk, or grafting a head onto them would silently corrupt \
          the trunk"
+    );
+}
+
+/// The 1-bit dense fixture above exercises only `DTYPE_BF16` and
+/// `DTYPE_INT1_AFFINE` (its every routed-style tensor is 1-bit and its
+/// norms are BF16). The real production caller
+/// (`graft_qwen_gdn_dense_mtp_head` grafting onto a real `qwen38-27b`
+/// trunk) runs the INT4 arm, which had no coverage here at all.
+#[test]
+fn read_resident_entries_round_trips_an_int4_dense_install_byte_for_byte() {
+    let dir = temp_dir();
+    build_synthetic_qwen_gdn_dense_install_at_bits(&dir, VOCAB, LAYERS, "qwen35-toy-int4", 4)
+        .expect("the int4 dense install writes");
+    let original = std::fs::read(dir.join("model_weights.bin")).expect("read original");
+
+    let entries = read_resident_entries(&dir).expect("read the resident entries back");
+    assert!(!entries.is_empty());
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, turbospark_repack::ResidentEntrySpec::Int4(_))),
+        "an int4 install must exercise the DTYPE_INT4_AFFINE arm"
+    );
+
+    let rebuilt = build_resident_weights_bin_mixed(&entries);
+    assert_eq!(rebuilt, original, "int4 round trip must be byte-exact");
+}
+
+/// Same property again for `DTYPE_INT8_AFFINE`, which the dense fixtures
+/// above never reach at all -- only a MoE install's router and
+/// sigmoid-gated shared-expert gate are INT8.
+#[test]
+fn read_resident_entries_round_trips_a_moe_installs_int8_router_byte_for_byte() {
+    let dir = temp_dir();
+    turbospark_repack::build_synthetic_qwen_gdn_moe_install(&dir, VOCAB, LAYERS, 4, "qwen36-toy")
+        .expect("the moe install writes");
+    let original = std::fs::read(dir.join("model_weights.bin")).expect("read original");
+
+    let entries = read_resident_entries(&dir).expect("read the resident entries back");
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, turbospark_repack::ResidentEntrySpec::Int8(_))),
+        "a MoE install's router must exercise the DTYPE_INT8_AFFINE arm"
+    );
+
+    let rebuilt = build_resident_weights_bin_mixed(&entries);
+    assert_eq!(rebuilt, original, "int8 round trip must be byte-exact");
+}
+
+/// A GGUF-block dtype (here Q8_0) has no `ResidentEntrySpec` variant to
+/// round-trip through, and this must fail loudly by name rather than be
+/// silently skipped or misread as one of the affine layouts. Patches a real
+/// install's first resident entry in place, which is enough: `load` reads
+/// `dtype` as a raw byte with no validation, so the reader's own dispatch is
+/// what has to refuse it.
+#[test]
+fn refuses_a_gguf_block_dtype_by_name() {
+    let dir = temp_dir();
+    build_synthetic_qwen_gdn_dense_install_at_bits(&dir, VOCAB, LAYERS, "qwen35-toy-q8", 4)
+        .expect("the int4 dense install writes");
+
+    let weights_path = dir.join("model_weights.bin");
+    let mut bytes = std::fs::read(&weights_path).expect("read model_weights.bin");
+    // Header is 24 bytes, entry table starts there; each entry is 72 bytes
+    // with `dtype` at offset 6 (`resident_writer.rs`'s `out[base + 6]`).
+    const HEADER_BYTES: usize = 24;
+    const DTYPE_GGUF_Q8_0: u8 = 6;
+    bytes[HEADER_BYTES + 6] = DTYPE_GGUF_Q8_0;
+    std::fs::write(&weights_path, &bytes).expect("patch dtype");
+
+    let err = read_resident_entries(&dir).unwrap_err();
+    assert!(
+        err.contains("GGUF block type"),
+        "expected the GGUF-block refusal, got: {err}"
     );
 }
 

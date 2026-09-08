@@ -94,8 +94,8 @@ pub fn narrow_raw_to_bf16(
 /// Decodes raw BF16/F16/F32 bytes into f32 values, in file order.
 ///
 /// The shared parse step behind [`narrow_raw_to_bf16`]'s F16/F32 arm (which
-/// re-narrows the result back to BF16) and [`quantize_router_int8`] (which
-/// quantizes it to INT8-affine instead). Unlike `narrow_raw_to_bf16`, this
+/// re-narrows the result back to BF16) and [`quantize_gating_matrix_int8`]
+/// (which quantizes it to INT8-affine instead). Unlike `narrow_raw_to_bf16`, this
 /// also decodes a `BF16` source rather than passing it through: the router
 /// quantizer needs f32 regardless of the source width.
 fn decode_raw_to_f32(tensor: &str, dtype: &str, bytes: &[u8]) -> Result<Vec<f32>, Gemma4Error> {
@@ -173,23 +173,12 @@ pub fn quantize_gating_matrix_int8(
             detail: format!("{} values do not fill {rows}x{cols}", values.len()),
         });
     }
-    let mut packed = Vec::with_capacity(rows * cols);
-    let mut scales = Vec::with_capacity(rows * cols / group);
-    let mut biases = Vec::with_capacity(rows * cols / group);
-    for r in 0..rows {
-        let row = compute::quantize_int8_affine(&values[r * cols..(r + 1) * cols]);
-        packed.extend_from_slice(&row.packed);
-        scales.extend_from_slice(&row.scales);
-        biases.extend_from_slice(&row.biases);
-    }
-    Ok(ResidentEntrySpec::Int8(ResidentTensorSpec {
-        name: name.to_string(),
-        packed,
-        scales,
-        biases,
-        rows: rows as u32,
-        cols: cols as u32,
-    }))
+    let quantized: Vec<_> = (0..rows)
+        .map(|r| compute::quantize_int8_affine(&values[r * cols..(r + 1) * cols]))
+        .collect();
+    Ok(ResidentEntrySpec::Int8(
+        crate::repack::resident_spec_from_int8_rows(name, &quantized, cols),
+    ))
 }
 
 /// One unquantized tensor converted to FP16, for the vision tower alone
@@ -377,6 +366,22 @@ pub fn pass_through_packed(
     let rows = w.shape[0];
     let cols = w.shape[1] * factor;
     let packed = shards.read(name)?;
+    // Scales and biases are checked against `rows*cols/group` below; the
+    // packed run itself was not, so a shard whose `data_offsets` disagree
+    // with its declared `shape` (a corrupt but non-hostile checkpoint) would
+    // otherwise write an index entry whose shape and byte size disagree.
+    let expected_packed_bytes = (rows * w.shape[1] * 4) as usize;
+    if packed.len() != expected_packed_bytes {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!(
+                "packed run is {} bytes, expected {expected_packed_bytes} for a {rows}x{} \
+                 u32 packing of shape {rows}x{cols}",
+                packed.len(),
+                w.shape[1]
+            ),
+        });
+    }
     let scales = le_u16(&shards.read(&scales_name)?);
     let biases = le_u16(&shards.read(&biases_name)?);
     let group = group_size as u64;
@@ -392,6 +397,13 @@ pub fn pass_through_packed(
             ),
         });
     }
+    // Writer invariant: `ResidentTensorSpec` stores shape as `u32`. A silent
+    // truncation here would write a plausible, wrong shape with no error at
+    // any later read, so this is asserted rather than cast blindly.
+    assert!(
+        rows <= u64::from(u32::MAX) && cols <= u64::from(u32::MAX),
+        "{name}: shape {rows}x{cols} exceeds the 32-bit resident index shape fields"
+    );
     let spec = ResidentTensorSpec {
         name: name.to_string(),
         packed,

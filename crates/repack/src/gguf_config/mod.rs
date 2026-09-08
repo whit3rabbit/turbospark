@@ -121,7 +121,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     // Absent means 0 (AGENTS.md Gotcha 39: the default belongs to the FORMAT).
     // Every GGUF this port installed before Ornith omits the key, so their
     // derivations are unchanged.
-    let mtp_blocks = m.opt_i64("nextn_predict_layers").unwrap_or(0);
+    let mtp_blocks = m.opt_i64("nextn_predict_layers")?.unwrap_or(0);
     let block_count = m.i64("block_count")?;
     // Guarded only when the key is PRESENT and positive. A file that declares
     // no head is left exactly as it was before this subtraction existed,
@@ -140,13 +140,13 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     // A DENSE checkpoint publishes none of the three MoE keys, and the
     // `llama` architecture covers both halves (Mixtral has them, Llama 3.1
     // does not), so they are optional and default to the dense answer.
-    arch.num_experts = m.opt_i64("expert_count").unwrap_or(0);
-    arch.top_k_experts = m.opt_i64("expert_used_count").unwrap_or(0);
+    arch.num_experts = m.opt_i64("expert_count")?.unwrap_or(0);
+    arch.top_k_experts = m.opt_i64("expert_used_count")?.unwrap_or(0);
     // Gemma and Qwen publish a separate expert width; the `llama`
     // architecture does not, and its experts are `feed_forward_length` wide.
     // Measured absent on both Mixtral conversions, and asserted so in
     // `gguf_checkpoint_network.rs::scopes_phase_m2_from_the_mixtral_header`.
-    arch.moe_intermediate_size = match m.opt_i64("expert_feed_forward_length") {
+    arch.moe_intermediate_size = match m.opt_i64("expert_feed_forward_length")? {
         Some(width) => width,
         None if arch.num_experts > 0 => m.i64("feed_forward_length")?,
         None => 0,
@@ -197,12 +197,12 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     // reuses `feed_forward_length` for something else, so prefer the
     // specific one and fall back.
     arch.intermediate_size = m
-        .opt_i64("expert_shared_feed_forward_length")
-        .or_else(|| m.opt_i64("feed_forward_length"))
+        .opt_i64("expert_shared_feed_forward_length")?
+        .or(m.opt_i64("feed_forward_length")?)
         .unwrap_or(arch.intermediate_size);
 
     // A model with no sliding-window layers publishes no window.
-    if let Some(window) = m.opt_i64("attention.sliding_window") {
+    if let Some(window) = m.opt_i64("attention.sliding_window")? {
         arch.sliding_window = window;
     }
     if let Some(cap) = m.opt_f64("final_logit_softcapping") {
@@ -242,7 +242,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
         arch.rope_scaling = model_io::RopeScalingConfig {
             factor,
-            original_context: m.opt_i64("rope.scaling.original_context_length").ok_or(
+            original_context: m.opt_i64("rope.scaling.original_context_length")?.ok_or(
                 GgufConfigError::MissingKey {
                     key: m.key("rope.scaling.original_context_length"),
                 },
@@ -270,12 +270,12 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     if matches!(family, ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense) {
         arch.linear_attention = linear_attention(&m)?;
         // Qwen's key/value length are per-head and equal on both paths.
-        if let Some(k) = m.opt_i64("attention.key_length") {
+        if let Some(k) = m.opt_i64("attention.key_length")? {
             arch.head_dim = k;
             arch.full_head_dim = k;
         }
     } else {
-        match m.opt_i64("attention.key_length") {
+        match m.opt_i64("attention.key_length")? {
             Some(k) => {
                 arch.full_head_dim = k;
                 // A model with one attention kind publishes no `_swa` width,
@@ -316,7 +316,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
                 arch.full_head_dim = arch.head_dim;
             }
         }
-        if let Some(k) = m.opt_i64("attention.key_length_swa") {
+        if let Some(k) = m.opt_i64("attention.key_length_swa")? {
             arch.head_dim = k;
         }
     }

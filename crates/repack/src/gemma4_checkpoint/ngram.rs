@@ -122,6 +122,13 @@ impl NgramTableSpec {
 /// Streams the interleaved table into `<dir>/ngram_table/`.
 pub struct NgramTableWriter {
     spec: NgramTableSpec,
+    /// The INSTALL directory (what `create` was called with), stored
+    /// verbatim so `finish`'s read-back check reads from the directory
+    /// this walk actually wrote into rather than guessing it back from
+    /// `dir` via `.parent()`. On a bare relative single-segment path
+    /// `.parent()` returns `""`, which `load_ngram_table_layout` reads
+    /// relative to the CWD -- a directory this writer never touched.
+    install_dir: PathBuf,
     dir: PathBuf,
     blob: BufWriter<File>,
     /// The next shard index this writer will accept. See the module header.
@@ -139,6 +146,7 @@ impl NgramTableWriter {
         let blob = File::create(&path).map_err(|e| Gemma4Error::Config(e.to_string()))?;
         Ok(Self {
             spec,
+            install_dir: install_dir.to_path_buf(),
             dir,
             blob: BufWriter::with_capacity(1 << 20, blob),
             next_shard: 0,
@@ -250,18 +258,17 @@ impl NgramTableWriter {
             "headOffsets": head_offsets,
         });
         let path = self.dir.join(model_io::NGRAM_TABLE_HEADER);
-        std::fs::write(
-            &path,
-            serde_json::to_vec_pretty(&header).unwrap_or_default(),
-        )
-        .map_err(|e| Gemma4Error::Config(e.to_string()))?;
+        let bytes = serde_json::to_vec_pretty(&header).map_err(|e| {
+            Gemma4Error::Config(format!("serializing ngram_table/header.json: {e}"))
+        })?;
+        std::fs::write(&path, bytes).map_err(|e| Gemma4Error::Config(e.to_string()))?;
 
         // **THE WRITER VALIDATES ITS OWN OUTPUT THROUGH THE READER'S CHECK.**
         // The two are separate implementations by design, so running one over
         // the other here is what stops them drifting -- a header this walk
         // wrote and the runtime then refuses is a 68 GiB stream wasted, and
         // the refusal would arrive at open rather than at write.
-        match model_io::load_ngram_table_layout(self.dir.parent().unwrap_or(Path::new("."))) {
+        match model_io::load_ngram_table_layout(&self.install_dir) {
             Ok(Some(_)) => Ok(()),
             Ok(None) => Err(Gemma4Error::Config(
                 "the n-gram header was written and did not read back".to_string(),

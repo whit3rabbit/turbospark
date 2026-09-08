@@ -93,12 +93,10 @@ pub use qwen36_config::{
     parse_vision_config,
 };
 pub use ranged_download::{
-    fetch_gguf_header, fetch_safetensors_header, ByteProgressCallback, DownloadError,
+    fetch_gguf_header, fetch_safetensors_header, ByteProgressCallback, CancelFlag, DownloadError,
     HttpRangeSource, MemoryRangeSource, RangeSource, GGUF_INITIAL_FETCH_BYTES,
 };
-pub use repack::{
-    int4_packed_bytes, int8_packed_bytes, quantize_matrix_int4, quantize_matrix_int8, RepackError,
-};
+pub use repack::{quantize_matrix_int4, quantize_matrix_int8, RepackError};
 pub use resident_reader::read_resident_entries;
 pub use resident_writer::{
     build_resident_weights_bin, build_resident_weights_bin_mixed, RawTensorSpec, ResidentEntrySpec,

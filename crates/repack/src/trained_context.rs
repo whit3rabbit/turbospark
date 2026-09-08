@@ -84,6 +84,15 @@ fn sane(raw: u64) -> Option<u32> {
 /// `model_weights.bin` and the packed-expert files and never itself, so
 /// rewriting it invalidates nothing. Idempotent -- re-running overwrites
 /// the same key with the same value.
+///
+/// Written to a `.tmp` sibling and renamed into place rather than
+/// `std::fs::write`ing `manifest.json` directly: a plain write truncates
+/// the file before writing the new bytes, so a crash or a kill between
+/// those two steps leaves a zero-byte `manifest.json` -- an install that
+/// then reads as "not an install" rather than as "interrupted while
+/// annotating a trained context", which is a worse failure than the one
+/// this function exists to avoid. `rename` on the same filesystem is
+/// atomic, so a reader never observes a partially written file.
 pub fn record(model_dir: &Path, trained_context: u32) -> Result<(), String> {
     let path = model_dir.join("manifest.json");
     let bytes =
@@ -98,8 +107,11 @@ pub fn record(model_dir: &Path, trained_context: u32) -> Result<(), String> {
         "trainedContext".to_string(),
         serde_json::Value::from(trained_context),
     );
-    std::fs::write(&path, serde_json::to_vec_pretty(&value).unwrap())
-        .map_err(|e| format!("writing {}: {e}", path.display()))
+    let tmp_path = model_dir.join("manifest.json.tmp");
+    std::fs::write(&tmp_path, serde_json::to_vec_pretty(&value).unwrap())
+        .map_err(|e| format!("writing {}: {e}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, &path)
+        .map_err(|e| format!("renaming {} to {}: {e}", tmp_path.display(), path.display()))
 }
 
 /// The trained context an installed `.gturbo` declares, or `None` for one
@@ -207,5 +219,39 @@ mod tests {
         let dir = std::env::temp_dir().join("turbospark-no-such-install");
         assert!(record(&dir, 4096).is_err());
         assert_eq!(peek(&dir), None);
+    }
+
+    /// A `record` that fails partway must leave `manifest.json` exactly as
+    /// it was, not truncated or half-written: the write lands in a `.tmp`
+    /// sibling first, and only a successful write is renamed over the real
+    /// file. Forces the failure by pre-creating `manifest.json.tmp` as a
+    /// DIRECTORY, so `std::fs::write` to that path fails before `rename`
+    /// ever runs.
+    #[test]
+    fn a_failed_write_leaves_the_original_manifest_untouched() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-trained-context-atomic-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = serde_json::json!({
+            "magic": "GTURBO",
+            "modelID": "fixture",
+            "arch": { "hiddenSize": 64 },
+        });
+        let original_bytes = serde_json::to_vec_pretty(&original).unwrap();
+        std::fs::write(dir.join("manifest.json"), &original_bytes).unwrap();
+        // Block the temp write: a directory at the `.tmp` path makes
+        // `std::fs::write` fail with an IsADirectory-shaped io::Error before
+        // `record` ever reaches `rename`.
+        std::fs::create_dir(dir.join("manifest.json.tmp")).unwrap();
+
+        assert!(record(&dir, 131_072).is_err());
+        let after = std::fs::read(dir.join("manifest.json")).unwrap();
+        assert_eq!(
+            after, original_bytes,
+            "a failed record() must not disturb the real manifest.json"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

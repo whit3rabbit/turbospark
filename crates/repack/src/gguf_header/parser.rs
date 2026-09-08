@@ -193,6 +193,21 @@ pub fn parse_header(leading_bytes: &[u8], max_bytes: u64) -> Result<GgufHeader, 
         return Err(GgufHeaderError::BadAlignment { alignment });
     }
 
+    // The spec requires every tensor's offset to be a multiple of the
+    // header's own alignment. A file that violates this is corrupt rather
+    // than merely unusual, and this is the cheapest point to say so: every
+    // consumer downstream assumes it (the F32/BF16 narrowing paths in
+    // particular read tensors as contiguous typed spans).
+    for (name, info) in &tensors {
+        if info.offset % alignment != 0 {
+            return Err(GgufHeaderError::MisalignedTensor {
+                name: name.clone(),
+                offset: info.offset,
+                alignment,
+            });
+        }
+    }
+
     let table_end = c.pos as u64;
     let data_region_start = table_end.div_ceil(alignment) * alignment;
 

@@ -30,7 +30,7 @@ use super::mtp::decode_bf16;
 use super::narrow::narrow_raw_to_bf16;
 use super::shards::{shape4, Gemma4Shards};
 use crate::repack::quantize_matrix_int4;
-use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec, ResidentTensorSpec};
+use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
 /// The drafter's resident entries plus what narrowing its raw tensors cost.
 pub struct DflashRead {
@@ -82,22 +82,9 @@ pub fn read_dflash_entries(
                         detail: e.to_string(),
                     }
                 })?;
-                let mut packed = Vec::with_capacity(rows * cols / 2);
-                let mut scales = Vec::new();
-                let mut biases = Vec::new();
-                for row in &quantized {
-                    packed.extend_from_slice(&row.packed);
-                    scales.extend_from_slice(&row.scales);
-                    biases.extend_from_slice(&row.biases);
-                }
-                entries.push(ResidentEntrySpec::Int4(ResidentTensorSpec {
-                    name: name.to_string(),
-                    packed,
-                    scales,
-                    biases,
-                    rows: rows as u32,
-                    cols: cols as u32,
-                }));
+                entries.push(ResidentEntrySpec::Int4(
+                    crate::repack::resident_spec_from_int4_rows(name, &quantized, cols),
+                ));
             }
             // A CODEBOOK, a CONV BASE KERNEL, or an RMS NORM: narrowed
             // verbatim rather than quantized, each for its own reason (see

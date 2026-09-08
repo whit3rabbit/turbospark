@@ -225,7 +225,8 @@ fn repacks_the_qwen38_trunk_with_the_dflash2_drafter() {
             .zip(sources.iter())
             .map(|(h, s)| (h, s as &dyn RangeSource))
             .collect(),
-    );
+    )
+    .expect("no tensor name collides across shards");
 
     // 4. The install. The trunk still streams a layer at a time; the
     //    drafter's 3.8 GB rides the resident region's walk.

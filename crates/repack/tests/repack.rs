@@ -1,8 +1,6 @@
 //! Tests for the row-major matrix quantization repack.
 
-use turbospark_repack::{
-    int4_packed_bytes, int8_packed_bytes, quantize_matrix_int4, quantize_matrix_int8, RepackError,
-};
+use turbospark_repack::{quantize_matrix_int4, quantize_matrix_int8, RepackError};
 
 #[test]
 fn quantize_matrix_int4_produces_one_row_per_matrix_row() {
@@ -40,23 +38,30 @@ fn quantize_matrix_rejects_non_group_aligned_columns() {
     assert!(matches!(err, RepackError::RowNotGroupAligned { .. }));
 }
 
+/// `cols == 0` passes `0 % GROUP_SIZE == 0`, so the shape a hostile or
+/// corrupt header names (`[N, 0]`) must be refused explicitly rather than
+/// reaching `chunks_exact(0)`, which panics.
 #[test]
-fn packed_byte_sizes_match_the_written_row_shapes() {
-    let rows = 4;
-    let cols = 128; // 2 groups of 64
-    let data = vec![0.5f32; rows * cols];
+fn quantize_matrix_rejects_zero_columns_instead_of_panicking() {
+    let err4 = quantize_matrix_int4(&[], 3, 0).unwrap_err();
+    assert!(matches!(
+        err4,
+        RepackError::RowNotGroupAligned { len: 0, .. }
+    ));
 
-    let int4_rows = quantize_matrix_int4(&data, rows, cols).unwrap();
-    let int4_actual: usize = int4_rows
-        .iter()
-        .map(|r| r.packed.len() + r.scales.len() * 2 + r.biases.len() * 2)
-        .sum();
-    assert_eq!(int4_actual, int4_packed_bytes(rows, cols));
+    let err8 = quantize_matrix_int8(&[], 3, 0).unwrap_err();
+    assert!(matches!(
+        err8,
+        RepackError::RowNotGroupAligned { len: 0, .. }
+    ));
+}
 
-    let int8_rows = quantize_matrix_int8(&data, rows, cols).unwrap();
-    let int8_actual: usize = int8_rows
-        .iter()
-        .map(|r| r.packed.len() + r.scales.len() * 2 + r.biases.len() * 2)
-        .sum();
-    assert_eq!(int8_actual, int8_packed_bytes(rows, cols));
+/// `rows * cols` must not wrap: two shape values that overflow `usize`
+/// multiplication but happen to produce a small wrapped product must not be
+/// read as a matching shape.
+#[test]
+fn quantize_matrix_rejects_a_shape_whose_product_overflows() {
+    let data = vec![0.0f32; 4];
+    let err = quantize_matrix_int4(&data, usize::MAX / 2 + 1, 2).unwrap_err();
+    assert!(matches!(err, RepackError::ShapeMismatch { .. }));
 }

@@ -28,7 +28,7 @@ pub fn gpt_oss_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, Gg
             detail: format!("{window} is not a usable sliding window"),
         });
     }
-    let period = m.opt_i64("attention.sliding_window_pattern").unwrap_or(2);
+    let period = m.opt_i64("attention.sliding_window_pattern")?.unwrap_or(2);
     if period < 1 {
         return Err(GgufConfigError::BadValue {
             key: m.key("attention.sliding_window_pattern"),

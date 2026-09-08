@@ -2,6 +2,8 @@
 //! arch peeked back out of its own manifest, and the family-specific
 //! classification actually fires.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use turbospark_repack::{
     build_synthetic_qwen_gdn_moe_install, classify_for_family, peek_manifest_arch, Gemma4Bucket,
 };
@@ -17,8 +19,16 @@ fn build(dir: &std::path::Path) -> model_io::ArchConfig {
         .expect("synthetic qwen install")
 }
 
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Distinct from every OTHER caller by `name` today (its three call sites
+/// pass distinct labels), and from any caller within a run by the counter
+/// too, so the path stays unique under `docs/TESTING.md`'s convention even
+/// if a future case reuses a label or runs the same test body twice.
 fn temp_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("turbospark-qwen-{name}-{}", std::process::id()));
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir =
+        std::env::temp_dir().join(format!("turbospark-qwen-{name}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

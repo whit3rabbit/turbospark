@@ -20,19 +20,32 @@ pub struct Gemma4Shards<'a> {
 
 impl<'a> Gemma4Shards<'a> {
     /// Creates multi-shard tensor registry mapping names to shard index.
-    pub fn new(shards: Vec<(&'a SafetensorsHeader, &'a dyn RangeSource)>) -> Self {
+    ///
+    /// A tensor present in two shards is a corrupt checkpoint (the shard
+    /// split is supposed to partition the tensor set), and the old
+    /// behaviour -- last shard silently wins -- would read one shard's
+    /// bytes under a name the manifest also lets a caller resolve from a
+    /// different shard, with no error anywhere.
+    pub fn new(
+        shards: Vec<(&'a SafetensorsHeader, &'a dyn RangeSource)>,
+    ) -> Result<Self, Gemma4Error> {
         let mut by_name = std::collections::HashMap::new();
         for (i, (header, _)) in shards.iter().enumerate() {
             for name in header.tensors.keys() {
-                by_name.insert(name.as_str(), i);
+                if by_name.insert(name.as_str(), i).is_some() {
+                    return Err(Gemma4Error::ShapeMismatch {
+                        tensor: name.clone(),
+                        detail: "present in two shards".to_string(),
+                    });
+                }
             }
         }
-        Self { shards, by_name }
+        Ok(Self { shards, by_name })
     }
 
     /// Creates single-shard tensor registry wrapper.
     pub fn single(header: &'a SafetensorsHeader, source: &'a dyn RangeSource) -> Self {
-        Self::new(vec![(header, source)])
+        Self::new(vec![(header, source)]).expect("a single shard cannot collide with itself")
     }
 
     /// Resolves the shard header and byte source for a given tensor name.

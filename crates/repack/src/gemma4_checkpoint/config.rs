@@ -200,7 +200,7 @@ impl Default for Gemma4Quant {
 impl Gemma4Quant {
     pub fn bits_for(&self, base_name: &str) -> u32 {
         // Overrides are keyed by the source path without the `.weight`
-        // suffix; try both to be safe.
+        // suffix, which every caller already strips before calling this.
         self.bits_overrides
             .get(base_name)
             .copied()

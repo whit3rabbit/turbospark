@@ -15,14 +15,8 @@ use std::path::Path;
 
 use crate::resident_writer::{
     RawTensorSpec, ResidentEntrySpec, ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32,
-    DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE, DTYPE_INT8_AFFINE,
+    DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE, DTYPE_INT4_AFFINE, DTYPE_INT8_AFFINE,
 };
-
-/// The INT4-affine dtype tag. Restated rather than made `pub` in
-/// `resident_writer` (which keeps it private -- nothing needed it outside
-/// that module before this reader existed): the value is part of the ON-DISK
-/// FORMAT, and this is the one other place that has to agree with it.
-const DTYPE_INT4_AFFINE: u8 = 4;
 
 fn le_u16s(bytes: &[u8]) -> Vec<u16> {
     bytes

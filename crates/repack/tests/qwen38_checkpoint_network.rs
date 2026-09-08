@@ -227,7 +227,8 @@ fn repacks_the_real_qwen38_27b_checkpoint() {
             .zip(sources.iter())
             .map(|(h, s)| (h, s as &dyn turbospark_repack::RangeSource))
             .collect(),
-    );
+    )
+    .expect("no tensor name collides across shards");
 
     let dir = install_dir();
     eprintln!("installing to {}", dir.display());
@@ -529,7 +530,8 @@ fn repacks_the_real_qwen38_27b_checkpoint_with_its_mtp_head() {
             .zip(sources.iter())
             .map(|(h, s)| (h, s as &dyn RangeSource))
             .collect(),
-    );
+    )
+    .expect("no tensor name collides across shards");
 
     let dir = install_dir_from("TURBOSPARK_QWEN38_MTP_INSTALL_DIR", "turbospark-qwen38-mtp");
     eprintln!("installing to {}", dir.display());
@@ -740,7 +742,8 @@ fn repacks_the_real_qwen38_27b_checkpoint_with_its_vision_tower() {
             .zip(sources.iter())
             .map(|(h, s)| (h, s as &dyn turbospark_repack::RangeSource))
             .collect(),
-    );
+    )
+    .expect("no tensor name collides across shards");
 
     let dir = install_dir_from(
         "TURBOSPARK_QWEN38_VISION_INSTALL_DIR",

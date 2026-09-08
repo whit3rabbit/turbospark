@@ -1,5 +1,6 @@
 //! Streaming writer implementation for large `.gturbo` install generation.
 
+use std::io::Write as _;
 use std::path::Path;
 
 use model_io::ArchConfig;
@@ -95,12 +96,22 @@ impl StreamingGturboWriter {
         Ok(())
     }
 
-    /// Finalizes the installation by writing `layout.json`, `model_weights.bin`, and `manifest.json`.
-    pub fn finish(
+    /// Finalizes the installation by writing `layout.json`, `model_weights.bin`,
+    /// and `manifest.json`, streaming the resident region straight to disk
+    /// via `write_resident` rather than requiring the caller to have already
+    /// assembled it as one in-memory `Vec<u8>`.
+    ///
+    /// `write_resident` is handed a `BufWriter` over a freshly created
+    /// `model_weights.bin` and nothing else: this method opens the file so
+    /// the path and its error handling live in ONE place rather than in
+    /// every caller, and closes (flushes) it before `manifest.json` is built
+    /// -- `build_manifest_json` hashes the file back off disk, so it has to
+    /// see the complete, flushed bytes.
+    pub fn finish_streaming(
         self,
         arch: &ArchConfig,
         model_id: &str,
-        resident_weights_bin: &[u8],
+        write_resident: impl FnOnce(&mut dyn std::io::Write) -> std::io::Result<()>,
     ) -> Result<(), WriterError> {
         let num_layers = self.layout_layers.len();
         let layout_json = serde_json::json!({
@@ -117,8 +128,13 @@ impl StreamingGturboWriter {
         .map_err(|e| io_err(&layout_path, e))?;
 
         let weights_path = self.dir.join("model_weights.bin");
-        std::fs::write(&weights_path, resident_weights_bin)
-            .map_err(|e| io_err(&weights_path, e))?;
+        (|| -> std::io::Result<()> {
+            let file = std::fs::File::create(&weights_path)?;
+            let mut w = std::io::BufWriter::with_capacity(1 << 20, file);
+            write_resident(&mut w)?;
+            w.flush()
+        })()
+        .map_err(|e| io_err(&weights_path, e))?;
 
         let manifest_path = self.dir.join("manifest.json");
         let mut manifest_json = build_manifest_json(
@@ -138,5 +154,18 @@ impl StreamingGturboWriter {
         )
         .map_err(|e| io_err(&manifest_path, e))?;
         Ok(())
+    }
+
+    /// [`Self::finish_streaming`] over an already-assembled resident region.
+    /// Kept for callers (and fixtures) that build the whole `Vec<u8>` up
+    /// front; a real streamed install goes through `finish_streaming`
+    /// directly so it never holds this vector at all.
+    pub fn finish(
+        self,
+        arch: &ArchConfig,
+        model_id: &str,
+        resident_weights_bin: &[u8],
+    ) -> Result<(), WriterError> {
+        self.finish_streaming(arch, model_id, |w| w.write_all(resident_weights_bin))
     }
 }

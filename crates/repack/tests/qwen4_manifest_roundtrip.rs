@@ -24,18 +24,18 @@
 //! refuse every install this walk produced.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const VOCAB: i64 = 64;
 const LAYERS: i64 = 4;
 
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn temp_dir() -> PathBuf {
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
-        "turbospark-qwen4-manifest-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
+        "turbospark-qwen4-manifest-{}-{n}",
+        std::process::id()
     ));
     std::fs::create_dir_all(&dir).expect("temp dir");
     dir

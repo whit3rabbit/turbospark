@@ -72,7 +72,8 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     quant: &Gemma4Quant,
 ) -> Result<Gemma4RepackOutput, Gemma4Error> {
     let plan = classify_all(shards, arch)?;
-    let mut resident = read_resident_entries(shards, &plan.resident_bases, quant, arch.family)?;
+    let mut resident =
+        read_resident_entries_from_shards(shards, &plan.resident_bases, quant, arch.family)?;
     // The head is APPENDED, after `lm_head` and after the trunk's own
     // ordering has been settled. Absent from the checkpoint means absent from
     // the install, with no flag and no manifest field to disagree with the
@@ -148,7 +149,7 @@ pub struct ClassifiedNames<'a> {
     ///
     /// Two reasons, and the second is the one that bites. The head takes a
     /// quantizing arm no trunk tensor takes (`mtp::read_mtp_entries`), so
-    /// merging would mean `read_resident_entries` deciding per tensor which
+    /// merging would mean `read_resident_entries_from_shards` deciding per tensor which
     /// of three paths a name wants. And `lm_order_key` sorts on
     /// `layer_index`, which finds `.layers.` inside `mtp.layers.0.*` and
     /// would interleave the head's block with TRUNK LAYER 0's tensors --
@@ -166,7 +167,7 @@ pub struct ClassifiedNames<'a> {
     /// The head's first reason: the tower takes a dtype arm no trunk tensor
     /// takes. It stays FP16 verbatim where every unquantized trunk tensor is
     /// narrowed to BF16 (`narrow_raw_to_bf16`, AGENTS.md Gotcha 45), so
-    /// merging would put a third path inside `read_resident_entries`.
+    /// merging would put a third path inside `read_resident_entries_from_shards`.
     ///
     /// The head's second reason, and the one that would actually corrupt the
     /// index: `lm_order_key` sorts on `layer_index`, which finds `.layers.`
@@ -328,7 +329,7 @@ fn int8_force_targets(family: ModelFamily) -> &'static [&'static str] {
 }
 
 /// Reads resident weight and norm entries for the classified base names.
-pub fn read_resident_entries(
+pub fn read_resident_entries_from_shards(
     shards: &Gemma4Shards<'_>,
     resident_bases: &[&str],
     quant: &Gemma4Quant,

@@ -165,7 +165,8 @@ fn repacks_the_real_ornith_35b_mlx_4bit() {
             .zip(sources.iter())
             .map(|(h, s)| (h, s as &dyn turbospark_repack::RangeSource))
             .collect(),
-    );
+    )
+    .expect("no tensor name collides across shards");
 
     let dir = install_dir();
     eprintln!("installing to {}", dir.display());

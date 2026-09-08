@@ -8,7 +8,7 @@ use super::types::{
 use crate::gguf_header::GgufHeader;
 use crate::gguf_names::{map_gguf_name, GgufMapping};
 use crate::ranged_download::RangeSource;
-use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec, ResidentTensorSpec};
+use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
 fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
     match family {
@@ -26,10 +26,12 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // are F32 and are NOT here: they take the BF16 default, which is
         // what a bias-add kernel reads.
         ModelFamily::Llama | ModelFamily::Qwen3Moe | ModelFamily::GptOss => &["mlp.gate.weight"],
-        // `qwen3_5` has NO GGUF file -- it is published as MLX
-        // safetensors only -- so the GGUF walk never reaches it. Empty
-        // rather than Qwen 3.6's list, which would be a claim about bytes
-        // that do not exist.
+        // `qwen3_5` DOES have a real GGUF file now
+        // (`ornith-ai/Ornith-1.5-9B-GGUF`, walked by
+        // `tests/ornith_gguf_network.rs`), so the empty list is not about
+        // an unreached family. It is empty because the dense half of this
+        // architecture has no router and no shared-expert gate at all,
+        // unlike Qwen 3.6's MoE list.
         // `muse_glimmer` is MLX-safetensors-only for the same reason, and is
         // additionally DENSE, so it has no router to transcode even if a
         // GGUF of it were ever published.
@@ -139,24 +141,13 @@ pub fn transcode_f32(
             detail: format!("row length {cols} is not a multiple of the 64-element group"),
         });
     }
-    let mut packed = Vec::with_capacity(rows * cols);
-    let mut scales = Vec::with_capacity(rows * cols / 64);
-    let mut biases = Vec::with_capacity(rows * cols / 64);
-    for r in 0..rows {
-        let row = compute::quantize_int8_affine(&values[r * cols..(r + 1) * cols]);
-        packed.extend_from_slice(&row.packed);
-        scales.extend_from_slice(&row.scales);
-        biases.extend_from_slice(&row.biases);
-    }
+    let quantized: Vec<_> = (0..rows)
+        .map(|r| compute::quantize_int8_affine(&values[r * cols..(r + 1) * cols]))
+        .collect();
     Ok(Transcoded {
-        spec: ResidentEntrySpec::Int8(ResidentTensorSpec {
-            name: canonical,
-            packed,
-            scales,
-            biases,
-            rows: rows as u32,
-            cols: cols as u32,
-        }),
+        spec: ResidentEntrySpec::Int8(crate::repack::resident_spec_from_int8_rows(
+            canonical, &quantized, cols,
+        )),
         lossy: 0,
     })
 }

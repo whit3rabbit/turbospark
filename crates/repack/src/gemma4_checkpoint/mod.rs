@@ -72,8 +72,12 @@ pub fn write_gemma4_install_streamed(
         plan.routed.len(),
     ));
 
-    let mut resident =
-        orchestrate::read_resident_entries(shards, &plan.resident_bases, quant, arch.family)?;
+    let mut resident = orchestrate::read_resident_entries_from_shards(
+        shards,
+        &plan.resident_bases,
+        quant,
+        arch.family,
+    )?;
     // THE MTP HEAD, and this arm has to exist HERE as well as in
     // `orchestrate_gemma4_checkpoint_sharded` -- which is the whole reason it
     // is worth a comment. Every REAL install goes through this streamed
@@ -158,8 +162,6 @@ pub fn write_gemma4_install_streamed(
         write_ngram_table(shards, arch, &ngram_plan, dir, &mut progress)?;
     }
 
-    let resident_bytes =
-        crate::resident_writer::build_resident_weights_bin_mixed(&resident.entries);
     // Reported rather than merely counted, on the streamed path especially:
     // this is the only place a 25-minute walk says out loud that it narrowed
     // an F16 checkpoint's norms (`narrow_raw_to_bf16`), and a silent lossy
@@ -178,10 +180,16 @@ pub fn write_gemma4_install_streamed(
                 .join(", ")
         ));
     }
-    drop(resident);
+    // `resident` is kept alive (not built into a `Vec<u8>` and dropped here)
+    // so `finish_streaming` below can write its specs' bytes straight to
+    // `model_weights.bin`: building the whole resident region as a `Vec<u8>`
+    // just to hand it to the writer would hold three copies at once on a
+    // real MoE install (`resident.entries` itself, the concatenated region,
+    // and the writer's own copy of it) -- see `resident_writer`'s module
+    // doc.
     progress(&format!(
-        "resident region built ({} bytes)",
-        resident_bytes.len()
+        "{} resident tensors ready to stream to disk",
+        resident.entries.len()
     ));
 
     // THE VISION TOWER, and this arm has to exist HERE as well as in
@@ -237,7 +245,9 @@ pub fn write_gemma4_install_streamed(
         // all, and without which the whole manifest gate never runs.
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
         writer.set_quant(manifest_quant_for(quant, arch.family, false));
-        writer.finish(arch, model_id, &resident_bytes)?;
+        writer.finish_streaming(arch, model_id, |w| {
+            crate::resident_writer::write_resident_weights_bin_mixed(&resident.entries, w)
+        })?;
         progress("install written (no routed experts)");
         return Ok(());
     }
@@ -256,7 +266,9 @@ pub fn write_gemma4_install_streamed(
             blobs.experts.len()
         ));
     }
-    writer.finish(arch, model_id, &resident_bytes)?;
+    writer.finish_streaming(arch, model_id, |w| {
+        crate::resident_writer::write_resident_weights_bin_mixed(&resident.entries, w)
+    })?;
     progress("manifest written");
     Ok(())
 }
@@ -272,8 +284,7 @@ pub fn write_gemma4_install(
     quant: &Gemma4Quant,
 ) -> Result<Gemma4RepackOutput, Box<dyn std::error::Error>> {
     let out = orchestrate_gemma4_checkpoint(header, source, arch, quant)?;
-    let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&out.resident);
-    // THE VISION TOWER, before either `finish` below, because
+    // THE VISION TOWER, before either `finish_streaming` below, because
     // `build_manifest_json` hashes every file it lists. The streamed writer
     // has the same two lines and the same ordering constraint; see its
     // comment for why both writers carry this rather than one.
@@ -299,7 +310,9 @@ pub fn write_gemma4_install(
         // cannot carry one.
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
         writer.set_quant(manifest_quant_for(quant, arch.family, false));
-        writer.finish(arch, model_id, &resident_bytes)?;
+        writer.finish_streaming(arch, model_id, |w| {
+            crate::resident_writer::write_resident_weights_bin_mixed(&out.resident, w)
+        })?;
     } else {
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(
             dir,
@@ -310,7 +323,9 @@ pub fn write_gemma4_install(
         for layer in &out.layers {
             writer.write_layer(layer)?;
         }
-        writer.finish(arch, model_id, &resident_bytes)?;
+        writer.finish_streaming(arch, model_id, |w| {
+            crate::resident_writer::write_resident_weights_bin_mixed(&out.resident, w)
+        })?;
     }
     Ok(out)
 }
@@ -445,12 +460,9 @@ pub fn graft_qwen_gdn_dense_mtp_head(
         head.entries.len()
     ));
     entries.extend(head.entries);
-
-    let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&entries);
-    drop(entries);
     progress(&format!(
-        "resident region built ({} bytes)",
-        resident_bytes.len()
+        "{} resident tensors ready to stream to disk",
+        entries.len()
     ));
 
     // Same shape as the `plan.routed.is_empty()` arm above: a dense install
@@ -459,7 +471,9 @@ pub fn graft_qwen_gdn_dense_mtp_head(
     // `write_gturbo_install_with_resident_index`.
     let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(out_dir, 0, 0)?;
     writer.set_quant(manifest_quant_for(quant, arch.family, false));
-    writer.finish(arch, model_id, &resident_bytes)?;
+    writer.finish_streaming(arch, model_id, |w| {
+        crate::resident_writer::write_resident_weights_bin_mixed(&entries, w)
+    })?;
     progress("install written (reused trunk, no routed experts)");
     Ok(())
 }
@@ -501,10 +515,11 @@ pub fn write_vision_sidecar(
     }
     crate::gturbo_writer::write_packed_vision(out_dir, &read.blocks, read.block_stride)?;
 
-    let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&read.entries);
     let arch = model_io::sidecar_arch(family, vision.out_hidden_size, vision);
     let writer = crate::gturbo_writer::StreamingGturboWriter::new(out_dir, 0, 0)?;
-    writer.finish(&arch, model_id, &resident_bytes)?;
+    writer.finish_streaming(&arch, model_id, |w| {
+        crate::resident_writer::write_resident_weights_bin_mixed(&read.entries, w)
+    })?;
 
     record.write(out_dir)?;
     Ok(())

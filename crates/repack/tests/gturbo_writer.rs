@@ -263,6 +263,82 @@ fn each_layer_is_padded_to_its_own_stride_not_the_model_wide_maximum() {
     verify_install_full_sha256(&dir, &arch).unwrap();
 }
 
+/// `StreamingGturboWriter::adopt_layer` is the resume path (ROADMAP Phase
+/// M2) and had zero direct callers under `tests/` before this: the size
+/// check it applies is a function of the layer file's byte length alone, so
+/// a truncated or differently-strided leftover must be refused rather than
+/// silently believed.
+#[test]
+fn adopt_layer_refuses_a_layer_file_of_the_wrong_size() {
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("packed_experts")).unwrap();
+    // Deliberately not the size this walk would write for layer 0.
+    std::fs::write(dir.join("packed_experts/layer_00.bin"), vec![0u8; 3]).unwrap();
+
+    let mut writer =
+        turbospark_repack::StreamingGturboWriter::new(&dir, EXPERT_STRIDE, EXPERTS_PER_LAYER)
+            .unwrap();
+    let layers = synthetic_layers();
+    let err = writer.adopt_layer(&layers[0]).unwrap_err();
+    let turbospark_repack::WriterError::Io { detail, .. } = err else {
+        panic!("expected an Io error, got {err:?}");
+    };
+    assert!(
+        detail.contains("cannot resume"),
+        "expected a resume refusal, got: {detail}"
+    );
+}
+
+/// The other half of the resume contract: a placeholder file of the EXACT
+/// expected size (zeros, per `adopt_layer`'s own doc comment -- the check
+/// is size-only) is adopted rather than refused, and the layout entry it
+/// records is byte-identical to the one `write_layer` would have recorded
+/// for the real bytes. The entry is a function of sizes, dtypes and shapes,
+/// never of content, which is the whole reason a resume can skip the
+/// network read.
+#[test]
+fn adopt_layer_records_the_same_layout_entry_write_layer_would_have() {
+    let layers = synthetic_layers();
+    let arch = toy_arch();
+
+    // Reference: write the real layer normally, and note its exact size.
+    let ref_dir = tempdir();
+    let mut ref_writer =
+        turbospark_repack::StreamingGturboWriter::new(&ref_dir, EXPERT_STRIDE, EXPERTS_PER_LAYER)
+            .unwrap();
+    ref_writer.write_layer(&layers[0]).unwrap();
+    ref_writer.finish(&arch, "toy-model", &[]).unwrap();
+    let ref_layout = std::fs::read_to_string(ref_dir.join("packed_experts/layout.json")).unwrap();
+    let real_size = std::fs::metadata(ref_dir.join("packed_experts/layer_00.bin"))
+        .unwrap()
+        .len();
+
+    // Resume: a same-sized placeholder, adopted instead of written.
+    let resume_dir = tempdir();
+    std::fs::create_dir_all(resume_dir.join("packed_experts")).unwrap();
+    std::fs::write(
+        resume_dir.join("packed_experts/layer_00.bin"),
+        vec![0u8; real_size as usize],
+    )
+    .unwrap();
+    let mut resume_writer = turbospark_repack::StreamingGturboWriter::new(
+        &resume_dir,
+        EXPERT_STRIDE,
+        EXPERTS_PER_LAYER,
+    )
+    .unwrap();
+    resume_writer.adopt_layer(&layers[0]).unwrap();
+    resume_writer.finish(&arch, "toy-model", &[]).unwrap();
+    let resume_layout =
+        std::fs::read_to_string(resume_dir.join("packed_experts/layout.json")).unwrap();
+
+    assert_eq!(ref_layout, resume_layout);
+    // adopt_layer must never write: the placeholder's zero bytes are
+    // untouched, which is the whole point of skipping the network read.
+    let placeholder = std::fs::read(resume_dir.join("packed_experts/layer_00.bin")).unwrap();
+    assert!(placeholder.iter().all(|&b| b == 0));
+}
+
 // The reading half of this pair lives in
 // `crates/streaming/tests/pread_streamer.rs`: repack does not depend on
 // streaming, and the two together are what matter (bytes written narrow,

@@ -59,6 +59,19 @@ pub fn linear_attention(m: &Meta<'_>) -> Result<LinearAttentionConfig, GgufConfi
             detail: "must be non-zero".to_string(),
         });
     }
+    // `value_head_dim` is DERIVED, not published, so a GGUF whose
+    // `ssm.inner_size` is not a whole multiple of `ssm.time_step_rank`
+    // would otherwise silently floor to a smaller head width -- a correct
+    // BYTE SIZE at a nonsense SHAPE, no different from the affine-layout
+    // shape checks this walk applies elsewhere.
+    if inner % num_v_heads != 0 {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("ssm.inner_size"),
+            detail: format!(
+                "{inner} is not a whole multiple of ssm.time_step_rank ({num_v_heads})"
+            ),
+        });
+    }
     Ok(LinearAttentionConfig {
         num_k_heads: m.i64("ssm.group_count")?,
         num_v_heads,

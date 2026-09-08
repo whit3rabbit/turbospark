@@ -413,6 +413,77 @@ fn a_per_tensor_override_that_leaves_the_group_size_behind_is_refused() {
     assert!(text.contains("q_proj"), "{text}");
 }
 
+/// A weight run whose actual byte length disagrees with the shape it
+/// declares (offsets one u32 word short) must be refused: `pass_through_packed`
+/// already checks its scale/bias companions against `rows*cols/group`, but
+/// left the packed run itself unchecked, so a shard with a truncated
+/// `data_offsets` range wrote a correctly-shaped-looking index entry whose
+/// bytes did not match.
+#[test]
+fn pass_through_packed_rejects_a_weight_run_shorter_than_its_declared_shape() {
+    const ROWS: usize = 4;
+    const COLS: usize = 128;
+    let name = "language_model.model.layers.0.self_attn.q_proj.weight";
+    let mut tensors = packed_tensor(name, ROWS, COLS, 4, "bf16");
+    // Shorten the packed weight run by one u32 word while its `shape` field
+    // (still [ROWS, COLS*4/32]) says otherwise.
+    let shortened = tensors[0].bytes.len() - 4;
+    tensors[0].bytes.truncate(shortened);
+    let blob = assemble(&tensors);
+    let header = turbospark_repack::parse_header(&blob, 1 << 20).expect("fixture header parses");
+    let source = MemoryRangeSource::new(&blob);
+    let shards = Gemma4Shards::single(&header, &source);
+    let quant = parse_gemma4_quantization(&quant_config_json(4, 64)).expect("spec parses");
+    let err = pass_through_packed(&shards, name, &quant).unwrap_err();
+    assert!(
+        matches!(err, Gemma4Error::ShapeMismatch { .. }),
+        "expected ShapeMismatch, got {err:?}"
+    );
+}
+
+/// The routed-expert sibling of the check above: a per-expert weight blob
+/// whose byte length disagrees with the tensor's OWN declared shape
+/// (`rows`/`cols` come from `w.shape` in `plan_one_expert_layer`, `w_per`
+/// used to come only from the byte range). Corrupts one expert weight
+/// tensor's actual bytes by one u32 word while its `shape` stays as
+/// declared, and exercises it through the full walk since
+/// `plan_one_expert_layer` is not exported on its own.
+#[test]
+fn a_routed_expert_weight_run_shorter_than_its_declared_shape_is_refused() {
+    let mut tensors = fixture();
+    let target = "language_model.model.layers.0.experts.switch_glu.gate_proj.weight";
+    let t = tensors
+        .iter_mut()
+        .find(|t| t.name == target)
+        .expect("fixture carries the target tensor");
+    let shortened = t.bytes.len() - 4;
+    t.bytes.truncate(shortened);
+
+    let blob = assemble(&tensors);
+    let header = turbospark_repack::parse_header(&blob, 1 << 20).expect("fixture header parses");
+    let source = MemoryRangeSource::new(&blob);
+    let arch = parse_gemma4_config(&config_json()).expect("config");
+    let quant = parse_gemma4_quantization(&config_json()).expect("quant");
+    // `Gemma4RepackOutput` has no `Debug` impl, so match rather than
+    // `unwrap_err`.
+    let Err(err) = orchestrate_gemma4_checkpoint(&header, &source, &arch, &quant) else {
+        panic!("a routed expert weight run shorter than its declared shape must be refused");
+    };
+    // Matching only the `ShapeMismatch` VARIANT is not enough: a
+    // corruption that shifts `blob_used` can also trip the unrelated
+    // "down offset not 4-byte aligned" check downstream, which is the
+    // SAME variant with a different message. Check the detail text names
+    // the per-expert weight blob, so this pins the check this test exists
+    // to cover rather than any check that happens to fire.
+    let Gemma4Error::ShapeMismatch { detail, .. } = &err else {
+        panic!("expected ShapeMismatch, got {err:?}");
+    };
+    assert!(
+        detail.contains("per-expert weight blob"),
+        "expected the per-expert weight blob check to fire, got: {detail}"
+    );
+}
+
 /// A 1-bit tensor passes through as `Int1`, 32 elements per packed word.
 #[test]
 fn a_one_bit_tensor_passes_through_as_int1() {
@@ -704,7 +775,8 @@ fn sharded_orchestration_matches_single_source() {
     let src_b = MemoryRangeSource::new(&shard_b);
     let hdr_a = turbospark_repack::fetch_safetensors_header(&src_a).expect("header a");
     let hdr_b = turbospark_repack::fetch_safetensors_header(&src_b).expect("header b");
-    let shards = Gemma4Shards::new(vec![(&hdr_a, &src_a), (&hdr_b, &src_b)]);
+    let shards = Gemma4Shards::new(vec![(&hdr_a, &src_a), (&hdr_b, &src_b)])
+        .expect("no tensor name collides across shards");
     let sharded = orchestrate_gemma4_checkpoint_sharded(&shards, &arch, &quant).expect("sharded");
 
     let src_full = MemoryRangeSource::new(&full);
@@ -734,6 +806,31 @@ fn sharded_orchestration_matches_single_source() {
             }
         }
     }
+}
+
+/// A tensor present in two shards is a corrupt checkpoint (the shard split
+/// is supposed to partition the tensor set); the registry must refuse it
+/// rather than silently keep the last shard's bytes under a name the
+/// manifest still resolves from either shard's own header.
+#[test]
+fn a_tensor_present_in_two_shards_is_refused() {
+    use turbospark_repack::Gemma4Shards;
+
+    let tensors = fixture();
+    let blob = assemble(&tensors);
+    let source = MemoryRangeSource::new(&blob);
+    let header = turbospark_repack::fetch_safetensors_header(&source).expect("header");
+
+    // The SAME header and source twice: every name it declares collides
+    // with itself. `Gemma4Shards` has no `Debug` impl (it borrows a
+    // `dyn RangeSource`), so match rather than `unwrap_err`.
+    let Err(err) = Gemma4Shards::new(vec![(&header, &source), (&header, &source)]) else {
+        panic!("a tensor present in two shards must be refused");
+    };
+    assert!(
+        matches!(err, turbospark_repack::Gemma4Error::ShapeMismatch { .. }),
+        "expected ShapeMismatch, got {err:?}"
+    );
 }
 
 #[test]

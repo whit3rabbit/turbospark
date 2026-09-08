@@ -6,6 +6,8 @@
 //! for callers that need real, addressable tensors — e.g. a small synthetic
 //! model whose weights a real forward pass reads back by name.
 
+use std::io::{self, Write};
+
 const HEADER_BYTES: usize = 24;
 const ENTRY_BYTES: usize = 72;
 
@@ -29,9 +31,12 @@ pub struct ResidentTensorSpec {
 }
 
 /// INT4-affine dtype tag stored in each entry's `dtype` byte. Not validated
-/// by the reader; this port's only consumer of the tag is its own writer
-/// and `crates/runtime`'s `RealForwardRunner`.
-const DTYPE_INT4_AFFINE: u8 = 4;
+/// by `crates/model-io`'s reader; this port's consumers of the tag are this
+/// module's own writer, `resident_reader.rs` (reading an install back for
+/// the MTP graft), and `crates/runtime`'s `RealForwardRunner`. `pub` for
+/// that second reason: the value is part of the ON-DISK FORMAT, and a
+/// private restatement of it in the reader is the one copy that can drift.
+pub const DTYPE_INT4_AFFINE: u8 = 4;
 
 /// INT8-affine dtype tag: same packed+scales+biases entry shape as INT4,
 /// one byte per element instead of one nibble.
@@ -180,13 +185,37 @@ pub fn build_resident_weights_bin(specs: &[ResidentTensorSpec]) -> Vec<u8> {
         .iter()
         .map(|t| EntryView::Packed(t, DTYPE_INT4_AFFINE))
         .collect();
-    build_from_views(&views)
+    let mut out = Vec::new();
+    write_from_views(&views, &mut out).expect("writing into a Vec<u8> cannot fail");
+    out
 }
 
 /// [`build_resident_weights_bin`] over a mix of INT4-affine and raw
 /// (BF16/FP16/FP32) entries — what a real checkpoint repack produces:
 /// pass-through quantized projections plus unquantized norms/scalars.
 pub fn build_resident_weights_bin_mixed(specs: &[ResidentEntrySpec]) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_resident_weights_bin_mixed(specs, &mut out).expect("writing into a Vec<u8> cannot fail");
+    out
+}
+
+/// Streaming counterpart to [`build_resident_weights_bin_mixed`]: writes the
+/// SAME bytes directly to `out` rather than assembling the whole resident
+/// region in memory first.
+///
+/// `build_resident_weights_bin_mixed` is now a thin wrapper over this
+/// (writing into a `Vec<u8>`), so the two are byte-identical by
+/// CONSTRUCTION rather than by a separate test asserting they agree: there
+/// is only one implementation. On a real streamed install this is what lets
+/// `StreamingGturboWriter::finish_streaming` write the resident region
+/// straight to `model_weights.bin` without ever holding a second, then a
+/// third, full copy of it in memory (the caller's `specs` -- built while
+/// reading and quantizing the checkpoint -- is the one copy this function
+/// does not eliminate).
+pub fn write_resident_weights_bin_mixed(
+    specs: &[ResidentEntrySpec],
+    out: &mut dyn Write,
+) -> io::Result<()> {
     let views: Vec<EntryView<'_>> = specs
         .iter()
         .map(|s| match s {
@@ -197,7 +226,7 @@ pub fn build_resident_weights_bin_mixed(specs: &[ResidentEntrySpec]) -> Vec<u8> 
             ResidentEntrySpec::Raw(r) => EntryView::Raw(r),
         })
         .collect();
-    build_from_views(&views)
+    write_from_views(&views, out)
 }
 
 enum EntryView<'a> {
@@ -214,7 +243,55 @@ impl EntryView<'_> {
     }
 }
 
-fn build_from_views(specs: &[EntryView<'_>]) -> Vec<u8> {
+/// Writes `n` zero bytes to `out` without allocating an `n`-byte buffer.
+fn write_zeros(out: &mut dyn Write, n: usize) -> io::Result<()> {
+    const ZEROS: [u8; 64] = [0u8; 64];
+    let mut remaining = n;
+    while remaining > 0 {
+        let chunk = remaining.min(ZEROS.len());
+        out.write_all(&ZEROS[..chunk])?;
+        remaining -= chunk;
+    }
+    Ok(())
+}
+
+/// One entry's placement in the data region, computed from LENGTHS alone
+/// (never from the bytes themselves) so the layout is known before a single
+/// byte of tensor data is written.
+struct Placed {
+    dtype: u8,
+    weight_offset: u64,
+    weight_size: u64,
+    shape: (u32, u32, u32, u32),
+    scale_offset: u64,
+    scale_size: u64,
+    bias_offset: u64,
+    bias_size: u64,
+}
+
+/// Writes header, entry table, string table, then the data region, to
+/// `out`, in two passes over `specs`.
+///
+/// **PASS 1 computes every entry's placement from `.len()` calls alone --
+/// never copying or even reading a tensor's bytes -- because the header and
+/// entry table have to be written before the data region they describe, and
+/// this port's on-disk format is not self-describing enough to write them
+/// any other way.** That is the one unavoidable pre-pass; nothing here
+/// holds a second copy of the DATA to produce it.
+///
+/// **PASS 2 writes the real bytes straight to `out`, padding to each
+/// entry's OWN `weight_offset` from pass 1 rather than recomputing the
+/// alignment rule a second time** -- so the two passes cannot silently
+/// disagree about where a tensor lands; there is one source of truth for
+/// the layout and pass 2 is only ever catching up to it.
+///
+/// This is what lets [`build_resident_weights_bin_mixed`] and a real
+/// streamed install ([`StreamingGturboWriter::finish_streaming`], in
+/// `gturbo_writer/streaming.rs`) share one implementation: the in-memory
+/// caller passes a `Vec<u8>` as `out` and the streamed caller passes an open
+/// file, and neither this function nor its caller ever builds a second,
+/// full-sized copy of the resident region to get there.
+fn write_from_views(specs: &[EntryView<'_>], out: &mut dyn Write) -> io::Result<()> {
     let entry_count = specs.len();
     let entry_table_bytes = entry_count * ENTRY_BYTES;
     let string_table_start = HEADER_BYTES + entry_table_bytes;
@@ -234,49 +311,38 @@ fn build_from_views(specs: &[EntryView<'_>]) -> Vec<u8> {
     const PAGE_BYTES: usize = 16_384;
     let index_size = string_table_end.div_ceil(PAGE_BYTES) * PAGE_BYTES;
 
-    let mut data = Vec::new();
-    struct Placed {
-        dtype: u8,
-        weight_offset: u64,
-        weight_size: u64,
-        shape: (u32, u32, u32, u32),
-        scale_offset: u64,
-        scale_size: u64,
-        bias_offset: u64,
-        bias_size: u64,
-    }
+    // PASS 1: placement, from lengths alone.
     let mut placed = Vec::with_capacity(entry_count);
+    let mut cursor = 0u64;
     for spec in specs {
         // 4-byte-align every entry's start: packed u32 weights are read
         // with 4-byte loads by some kernels, and BF16 entries can leave
         // the cursor 2 mod 4.
-        while data.len() % 4 != 0 {
-            data.push(0);
-        }
+        cursor += (4 - (cursor % 4)) % 4;
         match spec {
             EntryView::Packed(t, dtype) => {
-                let weight_offset = index_size as u64 + data.len() as u64;
-                data.extend_from_slice(&t.packed);
-                let scale_bytes = u16_slice_to_le_bytes(&t.scales);
-                let scale_offset = index_size as u64 + data.len() as u64;
-                data.extend_from_slice(&scale_bytes);
-                let bias_bytes = u16_slice_to_le_bytes(&t.biases);
-                let bias_offset = index_size as u64 + data.len() as u64;
-                data.extend_from_slice(&bias_bytes);
+                let weight_offset = index_size as u64 + cursor;
+                cursor += t.packed.len() as u64;
+                let scale_size = (t.scales.len() * 2) as u64;
+                let scale_offset = index_size as u64 + cursor;
+                cursor += scale_size;
+                let bias_size = (t.biases.len() * 2) as u64;
+                let bias_offset = index_size as u64 + cursor;
+                cursor += bias_size;
                 placed.push(Placed {
                     dtype: *dtype,
                     weight_offset,
                     weight_size: t.packed.len() as u64,
                     shape: (t.rows, t.cols, 0, 0),
                     scale_offset,
-                    scale_size: scale_bytes.len() as u64,
+                    scale_size,
                     bias_offset,
-                    bias_size: bias_bytes.len() as u64,
+                    bias_size,
                 });
             }
             EntryView::Raw(r) => {
-                let weight_offset = index_size as u64 + data.len() as u64;
-                data.extend_from_slice(&r.bytes);
+                let weight_offset = index_size as u64 + cursor;
+                cursor += r.bytes.len() as u64;
                 placed.push(Placed {
                     dtype: r.dtype,
                     weight_offset,
@@ -290,35 +356,87 @@ fn build_from_views(specs: &[EntryView<'_>]) -> Vec<u8> {
             }
         }
     }
+    let data_len = cursor;
 
-    let mut out = vec![0u8; index_size];
-    out[0..8].copy_from_slice(&(index_size as u64).to_le_bytes());
-    out[8..16].copy_from_slice(&(data.len() as u64).to_le_bytes());
-    out[16..24].copy_from_slice(&(entry_count as u64).to_le_bytes());
+    // Header.
+    let mut header = [0u8; HEADER_BYTES];
+    header[0..8].copy_from_slice(&(index_size as u64).to_le_bytes());
+    header[8..16].copy_from_slice(&data_len.to_le_bytes());
+    header[16..24].copy_from_slice(&(entry_count as u64).to_le_bytes());
+    out.write_all(&header)?;
 
+    // Entry table.
     for (i, p) in placed.iter().enumerate() {
-        let base = HEADER_BYTES + i * ENTRY_BYTES;
         let (name_offset, name_len) = name_ranges[i];
-        out[base..base + 4].copy_from_slice(&(name_offset as u32).to_le_bytes());
-        out[base + 4..base + 6].copy_from_slice(&(name_len as u16).to_le_bytes());
-        out[base + 6] = p.dtype;
-        out[base + 7] = 0;
-        out[base + 8..base + 16].copy_from_slice(&p.weight_offset.to_le_bytes());
-        out[base + 16..base + 24].copy_from_slice(&p.weight_size.to_le_bytes());
-        out[base + 24..base + 28].copy_from_slice(&p.shape.0.to_le_bytes());
-        out[base + 28..base + 32].copy_from_slice(&p.shape.1.to_le_bytes());
-        out[base + 32..base + 36].copy_from_slice(&p.shape.2.to_le_bytes());
-        out[base + 36..base + 40].copy_from_slice(&p.shape.3.to_le_bytes());
-        out[base + 40..base + 48].copy_from_slice(&p.scale_offset.to_le_bytes());
-        out[base + 48..base + 56].copy_from_slice(&p.scale_size.to_le_bytes());
-        out[base + 56..base + 64].copy_from_slice(&p.bias_offset.to_le_bytes());
-        out[base + 64..base + 72].copy_from_slice(&p.bias_size.to_le_bytes());
-    }
-    for (i, spec) in specs.iter().enumerate() {
-        let (name_offset, name_len) = name_ranges[i];
-        out[name_offset..name_offset + name_len].copy_from_slice(spec.name().as_bytes());
+        // Writer invariants, not hostile-input hazards -- but a silent
+        // truncation here writes a plausible, wrong index with no error at
+        // any later read, so these are asserted rather than cast blindly.
+        // A `debug_assert!` would not do: release is what writes real
+        // installs.
+        assert!(
+            name_offset <= u32::MAX as usize,
+            "resident index string table offset {name_offset} exceeds the 32-bit field \
+             (string table over 4 GiB)"
+        );
+        assert!(
+            name_len <= u16::MAX as usize,
+            "tensor name {:?} is {name_len} bytes, exceeding the 16-bit name-length field",
+            specs[i].name()
+        );
+        let mut entry = [0u8; ENTRY_BYTES];
+        entry[0..4].copy_from_slice(&(name_offset as u32).to_le_bytes());
+        entry[4..6].copy_from_slice(&(name_len as u16).to_le_bytes());
+        entry[6] = p.dtype;
+        entry[7] = 0;
+        entry[8..16].copy_from_slice(&p.weight_offset.to_le_bytes());
+        entry[16..24].copy_from_slice(&p.weight_size.to_le_bytes());
+        entry[24..28].copy_from_slice(&p.shape.0.to_le_bytes());
+        entry[28..32].copy_from_slice(&p.shape.1.to_le_bytes());
+        entry[32..36].copy_from_slice(&p.shape.2.to_le_bytes());
+        entry[36..40].copy_from_slice(&p.shape.3.to_le_bytes());
+        entry[40..48].copy_from_slice(&p.scale_offset.to_le_bytes());
+        entry[48..56].copy_from_slice(&p.scale_size.to_le_bytes());
+        entry[56..64].copy_from_slice(&p.bias_offset.to_le_bytes());
+        entry[64..72].copy_from_slice(&p.bias_size.to_le_bytes());
+        out.write_all(&entry)?;
     }
 
-    out.extend_from_slice(&data);
-    out
+    // String table, then pad the index region up to `index_size`.
+    for spec in specs {
+        out.write_all(spec.name().as_bytes())?;
+    }
+    write_zeros(out, index_size - string_table_end)?;
+
+    // PASS 2: the data region, streamed straight from each spec's own
+    // bytes. Padding is taken from pass 1's `placed` entries rather than
+    // recomputed, so this loop can never disagree with the layout the
+    // entry table just declared.
+    let mut cursor = 0u64;
+    for (i, spec) in specs.iter().enumerate() {
+        let want = placed[i].weight_offset - index_size as u64;
+        write_zeros(out, (want - cursor) as usize)?;
+        cursor = want;
+        match spec {
+            EntryView::Packed(t, _) => {
+                out.write_all(&t.packed)?;
+                cursor += t.packed.len() as u64;
+                let scale_bytes = u16_slice_to_le_bytes(&t.scales);
+                out.write_all(&scale_bytes)?;
+                cursor += scale_bytes.len() as u64;
+                let bias_bytes = u16_slice_to_le_bytes(&t.biases);
+                out.write_all(&bias_bytes)?;
+                cursor += bias_bytes.len() as u64;
+            }
+            EntryView::Raw(r) => {
+                out.write_all(&r.bytes)?;
+                cursor += r.bytes.len() as u64;
+            }
+        }
+    }
+    debug_assert_eq!(
+        cursor, data_len,
+        "pass 2 must consume exactly what pass 1 sized"
+    );
+
+    Ok(())
 }

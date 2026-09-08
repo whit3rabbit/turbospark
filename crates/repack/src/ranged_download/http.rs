@@ -1,6 +1,9 @@
 //! HTTP range download implementation using reqwest.
 
+use std::io::Read as _;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::chunks::{
     chunk_ranges, fill_chunks, MAX_RANGE_BYTES, RANGE_ATTEMPTS, RANGE_CONCURRENCY,
@@ -9,6 +12,51 @@ use super::{DownloadError, RangeSource};
 
 /// Callback invoked on each downloaded chunk with the chunk's byte count.
 pub type ByteProgressCallback = Arc<dyn Fn(u64) + Send + Sync>;
+
+/// A cloneable cancellation flag for a download walk.
+///
+/// One walk holds one flag; the caller clones it out BEFORE starting so a
+/// UI thread can `cancel()` it while the walk is blocking in `read_range`.
+/// Every chunk read checks the flag, so a walk stops within one chunk
+/// window (a few seconds at the chunk sizes this module issues) rather
+/// than at the next tensor or shard boundary. Not a future and not a
+/// channel: the only operation the walk performs on it is a load.
+#[derive(Clone)]
+pub struct CancelFlag(Arc<AtomicBool>);
+
+impl CancelFlag {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Identity test for the guard that unregisters its own flag when the
+    /// walk ends.
+    pub fn same_flag(&self, other: &CancelFlag) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Default for CancelFlag {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for CancelFlag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CancelFlag")
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
 
 /// HTTP-backed [`RangeSource`] using the `blocking` `reqwest` client. Issues
 /// `Range: bytes=start-(end-1)` GETs and requires a `206 Partial Content`
@@ -24,46 +72,71 @@ pub struct HttpRangeSource {
     client: reqwest::blocking::Client,
     on_bytes: Option<ByteProgressCallback>,
     token: Option<String>,
+    /// Set by `with_cancel`: when the flag fires, chunk reads abort with
+    /// `DownloadError::Cancelled`. `None` (the default) is every existing
+    /// caller -- the CLI has nothing to cancel a walk with, so nothing
+    /// there changes shape.
+    cancel: Option<CancelFlag>,
+}
+
+/// `connect_timeout` bounds the TCP/TLS handshake; `timeout` bounds the
+/// ENTIRE request (reqwest's blocking client has no separate read timeout in
+/// 0.12.28 -- checked in the vendored source -- so this is the only knob
+/// that bounds a stalled read). Sized for one [`MAX_RANGE_BYTES`] chunk: a
+/// slower-than-~110 KB/s edge still fails within the window rather than
+/// hanging indefinitely, and the retry ladder (`RANGE_ATTEMPTS`) is what
+/// recovers from a single slow or dropped chunk.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+
+fn build_client() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        // `http1_only` IS the optimization; [`RANGE_CONCURRENCY`] on its
+        // own is not. Every one of these URLs redirects to the Xet LFS
+        // bridge, which speaks HTTP/2, and reqwest would then multiplex
+        // all the concurrent chunk GETs onto ONE connection -- so one
+        // CloudFront edge, so the one per-edge rate cap, so the
+        // concurrency buys exactly nothing. There is no error and no
+        // warning in that case, only the old wall clock (AGENTS.md
+        // Gotcha 46). HTTP/1.1 forces a connection per in-flight
+        // request, which is what the measurement in
+        // [`RANGE_CONCURRENCY`]'s table was taken over.
+        .http1_only()
+        .pool_max_idle_per_host(RANGE_CONCURRENCY)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        // Matches `Client::new`, which panics on the same failure.
+        .expect("blocking HTTP client")
 }
 
 impl HttpRangeSource {
     pub fn new(url: impl Into<String>) -> Self {
-        let client = reqwest::blocking::Client::builder()
-            // `http1_only` IS the optimization; [`RANGE_CONCURRENCY`] on its
-            // own is not. Every one of these URLs redirects to the Xet LFS
-            // bridge, which speaks HTTP/2, and reqwest would then multiplex
-            // all the concurrent chunk GETs onto ONE connection -- so one
-            // CloudFront edge, so the one per-edge rate cap, so the
-            // concurrency buys exactly nothing. There is no error and no
-            // warning in that case, only the old wall clock (AGENTS.md
-            // Gotcha 46). HTTP/1.1 forces a connection per in-flight
-            // request, which is what the measurement in
-            // [`RANGE_CONCURRENCY`]'s table was taken over.
-            .http1_only()
-            .pool_max_idle_per_host(RANGE_CONCURRENCY)
-            .build()
-            // Matches `Client::new`, which panics on the same failure.
-            .expect("blocking HTTP client");
         Self {
             url: url.into(),
-            client,
+            client: build_client(),
             on_bytes: None,
             token: None,
+            cancel: None,
         }
     }
 
     pub fn with_progress(url: impl Into<String>, on_bytes: ByteProgressCallback) -> Self {
-        let client = reqwest::blocking::Client::builder()
-            .http1_only()
-            .pool_max_idle_per_host(RANGE_CONCURRENCY)
-            .build()
-            .expect("blocking HTTP client");
         Self {
             url: url.into(),
-            client,
+            client: build_client(),
             on_bytes: Some(on_bytes),
             token: None,
+            cancel: None,
         }
+    }
+
+    /// Attach a cancel flag: once `CancelFlag::cancel` has been called on
+    /// it, every chunk read this source issues aborts with
+    /// `DownloadError::Cancelled`.
+    pub fn with_cancel(mut self, cancel: CancelFlag) -> Self {
+        self.cancel = Some(cancel);
+        self
     }
 
     /// Attach a bearer authentication token for gated repositories.
@@ -87,6 +160,11 @@ impl HttpRangeSource {
         end_exclusive: u64,
         dst: &mut [u8],
     ) -> Result<(), DownloadError> {
+        if let Some(cancel) = &self.cancel {
+            if cancel.is_cancelled() {
+                return Err(DownloadError::Cancelled);
+            }
+        }
         let end_inclusive = end_exclusive.saturating_sub(1);
         let mut request = self.client.get(&self.url).header(
             reqwest::header::RANGE,
@@ -95,7 +173,7 @@ impl HttpRangeSource {
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }
-        let response = request
+        let mut response = request
             .send()
             .map_err(|e| DownloadError::Request(e.to_string()))?;
         if response.status().as_u16() != 206 {
@@ -115,19 +193,31 @@ impl HttpRangeSource {
                 retry_after,
             });
         }
-        let bytes = response
-            .bytes()
-            .map_err(|e| DownloadError::Request(e.to_string()))?;
+        // Read straight into `dst` rather than buffering the whole body via
+        // `response.bytes()` and then copying: with `RANGE_CONCURRENCY`
+        // chunks in flight, that doubled peak memory above the caller's own
+        // buffer (an extra ~512 MiB at the default chunk size and
+        // concurrency), which is exactly the overhead the disjoint-slice
+        // design in `fill_chunks` exists to avoid. A manual loop rather than
+        // `read_exact` so a short body reports how much it actually got
+        // (`read_exact` only distinguishes "all" from "not all").
         let expected = end_exclusive - start;
-        if bytes.len() as u64 != expected {
+        let mut read = 0usize;
+        while read < dst.len() {
+            match response.read(&mut dst[read..]) {
+                Ok(0) => break,
+                Ok(n) => read += n,
+                Err(e) => return Err(DownloadError::Request(e.to_string())),
+            }
+        }
+        if read as u64 != expected {
             return Err(DownloadError::ShortRead {
                 expected,
-                actual: bytes.len() as u64,
+                actual: read as u64,
             });
         }
-        dst.copy_from_slice(&bytes);
         if let Some(on_bytes) = &self.on_bytes {
-            on_bytes(bytes.len() as u64);
+            on_bytes(read as u64);
         }
         Ok(())
     }
@@ -163,6 +253,10 @@ impl HttpRangeSource {
         for attempt in 0..RANGE_ATTEMPTS {
             match self.read_chunk(start, end_exclusive, dst) {
                 Ok(()) => return Ok(()),
+                // A cancel is not a network condition: retrying it would
+                // spend the ladder's backoffs pretending the caller did not
+                // just ask the walk to stop.
+                Err(e @ DownloadError::Cancelled) => return Err(e),
                 Err(DownloadError::UnexpectedStatus {
                     status,
                     retry_after,
@@ -220,6 +314,11 @@ fn throttle_backoff(attempt: usize, retry_after: Option<u64>) -> std::time::Dura
 
 impl RangeSource for HttpRangeSource {
     fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
+        if let Some(cancel) = &self.cancel {
+            if cancel.is_cancelled() {
+                return Err(DownloadError::Cancelled);
+            }
+        }
         let chunks = chunk_ranges(start, end_exclusive, MAX_RANGE_BYTES);
         let mut out = vec![0u8; (end_exclusive - start) as usize];
         fill_chunks(
@@ -234,7 +333,48 @@ impl RangeSource for HttpRangeSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{throttle_backoff, throttled_status};
+    use super::super::{DownloadError, RangeSource};
+    use super::{throttle_backoff, throttled_status, CancelFlag, HttpRangeSource};
+
+    /// A fired flag aborts `read_range` BEFORE any request: the port here
+    /// (:1) is unreachable, so a probe that reached the network would fail
+    /// with `Request`, not `Cancelled`. That distinction IS the test --
+    /// cancellation is the walk's own decision, not a transport failure,
+    /// and the retry ladder must never see it.
+    #[test]
+    fn a_fired_cancel_flag_aborts_read_range_before_any_request() {
+        let flag = CancelFlag::new();
+        let source = HttpRangeSource::new("http://127.0.0.1:1/nothing").with_cancel(flag.clone());
+        assert!(!flag.is_cancelled());
+        assert!(
+            !matches!(source.read_range(0, 64), Err(DownloadError::Cancelled)),
+            "before cancel() the walk must still try to read"
+        );
+        flag.cancel();
+        assert!(flag.is_cancelled());
+        assert_eq!(
+            source.read_range(0, 64),
+            Err(DownloadError::Cancelled),
+            "after cancel() the flag must stop the walk before any request"
+        );
+    }
+
+    /// A flag attached to no source must not lose its identity: the guard
+    /// that deregisters a finished walk compares by `Arc` identity, so a
+    /// clone and its original are the same flag and two fresh flags are
+    /// not.
+    #[test]
+    fn clones_share_state_and_fresh_flags_are_distinct() {
+        let flag = CancelFlag::new();
+        let clone = flag.clone();
+        let other = CancelFlag::new();
+        assert!(flag.same_flag(&clone));
+        assert!(clone.same_flag(&flag));
+        assert!(!flag.same_flag(&other));
+        clone.cancel();
+        assert!(flag.is_cancelled(), "state must flow through the clone");
+        assert!(!other.is_cancelled());
+    }
 
     /// 429 retries and 404 does not, which is the whole correction.
     ///

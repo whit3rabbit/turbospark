@@ -35,16 +35,43 @@ impl Meta<'_> {
             })
     }
 
-    /// Reads a required `i64` metadata value for the prefixed key, casting from `u64`.
+    /// Reads a required `i64` metadata value for the prefixed key, converting
+    /// from `u64`. A value above `i64::MAX` is refused rather than wrapped
+    /// negative -- a header field this port cannot represent should never
+    /// reach a shape or a mask as a plausible-looking negative number.
     pub fn i64(&self, suffix: &str) -> Result<i64, GgufConfigError> {
-        Ok(self.u64(suffix)? as i64)
+        let key = self.key(suffix);
+        i64::try_from(self.u64(suffix)?).map_err(|_| GgufConfigError::BadValue {
+            key,
+            detail: "exceeds i64".to_string(),
+        })
     }
 
-    /// Reads an optional `i64` metadata value for the prefixed key, casting from `u64`.
-    pub fn opt_i64(&self, suffix: &str) -> Option<i64> {
-        self.opt(suffix)
-            .and_then(GgufValue::as_u64)
-            .map(|v| v as i64)
+    /// Reads an optional `i64` metadata value for the prefixed key, converting
+    /// from `u64`.
+    ///
+    /// Returns `Ok(None)` only when the key is genuinely absent. A key that
+    /// IS present but is not representable as `i64` is an error, not a
+    /// silent absence: collapsing "no such key" and "present but unreadable"
+    /// into one `None` is exactly the class of bug this port has hit before
+    /// (`crates/repack` CLAUDE.md's control-vector `layer_base` reader draws
+    /// the same distinction, for the same reason) -- a caller that then
+    /// falls back to a baseline default would read a corrupt or hostile
+    /// field as if the checkpoint had simply not published it.
+    pub fn opt_i64(&self, suffix: &str) -> Result<Option<i64>, GgufConfigError> {
+        let Some(value) = self.opt(suffix) else {
+            return Ok(None);
+        };
+        let raw = value.as_u64().ok_or_else(|| GgufConfigError::BadValue {
+            key: self.key(suffix),
+            detail: "not an unsigned integer".to_string(),
+        })?;
+        i64::try_from(raw)
+            .map(Some)
+            .map_err(|_| GgufConfigError::BadValue {
+                key: self.key(suffix),
+                detail: "exceeds i64".to_string(),
+            })
     }
 
     /// Reads an optional `f64` metadata value for the prefixed key.
