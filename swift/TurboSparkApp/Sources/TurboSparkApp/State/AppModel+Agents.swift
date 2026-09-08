@@ -47,6 +47,63 @@ extension AppModel {
         reloadAgents()
     }
 
+    // MARK: - Agent File Management (Settings editor)
+
+    /// Creates and writes a new agent file in user or project scope.
+    /// A project scope without an open project is refused by the manager.
+    @discardableResult
+    public func createAgent(
+        name: String,
+        displayName: String?,
+        description: String,
+        systemPrompt: String,
+        tools: [String]?,
+        disallowedTools: [String]?,
+        maxTurns: Int,
+        scope: AppAgentScope
+    ) -> Result<AppAgentDefinition, Error> {
+        do {
+            let agent = try AgentManager.shared.createAgent(
+                name: name,
+                displayName: displayName,
+                description: description,
+                systemPrompt: systemPrompt,
+                tools: tools,
+                disallowedTools: disallowedTools,
+                maxTurns: maxTurns,
+                scope: scope,
+                projectRootURL: selectedProject?.rootDirectoryURL)
+            reloadAgents()
+            showToast("Agent '\(agent.name)' created in \(scope.label) scope.", style: .info)
+            return .success(agent)
+        } catch {
+            showToast("Failed to create agent: \(error.localizedDescription)", style: .error)
+            return .failure(error)
+        }
+    }
+
+    /// Updates and persists an existing agent on disk.
+    public func updateAgent(_ agent: AppAgentDefinition) {
+        do {
+            try AgentManager.shared.saveAgent(agent)
+            reloadAgents()
+            showToast("Saved changes to '\(agent.name)'.", style: .info)
+        } catch {
+            showToast("Failed to save agent: \(error.localizedDescription)", style: .error)
+        }
+    }
+
+    /// Deletes an agent's file from disk.
+    public func deleteAgent(_ agent: AppAgentDefinition) {
+        do {
+            try AgentManager.shared.deleteAgent(agent)
+            reloadAgents()
+            showToast("Removed agent '\(agent.name)'.", style: .info)
+        } catch {
+            showToast("Failed to delete agent: \(error.localizedDescription)", style: .error)
+        }
+    }
+
     /// Finds an ENABLED agent by name.
     ///
     /// **DISABLED MEANS DISABLED ON BOTH PATHS** (state#93). The `agent` TOOL

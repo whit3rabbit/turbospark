@@ -20,6 +20,9 @@ public struct AgentsSettingsPaneView: View {
     @State private var scopeFilter: AgentScopeFilter = .all
     @State private var searchQuery: String = ""
     @State private var selectedAgentID: UUID? = nil
+    @State private var showingEditorSheet: Bool = false
+    @State private var agentToEdit: AppAgentDefinition? = nil
+    @State private var agentToDelete: AppAgentDefinition? = nil
 
     public init(model: AppModel) {
         self.model = model
@@ -148,6 +151,30 @@ public struct AgentsSettingsPaneView: View {
                 selectedAgentID = filteredAgents.first?.id
             }
         }
+        .sheet(isPresented: $showingEditorSheet) {
+            AgentEditorSheet(model: model, agentToEdit: agentToEdit)
+        }
+        .alert(
+            Text("Delete Agent", bundle: .module),
+            isPresented: Binding(
+                get: { agentToDelete != nil },
+                set: { if !$0 { agentToDelete = nil } }),
+            presenting: agentToDelete
+        ) { agent in
+            Button(role: .destructive) {
+                model.deleteAgent(agent)
+                agentToDelete = nil
+            } label: {
+                Text("Delete", bundle: .module)
+            }
+            Button {
+                agentToDelete = nil
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: { agent in
+            Text(verbatim: "Delete the agent file for '\(agent.name)'? This cannot be undone.")
+        }
     }
 
     // MARK: - Header Bar
@@ -182,6 +209,15 @@ public struct AgentsSettingsPaneView: View {
             }
             .buttonStyle(.bordered)
             .help("Rescan agents on disk")
+
+            Button {
+                agentToEdit = nil
+                showingEditorSheet = true
+            } label: {
+                Label("New Agent", systemImage: "plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .help("Create a new agent definition file")
         }
     }
 
@@ -242,6 +278,28 @@ public struct AgentsSettingsPaneView: View {
                     }
 
                     Spacer()
+
+                    // Edit and Delete only where the definition is a file
+                    // this app owns: built-ins are code and plugin agents
+                    // belong to their plugin, so neither has an editor.
+                    if agent.scope == .userGlobal || agent.scope == .project {
+                        HStack(spacing: 8) {
+                            Button {
+                                agentToEdit = agent
+                                showingEditorSheet = true
+                            } label: {
+                                Label("Edit", systemImage: "pencil")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button(role: .destructive) {
+                                agentToDelete = agent
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
 
                     Toggle("Enabled", isOn: Binding(
                         get: { agent.isEnabled },

@@ -168,6 +168,61 @@ public enum AgentParser {
         )
     }
 
+    // MARK: - Serialization
+
+    /// Serializes an agent definition to Markdown with YAML frontmatter,
+    /// the same shape `parseFile` reads back.
+    ///
+    /// The write-side twin of the read side above, for the Settings editor:
+    /// a created or edited agent is a real file in the user's agents
+    /// directory, hand-editable afterwards, not a row in a private store.
+    /// Single-line fields have newlines folded away, because the
+    /// frontmatter reader is line-oriented -- a value carrying a newline
+    /// would re-enter the parser as `key: value` lines.
+    public static func serializeAgent(_ agent: AppAgentDefinition) -> String {
+        func singleLine(_ value: String) -> String {
+            value.replacingOccurrences(of: "\r\n", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\r", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var lines: [String] = ["---"]
+        let name = singleLine(agent.name)
+        if !name.isEmpty {
+            lines.append("name: \(name)")
+        }
+        let displayName = singleLine(agent.displayName)
+        if !displayName.isEmpty {
+            lines.append("display_name: \(displayName)")
+        }
+        let description = singleLine(agent.agentDescription)
+        if !description.isEmpty {
+            lines.append("description: \(description)")
+        }
+        if let model = agent.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
+            lines.append("model: \(model)")
+        }
+        lines.append("max_turns: \(agent.maxTurns)")
+        if let tools = agent.tools, !tools.isEmpty {
+            lines.append("tools:")
+            for tool in tools {
+                lines.append("  - \(tool)")
+            }
+        }
+        if let disallowed = agent.disallowedTools, !disallowed.isEmpty {
+            lines.append("disallowed_tools:")
+            for tool in disallowed {
+                lines.append("  - \(tool)")
+            }
+        }
+        lines.append("---")
+        lines.append("")
+        lines.append(agent.systemPrompt)
+        lines.append("")
+        return lines.joined(separator: "\n")
+    }
+
     // MARK: - Frontmatter Extraction Helpers
 
     private static func extractFrontmatterAndBody(from text: String) -> (frontmatter: String?, body: String) {

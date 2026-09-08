@@ -76,6 +76,15 @@ public struct AppAgentDefinition: Identifiable, Codable, Equatable, Sendable {
     /// user in it, each turn free to run tools.
     public var maxTurns: Int
 
+    /// Skips the project's own instructions when this agent's system prompt
+    /// is assembled (`SubagentRunner.buildSystemPrompt`).
+    ///
+    /// Claude Code's Explore agent sets `omitClaudeMd` for the same reason:
+    /// a fast search agent does not need the project's conventions, and the
+    /// section can be long. The workspace root and the memory section are
+    /// still included -- the explorer needs the root to search.
+    public var omitsProjectInstructions: Bool
+
     /// The most turns any agent file may ask for (state#95).
     ///
     /// 50 rather than a smaller number because the ceiling is there to bound
@@ -102,6 +111,7 @@ public struct AppAgentDefinition: Identifiable, Codable, Equatable, Sendable {
         disallowedTools: [String]? = nil,
         model: String? = nil,
         maxTurns: Int = 5,
+        omitsProjectInstructions: Bool = false,
         sourceAgent: AgentSourceAgent = .turboSpark,
         scope: AppAgentScope = .builtIn,
         filePath: String? = nil,
@@ -116,6 +126,7 @@ public struct AppAgentDefinition: Identifiable, Codable, Equatable, Sendable {
         self.disallowedTools = disallowedTools
         self.model = model
         self.maxTurns = min(max(1, maxTurns), Self.maxTurnsCeiling)
+        self.omitsProjectInstructions = omitsProjectInstructions
         self.sourceAgent = sourceAgent
         self.scope = scope
         self.filePath = filePath
