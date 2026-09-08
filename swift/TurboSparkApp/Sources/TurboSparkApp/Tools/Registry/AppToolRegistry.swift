@@ -511,6 +511,18 @@ public enum AppToolRegistry {
             case "taskoutput", "task_output":
                 output = try TaskManager.executeOutput(arguments: call.arguments)
 
+            case "croncreate", "cron_create":
+                output = try CronScheduler.executeCreate(arguments: call.arguments, chatID: chatID)
+
+            case "crondelete", "cron_delete":
+                output = try CronScheduler.executeDelete(arguments: call.arguments)
+
+            case "cronlist", "cron_list":
+                output = CronScheduler.executeList(arguments: call.arguments)
+
+            case "schedulewakeup", "schedule_wakeup":
+                output = try CronScheduler.executeScheduleWakeup(arguments: call.arguments, chatID: chatID)
+
             case "sleep", "delay":
                 output = try await SleepExecutor.execute(arguments: call.arguments)
 

@@ -19,6 +19,8 @@ public struct GhostChatPayload: Codable, Equatable {
     public var compactedMessageCount: Int
     /// Bounded execution state, when the project runs in SKILL.state mode.
     public var skillState: AppSkillState?
+    /// The chat's active `/goal`, when one is set (swift/docs/SWIFT_GOALS.md).
+    public var goal: ChatGoalState?
     /// Uncommitted draft prompt text.
     public var draft: String
 
@@ -28,6 +30,7 @@ public struct GhostChatPayload: Codable, Equatable {
         contextSummary: String? = nil,
         compactedMessageCount: Int = 0,
         skillState: AppSkillState? = nil,
+        goal: ChatGoalState? = nil,
         draft: String = ""
     ) {
         self.messages = messages
@@ -35,12 +38,13 @@ public struct GhostChatPayload: Codable, Equatable {
         self.contextSummary = contextSummary
         self.compactedMessageCount = compactedMessageCount
         self.skillState = skillState
+        self.goal = goal
         self.draft = draft
     }
 
     /// Whether the payload carries anything a user could lose.
     public var hasContent: Bool {
-        !messages.isEmpty || !todos.isEmpty || !draft.isEmpty
+        !messages.isEmpty || !todos.isEmpty || !draft.isEmpty || goal != nil
     }
 }
 

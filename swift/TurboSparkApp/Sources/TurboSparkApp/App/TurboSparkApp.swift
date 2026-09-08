@@ -116,6 +116,23 @@ struct TurboSparkApp: App {
 
                 Divider()
 
+                // The chat sidebar owns the Chat/Projects segment since the
+                // top bar's duplicate was removed, and Ctrl+Cmd+S can hide
+                // that sidebar -- which would strand the only way to
+                // switch modes. This is the reachable one.
+                Picker(selection: Binding(
+                    get: { model.interactionMode },
+                    set: { model.setInteractionMode($0) }
+                )) {
+                    ForEach(AppModel.AppInteractionMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                } label: {
+                    Text("Interaction Mode", bundle: .module)
+                }
+
+                Divider()
+
                 Button {
                     NotificationCenter.default.post(name: .toggleChatSidebar, object: nil)
                 } label: {
@@ -232,6 +249,24 @@ struct TurboSparkApp: App {
                 }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 .disabled(model.isRunning || !model.hasOutputTranscript)
+
+                Divider()
+
+                Button {
+                    model.jumpTurn(delta: -1)
+                } label: {
+                    Text("Previous Turn", bundle: .module)
+                }
+                .keyboardShortcut(.upArrow, modifiers: [.control, .command])
+                .disabled(model.isRunning)
+
+                Button {
+                    model.jumpTurn(delta: 1)
+                } label: {
+                    Text("Next Turn", bundle: .module)
+                }
+                .keyboardShortcut(.downArrow, modifiers: [.control, .command])
+                .disabled(model.isRunning)
             }
 
             CommandMenu(Text("Generation", bundle: .module)) {
@@ -254,6 +289,16 @@ struct TurboSparkApp: App {
                 }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(!model.canCancel)
+
+                Button {
+                    model.stopAll()
+                } label: {
+                    Text("Stop All", bundle: .module)
+                }
+                .keyboardShortcut(".", modifiers: [.command, .shift])
+                .disabled(!model.canCancel && !model.isInstallingModel
+                    && model.backgroundAgentRuns.values.allSatisfy { $0.status != "running" }
+                    && model.backgroundShellSummaries.isEmpty)
 
                 Button {
                     model.cancelInstall()

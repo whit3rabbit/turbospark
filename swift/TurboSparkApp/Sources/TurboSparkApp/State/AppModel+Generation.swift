@@ -224,6 +224,17 @@ extension AppModel {
                             peakMemory: TurboSparkSession.peakFootprintBytes,
                             phases: phaseReport
                         )
+                        // The ledger is the usage dashboard's data source:
+                        // every completed generate call lands here exactly
+                        // once, whatever path started it.
+                        self.recordUsage(
+                            promptTokens: result.promptTokens,
+                            outputTokens: result.newTokens,
+                            chatID: turnChatID)
+                        // The goal's display ledger takes the same
+                        // authoritative count (swift/docs/SWIFT_GOALS.md).
+                        self.recordGoalTurnTokens(
+                            chatID: turnChatID, tokens: result.newTokens)
 
                         // Merge the state patch BEFORE parsing tool calls, so
                         // the tool parser never sees the patch JSON and cannot

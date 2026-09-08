@@ -105,7 +105,8 @@ extension AppModel {
         if let reminder = SystemReminders.reminder(
             todos: chats[chatIndex].todos,
             messages: turnMessages(for: chatID),
-            planModeActive: PlanModeExecutor.isPlanModeActive(for: chatID)) {
+            planModeActive: PlanModeExecutor.isPlanModeActive(for: chatID),
+            goal: activeGoals[chatID]) {
             if let lastUser = history.lastIndex(where: { $0.role == .user }) {
                 history[lastUser].content += "\n\n\(reminder)"
             }

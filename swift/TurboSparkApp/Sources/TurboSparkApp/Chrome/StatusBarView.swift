@@ -12,26 +12,21 @@ struct StatusBarView: View {
 
     /// Polled rather than published: footprint and CPU are read straight from
     /// the mach counters on every poll.
-    @State private var memoryBytes: UInt64?
-    @State private var cpuPercent: Double?
 
     /// Historical ring buffers for live sparkline graphs (up to 16 data points).
-    @State private var memoryHistory: [Double] = []
-    @State private var cpuHistory: [Double] = []
     @State private var throughputHistory: [Double] = []
 
     private let poll = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 0) {
-            memoryReadout
-            barDivider
-            cpuReadout
-            FanReadoutView(model: model)
+            // Memory and CPU live in the top bar's ChromeTelemetryView now.
+            // The per-token numbers stay here: they belong beside throughput,
+            // not in the chrome above the transcript.
             if let contextFill {
-                barDivider
                 contextReadout(contextFill)
             }
+            FanReadoutView(model: model, showsLeadingDivider: contextFill != nil)
             Spacer(minLength: 12)
             throughputReadout
             barDivider
@@ -96,110 +91,7 @@ struct StatusBarView: View {
         .appPointerCursor()
     }
 
-    // MARK: - Memory
-
-    private var memoryReadout: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "memorychip")
-                .font(theme.ui(points: 10))
-                .accessibilityHidden(true)
-            if isGraphMode {
-                MiniSparklineView(
-                    samples: memoryHistory,
-                    tint: memoryFraction.map { memoryTint($0) } ?? TurboSparkTheme.accentColor
-                )
-            }
-            Text(MetricFormat.memory(memoryBytes))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
-            if !isGraphMode, let fraction = memoryFraction {
-                MeterBar(fraction: fraction, tint: memoryTint(fraction))
-                    .frame(width: 44)
-                Text(MetricFormat.percent(fraction * 100))
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .help(memoryHelp)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Process memory")
-        .accessibilityValue(memoryAccessibilityValue)
-    }
-
-    private var memoryFraction: Double? {
-        guard let memoryBytes,
-              let physical = model.telemetry?.physicalMemoryBytes,
-              physical > 0
-        else { return nil }
-        return min(1.0, Double(memoryBytes) / Double(physical))
-    }
-
-    private func memoryTint(_ fraction: Double) -> Color {
-        if fraction > 0.85 { return .red }
-        if fraction > 0.65 { return .orange }
-        return TurboSparkTheme.accentColor
-    }
-
-    private var memoryHelp: String {
-        var text = "Physical footprint of this process (phys_footprint)."
-        if let physical = model.telemetry?.physicalMemoryBytes {
-            text += " Machine has \(MetricFormat.memory(physical))."
-        }
-        return text
-    }
-
-    private var memoryAccessibilityValue: String {
-        guard let fraction = memoryFraction else { return MetricFormat.memory(memoryBytes) }
-        return "\(MetricFormat.memory(memoryBytes)), \(MetricFormat.percent(fraction * 100)) of system memory"
-    }
-
-    // MARK: - CPU
-
-    private var cpuReadout: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "cpu")
-                .font(theme.ui(points: 10))
-                .accessibilityHidden(true)
-            if isGraphMode {
-                MiniSparklineView(
-                    samples: cpuHistory,
-                    tint: .cyan,
-                    fixedMax: 100
-                )
-            }
-            Text(cpuText)
-                .monospacedDigit()
-                .foregroundStyle(.primary)
-            if !isGraphMode {
-                Text("CPU", bundle: .module)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .help("Current CPU utilization of the TurboSpark process")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Process CPU usage")
-        .accessibilityValue(cpuText)
-    }
-
-    private var cpuText: String {
-        guard let cpuPercent else { return "\u{2014}" }
-        return MetricFormat.percent(cpuPercent)
-    }
-
     private func refreshMetrics() {
-        let mem = model.currentProcessMemoryBytes
-        memoryBytes = mem
-        if let mem {
-            let mb = Double(mem) / (1024 * 1024)
-            appendSample(mb, to: &memoryHistory)
-        }
-
-        let cpu = model.currentProcessCPUUsage
-        cpuPercent = cpu
-        if let cpu {
-            appendSample(cpu, to: &cpuHistory)
-        }
-
         let rate = model.phase == .decode ? model.liveTokensPerSecond : (model.diagnostics?.tokensPerSecond ?? 0.0)
         appendSample(rate, to: &throughputHistory)
 

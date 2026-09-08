@@ -86,8 +86,9 @@ extension InspectorView {
 
     var memoryAndPowerSection: some View {
         Section("Open & Architecture Options") {
-            ContextWindowOptionsView(model: model)
-
+            // The context window moved to InspectorEssentialsSection. It is
+            // set in ONE place; ContextWindowOptionsView is still the control
+            // that does it, called from there.
             LabeledContent("Cache Slots") {
                 Picker("Slots", selection: $model.runtimeOptions.expertCacheSlots) {
                     ForEach(AppRuntimeOptions.allowedSlotCounts, id: \.self) { slots in
@@ -277,7 +278,13 @@ extension InspectorView {
 
 }
 
-private struct ContextWindowOptionsView: View {
+/// Auto, the preset ladder, and a custom size.
+///
+/// Called from `InspectorEssentialsSection` (not from this file's own
+/// section any more). Internal rather than private for that reason: it is
+/// the only control that can express `Auto` and an arbitrary custom window,
+/// neither of which is a rung on the priced ladder above it.
+struct ContextWindowOptionsView: View {
     @ObservedObject var model: AppModel
     @State private var isCustom = false
 

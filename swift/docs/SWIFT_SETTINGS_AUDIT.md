@@ -147,8 +147,28 @@ process rather than error.
 | per-mode font rows | `setUIFont`/`setCodeFont` write both configs, so a per-mode font was never representable. | Rows removed. One set of font controls. |
 | theme Import | A non-theme clipboard silently applied the TurboSpark preset. | Reports "Not a theme," changes nothing. |
 | `installedFamilies()` | Enumerated `NSFontManager` on every injector body pass, once per streamed token. | Memoized. |
+| reset | No way back to the factory theme short of hand-editing `appearance.json`; `resetTextSize()` covered sizes only. | `resetToDefaults()` (2026-09-07) restores every published field from a zero-arg `AppearanceArchive()` behind a confirmation dialog at the bottom of the pane; `testResetToDefaultsRestoresEveryField` moves all eleven fields off their defaults first so a partial reset cannot pass. |
 | `translucentSidebar`, `usePointerCursors`, `statusBarViewMode`, `diffMarkers`, `contrast`, the three hex colors | Each has a control and a reader. | No action. |
 | `ResolvedAppTheme.borderStrokeOpacity`, `.background`, `.textSize` | Zero callers. | Left in place; the font conversion is the likely consumer. |
+
+### The default preset is Spark Blue, and a preset must not alias the default
+
+`ThemePreset.presets`' first entry used to be
+
+    ThemePreset(id: "codex", light: .defaultLight, dark: .defaultDark)
+
+so "Codex" was not a preset at all, it was a name for whatever the default
+happened to be. Changing the default (2026-09-07, to Spark Blue -- the cyan
+taken from `WelcomeCharacter.png`, on a `#12151B` dark ground rather than a
+neutral `#181818`, so a cyan accent has something to sit on) would have
+silently rewritten Codex into the new default and left the app with two
+identical entries.
+
+`ThemeModeConfig.codexLight` / `.codexDark` are Codex's own values now, and
+`.defaultLight` / `.defaultDark` carry Spark Blue. **A preset names a set of
+colours; it never points at `default*`.** Only a fresh install moves: the
+appearance store decodes a persisted config first and falls back to the
+defaults, so an existing user keeps whatever they had.
 
 ## 4. Pane findings
 

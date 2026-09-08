@@ -26,6 +26,12 @@ struct PromptComposerEditor: View {
     @ScaledMetric private var expandedMaxHeight: CGFloat = 420
     @State private var measuredTextHeight: CGFloat = 0
     @State private var isExpanded: Bool = false
+    /// Up/Down recall through `model.promptHistory` (qwen-code input
+    /// history). Nil while the editor is not browsing. The text each step
+    /// writes is remembered so an unrelated edit (typing, pasting) ends the
+    /// walk instead of leaving it armed under a draft that moved.
+    @State private var historyBrowser: ComposerHistoryBrowser? = nil
+    @State private var lastHistoryAppliedText: String? = nil
 
     private var currentMaxHeight: CGFloat {
         isExpanded ? expandedMaxHeight : editorMaxHeight
@@ -63,6 +69,11 @@ struct PromptComposerEditor: View {
                 // new one.
                 if newValue.isEmpty {
                     isExpanded = false
+                }
+                // A text change that was not a history step ends the walk.
+                if historyBrowser != nil, newValue != lastHistoryAppliedText {
+                    historyBrowser?.noteExternalEdit()
+                    if historyBrowser?.isActive != true { historyBrowser = nil }
                 }
             }
             .overlay(alignment: .topLeading) {
@@ -109,11 +120,31 @@ struct PromptComposerEditor: View {
                             }
                         }
                         if press.key == .escape {
-                            if model.isRunning && model.canCancel {
-                                model.cancel()
+                            if model.isRunning && model.canCancel
+                                && model.handleEscCancelIntent() {
+                                // Two-stage cancel (qwen-code parity): the
+                                // first press ARMS ("Press Esc again to
+                                // stop" in the footer), the second stops.
                                 return .handled
                             }
                             promptFocused.wrappedValue = false
+                            return .handled
+                        }
+                        // History recall (qwen-code parity): Up from an
+                        // empty draft starts a walk back through submitted
+                        // prompts; Down reverses it and past the newest
+                        // restores the parked draft. Only from an EMPTY
+                        // draft or an active walk, so it never steals the
+                        // caret move inside a half-written multi-line
+                        // message; the autocomplete popup outranks it.
+                        if press.key == .upArrow, press.modifiers.isEmpty,
+                            historyBrowser?.canStepBack(draftText: model.promptText) == true {
+                            applyHistoryStep(backward: true)
+                            return .handled
+                        }
+                        if press.key == .downArrow, press.modifiers.isEmpty,
+                            historyBrowser?.isActive == true {
+                            applyHistoryStep(backward: false)
                             return .handled
                         }
                         if press.key == .return {
@@ -160,6 +191,30 @@ struct PromptComposerEditor: View {
             let newText = autocomplete.accept(in: model.promptText)
         else { return }
         model.promptText = newText
+    }
+
+    /// One step of the history walk, shared by both arrows. The applied
+    /// text is recorded so the `onChange` above can tell a history step
+    /// from a keystroke.
+    private func applyHistoryStep(backward: Bool) {
+        if historyBrowser == nil { historyBrowser = ComposerHistoryBrowser() }
+        var browser = historyBrowser!
+        let applied: String?
+        if backward {
+            applied = browser.stepBack(
+                store: model.promptHistory, currentDraft: model.promptText)
+        } else {
+            applied = browser.stepForward(store: model.promptHistory)
+        }
+        guard let applied else { return }
+        lastHistoryAppliedText = applied
+        model.promptText = applied
+        if browser.isActive {
+            historyBrowser = browser
+        } else {
+            historyBrowser = nil
+            lastHistoryAppliedText = nil
+        }
     }
 }
 

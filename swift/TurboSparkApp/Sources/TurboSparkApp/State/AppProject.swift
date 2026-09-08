@@ -6,6 +6,11 @@ public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Send
     case ask
     /// Smart auto-approval: runs safe & low-risk development commands silently, prompts on high-risk operations.
     case auto
+    /// Classifier-driven approval (`swift/docs/SWIFT_AGENT_MODE.md`): the
+    /// local model judges each call the static ladder would have asked about.
+    /// Safe calls run, risky ones are refused with a reason, and anything the
+    /// classifier cannot decide asks anyway.
+    case agentAuto
     /// Permissive: executes all tools without prompting within sandbox bounds.
     case permissive
     /// Full access: unrestricted, no approval prompts and the code sandbox is disabled.
@@ -19,6 +24,7 @@ public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Send
         switch self {
         case .ask: return "Ask for approval"
         case .auto: return "Approve for me"
+        case .agentAuto: return "Agent (classifier)"
         case .permissive: return "Run automatically"
         case .fullAccess: return "Full access"
         case .readOnly: return "Strict Read-Only"
@@ -29,6 +35,7 @@ public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Send
         switch self {
         case .ask: return "Ask for approval"
         case .auto: return "Approve for me"
+        case .agentAuto: return "Agent"
         case .permissive: return "Run automatically"
         case .fullAccess: return "Full access"
         case .readOnly: return "Read Only"
@@ -41,6 +48,8 @@ public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Send
             return "Always ask before tool calls edit files or use the internet"
         case .auto:
             return "Run tool calls, but ask before high-risk actions like credential access, privilege escalation, or destructive commands"
+        case .agentAuto:
+            return "A local classifier reviews each tool call: safe ones run, risky ones are blocked with a reason, and uncertain ones ask you"
         case .permissive:
             return "Run tool calls without approval prompts inside the sandbox"
         case .fullAccess:
@@ -54,6 +63,7 @@ public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Send
         switch self {
         case .ask: return "hand.raised.fill"
         case .auto: return "shield.lefthalf.filled"
+        case .agentAuto: return "brain.head.profile"
         case .permissive: return "play.circle.fill"
         case .fullAccess: return "exclamationmark.triangle.fill"
         case .readOnly: return "lock.shield.fill"
@@ -186,6 +196,22 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         )
     }
 
+    /// Agent configuration: the same matrix as `.standard`, where the
+    /// `.ask` categories are exactly what the classifier judges
+    /// (`swift/docs/SWIFT_AGENT_MODE.md`). A category the user moves to
+    /// `.allow` runs without the classifier; `.deny` refuses outright.
+    public static var agent: AppProjectPermissions {
+        AppProjectPermissions(
+            mode: .agentAuto,
+            fileRead: .allow,
+            fileWrite: .ask,
+            terminal: .ask,
+            web: .allow,
+            mcp: .ask,
+            automation: .ask
+        )
+    }
+
     /// Permissive configuration allowing all actions without asking.
     public static var permissive: AppProjectPermissions {
         AppProjectPermissions(
@@ -243,6 +269,7 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         switch mode {
         case .ask: return .alwaysAsk
         case .auto: return .standard
+        case .agentAuto: return .agent
         case .permissive: return .permissive
         case .fullAccess: return .fullAccess
         case .readOnly: return .readOnly

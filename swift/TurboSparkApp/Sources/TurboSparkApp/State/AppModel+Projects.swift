@@ -8,11 +8,14 @@ extension AppModel {
     /// or chat navigation. `selectProject` and `orderedChats` both read this,
     /// so a stray ghost row in here can surface as either landing back in
     /// Ghost Mode on a plain project switch, or Cmd+[/Cmd+] cycling into it.
+    /// Archived chats are excluded for the same reachability reason (the
+    /// qwen-code session-archive semantics): one leaves the lists, and
+    /// returns only through the sidebar's Archived section or `/unarchive`.
     public var filteredChats: [AppChat] {
         guard let projectID = selectedProjectID else {
-            return chats.filter { !$0.isGhost }
+            return chats.filter { !$0.isGhost && !$0.isArchived }
         }
-        return chats.filter { $0.projectID == projectID && !$0.isGhost }
+        return chats.filter { $0.projectID == projectID && !$0.isGhost && !$0.isArchived }
     }
 
     /// The project a chat belongs to, or nil.

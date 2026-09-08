@@ -46,8 +46,10 @@ public struct ModelLogoView: View {
 
             if let image = resolvedImage {
                 Image(nsImage: image)
+                    .renderingMode(Self.isMonochromeMark(logoName) ? .template : .original)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(.primary)
                     .padding(size * 0.18)
             } else {
                 fallbackView
@@ -61,6 +63,34 @@ public struct ModelLogoView: View {
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityHidden(true)
     }
+
+    /// Marks with no colour of their own, which the asset stores as pure
+    /// black. The tile behind them is `.controlBackgroundColor`, i.e. dark
+    /// in dark mode, so drawn `.original` they are black on near-black --
+    /// legible in light mode and invisible in dark. `NSImage(contentsOf:)`
+    /// does not produce a template image, so the rendering mode has to be
+    /// stated here.
+    ///
+    /// An explicit list rather than a heuristic: the other bundled marks
+    /// (`hf.svg`, `microsoft.svg`, `mistral.svg`, `google.png`, `qwen.png`)
+    /// carry their own brand colours, and templating one would flatten it
+    /// to a single tint. Add a name here only after checking the asset has
+    /// no `fill` of its own.
+    static func isMonochromeMark(_ name: String?) -> Bool {
+        guard let name else { return false }
+        return monochromeMarks.contains((name as NSString).lastPathComponent.lowercased())
+    }
+
+    private static let monochromeMarks: Set<String> = [
+        "openai.svg",
+        "meta.svg",
+        "deepseek.svg",
+        "xai.svg",
+        "zai.svg",
+        "z-ai.svg",
+        "llama_cpp.svg",
+        "ollama.svg",
+    ]
 
     private var resolvedImage: NSImage? {
         guard let logoName, !logoName.isEmpty else { return nil }

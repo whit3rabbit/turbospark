@@ -232,6 +232,12 @@ extension AppModel {
         persistChats()
         updateTokenEstimate()
         drainPendingTaskNotificationsIfIdle(chatID: id)
+        // Queued prompts drain on selection too. The turn tail covers the
+        // chat the user STAYED on; this covers the chat the user LEFT and
+        // came back to (and is how a cron prompt parked for a background
+        // chat finally fires). The drain re-checks idleness, so a selection
+        // made mid-turn parks cleanly again.
+        drainPendingUserMessagesIfIdle(chatID: id)
     }
 
     public func renameChat(id: UUID, title: String) {
@@ -291,6 +297,14 @@ extension AppModel {
         // no row would sit in `pendingUserMessages` forever (nothing else
         // removes entries keyed by a dead chat).
         pendingUserMessages[id] = nil
+        // Its background work dies with it too: an agent would run to
+        // completion for an audience of nobody (the completion path drops
+        // its notification once the chat row is gone), and a shell would
+        // outlive the conversation that was its only scope.
+        stopBackgroundWork(forDeletedChat: id)
+        // The goal dies with the chat as well: its idle timer would
+        // otherwise fire for a chat with no row and re-arm forever.
+        teardownGoal(chatID: id)
         chats.remove(at: index)
         if chats.isEmpty {
             selectedChatID = UUID()
@@ -321,8 +335,10 @@ extension AppModel {
         Task {
             // The grants belonged to a conversation that no longer exists,
             // and the ids are UUIDs, so nothing would ever collect them
-            // (state#49).
+            // (state#49). Agent mode's counters and suspension are keyed on
+            // the same id and die with the chat for the same reason.
             await SessionApprovalStore.shared.clear(sessionID: id.uuidString)
+            await AgentModeGate.shared.clear(sessionID: id.uuidString)
             _ = await self.dispatchSessionEnd(
                 reason: "clear", chatID: id, project: deletedProject)
         }
@@ -374,6 +390,7 @@ extension AppModel {
         updateTokenEstimate()
         Task {
             await SessionApprovalStore.shared.clear(sessionID: clearedChatID.uuidString)
+            await AgentModeGate.shared.clear(sessionID: clearedChatID.uuidString)
             _ = await self.dispatchSessionEnd(
                 reason: "clear", chatID: clearedChatID, project: clearedProject)
         }
@@ -429,9 +446,11 @@ extension AppModel {
         updateTokenEstimate()
     }
 
-    /// Returns chats filtered by the active project, ordered by most recently updated.
+    /// Returns chats filtered by the active project, pinned first then by
+    /// most recent update -- the same ordering the sidebar shows, so
+    /// prev/next navigation walks the list the user sees.
     public var orderedChats: [AppChat] {
-        filteredChats.sorted { $0.updatedAt > $1.updatedAt }
+        AppChat.sortedForSidebar(filteredChats)
     }
 
     /// Selects the previous chat in the sorted conversation list.

@@ -64,6 +64,10 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
     public var category: AppToolCategory
     /// Evaluated security risk assessment.
     public var riskAssessment: ToolRiskAssessment?
+    /// "classifier" when Agent mode's classifier approved the call
+    /// (`swift/docs/SWIFT_AGENT_MODE.md`); nil for everything else, which
+    /// covers every archive written before the field existed.
+    public var autoApprovedBy: String?
     /// Timestamp when invocation was requested.
     public var createdAt: Date
 
@@ -76,6 +80,7 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         status: AppToolCallStatus = .pendingApproval,
         category: AppToolCategory = .fileRead,
         riskAssessment: ToolRiskAssessment? = nil,
+        autoApprovedBy: String? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -86,6 +91,7 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         self.status = status
         self.category = category
         self.riskAssessment = riskAssessment
+        self.autoApprovedBy = autoApprovedBy
         self.createdAt = createdAt
     }
 
@@ -110,6 +116,7 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         status = try container.decodeIfPresent(AppToolCallStatus.self, forKey: .status) ?? .completed
         category = try container.decodeIfPresent(AppToolCategory.self, forKey: .category) ?? .fileRead
         riskAssessment = try container.decodeIfPresent(ToolRiskAssessment.self, forKey: .riskAssessment)
+        autoApprovedBy = try container.decodeIfPresent(String.self, forKey: .autoApprovedBy)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 

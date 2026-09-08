@@ -6,6 +6,8 @@ public struct AppearanceSettingsPaneView: View {
     @ObservedObject private var manager = AppearanceManager.shared
     @Environment(\.colorScheme) private var colorScheme
 
+    @State private var showsResetConfirmation = false
+
     public init() {}
 
     private var isCurrentlyDark: Bool {
@@ -43,10 +45,57 @@ public struct AppearanceSettingsPaneView: View {
                 )
 
                 AppearancePreferencesCardView(manager: manager)
+
+                resetSection
             }
             .padding(20)
         }
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
+    }
+
+    // MARK: - Reset to Defaults
+
+    /// The one description of what a reset does, shared by the card's
+    /// caption and the confirmation dialog's message so the two cannot
+    /// drift apart.
+    private var resetDescription: Text {
+        Text("Restores theme mode, colors, fonts, text size, dock icon, and every preference on this pane. This cannot be undone.", bundle: .module)
+    }
+
+    private var resetSection: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Reset Appearance", bundle: .module)
+                    .font(theme.ui(.base, weight: .medium))
+                    .foregroundStyle(.primary)
+                resetDescription
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Reset to Defaults...") {
+                showsResetConfirmation = true
+            }
+        }
+        .padding(16)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+        )
+        .confirmationDialog(
+            Text("Reset Appearance", bundle: .module),
+            isPresented: $showsResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset to Defaults", role: .destructive) {
+                manager.resetToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            resetDescription
+        }
     }
 
     // MARK: - Theme Mode Selector

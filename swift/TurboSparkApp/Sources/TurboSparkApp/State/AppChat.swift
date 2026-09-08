@@ -328,6 +328,25 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     /// draft, skill state) do not even sit on the row; they live
     /// AES-GCM-sealed in `GhostChatVault` and those row fields stay empty.
     public var isGhost: Bool
+    /// Sidebar pin. Pinned chats sort above unpinned ones (recency breaks
+    /// ties inside each group). Allowed on a ghost row harmlessly: the row
+    /// dies with the process either way.
+    public var isPinned: Bool
+    /// Cumulative token ledger recorded from the engine's own per-turn
+    /// counts. `nil` on chats with nothing recorded yet (every chat written
+    /// before recording existed, and ghost chats, which never record).
+    public var usage: AppChatUsageLedger?
+    /// This chat's active `/goal` (swift/docs/SWIFT_GOALS.md). `nil` when
+    /// no goal is set. OPTIONAL so the decoder accepts a
+    /// `chats_archive.json` written before this field existed. A ghost
+    /// chat's goal lives in the vault payload, not here, like the rest of
+    /// its conversation contents.
+    public var goal: ChatGoalState?
+    /// Archived marker (qwen-code session parity): an archived chat leaves
+    /// the sidebar lists but is not deleted, and `/unarchive` or the
+    /// sidebar's Archived section brings it back. OPTIONAL for the decoder,
+    /// like every field after the first release.
+    public var isArchived: Bool
 
     /// Creates a new chat session.
     public init(
@@ -346,7 +365,11 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         skillState: AppSkillState? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        isGhost: Bool = false
+        isGhost: Bool = false,
+        isPinned: Bool = false,
+        usage: AppChatUsageLedger? = nil,
+        goal: ChatGoalState? = nil,
+        isArchived: Bool = false
     ) {
         self.id = id
         self.projectID = projectID
@@ -364,6 +387,10 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isGhost = isGhost
+        self.isPinned = isPinned
+        self.usage = usage
+        self.goal = goal
+        self.isArchived = isArchived
     }
 
     /// Tolerant decode, for the reason given on `AppChatMessage.init(from:)`:
@@ -403,6 +430,14 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         isGhost = try container.decodeIfPresent(Bool.self, forKey: .isGhost) ?? false
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        usage = ((try? container.decodeIfPresent(
+            AppChatUsageLedger.self, forKey: .usage)) ?? nil)
+        // The lenient form (not plain `decodeIfPresent`) for the same
+        // reason `samplingOverride` uses it: a wrong-typed value must cost
+        // THIS field, not the chat.
+        goal = ((try? container.decodeIfPresent(ChatGoalState.self, forKey: .goal)) ?? nil)
+        isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
     }
 
     /// Single-line preview text for sidebar display.
@@ -414,6 +449,61 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
             return String(draft.prefix(60)).replacingOccurrences(of: "\n", with: " ")
         }
         return ""
+    }
+
+    /// THE ordering for every chat list (sidebar, grouped projects,
+    /// prev/next navigation): pinned chats first, recency inside each
+    /// group. One function rather than a sort closure restated per view,
+    /// so a list can never disagree with another about what pinned means.
+    public static func sortedForSidebar(_ chats: [AppChat]) -> [AppChat] {
+        chats.sorted { lhs, rhs in
+            if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+            return lhs.updatedAt > rhs.updatedAt
+        }
+    }
+
+    /// A deep copy under fresh identities (qwen-code's duplicate session):
+    /// new chat id, a new id on every message, alternate and artifact row,
+    /// and a `Title (copy)` title. ForEach identity is the message id, so
+    /// sharing ids with the original would make the two transcripts fight
+    /// over rows. Draft state (draft text, attachments) does NOT carry:
+    /// the copy is of the conversation, not of a half-typed thought.
+    public func duplicated() -> AppChat {
+        var copy = AppChat(
+            id: UUID(),
+            projectID: projectID,
+            title: title + " (copy)",
+            messages: [],
+            todos: todos,
+            artifacts: [],
+            contextSummary: contextSummary,
+            compactedMessageCount: compactedMessageCount,
+            systemPrompt: systemPrompt,
+            samplingOverride: samplingOverride,
+            skillState: skillState,
+            createdAt: Date(),
+            updatedAt: Date(),
+            isGhost: false,
+            isPinned: false,
+            usage: usage,
+            goal: goal,
+            isArchived: false)
+        copy.messages = messages.map { message in
+            var copied = message
+            copied.id = UUID()
+            copied.alternates = message.alternates.map { alternate in
+                var copiedAlternate = alternate
+                copiedAlternate.id = UUID()
+                return copiedAlternate
+            }
+            return copied
+        }
+        copy.artifacts = artifacts.map { artifact in
+            var copied = artifact
+            copied.id = UUID()
+            return copied
+        }
+        return copy
     }
 }
 

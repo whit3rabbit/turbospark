@@ -9,18 +9,22 @@ struct FanReadoutView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject private var fans: FanController = .shared
     @ObservedObject var model: AppModel
+    /// False when this readout is FIRST in the strip. The divider travels
+    /// with the readout so an absent fan controller leaves no dangling mark,
+    /// which inverts once nothing precedes it: memory and CPU moved to the
+    /// top bar, so the left group can now start here.
+    var showsLeadingDivider: Bool = true
     @State private var showsControls = false
 
     var body: some View {
         if fans.isAvailable {
             HStack(spacing: 0) {
-                // StatusBarView composes its readouts with hairline dividers;
-                // this leading one travels with the readout so the strip
-                // never shows a dangling divider for an absent feature.
-                Rectangle()
-                    .fill(TurboSparkTheme.hairlineColor)
-                    .frame(width: 0.5, height: 11)
-                    .padding(.horizontal, 9)
+                if showsLeadingDivider {
+                    Rectangle()
+                        .fill(TurboSparkTheme.hairlineColor)
+                        .frame(width: 0.5, height: 11)
+                        .padding(.horizontal, 9)
+                }
                 readout
             }
             .popover(isPresented: $showsControls, arrowEdge: .bottom) { controls }

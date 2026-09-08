@@ -107,11 +107,20 @@ extension AppModel {
         // tool gets no listing, which is the honest state -- it could not
         // load one.
         let contextBudget: Int? = maxContextTokens > 0 ? maxContextTokens : nil
+        // The model-visible agent roster, ENABLED only: the `agent` tool
+        // refuses a disabled agent, so advertising one here would only
+        // invite the refusal. Resolved for THIS project, the same scope the
+        // executor resolves names against.
+        let availableAgents = AgentManager.shared
+            .resolveEffectiveAgents(projectURL: project.rootDirectoryURL)
+            .filter { $0.isEnabled }
+            .map { (name: $0.name, whenToUse: $0.agentDescription) }
         let toolsPrompt = AppToolCatalog.systemPromptAddendum(
             for: agentType,
             mcpServers: activeMcpServers,
             project: project,
-            contextTokens: contextBudget)
+            contextTokens: contextBudget,
+            availableAgents: availableAgents)
         sections.append((.tools, toolsPrompt))
 
         if !activeMcpServers.isEmpty {
@@ -210,6 +219,12 @@ extension AppModel {
         let sessionID = chatID.uuidString
         let toolName = call.name
         let cmd = call.arguments["command"] ?? call.arguments["cmd"]
+        // Approving a card -- an Agent-mode fallback card in particular --
+        // is the recovery the classifier counters wait for (qwen-code's
+        // rule): both streaks break on an approval, so a skipped or
+        // unavailable classifier comes back. A suspension the user chose is
+        // deliberately NOT lifted here; re-selecting the mode is.
+        Task { await AgentModeGate.shared.recordAllow(sessionID: sessionID) }
 
         // `generating` was lowered when the call was proposed, which is what
         // frees the UI while a human decides. It goes back up for the

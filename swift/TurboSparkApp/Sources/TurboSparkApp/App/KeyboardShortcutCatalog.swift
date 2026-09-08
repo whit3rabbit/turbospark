@@ -84,8 +84,13 @@ public enum KeyboardShortcutCatalog {
             KeyboardShortcutRow(label: "Search Chats", keys: "\(command) K"),
             KeyboardShortcutRow(label: "Add Files or Photos", keys: "\(command) U"),
             KeyboardShortcutRow(label: "Clear Chat History", keys: "\(shift) \(command) K"),
+            KeyboardShortcutRow(
+                label: "Previous Turn", keys: "\(control) \(command) \u{2191}"),
+            KeyboardShortcutRow(
+                label: "Next Turn", keys: "\(control) \(command) \u{2193}"),
             KeyboardShortcutRow(label: "Generate Response", keys: "\(command) \(returnKey)"),
             KeyboardShortcutRow(label: "Cancel Generation", keys: "\(command) ."),
+            KeyboardShortcutRow(label: "Stop All", keys: "\(shift) \(command) ."),
         ])
 
     public static var sections: [KeyboardShortcutSection] {

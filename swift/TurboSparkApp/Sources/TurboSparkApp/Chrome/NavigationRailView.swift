@@ -7,6 +7,13 @@ import SwiftUI
 /// The rail is what makes the rest of the chrome collapsible: with sections
 /// living here, the chat sidebar holds only conversations and can be hidden
 /// without stranding navigation.
+///
+/// Redesign notes: selection is now a single indicator bar that SLIDES
+/// between rows (`matchedGeometryEffect`) instead of a tinted rounded rect
+/// that appears and disappears per button. One moving mark reads as "you are
+/// here"; five independently fading rects read as five separate states. The
+/// tinted background is kept underneath it, and hover gets its own quieter
+/// fill so an unselected icon still answers the pointer.
 @MainActor
 struct NavigationRailView: View {
     @Environment(\.appTheme) private var theme
@@ -15,6 +22,7 @@ struct NavigationRailView: View {
     @ScaledMetric private var itemSize: CGFloat = 34
     @State private var hoveredSection: AppModel.AppNavigationSection? = nil
     @State private var isSettingsHovered = false
+    @Namespace private var selectionNamespace
 
     var body: some View {
         VStack(spacing: 4) {
@@ -31,38 +39,59 @@ struct NavigationRailView: View {
         .frame(width: AppChromeLayout.navigationRailWidth)
         .frame(maxHeight: .infinity)
         .background(TurboSparkTheme.railBackgroundColor)
+        .animation(TSMotion.select, value: model.activeSection)
     }
 
     private func railButton(_ section: AppModel.AppNavigationSection) -> some View {
         let isSelected = model.activeSection == section
+        let isHovered = hoveredSection == section
+
         return Button {
             model.activeSection = section
         } label: {
             Image(systemName: isSelected ? section.selectedSystemImage : section.systemImage)
                 .font(theme.ui(points: 15, weight: .medium))
-                .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
+                .foregroundStyle(isSelected ? theme.accent : Color.secondary)
                 .frame(width: itemSize, height: itemSize)
-                .background(
-                    isSelected ? TurboSparkTheme.accentColor.opacity(0.14) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(
+                            isSelected
+                                ? theme.accent.opacity(0.14)
+                                : Color.primary.opacity(isHovered ? 0.07 : 0))
+                }
+                // The one moving mark. Only the selected row hosts it, so
+                // SwiftUI interpolates its frame from the old row to the new.
+                .overlay(alignment: .leading) {
+                    if isSelected {
+                        Capsule()
+                            .fill(theme.accent)
+                            .frame(width: 2.5, height: itemSize * 0.55)
+                            .offset(x: -7)
+                            .matchedGeometryEffect(id: "railSelection", in: selectionNamespace)
+                    }
+                }
+                // Symbol swap (outline to filled) crossfades instead of
+                // popping. Cheap: one glyph, only on selection change.
+                .contentTransition(.symbolEffect(.replace))
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TSPressScaleStyle(scale: 0.92))
         .help("\(section.title) (⌘\(String(section.shortcutKey)))")
         .accessibilityLabel(section.title)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityHint("Switches the main pane to \(section.title)")
         .overlay(alignment: .leading) {
-            if hoveredSection == section {
+            if isHovered {
                 RailTooltip(title: section.title, shortcut: "⌘\(String(section.shortcutKey))")
                     .offset(x: itemSize + 12)
                     .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
                     .zIndex(100)
             }
         }
-        .onHover { isHovered in
-            withAnimation(.easeInOut(duration: 0.12)) {
-                if isHovered {
+        .onHover { hovering in
+            withAnimation(TSMotion.hover) {
+                if hovering {
                     hoveredSection = section
                 } else if hoveredSection == section {
                     hoveredSection = nil
@@ -77,9 +106,14 @@ struct NavigationRailView: View {
                 .font(theme.ui(points: 15, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: itemSize, height: itemSize)
+                .background {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.primary.opacity(isSettingsHovered ? 0.07 : 0))
+                }
+                .rotationEffect(.degrees(isSettingsHovered ? 30 : 0))
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TSPressScaleStyle(scale: 0.92))
         .help("Settings (⌘,)")
         .accessibilityLabel("Settings")
         .accessibilityHint("Opens application settings window")
@@ -91,10 +125,8 @@ struct NavigationRailView: View {
                     .zIndex(100)
             }
         }
-        .onHover { isHovered in
-            withAnimation(.easeInOut(duration: 0.12)) {
-                isSettingsHovered = isHovered
-            }
+        .onHover { hovering in
+            withAnimation(TSMotion.select) { isSettingsHovered = hovering }
         }
     }
 }
@@ -117,7 +149,9 @@ private struct RailTooltip: View {
                 .foregroundStyle(Color.secondary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1.5)
-                .background(Color(nsColor: .separatorColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 3))
+                .background(
+                    Color(nsColor: .separatorColor).opacity(0.3),
+                    in: RoundedRectangle(cornerRadius: 3))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)

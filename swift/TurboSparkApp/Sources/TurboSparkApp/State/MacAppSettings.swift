@@ -193,6 +193,12 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// (swift/docs/SWIFT_MEMORY.md). On by default, like Claude Code's
     /// `autoMemoryEnabled`.
     public var memoryEnabled: Bool
+    /// Natural-language classifier steering for Agent mode
+    /// (`swift/docs/SWIFT_AGENT_MODE.md`): allow / softDeny / hardDeny /
+    /// environment sentences embedded in the classifier's policy text.
+    /// Caps are applied at prompt time (`AgentModeHints.normalized`), not
+    /// here, so a hand-edited file keeps its text on disk.
+    public var agentModeHints: AgentModeHints
 
     public init(
         contextTokens: Int = 0,
@@ -246,7 +252,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         keepServerRunningInBackground: Bool = true,
         serverEmbeddingModel: String = "",
         hfEndpoint: String = "",
-        memoryEnabled: Bool = true
+        memoryEnabled: Bool = true,
+        agentModeHints: AgentModeHints = AgentModeHints()
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -300,6 +307,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.serverEmbeddingModel = serverEmbeddingModel
         self.hfEndpoint = hfEndpoint
         self.memoryEnabled = memoryEnabled
+        self.agentModeHints = agentModeHints
     }
 
     /// Tolerant of a wrong TYPE as well as an absent key (state#59).
@@ -384,6 +392,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             String.self, forKey: .hfEndpoint, fallback: "")
         self.memoryEnabled = c.decodeLenient(
             Bool.self, forKey: .memoryEnabled, fallback: true)
+        self.agentModeHints = c.decodeLenient(
+            AgentModeHints.self, forKey: .agentModeHints, fallback: AgentModeHints())
     }
 }
 

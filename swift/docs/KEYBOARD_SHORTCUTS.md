@@ -32,6 +32,7 @@ TurboSparkApp provides complete keyboard-driven navigation, command menus, and V
 | :--- | :--- | :--- |
 | `Cmd+Return` | Generate Response | Submits the current prompt and initiates token generation. |
 | `Cmd+.` or `Escape` | Cancel Generation | Interrupts active prefill or token decoding immediately. |
+| `Cmd+Shift+.` | Stop All | Stops the turn, every running background agent and shell, and an in-flight model install. The server and the loaded model are untouched. |
 
 ### Model Management (Model Menu)
 

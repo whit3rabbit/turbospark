@@ -38,6 +38,10 @@ public struct StreamingStatusFooterView: View {
                     Text("Needs confirmation for \(pending.name)", bundle: .module)
                         .themedFont(points: 11, weight: .medium)
                         .foregroundStyle(Color.orange)
+                } else if model.isEscCancelArmed {
+                    Text("Press Esc again to stop", bundle: .module)
+                        .themedFont(points: 11, weight: .medium)
+                        .foregroundStyle(Color.orange)
                 } else {
                     Text(currentStatusText)
                         .themedFont(points: 11, weight: .regular)
@@ -90,7 +94,11 @@ public struct StreamingStatusFooterView: View {
             return "Running tools..."
         }
         if model.isRunning {
-            return "Generating response..."
+            // The rotating phrase (qwen-code loadingPhrases parity): a plain
+            // decode with nothing more specific to say still says something
+            // different every 15 seconds. Any more specific state above
+            // outranks it.
+            return LoadingPhrases.phrase(elapsed: TimeInterval(elapsedSeconds))
         }
         return "Idle"
     }

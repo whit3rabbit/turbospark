@@ -174,6 +174,43 @@ so a subagent or an unrelated chat can neither read another turn's output
 nor kill another turn's process, and there is a ceiling of 20 concurrently
 running shells.
 
+**Every kill is a TREE kill.** `ProcessExecutor.terminateAndReap` snapshots
+the child's transitive descendants from the kernel process table BEFORE the
+SIGTERM-to-SIGKILL ladder (once the child dies its children reparent to
+launchd and become unfindable), then SIGKILLs any snapshot member still
+alive. Best-effort by nature (a grandchild spawned during the ladder is
+invisible to the snapshot; a churned pid could be signalled), and
+**defense-in-depth rather than the front line**: Foundation's
+`Process.terminate()` turns out to signal the child's whole PROCESS GROUP
+(measured: `zsh -c 'sleep 30 & ...; wait'` loses the `sleep` to
+`terminate()` alone -- the app's spawn makes zsh a group leader and the
+`sleep` inherits its group), so the COMMON grandchild already dies with the
+child. What the sweep buys is the set a group kill cannot reach: children
+that escaped via `setsid` (daemons, double-fork servers), which is exactly
+the "hangs forever after Stop" class. `KillSurfacesTests` spawns its
+grandchildren through `os.setsid()` for precisely this reason -- a plain
+`sleep &` grandchild cannot see the difference between the sweep and the
+group kill, and passes with the sweep deleted.
+`ProcessExecutor.killTreeNow` is the shutdown variant: no grace period, no
+waiting, only for process exit.
+
+**The USER has kill surfaces, not just the model.** The model always had
+`KillShell`; the user-side equivalents landed with the background-shell
+strip (`BackgroundShellsStripView` under the transcript, one Kill button
+per running shell, fed by `AppModel.backgroundShellSummaries` rebuilt off
+the registry's change hook): `AppModel.killBackgroundShell(id:)` applies
+the strip's own visibility rule (unscoped, or scoped to the selected chat),
+and the Generation menu's Stop All (`Cmd+Shift+.`) runs `AppModel.stopAll`:
+turn stop, every running background agent, every running background shell,
+and a real install cancel. Deleting a chat ends its background work
+(`stopBackgroundWork(forDeletedChat:)`: its agents are cancelled and read
+as `killed`, its shells die), and app quit sweeps everything background
+(`stopAllBackgroundWorkForShutdown` from `shutdown()`: shells are
+SIGKILLed tree-style with no grace period, agent tasks cancelled) --
+without it, shells survived the app as orphans. The server and the loaded
+model are deliberately outside Stop All: they are explicit toggles, not
+hangs.
+
 **No fabricated success (T5).** The `default` arm throws for a name it does
 not implement, and `AppToolCatalog` filters every advertised list through
 `isImplemented` so the model is never offered a tool with no executor.
@@ -639,9 +676,13 @@ parallel token generation.
 `AppModel.launchBackgroundAgent` and returns the task id immediately. The
 run's `Task` is unstructured ON PURPOSE: it inherits no cancellation, so
 chat Stop cannot kill it, and `stopBackgroundAgent` (the `stop_agent`
-tool, or the card's stop button) is the only kill path -- a stopped run
-reports `killed`, not `cancelled`. The session is CAPTURED at launch, so
-unloading the model in the UI does not kill a run already going.
+tool, or the card's stop button) is the kill path -- a stopped run
+reports `killed`, not `cancelled`. The same path fires WITHOUT the card
+when the run's chat is deleted (`stopBackgroundWork(forDeletedChat:)`:
+an agent would otherwise run to completion for an audience of nobody --
+the completion path drops its notification once the chat row is gone) and
+from Stop All and the app-quit sweep. The session is CAPTURED at launch,
+so unloading the model in the UI does not kill a run already going.
 Completion injects a USER-role `<task-notification>` turn (task_id, status
 completed/failed/killed, agent, result, turns/tool_calls/duration) into
 the originating chat and, if the chat is idle, answers it with a fresh
@@ -658,13 +699,64 @@ gigabytes), so until that lands the honest answer is the refusal. The seam
 is `SubagentRunner.run(session:)`, which already takes whatever session
 the caller resolves.
 
+**Built-ins, their prompts, and the model-visible roster.** The four
+built-ins live in `State/AgentManager+BuiltIns.swift`; their prompts and
+when-to-use descriptions are written to Claude Code's Explore shape: an
+explicit read-only prohibition block (no writes, no deletes, no redirects
+or heredocs into files, no state-changing commands), per-tool guidance
+naming the ADVERTISED wire names (`Glob`, `Grep`, `FileRead`, `Bash` --
+not the legacy synonyms the dispatch also accepts), a batching instruction
+(one turn executes every parsed call), and the search-breadth levels a
+caller may specify (quick / medium / very thorough). `explore` additionally
+sets `omitsProjectInstructions` (Claude Code's `omitClaudeMd`):
+`SubagentRunner.buildSystemPrompt` skips the project's custom-instructions
+section for such an agent, keeping the workspace root it needs to search
+and the memory section. A project agent shadowing a built-in is still held
+to its deny set and turn budget (state#22/#95); the prompts and
+descriptions are the project's own. Explore's read-only is also ENFORCED,
+not only asked for: its `tools` allowlist (`FileRead`, `Glob`, `Grep`,
+`Bash`, `WebFetch`, `WebSearch`) fails closed over every other tool,
+today's and future -- the one structural idea taken from opencode's
+registry, where `explore` is `"*": "deny"` plus six explicit allows. The
+allowlist is a ceiling like the deny set: `constrained` intersects a
+shadowing project agent's allowlist with it, so an `explore.md` with no
+`tools:` clause inherits read-only rather than the default set. Its prompt
+also carries opencode's two reporting rules: absolute paths in the final
+response, and no emojis.
+
+The parent's system prompt lists the ENABLED agents resolved for the
+turn's project -- one `- \`name\`: when-to-use` line each, descriptions
+truncated at 200 characters -- in the tool addendum's `## Subagents`
+block. Disabled agents are refused at execution, so they are never
+advertised; an unknown `subagent_type` still falls back to
+`general-purpose`. The addendum parameter is default-empty, so callers
+that pass nothing get the byte-identical shape its tests pinned. Without
+this listing the only hint of what `subagent_type` accepts was the
+parameter description's examples, and a user-created agent was reachable
+by `/slash` alone.
+
+**Creating and editing agents.** `State/AgentManager+Files.swift`
+(`createAgent` / `saveAgent` / `deleteAgent`) writes real Markdown files:
+user scope to `~/.turbospark/agents/<name>.md`, project scope to
+`<root>/.turbospark/agents/<name>.md`, hand-editable afterwards.
+`AgentParser.serializeAgent` is the write-side twin of the frontmatter
+reader, and its output must round-trip through it. Built-in and plugin
+agents are refused on save and delete (the first is code, the second is
+owned by its plugin); a create refuses to overwrite an existing file and
+refuses dot-leading names, which `scanDirectory`'s hidden-file skip would
+otherwise silently never discover. The Settings > Agents pane
+(`Components/AgentEditorSheet.swift`) is the UI over these calls, with
+Edit and Delete offered only where the definition is a file this app owns;
+enable/disable remains the `DisabledItemStore` toggles it already was.
+
 Names on this surface that must stay in sync:
 `AppToolRegistry+Vocabulary` (supportedToolNames),
 `AppToolCatalog.category`, and `AgentToolDefinitions`. `stop_agent` is
 deliberately NOT `taskstop`, which is the task-list system's verb.
-Tests: `SubagentProgressTests`, `SubagentBatchRoutingTests`,
-`BackgroundAgentTests` (plus the pre-existing Subagent* suites, which pin
-the gate and the hooks).
+Tests: `AgentDefaultsTests` (the built-in contract, the roster listing,
+the file write path), `SubagentProgressTests`,
+`SubagentBatchRoutingTests`, `BackgroundAgentTests` (plus the
+pre-existing Subagent* suites, which pin the gate and the hooks).
 
 ## 13. Oversized shell output: the spill file
 

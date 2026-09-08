@@ -74,8 +74,16 @@ public enum SubagentRunner {
                 sections.append("## Workspace Environment\nRoot codebase directory: `\(root)`")
             }
             if !project.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let trimmedRules = project.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
-                sections.append("## Project Specific Context\n\(trimmedRules)")
+                // An agent may opt out of the project's own instructions
+                // (`omitsProjectInstructions`): Claude Code's Explore sets
+                // `omitClaudeMd` because a fast search agent does not need
+                // them and they can be long. DELIBERATE, so it does not read
+                // as the divergence this file's header warns of: the flag
+                // lives on the agent definition, and only `explore` sets it.
+                if !agent.omitsProjectInstructions {
+                    let trimmedRules = project.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+                    sections.append("## Project Specific Context\n\(trimmedRules)")
+                }
             }
             // The same memory section the main assembler appends, from the
             // same builder. A subagent that could not see or save memories
@@ -456,7 +464,8 @@ public enum SubagentRunner {
                 totalToolCalls += 1
                 await progress?(.toolStarted(name: call.name, summary: call.argumentsSummary))
                 let observationMessage = await observation(
-                    for: call, agent: agent, project: project, chatID: chatID, depth: depth)
+                    for: call, agent: agent, project: project, chatID: chatID, depth: depth,
+                    session: session)
                 await progress?(.toolFinished(
                     name: call.name, summary: call.argumentsSummary,
                     isError: observationMessage.content.hasPrefix("<tool_error>")))

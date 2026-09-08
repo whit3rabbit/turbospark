@@ -143,7 +143,7 @@ public enum AgentToolDefinitions {
             properties: [
                 "description": .string(description: "A short 3-5 word summary of the task."),
                 "prompt": .string(description: "Detailed instructions for the subagent to perform. Include everything it needs to know; it starts with zero context."),
-                "subagent_type": .string(description: "Type of specialized agent profile (e.g. general-purpose, explore, plan, reviewer)."),
+                "subagent_type": .string(description: "Type of specialized agent profile. The agent types listed in the system prompt are what can be resolved here; an unknown name falls back to general-purpose."),
                 "model": .string(description: "Optional model override for the subagent. Only 'inherit' (or omitting it) is supported today."),
                 "run_in_background": .boolean(description: "Set true to run the subagent in the background. You will be notified with a <task-notification> when it completes; use stop_agent to cancel it."),
                 "name": .string(description: "Unique label for the spawned agent.")

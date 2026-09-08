@@ -37,8 +37,78 @@ struct OutputPaneView: View {
 
             Divider()
 
+            Button("Session Stats...") {
+                model.showSessionStats = true
+            }
+            Button("Export Conversation...") {
+                model.exportSelectedChat(format: .markdown)
+            }
+            Button("Help...") {
+                model.showHelpSheet = true
+            }
+
+            Divider()
+
+            Button("Background Tasks...") {
+                model.showTasksSheet = true
+            }
+            Button("Context Usage...") {
+                model.showContextSheet = true
+            }
+
+            Divider()
+
+            if model.collapsedTurnAnchors.isEmpty {
+                Button("Collapse finished turns") {
+                    model.collapseAllTurns()
+                }
+                .disabled(!model.canCollapseTurns)
+            } else {
+                Button("Expand collapsed turns") {
+                    model.collapsedTurnAnchors.removeAll()
+                }
+            }
+
             Button("Clear chat history") { model.clearOutput() }
                 .disabled(model.isRunning || !model.hasOutputTranscript)
+        }
+        .sheet(isPresented: $model.showSessionStats) {
+            SessionStatsSheet(model: model)
+        }
+        .sheet(isPresented: $model.showHelpSheet) {
+            HelpSheetView(model: model)
+        }
+        // The qwen-code local-command sheets (`/context`, `/tasks`,
+        // `/tools`, `/status`, `/rewind`, `/recap`).
+        .sheet(isPresented: $model.showContextSheet) {
+            ContextUsageSheet(model: model)
+        }
+        .sheet(isPresented: $model.showTasksSheet) {
+            TasksStatusSheet(model: model)
+        }
+        .sheet(isPresented: $model.showToolsSheet) {
+            ToolsListSheet(model: model)
+        }
+        .sheet(isPresented: $model.showStatusSheet) {
+            StatusSheet(model: model)
+        }
+        .sheet(isPresented: $model.showRewindSheet) {
+            RewindSheet(model: model)
+        }
+        .sheet(isPresented: $model.showRecapSheet) {
+            RecapSheet(model: model)
+        }
+        // `/delete` asks first, exactly like the sidebar's Delete action.
+        .alert(
+            "Delete this chat?",
+            isPresented: $model.confirmDeleteChat
+        ) {
+            Button("Delete", role: .destructive) {
+                model.deleteChat(id: model.selectedChatID)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The conversation '\(model.selectedChat.title)' will be removed. This cannot be undone.", bundle: .module)
         }
         .onChange(of: model.isRunning) { wasRunning, isRunning in
             // Announce when generation finishes so a screen-reader user knows
@@ -49,6 +119,9 @@ struct OutputPaneView: View {
             // cross-platform API to use here; the iOS-only
             // \.accessibilityAnnouncementQueue environment value is not.
             if wasRunning && !isRunning {
+                // A turn that ends by itself disarms a two-stage Esc that
+                // never got its second press.
+                model.disarmEscCancel()
                 let count = model.liveTokenCount
                 let message = count > 0
                     ? "Generation finished. \(count) tokens."
@@ -86,10 +159,21 @@ struct OutputPaneView: View {
         }
     }
 }
-
 /// Native SwiftUI transcript view rendering multi-turn conversations with Markdown formatting.
 private struct ChatTranscriptView: View {
     @ObservedObject var model: AppModel
+
+    /// Transcript turns (qwen-code collapse parity): a user prompt anchors
+    /// each turn; a collapsed turn renders prompt + final answer with the
+    /// hidden rows behind a toggle. Anchors are UUIDs, so a stale anchor
+    /// from another chat simply matches nothing.
+    private var transcriptTurns: [(offset: Int, element: TurnCollapseModel.Turn)] {
+        Array(TurnCollapseModel.turns(in: model.selectedTurnMessages).enumerated())
+    }
+
+    private var messagesByID: [UUID: AppChatMessage] {
+        Dictionary(uniqueKeysWithValues: model.selectedTurnMessages.map { ($0.id, $0) })
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -103,14 +187,22 @@ private struct ChatTranscriptView: View {
                             summary: compaction.summary ?? "",
                             summarizedRows: compaction.boundary)
                     }
-                    ForEach(model.selectedTurnMessages) { message in
-                        MessageRowView(model: model, message: message)
+                    let turns = transcriptTurns
+                    let byID = messagesByID
+                    ForEach(turns, id: \.offset) { _, turn in
+                        turnRows(turn, byID: byID)
                     }
+
+                    NewChatSuggestionBanner(model: model)
 
                     // The live task checklist sits OUTSIDE the streaming row
                     // (same rationale as BackgroundAgentsStripView below): it
                     // must stay visible while the turn runs AND after it ends.
                     TaskChecklistPanelView(model: model)
+
+                    // The active-goal banner, same rationale: the goal must
+                    // stay visible (and stoppable) through its whole loop.
+                    GoalBannerView(model: model)
 
                     if model.isRunning || !model.outputText.isEmpty || !model.outputReasoningText.isEmpty {
                         ActiveStreamingRowView(
@@ -122,6 +214,8 @@ private struct ChatTranscriptView: View {
                     }
 
                     BackgroundAgentsStripView(model: model)
+
+                    BackgroundShellsStripView(model: model)
 
                     Color.clear
                         .frame(height: 1)
@@ -143,7 +237,92 @@ private struct ChatTranscriptView: View {
             .onAppear {
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
+            // Turn navigation (qwen-code parity): the menu commands and
+            // chords bump a token; this is where the jump actually lands.
+            .onChange(of: model.turnNavigationToken) { _, _ in
+                guard let target = model.turnNavigationTargetID else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(target, anchor: .top)
+                }
+            }
         }
+    }
+
+    /// The rows of one turn: every message when expanded, prompt + toggle +
+    /// final answer when collapsed. A collapse that would hide nothing
+    /// renders expanded.
+    @ViewBuilder
+    private func turnRows(
+        _ turn: TurnCollapseModel.Turn, byID: [UUID: AppChatMessage]
+    ) -> some View {
+        let hidden = TurnCollapseModel.hiddenCount(for: turn, messagesByID: byID)
+        let isCollapsed = turn.isCollapsible && hidden > 0
+            && model.collapsedTurnAnchors.contains(turn.anchorID!)
+        let visibleIDs = isCollapsed
+            ? TurnCollapseModel.visibleIDs(collapsedFor: turn, messagesByID: byID)
+            : turn.messageIDs
+        VStack(alignment: .leading, spacing: 20) {
+            ForEach(visibleIDs, id: \.self) { messageID in
+                if let message = byID[messageID] {
+                    MessageRowView(model: model, message: message)
+                        .id(message.id)
+                    // The toggle sits under the PROMPT of a collapsed turn
+                    // (qwen-code's "expand the middle steps" affordance);
+                    // only rendered when something is actually hidden.
+                    if isCollapsed && messageID == visibleIDs.first {
+                        TurnCollapseToggleRow(count: hidden) {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                _ = model.collapsedTurnAnchors.remove(turn.anchorID!)
+                            }
+                        }
+                    }
+                }
+            }
+            if !isCollapsed && turn.isCollapsible && hidden > 0 && !model.isRunning {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        _ = model.collapsedTurnAnchors.insert(turn.anchorID!)
+                    }
+                } label: {
+                    Label("Collapse turn", systemImage: "rectangle.compress.vertical")
+                        .themedFont(.tiny)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Fold this turn down to the prompt and its final answer")
+            }
+        }
+    }
+}
+
+/// The "N hidden steps" toggle a collapsed turn shows under its prompt.
+private struct TurnCollapseToggleRow: View {
+    let count: Int
+    let onExpand: () -> Void
+
+    var body: some View {
+        Button(action: onExpand) {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.down")
+                    .themedFont(.tiny)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .accessibilityHidden(true)
+                Text(
+                    count == 1
+                        ? "1 hidden step from this turn"
+                        : "\(count) hidden steps from this turn")
+                    .themedFont(.tiny, weight: .medium)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Expand the steps this turn took")
+        .accessibilityLabel("Show \(count) hidden steps")
     }
 }
 
@@ -532,6 +711,95 @@ private struct BackgroundAgentsStripView: View {
                 model.showToast(error.localizedDescription, style: .error)
             }
         }
+    }
+}
+
+/// The strip of RUNNING background shells for the selected chat, one row
+/// each with a Kill button. `KillShell` has always existed for the model;
+/// this is the user's equivalent -- a hung `yes` loop or dev server is
+/// visible and endable without asking the assistant or quitting the app.
+/// Finished shells are deliberately absent: their output reaches the model
+/// through `BashOutput`, and a transcript row per finished background
+/// command would grow without bound. Killed shells' descendants die with
+/// them (`ProcessExecutor.terminateAndReap` is a tree kill).
+private struct BackgroundShellsStripView: View {
+    @Environment(\.appTheme) private var theme
+    @ObservedObject var model: AppModel
+
+    /// Same visibility rule as the agent strip: unscoped shells (a run
+    /// whose chat was captured as nil) show everywhere; a chat-scoped shell
+    /// shows only in its own chat.
+    private var shellsForChat: [BackgroundShellSummary] {
+        model.backgroundShellSummaries
+            .filter { $0.chatID == nil || $0.chatID == model.selectedChatID }
+    }
+
+    var body: some View {
+        let shells = shellsForChat
+        if !shells.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(shells) { shell in
+                    shellRow(shell)
+                }
+            }
+        }
+    }
+
+    private func shellRow(_ shell: BackgroundShellSummary) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .themedFont(.small, weight: .bold)
+                .foregroundStyle(TurboSparkTheme.accentColor)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                if let description = shell.description, !description.isEmpty {
+                    Text(description)
+                        .themedFont(.small, weight: .semibold)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(shell.commandHead)
+                        .font(theme.code(.small))
+                        .foregroundStyle(theme.metadataForeground)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                } else {
+                    Text(shell.commandHead)
+                        .font(theme.code(.small))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+            Spacer(minLength: 8)
+            TaskProgressFlameIcon(size: 14)
+            Text(shell.id)
+                .themedFont(.small, weight: .medium)
+                .foregroundStyle(theme.metadataForeground)
+            Text(shell.startedAt, style: .timer)
+                .themedFont(.small)
+                .foregroundStyle(theme.metadataForeground)
+            Button {
+                model.killBackgroundShell(id: shell.id)
+            } label: {
+                Image(systemName: "stop.fill")
+                    .themedFont(.tiny)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.red.opacity(0.8))
+            .help("Kill this background shell (its child processes are killed with it)")
+            .accessibilityLabel("Kill background shell \(shell.id)")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(TurboSparkTheme.accentColor.opacity(0.45), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Background shell \(shell.id) running, \(shell.commandHead)")
     }
 }
 

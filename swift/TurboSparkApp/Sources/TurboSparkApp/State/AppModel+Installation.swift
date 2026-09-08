@@ -64,11 +64,13 @@ extension AppModel {
             return
         }
         guard !abandonedInstallAliases.contains(alias) else {
-            // A previous install of this alias was abandoned and its walk
-            // cannot be stopped, so it may still be writing that directory.
+            // A cancelled install's walk is still exiting; the refusal lifts
+            // on its own once `installsFinished()` proves it exited (and
+            // stays if it never does), so a second writer never races the
+            // first on this directory.
             showToast(
-                "'\(alias)' has a download still running in the background from an earlier "
-                    + "attempt. Restart the app before installing it again.",
+                "'\(alias)' has a download still exiting in the background. Try again "
+                    + "in a few seconds, or restart the app.",
                 style: .warning, duration: 6.0)
             return
         }
@@ -290,32 +292,27 @@ extension AppModel {
         }
     }
 
-    /// Stops WATCHING an install. It does not stop the install.
+    /// Cancels an install for real.
     ///
-    /// **THE ENGINE HAS NO INSTALL-CANCEL CALL, AND THE BINDING SAYS SO IN
-    /// SO MANY WORDS** (state#27): dropping the consumer ends DELIVERY, while
-    /// `ts_install` blocks its own thread and keeps streaming the checkpoint
-    /// to completion or failure with nobody listening
-    /// (`TurboSpark/Catalog.swift`: "do not build a Stop button on this").
-    /// This used to clear `isInstallingModel` synchronously, which reopened
-    /// `installModel`'s own guard -- so a second install could start and
-    /// write the same store the abandoned walk was still writing.
+    /// **TWO CANCELS REACH TWO THREADS.** `TurboSparkCatalog.cancelInstall()`
+    /// sets the flag the blocking C walk polls at its next ranged chunk
+    /// read; `installTask?.cancel()` ends the Swift consumer. The walk then
+    /// dies the same death a network failure gives it -- the error carries
+    /// "install cancelled", and NOTHING of the partial install is kept (the
+    /// walk cannot resume either way).
     ///
-    /// Two things follow, and both are the honest version rather than the
-    /// convenient one. The alias stays in `abandonedInstallAliases`, so
-    /// re-installing THAT model is refused until the app restarts (two
-    /// writers on one install directory is the case that corrupts
-    /// something); a DIFFERENT model may still be installed, since the store
-    /// writes are per directory and `installed.json` is rewritten whole by
-    /// each on completion. And the message says what actually happens
-    /// instead of claiming a stop. Making Cancel real needs
-    /// `ts_install_cancel` on the Rust side, which does not exist.
+    /// The alias sits in `abandonedInstallAliases` only for the seconds the
+    /// walk takes to notice the flag: `watchCancelledWalkExit` watches
+    /// `installsFinished()` and lifts the refusal once the walk has
+    /// actually exited, so Cancel + Retry works without an app restart. If
+    /// the walk somehow never notices, the refusal stays -- the pre-cancel
+    /// behavior, still safe (two writers on one install directory is the
+    /// case that corrupts something).
     public func cancelInstall() {
+        let cancelledAlias = installingAlias
+        let wasRunning = TurboSparkCatalog.cancelInstall()
         installTask?.cancel()
         installTask = nil
-        if let alias = installingAlias {
-            abandonedInstallAliases.insert(alias)
-        }
         installingAlias = nil
         isInstallingModel = false
         installStageText = nil
@@ -324,15 +321,38 @@ extension AppModel {
         installTotalBytes = nil
         installETAText = nil
         showToast(
-            "Stopped watching the download. It cannot be cancelled and keeps running in the "
-                + "background; this model cannot be re-installed until the app restarts.",
-            style: .warning, duration: 6.0)
+            wasRunning
+                ? "Download cancelled. Nothing was kept; '\(cancelledAlias ?? "the model")' can "
+                    + "be re-installed in a few seconds."
+                : "Nothing was downloading.",
+            style: .info, duration: 5.0)
         // Cancellation is cooperative: the cancelled Task keeps running
         // until its next suspension point notices, so its own tail can
         // still fire after this call returns. Bumping the epoch here too
         // (on top of each new install bumping it at its own start) means
         // that stale tail is a no-op even if nothing new has started yet.
         installEpoch += 1
+        if wasRunning, let cancelledAlias {
+            abandonedInstallAliases.insert(cancelledAlias)
+            watchCancelledWalkExit(alias: cancelledAlias)
+        }
+    }
+
+    /// Lifts the abandoned-alias refusal once the cancelled walk has
+    /// actually exited. Bounded: if the walk never notices the flag within
+    /// 30 s, the refusal stays until restart, which is safe.
+    private func watchCancelledWalkExit(alias: String) {
+        let baseline = TurboSparkCatalog.installsFinished()
+        Task { [weak self] in
+            for _ in 0..<60 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self, !self.abandonedInstallAliases.contains(alias) else { return }
+                if TurboSparkCatalog.installsFinished() != baseline {
+                    self.abandonedInstallAliases.remove(alias)
+                    return
+                }
+            }
+        }
     }
 
     /// Whether `alias` may be installed right now.

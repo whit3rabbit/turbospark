@@ -70,9 +70,8 @@ struct ChatSidebarGroupedProjectsView: View {
     }
 
     private func tasks(for projectID: UUID) -> [AppChat] {
-        let allTasks = model.chats
-            .filter { $0.projectID == projectID }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        let allTasks = AppChat.sortedForSidebar(
+            model.chats.filter { $0.projectID == projectID })
 
         if trimmedSearch.isEmpty {
             return allTasks
@@ -91,9 +90,7 @@ struct ChatSidebarGroupedProjectsView: View {
     }
 
     private var unorganizedChats: [AppChat] {
-        let chats = model.chats
-            .filter { $0.projectID == nil }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        let chats = AppChat.sortedForSidebar(model.chats.filter { $0.projectID == nil })
 
         if trimmedSearch.isEmpty {
             return chats

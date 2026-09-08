@@ -349,11 +349,64 @@ struct ChatSidebarView: View {
                         )
                     }
                 }
+                archivedSection
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The qwen-code session-archive surface: archived chats leave the
+    /// lists above and live behind one disclosure here, each row offering
+    /// Restore and Delete.
+    @ViewBuilder
+    private var archivedSection: some View {
+        let archived = AppChat.sortedForSidebar(model.archivedChats)
+        if !archived.isEmpty {
+            DisclosureGroup {
+                ForEach(archived) { chat in
+                    HStack(spacing: 8) {
+                        Image(systemName: "archivebox")
+                            .font(theme.ui(points: 11))
+                            .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
+                        Text(chat.title)
+                            .font(theme.ui(points: 12))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 4)
+                        Button {
+                            model.setChatArchived(id: chat.id, archived: false)
+                        } label: {
+                            Text("Restore", bundle: .module)
+                                .font(theme.ui(points: 10, weight: .medium))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Move this chat back into the chat list")
+                        Button(role: .destructive) {
+                            chatPendingDeletion = chat
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(theme.ui(points: 10))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tertiary)
+                        .help("Delete archived chat")
+                    }
+                    .padding(.leading, 12)
+                    .padding(.vertical, 2)
+                    .accessibilityElement(children: .combine)
+                }
+            } label: {
+                Label(
+                    archived.count == 1 ? "Archived (1 chat)" : "Archived (\(archived.count) chats)",
+                    systemImage: "archivebox")
+                    .font(theme.ui(points: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 10)
+        }
     }
 
     private var historyChats: [AppChat] {
@@ -363,9 +416,9 @@ struct ChatSidebarView: View {
     }
 
     private var sortedChats: [AppChat] {
-        model.filteredChats.sorted { lhs, rhs in
-            lhs.updatedAt > rhs.updatedAt
-        }
+        // Pinned first, recency inside each group -- `AppChat`'s one
+        // ordering, shared with the projects view and prev/next navigation.
+        AppChat.sortedForSidebar(model.filteredChats)
     }
 
     private var filteredHistoryChats: [AppChat] {

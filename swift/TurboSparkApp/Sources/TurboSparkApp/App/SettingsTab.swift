@@ -15,6 +15,7 @@ extension AppSettingsView {
         case memory = "Memory"
         case agents = "Agents & Subagents"
         case plugins = "Plugins"
+        case automation = "Scheduled Tasks"
         case hooks = "Hooks & Lifecycle"
 
         public var id: String { rawValue }
@@ -36,6 +37,7 @@ extension AppSettingsView {
             case .memory: return "brain"
             case .agents: return "person.2.badge.gearshape"
             case .plugins: return "puzzlepiece.extension"
+            case .automation: return "clock.badge.checkmark"
             case .hooks: return "link.badge.plus"
             }
         }
@@ -44,7 +46,8 @@ extension AppSettingsView {
             switch self {
             case .general, .profiles, .appearance, .shortcuts, .permissions:
                 return "Personal"
-            case .models, .engine, .safety, .mcp, .skills, .memory, .agents, .plugins, .hooks:
+            case .models, .engine, .safety, .mcp, .skills, .memory, .agents, .plugins,
+                .automation, .hooks:
                 return "Engine & Coding"
             }
         }
@@ -56,7 +59,7 @@ extension AppSettingsView {
             case .profiles:
                 return ["profiles", "users", "accounts", "switch user", "multi user"]
             case .appearance:
-                return ["theme", "font", "size", "color", "accent", "contrast", "dark", "light", "display", "motion"]
+                return ["theme", "font", "size", "color", "accent", "contrast", "dark", "light", "display", "motion", "reset", "restore", "factory"]
             case .shortcuts:
                 return ["keyboard", "keys", "shortcuts", "hotkeys", "commands"]
             case .permissions:
@@ -77,6 +80,8 @@ extension AppSettingsView {
                 return ["agents", "subagents", "personas", "system instructions", "scope"]
             case .plugins:
                 return ["plugins", "marketplace", "extensions", "addons", "contributions", "commands"]
+            case .automation:
+                return ["cron", "scheduled", "tasks", "schedule", "timer", "recurring", "automation"]
             case .hooks:
                 return ["hooks", "lifecycle", "events", "scripts"]
             }

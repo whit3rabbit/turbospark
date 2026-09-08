@@ -44,7 +44,7 @@ struct ComposerSuggestion: Identifiable, Equatable {
 /// without an `AppModel`.
 enum ComposerAutocompleteEngine {
     /// How many rows the popup offers at most.
-    static let maxSuggestions = 30
+    static let maxSuggestions = 36
 
     // MARK: - Trigger detection
 

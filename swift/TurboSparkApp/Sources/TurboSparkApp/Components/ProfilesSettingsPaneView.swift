@@ -3,7 +3,8 @@ import SwiftUI
 /// The Profiles settings pane: create, rename, delete, and switch between
 /// the users of this installation. Switching is a save-and-relaunch
 /// (`AppModel.switchToProfile`); this pane says so in as many words rather
-/// than surprising someone with an app restart.
+/// than surprising someone with an app restart, and both destructive doors
+/// (delete and switch) confirm before acting.
 struct ProfilesSettingsPaneView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
@@ -12,6 +13,7 @@ struct ProfilesSettingsPaneView: View {
     @State private var renameTarget: UserProfile?
     @State private var renameText: String = ""
     @State private var deleteTarget: UserProfile?
+    @State private var switchTarget: UserProfile?
 
     var body: some View {
         Form {
@@ -41,9 +43,26 @@ struct ProfilesSettingsPaneView: View {
                 deleteTarget = nil
             }
         } message: {
-            Text(
-                "The profile's settings, chats, and skills folder move to the Trash. "
-                    + "Downloaded models stay shared and are not deleted.")
+            Text("This removes the user's settings, chat history, projects, agents, global MCP servers and marketplaces, skills, plugins, custom tools, hooks, memory, and model favorites. The folder moves to the Trash, but restoring it does not bring the profile back; it is only for recovering files by hand. Shared and untouched: downloaded models, the install registry, the Keychain server API key, and the UI language.", bundle: .module)
+        }
+        .confirmationDialog(
+            Text("Switch Profile", bundle: .module),
+            isPresented: Binding(
+                get: { switchTarget != nil },
+                set: { if !$0 { switchTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Switch and Relaunch") {
+                if let target = switchTarget {
+                    model.switchToProfile(target)
+                }
+                switchTarget = nil
+            }
+            Button("Cancel", role: .cancel) {
+                switchTarget = nil
+            }
+        } message: {
+            Text("The app saves everything and relaunches as this user. Each user has separate settings, chat history, skills, MCP servers, agents, and plugins; work stays with the user who created it.", bundle: .module)
         }
     }
 
@@ -66,32 +85,33 @@ struct ProfilesSettingsPaneView: View {
     }
 
     private var defaultProfileRow: some View {
-        profileRowHeader(
+        profileRow(
             name: UserProfileStore.defaultProfile.name,
             isCurrent: model.isDefaultProfileActive,
-            subtitle: "Built in. Shares the ~/.turbospark skills, agents, and tools with other apps.")
+            subtitle: "Built in. Shares the ~/.turbospark skills, agents, and tools with other apps.",
+            profile: nil)
     }
 
     private func additionalProfileRow(_ profile: UserProfile) -> some View {
-        let isCurrent = profile.id == model.currentProfile.id
-        return profileRowHeader(
+        profileRow(
             name: profile.name,
-            isCurrent: isCurrent,
-            subtitle: "Self-contained settings, chats, skills, plugins, and MCP servers.")
+            isCurrent: profile.id == model.currentProfile.id,
+            subtitle: "Self-contained settings, chats, skills, plugins, and MCP servers.",
+            profile: profile)
         .contextMenu {
-            Button("Rename...") {
-                renameTarget = profile
-                renameText = profile.name
-            }
-            if !isCurrent {
-                Button("Delete...", role: .destructive) {
-                    deleteTarget = profile
-                }
-            }
+            profileActions(profile)
         }
     }
 
-    private func profileRowHeader(name: String, isCurrent: Bool, subtitle: String) -> some View {
+    /// One row for either kind of user. `profile` is nil for the built-in
+    /// Default user, which cannot be renamed or deleted and switches through
+    /// the fixed `defaultProfile` row rather than a registry lookup.
+    private func profileRow(
+        name: String,
+        isCurrent: Bool,
+        subtitle: String,
+        profile: UserProfile?
+    ) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "person.crop.circle")
                 .font(theme.ui(.title3))
@@ -114,21 +134,48 @@ struct ProfilesSettingsPaneView: View {
                     .font(theme.ui(.small))
                     .foregroundStyle(.secondary)
             }
+            // Combining only the text keeps the Switch button and the actions
+            // menu individually reachable to VoiceOver; combining the whole
+            // row flattened them into the label.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(name)\(isCurrent ? ", current profile" : "")")
             Spacer()
             if !isCurrent {
                 Button("Switch") {
-                    if name == UserProfileStore.defaultProfile.name {
-                        model.switchToProfile(UserProfileStore.defaultProfile)
-                    } else if let profile = model.profiles.first(where: { $0.name == name }) {
-                        model.switchToProfile(profile)
-                    }
+                    switchTarget = profile ?? UserProfileStore.defaultProfile
                 }
                 .disabled(!model.canSwitchProfile)
                 .help("Saves everything and relaunches the app as this user")
             }
+            if let profile {
+                Menu {
+                    profileActions(profile)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(theme.ui(.base))
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("More actions for \(name)")
+            }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(name)\(isCurrent ? ", current profile" : "")")
+    }
+
+    /// The rename/delete pair, shared by the context menu and the row's
+    /// ellipsis menu so neither surface can drift from the other.
+    @ViewBuilder
+    private func profileActions(_ profile: UserProfile) -> some View {
+        Button("Rename...") {
+            renameTarget = profile
+            renameText = profile.name
+        }
+        if profile.id != model.currentProfile.id {
+            Button("Delete...", role: .destructive) {
+                deleteTarget = profile
+            }
+        }
     }
 
     private var addSection: some View {
@@ -139,6 +186,9 @@ struct ProfilesSettingsPaneView: View {
                 Button("Add Profile", action: addProfile)
                     .disabled(newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            Text("New users start empty: their own settings, chats, skills, and MCP servers, isolated from the Default user and the shared ~/.turbospark folders.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.secondary)
         }
     }
 

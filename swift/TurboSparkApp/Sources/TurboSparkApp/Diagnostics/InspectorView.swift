@@ -13,6 +13,10 @@ struct InspectorView: View {
             header
             Form {
                 modelSection
+                // Its own struct rather than a computed property here: the
+                // context ladder carries @State (the loaded ladder and its
+                // failure flag), which an extension property cannot hold.
+                InspectorEssentialsSection(model: model)
                 memoryAndPowerSection
                 steeringSection
                 // Its own struct, not an extension computed property: it
@@ -21,6 +25,7 @@ struct InspectorView: View {
                 GenerationSamplingSection(model: model)
                 telemetrySection
                 RunnerDiagnosticsSection(diagnostics: model.diagnostics)
+                usageDashboardSection
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)

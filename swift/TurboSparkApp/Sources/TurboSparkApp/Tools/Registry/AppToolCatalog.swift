@@ -162,10 +162,18 @@ public enum AppToolCatalog {
     /// `## Available Skills` section beside it), so it must resolve the same
     /// project scope the tool executor does and budget against the real
     /// context window.
+    ///
+    /// `availableAgents` is the model-visible agent roster: without it the
+    /// only hint of what `subagent_type` accepts is the parameter
+    /// description's hardcoded examples, and a user-created agent is
+    /// reachable by `/slash` alone. Callers pass the ENABLED agents resolved
+    /// for the turn's project; disabled ones are refused at execution, so
+    /// advertising them would only invite the refusal.
     public static func systemPromptAddendum(
         for agentType: AppAgentType,
         projectURL: URL? = nil,
-        contextTokens: Int? = nil
+        contextTokens: Int? = nil,
+        availableAgents: [(name: String, whenToUse: String)] = []
     ) -> String {
         let active = tools(for: agentType, projectURL: projectURL, contextTokens: contextTokens)
         var lines: [String] = []
@@ -191,6 +199,17 @@ public enum AppToolCatalog {
         lines.append("")
         lines.append("## Subagents")
         lines.append("The `agent` tool runs a task in a separate subagent that starts with NO context from this conversation and reports its final answer back to you as the tool result. Brief each subagent fully in its `prompt`: what to do, what it needs to know, and what to return.")
+        if !availableAgents.isEmpty {
+            lines.append("Available agent types for `subagent_type` (an unknown name falls back to `general-purpose`):")
+            for agent in availableAgents {
+                var description = agent.whenToUse.trimmingCharacters(in: .whitespacesAndNewlines)
+                if description.isEmpty { description = "Specialized agent." }
+                if description.count > 200 {
+                    description = String(description.prefix(200)) + "..."
+                }
+                lines.append("- `\(agent.name)`: \(description)")
+            }
+        }
         lines.append("You may issue several `agent` calls in ONE reply (one tool call block each); they run concurrently and every one returns its own result. Other tools remain one call per turn.")
         lines.append("Set `\"run_in_background\": \"true\"` to launch without waiting: you get a task id at once and a `<task-notification>` message later when it finishes. Cancel one with `stop_agent`.")
         return lines.joined(separator: "\n")
@@ -208,12 +227,14 @@ public enum AppToolCatalog {
         for agentType: AppAgentType,
         mcpServers: [McpServerConfig],
         project: AppProject?,
-        contextTokens: Int? = nil
+        contextTokens: Int? = nil,
+        availableAgents: [(name: String, whenToUse: String)] = []
     ) -> String {
         let base = systemPromptAddendum(
             for: agentType,
             projectURL: project?.rootDirectoryURL,
-            contextTokens: contextTokens)
+            contextTokens: contextTokens,
+            availableAgents: availableAgents)
         let definitions = AppToolCatalogMcp.toolDefinitions(servers: mcpServers, permissions: project?.permissions)
         guard !definitions.isEmpty else { return base }
         var lines: [String] = [

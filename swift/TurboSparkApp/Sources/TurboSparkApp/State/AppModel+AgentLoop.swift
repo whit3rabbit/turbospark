@@ -32,6 +32,18 @@ extension AppModel {
     func dispatchStopAndContinueIfBlocked(
         chatID: UUID, resumeStep: Int, project: AppProject?
     ) async -> Bool {
+        // **THE GOAL LOOP EVALUATES HERE, BEFORE THE USER'S OWN STOP
+        // HOOKS** (swift/docs/SWIFT_GOALS.md). CC's goal is a session-
+        // scoped prompt-based Stop hook sitting among the blockable
+        // turn-end hooks; this is that position. When the goal continues
+        // the loop itself -- a not-met verdict or a due check-in -- this
+        // round is not a stop, so the user's Stop hooks wait for the turn
+        // the goal actually ends. The Bool is "re-entered" either way.
+        if activeGoals[chatID] != nil {
+            let goalContinued = await handleGoalAtStop(
+                chatID: chatID, project: project)
+            if goalContinued { return true }
+        }
         let wasActive = stopHookReentryCount > 0
         let verdict = await evaluateStop(
             stopHookActive: wasActive, chatID: chatID, project: project)
@@ -240,6 +252,9 @@ extension AppModel {
             self.pendingToolCallChatID = chatID
             self.pendingToolCallStep = currentStep
             self.pendingToolCallProject = project
+            // A hook ask is not a classifier fallback; never render a stale
+            // one beside it.
+            self.pendingToolCallClassifierNotice = nil
             mutateTurnMessages(for: chatID) {
                 $0.append(AppChatMessage(
                     role: .assistant,
@@ -282,22 +297,48 @@ extension AppModel {
                 let reason = permVerdict.permissionReason ?? "Denied by PermissionRequest hook"
                 await self.recordDeniedCall(call, extra: extra, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
             } else {
-                var pending = call
-                pending.status = .pendingApproval
-                pending.riskAssessment = assessment
-                self.pendingToolCall = pending
-                self.pendingToolCallChatID = chatID
-                self.pendingToolCallStep = currentStep
-                self.pendingToolCallProject = decisionProject
-                mutateTurnMessages(for: chatID) {
-                    $0.append(AppChatMessage(
-                        role: .assistant,
-                        content: fullContent,
-                        reasoning: reasoning,
-                        stopReason: "tool_use",
-                        toolCalls: [pending] + extra.calls,
-                        toolResults: extra.results
-                    ))
+                // **AGENT MODE ROUTES HERE, BEFORE THE CARD** (see
+                // `swift/docs/SWIFT_AGENT_MODE.md`). The hook above already
+                // declined to decide; the router turns the ask into a run
+                // (fast path or classifier allow), a policy refusal, or the
+                // ordinary card -- with a fallback notice when the
+                // classifier, not the policy, is why a human is seeing it.
+                let outcome = await resolveAskUnderAgentMode(
+                    call, assessment: assessment, chatID: chatID, project: decisionProject)
+                switch outcome {
+                case .run(let byClassifier):
+                    var approved = call
+                    if byClassifier {
+                        approved.autoApprovedBy = "classifier"
+                    }
+                    await self.runApprovedCall(approved, extra: extra, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
+                case .denyWithReason(let reason):
+                    await self.dispatchPermissionDenied(
+                        toolName: call.name, toolArguments: call.arguments, reason: reason,
+                        chatID: chatID, project: decisionProject)
+                    await self.recordDeniedCall(
+                        call, extra: extra, reason: reason, fullContent: fullContent,
+                        reasoning: reasoning, chatID: chatID, currentStep: currentStep,
+                        project: decisionProject)
+                case .parkCard(let notice):
+                    var pending = call
+                    pending.status = .pendingApproval
+                    pending.riskAssessment = assessment
+                    self.pendingToolCall = pending
+                    self.pendingToolCallChatID = chatID
+                    self.pendingToolCallStep = currentStep
+                    self.pendingToolCallProject = decisionProject
+                    self.pendingToolCallClassifierNotice = notice
+                    mutateTurnMessages(for: chatID) {
+                        $0.append(AppChatMessage(
+                            role: .assistant,
+                            content: fullContent,
+                            reasoning: reasoning,
+                            stopReason: "tool_use",
+                            toolCalls: [pending] + extra.calls,
+                            toolResults: extra.results
+                        ))
+                    }
                 }
             }
 
@@ -495,9 +536,43 @@ extension AppModel {
             }
         }
 
+        // **AGENT MODE JUDGES THE ASKED SET BEFORE ANY CARD GOES UP**
+        // (`swift/docs/SWIFT_AGENT_MODE.md`), the same routing the single
+        // path takes so the two cannot drift. A classifier allow joins the
+        // prepared set, a policy block joins the denied set (marked
+        // `fromEngine: true` because that flag means "dispatch
+        // PermissionDenied to hooks", and a policy refusal is one), and only
+        // what the classifier could not decide -- or a hard gate -- remains
+        // here to park. A mixed batch after routing falls through to the
+        // single path below; its one remaining re-route re-classifies only
+        // after unavailable verdicts, which the skip threshold bounds.
+        var batchClassifierNotice: String?
+        var routedAsked: [(call: AppToolCall, assessment: ToolRiskAssessment)] = []
+        for entry in asked {
+            let outcome = await resolveAskUnderAgentMode(
+                entry.call, assessment: entry.assessment, chatID: chatID, project: project)
+            switch outcome {
+            case .run(let byClassifier):
+                var approved = entry.call
+                if byClassifier {
+                    approved.autoApprovedBy = "classifier"
+                }
+                prepared.append(approved)
+            case .denyWithReason(let reason):
+                denied.append((entry.call, reason, true))
+            case .parkCard(let notice):
+                if batchClassifierNotice == nil {
+                    batchClassifierNotice = notice
+                }
+                routedAsked.append(entry)
+            }
+        }
+        asked = routedAsked
+
         // An engine deny is a `PermissionDenied` in Claude Code's contract,
         // so configured hooks hear about it -- at gate time, like the single
-        // path does, not at execution time.
+        // path does, not at execution time. A classifier policy block is the
+        // same shape of verdict and rides the same dispatch.
         for entry in denied where entry.fromEngine {
             await dispatchPermissionDenied(
                 toolName: entry.call.name, toolArguments: entry.call.arguments,
@@ -516,6 +591,9 @@ extension AppModel {
             pendingToolCallStep = currentStep
             pendingToolCallProject = project
             pendingBatchCalls = updatedCalls
+            // Batch asks that survive routing are classifier fallbacks or
+            // hard gates; the notice (set by the routing below) says which.
+            pendingToolCallClassifierNotice = batchClassifierNotice
             let parked = updatedCalls.map { call -> AppToolCall in
                 var parked = call
                 parked.status = .pendingApproval

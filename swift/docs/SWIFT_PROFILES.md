@@ -82,12 +82,20 @@ while a generation or install is running, saves the registry choice, runs
 the same ordered flush as quit (`AppModel.shutdown()`), re-execs
 `Bundle.main.executableURL` with `TURBOSPARK_PROFILE` pinned in the child
 environment, and exits. A live in-app switch would mean re-pointing the
-cached root and re-creating every `.shared` store; nothing here tries.
+cached root and re-creating every `.shared` store; nothing here tries. The
+Settings pane asks for confirmation first and says what a switch means.
 
 Deletion moves the profile's folder to the Trash (`FileManager.trashItem`)
 BEFORE saving the registry, so a failed trash leaves the profile named
 rather than forgotten. The active profile and the Default user cannot be
-deleted; switch away first.
+deleted; switch away first. The pane's delete confirmation enumerates the
+inventory so the cost is read before it is paid: the folder holds the
+user's settings, chat history, projects and agents, global MCP servers and
+marketplaces, skills, plugins, custom tools, hooks, memory, and model
+favorites, while downloaded models, the install registry, the Keychain
+server API key, and the UI language stay shared. Restoring a trashed
+folder does not re-register the profile; the registry row is gone with the
+save, so the Trash is for recovering files by hand only.
 
 ## Entry points
 

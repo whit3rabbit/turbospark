@@ -175,6 +175,8 @@ public struct AppSettingsView: View {
             AgentsSettingsPaneView(model: model)
         case .plugins:
             PluginSettingsPaneView(model: model)
+        case .automation:
+            CronJobsSettingsPaneView(model: model)
         case .hooks:
             HooksSettingsPaneView(model: model)
         }

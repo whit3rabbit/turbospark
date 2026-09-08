@@ -196,6 +196,15 @@ public final class AppModel: ObservableObject {
 
     /// Updates permission mode for current project or global chat.
     public func setEffectivePermissionMode(_ mode: AppPermissionMode) {
+        // Entering Agent mode starts its fallback counters fresh: a streak
+        // recorded under an earlier selection is not this selection's
+        // history, and `AgentModeGate.reset` also lifts a session
+        // suspension, which re-selecting the mode is the documented way to
+        // end (`swift/docs/SWIFT_AGENT_MODE.md`).
+        if mode == .agentAuto {
+            let sessionID = selectedChatID.uuidString
+            Task { await AgentModeGate.shared.reset(sessionID: sessionID) }
+        }
         if let project = selectedProject {
             var updated = project
             updated.permissions = AppProjectPermissions.preset(for: mode)
@@ -232,6 +241,19 @@ public final class AppModel: ObservableObject {
     /// refuses all. `pendingToolCall` remains the call whose verdict the
     /// card renders.
     var pendingBatchCalls: [AppToolCall]? = nil
+    /// Why Agent mode (`swift/docs/SWIFT_AGENT_MODE.md`) punted this call to
+    /// the card: classifier unavailable, or the skip thresholds tripped. Nil
+    /// for an ordinary ask, so the card renders exactly as before.
+    @Published public var pendingToolCallClassifierNotice: String? = nil
+    /// Natural-language classifier steering (allow / softDeny / hardDeny /
+    /// environment), mirrored from settings like every other preference.
+    /// Read at classification time by the router; edited in the Permissions
+    /// settings pane.
+    @Published public var agentModeHints: AgentModeHints = AgentModeHints()
+    /// Test seam for `resolveAskUnderAgentMode`: when set, it classifies
+    /// instead of `LocalModelToolClassifier`, so verdict routing is
+    /// testable with no model loaded. Not published; nothing draws it.
+    var agentModeClassifierOverride: ToolCallClassifying? = nil
     /// Why the last SKILL.state patch was rejected, or nil if the last one
     /// merged. Surfaced rather than swallowed: a dropped patch means the run
     /// lost a step's bookkeeping, which is invisible in the transcript.
@@ -295,6 +317,30 @@ public final class AppModel: ObservableObject {
     var killedBackgroundAgentIDs: Set<String> = []
     var nextBackgroundAgentID = 1
 
+    /// Running background shells, for the kill strip. Value-type snapshots
+    /// rebuilt off the registry's change hook; the strip filters by chat.
+    @Published public var backgroundShellSummaries: [BackgroundShellSummary] = []
+
+    // Goal state (swift/docs/SWIFT_GOALS.md). The row (or ghost payload)
+    // is the persisted source; this mirror is what SwiftUI and the stop
+    // seam read, kept in step by `AppModel+Goal.updateGoal`.
+    /// Each chat's active `/goal`, keyed by chat id. Published for the
+    /// transcript banner.
+    @Published public var activeGoals: [UUID: ChatGoalState] = [:]
+    /// The idle check-in timer per chat, cancelled on clear, teardown and
+    /// re-arm. The pipeline's first recurring timer: it exists so a
+    /// deferral that goes QUIET (nothing left to start a turn) still
+    /// surfaces its check-in.
+    var goalIdleTimerTasks: [UUID: Task<Void, Never>] = [:]
+    /// Transcript message count at the goal's set point / last evaluation:
+    /// what the evaluator's slice and the stall detector read since.
+    var goalEvalMessageCounts: [UUID: Int] = [:]
+    /// Consecutive tool-free evaluation rounds, per chat (the stall
+    /// counter).
+    var goalToolFreeEvals: [UUID: Int] = [:]
+    /// Whether the goal evaluator's side query is running right now.
+    @Published public var isEvaluatingGoal = false
+
     // Message editing state
     /// The transcript row currently open in the in-place edit composer, or
     /// nil. Pure UI state: set by `beginEdit`, cleared on commit and cancel,
@@ -351,6 +397,11 @@ public final class AppModel: ObservableObject {
     /// summary and skill state EMPTY; they are sealed in here under a
     /// per-launch key. See `GhostChatVault` and `AppModel+Ghost.swift`.
     var ghostVault = GhostChatVault()
+    /// App-wide prompt history behind the composer's Up/Down recall
+    /// (`InputHistoryStore`). Loads its own file at init, records at
+    /// submission, and is shared across chats: recall is a habit of the
+    /// keyboard, not of the conversation.
+    let promptHistory = InputHistoryStore()
 
     // Live Generation State
     /// Whether token generation is currently running.
@@ -398,6 +449,53 @@ public final class AppModel: ObservableObject {
     @Published public var error: String?
     /// Active toast notification displayed on screen and announced to assistive technologies.
     @Published public var activeToast: AppToast? = nil
+
+    // Local command surfaces (qwen-code /stats and /help parity). Pure UI
+    // state; sheets on the chat pane present while these are true.
+    /// Whether the session stats sheet (`/stats`) is showing.
+    @Published public var showSessionStats: Bool = false
+    /// Whether the help sheet (`/help`: commands and shortcuts) is showing.
+    @Published public var showHelpSheet: Bool = false
+    /// Whether the context usage sheet (`/context`) is showing.
+    @Published public var showContextSheet: Bool = false
+    /// Whether the background tasks sheet (`/tasks`) is showing.
+    @Published public var showTasksSheet: Bool = false
+    /// Whether the tool catalog sheet (`/tools`) is showing.
+    @Published public var showToolsSheet: Bool = false
+    /// Whether the status sheet (`/status`) is showing.
+    @Published public var showStatusSheet: Bool = false
+    /// Whether the rewind sheet (`/rewind`) is showing.
+    @Published public var showRewindSheet: Bool = false
+    /// Whether the recap sheet (`/recap`) is showing, with the recap text
+    /// beside it. The text is transient: it dies with the sheet, unlike a
+    /// compaction summary which replaces transcript in the prompt.
+    @Published public var showRecapSheet: Bool = false
+    @Published public var recapText: String = ""
+    @Published public var isRecapping: Bool = false
+    /// Arms the `/delete` confirmation alert: the command refuses to delete
+    /// without one, exactly like the sidebar's own Delete action.
+    @Published public var confirmDeleteChat: Bool = false
+    /// Transcript collapse (qwen-code turn folding): anchors of the turns
+    /// currently folded to prompt + final answer. Session-only state, like
+    /// turn navigation; there is no persisted "was collapsed" to restore.
+    @Published public var collapsedTurnAnchors: Set<UUID> = []
+    /// Two-stage Esc cancel (qwen-code `escapeIntent` parity): the first
+    /// Escape while generating ARMS the cancel and the footer says so; the
+    /// second within the window stops the turn. Auto-disarms.
+    @Published public var isEscCancelArmed: Bool = false
+    var escCancelArmTask: Task<Void, Never>? = nil
+
+    // Turn navigation (qwen-code turn-jump parity). `turnNavigationToken`
+    // is what the transcript's ScrollViewReader observes; the target it
+    // points at travels beside it. Both die with the view: no persistence.
+    /// Message id the transcript should scroll to, per `jumpTurn`.
+    @Published public var turnNavigationTargetID: UUID? = nil
+    /// Bumped on every jump so repeating a jump to the SAME row still
+    /// scrolls (an onChange keyed on the id alone would not).
+    @Published public var turnNavigationToken: Int = 0
+    /// The cron poll timer, installed by `startCronScheduler`; held so
+    /// shutdown can invalidate it.
+    var cronPollTimer: Timer?
 
 
     // Runtime Settings
@@ -488,11 +586,11 @@ public final class AppModel: ObservableObject {
     @Published public var installingAlias: String? = nil
     /// Aliases whose install was abandoned by `cancelInstall()`.
     ///
-    /// The engine exposes no install-cancel call, so dropping the consumer
-    /// ends DELIVERY while `ts_install` keeps streaming the checkpoint to
-    /// that directory. There is no way to learn when it finishes, so a
-    /// second install of the same alias is refused for the rest of the
-    /// process rather than raced against the first.
+    /// Refuses a re-install of `alias` while a cancelled walk may still be
+    /// writing its directory. `cancelInstall()` inserts the alias and
+    /// `watchCancelledWalkExit` lifts the refusal once `installsFinished()`
+    /// shows the walk exited; if the walk never notices the flag, the entry
+    /// stays until app restart rather than racing a live writer.
     @Published public var abandonedInstallAliases: Set<String> = []
 
     var runTask: Task<Void, Never>?
@@ -555,6 +653,7 @@ public final class AppModel: ObservableObject {
         loadProfiles()
         loadProjects()
         loadChats()
+        installBackgroundShellObserver()
         // Ghost Mode opt-in, AFTER `loadChats`: the restored archive is
         // already in place and the temporary chat sits on top of it, selected.
         if alwaysStartInGhostMode {
@@ -565,6 +664,7 @@ public final class AppModel: ObservableObject {
         reloadAgents()
         reloadPlugins()
         refreshModels()
+        startCronScheduler()
         AppToolRegistry.activeSessionProvider = { [weak self] in
             self?.session
         }

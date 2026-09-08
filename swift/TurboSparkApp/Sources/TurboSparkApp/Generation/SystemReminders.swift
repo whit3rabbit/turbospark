@@ -32,7 +32,8 @@ enum SystemReminders {
     /// applies. Pure: every input is a value, so the matrix is assertable
     /// without a session.
     static func reminder(
-        todos: [TodoItem], messages: [AppChatMessage], planModeActive: Bool
+        todos: [TodoItem], messages: [AppChatMessage], planModeActive: Bool,
+        goal: ChatGoalState? = nil
     ) -> String? {
         var sections: [String] = []
         if let todo = todoSection(todos: todos, messages: messages) {
@@ -40,6 +41,9 @@ enum SystemReminders {
         }
         if planModeActive {
             sections.append(planSection)
+        }
+        if let goal {
+            sections.append(goalSection(goal))
         }
         guard !sections.isEmpty else { return nil }
         return sections
@@ -108,5 +112,33 @@ enum SystemReminders {
         patches, or run state-changing commands: research and design only. When the plan is \
         ready, call exit_plan_mode with the finalized plan text.
         """
+    }
+
+    // MARK: - Active goal
+
+    /// While a `/goal` is active, every prompt restates it: the condition,
+    /// how many evaluation rounds have run, and the evaluator's latest
+    /// reason it is not yet met. This is how the goal survives compaction
+    /// and reaches the continuation turns -- the verdict rows alone would
+    /// scroll out of the window-fit's reach eventually, and a goal the
+    /// model can no longer see is a goal it cannot work toward.
+    static func goalSection(_ goal: ChatGoalState) -> String {
+        var lines = [
+            "An ACTIVE GOAL is set for this conversation. Keep working toward it; do not "
+                + "end the conversation until it is met:",
+            "Goal: \(goal.condition)",
+        ]
+        if goal.isPaused {
+            lines.append(
+                "The loop is PAUSED pending user input (too many consecutive replies "
+                    + "produced no tool use). Answer the user's latest message.")
+        } else if let reason = goal.lastReason, !reason.isEmpty {
+            lines.append(
+                "Latest evaluation: not yet met (iteration \(goal.iterations + 1) next). "
+                    + "Reason: \(reason). Address that reason next.")
+        } else {
+            lines.append("The first evaluation happens when this turn ends; work toward the goal.")
+        }
+        return lines.joined(separator: "\n")
     }
 }

@@ -138,6 +138,16 @@ The SKILL.state history path deliberately gets NO reminders: its prompt is
 O(1) in step count with its own state patch format (`docs/SKILL_STATE.md`),
 and a per-turn reminder would defeat the bound it exists for.
 
+**The goal loop rides both of these seams** (`swift/docs/SWIFT_GOALS.md`
+owns the details): `reminder` gained a `goal:` parameter, so an active
+`/goal` restates its condition, iteration count and latest not-met reason
+in a `<goal>` section on every assembly; and `run()`'s submission task
+resets the goal's per-prompt counters -- the stall pause and the idle
+check-in cap -- on every accepted prompt. The goal's own evaluation arm
+sits at the top of `dispatchStopAndContinueIfBlocked`, making it the
+third consumer of the stop seam beside the user's Stop hooks and the
+steer reset.
+
 ## Tests
 
 `MessageQueueTests` (predicate term matrix, enqueue/restore/drain,

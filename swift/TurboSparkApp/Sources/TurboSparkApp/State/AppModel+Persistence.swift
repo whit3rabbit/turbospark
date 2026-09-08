@@ -107,6 +107,7 @@ extension AppModel {
         // being threaded through `assessTerminalCommand`. Set it here, once,
         // where settings are already being applied.
         CommandGate.vetoEnabled = settings.commandAdvisoryVeto
+        self.agentModeHints = settings.agentModeHints
 
         if settings.serverAutoStartOnLaunch && server == nil {
             startServer()
@@ -182,7 +183,8 @@ extension AppModel {
             keepServerRunningInBackground: keepServerRunningInBackground,
             serverEmbeddingModel: serverEmbeddingModelInput,
             hfEndpoint: hfEndpointInput,
-            memoryEnabled: memoryEnabled
+            memoryEnabled: memoryEnabled,
+            agentModeHints: agentModeHints
         )
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not
@@ -268,6 +270,11 @@ extension AppModel {
         } else {
             self.selectedChatID = archive.chats[0].id
         }
+        // Restore active goals AFTER the rows are in: the mirror hydrates
+        // through `restoredForRelaunch()`, which keeps only the condition
+        // and the set time (CC's resume rule), so counters and timers do
+        // not come back.
+        restoreGoalsFromRows()
     }
 
     /// The chats that may reach disk: ghost chats live only in memory.
@@ -446,6 +453,12 @@ extension AppModel {
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,
         // which is exactly the case where the flush below matters most.
         cancel()
+        // Background work is NOT reachable by `cancel()`: shells are
+        // separate processes and agent tasks are unstructured, so both would
+        // otherwise outlive the app (a shell's children keep running after
+        // the process exits). Agents are cancelled first so a completion
+        // cannot race the persists below, then the shells' whole trees die.
+        stopAllBackgroundWorkForShutdown()
         detachChatSessionFromServer()
         session = nil
 

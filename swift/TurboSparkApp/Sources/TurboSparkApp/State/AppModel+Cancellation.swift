@@ -133,5 +133,29 @@ extension AppModel {
         pendingToolCallStep = 0
         pendingToolCallProject = nil
         pendingBatchCalls = nil
+        pendingToolCallClassifierNotice = nil
+    }
+
+    /// The Stop All command: the turn (`cancel()`), every running background
+    /// agent, every running background shell, and an in-flight model
+    /// install. The local server and the loaded model are deliberately NOT
+    /// here -- they are explicit toggles a user starts on purpose, and
+    /// stopping either from a "stop everything that is hung" gesture would
+    /// surprise more than it rescues.
+    ///
+    /// The agent arm is `stopBackgroundAgent`'s insert-and-cancel shape
+    /// inlined: that method is async and returns a model-facing string, and
+    /// the completion watcher turns each cancelled run into a `killed`
+    /// notification either way.
+    public func stopAll() {
+        cancel()
+        for (id, state) in backgroundAgentRuns where state.status == "running" {
+            killedBackgroundAgentIDs.insert(id)
+            backgroundAgentTasks[id]?.cancel()
+        }
+        killAllBackgroundShells()
+        if isInstallingModel {
+            cancelInstall()
+        }
     }
 }

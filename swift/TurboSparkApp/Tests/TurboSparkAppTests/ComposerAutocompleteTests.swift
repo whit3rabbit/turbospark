@@ -98,7 +98,19 @@ final class ComposerAutocompleteTests: XCTestCase {
 
     func testEmptyPrefixOffersAllBuiltIns() {
         let rows = ComposerAutocompleteEngine.slashCandidates(prefix: "", skills: [])
-        XCTAssertEqual(rows.map(\.title), ["/agent", "/compact", "/explore", "/memory", "/plan", "/review"])
+        // One row per table NAME (aliases never get rows), capped at
+        // maxSuggestions -- the table has outgrown one screen, so the empty
+        // prefix pins the cap and the dedupe, not the whole alphabet.
+        let primaryNames = Set(BuiltInSlashCommand.all.map { "/" + $0.name })
+        XCTAssertTrue(rows.map(\.title).allSatisfy(primaryNames.contains))
+        XCTAssertEqual(rows.count, BuiltInSlashCommand.all.count, "the empty prefix still lists every command")
+        // A typed prefix reaches the rows past the cap.
+        XCTAssertTrue(ComposerAutocompleteEngine.slashCandidates(prefix: "theme", skills: [])
+            .contains { $0.title == "/theme" })
+        XCTAssertTrue(ComposerAutocompleteEngine.slashCandidates(prefix: "tools", skills: [])
+            .contains { $0.title == "/tools" })
+        XCTAssertTrue(ComposerAutocompleteEngine.slashCandidates(prefix: "btw", skills: [])
+            .contains { $0.title == "/btw" })
     }
 
     func testDisabledAndModelOnlySkillsAreNotOffered() {
@@ -275,10 +287,10 @@ final class ComposerAutocompleteTests: XCTestCase {
             "the parser recognizes a command the registry never recorded")
     }
 
-    func testMetaCommandsAreExactlyCompactAndMemory() {
+    func testMetaCommandsAreThePinnedSet() {
         XCTAssertEqual(
             BuiltInSlashCommand.all.filter { $0.kind == .metaCommand }.map(\.name),
-            ["compact", "memory"])
+            ["compact", "memory", "goal", "stats", "export", "help"])
         XCTAssertTrue(BuiltInSlashCommand.isMetaCommand("/compact"))
         XCTAssertTrue(BuiltInSlashCommand.isMetaCommand("/compact 10"))
         XCTAssertFalse(BuiltInSlashCommand.isMetaCommand("/compactify"))
@@ -291,6 +303,27 @@ final class ComposerAutocompleteTests: XCTestCase {
         XCTAssertFalse(BuiltInSlashCommand.isMemoryCommand("/memorize"))
         XCTAssertFalse(BuiltInSlashCommand.isMemoryCommand("/memories"))
         XCTAssertTrue(BuiltInSlashCommand.isMetaCommand("/memory"))
+
+        // The LOCAL meta commands route through their own predicate and
+        // their own `run()` dispatcher arm (qwen-code /stats /export
+        // /help parity); they are session-less and must never fall
+        // through as prose.
+        XCTAssertTrue(BuiltInSlashCommand.isLocalMetaCommand("/stats"))
+        XCTAssertTrue(BuiltInSlashCommand.isLocalMetaCommand("/export"))
+        XCTAssertTrue(BuiltInSlashCommand.isLocalMetaCommand("/export json"))
+        XCTAssertTrue(BuiltInSlashCommand.isLocalMetaCommand("/help"))
+        XCTAssertFalse(BuiltInSlashCommand.isLocalMetaCommand("/statistical"))
+        XCTAssertFalse(BuiltInSlashCommand.isLocalMetaCommand("/exports"))
+        XCTAssertFalse(BuiltInSlashCommand.isMemoryCommand("/stats"))
+
+        // `/goal` is table-driven the same way (swift/docs/SWIFT_GOALS.md):
+        // its own predicate keys off the row, so the row and `run()`'s
+        // dispatcher arm cannot drift apart either.
+        XCTAssertTrue(BuiltInSlashCommand.isGoalCommand("/goal"))
+        XCTAssertTrue(BuiltInSlashCommand.isGoalCommand("/goal all tests pass"))
+        XCTAssertFalse(BuiltInSlashCommand.isGoalCommand("/goals"))
+        XCTAssertFalse(BuiltInSlashCommand.isGoalCommand("/goalcheck now"))
+        XCTAssertTrue(BuiltInSlashCommand.isMetaCommand("/goal"))
     }
 
     func testRegistryNamesAndAliasesAreUnique() {

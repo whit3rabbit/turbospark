@@ -18,47 +18,104 @@ public final class WelcomeCharacterAssetCache {
     }
 }
 
+/// One suggestion on the empty state.
+///
+/// The old version put four raw prompt strings on the screen ("Write a
+/// high-performance Rust function") as bare capsules. A first-time user
+/// cannot tell from those whether the app can read their files, whether it
+/// needs a model loaded, or what a good prompt looks like -- so each card now
+/// carries the invitation AND what it will actually do. `prompt` is what
+/// lands in the composer; `title` and `detail` are what the user reads.
+struct WelcomeSuggestion: Identifiable {
+    let id = UUID()
+    let systemImage: String
+    let title: String
+    let detail: String
+    let prompt: String
+}
+
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// Animated welcome hero view displayed on app launch and empty chat transcripts.
-/// Displays the Claude-inspired centered greeting with embedded floating prompt composer.
+/// The empty-state hero: mascot, greeting, composer, and three ways in.
+///
+/// Redesign notes:
+///
+/// - The three rows stagger in (`tsEntrance`) rather than appearing at once,
+///   so opening a chat reads as the app waking up. Total stagger is 0.16s;
+///   past about 0.25s it starts to feel like a loading screen.
+/// - The mascot idles (`TSIdlingSparkView`) with a glow that picks up the
+///   theme accent, which is what ties the character to the rest of the
+///   chrome instead of leaving it a floating sticker.
+/// - The subhead names the product's actual promise ("Everything here runs on
+///   your Mac") instead of asking "How can I help you today?", which is the
+///   one line every assistant already says.
+/// - Suggestions are cards with an icon and a description. Same four ideas,
+///   trimmed to three so the row does not wrap at the sidebar-open width.
+///
+/// Everything here still respects reduce-motion through the `TS*` helpers.
 @MainActor
 public struct WelcomeHeroView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     public let size: CGFloat
 
-    private static let samplePrompts: [String] = [
-        "Explain how this project works",
-        "Write a high-performance Rust function",
-        "Design a clean SwiftUI component",
-        "Review architecture and suggest improvements"
+    private static let suggestions: [WelcomeSuggestion] = [
+        WelcomeSuggestion(
+            systemImage: "chevron.left.forwardslash.chevron.right",
+            title: "Explain a codebase",
+            detail: "Point it at a folder and ask what lives where.",
+            prompt: "Explain how this project works"),
+        WelcomeSuggestion(
+            systemImage: "wand.and.stars",
+            title: "Write a function",
+            detail: "Give it a signature; get an implementation.",
+            prompt: "Write a high-performance Rust function"),
+        WelcomeSuggestion(
+            systemImage: "rectangle.on.rectangle",
+            title: "Review a design",
+            detail: "Paste a SwiftUI view and ask for a critique.",
+            prompt: "Design a clean SwiftUI component"),
     ]
 
-    public init(model: AppModel, size: CGFloat = 44) {
+    public init(model: AppModel, size: CGFloat = 92) {
         self.model = model
         self.size = size
     }
 
     public var body: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: 26) {
             greetingHeader
+                .tsEntrance()
 
             VStack(spacing: 12) {
                 PromptComposerView(model: model)
                 ErrorBanner(model: model)
             }
-            .frame(maxWidth: 680)
+            .frame(maxWidth: 700)
+            .tsEntrance(delay: 0.08)
 
             if model.promptText.isEmpty {
-                samplePromptPills
+                suggestionCards
+                    .tsEntrance(delay: 0.16)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
         .padding(.vertical, 28)
-        .animation(.smooth(duration: 0.22), value: model.promptText.isEmpty)
+        // A soft accent wash behind the hero. This is the only place in the
+        // app with a gradient; it exists to stop the empty state from
+        // reading as a blank window, and it is subtle enough that text on
+        // top of it still clears contrast.
+        .background {
+            RadialGradient(
+                colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.07), .clear],
+                center: UnitPoint(x: 0.5, y: 0.26),
+                startRadius: 0,
+                endRadius: 460)
+            .allowsHitTesting(false)
+        }
+        .animation(TSMotion.pane, value: model.promptText.isEmpty)
     }
 
     @AppStorage(AppLanguage.storageKey) private var languageRawValue = AppLanguage.system.rawValue
@@ -69,22 +126,27 @@ public struct WelcomeHeroView: View {
     }
 
     private var greetingHeader: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 14) {
+            TSIdlingSparkView(size: size)
+
             Button(action: cycleGreeting) {
-                HStack(spacing: 10) {
-                    welcomeCharacter
-
-                    Text(displayGreeting)
-                        .font(theme.ui(points: 28, weight: .medium, systemDesign: .serif))
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text(displayGreeting)
+                    .font(theme.ui(points: 34, weight: .regular, systemDesign: .serif))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    // The greeting is re-rolled on click, so the swap is a
+                    // real content change and gets a crossfade.
+                    .contentTransition(.opacity)
+                    .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TSPressScaleStyle(scale: 0.985))
             .help(Text("Click to change greeting phrase", bundle: .module))
+            .accessibilityLabel(displayGreeting)
+            .accessibilityHint("Changes the greeting phrase")
 
-            Text("How can I help you today?", bundle: .module)
-                .font(theme.ui(points: 15))
+            Text("Everything here runs on your Mac. Nothing leaves it.", bundle: .module)
+                .font(theme.ui(points: 14.5))
                 .foregroundStyle(.secondary)
         }
         .onAppear {
@@ -107,51 +169,78 @@ public struct WelcomeHeroView: View {
     private func cycleGreeting() {
         let pool = GreetingProvider.shared.availableGreetings()
         let alternatives = pool.filter { $0.id != currentGreeting?.id }
-        currentGreeting = alternatives.randomElement() ?? pool.randomElement()
-    }
-
-    /// The bundled waving spark, with the SF symbol only as a fallback for a
-    /// build whose resource bundle did not come along. The asset is the
-    /// product's character; a sun here reads as a different app.
-    @ViewBuilder
-    private var welcomeCharacter: some View {
-        if let image = WelcomeCharacterAssetCache.shared.welcomeImage {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(width: size, height: size)
-                .accessibilityHidden(true)
-        } else {
-            Image(systemName: "flame.fill")
-                .font(theme.ui(points: 22))
-                .foregroundStyle(TurboSparkTheme.accentColor)
-                .accessibilityHidden(true)
+        withAnimation(TSMotion.select) {
+            currentGreeting = alternatives.randomElement() ?? pool.randomElement()
         }
     }
 
-    private var samplePromptPills: some View {
-        FlowLayout(spacing: 8, lineSpacing: 8, alignment: .center) {
-            ForEach(Self.samplePrompts, id: \.self) { prompt in
-                Button(action: {
-                    model.promptText = prompt
-                }) {
-                    Text(LocalizedStringKey(prompt))
-                        .font(theme.ui(points: 13))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
+    private var suggestionCards: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("START HERE", bundle: .module)
+                .font(theme.ui(points: 10, weight: .semibold))
+                .tracking(1.0)
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 2)
+                .accessibilityHidden(true)
+
+            // Grid rather than FlowLayout: three equal cards should stay
+            // equal, and `FlowLayout` sizes each child to its content, which
+            // made the old pills a ragged row of three different widths.
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3),
+                spacing: 9
+            ) {
+                ForEach(Self.suggestions) { suggestion in
+                    suggestionCard(suggestion)
                 }
-                .buttonStyle(.plain)
-                .help("Insert prompt into editor")
             }
         }
-        .frame(maxWidth: 680)
-        .padding(.horizontal, 12)
+        .frame(maxWidth: 700)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Suggested prompts")
+    }
+
+    private func suggestionCard(_ suggestion: WelcomeSuggestion) -> some View {
+        Button {
+            withAnimation(TSMotion.select) {
+                model.promptText = suggestion.prompt
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                Image(systemName: suggestion.systemImage)
+                    .font(theme.ui(points: 12, weight: .semibold))
+                    .foregroundStyle(theme.accent)
+                    .frame(width: 24, height: 24)
+                    .background(theme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .accessibilityHidden(true)
+
+                Text(suggestion.title)
+                    .font(theme.ui(points: 12.5, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Text(suggestion.detail)
+                    .font(theme.ui(points: 11.5))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(TurboSparkTheme.surfaceColor)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    }
+            }
+            .contentShape(.rect(cornerRadius: 13))
+        }
+        .buttonStyle(TSPressScaleStyle(scale: 0.975))
+        .tsHoverLift(scale: 1.02)
+        .help("Insert this prompt into the composer")
+        .accessibilityLabel("\(suggestion.title): \(suggestion.detail)")
+        .accessibilityHint("Puts this prompt in the composer so you can edit it")
     }
 }

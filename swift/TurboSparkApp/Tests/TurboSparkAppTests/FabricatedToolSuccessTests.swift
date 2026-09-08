@@ -21,8 +21,13 @@ final class FabricatedToolSuccessTests: XCTestCase {
     /// model was told a task existed or a user had been asked when neither
     /// happened. Every spelling now falls to the honest not-implemented
     /// error, and is filtered out of the advertised list by `isImplemented`.
+    /// The cron names (croncreate/crondelete/cronlist/schedulewakeup) used
+    /// to sit in this list too: the catalog advertised them and execute had
+    /// no arm. They now have REAL executors (`CronScheduler`), so they left
+    /// this list the same day -- a tool that reports a real error or a real
+    /// result is not a fabricated success.
     func testCannedNoOpToolArmsAreGoneFromExecute() async {
-        for name in ["repl", "workflow", "croncreate", "schedulewakeup"] {
+        for name in ["repl", "workflow"] {
             let call = AppToolCall(name: name, arguments: ["subject": "x"], category: .automation)
             let result = await AppToolRegistry.execute(call: call, in: nil)
             XCTAssertTrue(result.isError, "'\(name)' had no effect and must not report success: \(result.output)")
@@ -57,7 +62,7 @@ final class FabricatedToolSuccessTests: XCTestCase {
 
     func testUnimplementedToolNamesAreExcludedFromAllTools() {
         let advertisedNames = Set(AppToolCatalog.allTools.map { $0.function.name.lowercased() })
-        for unimplemented in ["repl", "workflow", "croncreate", "crondelete", "cronlist", "schedulewakeup"] {
+        for unimplemented in ["repl", "workflow"] {
             XCTAssertFalse(
                 advertisedNames.contains(unimplemented),
                 "'\(unimplemented)' has no executor and must not be advertised to the model."

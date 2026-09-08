@@ -24,6 +24,20 @@ that long starves the rest of the process. And the walk CANNOT RESUME, so a
 cancelled or failed install restarts from zero; the UI should say so before
 starting.
 
+**Cancelling is real since `ts_install_cancel` landed on the Rust side.**
+`cancelInstall()` sets the flag the blocking walk polls at its next ranged
+chunk read (seconds, not tensor boundaries) AND cancels the consuming Task;
+the walk then dies exactly as a network failure would, keeping nothing.
+The cancelled alias sits in `abandonedInstallAliases` only until
+`watchCancelledWalkExit` sees `installsFinished()` prove the walk exited
+(a bounded 30 s poll), after which the model can be re-installed without
+an app restart; if the walk never notices the flag, the refusal stays --
+the safe pre-cancel behavior. `state#27`'s complaint was about the era
+when the C ABI had no cancel call and the button only stopped watching;
+the history below is kept because the epoch guard it introduced still is
+the thing keeping a cancelled walk's delayed tail from clobbering a new
+install's state.
+
 `state#15`: a cancelled install's delayed tail reset the NEW install's
 state; `installEpoch` guards it. `state#27`: `cancelInstall` claimed a
 cancellation the engine cannot perform and reopened the install guard.

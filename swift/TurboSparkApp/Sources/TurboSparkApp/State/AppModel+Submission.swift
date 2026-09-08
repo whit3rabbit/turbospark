@@ -30,6 +30,39 @@ extension AppModel {
             handleMemoryCommand()
             return
         }
+        // The other never-generate commands (`/stats`, `/export`, `/help`)
+        // sit in the same session-less band as `/memory`: each is pure UI
+        // over the chat row, so they work with no model loaded too.
+        if BuiltInSlashCommand.isLocalMetaCommand(userDraft) {
+            handleLocalMetaCommand(userDraft)
+            return
+        }
+        // `/goal` sits in this band too: status and clear never generate,
+        // and the SET arm wants to be above the queue gate so that setting
+        // a goal while the chat is busy parks the directive turn behind the
+        // running work rather than refusing. Not recorded in prompt
+        // history: it is a command, not a recalled prompt.
+        if BuiltInSlashCommand.isGoalCommand(userDraft) {
+            handleGoalCommand(userDraft)
+            return
+        }
+        // The LOCAL commands (`/copy`, `/theme`, `/tasks`, `/btw`, ...)
+        // share the session-less band: none of them generate, and several
+        // exist to run WHILE a turn is generating, so they must precede the
+        // queue gate, not ride behind it. Handlers enforce their own
+        // preconditions (a `/fork` with no model toasts a refusal).
+        if BuiltInSlashCommand.isLocalCommand(userDraft) {
+            handleLocalCommand(userDraft)
+            return
+        }
+        // Input history (qwen-code parity): every accepted prompt is
+        // remembered for Up-arrow recall, ghost chats excepted -- history
+        // persists to disk and a ghost prompt must not.
+        let historyChatIsGhost =
+            chats.first(where: { $0.id == selectedChatID })?.isGhost ?? false
+        if !historyChatIsGhost {
+            promptHistory.record(userDraft)
+        }
 
         // **A BUSY CHAT QUEUES THE DRAFT INSTEAD OF DROPPING THE KEYPRESS**
         // (Claude Code's message queue). When the only failing `canRun`
@@ -97,6 +130,10 @@ extension AppModel {
                 if !self.generating { self.isCancellationPending = false }
             }
             self.stopHookReentryCount = 0
+            // A user prompt is the goal loop's external clock: it lifts a
+            // stall pause and resets the idle check-in cap (CC: "up to
+            // three idle check-ins per goal BETWEEN YOUR PROMPTS").
+            self.resetGoalForUserPrompt(chatID: submissionChatID)
             // Retry/Edit park response variants immediately before their own
             // turn; an ordinary submission must never inherit a stale one.
             self.pendingResponseVariants[submissionChatID] = nil

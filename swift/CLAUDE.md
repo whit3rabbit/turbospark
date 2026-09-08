@@ -322,13 +322,36 @@ keeps resolving.
     directly (not through the actor) and is why Stop is immediate.
 
 17. **THE WINDOW IS FOUR CHROME BANDS AND EACH ONE OWNS ONE QUESTION.**
-    `RootView` is a rail (sections), a top bar (which model, and is it
-    loaded), the working panes, and a status strip (memory, context fill,
-    tok/s). Sections live in the RAIL so the chat sidebar can be hidden
-    without stranding navigation (`showsChatSidebar` gates on
-    `activeSection == .chat`), and the top bar is LEFT-ALIGNED because the
-    phase indicator appears and disappears once per turn, and a centred
-    model loader would slide sideways every time it does.
+    `RootView` is a rail (sections), a top bar (which model, is it loaded,
+    and what the machine is doing), the working panes, and a status strip
+    (context fill, fans, tok/s, tokens, thermal, memory pressure). Sections
+    live in the RAIL so the chat sidebar can be hidden without stranding
+    navigation (`showsChatSidebar` gates on `activeSection == .chat`).
+
+    **The top bar is THREE GROUPS, and the middle one is `.fixedSize()`.**
+    It used to be one left-aligned run, on the reasoning that the phase
+    indicator appears and disappears once per turn and a centred model
+    loader would slide every time it does. Since 2026-09-07 the bar is a
+    leading group (sidebar toggle, phase indicator, git pill), a fixed-size
+    `ChromeTelemetryView` in the centre, and a trailing group (model loader,
+    inspector toggle, ghost). Both outer groups are
+    `frame(maxWidth: .infinity)`, so an HStack splits the slack evenly and
+    the centre does not move; the model loader is pinned to the trailing
+    edge and does not move either. The original hazard is still real -- it
+    is the LAYOUT that defuses it, so keep the `.fixedSize()` and both
+    flexible frames if you touch that band.
+
+    **`ChromeTelemetryView` polls memory and CPU on the same 2-second timer
+    the status strip used, and that is the whole reason it is allowed up
+    there.** The strip's old `memoryReadout` and `cpuReadout` were deleted
+    when it landed, along with their `memoryHistory`/`cpuHistory` buffers
+    (nothing else read them, so the graph mode lost those two sparklines and
+    keeps the throughput one). Per-TOKEN numbers -- tok/s and the token
+    count -- stay in the strip, because a number that updates per token
+    pulls the eye and that is what the original note was about. Do not move
+    those up. `FanReadoutView` carries its own LEADING divider and now takes
+    `showsLeadingDivider:`, because with memory and CPU gone it can be first
+    in the strip.
 
     The rail carries five sections since 2026-08-30 (Chat, Files,
     Installed, Discover, Server); Server was APPENDED at the last shortcut
@@ -630,6 +653,22 @@ keeps resolving.
     language, and nothing in the build stops it. Moved to
     `swift/docs/SWIFT_LOCALIZATION.md`.
 
+61. **AGENT MODE'S CLASSIFIER IS THE ASK-BAND, AND `hardGated` IS WHAT
+    KEEPS THE HARD STUFF OUT OF IT.** `.agentAuto` routes the engine's
+    `.ask` verdicts to a local-model classifier, and the whole safety
+    argument rests on `ToolRiskAssessment.hardGated` being set by every
+    deterministic guard (terminal denylist, the structural shell check,
+    the `CommandGate` veto, sensitive paths, sandbox-denied web targets,
+    the repo-import MCP gate) and by NOTHING else. A new `.high` source
+    that forgets to set it becomes classifier-judged; a new guard that
+    marks an unrecognized-command ask hard kills the feature's whole
+    population. The engine's step 7b must stay conditional on `.auto` OR
+    `.agentAuto` -- with only `.auto`, a cloned `.mcp.json` is judged by a
+    model instead of by the user. Routing is
+    `AgentModeRouting.preClassifierDecision` and both call sites (main
+    loop and `SubagentRunner+Gate`) go through it; a third inline copy is
+    how the two drift. See `swift/docs/SWIFT_AGENT_MODE.md`.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments
@@ -645,11 +684,13 @@ Each page carries its own "read this before" list at the top.
 | Page | Covers |
 |---|---|
 | `swift/docs/SWIFT_TOOLS.md` | tool execution, containment, permissions, hooks, MCP, subagents, adding or removing a tool |
+| `swift/docs/SWIFT_AGENT_MODE.md` | the `.agentAuto` permission mode: the classifier contract, routing rules, hard gates, fallback counters, hints |
 | `swift/docs/SWIFT_PLUGINS.md` | the plugin system: manifest, contributions, enable cascade, marketplace |
 | `swift/docs/SWIFT_SKILLS.md` | skills: architecture, scopes, file layout, marketplace |
 | `swift/docs/SWIFT_MEMORY.md` | auto-memory: the per-project directory, the index, the `memory` tool, the `#` quick-save |
 | `swift/docs/SWIFT_COMPACTION.md` | context compaction: trigger, boundary, summarizer, the ghost rule |
 | `swift/docs/SWIFT_TURN_PIPELINE.md` | the message queue, steer delivery at step boundaries, system reminders |
+| `swift/docs/SWIFT_GOALS.md` | the `/goal` loop: the stop-seam evaluator, deferral + idle check-ins, stall pause, restore rules |
 | `swift/docs/SWIFT_MESSAGE_EDITING.md` | message retry, edit and branch |
 | `swift/docs/SWIFT_GHOST_MODE.md` | temporary (ghost) chats: the two layers, the three rules that must not break |
 | `swift/docs/SWIFT_STORAGE.md` | the three JSON stores, `AppStorageRoot`, which directories a test may write to |

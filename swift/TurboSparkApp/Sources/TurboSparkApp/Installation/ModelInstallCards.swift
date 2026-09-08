@@ -170,7 +170,7 @@ struct ActiveInstallCard: View {
                     .controlSize(.small)
                     .help("Cancel model download")
                     .accessibilityLabel("Cancel download")
-                    .accessibilityHint("Stops the model download and keeps any verified progress")
+                    .accessibilityHint("Cancels the download; nothing is kept, and the model can be re-installed after the cancelled walk exits")
             }
 
             if let fraction = model.installProgressFraction {
