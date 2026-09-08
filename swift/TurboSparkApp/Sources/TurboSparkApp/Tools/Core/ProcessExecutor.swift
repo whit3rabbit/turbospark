@@ -210,7 +210,8 @@ enum ProcessExecutor {
         )
     }
 
-    /// SIGTERM, then a bounded wait, then SIGKILL.
+    /// SIGTERM, then a bounded wait, then SIGKILL -- and then the same for
+    /// everything the child left running.
     ///
     /// Synchronous on purpose: it runs from the cancellation path, where an
     /// `await` would suspend on an already-cancelled task and hand back
@@ -220,7 +221,22 @@ enum ProcessExecutor {
     /// spawns stdio children of its own and had only a bare `terminate()`,
     /// so a server that traps or ignores SIGTERM survived every call and
     /// accumulated one orphan per invocation for the life of the app.
+    ///
+    /// **THE KILL IS A TREE KILL, NOT A PID KILL.** A shell tool command is
+    /// `zsh -c <script>`, and zsh does not forward signals: a script that
+    /// started a dev server, daemon, or `yes` loop survives the death of
+    /// its shell, keeps its pipe write end open, and keeps burning a core
+    /// -- which is exactly the thing the user asked to stop. Before the
+    /// ladder, the descendant set is snapshotted from the kernel process
+    /// table; after the child is gone, every snapshot member still alive is
+    /// SIGKILLed. Best-effort by nature (a pid that churned inside the
+    /// window could be signalled, and a grandchild spawned DURING the ladder
+    /// is invisible to the snapshot), but it closes the common case.
     static func terminateAndReap(_ process: Process) {
+        // The snapshot MUST precede the kill: once the direct child dies its
+        // children reparent to launchd and the ppid chain that identifies
+        // them is gone.
+        let descendants = descendantPIDs(of: process.processIdentifier)
         process.terminate()
         let killDeadline = Date().addingTimeInterval(2.0)
         while process.isRunning && Date() < killDeadline {
@@ -233,6 +249,69 @@ enum ProcessExecutor {
                 usleep(50_000)
             }
         }
+        for pid in descendants {
+            kill(pid, SIGKILL)
+        }
+    }
+
+    /// Every living process as `(pid, ppid)`, from one `sysctl` walk of
+    /// `kern.proc.all`.
+    private static func processTableSnapshot() -> [(pid: pid_t, ppid: pid_t)] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+        var size = 0
+        guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0 else {
+            return []
+        }
+        // Over-allocate ~12%: processes can appear between the sizing call
+        // and the read, and sysctl answers a short buffer with ENOMEM rather
+        // than truncating. One generous buffer covers that race.
+        let stride = MemoryLayout<kinfo_proc>.stride
+        let capacity = max(1, (size + size / 8) / stride)
+        let buffer = UnsafeMutablePointer<kinfo_proc>.allocate(capacity: capacity)
+        defer { buffer.deallocate() }
+        var actual = capacity * stride
+        guard sysctl(&mib, u_int(mib.count), buffer, &actual, nil, 0) == 0 else {
+            return []
+        }
+        let count = actual / stride
+        return (0..<count).map { i in
+            (pid: buffer[i].kp_proc.p_pid, ppid: buffer[i].kp_eproc.e_ppid)
+        }
+    }
+
+    /// All transitively-descendant pids of `root` at the moment of the call.
+    /// Empty on any probe failure: the sweep is an addition to the direct
+    /// kill, never a condition of it.
+    static func descendantPIDs(of root: pid_t) -> [pid_t] {
+        guard root > 0 else { return [] }
+        var childrenOf: [pid_t: [pid_t]] = [:]
+        for (pid, ppid) in processTableSnapshot() where ppid > 0 {
+            childrenOf[ppid, default: []].append(pid)
+        }
+        var descendants: [pid_t] = []
+        var seen: Set<pid_t> = []
+        var queue = childrenOf[root] ?? []
+        seen.formUnion(queue)
+        while let pid = queue.popLast() {
+            descendants.append(pid)
+            for child in childrenOf[pid] ?? [] where !seen.contains(child) {
+                seen.insert(child)
+                queue.append(child)
+            }
+        }
+        return descendants
+    }
+
+    /// The shutdown variant: SIGKILL the tree immediately, no grace period,
+    /// no waiting. Only for process exit -- everywhere else the SIGTERM
+    /// ladder in `terminateAndReap` is what gives a child the chance to
+    /// flush its output.
+    static func killTreeNow(_ pid: pid_t) {
+        guard pid > 0 else { return }
+        for descendant in descendantPIDs(of: pid) {
+            kill(descendant, SIGKILL)
+        }
+        kill(pid, SIGKILL)
     }
 
     /// Asynchronously waits for `group` to complete, or until `timeoutSeconds`

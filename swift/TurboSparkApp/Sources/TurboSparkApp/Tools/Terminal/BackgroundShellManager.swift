@@ -77,6 +77,33 @@ final class BackgroundShellRecord: @unchecked Sendable {
     }
 }
 
+/// Value-type snapshot of one running background shell, for the kill UI.
+///
+/// `BackgroundShellRecord` is a class shared with its reader threads; the
+/// strip renders from this copy so SwiftUI never observes a live record and
+/// never touches a process handle directly. Public because `AppModel`
+/// publishes a `[BackgroundShellSummary]`.
+public struct BackgroundShellSummary: Identifiable, Equatable {
+    public let id: String
+    public let commandHead: String
+    public let description: String?
+    public let startedAt: Date
+    public let chatID: UUID?
+    public let elapsedSeconds: Int
+
+    init(
+        id: String, commandHead: String, description: String?,
+        startedAt: Date, chatID: UUID?, elapsedSeconds: Int
+    ) {
+        self.id = id
+        self.commandHead = commandHead
+        self.description = description
+        self.startedAt = startedAt
+        self.chatID = chatID
+        self.elapsedSeconds = elapsedSeconds
+    }
+}
+
 /// Process-lifetime registry of background shells.
 ///
 /// Records are chat-scoped: an id is only resolvable from the conversation
@@ -98,6 +125,11 @@ final class BackgroundShellManager: @unchecked Sendable {
     private let lock = NSLock()
     private var records: [String: BackgroundShellRecord] = [:]
     private var nextID = 1
+    /// Set by `AppModel` at init, read under the lock, always dispatched to
+    /// the main queue. The kill UI cannot poll the registry from SwiftUI (a
+    /// view only re-renders when observed state changes), so every shape
+    /// change of the record set pushes instead.
+    private var _changeObserver: (() -> Void)?
 
     // MARK: - Launch
 
@@ -176,11 +208,13 @@ final class BackgroundShellManager: @unchecked Sendable {
                 state: code == 0 ? .completed : .failed,
                 exitCode: code)
             self.pruneFinished()
+            self.notifyChanged()
         }
 
         lock.lock()
         records[id] = record
         lock.unlock()
+        notifyChanged()
 
         // Background commands take no stdin: closing the write end delivers
         // EOF immediately, so a script that reads stdin fails fast instead
@@ -271,7 +305,75 @@ final class BackgroundShellManager: @unchecked Sendable {
         guard record.state == .running else { return false }
         record.markKilled()
         ProcessExecutor.terminateAndReap(record.process)
+        notifyChanged()
         return true
+    }
+
+    // MARK: - Kill UI and observation
+
+    /// Registers the callback fired (on the main queue) whenever the record
+    /// set changes shape: launch, kill, natural completion. Pass nil to
+    /// detach; tests leave it unset.
+    func setChangeObserver(_ callback: (() -> Void)?) {
+        lock.lock()
+        _changeObserver = callback
+        lock.unlock()
+    }
+
+    private func notifyChanged() {
+        lock.lock()
+        let callback = _changeObserver
+        lock.unlock()
+        guard let callback else { return }
+        DispatchQueue.main.async(execute: callback)
+    }
+
+    /// Every record whose process is still running, oldest first. The kill
+    /// UI renders from these; kill scope is enforced by the CALLER
+    /// (`AppModel` filters by the same visibility rule the strip shows).
+    func runningRecords() -> [BackgroundShellRecord] {
+        lock.lock(); defer { lock.unlock() }
+        return records.values
+            .filter { $0.state == .running }
+            .sorted { $0.startedAt < $1.startedAt }
+    }
+
+    /// Running records for one chat, oldest first: what a chat's deletion
+    /// is allowed to end.
+    func runningRecords(chatID: UUID) -> [BackgroundShellRecord] {
+        lock.lock(); defer { lock.unlock() }
+        return records.values
+            .filter { $0.state == .running && $0.chatID == chatID }
+            .sorted { $0.startedAt < $1.startedAt }
+    }
+
+    /// Kills every running shell, ladders in parallel. Each
+    /// `terminateAndReap` can block ~3 s on a child that ignores SIGTERM;
+    /// the shells are independent processes, so the ladders run
+    /// concurrently rather than summing on the caller's thread.
+    @discardableResult
+    func killAll() -> Int {
+        let running = runningRecords()
+        for record in running {
+            record.markKilled()
+            DispatchQueue.global(qos: .userInitiated).async {
+                ProcessExecutor.terminateAndReap(record.process)
+            }
+        }
+        if !running.isEmpty { notifyChanged() }
+        return running.count
+    }
+
+    /// Decisive variant for app shutdown: SIGKILL the whole tree with no
+    /// grace period and no waiting. The process is exiting, so SIGTERM's
+    /// output-flush grace buys nothing and the ladder's bounded waits would
+    /// stall quit by seconds per stubborn child.
+    func killAllForShutdown() {
+        let running = runningRecords()
+        for record in running {
+            record.markKilled()
+            ProcessExecutor.killTreeNow(record.process.processIdentifier)
+        }
     }
 
     /// Drops the oldest finished records past the per-chat keep count.
