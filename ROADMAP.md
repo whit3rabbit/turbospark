@@ -58,6 +58,40 @@ Low-friction, high-impact fixes, unblocked measurement runs, or low-hanging symm
   - `crates/bench/tests/kv_quant_probe.rs`
   - `docs/TRUBOQUANT.md`
 
+#### 6. Verify the Cron Double-Fire Fix on macOS (BLOCKING, do this first)
+- **Objective**: Build and test `swift/TurboSparkApp` and mutation-check the two guards landed on 2026-09-09. The fix was authored in a Linux container with NO Swift toolchain, so it has never been compiled.
+- **Why Open**: `swift build` and `swift test` did not run. A default argument added to four static executors and a new `init(directory:)` on `CronScheduler` are exactly the kind of change that compiles in the author's head and not on the machine.
+- **Run**:
+  - `make swift-lib` first, then `cd swift/TurboSparkApp && swift build && swift test`. Read `Executed N tests, with M failures`, not swift-testing's `0 tests in 0 suites` summary (`swift/CLAUDE.md` Gotcha 44).
+  - `swift test --filter QwenParityFeaturesTests` for the edit loop.
+  - Mutation 1 (the real defect): delete `!inFlight.contains(job.id)` from `takeDueJobs` in `CronScheduler.swift`. `testAnOverlappingPollDoesNotDeliverTheSameJobTwice` must redden ALONE. If it reddens nothing, the re-entrant `fireDueJobs` in its handler is not reaching the guard and the test is worthless.
+  - Mutation 2 (the isolation): point `makeIsolatedScheduler` in `QwenParityFeaturesTests.swift` back at `CronScheduler.shared`. Run the FULL suite (not `--filter`) several times: without the timer leak fixed this is how the flake returns, and it is the only way to see it.
+  - Assert each mutation applied before believing a survivor (`AGENTS.md`, the mutation-check rules).
+
+#### 7. `startCronScheduler`'s Poll Timer Is Never Invalidated
+- **Objective**: Give `AppModel`'s cron poll timer the lifecycle `startServerPolling`/`stopServerPolling` already has, and stop it when the model goes away.
+- **Why Open**: This is the ROOT of the 2026-09-09 flake, and only its symptom was fixed. `startCronScheduler` (`AppModel+LocalCommands.swift:75-87`) adds a 20-second repeating `Timer` to `RunLoop.main` and NOTHING calls `.invalidate()`. `cronPollTimer` is stored for a shutdown path that does not exist, and the timer's block does not reference the model at all (it calls `CronScheduler.shared.fireDueJobs()` directly), so a deallocated `AppModel` leaves its timer running forever. About twenty test files build an `AppModel`, so a full `swift test` accumulates that many permanent pollers of the singleton; in the app, every model rebuild adds one and they never go away.
+- **Why It Was Not Done In That Change**: it needs an `AppModel` teardown path that does not exist yet, which is wider than a flake fix and was not worth landing unbuilt.
+- **Shape**: mirror `AppModel+Server.swift:332-346` -- a `stopCronScheduler()` that invalidates and nils, called from `startCronScheduler` first (so a restart cannot stack) and from whatever shutdown seam gets added. `[weak self]` in the block does NOT fix it on its own; the block does not capture self.
+- **Files to Touch**:
+  - `swift/TurboSparkApp/Sources/TurboSparkApp/State/AppModel+LocalCommands.swift`
+  - `swift/TurboSparkApp/Sources/TurboSparkApp/State/AppModel.swift` (`cronPollTimer`, line ~532)
+  - a case in `swift/TurboSparkApp/Tests/TurboSparkAppTests/` asserting a second `startCronScheduler()` leaves one timer, not two
+
+#### 8. Audit the Other Singletons a Test Can Drive
+- **Objective**: Find the siblings of the cron bug: a `.shared` that other code is still ACTING on while a test drives it.
+- **Why Open**: `AppStorageRoot` isolates the FILE a store writes and says nothing about a shared OBJECT with a background poller, which is the distinction `swift/docs/SWIFT_STORAGE.md`'s new closing section is about. The audit was never run; `CronScheduler` was found by a flake, not by looking.
+- **Known Starting Points**: `FanController.shared` calls `startPolling()` from its own `init` path (`FanController.swift:128,167`) and does invalidate on restart, so check whether a test can reach it at all. `AppModel+Server`'s timer is the correct pattern and is the reference, not a suspect. Goal idle timers are `Task`s keyed by chat and are cancelled (`AppModel+GoalLoop.swift:207-224`).
+- **What Good Looks Like**: every `.shared` reachable from a test either has no background work, or has an injectable-instance seam like `CronScheduler(directory:)` and `InputHistoryStore(directory:)`.
+
+#### 9. `AppStorageRoot`'s Test Root Is Keyed On PID, Not On A RUN
+- **Objective**: Decide whether the per-process temp root should also be per-invocation.
+- **Why Open**: `AppStorageRoot.resolvedBase` uses `NSTemporaryDirectory()/TurboSparkTests-<pid>` and nothing ever removes it, so the directories accumulate and a repeated process id hands a new run an old run's files. This was the FIRST theory for the cron flake and turned out not to be its cause, so it is unproven and low priority -- but it is still a real cross-run channel for every store, and it costs one line to close (append a per-launch UUID).
+- **Care**: this changes what every store sees under test, across a suite of 400+ cases that cannot be run from a Linux container. Land it with a full green run in hand, not on reasoning.
+- **Files to Touch**:
+  - `swift/TurboSparkApp/Sources/TurboSparkApp/State/AppStorageRoot.swift`
+  - `swift/TurboSparkApp/Tests/TurboSparkAppTests/StorageIsolationTests.swift`
+
 ---
 
 ### Priority 1: Near-Term Core Engine & Infrastructure
