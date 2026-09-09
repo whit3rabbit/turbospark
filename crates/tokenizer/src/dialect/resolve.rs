@@ -64,6 +64,18 @@ pub(crate) const LLAMA3_EOS_MARK: &str = "<|end_of_text|>";
 pub(crate) const LLAMA3_EOT_MARK: &str = "<|eot_id|>";
 pub(crate) const LLAMA3_START_HEADER_MARK: &str = "<|start_header_id|>";
 pub(crate) const LLAMA3_END_HEADER_MARK: &str = "<|end_header_id|>";
+/// Spark-X2.5. BOS/EOS use the DEEPSEEK fullwidth-bar spelling but with
+/// `start` where DeepSeek writes `begin`, so the DeepSeek constants above do
+/// not match and must not be reused. The TURN markers are plain ASCII and
+/// `<|Bot|>` is the witness: no other table this port resolves carries it,
+/// and `resolve_spark` requires it, so probe and resolver agree (Gotcha
+/// 52's rule). Ids on `XHToken/Spark-X2.5-4B`: bos 0, eos 1, `<think>` 3,
+/// `</think>` 4, `<|System|>` 130972, `<|User|>` 130973, `<|Tool|>` 130974,
+/// `<|Bot|>` 130976 -- read off the tokenizer, never hardcoded.
+pub(crate) const SPARK_BOS_MARK: &str = "<\u{FF5C}start\u{2581}of\u{2581}sentence\u{FF5C}>";
+pub(crate) const SPARK_EOS_MARK: &str = "<\u{FF5C}end\u{2581}of\u{2581}sentence\u{FF5C}>";
+pub(crate) const SPARK_USER_MARK: &str = "<|User|>";
+pub(crate) const SPARK_BOT_MARK: &str = "<|Bot|>";
 
 pub(crate) struct Resolved {
     pub(crate) bos_id: i32,
@@ -111,6 +123,14 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
     // decide a dialect on its own.
     if special_token_id(tokenizer, DEEPSEEK_USER_MARK).is_some() {
         ChatDialect::Deepseek
+    } else if special_token_id(tokenizer, SPARK_BOT_MARK).is_some() {
+        // Spark-X2.5, probed BEFORE ChatML on a marker no other table
+        // carries. Order relative to the DeepSeek arm is not load-bearing --
+        // this table has no fullwidth `<｜User｜>`, so the arm above cannot
+        // fire here -- but it IS load-bearing relative to nothing at all:
+        // `<|Bot|>` in a Gemma-fallback vocab would silently misframe, so it
+        // is tested positively rather than left to the fallback.
+        ChatDialect::Spark
     } else if special_token_id(tokenizer, HARMONY_START_MARK).is_some()
         && special_token_id(tokenizer, HARMONY_MESSAGE_MARK).is_some()
         && special_token_id(tokenizer, HARMONY_CHANNEL_MARK).is_some()
@@ -171,7 +191,7 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 
 use super::resolvers::{
     resolve_chatml, resolve_deepseek, resolve_gemma, resolve_harmony, resolve_llama3,
-    resolve_mistral, resolve_muse_glimmer,
+    resolve_mistral, resolve_muse_glimmer, resolve_spark,
 };
 
 pub(crate) fn resolve_dialect(
@@ -187,5 +207,6 @@ pub(crate) fn resolve_dialect(
         ChatDialect::Harmony => resolve_harmony(tokenizer),
         ChatDialect::MuseGlimmer => resolve_muse_glimmer(tokenizer),
         ChatDialect::Llama3 => resolve_llama3(tokenizer),
+        ChatDialect::Spark => resolve_spark(tokenizer),
     }
 }

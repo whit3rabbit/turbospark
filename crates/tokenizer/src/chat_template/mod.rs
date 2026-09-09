@@ -17,7 +17,8 @@ mod mistral;
 
 use crate::dialect::{
     ChatDialect, MfTokenizer, HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_START_MARK,
-    MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK,
+    MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK,
+    SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use crate::error::TokenizerError;
 use crate::json_value::JsonValue;
@@ -295,6 +296,19 @@ impl MfTokenizer {
                     .to_string(),
             )),
             ChatDialect::Llama3 => llama3::llama3_chat_template(messages),
+            // NO FALLBACK RENDERER FOR SPARK, on the Harmony/Muse doctrine:
+            // its template forces the think frame OPEN at the generation
+            // point (`<think>` or `</think>` per `enable_thinking`), frames a
+            // default system prompt into the opening block, and carries a
+            // `<tool_call>`/`<arg_key>` DSL -- all decisions a hand-rolled
+            // renderer would have to guess, and guessing one wrong is fluent
+            // output that is not an answer. A real install always ships the
+            // template; this refusal is what a MALFORMED install gets.
+            ChatDialect::Spark => Err(TokenizerError::UnsupportedForDialect(
+                "spark2_5 has no fallback renderer; the install must carry its own \
+                 chat_template.jinja (or tokenizer_config.json's chat_template key)"
+                    .to_string(),
+            )),
         }
     }
 
@@ -325,6 +339,19 @@ impl MfTokenizer {
                  {MUSE_START_MARK}assistant{MUSE_MESSAGE_MARK}"
             ),
             ChatDialect::Llama3 => llama3::llama3_continuation_suffix(content),
+            // Writable for Harmony's reason: a continuation is one user turn
+            // plus the opening of an assistant one, no system preamble and no
+            // tools involved. The think frame is opened here to match the
+            // checkpoint's own generation prompt at its default
+            // (`enable_thinking` true): the template ALWAYS writes one of the
+            // two tags at this point, and the bare `<|Bot|>` the model was
+            // never trained to continue is the one frame that reads as
+            // malformed. `prompt_opens_thought` keys on the rendered tag, so
+            // the structured decoder lands in Thought to match.
+            ChatDialect::Spark => format!(
+                "{SPARK_BOS_MARK}{SPARK_USER_MARK}{content}{SPARK_EOS_MARK}\
+                 {SPARK_BOS_MARK}{SPARK_BOT_MARK}<think>"
+            ),
         };
         let mut out = vec![self.end_of_turn_id];
         out.extend(self.encode(&suffix, false));

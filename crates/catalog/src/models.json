@@ -276,7 +276,7 @@
         "repo": "Qwen/Qwen3.8-27B",
         "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
       },
-      "download_bytes": 16903940133,
+      "download_bytes": 16054541349,
       "install_bytes": 15440000000,
       "status": "runs",
       "gates": [
@@ -741,6 +741,47 @@
         }
       ],
       "notes": "qwen4_exp (Qwen3.8-Flash-Next), REAP-288 is a pruned-expert variant (288 of the original expert count) at top-10 routing. Window is capped at 2048: the checkpoint's own compressed_attention.index_budget, not a chosen number (docs/QWEN4_EXP.md, docs/QWEN4_PHASE0.md), so long-synthesis (2940 tokens under this vocab) cannot run and this row is not comparable to any other family's. Router and shared-expert-gate ship raw BF16 on this checkpoint rather than pre-packed U32 like every other MoE family here; both are force-quantized to INT8 at repack time (docs/QWEN4_EXP.md's dtype-bug fix). Quality-gate row is frozen (perplexity 8.7224, both digests, reproducing across three independent processes): the within-process determinism bug this row's earlier notes described (repeated greedy generation after reset() not reproducing) was root-caused and fixed 2026-09-04 -- RealQwen4State::reset never zeroed ple_conv_tail, the PLE sublayer's own dilated-conv recurrent tail (docs/QWEN4_EXP.md). An MTP-ingestible head DOES exist, published separately: sh0wie/Qwen3.8-Flash-Next-MTP-Drafter-MLX-bf16 (same publisher, verified 2026-09-04 against its safetensors header, matching this port's own Phase 0 tensor inventory). It is a complete QSA plus 512-expert MoE decoder layer with its own hyper-connections, not a small drafter: wiring it needs a second repack path, a second independent expert cache separate from this checkpoint's pruned 288-expert one, and an unresolved rollback-cost question (docs/QWEN4_EXP.md's MTP section). Not wired into this port today. The indexer's REPACK groundwork is already complete and verified against real bytes (this install's model_weights.bin carries all 36 self_attn.indexer.* tensors); the CPU reference for its block pooling, scoring and top-k selection lives in crates/compute/src/qsa_indexer.rs, with its norm/RoPE convention resolved from source (rms_norm_centered plus rope_neox_subdim at rotary_dim=64, theta=1e7 -- the same object the trunk's own QSA attention already uses). The QSA indexer is WIRED since 2026-09-05 (families/qwen4/attn.rs): the pool/score kernels, the indexer cache manager and the indexed decode-attention kernel run above index_top_k complete blocks, and the family opens at any --max-context; at or below the budget the dispatch stream is byte-identical to before, which the frozen quality-gate row reproducing is the proof of. This row's own measured window stays 2048 until it is re-frozen (docs/QWEN4_EXP.md's QSA sections)."
+    },
+    {
+      "alias": "spark25",
+      "name": "Spark-X2.5-4B (GGUF Q4_K_M, dense)",
+      "family": "spark2_5",
+      "source": {
+        "kind": "gguf",
+        "repo": "XHToken/Spark-X2.5-4B-GGUF",
+        "revision": "main",
+        "file": "Spark-X2.5-4B-Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "XHToken/Spark-X2.5-4B",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 2600224352,
+      "install_bytes": 2609242313,
+      "status": "runs",
+      "gates": [
+        "spark_memory_oracle",
+        "spark_quality_gate"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 575,
+          "decode_tok_s_min": 44.822,
+          "decode_tok_s_max": 49.555,
+          "measured_on": "2026-09-08",
+          "source": "this port, one reading, AC, 8192 context, 2048 budget; all three protocol cases stopped endOfTurn at the derived window/budget row"
+        }
+      ],
+      "notes": "The ninth family: dense 36-layer GQA with the muse window at 512, per-class RoPE (full: theta 5e6 over the leading quarter; SWA: theta 1e4 whole head), a fused q_k_v_proj, a headwise scalar sigmoid output gate, exact-erf GELU and a tied head. GGUF intake only this pass (the upstream llama.cpp merge PR 27868 fixes the conventions this intake mirrors); HF safetensors intake is deferred. 1M trained context; the bench window is the derived 8,192 pending its first protocol run. Tool-call markup exists but has no parser (DEVIATIONS.md)."
     }
   ]
 }

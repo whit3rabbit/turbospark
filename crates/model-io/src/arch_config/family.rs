@@ -162,11 +162,46 @@ pub enum ModelFamily {
     /// It is a VISION-language model and this port ingests the TEXT tower
     /// only, as `qwen3_5` and `muse_glimmer` already do.
     Qwen4Exp,
+    /// The `spark2_5` architecture (`XHToken/Spark-X2.5-4B`), the NINTH
+    /// decode flow and the first family whose GGUF conventions come from an
+    /// upstream llama.cpp merge rather than a fork (PR 27868, 2026-09-06).
+    ///
+    /// A dense 36-layer stack whose hybrid window is byte-identical to
+    /// [`ModelFamily::MuseGlimmer`]'s: `[swa, swa, swa, full]` repeating, 27
+    /// sliding layers at window 512 against 9 full. It runs its own flow
+    /// (`crates/runtime/src/families/spark/`) because four things inside the
+    /// layer are each a first for this port, and every one of them produces
+    /// fluent WRONG text on a neighbour's flow:
+    ///
+    /// 1. PER-CLASS RoPE WITH A PER-CLASS PARTIAL FACTOR: full layers rotate
+    ///    only the leading 64 of 256 dims at theta 5e6, SWA layers rotate all
+    ///    256 at theta 1e4. Gemma 4 shares the per-class theta shape and its
+    ///    factor-1.0-on-SWA hard-coding, but applies `rope_proportional_neox`
+    ///    semantics; Spark's divisor is the ROTARY dim (64), which is
+    ///    `rope_neox_subdim`'s convention.
+    /// 2. A HEADWISE SCALAR output gate: `g_proj` maps hidden to num_heads (16
+    ///    scalars), sigmoid, broadcast over head_dim before `o_proj`. Qwen
+    ///    packs a full-width per-head gate into `q_proj`; muse's separate
+    ///    gate is full-width. `attn_output_gate` is false with the muse
+    ///    precedent: the gate is its own tensor and the flow applies it
+    ///    unconditionally.
+    /// 3. EXACT-ERF GELU on a gated MLP (`hidden_act: "gelu"`, and the
+    ///    reference implementation refuses anything else). Trunk paths only
+    ///    had silu and tanh-GELU.
+    /// 4. FUSED `q_k_v_proj` with no gate packed inside, so the QKV split is
+    ///    plain 4096/1024/1024.
+    ///
+    /// No QK-norm, no sandwich norms, no softcap, no embedding scaling,
+    /// attention scale exactly `256^-0.5`, tied embeddings. Everything else
+    /// -- the SWA ring, the split-KV decode attention, the dequant GEMV
+    /// matrix -- is composition over existing kernels. Facts:
+    /// `docs/SPARK_PHASE0.md`.
+    Spark25,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 9 model families.
-    pub const ALL: [ModelFamily; 9] = [
+    /// Exhaustive list of all 10 model families.
+    pub const ALL: [ModelFamily; 10] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -176,6 +211,7 @@ impl ModelFamily {
         ModelFamily::QwenGdnDense,
         ModelFamily::MuseGlimmer,
         ModelFamily::Qwen4Exp,
+        ModelFamily::Spark25,
     ];
 
     /// Returns static string identifier for the model family.
@@ -208,6 +244,9 @@ impl ModelFamily {
             // `.gturbo` directory has ever been written with it.
             ModelFamily::MuseGlimmer => "museGlimmer",
             ModelFamily::Qwen4Exp => "qwen4exp",
+            // Also new, and it matches the GGUF `general.architecture` string
+            // AND the HF `model_type`, which agree ("spark2_5").
+            ModelFamily::Spark25 => "spark2_5",
         }
     }
 
@@ -223,6 +262,7 @@ impl ModelFamily {
             "qwen35" => Some(ModelFamily::QwenGdnDense),
             "museGlimmer" => Some(ModelFamily::MuseGlimmer),
             "qwen4exp" => Some(ModelFamily::Qwen4Exp),
+            "spark2_5" => Some(ModelFamily::Spark25),
             _ => None,
         }
     }
@@ -245,9 +285,10 @@ mod tests {
                 ModelFamily::QwenGdnDense => 6,
                 ModelFamily::MuseGlimmer => 7,
                 ModelFamily::Qwen4Exp => 8,
+                ModelFamily::Spark25 => 9,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 9);
+        assert_eq!(ModelFamily::ALL.len(), 10);
     }
 }

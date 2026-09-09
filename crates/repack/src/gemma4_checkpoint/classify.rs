@@ -185,13 +185,15 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // sibling whose marker it could borrow, so it takes the default for
         // the same reason the GGUF-only families do: the marker can never
         // match, and one that could only ever match the wrong thing is worse
-        // than one that cannot match.
+        // than one that cannot match. `spark2_5` is dense in the same way
+        // and is GGUF-intake-only this pass, so it rides along.
         ModelFamily::Gemma4
         | ModelFamily::DeepseekV4Flash
         | ModelFamily::Llama
         | ModelFamily::Qwen3Moe
         | ModelFamily::GptOss
-        | ModelFamily::MuseGlimmer => ".experts.switch_glu.",
+        | ModelFamily::MuseGlimmer
+        | ModelFamily::Spark25 => ".experts.switch_glu.",
     }
 }
 

@@ -226,7 +226,16 @@ impl<'a> StructuredAssistantDecoder<'a> {
         }
         match self.tokenizer.dialect {
             ChatDialect::ChatMl => return self.consume_chatml(token_id, delta),
-            ChatDialect::Deepseek => return self.consume_deepseek(token_id, delta),
+            // Spark SHARES the DeepSeek arm on purpose: its reasoning frame
+            // is the same think-open/think-close pair resolved into the same
+            // ids, so the channel split is identical. What differs is only
+            // what the arm never sees -- Spark has no DSML tool markers, so
+            // its `<tool_call>` markup flows through as ordinary content
+            // (`Prompted`, per `tool_call_support`), which is the honest
+            // route while that DSL has no parser.
+            ChatDialect::Deepseek | ChatDialect::Spark => {
+                return self.consume_deepseek(token_id, delta)
+            }
             ChatDialect::MuseGlimmer => return Ok(self.consume_muse(token_id, delta)),
             ChatDialect::Gemma => {}
             // Nothing to decode: this checkpoint has no tool-call or

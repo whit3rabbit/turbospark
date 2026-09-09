@@ -206,6 +206,7 @@ impl RealForwardRunner {
             vision_sidecar_dir: None,
             prompt_vision: None,
             skip_head: false,
+            real_spark: None,
         };
         match runner.arch.family {
             model_io::ModelFamily::Gemma4 => {
@@ -356,6 +357,18 @@ impl RealForwardRunner {
             // `ModelFamily::MuseGlimmer` for the list.
             model_io::ModelFamily::MuseGlimmer => {
                 runner.real_muse = Some(crate::families::museglimmer::RealMuseState::build(
+                    &mut runner.context,
+                    &runner.index,
+                    &runner.arch,
+                )?);
+            }
+            // A NINTH FLOW, on the same reasoning: fused QKV, per-class rope
+            // with a per-class partial factor, a headwise scalar output gate
+            // and an exact-erf GELU are each inside the layer, and each is
+            // fluent rather than fatal on a neighbour's flow. See
+            // `ModelFamily::Spark25` and `docs/SPARK_PHASE0.md`.
+            model_io::ModelFamily::Spark25 => {
+                runner.real_spark = Some(crate::families::spark::RealSparkState::build(
                     &mut runner.context,
                     &runner.index,
                     &runner.arch,

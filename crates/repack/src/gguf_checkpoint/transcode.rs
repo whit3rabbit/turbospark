@@ -42,10 +42,16 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // Listing its router here would be a claim about a file nobody in
         // this repo has parsed. It gains a list when the GGUF walk gains an
         // arm, not before.
+        //
+        // `spark2_5` is DENSE and has no router and no shared-expert gate:
+        // its only small per-layer tensor is the headwise `attn_gate`, which
+        // the flow reads as FP16 and which takes the BF16 default like every
+        // other small tensor.
         ModelFamily::DeepseekV4Flash
         | ModelFamily::QwenGdnDense
         | ModelFamily::MuseGlimmer
-        | ModelFamily::Qwen4Exp => &[],
+        | ModelFamily::Qwen4Exp
+        | ModelFamily::Spark25 => &[],
     }
 }
 

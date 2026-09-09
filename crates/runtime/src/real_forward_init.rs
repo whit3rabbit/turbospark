@@ -346,6 +346,7 @@ mod tests {
         ModelFamily::QwenGdnDense,
         ModelFamily::MuseGlimmer,
         ModelFamily::Qwen4Exp,
+        ModelFamily::Spark25,
     ];
 
     #[test]

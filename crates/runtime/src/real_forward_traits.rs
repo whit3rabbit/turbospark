@@ -524,6 +524,12 @@ impl RealForwardRunner {
             })
             .map_err(|e| e.to_string());
         }
+        if self.real_spark.is_some() {
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_spark(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
+        }
         if self.real_gpt_oss.is_some() {
             return gpu::autorelease_pool(|| {
                 self.prefill_chunk_real_gpt_oss(tokens, start_position, logits)

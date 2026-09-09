@@ -189,6 +189,12 @@ pub struct RealForwardRunner {
     /// per-layer router bias, attention sinks and per-projection biases.
     pub(crate) real_gpt_oss: Option<crate::families::gptoss::RealGptOssState>,
     pub(crate) real_muse: Option<crate::families::museglimmer::RealMuseState>,
+    /// Present for a `spark2_5` install. Its own state for the same reason
+    /// muse's is: the differences are inside the layer (fused QKV, per-class
+    /// rope, headwise gate, erf GELU), and the buffers it needs -- the fused
+    /// QKV row staging and the per-head gate -- are shapes no shared scratch
+    /// carries.
+    pub(crate) real_spark: Option<crate::families::spark::RealSparkState>,
     /// Present for a `qwen4_exp` install (Phase 3 of its bring-up,
     /// `docs/QWEN4_PHASE0.md`). Its own state rather than a variant of
     /// `real_qwen`: the residual stream is `hc_count` times wider, every

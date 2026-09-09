@@ -114,8 +114,18 @@ impl<'a> TurnSplitter<'a> {
                 tokenizer.dialect,
                 ChatDialect::Harmony | ChatDialect::MuseGlimmer
             )
+            // Spark joins the reasoning-on arm on ChatML's grounds: its
+            // template FORCES the think frame open in the generation prompt
+            // (`<think>` when thinking is on), so the model never emits the
+            // opening tag and only the prompt-aware decoder seed splits the
+            // channels. Unlike ChatML it has no native tool markup, so with
+            // no tools and no reasoning asked for the raw pass-through is
+            // exactly right and the decoder stays unbuilt.
             || (effort != ReasoningEffort::Off
-                && matches!(tokenizer.dialect, ChatDialect::ChatMl | ChatDialect::Gemma));
+                && matches!(
+                    tokenizer.dialect,
+                    ChatDialect::ChatMl | ChatDialect::Gemma | ChatDialect::Spark
+                ));
         Self {
             decoder: wanted.then(|| {
                 StructuredAssistantDecoder::new(tokenizer, tools.clone(), id_generator, prompt_ids)

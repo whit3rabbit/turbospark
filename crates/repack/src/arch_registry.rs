@@ -103,6 +103,14 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // download; M5 confirmed all 459 real tensor names mapped before a byte
     // of expert data was fetched.
     ("gpt-oss", ModelFamily::GptOss),
+    // Read off `XHToken/Spark-X2.5-4B-GGUF`'s Q4_K_M, header-only 2026-09-08
+    // (docs/SPARK_PHASE0.md): 290 tensors, `block_count 36`, fused
+    // `attn_qkv` plus a per-head `attn_gate`, per-tensor Q4_K/Q6_K over F32
+    // norms, every block type already executable. This is the FIRST family
+    // whose GGUF conventions come from an upstream llama.cpp merge (PR 27868,
+    // 2026-09-06) rather than a fork, so the name mapping below mirrors code
+    // that is merged, tagged and stable.
+    ("spark2_5", ModelFamily::Spark25),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.

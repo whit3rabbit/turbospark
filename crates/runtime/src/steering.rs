@@ -306,6 +306,11 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // mid-layer commit -- the whole token runs on one pass and this is
         // simply wherever it currently is.
         F::MuseGlimmer => true,
+        // `families/spark/`, ONE call site: the FFN residual add, the same
+        // one-stream shape as muse's (dense, no router, no sandwich norm, so
+        // the post-FFN add is the layer's whole contribution). Wired with the
+        // flow.
+        F::Spark25 => true,
         // No hook in the flow yet: DeepSeek-V4-Flash's compressed-attention
         // kernels are unported, so it is refused at open before any decode
         // flow -- there is no layer loop for a hook to sit in.

@@ -124,7 +124,13 @@ pub fn manifest_quant_for(
         // width) -- `crates/repack` Gotcha 8. The shared-expert probe names
         // the DENSE FFN, which exists, so that slot reports a width that was
         // actually measured rather than a default.
-        ModelFamily::MuseGlimmer => (
+        //
+        // `spark2_5` is dense the same way and takes the same probe shape.
+        // It has no safetensors intake this pass (GGUF only), so the arm is
+        // unreachable today; it is written in the shape the future
+        // safetensors pass would want rather than parked on another
+        // family's arm whose probes name tensors Spark does not have.
+        ModelFamily::MuseGlimmer | ModelFamily::Spark25 => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),

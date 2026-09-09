@@ -1,6 +1,6 @@
 # Roadmap
 
-The forward-looking roadmap and prioritized task tracker for this engine, last reconciled against the tree on 2026-09-07. All core port phases (Q, P1, G, S, P2, M1-M5) are complete and green. This document functions as an active TODO list for forward engineering, measurements, and architectural bring-ups.
+The forward-looking roadmap and prioritized task tracker for this engine, last reconciled against the tree on 2026-09-08. All core port phases (Q, P1, G, S, P2, M1-M5) are complete and green. This document functions as an active TODO list for forward engineering, measurements, and architectural bring-ups.
 
 All completed work, historical milestones, and landed features have been removed to focus strictly on remaining tasks.
 
@@ -19,31 +19,21 @@ All completed work, historical milestones, and landed features have been removed
 
 Low-friction, high-impact fixes, unblocked measurement runs, or low-hanging symmetry tasks that can be executed immediately.
 
-#### 1. Cancellable Model Installation (`ts_install_cancel`)
-- **Objective**: `ts_install` currently blocks its thread for the whole streaming walk; GUI Cancel only detaches observation while the download continues in the background (`DEVIATIONS.md`). Thread an atomic cancellation flag through `catalog::install` and expose `ts_install_cancel` in the C ABI and Swift package.
-- **Why Open**: Required for genuine user cancellation in `TurboSparkApp` without background resource leaks or file write collisions.
-- **Files to Touch**:
-  - `crates/catalog/src/install.rs` (thread cancellation atomic through download and extract loops)
-  - `crates/ffi/include/turbospark.h` (declare `ts_install_cancel`)
-  - `crates/ffi/src/c_surface.rs` / `crates/ffi/src/install.rs` (expose C FFI cancel endpoint)
-  - `swift/TurboSpark/Sources/TurboSpark/ModelCatalog.swift` (wrap cancellation in Swift library)
-  - `swift/TurboSparkApp/Sources/TurboSparkApp/ModelInstallView.swift` / `CatalogSheet.swift` (wire UI Cancel button)
-
-#### 2. Prefill Energy Capture
+#### 1. Prefill Energy Capture
 - **Objective**: Run `ARMS=seq,chunked scripts/power.sh` on AC quiet machine (~12 min, sudo) to capture baseline chunked prefill power and J/tok.
 - **Why Open**: Tooling was unblocked (`turbospark-bench --prefill-chunk off|auto|N` and `scripts/power.sh seq|chunked` wired), but clean baseline row run is still owed.
 - **Files to Touch / Run**:
   - `scripts/power.sh` (execute benchmark)
   - `docs/POWER_BASELINE.md` (record resulting rows)
 
-#### 3. Step 6 Batched GEMV Throughput A/B Re-run
+#### 2. Step 6 Batched GEMV Throughput A/B Re-run
 - **Objective**: Re-run throughput A/B on a quiet machine via `turbospark-bench --prefill-chunk auto` with `TURBOSPARK_BATCHED_GEMV=1` exported, polling `pgrep -x rustc` throughout to guard against mid-run build contamination.
 - **Why Open**: Direction confirmed twice over (never slower on Gemma 4 install), but exact magnitude was invalidated by concurrent build processes.
 - **Files to Touch / Run**:
   - `crates/bench/` (`turbospark-bench`)
   - `docs/BATCHED_PREFILL.md` (freeze verified throughput speedup)
 
-#### 4. `qwen4_exp` Chunked Prefill Throughput & Pread Verification
+#### 3. `qwen4_exp` Chunked Prefill Throughput & Pread Verification
 - **Objective**: Difference two `TURBOSPARK_PHASES=1` runs' `expert io (pread)` buckets via `turbospark-check` (short prompt vs long prompt at same `--max-new`) to test if prefill is pread-bound.
 - **Why Open**: Seventh `ChunkedPrefillRunner` landed and is bit-identical, but throughput numbers remain unmeasured.
 - **Files to Touch / Run**:
@@ -51,7 +41,7 @@ Low-friction, high-impact fixes, unblocked measurement runs, or low-hanging symm
   - `crates/runtime/src/families/qwen4/prefill.rs`
   - `docs/QWEN4_EXP.md`
 
-#### 5. Real-Model Smoke for TurboQuant `--kv-bits`
+#### 4. Real-Model Smoke for TurboQuant `--kv-bits`
 - **Objective**: Run `turbospark-check --kv-bits 2|3|3.5|4` on real installs and record sanity output and perplexity checks.
 - **Why Open**: Pipeline and Metal kernels landed across all 7 families, but real-model execution has not been validated against real hardware from the main worktree.
 - **Files to Touch / Run**:
@@ -72,22 +62,14 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/bench/tests/vision_memory_oracle.rs` (add sidecar memory assertion)
   - `docs/VISION.md`
 
-#### 2. `--vision-sidecar auto` Front-End Resolution
-- **Objective**: Wire catalog-based automatic sidecar resolution by family and hidden size (via `catalog::resolve_vision_sidecar`) to the CLI and server front ends.
-- **Why Open**: Backend resolution exists in `crates/catalog/src/resolve.rs`, but CLI and server currently only accept explicit `--vision-sidecar <PATH>`.
-- **Files to Touch**:
-  - `crates/cli/src/args.rs`
-  - `crates/server/src/args.rs`
-  - `crates/catalog/src/resolve.rs`
-
-#### 3. Server Multimodal Chunked Prefill
+#### 2. Server Multimodal Chunked Prefill
 - **Objective**: Allow server image completion endpoints to use chunked prefill. CLI and FFI already chunk image prompts, but the server image path does not chunk.
 - **Why Open**: Image prompts generate >1,000 merged vision tokens; chunking prefill on the server is critical to prevent request stalls.
 - **Files to Touch**:
   - `crates/server/src/completions.rs`
   - `crates/server/src/handler/`
 
-#### 4. MTP / DFlash2 Verify Pass for Multimodal Prompts
+#### 3. MTP / DFlash2 Verify Pass for Multimodal Prompts
 - **Objective**: Make speculative verify passes vision-aware (handling image token injection) or enforce an explicit open-time refusal when both an MTP head and vision sidecar are active.
 - **Why Open**: Verify pass currently assumes text tokens only; no install currently combines both, but combination is unhandled.
 - **Files to Touch**:
@@ -96,7 +78,7 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/runtime/src/families/qwen/dflash.rs`
   - `docs/VISION.md`
 
-#### 5. Mapped Residency Eviction Benchmark & Policy Unification
+#### 4. Mapped Residency Eviction Benchmark & Policy Unification
 - **Objective**: Measure paging overhead and fault costs when OS reclaims clean mapped pages under memory pressure. Unify slot cache policy with mapped expert residency: pick residency mode first (`mapped` vs `streamed`), then slot count only if `streamed` is active. Expose `--expert-residency auto|streamed|mapped`.
 - **Why Open**: Mapped residency is landed and measured, but requires automated selection based on system memory headroom.
 - **Files to Touch / Create**:
@@ -108,7 +90,7 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/model-io/src/expert_cache_policy.rs`
   - `docs/EXPERT_RESIDENCY.md`
 
-#### 6. Exact Rejection Sampling for Speculation (T > 0)
+#### 5. Exact Rejection Sampling for Speculation (T > 0)
 - **Objective**: Implement Leviathan/Chen algorithm on shaped distributions for non-greedy sampling during speculative verification.
 - **Why Open**: Current speculative verification only supports greedy decoding (T = 0); non-greedy sampling requires distribution-preserving rejection sampling.
 - **Files to Touch**:
@@ -117,7 +99,7 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/runtime/src/speculation_policy.rs`
   - `docs/SPECULATIVE_DECODING.md`
 
-#### 7. Server Request Queue & Fairness (Option 1)
+#### 6. Server Request Queue & Fairness (Option 1)
 - **Objective**: Implement request FIFO queue with streaming-aware fairness and cancellation handling in `turbospark-server`.
 - **Why Open**: Currently single-runner concurrency relies on mutex serialization and session-pool KV reuse; request queueing provides fairness under high client concurrency.
 - **Files to Touch / Create**:
@@ -208,6 +190,17 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 - **Files to Touch**:
   - `crates/repack/src/qwen36_config.rs`
   - `crates/catalog/src/install.rs`
+
+#### 10. `spark2_5` Architecture Bring-up (Spark-X2.5)
+- **Objective**: Bring up the Spark-X2.5 dense family (4B in this pass): dense 36-layer hybrid attention (27 SWA window 512 + 9 full, the museglimmer mask), per-class RoPE (full: theta 5e6 partial 0.25; SWA: theta 1e4), headwise sigmoid output gate (`g_proj` hidden to num_heads), exact-erf GELU gated MLP, tied embeddings. GGUF intake first (`general.architecture = spark2_5`, fused `attn_qkv`); HF safetensors intake later.
+- **Why Open**: Not recognized anywhere; probe refuses. Witness: XHToken/Spark-X2.5-4B-GGUF Q4_K_M header (arch string, kv keys, 290 tensors) and merged upstream llama.cpp PR 27868 (2026-09-06), which also fixes the GGUF conventions this port mirrors. Bring-up notes in `docs/SPARK_PHASE0.md`.
+- **Files to Touch / Create**:
+  - `crates/model-io/src/arch_config/family.rs`, `crates/model-io/src/arch_baselines/spark.rs` [NEW]
+  - `crates/repack/src/arch_registry.rs`, `crates/repack/src/gguf_names/spark.rs` [NEW], `crates/repack/src/gguf_config/`
+  - `crates/gpu/src/shaders/utility.metal` (per-head sigmoid gate, erf GELU) + `crates/gpu/src/utility.rs`
+  - `crates/runtime/src/families/spark/` [NEW]
+  - `crates/tokenizer/src/dialect/` (new dialect variant; halfwidth `<|User|>` / `<|Bot|>` markers, `<think>` ids 3/4)
+  - `crates/catalog/src/models.json`, `crates/bench/tests/spark_*`
 
 ---
 

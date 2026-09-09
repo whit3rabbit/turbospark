@@ -66,7 +66,7 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     refusal names what each would need, and `tests/arch_registry_network.rs`
     re-reads every row's witness header so the string cannot rot silently
   - anything else -> refused as unknown. The audited candidate strings for
-    future bring-ups are in ROADMAP.md section 13, not here.
+    future bring-ups are in section 2's mlx-lm census below, not here.
 - **Hugging Face Safetensors**: the family is chosen by the caller, which picks
   the per-family install writer (`write_gemma4_install`,
   `write_qwen_gdn_moe_install`, and one sibling per family below).
@@ -105,13 +105,15 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
 
 ## 2. Complete Model Family Parity Matrix
 
-The table records what the code does TODAY: the nine `ModelFamily` variants
-(eight running, one scaffolded), the three registered-but-unported strings,
+The table records what the code does TODAY: the ten `ModelFamily` variants
+(nine running, one scaffolded), the three registered-but-unported strings,
 and the closest comparisons across `llama.cpp`, `mlx-lm`, and
 `turbo-fieldfare`. **The forward-looking family list is deliberately not this
-page's job**: candidates, witnessed `general.architecture` strings, expert-slot
-arithmetic, and bring-up notes live in ROADMAP.md section 13 (the oMLX and
-Unsloth catalog audits, 2026-09-06). A family appears here when a
+page's job**: bring-up scoping and ordering are ROADMAP priority questions.
+What this page does carry is STATUS: the census subsection below folds in the
+witnessed-string inventory of the 2026-09-06 oMLX and Unsloth catalog audits
+(pruned from ROADMAP.md on 2026-09-07) and extends it with a 2026-09-08
+enumeration of mlx-lm's own model registry. A family appears here when a
 `ModelFamily` variant, a baseline and a decode flow do.
 
 **Read the footprint column as an MoE result, not a general one.** The
@@ -151,26 +153,83 @@ rather than the "recognized, needs X" one.
 | **Gemma 4 26B-A4B** (`gemma4`) | SWA/Full Attention, MoE (128 experts, top-8), Tied Embeddings | **Full Support** | **Full Support** | Full Support | Full Support | **~2.1 GiB RAM** |
 | **Qwen 3.6 35B-A3B** (`qwen35moe`) | Gated-DeltaNet Linear Attention + MoE (256 experts, top-8) | **Full Support** | **Full Support** | Full Support | Full Support | **~1.6 GiB RAM** |
 | **DeepSeek V3** (`deepseek2`, confirmed; the same string also reports Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3) | Multi-head Latent Attention (MLA), DeepSeek MoE | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
-| **DeepSeek V4 Flash / Pro** (`deepseek4`, witnessed 2026-09-06) | MLA, hyper connections, SWA (window 128), 256-384 experts top-6; the Flash variant carries a VISION tower | *Scaffolded* (`DeepseekV4Flash`) | *Scaffolded* | Full Support | Full Support | *TBD* |
+| **DeepSeek V4 Flash / Pro** (`deepseek4`, witnessed 2026-09-06) | MLA, hyper connections, SWA (window 128), 256-384 experts top-6; the Flash variant carries a VISION tower | *Scaffolded* (`DeepseekV4Flash`) | *Scaffolded* | Full Support | Not supported (absent from mlx-lm, checked 2026-09-08) | *TBD* |
 | **Mixtral 8x7B / 8x22B** (`llama` + `expert_count`) | Plain GQA attention + MoE (8 experts, top-2), no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 2, Mistral 7B, TinyLlama** (`llama`, dense) | Standard Dense Transformer, GQA | **Full Support** (ROADMAP M4) | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
-| **Qwen3.8-Flash-Next / REAP-288** (`qwen4_exp`, HF only) | Fine-grained MoE (288-512 experts, top-10), GDN + sigmoid-gated norm, QSA block-sparse attention, PLE n-gram head, hyper-connections | **Full Support** | *Planned* | Full Support (`qwen4exp`) | Full Support | **~2.5 GiB RAM** (oracle peak at the 2,048 bench window; the 68G install streams) |
+| **Qwen3.8-Flash-Next / REAP-288** (`qwen4_exp`, HF only) | Fine-grained MoE (288-512 experts, top-10), GDN + sigmoid-gated norm, QSA block-sparse attention, PLE n-gram head, hyper-connections | **Full Support** | *Planned* | Full Support (`qwen4exp`) | Not supported (absent from mlx-lm, checked 2026-09-08) | **~2.5 GiB RAM** (oracle peak at the 2,048 bench window; the 68G install streams) |
 | **Llama 3.1 / 3.2 / 3.3** (`llama`, dense) | The above plus LEARNED RoPE frequency scaling, which ships as a TENSOR (`rope_freqs.weight`) and has no kernel input here | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks, per-projection biases, YaRN, clamped SwiGLU | **Full Support** | *Planned* | Full Support | Full Support | *MoE at 12.6 MiB per expert; 20B keeps the ceiling at 4.73 GiB of slot cache, 120B does not stream usefully* |
 | **Muse Glimmer 30B** (`muse_glimmer`, HF only) | Dense GQA, 3-sliding/1-full 2048 window, **NoPE on the full layers**, separate attention output gate, CENTERED per-layer norms against a PLAIN final one, TWO RMS epsilons, logit softcap behind an output multiplier | **Full Support** | *Not supported* | Full Support (`muse-glimmer`, published after this row was written) | Full Support (mlx-vlm) | **~535 MiB RAM** (dense at 8,192 context; see note) |
+| **Spark-X2.5-4B** (`spark2_5`) | Dense GQA, the muse window at 512 (3 sliding : 1 full), **per-class RoPE** (full: theta 5e6 over the leading quarter; SWA: theta 1e4 whole head), fused `q_k_v_proj`, **headwise scalar sigmoid output gate**, exact-erf GELU, tied head, 1M trained context | **Full Support** (GGUF intake; HF safetensors intake deferred) | *Not supported* | Full Support (upstream PR 27868, 2026-09-06; this port mirrors its conventions) | Full Support (community MLX conversions) | *dense: KV ~93 MiB at the 8,192 bench window (see note); oracle row pending its first run* |
 | **Phi-3 / Phi-3.5** (`phi3`; Phi-4 reports the same string) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 
 Every family not named above is UNREGISTERED here and refused as unknown --
 including Command-R, Grok, DBRX, StarCoder, Falcon, Baichuan, InternLM,
 MiniCPM, OLMo, Exaone and the GPT-2/NeoX/MPT/Bloom legacy lines, which an
 earlier version of this table carried as "*Planned*" without a registry row,
-a baseline, or a roadmap entry behind them. The candidate list for future
-bring-ups, each entry with its witnessed `general.architecture` string,
-expert-slot arithmetic, and what it would need in this engine, is
-[ROADMAP.md section 13](../ROADMAP.md) and is not duplicated here.
+a baseline, or a roadmap entry behind them. The full census of what mlx-lm
+runs that this port does not -- grouped by registry status and witness,
+with provenance on every entry -- is the subsection below. Bring-up SCOPING
+(what to build next, and in what order) stays a ROADMAP priority question
+and is deliberately not answered on this page.
+
+### The mlx-lm model census, 2026-09-08
+
+The systematic version of the paragraph above: every model implementation
+in mlx-lm's `mlx_lm/models/` directory, enumerated 2026-09-08 (129 files,
+of which 11 are shared modules -- `base`, `cache`, `mla`, `ssm`,
+`gated_delta`, `rope_utils`, `switch_layers`, `activations`,
+`bitlinear_layers`, `pipeline`, `__init__` -- leaving 118 model files),
+each classified against this repo's registry and the 2026-09-06 oMLX and
+Unsloth catalog audits. mlx-lm additionally carries a `MODEL_REMAPPING`
+dict in `mlx_lm/utils.py`; a remap counts as support there, and is named
+below where it matters. Re-running the census is one upstream directory
+listing plus, for any candidate worth scoping, one `turbospark-model
+probe` against a real repo.
+
+**Being in mlx-lm's list is not a witness for this registry.** The
+admission rule above (every key read off a real published file) is
+unchanged. What the census buys is the shape of the gap: how many
+families a peer engine runs that this port refuses, which of them already
+carry a witnessed string, and which run here but not there. The Unsloth
+audit's strings ARE witnesses in the registry's own sense -- read off
+real published files, re-derivable in seconds with the probe -- so the
+GGUF-witnessed group below is row-eligible, not merely plausible.
+
+| Verdict | Families (mlx-lm file names, minus `.py`) |
+| --- | --- |
+| Running in BOTH engines | `gemma4` / `gemma4_text`, `qwen3_5`, `qwen3_5_moe`, `qwen3_moe`, `gpt_oss`, `muse_glimmer`, `llama` / `mixtral` -- with the two splits the matrix rows above record (Llama 3.1+ refused on `rope_freqs.weight`; Mixtral runs on the GGUF path only, no HF writer exists here) |
+| Running HERE, ABSENT from mlx-lm | `qwen4_exp` (running here) and `deepseek4` (scaffolded here): no model file and no remap entry in mlx-lm on 2026-09-08. The other direction is format-level, not a family: this port reads GGUF natively, mlx-lm reads MLX safetensors only |
+| Registered, planned here; running there | `phi3` (the row's string also covers Phi-4, witnessed), `llama4` / `llama4_text`, `deepseek2` (mlx-lm's `deepseek_v2` / `deepseek_v3`; the audit's highest-leverage unlock -- one MLA bring-up covers Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3, and mlx-lm's own `kimi_k2 -> deepseek_v3` remap corroborates the shape), `kimi_k25` (mlx-lm ships a native file; here it reports the witnessed `deepseek2` string and is unported) |
+| GGUF-witnessed, unregistered here (Unsloth audit) | `qwen3` (the usage-weighted first bring-up: 0.6B-32B, Coder, QwQ, R1 distills), `qwen2` / `qwen2_moe` (the 2.5 line; SmolLM2, Yi and Zephyr ride the same dense shapes), `gemma3` / `gemma3_text` / `gemma2` / `gemma3n`, `qwen3_next` (`qwen3next`, 512 top-10 GDN -- its OWN string despite sharing `qwen36`'s layer graph), `minimax` (`minimax-m2`, 256 top-8 over ffn 1536, the best pure streaming shape the audit found), `glm4_moe` (`glm4moe`), `glm_moe_dsa` (`glm-dsa`, the GLM-5 DSA line), `nemotron_h` (`nemotron_h_moe`, 128 top-6 up to 512 top-22), `hunyuan` / `hunyuan_v1_dense` (`hunyuan-moe`), `ernie4_5` / `ernie4_5_moe` (`ernie4_5-moe`), `mistral3` / `ministral3` (`mistral3` -- dense, and a separate string from `llama`, so Devstral Small 2 needs its own row despite the name) |
+| Audit-noted model_type, no GGUF witness here | `deepseek_v32` (DeepSeek V3.2 -- rides omlx's `glm_moe_dsa` patch; needs MLA latent KV plus a token-level sparse indexer, where `qwen4_exp`'s QSA indexes blocks), `bailing_moe` / `bailing_moe_linear` / `bailing_moe_v3` (the Ling line; omlx audits `bailing_hybrid`, Ling 3.0 Flash -- MLA and KDA in one model), `laguna`, `longcat_flash` / `longcat_flash_ngram`, `mimo` / `mimo_v2_flash`, `step3p5` (omlx notes `step3p7`, the same vendor line) |
+| Refused by measurement, not by absence | `kimi_k3`: witnessed `kimi-k3` -- 896 experts top-16, about 727M parameters per expert, roughly 7x Mixtral's blob -- so Gotcha 36's header arithmetic says unstreamable here at any legal slot count; recorded so nobody re-derives it after a download |
+| In mlx-lm, no witness here, unregistered (refused as unknown) | `Klear`, `afm7`, `afmoe`, `apertus`, `baichuan_m1`, `bitnet`, `cohere` (Command-R), `cohere2`, `dbrx`, `deepseek` (V1), `dots1`, `exaone` / `exaone4` / `exaone_moe`, `falcon_h1`, `gear`, `glm` / `glm4` / `glm4_moe_lite`, `gpt2`, `gpt_bigcode`, `gpt_neox`, `gptj`, `granite` / `granitemoe` / `granitemoehybrid`, `helium`, `internlm2` / `internlm3`, `iquestloopcoder`, `jamba`, `kimi_linear`, `lfm2` / `lfm2_moe` / `lfm2-vl`, `lille-130m`, `mamba` / `mamba2`, `mellum`, `minicpm` / `minicpm3`, `nanbeige`, `nanochat`, `nemotron` / `nemotron-nas`, `olmo` / `olmo2` / `olmo3` / `olmoe`, `openelm`, `phi` / `phi3small` / `phimoe` / `phixtral`, `plamo` / `plamo2` / `plamo3`, `qwen` (Qwen 1), `recurrent_gemma`, `rwkv7`, `seed_oss`, `smollm3`, `solar_open`, `stablelm`, `starcoder2`, `talkie`, `telechat3`, `youtu_llm` |
+
+The vision-capable files (`qwen2_vl`, `qwen3_vl`, `qwen3_vl_moe`,
+`kimi_vl`, `lfm2-vl`, `pixtral`) are tower gaps, not text-family gaps --
+see the vision note below. Grok is absent from mlx-lm's directory on this
+date but keeps its Unsloth-witnessed `grok` string (Grok-2 270B, 8
+experts top-2 at ffn 32768: the Mixtral-unstreamable shape at 4x the
+size). `diffusion-gemma` is likewise witnessed upstream and out of class
+here: a block-diffusion generation LOOP, not a decode flow.
+
+Two structural readings fall out of the census:
+
+- **The usage-weighted gap is dense, not exotic.** The families a peer
+  engine serves daily and this port refuses are dense Qwen (`qwen3`, the
+  `qwen2`/2.5 line) and dense Gemma (`gemma3`/`gemma2`/`gemma3n`). The
+  audit's verdict ordering still stands as of this census: `qwen3`-dense
+  is the usage-weighted bring-up, `deepseek2` the multi-model unlock,
+  `minimax-m2` the best pure streaming shape.
+- **A class this engine has no machinery for at all.** The recurrent and
+  hybrid lines -- `mamba`, `mamba2`, `falcon_h1`, `jamba`, `nemotron_h`,
+  `recurrent_gemma`, `rwkv7`, `bailing_moe_linear`, `kimi_linear` (KDA)
+  -- need recurrent state machinery beside the GDN state manager, not a
+  new attention kernel; this port has none of it today.
 
 **Vision is per-tower, not per-family, so this page records it once**: the
 engine runs exactly one vision tower (the `qwen3_5` tower, the Qwen3-VL-lineage
@@ -180,7 +239,12 @@ any other running family parses to a TEXT-only config today: Gemma 4's and
 Muse Glimmer's vision tensors are dropped at repack, and "Full Support" above
 therefore never means vision support. The per-model vision inventory -- which
 vision-capable models `mlx-vlm` ships and which of them this port lacks --
-lives in [ROADMAP.md section 14](../ROADMAP.md) and is not duplicated here.
+was recorded in the 2026-09-06 mlx-vlm audit; ROADMAP.md pruned it on
+2026-09-07 and it is recoverable from git history
+(`git show 3d58b83^:ROADMAP.md`, section 14). Its headline for this page:
+this port runs exactly one tower, and the nearest-term vision gap is Gemma
+4 vision (`gemma4_unified`), whose text half already runs here and whose
+~815 vision tensors are dropped at repack today.
 
 ---
 
@@ -235,8 +299,9 @@ competes with llama.cpp on ground where this port has no advantage. That is why
 the first bring-up (ROADMAP Phase M2, complete) was the `llama` architecture's
 MoE half (Mixtral) rather than its dense half, even though dense Llama is the
 cheaper of the two. Which family to bring up NEXT is a ROADMAP.md question,
-not a this-page question: section 13 carries the audited candidate list with
-witnessed strings and slot arithmetic.
+not a this-page question: the census in section 2 carries the audited
+candidates with their witnessed strings, and the slot arithmetic is the
+Phase 0 multiplication of Gotcha 36.
 
 **Being MoE turned out to be necessary and not sufficient, and the correction
 is what chose the family after it.** The slot cache is
@@ -253,8 +318,8 @@ bring-up wrote. Both numbers come off the GGUF header before any download
 
 ## 5. Document References
 
-- Forward-looking family candidates, with witnessed strings and slot arithmetic: [ROADMAP.md section 13](../ROADMAP.md)
-- Per-model vision inventory (which VLMs `mlx-vlm` supports and this port does not): [ROADMAP.md section 14](../ROADMAP.md); the one running tower's mechanics: [`docs/VISION.md`](VISION.md)
+- The mlx-lm model census (2026-09-08) and the witnessed candidate strings: section 2 above
+- Per-model vision inventory: the 2026-09-06 mlx-vlm audit, pruned from ROADMAP.md on 2026-09-07 (`git show 3d58b83^:ROADMAP.md`, section 14); the one running tower's mechanics: [`docs/VISION.md`](VISION.md)
 - Installing a model, and probing one that is not listed: [`docs/MODELS.md`](MODELS.md)
 - Architecture Bring-up Guide: [`docs/NEW_MODEL.md`](docs/NEW_MODEL.md)
 - `.gturbo` Format Specification: [`docs/GTURBO.md`](docs/GTURBO.md)

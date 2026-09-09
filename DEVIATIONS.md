@@ -10,19 +10,19 @@ live network).
 
 ## Cross-cutting
 
-- **Model installation cannot be cancelled, and the GUI's Cancel button
-  says so rather than pretending.** `ts_install` blocks its own thread for
-  the whole walk and the C ABI exposes no `ts_install_cancel`, so dropping
-  the consuming task ends DELIVERY only: the download keeps running to
-  completion or failure on a thread nobody is listening to
-  (`TurboSpark/Catalog.swift` states this in the API doc). Until that call
-  exists, `swift/TurboSparkApp`'s Cancel stops WATCHING, tells the user the
-  download continues in the background, and refuses to re-install that same
-  alias for the rest of the process -- two writers on one install directory
-  being the case worth refusing rather than racing. A different model is
-  still installable, since the store writes are per directory. Adding a real
-  cancel means threading a cancellation flag through `catalog::install`'s
-  streaming walk, which nothing has needed enough to pay for.
+- **Model installation cancellation: RESOLVED.** This used to say the walk
+  could not be cancelled and the GUI's Cancel only stopped watching while
+  the download streamed on unheard. `ts_install_cancel` exists now:
+  `catalog::install`'s walk takes a `CancelFlag` polled at every step
+  boundary and inside every ranged chunk read, the FFI registers each
+  walk's flag and `ts_install_cancel` signals every in-flight one (its
+  return value is how many were running), and an `installs_finished`
+  counter lets a caller confirm a signalled walk has since exited. The
+  walk still CANNOT RESUME -- a cancelled install is a failed install,
+  nothing of the partial directory is kept, and a retry starts over. The
+  GUI's Cancel sets the flag AND cancels its consuming task (two threads,
+  one death), holds the alias refusal only until the watched walk actually
+  exits, and then permits Cancel + Retry without an app restart.
 - **The CLI and the FFI streaming paths now call `finish` on the turn
   decoder too, symmetrically with the server** (`crates/cli/src/generate/
   mod.rs`, `crates/ffi/src/generate/mod.rs`, mirroring
@@ -1973,3 +1973,42 @@ section 8, item 4) and the batched-prefill scratch finding closed with it
 (item 5). A paragraph is not a gate; both claims had been superseded in
 the page this entry points at.
 
+
+## `spark2_5` (the ninth family), landed and deliberately not done
+
+`docs/SPARK_PHASE0.md` carries the facts; this records the descopes. The
+family's GGUF conventions come from the UPSTREAM llama.cpp merge (PR 27868,
+2026-09-06), which is also the first time a family here could mirror merged
+upstream code rather than a fork or a fresh conversion.
+
+- **HF safetensors / MLX intake is not wired.** The registry's `SUPPORTED_HF`
+  table has no `spark2_5` rows, `crates/catalog`'s `evaluate_config` and
+  `stream_mlx` have no arms, and there is no `write_spark_install_streamed`.
+  The official checkpoint is BF16 safetensors and community MLX 4/8-bit
+  conversions exist; until the intake lands, `turbospark-model probe
+  XHToken/Spark-X2.5-4B` refuses at the registry while the GGUF repo
+  installs and runs. The GGUF-first ordering was deliberate: the merged
+  upstream converter fixes the conventions, and the Q4_K_M is the smallest
+  real install for the gates.
+- **Tool calls are not parsed.** The markup exists as special tokens
+  (`<tool_call>` 130977, `<arg_key>` 130980, `<arg_value>` 130982), and the
+  resolver deliberately leaves every tool id `NO_SUCH_TOKEN_ID` rather than
+  carrying ids nothing reads. The markup flows as ordinary CONTENT -- not
+  muse's reasoning-stream route -- because the Spark DSL is self-contained
+  plain text a rescue layer can parse, which is exactly the `Prompted` case
+  forge-guardrails helps most. A parser (the fifth DSL beside Gemma, Qwen,
+  DeepSeek and Muse's unparser) is the follow-up.
+- **The 1.7B sibling does not validate.** `arch_validation` compares a
+  manifest against the ONE per-family baseline, and the 1.7B (28 layers,
+  different widths) fails every shape field. Serving it needs either a
+  second variant or a per-checkpoint baseline scheme, which is a design
+  decision (`ModelFamily::QwenGdnDense`'s doc records why the baseline is
+  per-ARCHITECTURE) -- not a config change.
+- **The bench protocol row is derived, not measured.**
+  `protocol_parameters(Spark25)` takes muse's 8,192/2,048 on the reasoning
+  that the forced-open think frame carries a completion budget; the first
+  real oracle run confirms or moves it
+  (`crates/bench/src/real_model_params.rs`'s arm says so beside the code).
+- **No cross-engine KL yet.** Upstream llama.cpp runs this architecture
+  since PR 27868, so the `scripts/kld_llamacpp.py` shape applies once the
+  stock binary is built; the keyed `CHECKPOINTS` table needs one row.

@@ -42,6 +42,7 @@ read the page before proposing the thing it refutes.
 | `docs/VISION_PHASE0.md` | the vision CHECKPOINT: tensors, mRoPE semantics, activation magnitudes, the INT4 decision | reading a tower fact off the checkpoint |
 | `docs/QWEN4_PHASE0.md` | `qwen4_exp` (Qwen3.8-Flash-Next) Phase 0 fact-finding: config, tensor layout, two independent references cross-checked | reading a `qwen4_exp` fact, or continuing that bring-up |
 | `docs/QWEN4_EXP.md` | `qwen4_exp` bring-up beyond Phase 0: intake, decode wiring, memory policy, the router/shared-expert-gate dtype bug and fix, first real-hardware decode | touching `families/qwen4/` or the safetensors write path, or continuing that bring-up |
+| `docs/SPARK_PHASE0.md` | `spark2_5` (Spark-X2.5-4B) Phase 0 fact-finding: config, per-class RoPE, the headwise gate, the fused QKV, GGUF tensor inventory, tokenizer frame | reading a `spark2_5` fact, or touching `families/spark/` |
 | `docs/SKILL_STATE.md` | the SKILL.state bounded-state agent runtime, a measured POSITIVE with its scale caveat | proposing agent context compaction, structured output, or constrained decoding |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `swift/docs/SWIFT_TOOLS.md` | Swift native tool implementation: execution, containment, adding new tools | implementing or changing tools in TurboSparkApp |

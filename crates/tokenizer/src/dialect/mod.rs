@@ -19,7 +19,8 @@ use tokenizers::Tokenizer;
 use self::config::{GenerationConfig, TokenizerConfig};
 pub(crate) use self::resolve::{
     DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK,
-    HARMONY_START_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK,
+    HARMONY_START_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK, SPARK_BOS_MARK,
+    SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use crate::error::TokenizerError;
 
@@ -75,6 +76,29 @@ pub enum ChatDialect {
     /// 3.1-family checkpoint's `<|eom_id|>` / `<|python_tag|>` tool-calling
     /// pair is out of scope here and untested.
     Llama3,
+    /// Spark-X2.5 (`XHToken/Spark-X2.5-4B`):
+    /// `<｜start▁of▁sentence｜><|User|>...<｜end▁of▁sentence｜>` per turn,
+    /// assistant turns opened by `<|Bot|>` with a FORCED-OPEN think block
+    /// (the generation prompt ends `<think>` when thinking is on and
+    /// `</think>` when it is off), so a turn always begins inside a frame
+    /// the template already wrote.
+    ///
+    /// **THE FULLWIDTH TOKENS ARE DEEPSEEK'S SPELLING, THE HALFWIDTH TURN
+    /// MARKERS ARE NOT.** BOS/EOS/pad use the fullwidth-bar DeepSeek forms
+    /// (with `start` where DeepSeek writes `begin`), but the turn markers
+    /// are plain ASCII `<|User|>` / `<|Bot|>` / `<|Tool|>` / `<|System|>`,
+    /// and the fullwidth `<｜User｜>` / `<｜Assistant｜>` the DeepSeek
+    /// probe keys on are ABSENT from this table -- which is what makes the
+    /// two dialects separable and a separate variant rather than a DeepSeek
+    /// reskin (`resolve.rs`'s probe comment).
+    ///
+    /// The checkpoint ships its own template and it is the renderer (same
+    /// doctrine as Harmony and Muse Glimmer); this variant exists for the
+    /// ids and the STOP SET. Tool calls are framed `<tool_call>` /
+    /// `<arg_key>` / `<arg_value>` and are deliberately UNPARSED for now:
+    /// every such id resolves to [`NO_SUCH_TOKEN_ID`] and the markup flows
+    /// as ordinary content, where a rescue layer can reach it.
+    Spark,
 }
 
 /// Whether a dialect's own markup carries tool calls that this engine PARSES.
@@ -136,8 +160,7 @@ impl ChatDialect {
             // `NO_SUCH_TOKEN_ID` and the decoder's arm is a content-only
             // passthrough.
             ChatDialect::Mistral | ChatDialect::Llama3 => ToolCallSupport::Prompted,
-            // **NOT AN OVERSIGHT, AND NOT THE SAME AS THE TWO ABOVE.** This
-            // dialect DOES frame tool calls -- `<atem:function_calls>` on a
+            // **NOT AN OVERSIGHT, AND NOT THE SAME AS THE TWO ABOVE.** This dialect DOES frame tool calls -- `<atem:function_calls>` on a
             // `to=<tool>` message -- and this engine has NO PARSER for that
             // block (`structured_decoder/muse.rs`'s `parse_header`). The
             // decoder routes it to the REASONING stream on purpose, since
@@ -145,6 +168,14 @@ impl ChatDialect {
             // reply. So a caller never sees a `ToolCall` here, and a rescue
             // over the reply text will not see the markup either.
             ChatDialect::MuseGlimmer => ToolCallSupport::Prompted,
+            // The markup EXISTS (`<tool_call>` / `<arg_key>` / `<arg_value>`,
+            // all special tokens in the table) and this engine has NO PARSER
+            // for it yet -- a deliberate descope recorded in DEVIATIONS.md.
+            // The arm routes the markup as ordinary CONTENT, which is where
+            // a rescue layer can parse it, rather than muse's reasoning
+            // stream: unlike muse's header/body DSL, Spark's call syntax is
+            // self-contained plain text a caller's parser can read.
+            ChatDialect::Spark => ToolCallSupport::Prompted,
         }
     }
 
@@ -158,6 +189,11 @@ impl ChatDialect {
                      <atem:function_calls> block, which this engine has no parser for, so \
                      calls are reported as reasoning rather than handed over. A tool call \
                      has to be prompted for and parsed by the caller."
+                    .to_string(),
+                ChatDialect::Spark => "this checkpoint frames tool calls as <tool_call> / \
+                     <arg_key> / <arg_value> markup, which this engine does not parse yet, \
+                     so the markup is reported as ordinary content. A tool call has to be \
+                     prompted for and recovered from the reply text."
                     .to_string(),
                 _ => format!(
                     "the {self:?} dialect defines no tool-call markup, so nothing in this \

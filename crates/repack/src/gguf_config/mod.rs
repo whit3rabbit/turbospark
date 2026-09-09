@@ -157,6 +157,10 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
 
     arch.full_attention_layer_mask = match family {
         ModelFamily::Gemma4 => gemma4_layer_mask(&m, num_layers as usize)?,
+        // Spark-X2.5 publishes the SAME bool-array key with the SAME
+        // convention (true = this layer slides), so the Gemma builder IS
+        // this family's builder; only the rope divergence below is its own.
+        ModelFamily::Spark25 => gemma4_layer_mask(&m, num_layers as usize)?,
         // ONE builder for both halves, because both publish the same
         // `full_attention_interval` key and the same every-fourth-layer rule.
         // The dense half was refused here until `ornith-ai/Ornith-1.5-9B-GGUF`
@@ -318,6 +322,46 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
         if let Some(k) = m.opt_i64("attention.key_length_swa")? {
             arch.head_dim = k;
+        }
+    }
+
+    // Spark-X2.5: the converter encodes the per-class PARTIAL FACTORS as
+    // rotary dimensions (`int(head_dim * factor)`), which this port derives
+    // from `partial_rotary_factor` instead. When the file publishes them,
+    // cross-check the two derivations: a baseline whose factor disagreed
+    // with the file would otherwise rotate a different width than the
+    // conversion was built for, which is fluent rather than loud. Absent
+    // keys skip the check -- the install's behavior comes from this port's
+    // own baseline fields either way, and a file without the keys predates
+    // the conventions this family mirrors rather than contradicting them.
+    if family == ModelFamily::Spark25 {
+        let full_head = arch.full_head_dim as f64;
+        let sliding_head = arch.head_dim as f64;
+        let expect_full = (full_head * arch.partial_rotary_factor).round() as i64;
+        if let Some(dims) = m.opt_i64("rope.dimension_count")? {
+            if dims != expect_full {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key("rope.dimension_count"),
+                    detail: format!(
+                        "file rotates {dims} dims on the full layers but this port derives \
+                         {expect_full} (head_dim {full_head} x partial_rotary_factor {})",
+                        arch.partial_rotary_factor
+                    ),
+                });
+            }
+        }
+        if let Some(dims) = m.opt_i64("rope.dimension_count_swa")? {
+            // The SWA arm rotates the whole head (factor 1.0, the gemma4
+            // pattern the flow hard-codes); the file must agree.
+            if dims != sliding_head as i64 {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key("rope.dimension_count_swa"),
+                    detail: format!(
+                        "file rotates {dims} dims on the sliding layers but this port rotates \
+                         the whole head ({sliding_head})"
+                    ),
+                });
+            }
         }
     }
 

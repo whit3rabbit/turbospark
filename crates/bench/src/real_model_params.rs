@@ -47,6 +47,15 @@ const MUSE_GLIMMER_MAX_CONTEXT: u32 = 8192;
 /// sampled tokens to reach `<|eot|>` -- the SHORT one already exceeds the
 /// shared 1,024.
 const MUSE_GLIMMER_MAX_NEW: u32 = 2048;
+/// The `spark2_5` window (`spark_memory_oracle.rs`'s), on muse's arithmetic:
+/// the think frame the generation prompt forces open means a reasoning budget
+/// rides on top of `long-synthesis`, and `2,820 + 2,048` does not fit 4,096.
+/// DERIVED rather than measured; see the family's arm below.
+const SPARK_MAX_CONTEXT: u32 = 8192;
+/// The `spark2_5` budget, muse's margin against an unmeasured reasoning
+/// length: the think frame is forced open by the template, so completions can
+/// be as long as muse's. UNVERIFIED until an install exists.
+const SPARK_MAX_NEW: u32 = 2048;
 
 /// Resolve the protocol's two per-family parameters from the install's own
 /// declared family.
@@ -171,6 +180,23 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             family,
             max_context: GPTOSS_MAX_CONTEXT,
             max_new: GPTOSS_MAX_NEW,
+        },
+        // DERIVED, NOT MEASURED, and the first real run is what confirms it --
+        // the same standing caveat the dense `qwen3_5` row carries, written
+        // here so it cannot be forgotten. Spark-X2.5 REASONS BEFORE ANSWERING
+        // (the generation prompt forces the think frame open, exactly muse's
+        // reason for moving both), so the shared 1,024 budget is presumed to
+        // truncate its thinking; and while the 131,072-entry BPE tokenizes
+        // the frozen prose near Qwen's counts, the rendered template adds its
+        // own preamble, so the window takes muse's arithmetic
+        // (`long-synthesis` plus a reasoning budget does not fit 4,096)
+        // rather than the shared row's. A `long-synthesis` that stops on
+        // maxTokens, or an oracle run at a different pair, is what would move
+        // this row -- re-freeze deliberately, never by inheritance.
+        ModelFamily::Spark25 => ProtocolParameters {
+            family,
+            max_context: SPARK_MAX_CONTEXT,
+            max_new: SPARK_MAX_NEW,
         },
     }
 }

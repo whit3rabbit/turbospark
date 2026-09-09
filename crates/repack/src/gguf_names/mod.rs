@@ -36,6 +36,7 @@ mod gemma4;
 mod gpt_oss;
 mod llama;
 mod qwen;
+mod spark;
 
 use model_io::ModelFamily;
 
@@ -163,6 +164,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::Qwen3Moe => qwen::map_qwen3moe_layer(suffix, layer),
             ModelFamily::GptOss => gpt_oss::map_gpt_oss_layer(suffix, layer),
             ModelFamily::QwenGdnDense => qwen::map_qwen_gdn_dense_layer(suffix, layer),
+            ModelFamily::Spark25 => spark::map_spark_layer(suffix, layer),
             // Neither of the first two is published as a GGUF; an unmapped
             // name is the right answer rather than a neighbour's table,
             // which would map names these families do not have.
@@ -207,6 +209,10 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // string, which is what keeps `family_for_architecture` injective.
         // Read off `ornith-ai/Ornith-1.5-9B-GGUF`.
         ModelFamily::QwenGdnDense => Some("qwen35"),
+        // Read off `XHToken/Spark-X2.5-4B-GGUF`'s Q4_K_M: the GGUF
+        // architecture string and the HF `model_type` agree here, and the
+        // conventions are an upstream llama.cpp merge rather than a fork.
+        ModelFamily::Spark25 => Some("spark2_5"),
         // Neither of the first two is published as a GGUF. `None` is the
         // honest answer: inventing a string here would make
         // `family_for_architecture` claim to recognize a file that does not

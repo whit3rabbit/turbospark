@@ -41,6 +41,7 @@ mod synthetic_model;
 mod synthetic_muse;
 mod synthetic_qwen;
 mod synthetic_real;
+mod synthetic_spark;
 mod synthetic_tensors;
 mod trained_context;
 
@@ -144,6 +145,7 @@ pub use synthetic_qwen::{
 pub use synthetic_real::{
     build_synthetic_gemma4_real_install, build_synthetic_gemma4_real_install_at_shared_bits,
 };
+pub use synthetic_spark::{build_synthetic_spark_install, tiny_spark_arch};
 /// The checkpoint's own trained context length: read it out of either
 /// intake format, record it in an install, read it back. See the module
 /// docs for why this is install metadata rather than an `ArchConfig` field.

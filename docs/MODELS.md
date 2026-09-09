@@ -4,7 +4,7 @@
 answer two different questions, and knowing which one you are asking saves a
 lot of time:
 
-- **The catalog** says what has been run here. Fourteen rows, each naming a
+- **The catalog** says what has been run here. Twenty-two rows, each naming a
   repository and a revision that were streamed and generated on real hardware,
   with the gate targets that assert it.
 - **The probe** says what could be run here. It reads headers, costs KB and

@@ -8,6 +8,7 @@ use super::resolve::{
     IM_START_MARK, LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK, LLAMA3_EOS_MARK, LLAMA3_EOT_MARK,
     LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK, MUSE_BOS_MARK, MUSE_EOM_MARK,
     MUSE_EOS_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK, MUSE_START_MARK,
+    SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use super::NO_SUCH_TOKEN_ID;
 use crate::error::TokenizerError;
@@ -371,5 +372,54 @@ pub(crate) fn resolve_deepseek(tokenizer: &Tokenizer) -> Result<Resolved, Tokeni
         think_end_id: Some(think_end),
         stop_token_ids: [eos].into_iter().collect(),
         vocab_size: 129_280,
+    })
+}
+
+pub(crate) fn resolve_spark(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    let bos = required_id(tokenizer, SPARK_BOS_MARK)?;
+    let eos = required_id(tokenizer, SPARK_EOS_MARK)?;
+    let _user = required_id(tokenizer, SPARK_USER_MARK)?;
+    let _bot = required_id(tokenizer, SPARK_BOT_MARK)?;
+    // REQUIRED, not optional: the generation prompt FORCES the think frame
+    // open (`<think>` with thinking on, `</think>` with it off), so a table
+    // without the pair could not split reasoning from content at all -- and
+    // `prompt_opens_thought` would leave the decoder in Visible while the
+    // model wrote scratchpad.
+    let think_start = required_id(tokenizer, "<think>")?;
+    let think_end = required_id(tokenizer, "</think>")?;
+    Ok(Resolved {
+        bos_id: bos,
+        bos_prefix_id: Some(bos),
+        eos_id: eos,
+        pad_id: eos,
+        end_of_turn_id: eos,
+        // THE TOOL IDS EXIST in the table (`<tool_call>` 130977 and friends)
+        // and are deliberately NOT resolved: the `<tool_call>` / `<arg_key>` /
+        // `<arg_value>` DSL has no parser here (DEVIATIONS.md), and carrying
+        // ids nothing parses would suggest support `tool_call_support` does
+        // not answer. The markup flows as ordinary content instead.
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: NO_SUCH_TOKEN_ID,
+        // The think pair IS the channel bracket, exactly as ChatML and
+        // DeepSeek resolve it: the structured decoder's reasoning split keys
+        // on these.
+        channel_start_id: think_start,
+        channel_end_id: think_end,
+        // The thought channel above already brackets; there is no header.
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: Some(think_start),
+        think_end_id: Some(think_end),
+        // One EOS closes every turn kind (user, bot, tool); the template
+        // writes it explicitly, and `generation_config.json` adds nothing.
+        stop_token_ids: [eos].into_iter().collect(),
+        // The padded embedding row count, which for this checkpoint equals
+        // the tokenizer's vocab (131,072, `token_embd.weight`'s own dims) --
+        // a coincidence of THIS checkpoint, not a property of the dialect.
+        // Callers holding a `RealForwardRunner` read `vocab_size()` off it.
+        vocab_size: 131_072,
     })
 }
