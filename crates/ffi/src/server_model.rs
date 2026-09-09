@@ -139,10 +139,13 @@ impl FfiChatModel {
     /// loop's entry would land on the map for the prompt about to be
     /// prefilled (`crates/cli` Gotcha 13).
     ///
-    /// Speculation and chunked prefill are BOTH skipped here, matching the
-    /// standalone server: the qwen family this tower belongs to serves
-    /// neither, so composing them would be untested code on an unreachable
-    /// path.
+    /// Speculation is skipped here, matching the standalone server: no
+    /// published conversion of a vision family carries an ingestible
+    /// drafter, so composing the two would be untested code on an
+    /// unreachable path. Chunked prefill is NOT skipped, also matching the
+    /// standalone server: an image prompt takes the same
+    /// `supports_chunked_prefill` check and the same `DEFAULT_CHUNK_SIZE`
+    /// the text arm in `run_completion` uses.
     fn run_with_images(
         &self,
         prompt_ids: &[foundation::TokenId],
@@ -180,16 +183,30 @@ impl FfiChatModel {
             .map_err(|e| RuntimeError::Producer(e.to_string()))?;
 
         let combined = self.cancel_or_stopped(cancel);
-        let result = run_raw_completion_cancellable(
-            runner.as_mut(),
-            &self.core.tokenizer,
-            prompt_ids,
-            config,
-            self.core.max_context,
-            vocab_size,
-            &combined,
-            on_progress,
-        );
+        let result = if runner.supports_chunked_prefill() {
+            run_raw_completion_chunked_cancellable(
+                runner.as_mut(),
+                &self.core.tokenizer,
+                prompt_ids,
+                config,
+                self.core.max_context,
+                vocab_size,
+                foundation::DEFAULT_CHUNK_SIZE as usize,
+                &combined,
+                on_progress,
+            )
+        } else {
+            run_raw_completion_cancellable(
+                runner.as_mut(),
+                &self.core.tokenizer,
+                prompt_ids,
+                config,
+                self.core.max_context,
+                vocab_size,
+                &combined,
+                on_progress,
+            )
+        };
         runner.clear_prompt_vision();
         result
     }

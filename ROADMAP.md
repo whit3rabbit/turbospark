@@ -62,14 +62,7 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/bench/tests/vision_memory_oracle.rs` (add sidecar memory assertion)
   - `docs/VISION.md`
 
-#### 2. Server Multimodal Chunked Prefill
-- **Objective**: Allow server image completion endpoints to use chunked prefill. CLI and FFI already chunk image prompts, but the server image path does not chunk.
-- **Why Open**: Image prompts generate >1,000 merged vision tokens; chunking prefill on the server is critical to prevent request stalls.
-- **Files to Touch**:
-  - `crates/server/src/completions.rs`
-  - `crates/server/src/handler/`
-
-#### 3. MTP / DFlash2 Verify Pass for Multimodal Prompts
+#### 2. MTP / DFlash2 Verify Pass for Multimodal Prompts
 - **Objective**: Make speculative verify passes vision-aware (handling image token injection) or enforce an explicit open-time refusal when both an MTP head and vision sidecar are active.
 - **Why Open**: Verify pass currently assumes text tokens only; no install currently combines both, but combination is unhandled.
 - **Files to Touch**:
@@ -78,7 +71,7 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/runtime/src/families/qwen/dflash.rs`
   - `docs/VISION.md`
 
-#### 4. Mapped Residency Eviction Benchmark & Policy Unification
+#### 3. Mapped Residency Eviction Benchmark & Policy Unification
 - **Objective**: Measure paging overhead and fault costs when OS reclaims clean mapped pages under memory pressure. Unify slot cache policy with mapped expert residency: pick residency mode first (`mapped` vs `streamed`), then slot count only if `streamed` is active. Expose `--expert-residency auto|streamed|mapped`.
 - **Why Open**: Mapped residency is landed and measured, but requires automated selection based on system memory headroom.
 - **Files to Touch / Create**:
@@ -90,7 +83,7 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/model-io/src/expert_cache_policy.rs`
   - `docs/EXPERT_RESIDENCY.md`
 
-#### 5. Exact Rejection Sampling for Speculation (T > 0)
+#### 4. Exact Rejection Sampling for Speculation (T > 0)
 - **Objective**: Implement Leviathan/Chen algorithm on shaped distributions for non-greedy sampling during speculative verification.
 - **Why Open**: Current speculative verification only supports greedy decoding (T = 0); non-greedy sampling requires distribution-preserving rejection sampling.
 - **Files to Touch**:
@@ -99,7 +92,7 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/runtime/src/speculation_policy.rs`
   - `docs/SPECULATIVE_DECODING.md`
 
-#### 6. Server Request Queue & Fairness (Option 1)
+#### 5. Server Request Queue & Fairness (Option 1)
 - **Objective**: Implement request FIFO queue with streaming-aware fairness and cancellation handling in `turbospark-server`.
 - **Why Open**: Currently single-runner concurrency relies on mutex serialization and session-pool KV reuse; request queueing provides fairness under high client concurrency.
 - **Files to Touch / Create**:

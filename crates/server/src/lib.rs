@@ -28,6 +28,10 @@ pub mod observe;
 mod ollama;
 #[cfg(target_os = "macos")]
 mod real_model;
+#[cfg(target_os = "macos")]
+#[cfg(test)]
+#[path = "real_model_tests.rs"]
+mod real_model_tests;
 pub mod registry;
 mod response;
 mod responses;

@@ -458,11 +458,16 @@ impl RealChatModel {
     /// producer at ENTRY, so a clear there lands on the map for the prompt
     /// about to be prefilled (`crates/runtime/src/real_forward_traits.rs`).
     ///
-    /// Speculation and chunked prefill are BOTH skipped here, deliberately.
-    /// The qwen family this tower belongs to serves neither
-    /// (`supports_chunked_prefill` answers `false` for it, and no published
-    /// MoE conversion carries an ingestible drafter), so composing them would
-    /// be untested code on an unreachable path.
+    /// Speculation is skipped here, deliberately: no published conversion of
+    /// a vision family carries an ingestible drafter, so composing the two
+    /// would be untested code on an unreachable path. Chunked prefill is NOT
+    /// skipped: the chunked driver handles vision rows (its dense-qwen
+    /// prefill mirrors this arm's tower blit and mRoPE dispatch), so an
+    /// image prompt takes the same `supports_chunked_prefill` check and the
+    /// same `DEFAULT_CHUNK_SIZE` the text arm uses. The seam difference is
+    /// granularity only -- prefill cancellation lands on a chunk boundary
+    /// (still honored) and `Prefill` progress coarsens to one event per
+    /// chunk -- and the exec loop ignores `Prefill` events anyway.
     fn run_with_images(
         &self,
         prompt_ids: &[foundation::TokenId],
@@ -492,16 +497,30 @@ impl RealChatModel {
             .set_prompt_vision(&embeddings, &images.positions, prompt_ids.len())
             .map_err(|e| RuntimeError::Producer(e.to_string()))?;
 
-        let result = run_raw_completion_cancellable(
-            &mut *runner,
-            &self.tokenizer,
-            prompt_ids,
-            config,
-            self.context.resolved,
-            self.vocab_size,
-            cancel,
-            &mut *on_progress,
-        );
+        let result = if runner.supports_chunked_prefill() {
+            run_raw_completion_chunked_cancellable(
+                &mut *runner,
+                &self.tokenizer,
+                prompt_ids,
+                config,
+                self.context.resolved,
+                self.vocab_size,
+                foundation::DEFAULT_CHUNK_SIZE as usize,
+                cancel,
+                &mut *on_progress,
+            )
+        } else {
+            run_raw_completion_cancellable(
+                &mut *runner,
+                &self.tokenizer,
+                prompt_ids,
+                config,
+                self.context.resolved,
+                self.vocab_size,
+                cancel,
+                &mut *on_progress,
+            )
+        };
         // CONSUMED, whether the generation succeeded or not: a map left
         // behind would apply to whatever text request arrives next.
         runner.clear_prompt_vision();
