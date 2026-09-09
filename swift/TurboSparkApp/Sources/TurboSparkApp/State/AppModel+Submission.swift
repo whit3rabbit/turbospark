@@ -55,6 +55,15 @@ extension AppModel {
             handleLocalCommand(userDraft)
             return
         }
+        // A `!` draft runs a shell command and lands its output in the
+        // transcript as context (qwen-code bang-command parity). It never
+        // generates, and it is not queued: mid-turn output would land inside
+        // a running turn's rows, so the handler refuses while busy instead.
+        if Self.isBangCommand(userDraft) {
+            promptText = ""
+            handleBangCommand(userDraft)
+            return
+        }
         // Input history (qwen-code parity): every accepted prompt is
         // remembered for Up-arrow recall, ghost chats excepted -- history
         // persists to disk and a ghost prompt must not.

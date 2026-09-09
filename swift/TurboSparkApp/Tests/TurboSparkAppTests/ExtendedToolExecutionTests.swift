@@ -7,6 +7,11 @@ final class ExtendedToolExecutionTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        // AppModel's init installs the interactive AskUserQuestion waiter as
+        // STATIC state; other suites build AppModels and leave it behind,
+        // which would route this suite's question calls into a dead model
+        // instead of the immediate-record path these assertions read.
+        AskUserQuestionExecutor.answerWaiter = nil
         tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         project = AppProject(name: "test-proj", rootDirectoryPath: tempDir.path)

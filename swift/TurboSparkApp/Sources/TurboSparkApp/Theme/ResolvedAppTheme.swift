@@ -16,6 +16,10 @@ import SwiftUI
 public struct ResolvedAppTheme: Equatable, Sendable {
     public var isDark: Bool
     public var accent: Color
+    /// The theme's raw page background, resolved once here so
+    /// `composerBackground` can derive an elevated tone from it without an
+    /// actor hop into `AppearanceManager` (see `TurboSparkTheme.composerBackgroundColor`).
+    public var background: Color
     public var foreground: Color
     /// 0 to 100, from the mode's config. Drives hairlines, metadata text and
     /// border strokes.
@@ -27,6 +31,7 @@ public struct ResolvedAppTheme: Equatable, Sendable {
     public init(
         isDark: Bool,
         accent: Color,
+        background: Color = .black,
         foreground: Color,
         contrast: Double,
         uiFontDescriptor: AppFontDescriptor,
@@ -35,6 +40,7 @@ public struct ResolvedAppTheme: Equatable, Sendable {
     ) {
         self.isDark = isDark
         self.accent = accent
+        self.background = background
         self.foreground = foreground
         self.contrast = contrast
         self.uiFontDescriptor = uiFontDescriptor
@@ -92,7 +98,7 @@ public struct ResolvedAppTheme: Equatable, Sendable {
 
     /// Background color specifically for the prompt composer textbox.
     public var composerBackground: Color {
-        TurboSparkTheme.composerBackgroundColor(isDark: isDark)
+        TurboSparkTheme.composerBackgroundColor(isDark: isDark, background: background)
     }
 }
 
@@ -127,6 +133,7 @@ public extension ResolvedAppTheme {
         return ResolvedAppTheme(
             isDark: isDark,
             accent: manager.activeAccentColor(isDark: isDark),
+            background: manager.activeBackgroundColor(isDark: isDark),
             foreground: manager.activeForegroundColor(isDark: isDark),
             contrast: config.contrast,
             uiFontDescriptor: AppFontDescriptor(
@@ -160,6 +167,7 @@ public extension ResolvedAppTheme {
     static let fallback = ResolvedAppTheme(
         isDark: false,
         accent: Color(hex: ThemeModeConfig.defaultLight.accentHex) ?? .black,
+        background: Color(hex: ThemeModeConfig.defaultLight.backgroundHex) ?? .white,
         foreground: Color(hex: ThemeModeConfig.defaultLight.foregroundHex) ?? .primary,
         contrast: ThemeModeConfig.defaultLight.contrast,
         uiFontDescriptor: AppFontDescriptor(

@@ -30,7 +30,7 @@ struct InspectorView: View {
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(TurboSparkTheme.pageBackgroundColor)
     }
 
     private var header: some View {

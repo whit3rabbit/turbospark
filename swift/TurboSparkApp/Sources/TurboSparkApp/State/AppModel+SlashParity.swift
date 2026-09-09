@@ -76,6 +76,22 @@ extension AppModel {
             runForkCommand(arguments.joined(separator: " "))
         case "recap":
             runRecapCommand()
+        case "reset":
+            guard !generating, !submitting else {
+                showToast("Stop the current turn before resetting.", style: .warning)
+                return
+            }
+            clearOutput()
+        case "resume":
+            // The search palette IS the resume dialog here: it already
+            // searches every chat's content and selecting a row opens it.
+            NotificationCenter.default.post(name: .showChatSearch, object: nil)
+        case "diff":
+            runDiffCommand()
+        case "log":
+            runLogCommand()
+        case "prs":
+            runPrsCommand()
         default:
             break
         }

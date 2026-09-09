@@ -30,6 +30,13 @@ struct ToolCallCardView: View {
         call.status == .pendingApproval || (model.pendingToolCall?.id == call.id)
     }
 
+    /// Whether THIS call is the one the turn is parked on, waiting for the
+    /// user's answers (the interactive AskUserQuestion flow). Its options
+    /// render tappable while true, and the card holds itself open.
+    private var isActiveQuestionSet: Bool {
+        isQuestionCall && model.pendingUserQuestions?.toolCallID == call.id
+    }
+
     private var isHighRisk: Bool {
         call.riskAssessment?.isHighRisk ?? false
     }
@@ -119,12 +126,18 @@ struct ToolCallCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             summaryHeaderButton
 
-            if isExpanded || isPendingApproval {
+            if isExpanded || isPendingApproval || isActiveQuestionSet {
                 VStack(alignment: .leading, spacing: 8) {
                     if isTodoCall, let todos = parsedTodos, !todos.isEmpty {
                         todoChecklistPreview(todos)
                     } else if isQuestionCall, let questions = parsedQuestions, !questions.isEmpty {
-                        questionPreview(questions)
+                        if isActiveQuestionSet {
+                            // The tappable card: the turn is parked on these
+                            // questions right now.
+                            InteractiveQuestionCardView(model: model, questions: questions)
+                        } else {
+                            questionPreview(questions)
+                        }
                     } else if isFindingsCall, let findings = parsedFindings, !findings.isEmpty {
                         findingsPreview(findings)
                     } else if isAgentCall {

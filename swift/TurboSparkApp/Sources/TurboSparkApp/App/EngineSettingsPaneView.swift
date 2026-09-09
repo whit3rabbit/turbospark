@@ -390,7 +390,7 @@ struct EngineSettingsPaneView: View {
                     Text("Resolved", bundle: .module)
                     Spacer()
                     Text(info.kvBits)
-                        .font(.caption.monospaced())
+                        .themedFont(points: 11, systemDesign: .monospaced)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -403,7 +403,7 @@ struct EngineSettingsPaneView: View {
                     + "support it, and stays off on every other install. Takes effect on the "
                     + "next model load."
             )
-            .font(.caption)
+            .themedFont(.tiny)
             .foregroundStyle(.secondary)
         }
     }

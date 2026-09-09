@@ -35,53 +35,63 @@ public enum TurboSparkTheme {
         AppearanceManager.shared.activeAccentColor(isDark: isDark)
     }
 
+    /// The theme's own background, unmodified. Every "elevated" accessor
+    /// below is a step OFF this value rather than off a system material, so
+    /// a card, a bar or a hairline always reads as belonging to the same
+    /// palette instead of falling back to whatever `.controlBackgroundColor`
+    /// happens to render as -- which does not move when the theme's
+    /// background hex changes, and is why a themed dark-navy install still
+    /// drew system-neutral-gray boxes with no visible separation between
+    /// them (2026-09-08).
+    public static func pageBackgroundColor(isDark: Bool) -> Color {
+        AppearanceManager.shared.activeBackgroundColor(isDark: isDark)
+    }
+
+    /// Blends `base` toward white (dark mode: lighter, "raised") or black
+    /// (light mode: darker, "raised") by `fraction`. `NSColor.blended` is
+    /// AppKit's own and predates `Color.mix(with:by:)`, which the macOS 14
+    /// SDK this app still targets does not have at all -- `#available` gates
+    /// execution, not symbol resolution, so a guarded call to it fails to
+    /// compile on that SDK rather than merely failing at runtime.
+    nonisolated private static func elevate(_ base: Color, isDark: Bool, by fraction: CGFloat) -> Color {
+        guard let baseSRGB = NSColor(base).usingColorSpace(.sRGB) else { return base }
+        let mixColor = isDark ? NSColor.white : NSColor.black
+        guard let mixSRGB = mixColor.usingColorSpace(.sRGB),
+            let blended = baseSRGB.blended(withFraction: fraction, of: mixSRGB)
+        else {
+            return base
+        }
+        return Color(nsColor: blended)
+    }
+
     public static func sidebarBackgroundColor(isDark: Bool) -> Color {
         let config = AppearanceManager.shared.activeConfig(isDark: isDark)
-        if config.translucentSidebar {
-            return Color(nsColor: .windowBackgroundColor).opacity(0.82)
-        }
-        return AppearanceManager.shared.activeBackgroundColor(isDark: isDark)
+        let elevated = elevate(pageBackgroundColor(isDark: isDark), isDark: isDark, by: isDark ? 0.05 : 0.035)
+        return config.translucentSidebar ? elevated.opacity(0.94) : elevated
     }
 
     /// Background of the leftmost icon rail: slightly differentiated from the sidebar.
     public static func railBackgroundColor(isDark: Bool) -> Color {
         let config = AppearanceManager.shared.activeConfig(isDark: isDark)
-        if config.translucentSidebar {
-            return Color(nsColor: .windowBackgroundColor).opacity(0.7)
-        }
-        // **`#available` DOES NOT HELP WITH A SYMBOL THE SDK DOES NOT HAVE.**
-        // This was `Color.mix(with:by:)` behind a `macOS 15.0` guard, which
-        // is correct for RUNTIME availability and does nothing for
-        // compilation: the macOS 14 SDK has no such member, so the guarded
-        // call is `value of type 'Color' has no member 'mix'` on any
-        // toolchain older than the one it was written on. CI builds the app
-        // bundle on `macos-14` and every developer here is on a far newer
-        // Xcode, so it failed for nobody who could see it.
-        //
-        // `NSColor.blended(withFraction:of:)` is AppKit's own and predates
-        // all of this. It needs both colours in one space or it returns nil,
-        // and `NSColor.black` is generic gray, hence the two conversions and
-        // the fallback that was already the `else` branch.
-        let base = NSColor(AppearanceManager.shared.activeBackgroundColor(isDark: isDark))
-        if let sRGB = base.usingColorSpace(.sRGB),
-            let black = NSColor.black.usingColorSpace(.sRGB),
-            let darkened = sRGB.blended(withFraction: 0.06, of: black)
-        {
-            return Color(nsColor: darkened)
-        }
-        return Color(nsColor: .underPageBackgroundColor)
+        let elevated = elevate(pageBackgroundColor(isDark: isDark), isDark: isDark, by: isDark ? 0.03 : 0.02)
+        return config.translucentSidebar ? elevated.opacity(0.9) : elevated
     }
 
-    /// Background of the flat top bar and bottom status strip.
+    /// Background of the flat top bar and bottom status strip: one step
+    /// lighter (dark mode) than the page, so a band reads as a distinct
+    /// strip rather than as an unbroken continuation of the canvas below it.
     public static func barBackgroundColor(isDark: Bool) -> Color {
-        AppearanceManager.shared.activeBackgroundColor(isDark: isDark)
+        elevate(pageBackgroundColor(isDark: isDark), isDark: isDark, by: isDark ? 0.055 : 0.03)
     }
 
-    /// Hairline used between every chrome band.
+    /// Hairline used between every chrome band: a further step lighter than
+    /// a bar, so a border reads as a lighter line of the SAME palette rather
+    /// than as a neutral system-gray seam laid over a colored theme.
     public static func hairlineColor(isDark: Bool) -> Color {
         let config = AppearanceManager.shared.activeConfig(isDark: isDark)
-        let opacity = 0.25 + (config.contrast / 100.0) * 0.55
-        return Color(nsColor: .separatorColor).opacity(opacity)
+        let elevated = elevate(pageBackgroundColor(isDark: isDark), isDark: isDark, by: isDark ? 0.30 : 0.18)
+        let opacity = 0.4 + (config.contrast / 100.0) * 0.5
+        return elevated.opacity(opacity)
     }
 
     // MARK: - Ambient accessors
@@ -91,29 +101,33 @@ public enum TurboSparkTheme {
 
     public static var accentNSColor: NSColor { NSColor(accentColor) }
 
+    public static var pageBackgroundColor: Color { pageBackgroundColor(isDark: resolvedIsDark) }
+
     public static var sidebarBackgroundColor: Color { sidebarBackgroundColor(isDark: resolvedIsDark) }
 
     public static var railBackgroundColor: Color { railBackgroundColor(isDark: resolvedIsDark) }
 
     public static var barBackgroundColor: Color { barBackgroundColor(isDark: resolvedIsDark) }
 
-    /// Fill for cards and chips: the raised surface in the app.
+    /// Fill for cards and chips: the raised surface in the app. The most
+    /// elevated step short of a hairline, so a card is visibly lighter than
+    /// both the page behind it and the bar above it.
     public static var surfaceColor: Color {
-        Color(nsColor: .controlBackgroundColor)
+        let isDark = resolvedIsDark
+        return elevate(pageBackgroundColor(isDark: isDark), isDark: isDark, by: isDark ? 0.11 : 0.06)
     }
 
-    /// Background color specifically for the prompt composer textbox so it
-    /// cleanly contrasts against the window background in both light and dark modes.
-    nonisolated public static func composerBackgroundColor(isDark: Bool) -> Color {
-        if isDark {
-            return Color(nsColor: NSColor(white: 0.20, alpha: 1.0))
-        } else {
-            return Color(nsColor: NSColor(white: 0.94, alpha: 1.0))
-        }
+    /// Background color specifically for the prompt composer textbox,
+    /// derived from `background` rather than reached from `AppearanceManager`
+    /// directly: this stays `nonisolated` so `ResolvedAppTheme.composerBackground`
+    /// (a plain, non-actor-isolated computed property) can call it without an
+    /// actor hop, which means it cannot touch `AppearanceManager.shared` itself.
+    nonisolated public static func composerBackgroundColor(isDark: Bool, background: Color) -> Color {
+        elevate(background, isDark: isDark, by: isDark ? 0.09 : 0.05)
     }
 
     public static var composerBackgroundColor: Color {
-        composerBackgroundColor(isDark: resolvedIsDark)
+        composerBackgroundColor(isDark: resolvedIsDark, background: pageBackgroundColor(isDark: resolvedIsDark))
     }
 
     public static var hairlineColor: Color { hairlineColor(isDark: resolvedIsDark) }

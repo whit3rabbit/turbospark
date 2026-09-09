@@ -86,9 +86,8 @@ extension InspectorView {
 
     var memoryAndPowerSection: some View {
         Section("Open & Architecture Options") {
-            // The context window moved to InspectorEssentialsSection. It is
-            // set in ONE place; ContextWindowOptionsView is still the control
-            // that does it, called from there.
+            // The context window lives in InspectorEssentialsSection's
+            // `ContextLadderPicker`, the one place that sets it.
             LabeledContent("Cache Slots") {
                 Picker("Slots", selection: $model.runtimeOptions.expertCacheSlots) {
                     ForEach(AppRuntimeOptions.allowedSlotCounts, id: \.self) { slots in
@@ -260,104 +259,33 @@ extension InspectorView {
 
                 if model.runtimeOptions.steeringMode == .clamp {
                     LabeledContent("Clamp Target") {
-                        TextField("Target", value: $model.runtimeOptions.steeringTarget, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 70)
+                        // No `in:` range on the Stepper: unlike `steeringScale`
+                        // (0...3, documented, already a slider), this is a raw,
+                        // control-vector-dependent activation value with no
+                        // engine-defined bound, so a hardcoded min/max here
+                        // would silently clamp values a real vector needs.
+                        HStack(spacing: 4) {
+                            TextField("Target", value: $model.runtimeOptions.steeringTarget, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 70)
+                            Stepper("Clamp target", value: $model.runtimeOptions.steeringTarget, step: 0.1)
+                                .labelsHidden()
+                        }
                     }
                 }
 
                 LabeledContent("Activation Gate") {
-                    TextField("Gate threshold", value: $model.runtimeOptions.steeringGate, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 70)
+                    HStack(spacing: 4) {
+                        TextField("Gate threshold", value: $model.runtimeOptions.steeringGate, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 70)
+                        Stepper("Activation gate", value: $model.runtimeOptions.steeringGate, step: 0.1)
+                            .labelsHidden()
+                    }
                 }
             }
         }
         .disabled(model.isRunning)
     }
 
-}
-
-/// Auto, the preset ladder, and a custom size.
-///
-/// Called from `InspectorEssentialsSection` (not from this file's own
-/// section any more). Internal rather than private for that reason: it is
-/// the only control that can express `Auto` and an arbitrary custom window,
-/// neither of which is a rung on the priced ladder above it.
-struct ContextWindowOptionsView: View {
-    @ObservedObject var model: AppModel
-    @State private var isCustom = false
-
-    private var selectionTag: Binding<Int> {
-        Binding(
-            get: {
-                if isCustom { return -1 }
-                if AppContextLengthOption(rawValue: model.maxContextTokens) != nil {
-                    return model.maxContextTokens
-                }
-                return -1
-            },
-            set: { newValue in
-                if newValue == -1 {
-                    isCustom = true
-                    if model.maxContextTokens == 0 {
-                        model.maxContextTokens = model.resolvedContextTokens
-                    }
-                } else {
-                    isCustom = false
-                    model.maxContextTokens = newValue
-                }
-            }
-        )
-    }
-
-    var body: some View {
-        Group {
-            LabeledContent("Context Window") {
-                Picker("Context", selection: selectionTag) {
-                    ForEach(AppContextLengthOption.allCases) { option in
-                        Text(option.formattedLabel(resolvedAuto: model.resolvedContextTokens))
-                            .tag(option.tokens)
-                    }
-                    Divider()
-                    Text("Custom…", bundle: .module).tag(-1)
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .fixedSize()
-                .accessibilityLabel("Context window")
-            }
-
-            if isCustom {
-                LabeledContent("Custom Size") {
-                    HStack(spacing: 8) {
-                        Slider(
-                            value: Binding(
-                                get: { Double(model.maxContextTokens) },
-                                set: {
-                                    let raw = Int($0)
-                                    let step = raw < 8192 ? 256 : (raw < 32768 ? 512 : 1024)
-                                    let snapped = max(512, min(131072, ((raw + step / 2) / step) * step))
-                                    model.maxContextTokens = snapped
-                                }
-                            ),
-                            in: 512...131072
-                        )
-                        .accessibilityLabel("Custom context size")
-                        .accessibilityValue("\(model.maxContextTokens) tokens")
-                        Text("\(model.maxContextTokens.formatted())", bundle: .module)
-                            .themedFont(.small).monospacedDigit()
-                            .frame(width: 55, alignment: .trailing)
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .onAppear {
-            if model.maxContextTokens > 0 && AppContextLengthOption(rawValue: model.maxContextTokens) == nil {
-                isCustom = true
-            }
-        }
-        .animation(.smooth(duration: 0.2), value: isCustom)
-    }
 }

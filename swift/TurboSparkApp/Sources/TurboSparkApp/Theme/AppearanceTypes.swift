@@ -120,40 +120,45 @@ public struct ThemeModeConfig: Codable, Equatable, Sendable {
         return try? JSONDecoder().decode(ThemeModeConfig.self, from: data)
     }
 
-    /// The cyan taken from the mascot art (`WelcomeCharacter.png`), so the
-    /// character and the chrome belong to one palette.
+    /// A deep-navy, saturated-blue take on the Spark palette, tuned
+    /// 2026-09-08 to sit closer to a vivid "night sky" look than the
+    /// original cyan-on-slate default.
     ///
-    /// The dark background is `#12151B` rather than a neutral `#181818`: the
-    /// slight blue cast is what lets a cyan accent sit on it instead of
-    /// looking pasted on. Codex, the previous default, is still a preset --
-    /// `codexLight`/`codexDark` below are the exact values it shipped with,
-    /// so nothing that applies that preset moves.
+    /// The dark background is `#090D16` rather than a neutral `#181818`: the
+    /// blue cast is what lets a blue accent sit on it instead of looking
+    /// pasted on. It is deliberately NOT the same as the "Midnight Blue"
+    /// preset's `#0B0F19`/`#38BDF8` below -- `testNoPresetAliasesTheDefaultExceptSparkBlue`
+    /// asserts no other preset equals `default*`, and Midnight Blue would
+    /// otherwise be a second name for this default. Codex, the previous
+    /// default before Spark Blue, is still a preset -- `codexLight`/
+    /// `codexDark` below are the exact values it shipped with, so nothing
+    /// that applies that preset moves.
     public static let defaultLight = ThemeModeConfig(
         preset: "Spark Blue",
         accentName: "Spark",
-        accentHex: "#0E7C99",
+        accentHex: "#1D6FE0",
         backgroundHex: "#FFFFFF",
-        foregroundHex: "#1A1C1F",
+        foregroundHex: "#141A24",
         uiFontFamily: "System default",
         uiFontWeight: "Regular",
         codeFontFamily: "System default",
         codeFontWeight: "Regular",
         translucentSidebar: true,
-        contrast: 50.0
+        contrast: 52.0
     )
 
     public static let defaultDark = ThemeModeConfig(
         preset: "Spark Blue",
         accentName: "Spark",
-        accentHex: "#5FD8E8",
-        backgroundHex: "#12151B",
-        foregroundHex: "#F3F5FA",
+        accentHex: "#3B9EFF",
+        backgroundHex: "#090D16",
+        foregroundHex: "#F2F5FB",
         uiFontFamily: "System default",
         uiFontWeight: "Regular",
         codeFontFamily: "System default",
         codeFontWeight: "Regular",
         translucentSidebar: true,
-        contrast: 65.0
+        contrast: 68.0
     )
 
     /// Codex as it shipped. Named rather than aliased to `defaultLight`,

@@ -211,6 +211,31 @@ struct BuiltInSlashCommand: Identifiable, Equatable, Hashable {
             summary: "Summarize this conversation so far",
             iconName: "doc.text.magnifyingglass",
             kind: .localCommand, fixedAgentName: nil),
+        BuiltInSlashCommand(
+            name: "reset", aliases: [],
+            summary: "Reset this conversation (same as /clear)",
+            iconName: "arrow.uturn.backward",
+            kind: .localCommand, fixedAgentName: nil),
+        BuiltInSlashCommand(
+            name: "resume", aliases: [],
+            summary: "Pick up an earlier chat from the search palette",
+            iconName: "clock.arrow.circlepath",
+            kind: .localCommand, fixedAgentName: nil),
+        BuiltInSlashCommand(
+            name: "diff", aliases: [],
+            summary: "Show working-tree changes for this project vs HEAD",
+            iconName: "plus.forwardslash.minus",
+            kind: .localCommand, fixedAgentName: nil),
+        BuiltInSlashCommand(
+            name: "log", aliases: [],
+            summary: "Show recent commit history for this project",
+            iconName: "clock",
+            kind: .localCommand, fixedAgentName: nil),
+        BuiltInSlashCommand(
+            name: "prs", aliases: [],
+            summary: "List open GitHub pull requests for this project (needs gh)",
+            iconName: "arrow.triangle.pull",
+            kind: .localCommand, fixedAgentName: nil),
     ]
 
     /// The agent command whose primary name or alias is `name`,

@@ -337,6 +337,41 @@ struct ChatSidebarView: View {
                     .padding(.horizontal, 12)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("No chats yet. Start a conversation to see history here.")
+                } else if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // The qwen-code session grouping: time-bucket headers
+                    // over the recency-sorted list. Suppressed while a
+                    // search filter is active -- the matches are what
+                    // matters then, not when they happened.
+                    let pinned = filteredHistoryChats.filter(\.isPinned)
+                    let unpinned = filteredHistoryChats.filter { !$0.isPinned }
+                    ForEach(pinned) { chat in
+                        ChatSidebarChatRowView(
+                            model: model,
+                            chat: chat,
+                            chatBeingRenamed: $chatBeingRenamed,
+                            renameText: $renameText,
+                            chatPendingDeletion: $chatPendingDeletion,
+                            chatForSystemPrompt: $chatForSystemPrompt
+                        )
+                    }
+                    ForEach(dateGroupedChats(approach: unpinned), id: \.bucket) { group in
+                        Text(group.bucket.label)
+                            .font(theme.ui(points: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 10)
+                            .padding(.top, 8)
+                            .textCase(nil)
+                        ForEach(group.chats) { chat in
+                            ChatSidebarChatRowView(
+                                model: model,
+                                chat: chat,
+                                chatBeingRenamed: $chatBeingRenamed,
+                                renameText: $renameText,
+                                chatPendingDeletion: $chatPendingDeletion,
+                                chatForSystemPrompt: $chatForSystemPrompt
+                            )
+                        }
+                    }
                 } else {
                     ForEach(filteredHistoryChats) { chat in
                         ChatSidebarChatRowView(
@@ -427,6 +462,22 @@ struct ChatSidebarView: View {
         return historyChats.filter {
             $0.title.localizedCaseInsensitiveContains(trimmed) ||
             $0.preview.localizedCaseInsensitiveContains(trimmed)
+        }
+    }
+
+    private struct DateGroup {
+        let bucket: ChatDateBucket
+        let chats: [AppChat]
+    }
+
+    /// Buckets the recency-sorted chats, keeping the sort inside each
+    /// bucket and dropping empty buckets.
+    private func dateGroupedChats(approach chats: [AppChat]) -> [DateGroup] {
+        ChatDateBucket.allCases.compactMap { bucket in
+            let inBucket = chats.filter {
+                ChatDateBucket.bucket(for: $0.updatedAt) == bucket
+            }
+            return inBucket.isEmpty ? nil : DateGroup(bucket: bucket, chats: inBucket)
         }
     }
 

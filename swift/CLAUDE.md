@@ -189,6 +189,11 @@ That is not a shortcut for convenience alone. `make swift-app` depends on
 (Gotcha 3), so going through `make` recompiles the whole app every single
 time. Use `make` when the Rust side moved and SwiftPM when it did not.
 
+`swift run TurboSparkApp` has no bundle identifier, so LaunchServices-based
+screenshot tooling (agentic `list_apps`/`request_access` automation) cannot
+target it -- both return empty/not-found. Build `make app-bundle` first if a
+session needs to screenshot the app programmatically.
+
 ## Gotchas
 
 Cross-cutting: build system, the binding's own contract, and rules that
@@ -669,6 +674,22 @@ keeps resolving.
     loop and `SubagentRunner+Gate`) go through it; a third inline copy is
     how the two drift. See `swift/docs/SWIFT_AGENT_MODE.md`.
 
+62. **A THEMED ACCESSOR THAT RETURNS A SYSTEM COLOR IS NOT THEMED.**
+    `TurboSparkTheme.surfaceColor`/`barBackgroundColor`/`sidebarBackgroundColor`/
+    `railBackgroundColor`/`hairlineColor` used to return
+    `.controlBackgroundColor`/`.windowBackgroundColor`/`.separatorColor`
+    (system materials) instead of deriving from the active theme's own
+    background hex, and `RootView.swift` painted the window root with the
+    same raw system color directly -- so a custom dark theme still drew
+    system-neutral-gray boxes with no relation to the palette. Fixed
+    2026-09-08: every accessor now blends the theme's own background
+    lighter/darker by a fixed fraction (`TurboSparkTheme.elevate`). Reach
+    for one of these accessors on any new surface, never a raw
+    `Color(nsColor: ...)`. Separately: a `Section("...")` inside
+    `Form(.grouped)` draws AppKit's own grouped-list chrome, which no
+    SwiftUI `.background()` can override -- confirmed across the whole
+    Model Settings panel.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments
@@ -702,5 +723,6 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_FAN_CONTROL.md` | the ThermalForge status-bar control and its quit-restore |
 | `swift/docs/SWIFT_SETTINGS_AUDIT.md` | the settings audit: font propagation, per-field wiring, still-open items, the re-audit method |
 | `swift/docs/SWIFT_LOCALIZATION.md` | the string catalog, its compile step, and the parity gates |
+| `swift/docs/SWIFT_QWEN_PARITY2.md` | the second web-shell parity pass: git commands, bang commands, split panes, sidebar organization, chart fences, interactive AskUserQuestion, the QR descoping |
 | `swift/docs/KEYBOARD_SHORTCUTS.md` | shortcuts, menu commands, VoiceOver, the unsloth-compatible alternate chords |
 | `swift/docs/SWIFT_STATE_LEDGER.md` | the full `state#N` index |

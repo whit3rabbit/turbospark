@@ -98,6 +98,10 @@ struct OutputPaneView: View {
         .sheet(isPresented: $model.showRecapSheet) {
             RecapSheet(model: model)
         }
+        // The qwen-code git-command sheet (`/diff`, `/log`, `/prs`).
+        .sheet(isPresented: $model.showGitSheet) {
+            GitInfoSheet(model: model)
+        }
         // `/delete` asks first, exactly like the sidebar's Delete action.
         .alert(
             "Delete this chat?",
@@ -204,6 +208,18 @@ private struct ChatTranscriptView: View {
                     // stay visible (and stoppable) through its whole loop.
                     GoalBannerView(model: model)
 
+                    // The interactive AskUserQuestion card (qwen-code
+                    // parity). It lives OUTSIDE the streaming row like the
+                    // checklist and the goal banner: the tool call's own
+                    // transcript row does not exist until its result lands,
+                    // and the whole point is that the result waits for the
+                    // user's pick.
+                    if let pendingQuestions = model.pendingUserQuestions {
+                        InteractiveQuestionCardView(
+                            model: model,
+                            questions: pendingQuestions.items)
+                    }
+
                     if model.isRunning || !model.outputText.isEmpty || !model.outputReasoningText.isEmpty {
                         ActiveStreamingRowView(
                             model: model,
@@ -232,6 +248,15 @@ private struct ChatTranscriptView: View {
             .onChange(of: model.outputReasoningText) {
                 if model.isRunning {
                     proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+            // A parked question set scrolls itself into view: mid-turn it is
+            // the one thing the user has to act on.
+            .onChange(of: model.pendingUserQuestions) { _, pending in
+                if pending != nil {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
                 }
             }
             .onAppear {
@@ -464,6 +489,104 @@ private struct MessageRowView: View {
         }
     }
 
+    /// The qwen-code UserShellMessage parity: a `!command` bang run rendered
+    /// as the command plus its captured output, not as a chat bubble.
+    private func shellMessageRow(_ shell: ShellMessageContent) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Spacer(minLength: 32)
+            VStack(alignment: .trailing, spacing: 6) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "terminal")
+                            .themedFont(.tiny, weight: .semibold)
+                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .accessibilityHidden(true)
+                        Text(shell.command)
+                            .themedCode(.small, weight: .medium)
+                            .textSelection(.enabled)
+                    }
+                    if let output = shell.output {
+                        Text(Self.attributedShellOutput(output))
+                            .themedCode(.tiny)
+                            .foregroundStyle(theme.metadataForeground)
+                            .frame(maxWidth: .infinity, maxHeight: 220, alignment: .topLeading)
+                            .padding(8)
+                            .background(Color.primary.opacity(0.04))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(TurboSparkTheme.accentColor.opacity(0.25), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                if isHovered || isCurrentlySpeakingThis {
+                    MessageActionBarView(
+                        text: message.content,
+                        messageID: message.id,
+                        date: message.createdAt,
+                        actionsDisabled: model.isRunning
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                }
+            }
+        }
+    }
+
+    /// Bang-command output as attributed text: ANSI-colored when the output
+    /// carries escape codes, plain otherwise (the same split
+    /// `ToolResultOutputView` draws).
+    private static func attributedShellOutput(_ output: String) -> AttributedString {
+        guard output.contains("\u{1B}") else { return AttributedString(output) }
+        var attributed = AttributedString()
+        let base = Font.system(size: 11)
+        for segment in ANSIColorizer.segments(in: output) {
+            var run = AttributedString(segment.text)
+            if segment.bold || segment.italic {
+                run.font = segment.bold && segment.italic
+                    ? base.bold().italic() : segment.bold ? base.bold() : base.italic()
+            }
+            if segment.underline { run.underlineStyle = .single }
+            if segment.foreground != .default {
+                run.foregroundColor = ansiColor(segment.foreground)
+            }
+            if segment.faint {
+                run.foregroundColor = ansiColor(segment.foreground).opacity(0.5)
+            }
+            attributed += run
+        }
+        return attributed
+    }
+
+    /// The 16-color palette, the same RGB values `ToolResultOutputView`
+    /// draws with so a bang row and a tool card agree on what "red" is.
+    private static func ansiColor(_ palette: ANSIColorizer.Palette) -> Color {
+        switch palette {
+        case .black: return Color(red: 0, green: 0, blue: 0)
+        case .red: return Color(red: 0.8, green: 0, blue: 0)
+        case .green: return Color(red: 0, green: 0.8, blue: 0)
+        case .yellow: return Color(red: 0.8, green: 0.8, blue: 0)
+        case .blue: return Color(red: 0, green: 0, blue: 0.93)
+        case .magenta: return Color(red: 0.8, green: 0, blue: 0.8)
+        case .cyan: return Color(red: 0, green: 0.8, blue: 0.8)
+        case .white: return Color(red: 0.9, green: 0.9, blue: 0.9)
+        case .brightBlack: return Color(white: 0.5)
+        case .brightRed: return Color(red: 1, green: 0.25, blue: 0.25)
+        case .brightGreen: return Color(red: 0.25, green: 1, blue: 0.25)
+        case .brightYellow: return Color(red: 1, green: 1, blue: 0.25)
+        case .brightBlue: return Color(red: 0.35, green: 0.35, blue: 1)
+        case .brightMagenta: return Color(red: 1, green: 0.25, blue: 1)
+        case .brightCyan: return Color(red: 0.25, green: 1, blue: 1)
+        case .brightWhite: return Color(white: 1)
+        case .default: return .primary
+        }
+    }
+
     /// A `#` quick-save, shown as the memory note it is (Claude Code renders
     /// the same shape as a badged memory row, not as a chat bubble).
     private func memoryQuickSaveRow(_ memoryText: String) -> some View {
@@ -497,6 +620,8 @@ private struct MessageRowView: View {
             if message.role == .user {
                 if let memoryText = UserMemoryInputMessage.parse(message.content) {
                     memoryQuickSaveRow(memoryText)
+                } else if let shell = ShellMessageContent.parse(message.content) {
+                    shellMessageRow(shell)
                 } else if model.editingMessageID == message.id {
                     editingUserMessageRow
                 } else {

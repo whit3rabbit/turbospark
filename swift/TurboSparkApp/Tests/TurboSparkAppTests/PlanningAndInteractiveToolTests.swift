@@ -12,6 +12,15 @@ private final class StateBox<T>: @unchecked Sendable {
 }
 
 final class PlanningAndInteractiveToolTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        // AppModel's init installs the interactive answer waiter as STATIC
+        // state, and other suites build AppModels without clearing it. A
+        // leaked waiter would route this suite's question calls through a
+        // dead model and park forever, so every test starts with it unset.
+        AskUserQuestionExecutor.answerWaiter = nil
+    }
+
     private func makeProject() throws -> (AppProject, URL) {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -26,7 +35,7 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let receivedQuestions = StateBox<[UserQuestionItem]?>(nil)
-        AskUserQuestionExecutor.onQuestionsAsked = { _, items in
+        AskUserQuestionExecutor.onQuestionsAsked = { _, items, _ in
             receivedQuestions.value = items
         }
         defer { AskUserQuestionExecutor.onQuestionsAsked = nil }
@@ -55,7 +64,7 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let isMulti = StateBox<Bool?>(nil)
-        AskUserQuestionExecutor.onQuestionsAsked = { _, items in
+        AskUserQuestionExecutor.onQuestionsAsked = { _, items, _ in
             isMulti.value = items.first?.multiSelect
         }
         defer { AskUserQuestionExecutor.onQuestionsAsked = nil }

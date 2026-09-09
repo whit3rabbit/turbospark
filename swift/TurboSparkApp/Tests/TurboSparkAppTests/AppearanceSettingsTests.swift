@@ -37,11 +37,11 @@ final class AppearanceSettingsTests: XCTestCase {
             XCTAssertEqual(config.preset, "Spark Blue", "\(mode) default preset")
             XCTAssertEqual(config.accentName, "Spark", "\(mode) default accent name")
         }
-        XCTAssertEqual(archive.lightConfig.accentHex, "#0E7C99")
-        XCTAssertEqual(archive.darkConfig.accentHex, "#5FD8E8")
+        XCTAssertEqual(archive.lightConfig.accentHex, "#1D6FE0")
+        XCTAssertEqual(archive.darkConfig.accentHex, "#3B9EFF")
         // The blue cast is load-bearing: a neutral #181818 is what made the
-        // cyan accent read as pasted on.
-        XCTAssertEqual(archive.darkConfig.backgroundHex, "#12151B")
+        // blue accent read as pasted on.
+        XCTAssertEqual(archive.darkConfig.backgroundHex, "#090D16")
 
         XCTAssertEqual(archive.lightConfig, ThemeModeConfig.defaultLight)
         XCTAssertEqual(archive.darkConfig, ThemeModeConfig.defaultDark)

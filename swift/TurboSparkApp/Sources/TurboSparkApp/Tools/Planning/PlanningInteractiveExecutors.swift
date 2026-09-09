@@ -3,12 +3,25 @@ import Foundation
 // MARK: - AskUserQuestion Executor
 
 public enum AskUserQuestionExecutor {
-    /// Handler invoked when user questions are asked by a model.
-    public static var onQuestionsAsked: (@Sendable (UUID?, [UserQuestionItem]) -> Void)?
+    /// Handler invoked when user questions are asked by a model. The third
+    /// argument is the tool-call id the questions came from, what the
+    /// transcript card matches its interactive controls against.
+    public static var onQuestionsAsked: (@Sendable (UUID?, [UserQuestionItem], UUID?) -> Void)?
+
+    /// The app-side answer surface. Installed at startup by the app model;
+    /// when nil (tests, subagent context without a host) the questions are
+    /// recorded and the tool returns immediately, exactly as it did before
+    /// interactive answering existed. The third argument is the tool-call id
+    /// the questions came from, what the transcript card matches against.
+    public static var answerWaiter:
+        (@Sendable (UUID?, [UserQuestionItem], UUID?) async -> String)?
 
     /// Active pending answers by chat ID or session.
     private static let lock = NSLock()
     private static var pendingQuestions: [String: [UserQuestionItem]] = [:]
+    /// One parked execution per chat key. `submitAnswer` resumes it with the
+    /// user's reply; cancellation resumes it with the dismissed note.
+    private static var answerContinuations: [String: CheckedContinuation<String, Never>] = [:]
 
     public static func parseQuestions(from arguments: [String: String]) throws -> [UserQuestionItem] {
         if let jsonRaw = arguments["questions"], let data = jsonRaw.data(using: .utf8) {
@@ -66,7 +79,7 @@ public enum AskUserQuestionExecutor {
         pendingQuestions[key] = items
         lock.unlock()
 
-        onQuestionsAsked?(chatID, items)
+        onQuestionsAsked?(chatID, items, nil)
 
         var rendered = "Presented \(items.count) question(s) to the user:\n"
         for (i, q) in items.enumerated() {
@@ -76,6 +89,86 @@ public enum AskUserQuestionExecutor {
             }
         }
         return rendered
+    }
+
+    /// The interactive path: like `execute`, but the tool result does not
+    /// exist until the user answers. The registry routes here whenever the
+    /// app installed `answerWaiter`, which is what makes the questions in
+    /// the transcript tappable (qwen-code's AskUserQuestion card). A second
+    /// call for the same chat while one is parked replaces the PENDING
+    /// continuation bookkeeping only after the old one has been retired --
+    /// which cannot happen here, because the registry executes one call per
+    /// chat at a time.
+    public static func executeAwaitingAnswer(
+        arguments: [String: String], chatID: UUID?, toolCallID: UUID? = nil
+    ) async throws -> String {
+        let items = try parseQuestions(from: arguments)
+        guard !items.isEmpty else {
+            throw NSError(
+                domain: "TurboSparkTool",
+                code: 30,
+                userInfo: [NSLocalizedDescriptionKey: "No questions provided in AskUserQuestion call."]
+            )
+        }
+        guard let waiter = answerWaiter else {
+            return try execute(arguments: arguments, chatID: chatID)
+        }
+
+        let key = chatID?.uuidString ?? "default"
+        lock.lock()
+        pendingQuestions[key] = items
+        lock.unlock()
+
+        let answer = await withTaskCancellationHandler {
+            await waiter(chatID, items, toolCallID)
+        } onCancel: {
+            // Stop during a parked question dismisses it: the loop must
+            // never wait on a card the user asked to cancel.
+            submitAnswer(chatID: chatID, answers: [:], dismissed: true)
+        }
+        lock.lock()
+        pendingQuestions[key] = nil
+        lock.unlock()
+        return answer
+    }
+
+    /// Delivers the user's reply (or a dismissal) to the parked execution.
+    /// Idempotent: without a parked continuation this is a no-op, so a
+    /// double-click or a Stop race cannot crash a second resume.
+    public static func submitAnswer(
+        chatID: UUID?, answers: [String: String], dismissed: Bool = false
+    ) {
+        let key = chatID?.uuidString ?? "default"
+        lock.lock()
+        let continuation = answerContinuations.removeValue(forKey: key)
+        lock.unlock()
+        guard let continuation else { return }
+        if dismissed {
+            continuation.resume(returning: "The user dismissed the questions without answering.")
+            return
+        }
+        var rendered = "The user answered:\n"
+        for (question, answer) in answers {
+            rendered += "\n\(question): \(answer)"
+        }
+        continuation.resume(returning: rendered)
+    }
+
+    /// Parks the calling task until `submitAnswer` fires for this chat. The
+    /// executor hands this to `answerWaiter`'s caller, which presents the
+    /// questions and comes back through here.
+    public static func waitForAnswer(
+        chatID: UUID?, continuation: CheckedContinuation<String, Never>
+    ) {
+        let key = chatID?.uuidString ?? "default"
+        lock.lock()
+        let previous = answerContinuations.updateValue(continuation, forKey: key)
+        lock.unlock()
+        // A stale continuation for the same key means an earlier question
+        // was never retired; resuming it with a note keeps its task alive
+        // instead of leaking it forever.
+        previous?.resume(
+            returning: "The user dismissed the questions without answering.")
     }
 }
 

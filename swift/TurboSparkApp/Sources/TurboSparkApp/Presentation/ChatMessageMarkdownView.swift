@@ -189,6 +189,54 @@ private struct CodeBlockContainer<Content: View>: View {
         return tag == "html" || tag == "htm"
     }
 
+    /// The qwen-code MarkdownChartRenderer parity: an `echarts` (or
+    /// `chartjs`) fence previews as a live chart. The fence body is a JSON
+    /// option object, so the preview wraps it in a page that loads the
+    /// library from CDN and hands it the option verbatim. Nil for anything
+    /// that is not a chart fence.
+    private var chartPreviewHTML: String? {
+        guard onPreviewHTML != nil else { return nil }
+        switch language?.lowercased() {
+        case "echarts", "echarts-fulldata":
+            // The panel grants network per page, so the CDN fetch asks once;
+            // until then the page shows its own loading notice instead of a
+            // silent blank frame.
+            return """
+            <!doctype html><html><head><meta charset="utf-8">
+            <style>html,body{margin:0;height:100%;background:#fff}
+            #c{width:100%;height:100%}#n{font:13px -apple-system;padding:16px;color:#666}</style></head>
+            <body><div id="n">Loading ECharts from cdn.jsdelivr.net (grant network access to render)...</div>
+            <div id="c"></div>
+            <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+            <script>
+            var el=document.getElementById('n');
+            try{
+              if(typeof echarts==='undefined'){el.textContent='ECharts failed to load. Grant network access and retry.';}
+              else{el.remove();echarts.init(document.getElementById('c')).setOption(\(code));}
+            }catch(e){el.textContent='Chart error: '+e.message;}
+            </script></body></html>
+            """
+        case "chartjs", "chart.js", "chart":
+            return """
+            <!doctype html><html><head><meta charset="utf-8">
+            <style>html,body{margin:0;height:100%;background:#fff}
+            #c{width:100%;height:100%;position:relative}#n{font:13px -apple-system;padding:16px;color:#666}</style></head>
+            <body><div id="n">Loading Chart.js from cdn.jsdelivr.net (grant network access to render)...</div>
+            <div id="c"><canvas id="cv"></canvas></div>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+            <script>
+            var el=document.getElementById('n');
+            try{
+              if(typeof Chart==='undefined'){el.textContent='Chart.js failed to load. Grant network access and retry.';}
+              else{el.remove();new Chart(document.getElementById('cv'),\(code));}
+            }catch(e){el.textContent='Chart error: '+e.message;}
+            </script></body></html>
+            """
+        default:
+            return nil
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -218,6 +266,22 @@ private struct CodeBlockContainer<Content: View>: View {
                     .help("Open this HTML in the sandboxed preview panel")
                     .accessibilityLabel("Preview \(language ?? "html") block")
                     .accessibilityHint("Opens the block in the sandboxed preview panel")
+                } else if let chart = chartPreviewHTML {
+                    Button {
+                        onPreviewHTML?(chart)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chart.xyaxis.line")
+                                .accessibilityHidden(true)
+                            Text("Preview", bundle: .module)
+                        }
+                        .themedFont(.tiny, weight: .medium)
+                        .foregroundStyle(Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Render this chart in the preview panel")
+                    .accessibilityLabel("Preview \(language ?? "chart") block")
+                    .accessibilityHint("Renders the block as a chart in the preview panel")
                 }
                 Button {
                     copyCode()

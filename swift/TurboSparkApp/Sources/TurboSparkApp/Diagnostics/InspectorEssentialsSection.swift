@@ -122,7 +122,17 @@ private struct ThinkingLevelControl: View {
 
 // MARK: - Context window
 
-/// The context window, priced per rung against this machine's memory.
+/// The context window, priced per rung against this machine's memory, in ONE
+/// control: a collapsed summary button that opens a popover of every
+/// selectable option (each priced rung, Auto, and Custom).
+///
+/// **THIS USED TO BE TWO CONTROLS.** An always-expanded list of priced rows
+/// sat above a separate, plain-text `Picker` (the only thing that could
+/// actually express Auto or a custom size) -- the rows looked like the whole
+/// control and were not, and the real dropdown was easy to miss below them.
+/// Tapping a rung already set `model.maxContextTokens` directly; what moved
+/// here is the DISPLAY, collapsing both into one button plus a popover, not
+/// the underlying wiring.
 ///
 /// **NOTHING HERE MULTIPLIES A FIGURE.** KV cost is not linear in the window:
 /// a sliding-window layer is a ring capped at `sliding_window + 128` and stops
@@ -132,16 +142,18 @@ private struct ThinkingLevelControl: View {
 /// that refuses a window the machine affords. `catalog::context_ladder` calls
 /// `fit` per rung; this view renders those rungs and computes nothing.
 ///
-/// An empty ladder therefore renders NO ladder: never a ladder of zeros, and
-/// never one filled from a family baseline. `ContextWindowOptionsView` sits
-/// under the rungs either way, because `Auto` and a custom size are not rungs
-/// and a ladder alone would be a one-way door out of both.
+/// An empty ladder therefore offers NO priced rows in the popover: never a
+/// ladder of zeros, and never one filled from a family baseline. The popover
+/// falls back to the fixed `AppContextLengthOption` presets (unpriced) in
+/// that case, because Auto and a custom size are not rungs either way and a
+/// probe failure should not remove the ability to pick a window at all.
 private struct ContextLadderPicker: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     @State private var ladder: ContextLadder?
     @State private var loadFailed = false
+    @State private var isCustom = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -157,13 +169,14 @@ private struct ContextLadderPicker: View {
                 }
             }
 
-            if let rungs = ladder?.rungs, !rungs.isEmpty {
-                VStack(spacing: 1) {
-                    ForEach(rungs) { rung in
-                        rungRow(rung)
-                    }
-                }
+            ContextSelectionButton(model: model, ladder: ladder, isCustom: $isCustom)
 
+            if isCustom {
+                customSizeRow
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if let rungs = ladder?.rungs, !rungs.isEmpty {
                 Text("Each row is priced by the engine, not scaled from one figure.", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.secondary)
@@ -183,129 +196,63 @@ private struct ContextLadderPicker: View {
                     .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
-
-            // ALWAYS present, ladder or no ladder. A rung is a concrete
-            // window, so `Auto` (resolve from the checkpoint's trained
-            // context and this machine's memory) and an arbitrary custom
-            // size have no rung to be -- picking one off the ladder would
-            // otherwise be a one-way door out of Auto. When there is no
-            // ArchConfig there is no ladder at all, and this is the whole
-            // control rather than the escape hatch under it.
-            ContextWindowOptionsView(model: model)
         }
         .padding(.vertical, 2)
         .task(id: model.selected?.path) { await loadLadder() }
+        .onAppear { syncIsCustom() }
+        .onChange(of: model.maxContextTokens) { _, _ in syncIsCustom() }
+        .animation(.smooth(duration: 0.2), value: isCustom)
     }
 
-    /// One rung: window, its measured cost, the engine's verdict, and what is
-    /// notable about it. A refused rung is DISABLED -- it is the RAM ceiling
-    /// made visible, and offering it would let the user pick a window the
-    /// open then refuses.
-    @ViewBuilder
-    private func rungRow(_ rung: ContextLadderRung) -> some View {
-        let presentation = ModelFitPresentation.of(rung.verdict)
-        let isCurrent = model.resolvedContextTokens == Int(rung.context)
-        let isRefused = rung.verdict == .refused
-
-        Button {
-            model.maxContextTokens = Int(rung.context)
-        } label: {
-            HStack(spacing: 6) {
-                // minWidth, NOT a fixed width. A fixed one has to be sized
-                // against the widest value the ladder can ever hold, and
-                // sizing it against the ladder in front of you is how this
-                // got shipped wrapping: a 3-rung gptoss ladder tops out at
-                // 16,384, and the full one carries 131,072 and 1,007,616,
-                // which broke across two lines at width 52. `fixedSize`
-                // is what actually forbids the wrap; the frame only keeps
-                // the small values right-aligned with each other.
-                Text(rung.context.formatted())
-                    .themedFont(.small, weight: isCurrent ? .semibold : .regular)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: 52, alignment: .trailing)
-
-                Text(MetricFormat.storage(rung.counted))
-                    .themedFont(.small)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: 56, alignment: .trailing)
-                    .foregroundStyle(.secondary)
-
-                Circle()
-                    .fill(presentation.color)
-                    .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
-
-                // The inspector column is ~260pt and these five cells do not
-                // all fit at every text size. The VERDICT is the one that
-                // must never wrap or truncate ("Resident" broke across two
-                // lines at the shipped width), so it is fixed-size and the
-                // marker beside it is what gives way.
-                Text(presentation.compactLabel)
-                    .themedFont(.small)
-                    .foregroundStyle(presentation.color)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-
-                Spacer(minLength: 4)
-
-                // Whole or not at all. Truncation leaves "t..." for
-                // "trained" and "beyo..." for "beyond", which spends the
-                // width and says nothing; the same words are in the row's
-                // help text and its accessibility value either way.
-                if let marker = marker(rung) {
-                    ViewThatFits(in: .horizontal) {
-                        Text(marker)
-                            .themedFont(.tiny)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                        Color.clear.frame(width: 0, height: 0)
-                    }
-                    .layoutPriority(-1)
-                }
+    private var customSizeRow: some View {
+        LabeledContent("Custom Size") {
+            HStack(spacing: 8) {
+                Slider(
+                    value: Binding(
+                        get: { Double(model.maxContextTokens) },
+                        set: {
+                            let raw = Int($0)
+                            let step = raw < 8192 ? 256 : (raw < 32768 ? 512 : 1024)
+                            let snapped = max(512, min(131072, ((raw + step / 2) / step) * step))
+                            model.maxContextTokens = snapped
+                        }
+                    ),
+                    in: 512...131072
+                )
+                .accessibilityLabel("Custom context size")
+                .accessibilityValue("\(model.maxContextTokens) tokens")
+                Text("\(model.maxContextTokens.formatted())", bundle: .module)
+                    .themedFont(.small).monospacedDigit()
+                    .frame(width: 55, alignment: .trailing)
             }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 5)
-            .background {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isCurrent ? theme.accent.opacity(0.12) : .clear)
-            }
-            .contentShape(.rect(cornerRadius: 7))
         }
-        .buttonStyle(TSPressScaleStyle(scale: 0.99))
-        .disabled(isRefused)
-        .opacity(isRefused ? 0.45 : 1)
-        .help(
-            isRefused
-                ? "Needs more memory than this Mac has, with this model loaded."
-                : "Use a \(rung.context.formatted()) token window (\(MetricFormat.storage(rung.counted)) of KV cache)")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(rung.context.formatted()) tokens")
-        .accessibilityValue(
-            "\(MetricFormat.storage(rung.counted)), \(presentation.label)"
-                + (isCurrent ? ", current" : "")
-                + (isRefused ? ", too large for this Mac" : ""))
-        .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
     }
 
-    /// One short word, or nothing.
-    ///
-    /// The inspector row has about 50pt left after the window, the cost and
-    /// the verdict, which is one `.tiny` word -- "current" alone truncated to
-    /// "c..." at the shipped width. So: CURRENT IS NOT A MARKER HERE. The
-    /// highlighted background and the semibold digits already say it, and the
-    /// accessibility value below still spells it for VoiceOver, which is the
-    /// reader that cannot see either. The other three are the ones a user
-    /// cannot infer from the row itself, and they are mutually exclusive in
-    /// practice, so the joined form was never really reachable.
-    private func marker(_ rung: ContextLadderRung) -> String? {
-        if rung.pastTrained { return "beyond" }
-        if rung.isTrainedMax { return "trained" }
-        if rung.isLargestFitting { return "max fit" }
-        return nil
+    /// `isCustom` is a stored flag, not a computed one, because choosing
+    /// "Custom" from the popover has to WRITE two things as one gesture (the
+    /// flag, and a seed value when the current setting is Auto) -- a purely
+    /// computed property cannot do that. This keeps it in sync with
+    /// `model.maxContextTokens` for every other path: a persisted setting
+    /// from before this model was probed, a ladder that just finished
+    /// loading, or a rung/preset tapped in the popover. Clears whenever the
+    /// current token count matches Auto, a priced rung, or (with no ladder) a
+    /// fixed preset, so a real, nameable selection never gets stuck reading
+    /// as "Custom".
+    private func syncIsCustom() {
+        let tokens = model.maxContextTokens
+        if tokens == 0 {
+            isCustom = false
+            return
+        }
+        if let rungs = ladder?.rungs, rungs.contains(where: { Int($0.context) == tokens }) {
+            isCustom = false
+            return
+        }
+        if (ladder?.rungs.isEmpty ?? true), AppContextLengthOption(rawValue: tokens) != nil {
+            isCustom = false
+            return
+        }
+        isCustom = true
     }
 
     /// Reads the INSTALLED model's own manifest through the same trio
@@ -314,6 +261,7 @@ private struct ContextLadderPicker: View {
         guard let path = model.selected?.path, !path.isEmpty else {
             ladder = nil
             loadFailed = false
+            syncIsCustom()
             return
         }
         do {
@@ -327,5 +275,265 @@ private struct ContextLadderPicker: View {
             ladder = nil
             loadFailed = true
         }
+        syncIsCustom()
+    }
+}
+
+/// The collapsed control: one row showing the current selection, tapping it
+/// opens `ContextSelectionPopover`.
+private struct ContextSelectionButton: View {
+    @Environment(\.appTheme) private var theme
+    @ObservedObject var model: AppModel
+    let ladder: ContextLadder?
+    @Binding var isCustom: Bool
+    @State private var isPresented = false
+
+    private var currentRung: ContextLadderRung? {
+        ladder?.rungs.first { Int($0.context) == model.maxContextTokens }
+    }
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            HStack(spacing: 6) {
+                summary
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .themedFont(points: 9, weight: .semibold)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(.rect(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Context window")
+        .accessibilityValue(summaryAccessibilityValue)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            ContextSelectionPopover(
+                model: model,
+                ladder: ladder,
+                isCustom: $isCustom,
+                onDismiss: { isPresented = false })
+        }
+    }
+
+    // Points-based sizing (`theme.ui(points:)`), not `.themedFont(.small/.tiny)`:
+    // the step-based sizes are scaled off the user's BASE UI font size
+    // (16pt by default), so `.small` renders at ~14.7pt -- notably larger
+    // than the ~11-12.5pt `theme.ui(points:)` text this button sits beside
+    // in the sidebar and chat rows. Matching the surrounding chrome's scale
+    // matters more here than matching the Inspector's own (already larger)
+    // convention, since this control renders right next to that chrome.
+    @ViewBuilder
+    private var summary: some View {
+        if let rung = currentRung {
+            let presentation = ModelFitPresentation.of(rung.verdict)
+            Circle()
+                .fill(presentation.color)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+            Text(rung.context.formatted())
+                .font(theme.ui(points: 12, weight: .semibold))
+                .monospacedDigit()
+            Text(MetricFormat.storage(rung.counted))
+                .font(theme.ui(points: 11))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Text(presentation.compactLabel)
+                .font(theme.ui(points: 11))
+                .foregroundStyle(presentation.color)
+        } else if model.maxContextTokens == 0 {
+            Text("Auto (\(model.resolvedContextTokens.formatted()))", bundle: .module)
+                .font(theme.ui(points: 12, weight: .semibold))
+        } else if isCustom {
+            Text("Custom \u{00B7} \(model.maxContextTokens.formatted())", bundle: .module)
+                .font(theme.ui(points: 12, weight: .semibold))
+                .monospacedDigit()
+        } else {
+            Text(model.maxContextTokens.formatted())
+                .font(theme.ui(points: 12, weight: .semibold))
+                .monospacedDigit()
+        }
+    }
+
+    private var summaryAccessibilityValue: String {
+        if let rung = currentRung {
+            let presentation = ModelFitPresentation.of(rung.verdict)
+            return "\(rung.context.formatted()) tokens, \(MetricFormat.storage(rung.counted)), \(presentation.label)"
+        }
+        if model.maxContextTokens == 0 {
+            return "Auto, \(model.resolvedContextTokens.formatted()) tokens"
+        }
+        return "\(model.maxContextTokens.formatted()) tokens"
+    }
+}
+
+/// The popover's contents: Auto, then every priced rung (or, with no ladder,
+/// the fixed presets), then Custom. One `onSelect` per row, mirroring
+/// `ToolApprovalMenuPopover`'s shape (icon/dot, one or two lines of text, a
+/// trailing checkmark on the current selection) -- that view is this app's
+/// existing precedent for a rich per-row menu, needed because a native
+/// `Picker`/`Menu` on macOS can only show plain text per row
+/// (`ModelLoaderControl.swift`'s `.menuStyle(.button)` gotcha).
+private struct ContextSelectionPopover: View {
+    @Environment(\.appTheme) private var theme
+    @ObservedObject var model: AppModel
+    let ladder: ContextLadder?
+    @Binding var isCustom: Bool
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 2) {
+            autoRow
+
+            if let rungs = ladder?.rungs, !rungs.isEmpty {
+                ForEach(rungs) { rung in
+                    rungRow(rung)
+                }
+            } else {
+                ForEach(AppContextLengthOption.allCases.filter { $0 != .auto }) { option in
+                    fixedOptionRow(option)
+                }
+            }
+
+            customRow
+        }
+        .padding(6)
+        .frame(width: 300)
+        .background(TurboSparkTheme.surfaceColor)
+    }
+
+    private var autoRow: some View {
+        optionRow(
+            isSelected: model.maxContextTokens == 0,
+            primary: Text("Auto", bundle: .module),
+            secondary: Text("\(model.resolvedContextTokens.formatted()) tokens, resolved from the checkpoint and this machine", bundle: .module),
+            dotColor: nil,
+            disabled: false
+        ) {
+            isCustom = false
+            model.maxContextTokens = 0
+            onDismiss()
+        }
+    }
+
+    private func rungRow(_ rung: ContextLadderRung) -> some View {
+        let presentation = ModelFitPresentation.of(rung.verdict)
+        let isSelected = !isCustom && Int(rung.context) == model.maxContextTokens
+        let isRefused = rung.verdict == .refused
+        var secondary = "\(MetricFormat.storage(rung.counted)) \u{00B7} \(presentation.label)"
+        if let marker = marker(rung) {
+            secondary += " \u{00B7} \(marker)"
+        }
+
+        return optionRow(
+            isSelected: isSelected,
+            primary: Text(rung.context.formatted()),
+            secondary: Text(secondary),
+            dotColor: presentation.color,
+            disabled: isRefused
+        ) {
+            isCustom = false
+            model.maxContextTokens = Int(rung.context)
+            onDismiss()
+        }
+        .help(
+            isRefused
+                ? "Needs more memory than this Mac has, with this model loaded."
+                : "Use a \(rung.context.formatted()) token window (\(MetricFormat.storage(rung.counted)) of KV cache)")
+        .accessibilityLabel("\(rung.context.formatted()) tokens")
+        .accessibilityValue("\(MetricFormat.storage(rung.counted)), \(presentation.label)"
+            + (isRefused ? ", too large for this Mac" : ""))
+    }
+
+    private func fixedOptionRow(_ option: AppContextLengthOption) -> some View {
+        optionRow(
+            isSelected: !isCustom && model.maxContextTokens == option.tokens,
+            primary: Text(option.menuLabel),
+            secondary: nil,
+            dotColor: nil,
+            disabled: false
+        ) {
+            isCustom = false
+            model.maxContextTokens = option.tokens
+            onDismiss()
+        }
+    }
+
+    private var customRow: some View {
+        optionRow(
+            isSelected: isCustom,
+            primary: Text("Custom\u{2026}", bundle: .module),
+            secondary: Text("Pick any size from 512 to 131,072", bundle: .module),
+            dotColor: nil,
+            disabled: false
+        ) {
+            if model.maxContextTokens == 0 {
+                model.maxContextTokens = model.resolvedContextTokens
+            }
+            isCustom = true
+            onDismiss()
+        }
+    }
+
+    /// One short word, or nothing. Mirrors the marker this control used to
+    /// show as a separate trailing column on its always-visible rows; here it
+    /// is folded into the secondary line since the popover has room for it.
+    private func marker(_ rung: ContextLadderRung) -> String? {
+        if rung.pastTrained { return "beyond" }
+        if rung.isTrainedMax { return "trained" }
+        if rung.isLargestFitting { return "max fit" }
+        return nil
+    }
+
+    @ViewBuilder
+    private func optionRow(
+        isSelected: Bool,
+        primary: Text,
+        secondary: Text?,
+        dotColor: Color?,
+        disabled: Bool,
+        onSelect: @escaping () -> Void
+    ) -> some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                if let dotColor {
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 7, height: 7)
+                        .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    primary
+                        .font(theme.ui(points: 12, weight: isSelected ? .semibold : .regular))
+                        .foregroundStyle(Color.primary)
+                    if let secondary {
+                        secondary
+                            .font(theme.ui(points: 10.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 4)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .themedFont(points: 10, weight: .bold)
+                        .foregroundStyle(Color.primary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                isSelected ? theme.accent.opacity(0.12) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(.rect(cornerRadius: 6))
+        }
+        .buttonStyle(TSPressScaleStyle(scale: 0.99))
+        .disabled(disabled)
+        .opacity(disabled ? 0.45 : 1)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }

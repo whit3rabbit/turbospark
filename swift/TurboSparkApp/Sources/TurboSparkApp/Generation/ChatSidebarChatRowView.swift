@@ -40,8 +40,14 @@ struct ChatSidebarChatRowView: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(
                     isSelected
-                        ? theme.accent.opacity(0.13)
+                        ? theme.accent.opacity(0.18)
                         : Color.primary.opacity(isHovered ? 0.05 : 0))
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(theme.accent.opacity(0.25), lineWidth: 1)
+                    }
+                }
         }
         // The "you are here" mark. Full-opacity accent on a 2.5pt bar
         // survives any accent/background pairing the theme allows.
@@ -80,11 +86,25 @@ struct ChatSidebarChatRowView: View {
                 model.setChatArchived(id: chat.id, archived: !chat.isArchived)
             }
             .disabled(chat.isGhost)
+            // The qwen-code "open in split view" action: the chat joins the
+            // pane column without leaving the list.
+            Button(model.isSplitPane(chatID: chat.id) ? "Close Split Pane" : "Open in Split View") {
+                model.toggleSplitPane(chatID: chat.id)
+            }
+            .disabled(chat.isGhost || model.isRunning)
             Button("Delete", role: .destructive) {
                 chatPendingDeletion = chat
             }
             .disabled(model.isRunning)
         }
+    }
+
+    /// The chat's project accent, or nil for a projectless chat. Resolved
+    /// off the chat's own projectID so a row never depends on which project
+    /// is currently selected.
+    private var projectAccent: Color? {
+        guard chat.projectID != nil else { return nil }
+        return ProjectAccentColor.forProject(id: chat.projectID).color
     }
 
     private func selectButton(isSelected: Bool) -> some View {
@@ -97,10 +117,22 @@ struct ChatSidebarChatRowView: View {
                 rowIcon(isSelected: isSelected)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(chat.title)
-                        .font(theme.ui(points: 12.5, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(chat.title)
+                            .font(theme.ui(points: 12.5, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        // The qwen-code workspace accent: one deterministic
+                        // dot per project, so chats from different roots
+                        // read apart without reading any words.
+                        if let accent = projectAccent {
+                            Circle()
+                                .fill(accent)
+                                .frame(width: 6, height: 6)
+                                .help("Project")
+                                .accessibilityHidden(true)
+                        }
+                    }
                     if !chat.preview.isEmpty {
                         Text(chat.preview)
                             .font(theme.ui(points: 11))

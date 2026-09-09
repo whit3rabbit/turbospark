@@ -451,7 +451,14 @@ public enum AppToolRegistry {
                 output = try await stopper(agentID)
 
             case "askuserquestion", "ask_user_question", "ask_question", "question":
-                output = try AskUserQuestionExecutor.execute(arguments: call.arguments, chatID: chatID)
+                if AskUserQuestionExecutor.answerWaiter != nil {
+                    // Interactive: the result does not exist until the user
+                    // answers the card in the transcript.
+                    output = try await AskUserQuestionExecutor.executeAwaitingAnswer(
+                        arguments: call.arguments, chatID: chatID, toolCallID: call.id)
+                } else {
+                    output = try AskUserQuestionExecutor.execute(arguments: call.arguments, chatID: chatID)
+                }
 
             case "enterplanmode", "enter_plan_mode", "plan_mode", "plan":
                 output = PlanModeExecutor.enter(arguments: call.arguments, chatID: chatID)

@@ -258,6 +258,27 @@ public final class AppModel: ObservableObject {
     /// merged. Surfaced rather than swallowed: a dropped patch means the run
     /// lost a step's bookkeeping, which is invisible in the transcript.
     @Published public var skillStateLastError: String? = nil
+    /// The questions an `AskUserQuestion` tool call is parked on (the
+    /// qwen-code inline question card). Non-nil while the model's turn is
+    /// suspended inside the tool waiting for the user's pick; the
+    /// transcript card renders tappable options while it is set.
+    @Published public var pendingUserQuestions: PendingUserQuestions? = nil
+    /// Whether the git info sheet (`/diff`, `/log`, `/prs`) is showing.
+    @Published public var showGitSheet: Bool = false
+    @Published public var gitInfoTab: GitInfoTab = .diff
+    /// The full unified diff behind `/diff`, fetched once per presentation.
+    @Published public var gitDiffText: String = ""
+    /// The commits behind `/log`, newest first.
+    @Published public var gitCommits: [WorktreeCommit] = []
+    /// The pull requests behind `/prs`, newest first.
+    @Published public var gitPullRequests: [GitPullRequestRow] = []
+    @Published public var isLoadingGitInfo: Bool = false
+    /// A load error, shown inside the sheet above the stale rows.
+    @Published public var gitInfoError: String? = nil
+    /// The chats shown as secondary split panes (qwen-code split-view
+    /// parity), in pane order. Restored from defaults so the pane set
+    /// survives a relaunch, the way the web shell's `?split=` URL does.
+    @Published public var splitChatIDs: [UUID] = AppModel.loadSplitPaneIDs()
 
     // Skills State
     /// User-scoped skills (~/.turbospark/skills and user agent directories).
@@ -724,6 +745,16 @@ public final class AppModel: ObservableObject {
                 guard let self = self else { return }
                 self.activeToast = AppToast(message: "\(title): \(message)", style: .info)
             }
+        }
+        // The interactive AskUserQuestion surface (qwen-code parity): the
+        // registry routes question calls through this waiter, the transcript
+        // card answers them, and the tool result carries the reply back.
+        AskUserQuestionExecutor.answerWaiter = { [weak self] chatID, items, toolCallID in
+            guard let self else {
+                return "The user interface is not available to answer questions."
+            }
+            return await self.waitForUserAnswers(
+                chatID: chatID, items: items, toolCallID: toolCallID)
         }
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
         // A quarantined settings, chat or project file is the one thing the

@@ -103,19 +103,50 @@ public struct WelcomeHeroView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
         .padding(.vertical, 28)
-        // A soft accent wash behind the hero. This is the only place in the
-        // app with a gradient; it exists to stop the empty state from
-        // reading as a blank window, and it is subtle enough that text on
-        // top of it still clears contrast.
+        // A soft accent wash behind the hero, plus a scattering of tiny
+        // dots in dark mode for a "night sky" backdrop. This is the only
+        // place in the app with a gradient; it exists to stop the empty
+        // state from reading as a blank window, and it stays subtle enough
+        // that text on top of it still clears contrast.
         .background {
-            RadialGradient(
-                colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.07), .clear],
-                center: UnitPoint(x: 0.5, y: 0.26),
-                startRadius: 0,
-                endRadius: 460)
+            ZStack {
+                starfieldOverlay
+                RadialGradient(
+                    colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.07), .clear],
+                    center: UnitPoint(x: 0.5, y: 0.26),
+                    startRadius: 0,
+                    endRadius: 460)
+            }
             .allowsHitTesting(false)
         }
         .animation(TSMotion.pane, value: model.promptText.isEmpty)
+    }
+
+    /// Fixed sparkle positions for the dark-mode backdrop: (x fraction, y
+    /// fraction, diameter, opacity). Fixed rather than randomized per render
+    /// so the scatter doesn't reshuffle on every layout pass, and kept out
+    /// of light mode entirely since the same low-opacity dots read as dust
+    /// on a white background rather than as stars.
+    private static let starfieldDots: [(x: CGFloat, y: CGFloat, diameter: CGFloat, opacity: Double)] = [
+        (0.08, 0.12, 2.5, 0.35), (0.18, 0.32, 1.5, 0.25), (0.27, 0.08, 2.0, 0.30),
+        (0.35, 0.42, 1.5, 0.20), (0.46, 0.18, 2.5, 0.40), (0.58, 0.06, 1.5, 0.28),
+        (0.63, 0.35, 2.0, 0.22), (0.72, 0.14, 1.5, 0.32), (0.81, 0.28, 2.5, 0.24),
+        (0.89, 0.10, 1.5, 0.30), (0.93, 0.38, 2.0, 0.18), (0.14, 0.48, 1.5, 0.16),
+        (0.5, 0.5, 2.0, 0.14), (0.7, 0.46, 1.5, 0.18)
+    ]
+
+    @ViewBuilder
+    private var starfieldOverlay: some View {
+        if theme.isDark {
+            GeometryReader { proxy in
+                ForEach(Array(Self.starfieldDots.enumerated()), id: \.offset) { _, dot in
+                    Circle()
+                        .fill(theme.accent.opacity(dot.opacity))
+                        .frame(width: dot.diameter, height: dot.diameter)
+                        .position(x: proxy.size.width * dot.x, y: proxy.size.height * dot.y)
+                }
+            }
+        }
     }
 
     @AppStorage(AppLanguage.storageKey) private var languageRawValue = AppLanguage.system.rawValue

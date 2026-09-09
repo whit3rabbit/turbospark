@@ -7,6 +7,16 @@ import SwiftUI
 /// `.callout` to `.body` on macOS, so a site that used to say `.caption` reads
 /// the same after conversion. They are relative on purpose: the point of the
 /// step is that every themed surface moves together when the base size does.
+///
+/// `.tiny`/`.small` were recalibrated 2026-09-08: at the 16pt default base
+/// they used to render at about 13.3pt/14.7pt, while the OTHER font-sizing
+/// convention in this app (`theme.ui(points: N)`, used for chat/sidebar rows)
+/// renders equivalent small/secondary text at about 11pt/12.5pt -- two
+/// systems for the same semantic role, never reconciled, so a step-based
+/// control placed next to a points-based one (a popover next to a sidebar
+/// row) visibly mismatched. The new factors target those same point values;
+/// `.base` and up are untouched, since body/heading text wasn't part of the
+/// mismatch.
 public enum AppFontStep: Sendable {
     case tiny
     case small
@@ -19,8 +29,8 @@ public enum AppFontStep: Sendable {
 
     public var factor: CGFloat {
         switch self {
-        case .tiny: 0.83
-        case .small: 0.92
+        case .tiny: 0.69
+        case .small: 0.78
         case .base: 1.0
         case .large: 1.08
         case .title3: 1.15

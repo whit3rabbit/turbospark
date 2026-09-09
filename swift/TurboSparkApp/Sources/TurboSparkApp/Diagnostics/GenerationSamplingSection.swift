@@ -239,11 +239,25 @@ struct GenerationSamplingSection: View {
             } else {
                 ForEach(model.samplingPresets) { preset in
                     LabeledContent {
-                        Button("Apply") {
-                            applyPreset(preset)
+                        HStack(spacing: 6) {
+                            Button("Apply") {
+                                applyPreset(preset)
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityLabel("Apply sampling preset \(preset.name)")
+
+                            // A visible delete affordance beside the
+                            // right-click one below: this was context-menu
+                            // only, unlike "Remove Override" above, whose
+                            // destructive action is a plainly visible button.
+                            Button(role: .destructive) {
+                                model.deleteSamplingPreset(preset.id)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Delete sampling preset \(preset.name)")
                         }
-                        .buttonStyle(.bordered)
-                        .accessibilityLabel("Apply sampling preset \(preset.name)")
                     } label: {
                         Text(preset.name)
                     }

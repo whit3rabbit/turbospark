@@ -53,7 +53,7 @@ struct RootView: View {
                 rightColumn: rightColumnClaimant),
             minHeight: AppChromeLayout.minimumHeight)
         .clipped()
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(TurboSparkTheme.pageBackgroundColor)
         .appThemed()
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isChatSidebarVisible)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isInspectorVisible)
@@ -197,9 +197,11 @@ struct RootView: View {
                     FilePreviewView(model: model, attachment: attachment)
                 }
             } else if isInspectorVisible {
+                verticalHairline
                 inspectorColumn
             }
         case .inspector:
+            verticalHairline
             inspectorColumn
         }
     }
@@ -232,7 +234,7 @@ struct RootView: View {
         }
         .frame(width: currentWidth)
         .frame(maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(TurboSparkTheme.pageBackgroundColor)
         .clipped()
         .layoutPriority(1)
         .zIndex(1)
@@ -260,8 +262,17 @@ struct RootView: View {
         case .chat:
             if model.requiresModelInstallation && !model.isInstallingModel {
                 ModelInstallView(model: model)
-            } else {
+            } else if model.splitPaneChats.isEmpty {
                 conversationView
+            } else {
+                // The qwen-code split view: secondary chats beside the main
+                // conversation, each pane independently resizable.
+                HSplitView {
+                    conversationView
+                        .frame(minWidth: 360)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    SplitChatPanesView(model: model)
+                }
             }
         }
     }

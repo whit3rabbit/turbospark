@@ -103,7 +103,10 @@ final class ComposerAutocompleteTests: XCTestCase {
         // prefix pins the cap and the dedupe, not the whole alphabet.
         let primaryNames = Set(BuiltInSlashCommand.all.map { "/" + $0.name })
         XCTAssertTrue(rows.map(\.title).allSatisfy(primaryNames.contains))
-        XCTAssertEqual(rows.count, BuiltInSlashCommand.all.count, "the empty prefix still lists every command")
+        XCTAssertEqual(
+            rows.count,
+            min(ComposerAutocompleteEngine.maxSuggestions, BuiltInSlashCommand.all.count),
+            "the empty prefix still lists every command that fits the cap")
         // A typed prefix reaches the rows past the cap.
         XCTAssertTrue(ComposerAutocompleteEngine.slashCandidates(prefix: "theme", skills: [])
             .contains { $0.title == "/theme" })
