@@ -310,7 +310,7 @@ extension AppModel {
     /// case that corrupts something).
     public func cancelInstall() {
         let cancelledAlias = installingAlias
-        let wasRunning = TurboSparkCatalog.cancelInstall()
+        let wasRunning = TurboSparkCatalog.cancelInstall() || isInstallingModel
         installTask?.cancel()
         installTask = nil
         installingAlias = nil

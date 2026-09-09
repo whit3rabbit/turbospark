@@ -202,6 +202,45 @@ fn extract_port(args: &[String]) -> u16 {
     8080
 }
 
+/// Splits `--api-key <value>` out of `args`, returning the redacted args
+/// and the last value the flag carried.
+///
+/// **THE KEY MUST NOT RIDE THE CHILD'S COMMAND LINE.** A `turbospark-server`
+/// started with `--api-key KEY` puts that key in `ps` for the daemon's
+/// whole life and, one block below, in the meta file this function writes
+/// next to the pid -- the two surfaces `crates/server`'s own env fallback
+/// exists to keep a key off. So the pair is lifted out here and reattached
+/// as the child's `TURBOSPARK_API_KEY`, which the server's arg parser
+/// resolves when the flag is absent (`crates/server/src/main.rs`). The
+/// port extractor runs on the REDACTED args, so a key whose value is
+/// literally `--port` cannot redirect it.
+fn extract_api_key(args: &[String]) -> (Vec<String>, Option<String>) {
+    let mut redacted = Vec::with_capacity(args.len());
+    let mut api_key = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--api-key" {
+            match args.get(i + 1) {
+                Some(value) => {
+                    api_key = Some(value.clone());
+                    i += 2;
+                    continue;
+                }
+                // A valueless flag cannot be honoured and cannot stay: left
+                // in place it would make the child eat the next flag as the
+                // key. Dropped, with no key set.
+                None => {
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        redacted.push(args[i].clone());
+        i += 1;
+    }
+    (redacted, api_key)
+}
+
 fn start_daemon_internal(args: &[String]) -> Result<(), String> {
     let run = run_dir();
     fs::create_dir_all(&run)
@@ -226,10 +265,14 @@ fn start_daemon_internal(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("opening log file {}: {e}", log_path.display()))?;
 
     let server_bin = find_server_binary();
-    let port = extract_port(args);
+    let (args, api_key) = extract_api_key(args);
+    let port = extract_port(&args);
 
     let mut cmd = std::process::Command::new(&server_bin);
-    cmd.args(args);
+    cmd.args(&args);
+    if let Some(key) = api_key {
+        cmd.env("TURBOSPARK_API_KEY", key);
+    }
     cmd.stdout(log_handle.try_clone().map_err(|e| e.to_string())?);
     cmd.stderr(log_handle);
 
@@ -359,4 +402,72 @@ pub unsafe extern "C" fn ts_daemon_restart(args_json: *const c_char) -> c_int {
         };
         start_daemon_internal(&args).map_err(|e| (abi::TS_ERR_OPEN, e))
     })
+}
+
+#[cfg(test)]
+mod api_key_redaction_tests {
+    use super::extract_api_key;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).to_string()).collect()
+    }
+
+    /// The pair leaves the argv the child is handed and the value is
+    /// returned for the env attachment; everything around it is untouched.
+    #[test]
+    fn the_pair_is_lifted_out_whole() {
+        let (redacted, key) = extract_api_key(&args(&[
+            "--port",
+            "8080",
+            "--api-key",
+            "sk-secret",
+            "--system",
+            "be brief",
+        ]));
+        assert_eq!(key.as_deref(), Some("sk-secret"));
+        assert_eq!(redacted, args(&["--port", "8080", "--system", "be brief"]));
+    }
+
+    #[test]
+    fn no_flag_leaves_args_alone_and_no_key() {
+        let original = args(&["--port", "9000"]);
+        let (redacted, key) = extract_api_key(&original);
+        assert_eq!(redacted, original);
+        assert_eq!(key, None);
+    }
+
+    /// Last occurrence wins, matching a flag parser, and BOTH pairs are
+    /// redacted -- a first value left behind in argv would still be a key
+    /// in `ps`, just a stale one.
+    #[test]
+    fn every_occurrence_is_redacted_and_the_last_value_wins() {
+        let (redacted, key) = extract_api_key(&args(&[
+            "--api-key",
+            "sk-first",
+            "--guardrails",
+            "on",
+            "--api-key",
+            "sk-second",
+        ]));
+        assert_eq!(key.as_deref(), Some("sk-second"));
+        assert_eq!(redacted, args(&["--guardrails", "on"]));
+    }
+
+    /// A valueless flag cannot be honoured and must not stay: left in place
+    /// the child's parser would eat the next flag as the key.
+    #[test]
+    fn a_dangling_flag_is_dropped_without_setting_a_key() {
+        let (redacted, key) = extract_api_key(&args(&["--port", "8080", "--api-key"]));
+        assert_eq!(key, None);
+        assert_eq!(redacted, args(&["--port", "8080"]));
+    }
+
+    /// `extract_port` runs on the REDACTED args, so a key whose value is
+    /// the word `--port` cannot set the daemon's port.
+    #[test]
+    fn a_key_value_cannot_smuggle_a_port_flag() {
+        let (redacted, key) = extract_api_key(&args(&["--api-key", "--port", "--port", "9001"]));
+        assert_eq!(key.as_deref(), Some("--port"));
+        assert_eq!(redacted, args(&["--port", "9001"]));
+    }
 }

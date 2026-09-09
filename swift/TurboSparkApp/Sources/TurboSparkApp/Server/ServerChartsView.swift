@@ -89,6 +89,10 @@ struct ServerChartsView: View {
                     x: .value("Request", point.requestID),
                     y: .value("Seconds", point.prefillSeconds))
                     .foregroundStyle(by: .value("Phase", "prefill"))
+                BarMark(
+                    x: .value("Request", point.requestID),
+                    y: .value("Seconds", point.decodeSeconds))
+                    .foregroundStyle(by: .value("Phase", "decode"))
                 if let queued = point.queuedSeconds, queued > 0.001 {
                     BarMark(
                         x: .value("Request", point.requestID),

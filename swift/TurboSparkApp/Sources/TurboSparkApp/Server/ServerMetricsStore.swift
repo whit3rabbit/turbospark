@@ -78,6 +78,9 @@ public struct ServerMetricPoint: Identifiable, Equatable, Sendable {
     public let model: String
     public let tokensPerSecond: Double?
     public let prefillSeconds: Double
+    /// Zero when the request never reported a decode (an error, or a
+    /// prefill-only call), because a chart segment has to be a number.
+    public let decodeSeconds: Double
     public let queuedSeconds: Double?
     public let isError: Bool
 }
@@ -215,6 +218,7 @@ public struct ServerMetricsStore: Equatable {
                 model: model,
                 tokensPerSecond: record.tokensPerSecond,
                 prefillSeconds: prefill,
+                decodeSeconds: record.decodeSeconds ?? 0,
                 queuedSeconds: record.queuedSeconds,
                 isError: record.isError)
         }

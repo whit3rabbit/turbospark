@@ -1126,6 +1126,38 @@ final class SurfaceTests: XCTestCase {
         XCTAssertThrowsError(try server.attachEmbeddingModel("/nonexistent/model/path"))
     }
 
+    // MARK: - TurboSparkAgent launch commands
+
+    /// The plain shape is unchanged: quoted base URL, quoted key, the agent
+    /// named by the env vars it reads.
+    func testLaunchCommandWrapsBothValuesInDoubleQuotes() {
+        let cmd = TurboSparkAgent.launchCommand(
+            for: "claude", host: "127.0.0.1", port: 8080, apiKey: "sk-abc")
+        XCTAssertEqual(
+            cmd,
+            "export ANTHROPIC_BASE_URL=\"http://127.0.0.1:8080/v1\""
+                + " && export ANTHROPIC_API_KEY=\"sk-abc\" && claude")
+    }
+
+    /// **A HAND-TYPED KEY CANNOT BREAK OUT OF THE QUOTES IT IS PASTED
+    /// INSIDE.** The command goes straight into a terminal; an unescaped
+    /// quote terminates the export and a `$` or backtick runs part of the
+    /// key as a substitution. Every metacharacter a double-quoted shell
+    /// context treats specially survives as its escaped self.
+    func testLaunchCommandEscapesShellMetacharactersInTheKey() {
+        let raw = "a\\b\"c$d`e"
+        let keySegment = "a\\\\b\\\"c\\$d\\`e"
+        for agent in ["claude", "codex", "opencode", "hermes"] {
+            let cmd = TurboSparkAgent.launchCommand(for: agent, apiKey: raw)
+            XCTAssertTrue(
+                cmd.contains(keySegment),
+                "\(agent) command must escape every metacharacter: \(cmd)")
+            // The unescaped dollar must not survive inside the quotes, where
+            // the shell would read it as a substitution.
+            XCTAssertFalse(cmd.contains("c$d"), "\(agent) command leaked an unescaped $")
+        }
+    }
+
 }
 
 

@@ -292,6 +292,36 @@ final class ServerMetricsStoreTests: XCTestCase {
         XCTAssertEqual(store.points[0].requestID, 1)
     }
 
+    /// The latency chart stacks prefill, decode and queue, so a point has to
+    /// carry all three: without decode the bar reads as wall time while
+    /// omitting the phase that usually dominates it.
+    func testChartPointsCarryDecodeSeconds() {
+        var store = ServerMetricsStore()
+        store.ingest(started(1))
+        store.ingest(.requestRouted(id: 1, requested: nil, served: "alpha", stream: false))
+        store.ingest(generated(1, prefill: 0.5, decode: 1.25))
+        store.ingest(finished(1))
+
+        XCTAssertEqual(store.points.count, 1)
+        XCTAssertEqual(store.points[0].prefillSeconds, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(store.points[0].decodeSeconds, 1.25, accuracy: 1e-9)
+    }
+
+    /// A request that errored before any generation still becomes a point
+    /// (it has a prefill of nothing... no: it has NO prefill, so it is
+    /// skipped) -- decode reads 0 rather than inventing time.
+    func testDecodeSecondsIsZeroWhenTheRequestNeverGenerated() {
+        var store = ServerMetricsStore()
+        store.ingest(started(1))
+        store.ingest(.requestRouted(id: 1, requested: nil, served: "alpha", stream: false))
+        store.ingest(generated(1, prompt: 0, new: 0, prefill: 0.25, decode: 0))
+        store.ingest(finished(1, status: 503))
+
+        XCTAssertEqual(store.points.count, 1)
+        XCTAssertEqual(store.points[0].decodeSeconds, 0, accuracy: 1e-9)
+        XCTAssertTrue(store.points[0].isError)
+    }
+
     func testRequestRateBucketsByStartTime() {
         var store = ServerMetricsStore()
         // Three at t=1000, one at t=3500, over a 4s span in 1s buckets ending

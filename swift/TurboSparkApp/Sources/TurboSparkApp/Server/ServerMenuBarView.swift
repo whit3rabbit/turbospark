@@ -72,13 +72,11 @@ public struct ServerMenuBarView: View {
             }
             .disabled(model.serverBusy)
         } else if let daemon = daemonStatus, daemon.running {
-            Button("Stop Background Daemon (PID \(daemon.pid ?? 0))") {
-                try? TurboSparkDaemon.stop()
-                model.showToast("Stopped background daemon", style: .info)
+            Button("Stop Background Daemon (PID \(daemon.pid.map(String.init) ?? "?"))") {
+                stopDaemon()
             }
             Button("Restart Background Daemon") {
-                try? TurboSparkDaemon.restart()
-                model.showToast("Restarted background daemon", style: .info)
+                restartDaemon()
             }
             Button("Start In-App Server") {
                 model.startServer()
@@ -90,10 +88,64 @@ public struct ServerMenuBarView: View {
             }
             .disabled(model.serverBusy)
             Button("Start Background Daemon") {
-                try? TurboSparkDaemon.start()
-                model.showToast("Started background daemon", style: .info)
+                startDaemon()
             }
         }
+    }
+
+    // MARK: - Daemon control
+
+    /// The three daemon verbs, each reporting what ACTUALLY happened.
+    ///
+    /// **`try?` UNDER AN UNCONDITIONAL SUCCESS TOAST REPORTED FAILURES AS
+    /// SUCCESSES.** A daemon start fails for ordinary reasons -- no
+    /// `turbospark-server` binary beside the app, a refused port, the child
+    /// exiting on a bad flag -- and "Started background daemon" over any of
+    /// them sends the user looking at a server that is not there.
+    ///
+    /// Start and restart carry `ServerDaemonLaunch.args`, because the
+    /// daemon is a separate process that inherits nothing: without them it
+    /// binds its own default port with no API key, whatever the Advanced
+    /// pane has configured.
+    private func startDaemon() {
+        do {
+            try TurboSparkDaemon.start(args: daemonArgs)
+            model.showToast("Started background daemon", style: .info)
+        } catch {
+            model.showToast(
+                "Could not start the background daemon: \(error.localizedDescription)",
+                style: .error)
+        }
+    }
+
+    private func stopDaemon() {
+        do {
+            try TurboSparkDaemon.stop()
+            model.showToast("Stopped background daemon", style: .info)
+        } catch {
+            model.showToast(
+                "Could not stop the background daemon: \(error.localizedDescription)",
+                style: .error)
+        }
+    }
+
+    private func restartDaemon() {
+        do {
+            try TurboSparkDaemon.restart(args: daemonArgs)
+            model.showToast("Restarted background daemon", style: .info)
+        } catch {
+            model.showToast(
+                "Could not restart the background daemon: \(error.localizedDescription)",
+                style: .error)
+        }
+    }
+
+    /// The user's own server settings, carried to the daemon process.
+    private var daemonArgs: [String] {
+        ServerDaemonLaunch.args(
+            port: model.serverPinnedPort,
+            apiKey: AppModel.serverAPIKey(from: model.serverAPIKeyInput),
+            guardrails: AppModel.serverGuardrails(from: model.guardrailsMode))
     }
 
     @ViewBuilder
@@ -127,29 +179,35 @@ public struct ServerMenuBarView: View {
         Menu("Coding Agents") {
             let port = model.serverPinnedPort == 0 ? (info?.port ?? 8080) : model.serverPinnedPort
             let host = info?.host ?? "127.0.0.1"
+            // The key the running server will actually accept, or the same
+            // "unused" placeholder the Connect card sends when there is
+            // none. The helper's own default ("local") is the key NO server
+            // of ours is configured with, so an export copied while a key
+            // was set authenticated every agent against nothing.
+            let key = AppModel.serverAPIKey(from: model.serverAPIKeyInput) ?? "unused"
 
             Text("Connect Terminal Agents:", bundle: .module)
 
             Button("Claude Code (claude)") {
-                let cmd = TurboSparkAgent.launchCommand(for: "claude", host: host, port: port)
+                let cmd = TurboSparkAgent.launchCommand(for: "claude", host: host, port: port, apiKey: key)
                 copyToClipboard(cmd)
                 model.showToast("Copied Claude Code export command", style: .info)
             }
 
             Button("OpenAI CLI / Codex (codex)") {
-                let cmd = TurboSparkAgent.launchCommand(for: "codex", host: host, port: port)
+                let cmd = TurboSparkAgent.launchCommand(for: "codex", host: host, port: port, apiKey: key)
                 copyToClipboard(cmd)
                 model.showToast("Copied Codex export command", style: .info)
             }
 
             Button("OpenCode (opencode)") {
-                let cmd = TurboSparkAgent.launchCommand(for: "opencode", host: host, port: port)
+                let cmd = TurboSparkAgent.launchCommand(for: "opencode", host: host, port: port, apiKey: key)
                 copyToClipboard(cmd)
                 model.showToast("Copied OpenCode export command", style: .info)
             }
 
             Button("Hermes / OpenClaw") {
-                let cmd = TurboSparkAgent.launchCommand(for: "hermes", host: host, port: port)
+                let cmd = TurboSparkAgent.launchCommand(for: "hermes", host: host, port: port, apiKey: key)
                 copyToClipboard(cmd)
                 model.showToast("Copied environment export command", style: .info)
             }

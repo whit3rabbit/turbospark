@@ -68,24 +68,44 @@ public struct TurboSparkAgent: Sendable {
     }
 
     /// Returns the terminal export/launch command string for connecting an agent.
+    ///
+    /// Both interpolated values land inside double quotes in a command the
+    /// user pastes into a terminal, so each is escaped for that context: an
+    /// unescaped `"`, `$` or backtick in a hand-typed key terminates the
+    /// export or runs part of the key as a substitution. The engine-bound
+    /// host never carries metacharacters today, but the helper does not
+    /// have to be re-derived the day a bind address could.
     public static func launchCommand(
         for agent: String,
         host: String = "127.0.0.1",
         port: UInt16 = 8080,
         apiKey: String = "local"
     ) -> String {
-        let base = "http://\(host):\(port)/v1"
+        let base = shellDoubleQuoted("http://\(host):\(port)/v1")
         switch agent.lowercased() {
         case "claude":
-            return "export ANTHROPIC_BASE_URL=\"\(base)\" && export ANTHROPIC_API_KEY=\"\(apiKey)\" && claude"
+            return "export ANTHROPIC_BASE_URL=\(base) && export ANTHROPIC_API_KEY=\(shellDoubleQuoted(apiKey)) && claude"
         case "codex":
-            return "export OPENAI_BASE_URL=\"\(base)\" && export OPENAI_API_KEY=\"\(apiKey)\" && codex"
+            return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey)) && codex"
         case "opencode":
-            return "export OPENAI_BASE_URL=\"\(base)\" && export OPENAI_API_KEY=\"\(apiKey)\" && opencode"
+            return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey)) && opencode"
         case "hermes", "openclaw", "dsh":
-            return "export OPENAI_BASE_URL=\"\(base)\" && export OPENAI_API_KEY=\"\(apiKey)\""
+            return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey))"
         default:
-            return "export OPENAI_BASE_URL=\"\(base)\" && export OPENAI_API_KEY=\"\(apiKey)\""
+            return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey))"
         }
+    }
+
+    /// Escapes for a POSIX double-quoted string: backslash first, then the
+    /// three characters a double-quoted shell context still treats
+    /// specially -- the closing quote, parameter/command substitution, and
+    /// command substitution's other spelling.
+    private static func shellDoubleQuoted(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "$", with: "\\$")
+            .replacingOccurrences(of: "`", with: "\\`")
+        return "\"\(escaped)\""
     }
 }

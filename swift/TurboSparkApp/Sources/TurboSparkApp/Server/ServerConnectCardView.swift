@@ -95,9 +95,11 @@ struct ServerConnectCardView: View {
 
 /// The routes, grouped by the API they belong to.
 ///
-/// **ONLY IMPLEMENTED ROUTES, AND `/v1/embeddings` IS THE ABSENCE WORTH
-/// NOTICING.** This engine has no embedding path at all, so a row for it
-/// would be a capability claim a user could go and build against.
+/// **ONLY IMPLEMENTED ROUTES, AND THE CATALOG IS THE SOURCE.** A test keeps
+/// `ServerEndpointCatalog` in step with the router's own route table, so a
+/// row shown here is one the server actually answers. `/v1/embeddings`,
+/// `/api/embeddings` and `/api/embed` answer 503 until an embedding model
+/// is attached under Advanced, which is what that field's help text says.
 private struct ServerEndpointListView: View {
     @State private var family: ServerAPIFamily = .openAI
 
