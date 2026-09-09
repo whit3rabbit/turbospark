@@ -54,7 +54,7 @@ struct InstalledModelHeroHeaderView: View {
                     .themedFont(.small)
                     .foregroundStyle(.secondary)
 
-                    Text("\u{2022}", bundle: .module)
+                    Text(verbatim: "\u{2022}")
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
 
@@ -62,7 +62,7 @@ struct InstalledModelHeroHeaderView: View {
                         .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.secondary)
 
-                    Text("\u{2022}", bundle: .module)
+                    Text(verbatim: "\u{2022}")
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
 

@@ -242,7 +242,7 @@ struct ServerAdvancedSettingsView: View {
 
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            Text("-", bundle: .module).themedFont(.tiny).foregroundStyle(.secondary)
+            Text(verbatim: "-").themedFont(.tiny).foregroundStyle(.secondary)
             Text(text).themedFont(.tiny).foregroundStyle(.secondary)
         }
     }

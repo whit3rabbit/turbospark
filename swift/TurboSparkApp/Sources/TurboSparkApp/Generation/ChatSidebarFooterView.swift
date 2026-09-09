@@ -120,7 +120,7 @@ struct ChatSidebarFooterView: View {
     }
 
     private var badgePill: some View {
-        Text("P", bundle: .module)
+        Text(verbatim: "P")
             .font(theme.code(.small, weight: .bold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 4)

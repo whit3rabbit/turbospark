@@ -59,7 +59,7 @@ public struct ThemeConfigCardView: View {
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Text("Aa", bundle: .module)
+                            Text(verbatim: "Aa")
                                 .font(theme.ui(.small, weight: .bold))
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 2)

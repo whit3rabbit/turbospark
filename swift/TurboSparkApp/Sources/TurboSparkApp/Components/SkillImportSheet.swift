@@ -185,7 +185,7 @@ public struct SkillImportSheet: View {
                     .buttonStyle(.plain)
                     .themedFont(.small)
 
-                    Text("|", bundle: .module).foregroundStyle(.tertiary)
+                    Text(verbatim: "|").foregroundStyle(.tertiary)
 
                     Button("Deselect All") {
                         for i in candidates.indices { candidates[i].isSelected = false }

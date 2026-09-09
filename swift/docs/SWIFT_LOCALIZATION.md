@@ -34,7 +34,7 @@ catalog or the app builds against the previous output.
 
 ## The catalog
 
-`Localizable.xcstrings` carries 247 keys in 21 languages: en, es, fr, de,
+`Localizable.xcstrings` carries 672 keys in 21 languages: en, es, fr, de,
 it, pt-BR, ru, ja, ko, zh-Hans, zh-Hant, ar, he, hi, nl, pl, tr, uk, sv,
 vi, id. RTL support (ar, he) comes from `AppLanguage.isRTL` feeding
 `.environment(\.layoutDirection)`. The key IS the English source string
@@ -89,7 +89,7 @@ Deliberately NOT localized, and not defects:
 
 ## The gates (`Tests/TurboSparkAppTests/LocalizationParityTests.swift`)
 
-Six tests, each mutation-checked to redden only its own case:
+Seven tests, each mutation-checked to redden only its own case:
 
 1. **Full key x language parity.** Every key has a `translated`, non-empty
    entry for every `AppLanguage`. Adding a UI string means translating it
@@ -118,6 +118,40 @@ Six tests, each mutation-checked to redden only its own case:
    variable-argument form is the legitimate dynamic case.
 6. **greetings.json parity.** The greeting data must cover exactly the
    picker's language set, per greeting, in both directions.
+7. **Bundled literal has a key.** Every NON-INTERPOLATED literal that
+   passes `bundle: .module` resolves to a catalog key. Gate 5 is only
+   half the rule and this is the other half: a bundled literal with no
+   key renders its English source under all 21 languages, silently and
+   indistinguishably from never having been converted. That is not a
+   hypothesis -- it is how **416 keyless bundled literals** shipped (58%
+   of the bundled surface, whole settings paragraphs among them) with
+   the whole suite green, found 2026-09-09 by diffing the scan against
+   the catalog and fixed in the same change. `\u{2022}`-style escapes
+   are resolved before the lookup, because a literal spelled that way
+   and one spelled with the character itself are the SAME key.
+
+The two gates fail in opposite directions and neither substitutes for
+the other: gate 5 catches a literal that never reached the catalog's
+lookup path at all, gate 7 catches one that reaches it and finds
+nothing. Mutating a `Text(verbatim: "-")` back to
+`Text("-", bundle: .module)` reddens 7 alone; deleting a catalog key
+reddens 7 alone; blanking a translation reddens 1 alone.
+
+### The interpolated hole, and why it is a hole rather than an allowlist
+
+`Text("Loading \(name)...", bundle: .module)` looks up a FORMAT STRING
+(`Loading %@...`), not the source text, and the specifier follows the
+interpolated expression's TYPE -- `%@` for a `String`, `%lld` for an
+`Int` -- which a source scan cannot infer. Gate 7 therefore SKIPS
+interpolated literals rather than listing them: guessing would either
+invent keys nothing looks up or, worse, seed a wrong specifier into 21
+translations, which gate 2 calls the crash direction. As of 2026-09-09
+there are **139 such call sites**, 50 of them carrying real translatable
+prose (`"%@" and its conversation history will be removed.`) and 89 bare
+numeric readouts (`+\(adds)`, `Lines \(start)-\(end)`) that belong to
+the deliberately-not-localized class above. Closing the first 50 means
+deriving each key from the expression's type at the call site, one at a
+time; it is open work, not a covered case.
 
 `LocalizationTests` (the older suite) proves the compile chain itself:
 catalog parses, `xcstringstool` output resolves a real translation through
@@ -128,7 +162,17 @@ catalog parses, `xcstringstool` output resolves a real translation through
 A string: add the key to the catalog with all 21 languages (en's value is
 the key), reference it with `bundle: .module`, run `make compile-strings`
 and the tests. If the string is duplicated under two spellings
-(`...`/ellipsis), delete one.
+(`...`/ellipsis), delete one. `bundle: .module` WITHOUT the key is the
+failure gate 7 exists for, so the two halves land together or not at all.
+
+A string with nothing to translate -- a separator glyph, a layout spacer,
+a unit, a key name, a fragment of a code sample -- takes
+`Text(verbatim:)` instead. That spelling leaves the localized surface
+entirely (both source-scan gates skip it by construction), which is
+honest, where a catalog key whose 21 values are all `-` is noise. The
+2026-09-09 pass moved 24 such call sites across 13 files: `-`, `*`, `|`,
+`= {`, `themePreview:`, `Aa`, `px`, `Cmd+N`, `P`, `\u{2022}` and four
+empty spacers.
 
 A language: add the `AppLanguage` case (raw value, native `label`,
 `isRTL`), add the catalog column for all keys, AND add that language to

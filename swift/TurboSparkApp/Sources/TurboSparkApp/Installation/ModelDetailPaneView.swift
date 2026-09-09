@@ -103,7 +103,7 @@ struct ModelDetailPaneView: View {
                         .themedCode(.small, weight: .medium)
                         .foregroundStyle(.secondary)
 
-                    Text("\u{2022}", bundle: .module)
+                    Text(verbatim: "\u{2022}")
                         .foregroundStyle(.tertiary)
 
                     HStack(spacing: 4) {
@@ -116,7 +116,7 @@ struct ModelDetailPaneView: View {
                     .foregroundStyle(.secondary)
                     .help("Model Family: \(visuals.family)")
 
-                    Text("\u{2022}", bundle: .module)
+                    Text(verbatim: "\u{2022}")
                         .foregroundStyle(.tertiary)
 
                     Text(entry.status.capitalized)
@@ -217,7 +217,7 @@ struct ModelDetailPaneView: View {
                     HStack(spacing: 6) {
                         Text(visuals.formatLabel)
                             .themedFont(.base, weight: .semibold)
-                        Text("\u{2022}", bundle: .module)
+                        Text(verbatim: "\u{2022}")
                             .foregroundStyle(.tertiary)
                         Text("\(MetricFormat.storage(entry.downloadBytes)) download", bundle: .module)
                             .themedFont(.small)
