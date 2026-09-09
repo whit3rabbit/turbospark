@@ -355,3 +355,34 @@ fn the_fallback_renderer_refuses_an_image_rather_than_dropping_it() {
         .to_string();
     assert!(err.contains("carries an image"), "{err}");
 }
+
+/// **A MULTIBYTE TEMPLATE SURVIVES THE SHIM'S SCAN.** Spark-X2.5's template
+/// carries a `{#- 0826版本 -#}` comment and fullwidth-bar markers, and the
+/// shim's byte-walking scan used to panic slicing `source[i..]` at a
+/// continuation byte while hunting for the comment's `#}` close -- and, past
+/// the panic, pushed text bytes as Latin-1 chars, which would have mojibaked
+/// every multibyte character in the file. The scan must copy whole
+/// characters, find the close delimiter across multibyte bytes, and leave
+/// both intact in the rendered output.
+#[test]
+fn a_multibyte_template_survives_the_scan_intact() {
+    let template =
+        "{#- 0826版本 -#}<｜start▁of▁sentence｜>{{ 'ok' }}版本{%- if true %}判断{% endif %}";
+    assert_eq!(
+        render_with("multibyte", template),
+        "<｜start▁of▁sentence｜>ok版本判断"
+    );
+}
+
+/// The conditional-keyword-argument rewrite still fires when the template
+/// ALSO carries multibyte text, which is the combination Spark-X2.5 ships.
+#[test]
+fn a_conditional_kwarg_rewrites_beside_multibyte_text() {
+    assert_eq!(
+        render_with(
+            "multibyte-kwarg",
+            "{#- 版本 -#}{%- set ns = namespace(a=1 if true else 2) -%}[{{ ns.a }}]版本"
+        ),
+        "[1]版本"
+    );
+}

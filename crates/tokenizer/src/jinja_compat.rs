@@ -54,8 +54,17 @@ pub(crate) fn parenthesize_conditional_kwargs(source: &str) -> std::borrow::Cow<
         // Only Jinja blocks are scanned; everything else is template text.
         let block = block_at(bytes, i);
         let Some((open_len, close, is_comment)) = block else {
-            out.push(bytes[i] as char);
-            i += 1;
+            // **COPY ONE UTF-8 CHARACTER, NOT ONE BYTE.** Templates are
+            // mostly prose, and real prose is multibyte: Spark-X2.5's ships
+            // a `{#- 0826版本 -#}` comment and fullwidth-bar markers, and
+            // pushing `bytes[i] as char` here turned every one of those
+            // bytes into a Latin-1 mojibake character in the rendered
+            // template. `i` is always a char boundary here (it starts at 0
+            // and only ever advances by whole characters or whole blocks),
+            // so the slice below is safe.
+            let ch_len = source[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+            out.push_str(&source[i..i + ch_len]);
+            i += ch_len;
             continue;
         };
         let start = i;
@@ -121,9 +130,15 @@ fn find_close(source: &str, from: usize, close: &str) -> Option<usize> {
             None => {
                 if c == b'\'' || c == b'"' {
                     quote = Some(c);
-                } else if source[i..].starts_with(close) {
+                } else if (c & 0xC0) != 0x80 && source[i..].starts_with(close) {
                     return Some(i);
                 }
+                // The continuation-byte guard above is what keeps the slice
+                // legal: a byte with the 0x80 pattern is mid-character, so
+                // stepping onto one means the close delimiter is not here
+                // (its first byte is ASCII), and `source[i..]` at a
+                // non-boundary would panic. Spark-X2.5's template hit
+                // exactly that, scanning for `#}` across its `版本` comment.
             }
         }
         i += 1;
@@ -141,6 +156,17 @@ fn rewrite_expression(body: &str) -> (String, bool) {
     let mut depth = 0usize;
 
     while i < bytes.len() {
+        // **ANY NON-ASCII BYTE STARTS A CHARACTER THAT IS COPIED WHOLE.**
+        // Every arm below pushes `c as char`, which turns one byte of a
+        // multibyte character into one Latin-1 mojibake character; and the
+        // keyword-argument logic itself is ASCII-only (`=`, quotes,
+        // brackets), so a multibyte character can simply pass through.
+        if bytes[i] >= 0x80 {
+            let ch_len = body[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+            out.push_str(&body[i..i + ch_len]);
+            i += ch_len;
+            continue;
+        }
         let c = bytes[i];
         if let Some(q) = quote {
             out.push(c as char);
