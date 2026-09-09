@@ -260,7 +260,7 @@ public struct HooksSettingsPaneView: View {
             HStack(spacing: 12) {
                 // Icon
                 Image(systemName: groupIcon(for: group.sourceType))
-                    .themedFont(points: 16)
+                    .themedFont(.base)
                     .foregroundStyle(.secondary)
                     .frame(width: 28, height: 28)
                     .background(Color(nsColor: .windowBackgroundColor))
@@ -325,7 +325,7 @@ public struct HooksSettingsPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "link.badge.plus")
-                .themedFont(points: 40)
+                .themedFont(.display)
                 .foregroundStyle(.secondary)
             // Two states, two sentences: a fresh install with no hooks used
             // to read `No hooks found matching ''`.

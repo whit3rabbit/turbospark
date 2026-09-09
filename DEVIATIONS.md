@@ -23,21 +23,26 @@ live network).
   still installable, since the store writes are per directory. Adding a real
   cancel means threading a cancellation flag through `catalog::install`'s
   streaming walk, which nothing has needed enough to pay for.
-- **The CLI and the FFI streaming paths do not call `finish` on the turn
-  decoder, where the server does.** `runtime::TurnSplitter::finish` exists
-  and is wired on the server path only.
+- **The CLI and the FFI streaming paths now call `finish` on the turn
+  decoder too, symmetrically with the server** (`crates/cli/src/generate/
+  mod.rs`, `crates/ffi/src/generate/mod.rs`, mirroring
+  `crates/server/src/handler/exec.rs`).
 
-  **ON THOSE TWO PATHS IT IS PROVABLY INERT TODAY, and both of its jobs
-  need a non-empty tool allowlist that neither has.** A Harmony call is
-  emitted from `finish` only once the decoder has ENTERED its tool state,
-  which is gated on `allowed_tools.contains(name)`
+  **ON THOSE TWO PATHS IT IS STILL PROVABLY INERT TODAY, because both of
+  `finish`'s jobs need a non-empty tool allowlist that neither has.** A
+  Harmony call is emitted from `finish` only once the decoder has ENTERED
+  its tool state, which is gated on `allowed_tools.contains(name)`
   (`structured_decoder/harmony.rs`), so `close_harmony_tool` takes its
   `None` arm. The withheld tail is `held_text`, written by nothing but
   `consume_deepseek`, and `TurnSplitter::new` builds a decoder for DeepSeek
-  only when `!tools.is_empty()`. So this is a missing SYMMETRY rather than
-  dropped output: adopting it would emit nothing until a tools surface
-  exists, and it becomes load-bearing on the same day one does -- which is
-  the day to add it, with real-model eyes, rather than now. Read that
+  only when `!tools.is_empty()`. So wiring the call closed a missing
+  SYMMETRY rather than fixing dropped output: it emits nothing until a
+  tools surface exists (`--tools` on the CLI, a `GenerateOptions` field on
+  the FFI, neither built yet), and it becomes load-bearing on the same day
+  one does. `crates/ffi/tests/c_surface.rs`'s
+  `a_reasoning_level_on_chatml_builds_a_decoder_and_finish_does_not_error`
+  covers the one case besides tools where `finish` reaches a live decoder
+  today (a requested reasoning level on ChatML or Gemma). Read that
   ordering out of `docs/STREAMING.md` before assuming either direction.
 - **This port has a quality harness; the Swift original has none.** Not a
   deviation from a behavior, an addition on an axis Swift publishes

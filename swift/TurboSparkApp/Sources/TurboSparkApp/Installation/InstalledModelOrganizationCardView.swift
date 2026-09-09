@@ -30,7 +30,7 @@ struct InstalledModelOrganizationCardView: View {
                                 orgStore.removeTag(tag, for: installedModel.alias, path: installedModel.path)
                             } label: {
                                 Image(systemName: "xmark")
-                                    .themedFont(points: 8, weight: .bold)
+                                    .themedFont(.micro, weight: .bold)
                             }
                             .buttonStyle(.plain)
                             .help("Remove tag \(tag)")

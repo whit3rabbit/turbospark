@@ -157,10 +157,14 @@ struct ToolCallCardView: View {
                         fileWritePreview
                     } else if isEditCall {
                         fileEditPreview
+                    } else if isWebFetchCall {
+                        // Before the read arm: a fetch tool named
+                        // `read_url_content` contains "read", and matched
+                        // first it rendered the file-read layout under a
+                        // "Fetched <host>" header.
+                        webFetchPreview
                     } else if isReadCall {
                         fileReadPreview
-                    } else if isWebFetchCall {
-                        webFetchPreview
                     } else if isSkillCall {
                         skillPreview
                     } else if isMcpCall {
@@ -244,7 +248,7 @@ struct ToolCallCardView: View {
                 statusBadge
 
                 Image(systemName: "chevron.right")
-                    .themedFont(points: 10, weight: .semibold)
+                    .themedFont(.tiny, weight: .semibold)
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees((isExpanded || isPendingApproval) ? 90 : 0))
             }
@@ -325,9 +329,9 @@ struct ToolCallCardView: View {
     private func riskBadge(_ risk: ToolRiskAssessment) -> some View {
         HStack(spacing: 4) {
             Image(systemName: risk.level.systemImage)
-                .themedFont(points: 9)
+                .themedFont(.micro)
             Text(risk.level.label)
-                .themedFont(points: 10, weight: .semibold)
+                .themedFont(.tiny, weight: .semibold)
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 1)
@@ -542,9 +546,9 @@ struct ToolCallCardView: View {
                 if isBackground {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.triangle.2.circlepath")
-                            .themedFont(points: 8)
+                            .themedFont(.micro)
                         Text("Background", bundle: .module)
-                            .themedFont(points: 9, weight: .medium)
+                            .themedFont(.micro, weight: .medium)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -672,10 +676,10 @@ struct ToolCallCardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Image(systemName: "minus")
-                            .themedFont(points: 9, weight: .bold)
+                            .themedFont(.micro, weight: .bold)
                             .foregroundStyle(diffDeletionColor)
                         Text("ORIGINAL", bundle: .module)
-                            .themedCode(points: 10, weight: .bold)
+                            .themedCode(.callout, weight: .bold)
                             .foregroundStyle(diffDeletionColor)
                     }
                     Text(oldStr)
@@ -692,10 +696,10 @@ struct ToolCallCardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Image(systemName: "plus")
-                            .themedFont(points: 9, weight: .bold)
+                            .themedFont(.micro, weight: .bold)
                             .foregroundStyle(diffAdditionColor)
                         Text("REPLACEMENT", bundle: .module)
-                            .themedCode(points: 10, weight: .bold)
+                            .themedCode(.callout, weight: .bold)
                             .foregroundStyle(diffAdditionColor)
                     }
                     Text(newStr)
@@ -904,7 +908,7 @@ struct ToolCallCardView: View {
     private var argumentsPreview: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("ARGUMENTS", bundle: .module)
-                .themedCode(points: 10, weight: .bold)
+                .themedCode(.callout, weight: .bold)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -942,7 +946,7 @@ struct ToolCallCardView: View {
                 // the same notice and pairs it with the suspend option.
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "bolt.slash.fill")
-                        .themedFont(points: 11, weight: .semibold)
+                        .themedFont(.tiny, weight: .semibold)
                         .foregroundStyle(Color.orange)
                     Text(notice)
                         .themedFont(.small)

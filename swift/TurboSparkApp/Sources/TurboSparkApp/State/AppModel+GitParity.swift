@@ -106,6 +106,24 @@ extension AppModel {
 
     // MARK: - /prs
 
+    /// Re-runs the fetch for a tab whose data is absent, so a segment
+    /// switch shows the real query instead of a never-fetched empty state
+    /// ("No commits yet." for a log that was never asked for). Silent when
+    /// there is no project root: the command's own toast already fired when
+    /// the user ran the slash command, and repeating it on every tab switch
+    /// would be noise.
+    public func refreshGitInfoTabIfEmpty(_ tab: GitInfoTab) {
+        guard !isLoadingGitInfo, gitCommandRootPath != nil else { return }
+        switch tab {
+        case .diff:
+            if gitDiffText.isEmpty { runDiffCommand() }
+        case .log:
+            if gitCommits.isEmpty { runLogCommand() }
+        case .prs:
+            if gitPullRequests.isEmpty { runPrsCommand() }
+        }
+    }
+
     public func runPrsCommand() {
         guard let root = gitCommandRootPath else {
             showToast("Pick a project with a folder first: /prs works on its git repository.", style: .warning)

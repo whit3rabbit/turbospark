@@ -23,7 +23,7 @@ struct ServerAdvancedSettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             if isRunning {
                 Text("These take effect the next time the server starts.", bundle: .module)
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
 
@@ -81,7 +81,7 @@ struct ServerAdvancedSettingsView: View {
                 Label(
                     "With no key, any process on this machine can drive your models.",
                     systemImage: "exclamationmark.triangle")
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.orange)
             }
 
@@ -110,11 +110,11 @@ struct ServerAdvancedSettingsView: View {
                         }
                     if let portError {
                         Text(portError)
-                            .themedFont(points: 10)
+                            .themedFont(.tiny)
                             .foregroundStyle(.red)
                     } else if model.serverPinnedPort == 0 {
                         Text("automatic", bundle: .module)
-                            .themedFont(points: 10)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -213,7 +213,7 @@ struct ServerAdvancedSettingsView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("What this server does not do", bundle: .module)
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                 // Stated rather than left to be discovered. Each of these is
                 // a thing somebody will look for, and the honest answer is
                 // cheaper than the search.
@@ -232,18 +232,18 @@ struct ServerAdvancedSettingsView: View {
         _ label: String, help: String, @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).themedFont(points: 11, weight: .medium)
+            Text(label).themedFont(.tiny, weight: .medium)
             content()
             Text(help)
-                .themedFont(points: 10)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
         }
     }
 
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            Text("-", bundle: .module).themedFont(points: 10).foregroundStyle(.secondary)
-            Text(text).themedFont(points: 10).foregroundStyle(.secondary)
+            Text("-", bundle: .module).themedFont(.tiny).foregroundStyle(.secondary)
+            Text(text).themedFont(.tiny).foregroundStyle(.secondary)
         }
     }
 }

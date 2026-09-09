@@ -60,9 +60,12 @@ struct ChatSidebarGroupedProjectsView: View {
             if project.name.localizedCaseInsensitiveContains(trimmedSearch) {
                 return true
             }
-            // Check if any chat in this project matches the query
+            // Check if any chat in this project matches the query. Ghost
+            // and archived rows are excluded for the same reason `tasks`
+            // excludes them: a match only counts if the chat is one the
+            // list would actually show.
             return model.chats.contains { chat in
-                chat.projectID == project.id &&
+                chat.projectID == project.id && !chat.isGhost && !chat.isArchived &&
                     (chat.title.localizedCaseInsensitiveContains(trimmedSearch) ||
                      chat.preview.localizedCaseInsensitiveContains(trimmedSearch))
             }
@@ -70,8 +73,14 @@ struct ChatSidebarGroupedProjectsView: View {
     }
 
     private func tasks(for projectID: UUID) -> [AppChat] {
+        // Ghost and archived rows are NOT ordinary tasks: a ghost's row
+        // must be reachable only through `enterGhostChat`, and archived
+        // chats live behind the archive disclosure, not the project lists.
+        // The Chat tab reads `filteredChats` for the same reason.
         let allTasks = AppChat.sortedForSidebar(
-            model.chats.filter { $0.projectID == projectID })
+            model.chats.filter {
+                $0.projectID == projectID && !$0.isGhost && !$0.isArchived
+            })
 
         if trimmedSearch.isEmpty {
             return allTasks
@@ -90,7 +99,8 @@ struct ChatSidebarGroupedProjectsView: View {
     }
 
     private var unorganizedChats: [AppChat] {
-        let chats = AppChat.sortedForSidebar(model.chats.filter { $0.projectID == nil })
+        let chats = AppChat.sortedForSidebar(
+            model.chats.filter { $0.projectID == nil && !$0.isGhost && !$0.isArchived })
 
         if trimmedSearch.isEmpty {
             return chats
@@ -116,7 +126,7 @@ struct ChatSidebarGroupedProjectsView: View {
 
             if projectTasks.isEmpty {
                 Text("No tasks yet", bundle: .module)
-                    .font(theme.ui(points: 11))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.tertiary)
                     .padding(.leading, 24)
                     .padding(.vertical, 4)
@@ -131,7 +141,7 @@ struct ChatSidebarGroupedProjectsView: View {
                             toggleExpansion(for: project.id)
                         } label: {
                             Text(isExpanded ? "Show less" : "Show more")
-                                .font(theme.ui(points: 11, weight: .medium))
+                                .font(theme.ui(.tiny, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .padding(.leading, 24)
                                 .padding(.vertical, 4)
@@ -155,12 +165,12 @@ struct ChatSidebarGroupedProjectsView: View {
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: isSelected ? "folder.fill" : "folder")
-                        .font(theme.ui(points: 11))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                         .accessibilityHidden(true)
 
                     Text(project.name)
-                        .font(theme.ui(points: 12, weight: isSelected ? .semibold : .medium))
+                        .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
@@ -178,7 +188,7 @@ struct ChatSidebarGroupedProjectsView: View {
                     model.createChat(projectID: project.id)
                 } label: {
                     Image(systemName: "plus")
-                        .font(theme.ui(points: 10, weight: .medium))
+                        .font(theme.ui(.tiny, weight: .medium))
                         .foregroundStyle(.secondary)
                         .frame(width: actionButtonSize, height: actionButtonSize)
                         .contentShape(Circle())
@@ -248,6 +258,12 @@ struct ChatSidebarGroupedProjectsView: View {
                     if model.selectedProjectID != project.id {
                         model.selectProject(id: project.id)
                     }
+                } else if model.selectedProjectID != nil {
+                    // Same rule the search overlay's `open` applies: the
+                    // Chat tab's list is project-scoped, so opening a chat
+                    // OUTSIDE the selected project must move the project
+                    // selection first or the chat opens invisibly.
+                    model.selectProject(id: nil)
                 }
                 model.selectChat(id: chat.id)
             } label: {
@@ -255,14 +271,14 @@ struct ChatSidebarGroupedProjectsView: View {
                     taskIcon(chat: chat, isSelected: isSelected, isRecent: isRecent)
 
                     Text(chat.title)
-                        .font(theme.ui(points: 11.5, weight: isSelected ? .medium : .regular))
+                        .font(theme.ui(.tiny, weight: isSelected ? .medium : .regular))
                         .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.88))
                         .lineLimit(1)
 
                     Spacer(minLength: 4)
 
                     Text(MessageTimestampFormatter.compactRelativeString(for: chat.updatedAt))
-                        .font(theme.ui(points: 10))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -335,7 +351,7 @@ struct ChatSidebarGroupedProjectsView: View {
             TaskProgressFlameIcon(size: 11)
         } else if isRecent {
             Image(systemName: "sparkle")
-                .font(theme.ui(points: 10, weight: .medium))
+                .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                 .accessibilityHidden(true)
         } else {
@@ -365,10 +381,10 @@ struct ChatSidebarGroupedProjectsView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 7) {
                 Image(systemName: "tray")
-                    .font(theme.ui(points: 11))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.secondary)
                 Text("Other Tasks", bundle: .module)
-                    .font(theme.ui(points: 12, weight: .medium))
+                    .font(theme.ui(.small, weight: .medium))
                     .foregroundStyle(.secondary)
                 Spacer()
             }
@@ -388,11 +404,11 @@ struct ChatSidebarGroupedProjectsView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "folder.badge.plus")
-                .font(theme.ui(points: 22))
+                .font(theme.ui(.title2))
                 .foregroundStyle(.tertiary)
                 .padding(.top, 24)
             Text("No projects match filter", bundle: .module)
-                .font(theme.ui(points: 11, weight: .medium))
+                .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(.secondary)
             Button("Add Project") {
                 projectBeingEdited = nil

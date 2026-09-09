@@ -128,13 +128,13 @@ struct ModelLoaderControl: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(primaryText)
-                        .font(theme.ui(points: 12, weight: .semibold))
+                        .font(theme.ui(.small, weight: .semibold))
                         .lineLimit(1)
                         .foregroundStyle(.primary)
 
                     if let secondaryText {
                         Text(secondaryText)
-                            .font(theme.ui(points: 9.5))
+                            .font(theme.ui(.micro))
                             .lineLimit(1)
                             .foregroundStyle(.secondary)
                     }
@@ -150,7 +150,7 @@ struct ModelLoaderControl: View {
                         .frame(width: 42)
                 } else {
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(theme.ui(points: 8, weight: .bold))
+                        .font(theme.ui(.micro, weight: .bold))
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
                 }
@@ -228,15 +228,15 @@ struct ModelLoaderControl: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: model.reasoning != .off ? "brain.head.profile" : "brain")
-                    .font(theme.ui(points: 10, weight: .semibold))
+                    .font(theme.ui(.tiny, weight: .semibold))
                     .foregroundStyle(model.reasoning != .off ? theme.accent : Color.secondary)
 
                 Text(model.reasoningLabel(for: model.reasoning))
-                    .font(theme.ui(points: 11, weight: .medium))
+                    .font(theme.ui(.tiny, weight: .medium))
                     .foregroundStyle(model.reasoning != .off ? Color.primary : Color.secondary)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.ui(points: 7, weight: .bold))
+                    .font(theme.ui(.micro, weight: .bold))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
@@ -269,7 +269,7 @@ struct ModelLoaderControl: View {
             model.loadModel()
         } label: {
             Label("Load", systemImage: "play.fill")
-                .font(theme.ui(points: 11, weight: .semibold))
+                .font(theme.ui(.tiny, weight: .semibold))
                 .labelStyle(.titleAndIcon)
                 .imageScale(.small)
                 .foregroundStyle(theme.accent)
@@ -294,9 +294,9 @@ struct ModelLoaderControl: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "eject.fill")
-                    .font(theme.ui(points: 10, weight: .semibold))
+                    .font(theme.ui(.tiny, weight: .semibold))
                 Text("Eject", bundle: .module)
-                    .font(theme.ui(points: 11, weight: .medium))
+                    .font(theme.ui(.tiny, weight: .medium))
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 11)

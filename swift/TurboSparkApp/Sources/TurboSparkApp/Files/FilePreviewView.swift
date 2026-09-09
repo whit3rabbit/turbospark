@@ -34,18 +34,18 @@ struct FilePreviewView: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: attachment.symbolName)
-                .themedFont(points: 13)
+                .themedFont(.callout)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help("\(attachment.formatLabel) file")
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(attachment.fileName)
-                    .themedFont(points: 12, weight: .semibold)
+                    .themedFont(.small, weight: .semibold)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(subtitle)
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -56,7 +56,7 @@ struct FilePreviewView: View {
                 model.dismissPreview()
             } label: {
                 Image(systemName: "xmark")
-                    .themedFont(points: 10, weight: .semibold)
+                    .themedFont(.tiny, weight: .semibold)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
@@ -108,7 +108,7 @@ struct FilePreviewView: View {
             Text(attachment.extractedText.isEmpty
                  ? "No text was extracted from this document."
                  : attachment.extractedText)
-                .themedCode(points: 11)
+                .themedCode(.callout)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -136,7 +136,7 @@ struct FilePreviewView: View {
     private var unavailableView: some View {
         VStack(spacing: 8) {
             Image(systemName: "eye.slash")
-                .themedFont(points: 24)
+                .themedFont(.title2)
                 .foregroundStyle(.quaternary)
             Text("Preview unavailable", bundle: .module)
                 .themedFont(.base, weight: .medium)
@@ -156,7 +156,7 @@ struct FilePreviewView: View {
             if attachment.previewKind != .text {
                 Toggle(isOn: $showsExtractedText) {
                     Text("Model text", bundle: .module)
-                        .themedFont(points: 10, weight: .medium)
+                        .themedFont(.tiny, weight: .medium)
                 }
                 .toggleStyle(.button)
                 .controlSize(.mini)
@@ -210,7 +210,7 @@ struct FilePreviewView: View {
     ) -> some View {
         Button(role: role, action: action) {
             Label(title, systemImage: systemImage)
-                .themedFont(points: 10, weight: .medium)
+                .themedFont(.tiny, weight: .medium)
                 .labelStyle(.iconOnly)
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())

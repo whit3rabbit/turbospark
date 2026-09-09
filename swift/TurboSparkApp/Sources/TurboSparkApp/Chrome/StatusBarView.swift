@@ -40,7 +40,7 @@ struct StatusBarView: View {
             barDivider
             viewModeToggleButton
         }
-        .font(theme.ui(points: 10.5))
+        .font(theme.ui(.tiny))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .frame(height: AppChromeLayout.statusBarHeight)
@@ -76,7 +76,7 @@ struct StatusBarView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isGraphMode ? "chart.xyaxis.line" : "number")
-                    .font(theme.ui(points: 10, weight: .medium))
+                    .font(theme.ui(.tiny, weight: .medium))
                     .foregroundStyle(isGraphMode ? TurboSparkTheme.accentColor : Color.secondary)
             }
             .padding(.horizontal, 4)
@@ -119,7 +119,7 @@ struct StatusBarView: View {
         let hint = compactionHint(fraction)
         return HStack(spacing: 6) {
             Image(systemName: "text.alignleft")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .accessibilityHidden(true)
             MeterBar(fraction: fraction, tint: hint?.urgent == true ? .orange : TurboSparkTheme.accentColor)
                 .frame(width: 38)
@@ -179,7 +179,7 @@ struct StatusBarView: View {
     private var throughputReadout: some View {
         HStack(spacing: 5) {
             Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .accessibilityHidden(true)
             if isGraphMode {
                 MiniSparklineView(
@@ -239,7 +239,7 @@ struct StatusBarView: View {
 
         return HStack(spacing: 5) {
             Image(systemName: isAbnormal ? "thermometer.high" : "thermometer.medium")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(tintColor)
                 .accessibilityHidden(true)
             Text(level.capitalized)
@@ -266,7 +266,7 @@ struct StatusBarView: View {
     private func memoryPressureReadout(_ level: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: "exclamationmark.triangle")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .accessibilityHidden(true)
             Text("Memory \(level.capitalized)", bundle: .module)
         }

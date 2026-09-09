@@ -224,7 +224,7 @@ public struct PluginSettingsPaneView: View {
             }
         }()
         return Text(text)
-            .themedFont(points: 10, weight: .medium)
+            .themedFont(.tiny, weight: .medium)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.15)))
@@ -346,7 +346,7 @@ public struct PluginSettingsPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "puzzlepiece.extension")
-                .themedFont(points: 36)
+                .themedFont(.display)
                 .foregroundStyle(.tertiary)
             Text("No plugins installed.", bundle: .module)
                 .themedFont(.base)

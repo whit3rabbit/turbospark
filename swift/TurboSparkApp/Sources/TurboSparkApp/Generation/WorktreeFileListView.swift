@@ -56,7 +56,7 @@ public struct WorktreeFileListView: View {
 
             TextField("Filter changed files...", text: $worktree.searchQuery)
                 .textFieldStyle(.plain)
-                .font(theme.ui(points: 12))
+                .font(theme.ui(.small))
 
             if !worktree.searchQuery.isEmpty {
                 Button {
@@ -75,15 +75,25 @@ public struct WorktreeFileListView: View {
     }
 
     private var emptySearchResults: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
+        // Two different empties: the filter matched nothing (the common
+        // case while searching), and the repository simply has no changes.
+        // Telling a clean worktree to "clear the search filter" it never
+        // set is an instruction to do nothing.
+        let hasQuery = !worktree.searchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return VStack(spacing: 6) {
+            Image(systemName: hasQuery ? "magnifyingglass" : "checkmark.circle")
                 .themedFont(.title3)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 24)
-            Text("No matching changed files", bundle: .module)
+            Text(hasQuery ? "No matching changed files" : "No changes", bundle: .module)
                 .themedFont(.base, weight: .medium)
                 .foregroundStyle(.secondary)
-            Text("Try clearing the search filter.", bundle: .module)
+            Text(
+                hasQuery
+                    ? "Try clearing the search filter."
+                    : "Files appear here when the selected comparison finds modifications.",
+                bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.tertiary)
         }

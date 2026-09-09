@@ -36,7 +36,10 @@ struct ChatSidebarView: View {
             contentView
 
             ChatSidebarFooterView(
-                chatCount: historyChats.count,
+                // "local chats stored" is a machine-wide figure, so it
+                // counts every persisted chat regardless of the selected
+                // project or the archive filter the list above applies.
+                chatCount: model.chats.filter { !$0.isGhost }.count,
                 languageRawValue: $languageRawValue
             )
         }
@@ -107,9 +110,9 @@ struct ChatSidebarView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: mode.systemImage)
-                            .font(theme.ui(points: 10, weight: .semibold))
+                            .font(theme.ui(.tiny, weight: .semibold))
                         Text(mode.title)
-                            .font(theme.ui(points: 11.5, weight: isSelected ? .semibold : .medium))
+                            .font(theme.ui(.tiny, weight: isSelected ? .semibold : .medium))
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 24)
@@ -138,7 +141,7 @@ struct ChatSidebarView: View {
     private var filterBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
 
@@ -147,14 +150,14 @@ struct ChatSidebarView: View {
                 text: $searchText
             )
             .textFieldStyle(.plain)
-            .font(theme.ui(points: 11))
+            .font(theme.ui(.tiny))
 
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(theme.ui(points: 11))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
@@ -189,7 +192,7 @@ struct ChatSidebarView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Projects", bundle: .module)
-                    .font(theme.ui(points: 11, weight: .semibold))
+                    .font(theme.ui(.tiny, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
 
@@ -200,7 +203,7 @@ struct ChatSidebarView: View {
                     showingProjectSettingsSheet = true
                 } label: {
                     Image(systemName: "plus")
-                        .font(theme.ui(points: 11, weight: .semibold))
+                        .font(theme.ui(.tiny, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 20, height: 20)
                         .contentShape(Circle())
@@ -247,11 +250,11 @@ struct ChatSidebarView: View {
     private func activeProjectScopeBar(_ project: AppProject) -> some View {
         HStack(spacing: 5) {
             Image(systemName: "folder.fill")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(TurboSparkTheme.accentColor)
 
             Text("Project: \(project.name)", bundle: .module)
-                .font(theme.ui(points: 11, weight: .medium))
+                .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
 
@@ -262,9 +265,9 @@ struct ChatSidebarView: View {
             } label: {
                 HStack(spacing: 3) {
                     Text("All", bundle: .module)
-                        .font(theme.ui(points: 10))
+                        .font(theme.ui(.tiny))
                     Image(systemName: "xmark")
-                        .font(theme.ui(points: 9))
+                        .font(theme.ui(.micro))
                 }
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 5)
@@ -286,13 +289,13 @@ struct ChatSidebarView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "square.and.pencil")
-                    .font(theme.ui(points: 12))
+                    .font(theme.ui(.small))
                     .accessibilityHidden(true)
                 Text("New chat", bundle: .module)
-                    .font(theme.ui(points: 12, weight: .medium))
+                    .font(theme.ui(.small, weight: .medium))
                 Spacer()
                 Text("Cmd+N", bundle: .module)
-                    .font(theme.ui(points: 10))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
@@ -319,16 +322,16 @@ struct ChatSidebarView: View {
                 if filteredHistoryChats.isEmpty {
                     VStack(spacing: 6) {
                         Image(systemName: "bubble.left.and.bubble.right")
-                            .font(theme.ui(points: 20))
+                            .font(theme.ui(.title2))
                             .foregroundStyle(.tertiary)
                             .padding(.top, 18)
                             .padding(.bottom, 2)
                             .accessibilityHidden(true)
                         Text(searchText.isEmpty ? "No chats yet" : "No matching chats")
-                            .font(theme.ui(points: 11, weight: .medium))
+                            .font(theme.ui(.tiny, weight: .medium))
                             .foregroundStyle(.secondary)
                         Text(searchText.isEmpty ? "Start a conversation to see history here" : "Try a different search term")
-                            .font(theme.ui(points: 10))
+                            .font(theme.ui(.tiny))
                             .foregroundStyle(.tertiary)
                             .multilineTextAlignment(.center)
                     }
@@ -356,7 +359,7 @@ struct ChatSidebarView: View {
                     }
                     ForEach(dateGroupedChats(approach: unpinned), id: \.bucket) { group in
                         Text(group.bucket.label)
-                            .font(theme.ui(points: 10.5, weight: .semibold))
+                            .font(theme.ui(.tiny, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .padding(.leading, 10)
                             .padding(.top, 8)
@@ -403,11 +406,11 @@ struct ChatSidebarView: View {
                 ForEach(archived) { chat in
                     HStack(spacing: 8) {
                         Image(systemName: "archivebox")
-                            .font(theme.ui(points: 11))
+                            .font(theme.ui(.tiny))
                             .foregroundStyle(.tertiary)
                             .accessibilityHidden(true)
                         Text(chat.title)
-                            .font(theme.ui(points: 12))
+                            .font(theme.ui(.small))
                             .lineLimit(1)
                             .truncationMode(.tail)
                         Spacer(minLength: 4)
@@ -415,7 +418,7 @@ struct ChatSidebarView: View {
                             model.setChatArchived(id: chat.id, archived: false)
                         } label: {
                             Text("Restore", bundle: .module)
-                                .font(theme.ui(points: 10, weight: .medium))
+                                .font(theme.ui(.tiny, weight: .medium))
                         }
                         .buttonStyle(.plain)
                         .help("Move this chat back into the chat list")
@@ -423,7 +426,7 @@ struct ChatSidebarView: View {
                             chatPendingDeletion = chat
                         } label: {
                             Image(systemName: "trash")
-                                .font(theme.ui(points: 10))
+                                .font(theme.ui(.tiny))
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.tertiary)
@@ -437,7 +440,7 @@ struct ChatSidebarView: View {
                 Label(
                     archived.count == 1 ? "Archived (1 chat)" : "Archived (\(archived.count) chats)",
                     systemImage: "archivebox")
-                    .font(theme.ui(points: 11, weight: .medium))
+                    .font(theme.ui(.tiny, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             .padding(.top, 10)

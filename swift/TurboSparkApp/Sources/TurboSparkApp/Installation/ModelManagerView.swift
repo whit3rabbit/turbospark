@@ -116,7 +116,7 @@ struct ModelManagerView: View {
     private var emptyListState: some View {
         VStack(spacing: 12) {
             Image(systemName: "internaldrive")
-                .themedFont(points: 32)
+                .themedFont(.hero)
                 .foregroundStyle(.quaternary)
             Text(model.installed.isEmpty ? "No Models Installed" : "No Matching Models")
                 .themedFont(.base, weight: .medium)
@@ -156,7 +156,7 @@ struct ModelManagerView: View {
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "internaldrive")
-                    .themedFont(points: 30)
+                    .themedFont(.hero)
                     .foregroundStyle(.quaternary)
                 Text("No Model Selected", bundle: .module)
                     .themedFont(.base, weight: .medium)

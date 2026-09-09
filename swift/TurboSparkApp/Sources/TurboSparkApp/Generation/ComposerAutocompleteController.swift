@@ -69,6 +69,15 @@ final class ComposerAutocompleteController: ObservableObject {
         selectedIndex = ((selectedIndex + delta) % count + count) % count
     }
 
+    /// Points the highlight at the row the user CLICKED, so the accept that
+    /// follows (`accept(in:)` reads `selectedIndex`) inserts the clicked
+    /// row rather than whichever row the keyboard happened to highlight.
+    func select(_ index: Int) {
+        guard suggestions.indices.contains(index) else { return }
+        selectedIndex = index
+        objectWillChange.send()
+    }
+
     /// The full composer text with the trigger token replaced by the
     /// highlighted suggestion, or nil when there is nothing to accept. The
     /// trailing space is part of the result: a completed token is not a

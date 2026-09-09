@@ -143,7 +143,7 @@ struct RecommendationVerdictBadge: View {
         case .resident:
             HStack(spacing: 3) {
                 Image(systemName: "checkmark.circle.fill")
-                    .themedFont(points: 8, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                     .accessibilityHidden(true)
                 Text("Fits Memory", bundle: .module)
             }
@@ -156,7 +156,7 @@ struct RecommendationVerdictBadge: View {
         case .streams:
             HStack(spacing: 3) {
                 Image(systemName: "bolt.fill")
-                    .themedFont(points: 8, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                     .accessibilityHidden(true)
                 Text("Streams Fast", bundle: .module)
             }
@@ -169,7 +169,7 @@ struct RecommendationVerdictBadge: View {
         case .tight:
             HStack(spacing: 3) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .themedFont(points: 8, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                 Text("Tight Fit", bundle: .module)
             }
             .themedFont(.tiny, weight: .semibold)
@@ -181,7 +181,7 @@ struct RecommendationVerdictBadge: View {
         case .refused:
             HStack(spacing: 3) {
                 Image(systemName: "xmark.octagon.fill")
-                    .themedFont(points: 8, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                 Text("Too Large", bundle: .module)
             }
             .themedFont(.tiny, weight: .semibold)

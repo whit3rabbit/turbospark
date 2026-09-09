@@ -364,21 +364,22 @@ pub(crate) fn stream_turn(
         String::new,
         prompt_ids,
     );
+    let mut emit = |turn: runtime::TurnEvent| match turn {
+        // No prefill progress on stdout, and no tool rendering: the
+        // allowlist is empty, so a call stays reasoning and no
+        // TurnEvent::ToolCall can arrive.
+        runtime::TurnEvent::Prefill { .. } | runtime::TurnEvent::ToolCall(_) => {}
+        // Reasoning goes to stderr so redirecting stdout captures the
+        // ANSWER alone, and only the answer becomes the assistant turn.
+        runtime::TurnEvent::Reasoning(reasoning) => eprint!("{reasoning}"),
+        runtime::TurnEvent::Content(answer) => {
+            let _ = write!(out, "{answer}");
+            let _ = out.flush();
+            reply.push_str(&answer);
+        }
+    };
     let on_progress = |event| {
-        split.feed(event, &mut |turn| match turn {
-            // No prefill progress on stdout, and no tool rendering: the
-            // allowlist is empty, so a call stays reasoning and no
-            // TurnEvent::ToolCall can arrive.
-            runtime::TurnEvent::Prefill { .. } | runtime::TurnEvent::ToolCall(_) => {}
-            // Reasoning goes to stderr so redirecting stdout captures the
-            // ANSWER alone, and only the answer becomes the assistant turn.
-            runtime::TurnEvent::Reasoning(reasoning) => eprint!("{reasoning}"),
-            runtime::TurnEvent::Content(answer) => {
-                let _ = write!(out, "{answer}");
-                let _ = out.flush();
-                reply.push_str(&answer);
-            }
-        });
+        split.feed(event, &mut emit);
     };
     let chunk_tokens = resolve_chunk_tokens(session, request);
     let result = match (&session.speculation, chunk_tokens) {
@@ -418,6 +419,11 @@ pub(crate) fn stream_turn(
             )?,
         },
     };
+    // Flushes a stop-token-terminated tool call or DeepSeek's withheld tail,
+    // same as crates/server/src/handler/exec.rs. A no-op today: the empty
+    // tool set above means no dialect ever enters a state finish() would
+    // need to close (DEVIATIONS.md).
+    let _ = split.finish(&mut emit);
     let _ = writeln!(out);
     Ok((reply, result))
 }

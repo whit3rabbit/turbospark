@@ -34,7 +34,7 @@ struct PromptTipsGuideView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Prompting tips", bundle: .module)
-                .font(theme.ui(points: 13, weight: .semibold))
+                .font(theme.ui(.callout, weight: .semibold))
 
             tipSection("Clear task & constraints",
                        "State what you want created, explained, or transformed. Specify length, style, or output structure.")
@@ -43,7 +43,7 @@ struct PromptTipsGuideView: View {
             tipSection("Attach relevant documents",
                        "Attach PDFs, spreadsheets, or code files for local reasoning and question answering.")
         }
-        .font(theme.ui(points: 12))
+        .font(theme.ui(.small))
         .frame(width: 360, alignment: .leading)
         .padding(18)
     }
@@ -71,7 +71,7 @@ struct PromptAttachDocumentButton: View {
                     TaskProgressFlameIcon(size: 16)
                 } else {
                     Image(systemName: "plus")
-                        .themedFont(points: 13, weight: .medium)
+                        .themedFont(.callout, weight: .medium)
                 }
             }
             .frame(width: iconButtonSize, height: iconButtonSize)
@@ -105,9 +105,9 @@ struct SearchToggleButton: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "globe")
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                 Text("Search", bundle: .module)
-                    .font(theme.ui(points: 12, weight: .medium))
+                    .font(theme.ui(.small, weight: .medium))
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -144,7 +144,7 @@ struct PromptAudioInputButton: View {
             NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
         } label: {
             Image(systemName: "mic")
-                .themedFont(points: 13, weight: .medium)
+                .themedFont(.callout, weight: .medium)
                 .foregroundStyle(Color.secondary)
                 .frame(width: 28, height: 28)
                 .background(

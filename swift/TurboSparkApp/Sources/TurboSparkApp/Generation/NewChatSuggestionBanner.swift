@@ -14,13 +14,12 @@ import SwiftUI
 struct NewChatSuggestionBanner: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
-    @State private var dismissedChatID: UUID? = nil
 
     private var shouldSuggest: Bool {
         guard let summary = model.contextUsageSummary,
             summary.fraction >= 0.9,
             model.selectedTurnMessages.count >= 8,
-            dismissedChatID != model.selectedChatID
+            !model.dismissedNewChatSuggestionChatIDs.contains(model.selectedChatID)
         else { return false }
         return true
     }
@@ -37,7 +36,7 @@ struct NewChatSuggestionBanner: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Button {
-                    dismissedChatID = model.selectedChatID
+                    model.dismissedNewChatSuggestionChatIDs.insert(model.selectedChatID)
                 } label: {
                     Text("Dismiss", bundle: .module)
                         .themedFont(.small)

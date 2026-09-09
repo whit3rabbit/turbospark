@@ -306,8 +306,16 @@ public final class WorktreeModel: ObservableObject {
     }
 
     /// Selects a commit from the timeline to inspect its files and message.
+    ///
+    /// Also moves `comparisonMode` to that commit: `loadDiff` reads the
+    /// ambient mode, so a file row clicked under a commit whose mode still
+    /// said `.againstBranch` fetched the BRANCH diff -- empty for a file the
+    /// commit touched but the working tree did not, which then fell through
+    /// to the untracked fallback and showed the whole file as additions
+    /// under a commit header.
     public func selectTimelineCommit(_ commit: WorktreeCommit) {
         selectedTimelineCommit = commit
+        comparisonMode = .commit(hash: commit.hash, summary: commit.summary)
         isLoadingCommitFiles = true
         selectedCommitFiles = []
         let path = rootDirectoryPath
@@ -321,6 +329,18 @@ public final class WorktreeModel: ObservableObject {
             if let first = files.first {
                 self.loadDiff(for: first.relativePath)
             }
+        }
+    }
+
+    /// Clears the timeline selection. The commit-scoped comparison mode
+    /// goes with it: left behind, the next file click in the Changes list
+    /// would query the stale commit's diff instead of the mode the list is
+    /// showing.
+    public func deselectTimelineCommit() {
+        selectedTimelineCommit = nil
+        selectedCommitFiles = []
+        if case .commit = comparisonMode {
+            comparisonMode = .uncommitted
         }
     }
 

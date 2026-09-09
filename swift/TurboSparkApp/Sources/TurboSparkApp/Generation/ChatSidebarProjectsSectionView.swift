@@ -19,7 +19,7 @@ struct ChatSidebarProjectsSectionView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text("Projects", bundle: .module)
-                    .font(theme.ui(points: 11, weight: .semibold))
+                    .font(theme.ui(.tiny, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
@@ -29,7 +29,7 @@ struct ChatSidebarProjectsSectionView: View {
                 } label: {
                     Label("Add Project", systemImage: "plus")
                         .labelStyle(.iconOnly)
-                        .font(theme.ui(points: 11))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
@@ -58,15 +58,15 @@ struct ChatSidebarProjectsSectionView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: isSelected ? "folder.fill" : "folder")
-                    .font(theme.ui(points: 11))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                     .accessibilityHidden(true)
                 Text("All Chats", bundle: .module)
-                    .font(theme.ui(points: 12, weight: isSelected ? .semibold : .regular))
+                    .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(.primary)
                 Spacer()
                 Text("\(model.chats.count)", bundle: .module)
-                    .font(theme.ui(points: 10))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("\(model.chats.count) chats")
             }
@@ -96,16 +96,16 @@ struct ChatSidebarProjectsSectionView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isSelected ? "folder.fill.badge.gearshape" : "folder.badge.gearshape")
-                        .font(theme.ui(points: 11))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(project.name)
-                            .font(theme.ui(points: 12, weight: isSelected ? .semibold : .regular))
+                            .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                         Text(project.agentType.label)
-                            .font(theme.ui(points: 10))
+                            .font(theme.ui(.tiny))
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
@@ -125,7 +125,7 @@ struct ChatSidebarProjectsSectionView: View {
                     model.createChat(projectID: project.id)
                 } label: {
                     Image(systemName: "plus")
-                        .font(theme.ui(points: 11, weight: .semibold))
+                        .font(theme.ui(.tiny, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: projectActionSize, height: projectActionSize)
                         .contentShape(Circle())

@@ -26,11 +26,21 @@ struct MarkdownTableGrid: Equatable {
     /// table the interactive treatment. A table is a header line and a
     /// separator line that are both pipe-delimited, followed by contiguous
     /// pipe-delimited rows.
+    ///
+    /// FENCED CODE BLOCKS ARE NEVER TABLES. The scan tracks ```/~~~ fences
+    /// and treats their contents as prose: without that, an example table
+    /// inside a code block is detected, and the segmentation cuts the fence
+    /// in half -- the markdown renderer then receives an unclosed fence as
+    /// one segment and a stray ``` as another, which swallows the message's
+    /// remaining prose.
     static func segments(in markdown: String) -> [Segment] {
         var result: [Segment] = []
         let lines = markdown.components(separatedBy: "\n")
         var prose: [String] = []
         var index = 0
+        /// The fence currently open, if any: its delimiter character and
+        /// run length.
+        var openFence: (character: Character, length: Int)? = nil
         func flushProse() {
             if !prose.isEmpty {
                 result.append(.markdown(prose.joined(separator: "\n")))
@@ -38,6 +48,20 @@ struct MarkdownTableGrid: Equatable {
             }
         }
         while index < lines.count {
+            if let fence = openFence {
+                if closesFence(lines[index], fence) {
+                    openFence = nil
+                }
+                prose.append(lines[index])
+                index += 1
+                continue
+            }
+            if let fence = openedFence(lines[index]) {
+                openFence = fence
+                prose.append(lines[index])
+                index += 1
+                continue
+            }
             guard index + 1 < lines.count,
                 isPipeRow(lines[index]),
                 isSeparatorRow(lines[index + 1])
@@ -62,6 +86,35 @@ struct MarkdownTableGrid: Equatable {
         }
         flushProse()
         return result
+    }
+
+    /// The fence a line OPENS: three or more backticks or tildes, the
+    /// CommonMark fenced code block. Any info string after the marker is
+    /// ignored.
+    private static func openedFence(_ line: String) -> (character: Character, length: Int)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let first = trimmed.first, first == "`" || first == "~" else { return nil }
+        var length = 0
+        for character in trimmed {
+            guard character == first else { break }
+            length += 1
+        }
+        return length >= 3 ? (first, length) : nil
+    }
+
+    /// Whether a line CLOSES the given fence: the same character, at least
+    /// as long a run, and nothing else on the line.
+    private static func closesFence(
+        _ line: String, _ fence: (character: Character, length: Int)
+    ) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let first = trimmed.first, first == fence.character else { return false }
+        var length = 0
+        for character in trimmed {
+            guard character == fence.character else { break }
+            length += 1
+        }
+        return length >= fence.length && length == trimmed.count
     }
 
     enum Segment: Equatable {
@@ -144,19 +197,40 @@ struct MarkdownTableGrid: Equatable {
     /// case-insensitively. An index past the end returns self unchanged.
     func sorted(byColumn column: Int, direction: SortDirection) -> MarkdownTableGrid {
         guard column >= 0, column < columnCount else { return self }
-        let sorted = rows.sorted { lhs, rhs in
-            let left = lhs[safe: column] ?? ""
-            let right = rhs[safe: column] ?? ""
-            let order: Bool
-            if let leftNumber = Double(left.replacingOccurrences(of: ",", with: "")),
-                let rightNumber = Double(right.replacingOccurrences(of: ",", with: "")) {
-                order = leftNumber < rightNumber
+        let order = sortedRowIndices(byColumn: column, direction: direction)
+        return MarkdownTableGrid(header: header, rows: order.map { rows[$0] })
+    }
+
+    /// The row permutation `sorted(byColumn:direction:)` applies, so a view
+    /// can map a display position back to its original row POSITIONALLY.
+    /// Matching rows back by value collides on duplicate rows.
+    ///
+    /// The numeric decision is made for the WHOLE column, not per pair:
+    /// per-pair detection is not a strict weak ordering when a column mixes
+    /// numbers with text ("9" < "10" numerically, but "10" < "1a" < "9" as
+    /// strings is a cycle). Ties compare equal BOTH ways; the old `!order`
+    /// descending arm claimed a < b and b < a at once, and `sorted(by:)`
+    /// documents its behavior as unspecified under exactly that.
+    func sortedRowIndices(byColumn column: Int, direction: SortDirection) -> [Int] {
+        guard column >= 0, column < columnCount else { return Array(rows.indices) }
+        let normalized = rows.map { ($0[safe: column] ?? "").replacingOccurrences(of: ",", with: "") }
+        let isNumericColumn = normalized.allSatisfy { Double($0) != nil }
+        return rows.indices.sorted { lhs, rhs in
+            let comparison: ComparisonResult
+            if isNumericColumn {
+                let left = Double(normalized[lhs]) ?? 0
+                let right = Double(normalized[rhs]) ?? 0
+                comparison = left < right ? .orderedAscending
+                    : (left > right ? .orderedDescending : .orderedSame)
             } else {
-                order = left.localizedCaseInsensitiveCompare(right) == .orderedAscending
+                comparison = normalized[lhs].localizedCaseInsensitiveCompare(normalized[rhs])
             }
-            return direction == .ascending ? order : !order
+            switch (comparison, direction) {
+            case (.orderedSame, _): return false
+            case (.orderedAscending, .ascending), (.orderedDescending, .descending): return true
+            default: return false
+            }
         }
-        return MarkdownTableGrid(header: header, rows: sorted)
     }
 
     // MARK: - Serialization
@@ -171,13 +245,19 @@ struct MarkdownTableGrid: Equatable {
         delimited(",", escapeTabNewline: false, rows: rows)
     }
 
-    /// The original markdown again; the copy-the-source escape hatch.
+    /// The original markdown again; the copy-the-source escape hatch. A
+    /// literal pipe inside a cell is re-escaped, or the consumer (including
+    /// this app's own `segments(in:)`) re-splits the cell and the pasted
+    /// table comes out wider than the copied one.
     var markdown: String {
-        var lines = ["| " + header.joined(separator: " | ") + " |"]
+        func cell(_ value: String) -> String {
+            value.replacingOccurrences(of: "|", with: "\\|")
+        }
+        var lines = ["| " + header.map(cell).joined(separator: " | ") + " |"]
         lines.append("| " + header.map { _ in "---" }.joined(separator: " | ") + " |")
         for row in rows {
             let padded = row + Array(repeating: "", count: max(0, columnCount - row.count))
-            lines.append("| " + padded.prefix(columnCount).joined(separator: " | ") + " |")
+            lines.append("| " + padded.prefix(columnCount).map(cell).joined(separator: " | ") + " |")
         }
         return lines.joined(separator: "\n")
     }

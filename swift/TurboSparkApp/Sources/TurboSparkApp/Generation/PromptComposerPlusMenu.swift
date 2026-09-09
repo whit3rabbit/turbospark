@@ -38,9 +38,9 @@ struct PromptComposerPlusMenu: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: "plus")
-                        .themedFont(points: 12, weight: .semibold)
+                        .themedFont(.small, weight: .semibold)
                     Image(systemName: "chevron.down")
-                        .themedFont(points: 7, weight: .bold)
+                        .themedFont(.micro, weight: .bold)
                         .foregroundStyle(.secondary)
                 }
                 .frame(height: iconButtonSize)

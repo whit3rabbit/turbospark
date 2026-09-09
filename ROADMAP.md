@@ -19,16 +19,7 @@ All completed work, historical milestones, and landed features have been removed
 
 Low-friction, high-impact fixes, unblocked measurement runs, or low-hanging symmetry tasks that can be executed immediately.
 
-#### 1. Turn Decoder `finish()` Symmetry on CLI and FFI
-- **Objective**: Server calls `runtime::TurnSplitter::finish` to flush trailing text and stop-token tool calls, but CLI and FFI loops do not call it yet (`DEVIATIONS.md`). Symmetrically wire `finish()` across all generation consumers so withheld text (`held_text` from DeepSeek) and pending tool calls flush properly.
-- **Why Open**: Was previously inert because CLI and FFI ran with empty tool allowlists, but creating symmetry prevents subtle output dropping when tool execution expands.
-- **Files to Touch**:
-  - `crates/cli/src/generate/mod.rs` (invoke `split.finish()` after decode loop)
-  - `crates/ffi/src/generate/mod.rs` (invoke `split.finish()` after decode loop)
-  - `crates/runtime/src/turn_stream.rs` (verify finish event propagation)
-  - `docs/STREAMING.md`, `DEVIATIONS.md`
-
-#### 2. Cancellable Model Installation (`ts_install_cancel`)
+#### 1. Cancellable Model Installation (`ts_install_cancel`)
 - **Objective**: `ts_install` currently blocks its thread for the whole streaming walk; GUI Cancel only detaches observation while the download continues in the background (`DEVIATIONS.md`). Thread an atomic cancellation flag through `catalog::install` and expose `ts_install_cancel` in the C ABI and Swift package.
 - **Why Open**: Required for genuine user cancellation in `TurboSparkApp` without background resource leaks or file write collisions.
 - **Files to Touch**:
@@ -38,21 +29,21 @@ Low-friction, high-impact fixes, unblocked measurement runs, or low-hanging symm
   - `swift/TurboSpark/Sources/TurboSpark/ModelCatalog.swift` (wrap cancellation in Swift library)
   - `swift/TurboSparkApp/Sources/TurboSparkApp/ModelInstallView.swift` / `CatalogSheet.swift` (wire UI Cancel button)
 
-#### 3. Prefill Energy Capture
+#### 2. Prefill Energy Capture
 - **Objective**: Run `ARMS=seq,chunked scripts/power.sh` on AC quiet machine (~12 min, sudo) to capture baseline chunked prefill power and J/tok.
 - **Why Open**: Tooling was unblocked (`turbospark-bench --prefill-chunk off|auto|N` and `scripts/power.sh seq|chunked` wired), but clean baseline row run is still owed.
 - **Files to Touch / Run**:
   - `scripts/power.sh` (execute benchmark)
   - `docs/POWER_BASELINE.md` (record resulting rows)
 
-#### 4. Step 6 Batched GEMV Throughput A/B Re-run
+#### 3. Step 6 Batched GEMV Throughput A/B Re-run
 - **Objective**: Re-run throughput A/B on a quiet machine via `turbospark-bench --prefill-chunk auto` with `TURBOSPARK_BATCHED_GEMV=1` exported, polling `pgrep -x rustc` throughout to guard against mid-run build contamination.
 - **Why Open**: Direction confirmed twice over (never slower on Gemma 4 install), but exact magnitude was invalidated by concurrent build processes.
 - **Files to Touch / Run**:
   - `crates/bench/` (`turbospark-bench`)
   - `docs/BATCHED_PREFILL.md` (freeze verified throughput speedup)
 
-#### 5. `qwen4_exp` Chunked Prefill Throughput & Pread Verification
+#### 4. `qwen4_exp` Chunked Prefill Throughput & Pread Verification
 - **Objective**: Difference two `TURBOSPARK_PHASES=1` runs' `expert io (pread)` buckets via `turbospark-check` (short prompt vs long prompt at same `--max-new`) to test if prefill is pread-bound.
 - **Why Open**: Seventh `ChunkedPrefillRunner` landed and is bit-identical, but throughput numbers remain unmeasured.
 - **Files to Touch / Run**:
@@ -60,7 +51,7 @@ Low-friction, high-impact fixes, unblocked measurement runs, or low-hanging symm
   - `crates/runtime/src/families/qwen4/prefill.rs`
   - `docs/QWEN4_EXP.md`
 
-#### 6. Real-Model Smoke for TurboQuant `--kv-bits`
+#### 5. Real-Model Smoke for TurboQuant `--kv-bits`
 - **Objective**: Run `turbospark-check --kv-bits 2|3|3.5|4` on real installs and record sanity output and perplexity checks.
 - **Why Open**: Pipeline and Metal kernels landed across all 7 families, but real-model execution has not been validated against real hardware from the main worktree.
 - **Files to Touch / Run**:

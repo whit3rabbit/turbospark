@@ -1,43 +1,75 @@
 import AppKit
 import SwiftUI
 
-/// Named size steps for themed text, standing in for SwiftUI's semantic sizes.
+/// The named roles of the app's canonical type scale, and the only way to
+/// size themed text.
 ///
-/// The factors are the approximate ratios of `.caption2`, `.caption` and
-/// `.callout` to `.body` on macOS, so a site that used to say `.caption` reads
-/// the same after conversion. They are relative on purpose: the point of the
-/// step is that every themed surface moves together when the base size does.
+/// This is the ONE change point for font sizing. Every themed call site names
+/// a role (`theme.ui(.small)`, `.themedFont(.callout)`); the rendered size
+/// comes from this table, so retuning a role moves every surface that plays
+/// it, and adding surface #2,000 with a mismatched size is a compile error
+/// rather than a drift. The explicit-point-size spellings
+/// (`theme.ui(points:)` and friends) were deleted 2026-09-08: they had
+/// accumulated 437 call sites across 28 distinct values, with the SAME role
+/// (secondary row text, empty-state symbols) written at five or six
+/// neighbouring sizes across files. See `swift/docs/SWIFT_SETTINGS_AUDIT.md`
+/// section 1.
 ///
-/// `.tiny`/`.small` were recalibrated 2026-09-08: at the 16pt default base
-/// they used to render at about 13.3pt/14.7pt, while the OTHER font-sizing
-/// convention in this app (`theme.ui(points: N)`, used for chat/sidebar rows)
-/// renders equivalent small/secondary text at about 11pt/12.5pt -- two
-/// systems for the same semantic role, never reconciled, so a step-based
-/// control placed next to a points-based one (a popover next to a sidebar
-/// row) visibly mismatched. The new factors target those same point values;
-/// `.base` and up are untouched, since body/heading text wasn't part of the
-/// mismatch.
-public enum AppFontStep: Sendable {
+/// The rendered sizes below are at `AppFontCatalog.defaultUISize` (16pt);
+/// every one scales proportionally when the user moves the UI or code base
+/// size or the Text Size setting, through the same descriptor math for every
+/// role. Factors are exact size/16 ratios so the rendered value at the
+/// default base is the integer the table promises after `scaled(by:)`'s
+/// rounding.
+///
+/// | role | renders (16pt base) | plays |
+/// |---|---|---|
+/// | `.micro`   |  9 | overline chips, micro badges, chart ticks |
+/// | `.tiny`    | 11 | fine print, timestamps, dense metadata |
+/// | `.small`   | 12 | secondary rows, sidebar text |
+/// | `.callout` | 14 | control text, card and sheet titles |
+/// | `.base`    | 16 | body text |
+/// | `.large`   | 17 | slightly emphasized body |
+/// | `.title3`  | 18 | section headings |
+/// | `.title2`  | 21 | pane headings, small empty-state symbols |
+/// | `.title`   | 27 | window headings |
+/// | `.hero`    | 30 | medium empty-state symbols |
+/// | `.display` | 36 | hero empty-state symbols, display numerals |
+public enum AppFontStep: CaseIterable, Sendable {
+    case micro
     case tiny
     case small
+    case callout
     case base
     case large
     case title3
     case title2
     case title
     case hero
+    case display
 
+    /// The multiplier applied to the user's base font size. Exactly
+    /// `renderedPointsAtDefaultBase / 16`.
     public var factor: CGFloat {
         switch self {
-        case .tiny: 0.69
-        case .small: 0.78
+        case .micro: 0.5625
+        case .tiny: 0.6875
+        case .small: 0.75
+        case .callout: 0.875
         case .base: 1.0
-        case .large: 1.08
-        case .title3: 1.15
-        case .title2: 1.31
-        case .title: 1.70
-        case .hero: 2.00
+        case .large: 1.0625
+        case .title3: 1.125
+        case .title2: 1.3125
+        case .title: 1.6875
+        case .hero: 1.875
+        case .display: 2.25
         }
+    }
+
+    /// What this role renders at `AppFontCatalog.defaultUISize`. For tests
+    /// and previews; call sites read the factor through the theme instead.
+    public var renderedPointsAtDefaultBase: CGFloat {
+        AppFontCatalog.defaultUISize * factor
     }
 }
 
@@ -95,11 +127,21 @@ public struct AppFontDescriptor: Equatable, Hashable, Sendable {
 
     /// The same font at a size relative to this one, for a surface that wants
     /// a caption or a heading without leaving the chosen family.
-    public func scaled(by factor: CGFloat, weight override: Font.Weight? = nil) -> Font {
+    ///
+    /// `systemDesign` overrides the design only while this descriptor names
+    /// the system face (see `resolved(size:weight:systemDesign:)`), so a
+    /// deliberately monospaced or serif site keeps its look at the default
+    /// family setting.
+    public func scaled(
+        by factor: CGFloat,
+        weight override: Font.Weight? = nil,
+        systemDesign: Font.Design? = nil
+    ) -> Font {
         var copy = self
         copy.size = (size * factor).rounded()
         if let override { copy.weight = override }
-        return copy.font
+        return copy.resolved(
+            size: copy.size, weight: copy.weight, systemDesign: systemDesign)
     }
 }
 

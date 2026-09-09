@@ -56,34 +56,41 @@ public struct ResolvedAppTheme: Equatable, Sendable {
     ///
     /// Named steps rather than raw ratios so a call site says what it means,
     /// and so every code surface moves together when the base size changes.
-    public func code(_ step: AppFontStep = .base, weight: Font.Weight? = nil) -> Font {
-        codeFontDescriptor.scaled(by: step.factor, weight: weight)
+    public func code(
+        _ step: AppFontStep = .base,
+        weight: Font.Weight? = nil,
+        systemDesign: Font.Design? = nil
+    ) -> Font {
+        codeFontDescriptor.scaled(by: step.factor, weight: weight, systemDesign: systemDesign)
     }
 
-    /// The UI font at a named step. See `code(_:weight:)`.
-    public func ui(_ step: AppFontStep = .base, weight: Font.Weight? = nil) -> Font {
-        uiFontDescriptor.scaled(by: step.factor, weight: weight)
+    /// The UI font at a named step. See `code(_:weight:systemDesign:)`.
+    ///
+    /// `systemDesign` reaches the font only while the family is the system
+    /// face, which keeps a deliberately serif or monospaced site looking as
+    /// designed until a real family is chosen.
+    public func ui(
+        _ step: AppFontStep = .base,
+        weight: Font.Weight? = nil,
+        systemDesign: Font.Design? = nil
+    ) -> Font {
+        uiFontDescriptor.scaled(by: step.factor, weight: weight, systemDesign: systemDesign)
     }
 
-    /// The UI font at an explicit point size, scaled by how far the user has
+    /// The UI font at a LAYOUT-derived size, scaled by how far the user has
     /// moved the base off `AppFontCatalog.defaultUISize`.
     ///
-    /// At the default this returns exactly the size the call site asks for, so
-    /// converting a `.system(size: 11, ...)` site changes the FAMILY and
-    /// nothing else. `systemDesign` is honoured only while the family is the
-    /// system face, which keeps a deliberately serif or monospaced site
-    /// looking as designed until a real family is chosen.
-    public func ui(points: CGFloat, weight: Font.Weight = .regular, systemDesign: Font.Design? = nil) -> Font {
+    /// For a glyph whose size a frame dictates (a logo letterform, an icon
+    /// sized to its row), not for text: a constant here is a missing
+    /// `AppFontStep` role. See `View.themedFont(fitting:)`.
+    public func ui(
+        fitting points: CGFloat,
+        weight: Font.Weight = .regular,
+        systemDesign: Font.Design? = nil
+    ) -> Font {
         let scale = uiFontDescriptor.size / AppFontCatalog.defaultUISize
         return uiFontDescriptor.resolved(
             size: (points * scale).rounded(), weight: weight, systemDesign: systemDesign)
-    }
-
-    /// The code font at an explicit point size. See `ui(points:weight:)`.
-    public func code(points: CGFloat, weight: Font.Weight = .regular) -> Font {
-        let scale = codeFontDescriptor.size / AppFontCatalog.defaultCodeSize
-        return codeFontDescriptor.resolved(
-            size: (points * scale).rounded(), weight: weight, systemDesign: nil)
     }
 
     /// Secondary text that still clears WCAG AA at the configured contrast.

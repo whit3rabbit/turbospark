@@ -55,7 +55,7 @@ struct CronJobsSettingsPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "clock.badge.questionmark")
-                .font(theme.ui(points: 22))
+                .font(theme.ui(.title2))
                 .foregroundStyle(.tertiary)
                 .padding(.bottom, 2)
                 .accessibilityHidden(true)

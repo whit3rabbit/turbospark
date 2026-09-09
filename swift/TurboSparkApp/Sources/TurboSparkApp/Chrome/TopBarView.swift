@@ -69,7 +69,7 @@ struct TopBarView: View {
             isVisible: isChatSidebarVisible)
         return Button(action: toggleChatSidebar) {
             Image(systemName: presentation.systemImage)
-                .font(theme.ui(points: 13, weight: .medium))
+                .font(theme.ui(.callout, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .contentShape(Rectangle())
         }
@@ -90,7 +90,7 @@ struct TopBarView: View {
             isVisible: isInspectorVisible)
         return Button(action: toggleInspector) {
             Image(systemName: presentation.systemImage)
-                .font(theme.ui(points: 13, weight: .medium))
+                .font(theme.ui(.callout, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .contentShape(Rectangle())
         }
@@ -124,7 +124,7 @@ struct TopBarView: View {
             }
         } label: {
             Image(systemName: "ghost")
-                .font(theme.ui(points: 13, weight: .medium))
+                .font(theme.ui(.callout, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .contentShape(Rectangle())
         }
@@ -246,11 +246,11 @@ struct ChromeTelemetryView: View {
     private var memoryCell: some View {
         HStack(spacing: 6) {
             Image(systemName: "memorychip")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             Text(MetricFormat.memory(memoryBytes))
-                .font(theme.code(points: 11, weight: .medium))
+                .font(theme.code(.callout, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
             if let fraction = memoryFraction {
@@ -267,15 +267,15 @@ struct ChromeTelemetryView: View {
     private var cpuCell: some View {
         HStack(spacing: 6) {
             Image(systemName: "cpu")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             Text(cpuText)
-                .font(theme.code(points: 11, weight: .medium))
+                .font(theme.code(.callout, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
             Text("CPU", bundle: .module)
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
         }
         .help("Current CPU utilization of the TurboSpark process")
@@ -287,15 +287,15 @@ struct ChromeTelemetryView: View {
     private var gpuCell: some View {
         HStack(spacing: 6) {
             Image(systemName: "chart.line.uptrend.xyaxis")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             Text(gpuWaitText)
-                .font(theme.code(points: 11, weight: .medium))
+                .font(theme.code(.callout, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
             Text("GPU wait", bundle: .module)
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
         }
         .help(
@@ -405,7 +405,7 @@ struct GenerationPhaseIndicator: View {
                             .frame(width: 6, height: 6)
                     }
                     Text(statusText)
-                        .font(theme.ui(points: 11, weight: .medium))
+                        .font(theme.ui(.tiny, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

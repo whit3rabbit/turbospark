@@ -129,7 +129,7 @@ public struct SkillImportSheet: View {
         } else if candidates.isEmpty {
             VStack(spacing: 16) {
                 Image(systemName: "folder.badge.questionmark")
-                    .themedFont(points: 36)
+                    .themedFont(.display)
                     .foregroundStyle(.secondary)
                 Text("No external skills found in standard agent locations.", bundle: .module)
                     .themedFont(.base)
@@ -320,7 +320,7 @@ public struct SkillImportSheet: View {
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "globe.badge.chevron.backward")
-                        .themedFont(points: 40)
+                        .themedFont(.display)
                         .foregroundStyle(.secondary)
                     Text("Enter a GitHub repository (e.g. 'whit3rabbit/agent-skills') or direct HTTPS URL to browse and install remote skills.", bundle: .module)
                         .themedFont(.base)

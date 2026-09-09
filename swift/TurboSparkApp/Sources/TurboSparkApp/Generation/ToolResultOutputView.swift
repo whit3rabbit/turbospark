@@ -34,9 +34,9 @@ struct ToolResultOutputView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.down.circle")
-                            .themedFont(points: 10)
+                            .themedFont(.tiny)
                         Text(hiddenNoticeText)
-                            .themedFont(points: 11, weight: .medium)
+                            .themedFont(.tiny, weight: .medium)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
@@ -182,12 +182,12 @@ struct ToolResultOutputView: View {
     private var headerBar: some View {
         HStack(spacing: 8) {
             Text(isError ? "ERROR" : "OUTPUT")
-                .themedCode(points: 10, weight: .bold)
+                .themedCode(.callout, weight: .bold)
                 .foregroundStyle(isError ? Color.red : Color.secondary)
 
             if durationSeconds > 0 {
                 Text(String(format: "(%.2fs)", durationSeconds))
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
             }
 
@@ -198,9 +198,9 @@ struct ToolResultOutputView: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                     Text(isCopied ? "Copied" : "Copy Output")
-                        .themedFont(points: 11, weight: .medium)
+                        .themedFont(.tiny, weight: .medium)
                 }
                 .foregroundStyle(isCopied ? Color.green : Color.secondary)
             }

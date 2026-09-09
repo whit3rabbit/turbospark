@@ -49,7 +49,7 @@ struct FanReadoutView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "fanblades")
-                    .font(theme.ui(points: 10))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(isPinned ? Color.orange : Color.secondary)
                     .accessibilityHidden(true)
                 Text(rpmText)
@@ -57,7 +57,7 @@ struct FanReadoutView: View {
                     .foregroundStyle(.primary)
                 if isPinned {
                     Text("MAX", bundle: .module)
-                        .font(theme.ui(points: 9, weight: .semibold))
+                        .font(theme.ui(.micro, weight: .semibold))
                         .foregroundStyle(Color.orange)
                 }
             }
@@ -74,7 +74,7 @@ struct FanReadoutView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Fans", systemImage: "fanblades")
-                    .font(theme.ui(points: 13, weight: .semibold))
+                    .font(theme.ui(.callout, weight: .semibold))
                 Spacer()
                 if fans.isBusy {
                     ProgressView()
@@ -94,16 +94,16 @@ struct FanReadoutView: View {
                         Text(fan.isHeld ? "held" : "auto")
                             .foregroundStyle(fan.isHeld ? Color.orange : Color.secondary)
                     }
-                    .font(theme.ui(points: 11))
+                    .font(theme.ui(.tiny))
                 }
                 if let sensor = status.hottestSensor {
                     Text("Hottest sensor \(sensor.name): \(String(format: "%.1f", sensor.celsius)) C", bundle: .module)
-                        .font(theme.ui(points: 10))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.tertiary)
                 }
             } else {
                 Text(fans.statusError ?? "Reading fan status...")
-                    .font(theme.ui(points: 11))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.tertiary)
             }
 
@@ -119,7 +119,7 @@ struct FanReadoutView: View {
                 }
                 .disabled(fans.isBusy)
             }
-            .font(theme.ui(points: 11))
+            .font(theme.ui(.tiny))
 
             Toggle(isOn: Binding(
                 get: { fans.keepFansPinnedOnQuit },
@@ -132,13 +132,13 @@ struct FanReadoutView: View {
                 }
             )) {
                 Text("Keep fans pinned when TurboSpark quits", bundle: .module)
-                    .font(theme.ui(points: 11))
+                    .font(theme.ui(.tiny))
             }
             .controlSize(.small)
 
             if let error = fans.lastError ?? fans.statusError {
                 Text(error)
-                    .font(theme.ui(points: 10))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.red)
             }
 
@@ -146,7 +146,7 @@ struct FanReadoutView: View {
                 "A pinned hold outlives this app: quitting restores Apple's curve unless "
                     + "the toggle above is on. Fans can always be released with `thermalforge auto`."
             )
-            .font(theme.ui(points: 10))
+            .font(theme.ui(.tiny))
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }

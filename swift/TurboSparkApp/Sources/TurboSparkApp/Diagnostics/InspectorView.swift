@@ -36,12 +36,12 @@ struct InspectorView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "slider.horizontal.3")
-                .themedFont(points: 13, weight: .semibold)
+                .themedFont(.callout, weight: .semibold)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help("Model loading, generation, and steering options for the active model")
                 .accessibilityHidden(true)
             Text("Model Settings", bundle: .module)
-                .themedFont(points: 13, weight: .semibold)
+                .themedFont(.callout, weight: .semibold)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)

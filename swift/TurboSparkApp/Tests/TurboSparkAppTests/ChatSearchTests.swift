@@ -229,6 +229,19 @@ final class ChatSearchTests: XCTestCase {
         XCTAssertEqual(snippet.plainText, "short wetlands note")
     }
 
+    func testSnippetKeepsTheMatchWhenTheLeadInHasNoWhitespace() {
+        // A 40+-char URL before the match: the window walk finds no word
+        // boundary before the anchor and stops ON it. A second step there
+        // clipped the match's first character out of the window and the
+        // highlight with it.
+        let text = "see https://example.com/very/long/path/segments/aaaa?q=needle&x=1 for details"
+        let snippet = ChatSearch.makeSnippet(for: text, tokens: ["needle"])
+        XCTAssertTrue(snippet.plainText.contains("needle"), "the match survives the window cut")
+        XCTAssertEqual(
+            snippet.segments.filter(\.isMatch).map(\.text), ["needle"],
+            "the match itself is highlighted")
+    }
+
     func testSnippetForAMissFallsBackToTheWholeTextUnhighlighted() {
         let snippet = ChatSearch.makeSnippet(for: "nothing relevant", tokens: ["wetlands"])
         XCTAssertEqual(snippet.segments.count, 1)

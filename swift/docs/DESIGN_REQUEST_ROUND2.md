@@ -105,10 +105,14 @@ These are gates in this repo, not preferences. Round 1 tripped three of them.
 - **One property per `Section`.** The 14 SDK type checker's budget is smaller; a
   `Form` holding five inline `Section`s exceeded the solver there while
   compiling locally.
-- **No hardcoded `.font(`.** `FontPropagationTests` reddens on any file under
-  `Sources/` containing `.font(` and none of `themedFont` / `themedCode` /
-  `theme.`. Use `.themedFont(points:weight:)` or `theme.ui(...)` /
-  `theme.code(...)`.
+- **No hardcoded `.font(`, and no hardcoded size.** `FontPropagationTests`
+  reddens per CALL SITE on any `.font(` line with none of `themedFont` /
+  `themedCode` / `theme.` / `uiFont` / `codeFont`, and on any raw size
+  literal. Size text BY ROLE: `.themedFont(.small)` / `theme.code(.callout)`
+  -- `AppFontStep`'s doc table is the canonical scale, and the old
+  `points:` spellings were deleted. The one numeric spelling,
+  `.themedFont(fitting:)`, is for layout-derived glyph sizes (a letterform
+  at `size * 0.45`), never a constant.
 - **Every `Text("literal"` takes `bundle: .module`**, and a new key must be
   translated into all 21 catalog languages in the same change. **List the new
   user-facing strings separately at the top of the delivery** so they can be

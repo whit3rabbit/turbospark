@@ -85,7 +85,7 @@ struct WorktreeView: View {
                         Image(systemName: tab.systemImage)
                             .themedFont(.tiny)
                         Text(tab.title)
-                            .font(theme.ui(points: 11.5, weight: worktree.activeTab == tab ? .semibold : .regular))
+                            .font(theme.ui(.tiny, weight: worktree.activeTab == tab ? .semibold : .regular))
                     }
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
@@ -356,6 +356,12 @@ struct WorktreeView: View {
                         diff: diff,
                         onClose: { worktree.selectedFilePath = nil }
                     )
+                    // Keyed on the file so the fold state inside the diff
+                    // does not survive a switch to a different file: block
+                    // ids are sequential per parse, so carried-over state
+                    // would open fold #2 of file B because it was open in
+                    // file A.
+                    .id(file.relativePath)
                     .padding(8)
                 } else {
                     Text("No diff available.", bundle: .module)
@@ -366,7 +372,7 @@ struct WorktreeView: View {
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .themedFont(points: 28)
+                        .themedFont(.hero)
                         .foregroundStyle(.tertiary)
                     Text("Select a file to inspect diff", bundle: .module)
                         .themedFont(.base, weight: .medium)
@@ -403,6 +409,8 @@ struct WorktreeView: View {
                         diff: diff,
                         onClose: { worktree.selectedFilePath = nil }
                     )
+                    // Same fold-state reason as the split pane's copy.
+                    .id(file.relativePath)
                     .frame(maxHeight: 260)
                     .padding(6)
                 }
@@ -416,7 +424,7 @@ struct WorktreeView: View {
     private var nonGitRepositoryCard: some View {
         VStack(spacing: 12) {
             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .themedFont(points: 32)
+                .themedFont(.hero)
                 .foregroundStyle(TurboSparkTheme.accentColor.opacity(0.8))
                 .padding(.top, 40)
 

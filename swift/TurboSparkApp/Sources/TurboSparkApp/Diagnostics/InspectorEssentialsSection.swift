@@ -55,7 +55,7 @@ private struct ThinkingLevelControl: View {
                 Spacer()
                 if model.reasoningPickerEnabled {
                     Text("FROM TEMPLATE", bundle: .module)
-                        .themedFont(points: 9, weight: .semibold)
+                        .themedFont(.micro, weight: .semibold)
                         .tracking(0.5)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
@@ -300,7 +300,7 @@ private struct ContextSelectionButton: View {
                 summary
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
-                    .themedFont(points: 9, weight: .semibold)
+                    .themedFont(.micro, weight: .semibold)
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
@@ -320,13 +320,9 @@ private struct ContextSelectionButton: View {
         }
     }
 
-    // Points-based sizing (`theme.ui(points:)`), not `.themedFont(.small/.tiny)`:
-    // the step-based sizes are scaled off the user's BASE UI font size
-    // (16pt by default), so `.small` renders at ~14.7pt -- notably larger
-    // than the ~11-12.5pt `theme.ui(points:)` text this button sits beside
-    // in the sidebar and chat rows. Matching the surrounding chrome's scale
-    // matters more here than matching the Inspector's own (already larger)
-    // convention, since this control renders right next to that chrome.
+    // `.small`/`.tiny` are the sidebar rows' own roles in the canonical type
+    // scale, so this button renders at the same size as the sidebar and chat
+    // chrome it sits beside.
     @ViewBuilder
     private var summary: some View {
         if let rung = currentRung {
@@ -336,25 +332,25 @@ private struct ContextSelectionButton: View {
                 .frame(width: 7, height: 7)
                 .accessibilityHidden(true)
             Text(rung.context.formatted())
-                .font(theme.ui(points: 12, weight: .semibold))
+                .font(theme.ui(.small, weight: .semibold))
                 .monospacedDigit()
             Text(MetricFormat.storage(rung.counted))
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Text(presentation.compactLabel)
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(presentation.color)
         } else if model.maxContextTokens == 0 {
             Text("Auto (\(model.resolvedContextTokens.formatted()))", bundle: .module)
-                .font(theme.ui(points: 12, weight: .semibold))
+                .font(theme.ui(.small, weight: .semibold))
         } else if isCustom {
             Text("Custom \u{00B7} \(model.maxContextTokens.formatted())", bundle: .module)
-                .font(theme.ui(points: 12, weight: .semibold))
+                .font(theme.ui(.small, weight: .semibold))
                 .monospacedDigit()
         } else {
             Text(model.maxContextTokens.formatted())
-                .font(theme.ui(points: 12, weight: .semibold))
+                .font(theme.ui(.small, weight: .semibold))
                 .monospacedDigit()
         }
     }
@@ -508,11 +504,11 @@ private struct ContextSelectionPopover: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     primary
-                        .font(theme.ui(points: 12, weight: isSelected ? .semibold : .regular))
+                        .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
                         .foregroundStyle(Color.primary)
                     if let secondary {
                         secondary
-                            .font(theme.ui(points: 10.5))
+                            .font(theme.ui(.tiny))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -520,7 +516,7 @@ private struct ContextSelectionPopover: View {
                 Spacer(minLength: 4)
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .themedFont(points: 10, weight: .bold)
+                        .themedFont(.tiny, weight: .bold)
                         .foregroundStyle(Color.primary)
                 }
             }

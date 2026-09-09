@@ -108,16 +108,22 @@ reading the raw stream directly:
    that does not call `finish` silently drops stop-token-terminated calls
    and DeepSeek's withheld tail.
 
-Today the CLI and the FFI deliberately do NOT call `finish`, and only the
-server does. **On those two paths it is provably inert rather than merely
-low-risk**, because both of `finish`'s jobs need a non-empty allowlist that
-neither has: a Harmony call is emitted from it only once the decoder has
-ENTERED its tool state, which is gated on `allowed_tools.contains(name)`
+The CLI and the FFI now call `finish` too, symmetrically with the server
+(`crates/cli/src/generate/mod.rs`, `crates/ffi/src/generate/mod.rs`). **On
+those two paths it is still provably inert rather than merely low-risk**,
+because both of `finish`'s jobs need a non-empty allowlist that neither has:
+a Harmony call is emitted from it only once the decoder has ENTERED its
+tool state, which is gated on `allowed_tools.contains(name)`
 (`structured_decoder/harmony.rs`), and the withheld tail is `held_text`,
 written by nothing but `consume_deepseek`, whose decoder `TurnSplitter::new`
-builds only when `!tools.is_empty()`. So the gap is a missing SYMMETRY, not
-dropped output. It becomes load-bearing on the day a tools surface reaches
-either binding, which is the day to close it with real-model eyes.
+builds only when `!tools.is_empty()`. So wiring the call closed a missing
+SYMMETRY rather than fixing dropped output. It becomes load-bearing on the
+day a tools surface reaches either binding (`--tools` on the CLI, a
+`GenerateOptions` field on the FFI, neither built yet), which is the day to
+verify it with real-model eyes. `crates/ffi/tests/c_surface.rs`'s
+`a_reasoning_level_on_chatml_builds_a_decoder_and_finish_does_not_error`
+covers the one case besides tools where `finish` reaches a live decoder
+today: a requested reasoning level on ChatML or Gemma.
 
 ## Wire formats
 

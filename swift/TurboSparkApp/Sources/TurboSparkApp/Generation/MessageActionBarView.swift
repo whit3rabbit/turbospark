@@ -79,7 +79,7 @@ struct MessagePillActionButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                     .accessibilityHidden(true)
                 Text(label)
                     .themedFont(.tiny, weight: .medium)
@@ -106,7 +106,7 @@ struct MessageShareButton: View {
         ShareLink(item: text) {
             HStack(spacing: 4) {
                 Image(systemName: "square.and.arrow.up")
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                     .accessibilityHidden(true)
                 Text("Share", bundle: .module)
                     .themedFont(.tiny, weight: .medium)
@@ -139,7 +139,7 @@ struct MessageSpeechButton: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isSpeakingThis ? "stop.fill" : "speaker.wave.2")
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                     .accessibilityHidden(true)
                 Text(isSpeakingThis ? "Stop" : "Read")
                     .themedFont(.tiny, weight: .medium)
@@ -167,7 +167,7 @@ struct MessageTimestampBadge: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: "clock")
-                .themedFont(points: 10, weight: .medium)
+                .themedFont(.tiny, weight: .medium)
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
             Text(isHovered ? MessageTimestampFormatter.standardString(for: date) : MessageTimestampFormatter.relativeString(for: date))
@@ -203,7 +203,7 @@ struct MessageCopyButton: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                     .accessibilityHidden(true)
                 Text(isCopied ? "Copied" : "Copy")
                     .themedFont(.tiny, weight: .medium)

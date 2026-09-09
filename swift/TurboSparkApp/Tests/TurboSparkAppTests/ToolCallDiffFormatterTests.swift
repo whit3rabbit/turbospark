@@ -28,8 +28,34 @@ final class ToolCallDiffFormatterTests: XCTestCase {
         let summary = ToolCallDiffFormatter.summarize(callName: "write_to_file", arguments: args)
         XCTAssertEqual(summary.action, "Wrote")
         XCTAssertEqual(summary.target, "lib.rs")
-        XCTAssertEqual(summary.additions, 4)
+        // Three rendered lines; the trailing newline does not start a
+        // fourth, phantom one.
+        XCTAssertEqual(summary.additions, 3)
         XCTAssertNil(summary.deletions)
+    }
+
+    func testCountLinesTrailingNewlineAndEmptyBodies() {
+        // Direct pins on the two shapes the old `max(1, components)` count
+        // got wrong: an empty body read 1, and a trailing newline added a
+        // line no editor would render.
+        XCTAssertEqual(ToolCallDiffFormatter.countLines(""), 0)
+        XCTAssertEqual(ToolCallDiffFormatter.countLines("a"), 1)
+        XCTAssertEqual(ToolCallDiffFormatter.countLines("a\n"), 1)
+        XCTAssertEqual(ToolCallDiffFormatter.countLines("a\nb"), 2)
+        XCTAssertEqual(ToolCallDiffFormatter.countLines("a\nb\n"), 2)
+    }
+
+    func testPureInsertionEditHidesItsDeletionBadge() {
+        let summary = ToolCallDiffFormatter.summarize(
+            callName: "edit_file",
+            arguments: [
+                "file_path": "Sources/App.swift",
+                "old_string": "",
+                "new_string": "let x = 1\n"
+            ]
+        )
+        XCTAssertNil(summary.deletions, "an empty old_string removes nothing; no -0 badge")
+        XCTAssertEqual(summary.additions, 1)
     }
 
     func testViewFileSummaryWithLineRange() {
@@ -146,7 +172,7 @@ final class ToolCallDiffFormatterTests: XCTestCase {
         )
         XCTAssertEqual(summary.action, "Edited")
         XCTAssertEqual(summary.target, "App.swift")
-        XCTAssertEqual(summary.deletions, 2)
-        XCTAssertEqual(summary.additions, 3)
+        XCTAssertEqual(summary.deletions, 1)
+        XCTAssertEqual(summary.additions, 2)
     }
 }

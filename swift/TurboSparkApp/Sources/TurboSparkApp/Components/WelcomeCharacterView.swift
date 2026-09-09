@@ -162,7 +162,7 @@ public struct WelcomeHeroView: View {
 
             Button(action: cycleGreeting) {
                 Text(displayGreeting)
-                    .font(theme.ui(points: 34, weight: .regular, systemDesign: .serif))
+                    .font(theme.ui(.display, weight: .regular, systemDesign: .serif))
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -177,7 +177,7 @@ public struct WelcomeHeroView: View {
             .accessibilityHint("Changes the greeting phrase")
 
             Text("Everything here runs on your Mac. Nothing leaves it.", bundle: .module)
-                .font(theme.ui(points: 14.5))
+                .font(theme.ui(.callout))
                 .foregroundStyle(.secondary)
         }
         .onAppear {
@@ -208,7 +208,7 @@ public struct WelcomeHeroView: View {
     private var suggestionCards: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("START HERE", bundle: .module)
-                .font(theme.ui(points: 10, weight: .semibold))
+                .font(theme.ui(.tiny, weight: .semibold))
                 .tracking(1.0)
                 .foregroundStyle(.tertiary)
                 .padding(.leading, 2)
@@ -239,19 +239,19 @@ public struct WelcomeHeroView: View {
         } label: {
             VStack(alignment: .leading, spacing: 7) {
                 Image(systemName: suggestion.systemImage)
-                    .font(theme.ui(points: 12, weight: .semibold))
+                    .font(theme.ui(.small, weight: .semibold))
                     .foregroundStyle(theme.accent)
                     .frame(width: 24, height: 24)
                     .background(theme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .accessibilityHidden(true)
 
                 Text(suggestion.title)
-                    .font(theme.ui(points: 12.5, weight: .semibold))
+                    .font(theme.ui(.small, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Text(suggestion.detail)
-                    .font(theme.ui(points: 11.5))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)

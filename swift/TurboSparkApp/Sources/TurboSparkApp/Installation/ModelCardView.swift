@@ -78,7 +78,7 @@ struct ModelCardView: View {
                     HStack(spacing: 4) {
                         HStack(spacing: 3) {
                             Image(systemName: visuals.iconSystemName)
-                                .themedFont(points: 8, weight: .semibold)
+                                .themedFont(.micro, weight: .semibold)
                                 .accessibilityHidden(true)
                             Text(visuals.parameterTag)
                         }

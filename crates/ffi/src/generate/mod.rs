@@ -189,28 +189,28 @@ pub(crate) fn generate(
         &prompt_ids,
     );
 
+    let mut emit_turn = |turn: TurnEvent| match turn {
+        TurnEvent::Prefill { done, total } => emit(TS_EVENT_PREFILL, "", done as u32, total as u32),
+        // Fires only when the caller offered the tool by name, which no
+        // `GenerateOptions` field does yet; see `TS_EVENT_TOOL`.
+        TurnEvent::ToolCall(call) => {
+            let value = tool_call_json(&call);
+            let text = value.to_string();
+            tool_calls.push(value);
+            emit(TS_EVENT_TOOL, &text, tool_calls.len() as u32 - 1, 0);
+        }
+        TurnEvent::Reasoning(reason) => {
+            reasoning_text.push_str(&reason);
+            emit(TS_EVENT_REASONING, &reason, 0, 0);
+        }
+        TurnEvent::Content(answer) => {
+            content.push_str(&answer);
+            emit(TS_EVENT_CONTENT, &answer, 0, 0);
+        }
+    };
+
     let mut on_progress = |event: RawDecodeProgress| {
-        split.feed(event, &mut |turn| match turn {
-            TurnEvent::Prefill { done, total } => {
-                emit(TS_EVENT_PREFILL, "", done as u32, total as u32)
-            }
-            // Fires only when the caller offered the tool by name, which no
-            // `GenerateOptions` field does yet; see `TS_EVENT_TOOL`.
-            TurnEvent::ToolCall(call) => {
-                let value = tool_call_json(&call);
-                let text = value.to_string();
-                tool_calls.push(value);
-                emit(TS_EVENT_TOOL, &text, tool_calls.len() as u32 - 1, 0);
-            }
-            TurnEvent::Reasoning(reason) => {
-                reasoning_text.push_str(&reason);
-                emit(TS_EVENT_REASONING, &reason, 0, 0);
-            }
-            TurnEvent::Content(answer) => {
-                content.push_str(&answer);
-                emit(TS_EVENT_CONTENT, &answer, 0, 0);
-            }
-        });
+        split.feed(event, &mut emit_turn);
     };
 
     let predicate = || cancel.load(Ordering::Acquire);
@@ -316,6 +316,12 @@ pub(crate) fn generate(
     // fluently off a picture the model had not been shown). Nothing to do
     // here by hand; the guard is why.
     let result: RawDecodeResult = decoded.map_err(|e| e.to_string())?;
+
+    // Flushes a stop-token-terminated tool call or DeepSeek's withheld tail,
+    // same as crates/server/src/handler/exec.rs. A no-op today: the empty
+    // tool set above means no dialect ever enters a state finish() would
+    // need to close (DEVIATIONS.md).
+    let _ = split.finish(&mut emit_turn);
 
     // THE TERMINAL EVENT, after every content/reasoning/tool event and just
     // before the call that ran the turn returns, so a callback-driven host

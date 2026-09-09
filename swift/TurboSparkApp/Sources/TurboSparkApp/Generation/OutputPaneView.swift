@@ -213,8 +213,13 @@ private struct ChatTranscriptView: View {
                     // checklist and the goal banner: the tool call's own
                     // transcript row does not exist until its result lands,
                     // and the whole point is that the result waits for the
-                    // user's pick.
-                    if let pendingQuestions = model.pendingUserQuestions {
+                    // user's pick. Scoped to the asking chat -- the same
+                    // visibility rule as the strips below -- so a question
+                    // parked by one chat does not render inside another.
+                    if let pendingQuestions = model.pendingUserQuestions,
+                        pendingQuestions.chatID == nil
+                            || pendingQuestions.chatID == model.selectedChatID
+                    {
                         InteractiveQuestionCardView(
                             model: model,
                             questions: pendingQuestions.items)
@@ -403,11 +408,11 @@ private struct MessageRowView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: artifact.symbolName)
-                        .themedFont(points: 10, weight: .semibold)
+                        .themedFont(.tiny, weight: .semibold)
                         .foregroundStyle(TurboSparkTheme.accentColor)
                         .accessibilityHidden(true)
                     Text(artifact.fileName)
-                        .themedFont(points: 11, weight: .medium)
+                        .themedFont(.tiny, weight: .medium)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(artifact.formatLabel)
@@ -415,7 +420,7 @@ private struct MessageRowView: View {
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
                     Image(systemName: "sidebar.right")
-                        .themedFont(points: 9)
+                        .themedFont(.micro)
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
                 }
@@ -506,8 +511,8 @@ private struct MessageRowView: View {
                             .textSelection(.enabled)
                     }
                     if let output = shell.output {
-                        Text(Self.attributedShellOutput(output))
-                            .themedCode(.tiny)
+                        Text(Self.attributedShellOutput(output, base: theme.code(.small)))
+                            .themedCode(.small)
                             .foregroundStyle(theme.metadataForeground)
                             .frame(maxWidth: .infinity, maxHeight: 220, alignment: .topLeading)
                             .padding(8)
@@ -540,11 +545,15 @@ private struct MessageRowView: View {
 
     /// Bang-command output as attributed text: ANSI-colored when the output
     /// carries escape codes, plain otherwise (the same split
-    /// `ToolResultOutputView` draws).
-    private static func attributedShellOutput(_ output: String) -> AttributedString {
+    /// `ToolResultOutputView` draws). `base` is the themed font the runs
+    /// inherit, so the block renders at one size instead of a hardcoded
+    /// literal fighting the `.themedCode` modifier on the Text.
+    private static func attributedShellOutput(
+        _ output: String,
+        base: Font
+    ) -> AttributedString {
         guard output.contains("\u{1B}") else { return AttributedString(output) }
         var attributed = AttributedString()
-        let base = Font.system(size: 11)
         for segment in ANSIColorizer.segments(in: output) {
             var run = AttributedString(segment.text)
             if segment.bold || segment.italic {
@@ -981,12 +990,20 @@ private struct ReasoningDisclosureView: View {
     var defaultExpanded: Bool = false
 
     @State private var isExpanded: Bool = false
+    /// Whether the user has clicked the disclosure. Until they do, the
+    /// panel shows `defaultExpanded`; with a `true` default the old
+    /// `defaultExpanded || isExpanded` binding could never read false, so
+    /// the live trace was permanently pinned open.
+    @State private var hasUserOverride: Bool = false
 
     var body: some View {
         DisclosureGroup(
             isExpanded: Binding(
-                get: { defaultExpanded || isExpanded },
-                set: { isExpanded = $0 }
+                get: { hasUserOverride ? isExpanded : defaultExpanded },
+                set: { newValue in
+                    hasUserOverride = true
+                    isExpanded = newValue
+                }
             )
         ) {
             Text(reasoning)

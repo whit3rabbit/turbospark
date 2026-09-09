@@ -77,6 +77,15 @@ struct ArtifactPanelView: View {
         }
     }
 
+    /// The webview's own identity, which also carries the network grant: a
+    /// grant flip rebuilds the view, so the offline content-rule list the
+    /// first (blocked) load installed never meets a page that is allowed to
+    /// fetch. Rules are enforced below the navigation delegate, so no
+    /// delegate decision could lift them inside the old webview.
+    private var webViewIdentity: String {
+        "\(identityKey)#net:\(networkAllowed)"
+    }
+
     private var title: String {
         resolvedArtifact?.title ?? resolvedPreview?.title ?? "Preview"
     }
@@ -111,18 +120,18 @@ struct ArtifactPanelView: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: symbolName)
-                .themedFont(points: 13)
+                .themedFont(.callout)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help(subtitle)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .themedFont(points: 12, weight: .semibold)
+                    .themedFont(.small, weight: .semibold)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(subtitle)
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -198,7 +207,7 @@ struct ArtifactPanelView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .themedFont(points: 10, weight: .semibold)
+                .themedFont(.tiny, weight: .semibold)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
@@ -213,14 +222,14 @@ struct ArtifactPanelView: View {
     private var networkBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "wifi.slash")
-                .themedFont(points: 10, weight: .semibold)
+                .themedFont(.tiny, weight: .semibold)
                 .foregroundStyle(Color.secondary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Network is off for this preview", bundle: .module)
-                    .themedFont(points: 10, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                 Text("Pages load only local files from the artifact's own folder.", bundle: .module)
-                    .themedFont(points: 9)
+                    .themedFont(.micro)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
@@ -235,7 +244,7 @@ struct ArtifactPanelView: View {
                 isBannerDismissed = true
             } label: {
                 Image(systemName: "xmark")
-                    .themedFont(points: 8, weight: .semibold)
+                    .themedFont(.micro, weight: .semibold)
                     .frame(width: 16, height: 16)
                     .contentShape(Rectangle())
             }
@@ -259,7 +268,7 @@ struct ArtifactPanelView: View {
             artifactPreview(artifact)
         } else if let preview = resolvedPreview {
             ArtifactWebView(document: .inline(html: preview.html), networkAllowed: networkAllowed)
-                .id(identityKey)
+                .id(webViewIdentity)
         } else {
             unavailableView("This preview is no longer available.")
         }
@@ -273,7 +282,7 @@ struct ArtifactPanelView: View {
                 ArtifactWebView(
                     document: .file(page: url, readAccessFolder: url.deletingLastPathComponent()),
                     networkAllowed: networkAllowed)
-                    .id(identityKey)
+                    .id(webViewIdentity)
             } else {
                 unavailableView("The file is no longer at its written path.")
             }
@@ -305,7 +314,7 @@ struct ArtifactPanelView: View {
         case .opaque:
             VStack(spacing: 8) {
                 Image(systemName: "questionmark.folder")
-                    .themedFont(points: 24)
+                    .themedFont(.title2)
                     .foregroundStyle(.quaternary)
                 Text("No in-app preview for this format.", bundle: .module)
                     .themedFont(.base, weight: .medium)
@@ -338,7 +347,7 @@ struct ArtifactPanelView: View {
     private var monospacedSourceView: some View {
         ScrollView {
             Text(sourceText ?? "")
-                .themedCode(points: 11)
+                .themedCode(.callout)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -349,7 +358,7 @@ struct ArtifactPanelView: View {
     private func unavailableView(_ reason: LocalizedStringKey) -> some View {
         VStack(spacing: 8) {
             Image(systemName: "eye.slash")
-                .themedFont(points: 24)
+                .themedFont(.title2)
                 .foregroundStyle(.quaternary)
             Text(title)
                 .themedFont(.base, weight: .medium)
@@ -376,14 +385,14 @@ struct ArtifactPanelView: View {
                 Image(systemName: symbolName)
                     .foregroundStyle(TurboSparkTheme.accentColor)
                 Text(title)
-                    .themedFont(points: 12, weight: .semibold)
+                    .themedFont(.small, weight: .semibold)
                     .lineLimit(1)
                 Spacer()
                 Button {
                     isMaximized = false
                 } label: {
                     Image(systemName: "xmark")
-                        .themedFont(points: 10, weight: .semibold)
+                        .themedFont(.tiny, weight: .semibold)
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }

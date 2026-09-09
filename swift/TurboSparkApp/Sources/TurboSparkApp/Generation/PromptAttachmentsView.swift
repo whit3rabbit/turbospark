@@ -36,16 +36,16 @@ struct PromptAttachmentChipView: View {
             Button(action: onPreview) {
                 HStack(spacing: 6) {
                     Image(systemName: attachment.symbolName)
-                        .themedFont(points: 11)
+                        .themedFont(.tiny)
                         .foregroundStyle(isPreviewing ? TurboSparkTheme.accentColor : Color.secondary)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 0) {
                         Text(attachment.fileName)
-                            .themedFont(points: 11, weight: .medium)
+                            .themedFont(.tiny, weight: .medium)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(detailText)
-                            .themedFont(points: 9)
+                            .themedFont(.micro)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -59,7 +59,7 @@ struct PromptAttachmentChipView: View {
 
             Button(action: onRemove) {
                 Image(systemName: "xmark")
-                    .themedFont(points: 8, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                     .frame(width: 14, height: 14)
                     .contentShape(Rectangle())
             }

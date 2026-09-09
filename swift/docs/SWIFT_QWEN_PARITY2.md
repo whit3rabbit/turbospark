@@ -45,6 +45,9 @@ handling.
 - Static waiter pattern for tools requesting direct user choice or clarification.
 - Rendered as an interactive banner/card (`InteractiveQuestionCardView.swift`) rather
   than plain text output.
+- A multi-question set submits as ONE map from a footer button (the waiter is
+  all-or-nothing, so a per-question early submit would strand questions 2..N);
+  a single-question set answers on tap as before.
 - Dismissing or closing the question acts as an answer or cancellation to unblock the agent loop.
 - Implemented in `AppModel+Questions.swift` and `PlanningInteractiveExecutors.swift`.
 

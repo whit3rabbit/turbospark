@@ -332,7 +332,7 @@ public struct McpSettingsPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "server.rack")
-                .themedFont(points: 36)
+                .themedFont(.display)
                 .foregroundStyle(.secondary.opacity(0.5))
             Text("No MCP Servers Configured", bundle: .module)
                 .themedFont(.base, weight: .semibold)

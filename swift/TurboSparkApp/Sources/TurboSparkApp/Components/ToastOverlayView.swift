@@ -40,7 +40,7 @@ public struct ToastOverlayView: View {
     private func toastCard(_ toast: AppToast) -> some View {
         HStack(spacing: 10) {
             Image(systemName: toast.style.systemImage)
-                .themedFont(points: iconSize, weight: .semibold)
+                .themedFont(fitting: iconSize, weight: .semibold)
                 .foregroundStyle(toast.style.tintColor)
                 .accessibilityHidden(true)
 

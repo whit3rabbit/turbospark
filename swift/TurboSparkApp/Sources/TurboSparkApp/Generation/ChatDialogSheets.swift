@@ -16,7 +16,7 @@ struct SessionStatsSheet: View {
                     .foregroundStyle(TurboSparkTheme.accentColor)
                     .accessibilityHidden(true)
                 Text("Session Stats", bundle: .module)
-                    .themedFont(points: 15, weight: .semibold)
+                    .themedFont(.callout, weight: .semibold)
                 Spacer()
                 Button {
                     dismiss()
@@ -138,7 +138,7 @@ struct HelpSheetView: View {
                     .foregroundStyle(TurboSparkTheme.accentColor)
                     .accessibilityHidden(true)
                 Text("Help", bundle: .module)
-                    .themedFont(points: 15, weight: .semibold)
+                    .themedFont(.callout, weight: .semibold)
                 Spacer()
                 Button {
                     dismiss()
@@ -200,7 +200,7 @@ struct HelpSheetView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title, bundle: bundle)
-                .themedFont(points: 13, weight: .semibold)
+                .themedFont(.callout, weight: .semibold)
             VStack(alignment: .leading, spacing: 5) {
                 rows()
             }

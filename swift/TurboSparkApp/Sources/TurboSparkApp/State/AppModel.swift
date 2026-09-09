@@ -50,7 +50,12 @@ public final class AppModel: ObservableObject {
     /// switch whose whole job is to be deliberate. Keys are namespaced by
     /// source (`artifact:` + contentKey, `html:` + content hash) so a rewritten
     /// file or an edited fence never inherits the old grant.
-    var artifactNetworkGrants: [String: Bool] = [:]
+    ///
+    /// `@Published` is load-bearing: the panel banner and webview read this
+    /// through the observed model, so a grant written without a publish
+    /// would leave the banner up and the page offline until an unrelated
+    /// property happened to change.
+    @Published var artifactNetworkGrants: [String: Bool] = [:]
 
     /// Artifacts whose panel has already auto-opened.
     ///
@@ -58,6 +63,14 @@ public final class AppModel: ObservableObject {
     /// this set stays honest: a file rewritten three times pops the panel
     /// once, not once per write.
     var autoOpenedArtifactIDs: Set<UUID> = []
+
+    /// New-chat suggestion dismissals, per chat, in memory.
+    ///
+    /// On the model rather than the banner's own `@State` because the
+    /// banner sits in the transcript's LazyVStack: row state is discarded
+    /// when it scrolls away, and a dismissal that un-dismisses on the way
+    /// back down reads as a banner the user cannot get rid of.
+    @Published var dismissedNewChatSuggestionChatIDs: Set<UUID> = []
 
     // Model management
     /// Models currently installed locally on disk.

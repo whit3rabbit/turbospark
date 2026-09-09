@@ -90,7 +90,7 @@ public struct SkillsSettingsPaneView: View {
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "wand.and.stars")
-                                .themedFont(points: 36)
+                                .themedFont(.display)
                                 .foregroundStyle(.tertiary)
                             Text("Select a skill to inspect instructions and parameters.", bundle: .module)
                                 .themedFont(.base)
@@ -268,9 +268,9 @@ public struct SkillsSettingsPaneView: View {
     private var shadowedBadgeView: some View {
         HStack(spacing: 3) {
             Image(systemName: "arrow.2.squarepath")
-                .themedFont(points: 8)
+                .themedFont(.micro)
             Text("Shadowed", bundle: .module)
-                .themedFont(points: 9, weight: .semibold)
+                .themedFont(.micro, weight: .semibold)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -283,9 +283,9 @@ public struct SkillsSettingsPaneView: View {
     private func scopeBadgeView(scope: SkillScope) -> some View {
         HStack(spacing: 3) {
             Image(systemName: scope.badgeIcon)
-                .themedFont(points: 8)
+                .themedFont(.micro)
             Text(scope.label)
-                .themedFont(points: 9, weight: .semibold)
+                .themedFont(.micro, weight: .semibold)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -466,7 +466,7 @@ public struct SkillsSettingsPaneView: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
                 Text(value)
                     .themedFont(.small, weight: .medium)
@@ -479,7 +479,7 @@ public struct SkillsSettingsPaneView: View {
     private var emptyStateView: some View {
         VStack(spacing: 16) {
             Image(systemName: "wand.and.stars")
-                .themedFont(points: 48)
+                .themedFont(.display)
                 .foregroundStyle(.secondary)
 
             Text("No Skills Installed", bundle: .module)

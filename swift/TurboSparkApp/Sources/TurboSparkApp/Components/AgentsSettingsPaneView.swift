@@ -134,7 +134,7 @@ public struct AgentsSettingsPaneView: View {
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "person.2.badge.gearshape")
-                                .themedFont(points: 36)
+                                .themedFont(.display)
                                 .foregroundStyle(.tertiary)
                             Text("Select an agent to inspect system instructions and capabilities.", bundle: .module)
                                 .themedFont(.base)
@@ -404,7 +404,7 @@ public struct AgentsSettingsPaneView: View {
     private var emptyStateView: some View {
         VStack(spacing: 12) {
             Image(systemName: "person.2.badge.gearshape")
-                .themedFont(points: 44)
+                .themedFont(.display)
                 .foregroundStyle(.tertiary)
             Text("No Agents Found", bundle: .module)
                 .themedFont(.title3, weight: .bold)
@@ -419,7 +419,7 @@ public struct AgentsSettingsPaneView: View {
 
     private func badgeView(text: String, color: Color) -> some View {
         Text(text)
-            .themedFont(points: 10, weight: .medium)
+            .themedFont(.tiny, weight: .medium)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.15)))

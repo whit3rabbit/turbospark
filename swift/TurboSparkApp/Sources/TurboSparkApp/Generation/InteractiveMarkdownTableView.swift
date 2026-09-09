@@ -60,11 +60,24 @@ struct InteractiveMarkdownTableView: View {
     @State private var isCopied = false
     @State private var copyResetTask: Task<Void, Never>? = nil
 
-    private var displayGrid: MarkdownTableGrid {
+    /// The rows as displayed, paired with each row's ORIGINAL index, so
+    /// selection survives sorting positionally. The old recovery by value
+    /// (`grid.rows.firstIndex(of: row)`) mapped duplicate rows to whichever
+    /// copy sorted first: clicking the second of two identical rows
+    /// highlighted (and toggled) the first, and "copy selection" carried
+    /// one extra row.
+    private var displayRows: [(index: Int, row: [String])] {
+        let order: [Int]
         if let sortedColumn {
-            return grid.sorted(byColumn: sortedColumn, direction: sortDirection)
+            order = grid.sortedRowIndices(byColumn: sortedColumn, direction: sortDirection)
+        } else {
+            order = Array(grid.rows.indices)
         }
-        return grid
+        return order.map { ($0, grid.rows[$0]) }
+    }
+
+    private var displayGrid: MarkdownTableGrid {
+        MarkdownTableGrid(header: grid.header, rows: displayRows.map(\.row))
     }
 
     var body: some View {
@@ -80,14 +93,13 @@ struct InteractiveMarkdownTableView: View {
                     }
                 }
                 Divider()
-                ForEach(Array(displayGrid.rows.enumerated()), id: \.offset) { displayIndex, row in
-                    // Selection tracks the ORIGINAL row index, so sorting
-                    // does not silently reshuffle what is selected.
-                    let originalIndex = grid.rows.firstIndex(of: row)
-                    rowView(row: row, isSelected: originalIndex.map(selectedRowIndices.contains) ?? false)
+                ForEach(Array(displayRows.enumerated()), id: \.offset) { displayIndex, entry in
+                    rowView(
+                        row: entry.row,
+                        isSelected: selectedRowIndices.contains(entry.index))
                         .contentShape(Rectangle())
-                        .onTapGesture { toggleSelection(originalIndex) }
-                    if displayIndex < displayGrid.rows.count - 1 {
+                        .onTapGesture { toggleSelection(entry.index) }
+                    if displayIndex < displayRows.count - 1 {
                         Divider().opacity(0.5)
                     }
                 }
@@ -162,7 +174,7 @@ struct InteractiveMarkdownTableView: View {
                     systemName: sortedColumn == column
                         ? (sortDirection == .ascending ? "chevron.up" : "chevron.down")
                         : "arrow.up.arrow.down")
-                    .themedFont(points: 7, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                     .foregroundStyle(
                         sortedColumn == column ? TurboSparkTheme.accentColor : Color.secondary.opacity(0.5))
                     .accessibilityHidden(true)
@@ -191,8 +203,7 @@ struct InteractiveMarkdownTableView: View {
         .background(isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear)
     }
 
-    private func toggleSelection(_ originalIndex: Int?) {
-        guard let originalIndex else { return }
+    private func toggleSelection(_ originalIndex: Int) {
         if selectedRowIndices.contains(originalIndex) {
             selectedRowIndices.remove(originalIndex)
         } else {
@@ -234,11 +245,9 @@ struct InteractiveMarkdownTableView: View {
     /// TSV of just the selected rows (header included), what the
     /// "selection" copy arm exists for.
     private func gridSelectionTSV() -> String {
-        let selected = displayGrid.rows.enumerated()
-            .filter { _, row in
-                grid.rows.firstIndex(of: row).map(selectedRowIndices.contains) == true
-            }
-            .map(\.element)
+        let selected = displayRows
+            .filter { selectedRowIndices.contains($0.index) }
+            .map(\.row)
         return MarkdownTableGrid(header: grid.header, rows: selected).tsv()
     }
 

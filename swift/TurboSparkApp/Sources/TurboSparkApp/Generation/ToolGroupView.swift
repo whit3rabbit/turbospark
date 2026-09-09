@@ -76,7 +76,14 @@ struct ToolGroupView: View {
     private var triggerButton: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.18)) {
-                isManuallyExpanded = !isExpanded
+                // The approval force-open overrides the manual flag, so
+                // recording a toggle here would store an invisible value
+                // (the click looks dead, the group stays open) that then
+                // wins the moment the approval resolves. Ignore clicks for
+                // as long as the force holds.
+                if !hasPendingApproval {
+                    isManuallyExpanded = !isExpanded
+                }
             }
         } label: {
             HStack(spacing: 8) {
@@ -84,11 +91,11 @@ struct ToolGroupView: View {
                     TaskProgressFlameIcon(size: 13)
                 } else if hasFailedTool {
                     Image(systemName: "exclamationmark.circle")
-                        .themedFont(points: 12, weight: .semibold)
+                        .themedFont(.small, weight: .semibold)
                         .foregroundStyle(Color.red)
                 } else {
                     Image(systemName: "wrench.and.screwdriver")
-                        .themedFont(points: 12, weight: .semibold)
+                        .themedFont(.small, weight: .semibold)
                         .foregroundStyle(TurboSparkTheme.accentColor)
                 }
 
@@ -109,7 +116,7 @@ struct ToolGroupView: View {
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .themedFont(points: 10, weight: .bold)
+                    .themedFont(.tiny, weight: .bold)
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }

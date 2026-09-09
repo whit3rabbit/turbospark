@@ -55,7 +55,7 @@ struct GenerateControl: View {
             model.run()
         } label: {
             Image(systemName: "arrow.up")
-                .themedFont(points: 13, weight: .bold)
+                .themedFont(.callout, weight: .bold)
                 .foregroundStyle(ink)
                 .frame(width: circularButtonSize, height: circularButtonSize)
                 .background(Circle().fill(fill))
@@ -114,7 +114,7 @@ struct GenerateControl: View {
                             .frame(width: 22, height: 22)
                     }
                     Image(systemName: "stop.fill")
-                        .themedFont(points: 9, weight: .bold)
+                        .themedFont(.micro, weight: .bold)
                         .foregroundStyle(ink)
                 }
                 .accessibilityHidden(true)

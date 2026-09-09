@@ -37,7 +37,7 @@ public struct WorktreeCommitListView: View {
                     .frame(width: 12)
 
                 Text("All changes", bundle: .module)
-                    .font(theme.ui(points: 12, weight: .semibold))
+                    .font(theme.ui(.small, weight: .semibold))
                     .foregroundStyle(.primary)
 
                 Spacer()
@@ -93,7 +93,7 @@ public struct WorktreeCommitListView: View {
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(commit.summary)
-                    .font(theme.ui(points: 11.5, weight: isSelected ? .semibold : .regular))
+                    .font(theme.ui(.tiny, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .primary)
                     .lineLimit(1)
                     .truncationMode(.tail)

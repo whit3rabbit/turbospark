@@ -307,9 +307,9 @@ final class ServerMetricsStoreTests: XCTestCase {
         XCTAssertEqual(store.points[0].decodeSeconds, 1.25, accuracy: 1e-9)
     }
 
-    /// A request that errored before any generation still becomes a point
-    /// (it has a prefill of nothing... no: it has NO prefill, so it is
-    /// skipped) -- decode reads 0 rather than inventing time.
+    /// A request whose generation produced nothing still becomes a point
+    /// (its prefill was measured), and its decode segment reads 0 rather
+    /// than inventing time.
     func testDecodeSecondsIsZeroWhenTheRequestNeverGenerated() {
         var store = ServerMetricsStore()
         store.ingest(started(1))

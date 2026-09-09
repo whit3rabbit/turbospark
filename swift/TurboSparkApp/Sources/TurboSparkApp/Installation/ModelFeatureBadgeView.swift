@@ -33,7 +33,7 @@ public struct ModelFeatureBadgeView: View {
         HStack(spacing: iconSpacing) {
             if let iconSystemName {
                 Image(systemName: iconSystemName)
-                    .themedFont(points: iconSize, weight: .semibold)
+                    .themedFont(fitting: iconSize, weight: .semibold)
             }
             Text(title)
                 .themedFont(fontStep, weight: fontWeight)

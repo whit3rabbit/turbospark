@@ -17,9 +17,9 @@ struct ServerHeaderBandView: View {
                 stateDot
                 VStack(alignment: .leading, spacing: 2) {
                     Text(stateTitle)
-                        .themedFont(points: 15, weight: .semibold)
+                        .themedFont(.callout, weight: .semibold)
                     Text(stateSubtitle)
-                        .themedFont(points: 11)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
 
@@ -51,7 +51,7 @@ struct ServerHeaderBandView: View {
                     "Bound and answering, with no model attached. "
                         + "Requests get a 503 until you add one below.",
                     systemImage: "info.circle")
-                    .themedFont(points: 11)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
         }
@@ -98,7 +98,7 @@ struct ServerHeaderBandView: View {
         let rows = ServerStatusRows(info: info, guardrails: model.serverStartedGuardrails)
         return HStack(spacing: 8) {
             Text(rows.address)
-                .themedCode(points: 13)
+                .themedCode(.large)
                 .textSelection(.enabled)
 
             Button {
@@ -119,14 +119,14 @@ struct ServerHeaderBandView: View {
             // client bypasses that entirely. Reported here because it cannot
             // be changed without a restart.
             Label("guardrails " + rows.guardrailsLabel, systemImage: "shield.lefthalf.filled")
-                .themedFont(points: 11)
+                .themedFont(.tiny)
                 .foregroundStyle(Color.secondary)
                 .help(
                     "Tool-call guardrails for requests this server answers. Resolved when the "
                         + "server started; restart it to change them.")
 
             Label(rows.authLabel, systemImage: rows.authIsWarning ? "lock.open" : "lock")
-                .themedFont(points: 11)
+                .themedFont(.tiny)
                 .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
                 // The warning is not decoration: an unauthenticated loopback
                 // socket is reachable by every process on this machine, and a
@@ -156,7 +156,7 @@ struct ServerHeaderBandView: View {
                 stat("Log gaps", "\(metrics.droppedEvents)", tint: .orange)
             }
         }
-        .themedFont(points: 11)
+        .themedFont(.tiny)
     }
 
     private func stat(_ label: String, _ value: String, tint: Color? = nil) -> some View {

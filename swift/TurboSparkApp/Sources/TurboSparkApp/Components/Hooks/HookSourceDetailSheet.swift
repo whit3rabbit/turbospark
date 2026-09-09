@@ -51,7 +51,7 @@ public struct HookSourceDetailSheet: View {
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
-                            .themedFont(points: 14, weight: .semibold)
+                            .themedFont(.callout, weight: .semibold)
                             .foregroundStyle(.secondary)
                             .frame(width: 24, height: 24)
                             .background(Color(nsColor: .controlBackgroundColor))
@@ -80,7 +80,7 @@ public struct HookSourceDetailSheet: View {
                         if eventsPresent.isEmpty {
                             VStack(spacing: 12) {
                                 Image(systemName: "link.badge.plus")
-                                    .themedFont(points: 36)
+                                    .themedFont(.display)
                                     .foregroundStyle(.secondary)
                                 Text("No hooks registered in \(group.title).", bundle: .module)
                                     .themedFont(.small)
@@ -178,7 +178,7 @@ public struct HookSourceDetailSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: event.systemImage)
-                    .themedFont(points: 14, weight: .semibold)
+                    .themedFont(.callout, weight: .semibold)
                     .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 1) {

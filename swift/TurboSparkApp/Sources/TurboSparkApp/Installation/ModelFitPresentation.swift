@@ -111,7 +111,7 @@ struct ModelFitVerdictPill: View {
         HStack(spacing: compact ? 2 : 3) {
             if let icon = p.iconName {
                 Image(systemName: icon)
-                    .themedFont(points: compact ? 7 : 9, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                     .accessibilityHidden(true)
             }
             Text(compact ? p.compactLabel : p.label)

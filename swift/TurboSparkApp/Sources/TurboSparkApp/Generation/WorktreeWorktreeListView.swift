@@ -35,7 +35,7 @@ public struct WorktreeWorktreeListView: View {
     private var headerBar: some View {
         HStack {
             Text("Linked Worktrees", bundle: .module)
-                .font(theme.ui(points: 12, weight: .semibold))
+                .font(theme.ui(.small, weight: .semibold))
                 .foregroundStyle(.primary)
 
             Spacer()
@@ -52,7 +52,7 @@ public struct WorktreeWorktreeListView: View {
     private var emptyWorktreesView: some View {
         VStack(spacing: 8) {
             Image(systemName: "folder.badge.gearshape")
-                .themedFont(points: 28)
+                .themedFont(.hero)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 40)
             Text("No Additional Worktrees", bundle: .module)

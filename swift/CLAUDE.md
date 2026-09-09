@@ -194,6 +194,72 @@ screenshot tooling (agentic `list_apps`/`request_access` automation) cannot
 target it -- both return empty/not-found. Build `make app-bundle` first if a
 session needs to screenshot the app programmatically.
 
+## Adding or changing text, fonts, themes, or localized strings
+
+Read this before adding ANY user-visible text, a font treatment, a theme
+color, or a localized string, however small. Each rule exists because
+its violation already cost a real cleanup pass -- the two big ones are
+the 2026-09-06 font-propagation fix (raw `.font(...)` calls that never
+read the theme) and the 2026-09-08 type-scale standardization (437
+numeric font sizes across 28 distinct values playing the same roles),
+both recorded in `swift/docs/SWIFT_SETTINGS_AUDIT.md` section 1.
+
+**Size text BY ROLE, never by number.** `AppFontStep` is the canonical
+scale; its doc table lists every role's rendered size at the 16pt
+default base and is the one change point for retuning. Write
+`.themedFont(.small)` / `.themedCode(.small)` (they read `\.appTheme`
+themselves, so the call site needs no environment declaration) or
+`theme.ui(.role)` / `theme.code(.role)` where a `Font` value is wanted.
+The explicit-size spellings (`theme.ui(points:)` and friends) are
+DELETED, so an off-scale size is a compile error, not a review comment
+(Gotcha 63). The one numeric survivor, `.themedFont(fitting:)`, is for
+glyphs whose size a FRAME dictates (a logo letterform at
+`size * 0.45`), and must never take a constant.
+
+**A size the scale lacks is a new role, not a workaround.** Add an
+`AppFontStep` case, document its rendered size in the doc table, and
+update the pinned expectation in
+`FontPropagationTests.testCanonicalScaleRendersDocumentedSizes`. That
+is the whole point of the scale: retuning a role is one reviewed edit
+that moves every surface playing it.
+
+**Never give a view its own family or color.** Font families come from
+the Appearance settings through the theme; a call site that must LOOK
+serif or monospaced at the default setting passes `systemDesign:`,
+which applies only while the family is the system face. Colors come
+from the `TurboSparkTheme` accessors or the environment theme -- never
+`Color(nsColor: .separatorColor)` or friends, which ignore the palette
+entirely (Gotcha 62). Read `\.appTheme` in a view body; calling
+`AppearanceManager` directly from one is the pre-`ResolvedAppTheme`
+bug that made settings only sometimes apply.
+
+**Every `.font(` call reads the theme.** `FontPropagationTests` checks
+this per CALL SITE -- one themed call no longer whitewashes a file of
+raw ones -- and rejects raw size literals in any spelling. A themed
+font hoisted into a local must carry a marker in its name (`uiFont`,
+`codeFont`, ...); the marker list and the per-file exempt list (the two
+per-mode preview cards, the font-picker rows, the modifier itself) are
+explicit in the test with reasons, so extending either is a visible
+diff, not a silent widening.
+
+**User-facing strings are localized in the same change.** `Text("...")`
+takes `bundle: .module`; the key goes into
+`TurboSparkApp/Localization/Localizable.xcstrings` with a translation
+for EVERY language in the catalog in the same commit, and new strings
+are listed separately in the delivery so they are not
+reverse-engineered from the diff. `swift build` never compiles the
+catalog itself -- only `make compile-strings` does (`swift-app` runs it
+for you). The six parity gates and the rest of the pipeline are
+`swift/docs/SWIFT_LOCALIZATION.md`.
+
+**The edit-loop gate for any of the above** is
+`swift test --filter FontPropagationTests` (~0.3 s) plus a green
+`swift build` -- between them they catch an off-scale size, a raw
+literal, a non-themed `.font(`, and a moved scale factor before anything
+else has to. The AppKit print/export surfaces
+(`NSFont.systemFontSize`) are the documented exception to all of this,
+not an invitation; new SwiftUI UI has no business there.
+
 ## Gotchas
 
 Cross-cutting: build system, the binding's own contract, and rules that
@@ -689,6 +755,26 @@ keeps resolving.
     `Form(.grouped)` draws AppKit's own grouped-list chrome, which no
     SwiftUI `.background()` can override -- confirmed across the whole
     Model Settings panel.
+
+63. **A FONT SIZE AT A CALL SITE IS A ROLE OR IT IS DRIFT.** The 09-06
+    font-propagation pass made every site READ the theme but left every
+    site free to pick its SIZE, and two conventions grew beside each
+    other: named steps and explicit `theme.ui(points: N)` literals --
+    437 of the latter across 28 distinct values, the same role
+    (secondary rows, empty-state symbols) written at five neighbouring
+    sizes in different files. Standardized 2026-09-08: `AppFontStep` is
+    the canonical scale (its doc table lists every role's rendered size
+    at the 16pt default base), the `points:` spellings are DELETED so an
+    off-scale size is a compile error, and the one numeric survivor,
+    `themedFont(fitting:)`, is for layout-derived glyph sizes only (a
+    letterform at `size * 0.45`), never a constant.
+    `FontPropagationTests` checks `.font(` per CALL SITE rather than per
+    file, rejects any raw size literal, and pins the scale table case by
+    case. Reach for a role first; a size the scale lacks is a new
+    `AppFontStep` case, which is one reviewed edit instead of a
+    scattered literal. The AppKit print surfaces
+    (`NSFont.systemFontSize`) are the documented exception
+    (`swift/docs/SWIFT_SETTINGS_AUDIT.md` section 1), not an invitation.
 
 ## The `state#N` ledger
 

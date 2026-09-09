@@ -82,7 +82,7 @@ struct PromptComposerFooter: View {
                 promptFocused.wrappedValue = true
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .themedFont(points: 14)
+                    .themedFont(.callout)
                     .foregroundStyle(.tertiary)
                     .frame(width: iconButtonSize, height: iconButtonSize)
                     .contentShape(Circle())

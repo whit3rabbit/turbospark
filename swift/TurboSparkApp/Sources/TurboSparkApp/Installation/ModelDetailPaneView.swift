@@ -89,7 +89,7 @@ struct ModelDetailPaneView: View {
                         .lineLimit(2)
 
                     Text("CATALOG", bundle: .module)
-                        .themedFont(points: 9, weight: .bold)
+                        .themedFont(.micro, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(TurboSparkTheme.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))

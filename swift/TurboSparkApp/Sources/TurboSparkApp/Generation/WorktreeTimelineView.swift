@@ -35,7 +35,7 @@ public struct WorktreeTimelineView: View {
     private var emptyTimelineView: some View {
         VStack(spacing: 8) {
             Image(systemName: "clock.arrow.circlepath")
-                .themedFont(points: 28)
+                .themedFont(.hero)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 40)
             Text("No Commit History Found", bundle: .module)
@@ -73,8 +73,7 @@ public struct WorktreeTimelineView: View {
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         if isSelected {
-                            worktree.selectedTimelineCommit = nil
-                            worktree.selectedCommitFiles = []
+                            worktree.deselectTimelineCommit()
                         } else {
                             worktree.selectTimelineCommit(commit)
                         }
@@ -83,7 +82,7 @@ public struct WorktreeTimelineView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text(commit.summary)
-                                .font(theme.ui(points: 12, weight: isSelected ? .semibold : .medium))
+                                .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
                                 .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .primary)
                                 .lineLimit(2)
 

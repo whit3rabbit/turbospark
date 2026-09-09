@@ -29,4 +29,17 @@ final class ServerPortInputTests: XCTestCase {
         }
         XCTAssertEqual(error.message, "Digits only")
     }
+
+    /// A digit run wider than `Int` is a range problem, not a typo:
+    /// reporting "Digits only" sends the reader hunting for a letter that
+    /// is not there.
+    func testAnOverlongDigitRunReportsRangeNotTypo() {
+        guard case .failure(let error) = ServerPortInput.parse("99999999999999999999")
+        else {
+            return XCTFail("a 20-digit number must not parse")
+        }
+        XCTAssertTrue(
+            error.message.contains("65535"),
+            "an overflow breaks the range, and the message should say so: \(error.message)")
+    }
 }

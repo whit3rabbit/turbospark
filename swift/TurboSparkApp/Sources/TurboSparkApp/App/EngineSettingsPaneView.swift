@@ -390,7 +390,7 @@ struct EngineSettingsPaneView: View {
                     Text("Resolved", bundle: .module)
                     Spacer()
                     Text(info.kvBits)
-                        .themedFont(points: 11, systemDesign: .monospaced)
+                        .themedFont(.tiny, systemDesign: .monospaced)
                         .foregroundStyle(.secondary)
                 }
             }

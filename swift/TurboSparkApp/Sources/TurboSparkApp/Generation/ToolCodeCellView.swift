@@ -44,7 +44,7 @@ struct ToolCodeCellView: View {
     private var headerBar: some View {
         HStack(spacing: 8) {
             Text(label.uppercased())
-                .themedCode(points: 10, weight: .bold)
+                .themedCode(.callout, weight: .bold)
                 .foregroundStyle(.secondary)
 
             Spacer()
@@ -54,9 +54,9 @@ struct ToolCodeCellView: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                     Text(isCopied ? "Copied" : "Copy")
-                        .themedFont(points: 11, weight: .medium)
+                        .themedFont(.tiny, weight: .medium)
                 }
                 .foregroundStyle(isCopied ? Color.green : Color.secondary)
             }
@@ -69,9 +69,9 @@ struct ToolCodeCellView: View {
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.down.doc")
-                            .themedFont(points: 10)
+                            .themedFont(.tiny)
                         Text("Download", bundle: .module)
-                            .themedFont(points: 11, weight: .medium)
+                            .themedFont(.tiny, weight: .medium)
                     }
                     .foregroundStyle(Color.secondary)
                 }

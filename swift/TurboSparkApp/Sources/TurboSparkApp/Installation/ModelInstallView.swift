@@ -83,7 +83,7 @@ struct ModelInstallView: View {
     private var headerSection: some View {
         VStack(spacing: 8) {
             Image(systemName: "bolt.horizontal.circle.fill")
-                .themedFont(points: 42)
+                .themedFont(.display)
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .help("TurboSpark Local Inference")
                 .accessibilityHidden(true)

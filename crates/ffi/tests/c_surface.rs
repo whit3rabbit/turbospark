@@ -31,7 +31,8 @@ use turbospark_ffi::{
     ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
     ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
     ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
-    Server, Session, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_TOOL,
+    Server, Session, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING,
+    TS_EVENT_TOOL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -261,6 +262,61 @@ fn a_generation_streams_events_and_reports_a_result() {
         .map(|(_, t)| t.as_str())
         .collect();
     assert_eq!(result["content"].as_str().unwrap(), streamed);
+}
+
+/// Regression guard for `split.finish()` (`crates/ffi/src/generate/mod.rs`,
+/// mirroring `crates/server/src/handler/exec.rs`). `generate` always passes
+/// `TurnSplitter::new` an empty tool set, but ChatML's fixture template
+/// carries only `enable_thinking` (`ReasoningSupport::ToggleOnly`), and a
+/// request that asks for a reasoning level still builds a decoder for it
+/// independent of tools (`crates/runtime/src/turn_stream.rs`'s `wanted`
+/// check, AGENTS.md Gotcha 56) -- the one path in this file that reaches
+/// `finish()`'s decoder arm rather than its `None` no-op. The rendered
+/// prompt opens `<think>` itself, and this scripted run never emits the
+/// token that would close it, so `finish()` runs against a still-open
+/// reasoning span at the end of the turn and must not error.
+#[test]
+fn a_reasoning_level_on_chatml_builds_a_decoder_and_finish_does_not_error() {
+    // A `<think>`-opening prompt renders longer than a plain one, and
+    // `ScriptedLogitProducer` consumes one step per prefill token as well as
+    // per decode token, so this needs more headroom than the 4 new tokens
+    // asked for below.
+    let session = endless_session(fixture(), "h", 64);
+    let sink = Sink {
+        events: Mutex::new(Vec::new()),
+    };
+    let messages = c(r#"[{"role":"user","content":"hi"}]"#);
+    let options =
+        c(r#"{"maxNewTokens":4,"temperature":0.0,"topK":0,"topP":1.0,"reasoning":"low"}"#);
+    let mut out: *mut c_char = ptr::null_mut();
+
+    let code = unsafe {
+        ts_generate(
+            &session,
+            messages.as_ptr(),
+            options.as_ptr(),
+            Some(collect),
+            &sink as *const Sink as *mut c_void,
+            &mut out,
+        )
+    };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let result: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
+    assert_eq!(result["stopReason"], "maxTokens");
+
+    // Every decoded token reads as reasoning rather than content, which is
+    // only true if the decoder actually ran (a pass-through split would
+    // have reported "h" x4 as content instead).
+    let events = sink.events.lock().unwrap();
+    let streamed_reasoning: String = events
+        .iter()
+        .filter(|(k, _)| *k == TS_EVENT_REASONING)
+        .map(|(_, t)| t.as_str())
+        .collect();
+    assert!(!streamed_reasoning.is_empty());
+    assert!(!events.iter().any(|(k, _)| *k == TS_EVENT_CONTENT));
+    assert_eq!(result["reasoning"].as_str().unwrap(), streamed_reasoning);
+    assert_eq!(result["content"].as_str().unwrap(), "");
 }
 
 /// A sink that records the full callback payload, not just the text.

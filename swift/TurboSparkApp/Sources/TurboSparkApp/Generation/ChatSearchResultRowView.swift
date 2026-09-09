@@ -12,17 +12,17 @@ struct ChatSearchResultRowView: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "bubble.left")
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(hit.title)
-                    .font(theme.ui(points: 12, weight: isSelected ? .semibold : .medium))
+                    .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 if let snippet = hit.snippet {
                     snippetText(snippet)
-                        .font(theme.ui(points: 11))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -31,11 +31,11 @@ struct ChatSearchResultRowView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 if hit.matchCount > 0 {
                     Text(hit.matchCount == 1 ? "1 match" : "\(hit.matchCount) matches")
-                        .font(theme.ui(points: 10, weight: .medium))
+                        .font(theme.ui(.tiny, weight: .medium))
                         .foregroundStyle(TurboSparkTheme.accentColor)
                 }
                 Text(ChatSearch.dateBucket(hit.updatedAt))
-                    .font(theme.ui(points: 10))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.tertiary)
             }
         }

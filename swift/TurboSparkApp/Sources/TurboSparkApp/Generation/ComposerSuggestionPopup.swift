@@ -51,7 +51,7 @@ struct ComposerSuggestionPopup: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
-        .themedFont(points: 12)
+        .themedFont(.small)
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .accessibilityElement(children: .combine)
@@ -60,6 +60,10 @@ struct ComposerSuggestionPopup: View {
     private func row(_ suggestion: ComposerSuggestion, index: Int) -> some View {
         let isSelected = index == controller.selectedIndex
         return Button {
+            // Select first, THEN let the shared accept path run: accept
+            // reads `selectedIndex`, and without this a click on any row
+            // but the keyboard-highlighted one inserted THAT row instead.
+            controller.select(index)
             onPick()
         } label: {
             HStack(spacing: 8) {
@@ -72,7 +76,7 @@ struct ComposerSuggestionPopup: View {
                         .truncationMode(.middle)
                     if let subtitle = suggestion.subtitle {
                         Text(subtitle)
-                            .themedFont(points: 11)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)

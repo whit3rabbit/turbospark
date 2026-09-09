@@ -16,7 +16,7 @@ struct GitInfoSheet: View {
                     .foregroundStyle(TurboSparkTheme.accentColor)
                     .accessibilityHidden(true)
                 Text("Git", bundle: .module)
-                    .themedFont(points: 15, weight: .semibold)
+                    .themedFont(.callout, weight: .semibold)
                 Picker("", selection: $model.gitInfoTab) {
                     ForEach(AppModel.GitInfoTab.allCases) { tab in
                         Text(tab.rawValue).tag(tab)
@@ -67,6 +67,13 @@ struct GitInfoSheet: View {
             }
         }
         .frame(width: 680, height: 520)
+        .onChange(of: model.gitInfoTab) { _, tab in
+            // Tabs are fetched by their slash command, never by this sheet,
+            // so an authoritative empty state ("No commits yet.") would
+            // otherwise describe data that was never asked for. Refetch an
+            // empty tab; a populated one is left alone.
+            model.refreshGitInfoTabIfEmpty(tab)
+        }
     }
 
     @ViewBuilder
@@ -242,7 +249,7 @@ struct GitInfoSheet: View {
     private func emptyState(_ text: String, systemImage: String) -> some View {
         VStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(theme.ui(points: 22))
+                .font(theme.ui(.title2))
                 .foregroundStyle(.tertiary)
             Text(text)
                 .themedFont(.small)

@@ -116,7 +116,7 @@ public struct AppSettingsView: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: tab.systemImage)
-                                .font(theme.ui(points: 13, weight: .medium))
+                                .font(theme.ui(.callout, weight: .medium))
                                 .frame(width: 18)
                                 .foregroundStyle(isSelected ? appearanceManager.activeAccentColor(isDark: false) : .secondary)
                                 .accessibilityHidden(true)

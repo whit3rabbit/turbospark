@@ -27,11 +27,11 @@ struct ForgeGuardrailsPillControl: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: isEnabled ? "shield.checkmark.fill" : "shield.slash")
-                        .font(theme.ui(points: 10, weight: .semibold))
+                        .font(theme.ui(.tiny, weight: .semibold))
                         .foregroundStyle(isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
 
                     Text("Guardrails \(isEnabled ? "On" : "Off")", bundle: .module)
-                        .font(theme.ui(points: 12, weight: .medium))
+                        .font(theme.ui(.small, weight: .medium))
                         .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
                         .lineLimit(1)
                         .fixedSize()
@@ -58,7 +58,7 @@ struct ForgeGuardrailsPillControl: View {
                 model.openSettings(tab: .engine)
             } label: {
                 Image(systemName: "info.circle")
-                    .font(theme.ui(points: 10))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.tertiary)
                     .contentShape(Circle())
             }
@@ -122,10 +122,10 @@ struct SteeringPillControl: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: isOn ? "dial.medium.fill" : "dial.medium")
-                        .font(theme.ui(points: 10, weight: .semibold))
+                        .font(theme.ui(.tiny, weight: .semibold))
                         .foregroundStyle(isOn ? TurboSparkTheme.accentColor : Color.secondary)
                     Text(isOn ? "Steering On" : "Steering Off")
-                        .font(theme.ui(points: 12, weight: .medium))
+                        .font(theme.ui(.small, weight: .medium))
                         .foregroundStyle(isOn ? Color.primary : Color.secondary)
                         .lineLimit(1)
                         .fixedSize()
@@ -133,7 +133,7 @@ struct SteeringPillControl: View {
                     // pill reads "On" while the loaded model is unsteered.
                     if pending {
                         Image(systemName: "arrow.clockwise")
-                            .font(theme.ui(points: 9, weight: .semibold))
+                            .font(theme.ui(.micro, weight: .semibold))
                             .foregroundStyle(Color.orange)
                     }
                 }
@@ -153,7 +153,7 @@ struct SteeringPillControl: View {
                 model.openSettings(tab: .safety)
             } label: {
                 Image(systemName: "info.circle")
-                    .font(theme.ui(points: 10))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.tertiary)
                     .contentShape(Circle())
             }

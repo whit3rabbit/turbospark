@@ -284,6 +284,13 @@ public struct WorktreeDiffView: View {
                     )
                 )
                 currentOldLine += 1
+            } else if text.isEmpty || text.hasPrefix("\\") {
+                // Metadata, not content: the empty trailing component
+                // `components(separatedBy:)` leaves behind, and git's
+                // "\\ No newline at end of file" marker. Rendering either
+                // as a context row would show a phantom line AND advance
+                // both counters, shifting every later line number.
+                continue
             } else {
                 let cleanText = text.hasPrefix(" ") ? String(text.dropFirst()) : text
                 parsedLines.append(
@@ -339,10 +346,21 @@ public struct WorktreeDiffView: View {
     }
 
     private func parseHunkHeader(_ text: String) -> (Int, Int) {
-        let parts = text.split(separator: " ")
+        // Only the span between the two @@ markers carries counts. Scanning
+        // the whole line reads git's trailing function-context hint too, and
+        // a hunk like "@@ -10,7 +10,8 @@ x = -5" would overwrite oldStart
+        // with 5 off the "-5" in the hint.
+        // Only the span between the two @@ markers carries counts. Scanning
+        // the whole line reads git's trailing function-context hint too, and
+        // a hunk like "@@ -10,7 +10,8 @@ x = -5" would overwrite oldStart
+        // with 5 off the "-5" in the hint.
+        guard let openRange = text.range(of: "@@"),
+            let closeRange = text.range(of: "@@", range: openRange.upperBound..<text.endIndex)
+        else { return (1, 1) }
+        let counts = text[openRange.upperBound..<closeRange.lowerBound]
         var oldStart = 1
         var newStart = 1
-        for part in parts {
+        for part in counts.split(separator: " ") {
             if part.hasPrefix("-") {
                 let sub = part.dropFirst().split(separator: ",")
                 if let num = Int(sub.first ?? "") { oldStart = num }

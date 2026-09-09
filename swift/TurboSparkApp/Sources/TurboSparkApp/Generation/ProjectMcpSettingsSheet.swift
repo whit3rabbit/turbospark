@@ -290,7 +290,13 @@ public struct ProjectMcpSettingsSheet: View {
         let result = await model.testMcpServer(server, workingDirectory: project?.rootDirectoryURL)
         switch result {
         case .success(let tools):
-            var updated = server
+            // The test can take a while and the row is editable while it
+            // runs: write the discovered tools onto the LIVE config, not
+            // the clicked snapshot, or a save during the await would be
+            // reverted here.
+            var updated = model.projects
+                .first { $0.id == projectID }?
+                .mcpServers.first { $0.id == server.id } ?? server
             updated.discoveredTools = tools
             model.updateProjectMcpServer(projectID: projectID, config: updated)
             testResultToast = (id: server.id, message: "Connected: Discovered \(tools.count) tools.", isError: false)

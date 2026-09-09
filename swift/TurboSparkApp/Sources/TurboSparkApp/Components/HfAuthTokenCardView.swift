@@ -80,7 +80,7 @@ public struct HfAuthTokenCardView: View {
                     Text("Get Token", bundle: .module)
                         .font(theme.ui(.small))
                     Image(systemName: "arrow.up.forward.app")
-                        .themedFont(points: 11)
+                        .themedFont(.tiny)
                 }
             }
             .buttonStyle(.link)
@@ -107,7 +107,7 @@ public struct HfAuthTokenCardView: View {
                 } label: {
                     Image(systemName: isRevealed ? "eye.slash" : "eye")
                         .foregroundStyle(.secondary)
-                        .themedFont(points: 13)
+                        .themedFont(.callout)
                 }
                 .buttonStyle(.plain)
                 .help(isRevealed ? "Hide token" : "Reveal token")

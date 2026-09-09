@@ -231,7 +231,7 @@ struct PluginMarketplaceSheet: View {
                     }
                     if !entry.strict {
                         Text("non-strict", bundle: .module)
-                            .themedFont(points: 10, weight: .medium)
+                            .themedFont(.tiny, weight: .medium)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Capsule().fill(Color.orange.opacity(0.15)))

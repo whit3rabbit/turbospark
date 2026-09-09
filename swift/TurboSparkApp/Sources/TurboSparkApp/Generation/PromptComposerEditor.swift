@@ -98,14 +98,21 @@ struct PromptComposerEditor: View {
                         if let autocomplete, autocomplete.isVisible {
                             switch press.key {
                             case .upArrow:
-                                autocomplete.moveSelection(-1)
-                                return .handled
+                                // Arms with a hint but no rows (a scan in
+                                // flight, the no-project hint) have nothing
+                                // to move; falling through lets the keys
+                                // reach the editor instead of dying here.
+                                if !autocomplete.suggestions.isEmpty {
+                                    autocomplete.moveSelection(-1)
+                                    return .handled
+                                }
                             case .downArrow:
-                                autocomplete.moveSelection(1)
-                                return .handled
+                                if !autocomplete.suggestions.isEmpty {
+                                    autocomplete.moveSelection(1)
+                                    return .handled
+                                }
                             case .tab:
-                                acceptAutocomplete()
-                                return .handled
+                                if acceptAutocomplete() { return .handled }
                             case .escape:
                                 // The popup consumes the first Escape;
                                 // canceling a running turn stays on the
@@ -113,8 +120,11 @@ struct PromptComposerEditor: View {
                                 autocomplete.dismiss()
                                 return .handled
                             case .return where !press.modifiers.contains(.shift):
-                                acceptAutocomplete()
-                                return .handled
+                                // Only consumed when something was actually
+                                // inserted. A hint-only popup used to eat
+                                // Return here and make the message
+                                // unsendable from the keyboard.
+                                if acceptAutocomplete() { return .handled }
                             default:
                                 break
                             }
@@ -171,7 +181,7 @@ struct PromptComposerEditor: View {
                         }
                     } label: {
                         Image(systemName: isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                            .themedFont(points: 10, weight: .medium)
+                            .themedFont(.tiny, weight: .medium)
                             .foregroundStyle(.tertiary)
                             .padding(4)
                             .contentShape(Rectangle())
@@ -186,11 +196,15 @@ struct PromptComposerEditor: View {
             }
     }
 
-    private func acceptAutocomplete() {
+    /// Applies the highlighted suggestion; true when text was inserted, so
+    /// the key handler knows whether the key was consumed.
+    @discardableResult
+    private func acceptAutocomplete() -> Bool {
         guard let autocomplete,
             let newText = autocomplete.accept(in: model.promptText)
-        else { return }
+        else { return false }
         model.promptText = newText
+        return true
     }
 
     /// One step of the history walk, shared by both arrows. The applied

@@ -78,7 +78,7 @@ public struct CollapsibleMessageContentView: View {
                         Text(isExpanded ? "Show less" : "Show more")
                             .themedFont(.small, weight: .medium)
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .themedFont(points: 9, weight: .bold)
+                            .themedFont(.micro, weight: .bold)
                     }
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)

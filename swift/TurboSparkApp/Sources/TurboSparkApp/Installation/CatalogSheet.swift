@@ -162,7 +162,7 @@ struct CatalogSheet: View {
                                     .themedFont(.base, weight: .medium)
                                 HStack(spacing: 3) {
                                     Image(systemName: visuals.iconSystemName)
-                                        .themedFont(points: 8)
+                                        .themedFont(.micro)
                                     Text(visuals.family)
                                 }
                                 .themedFont(.tiny)

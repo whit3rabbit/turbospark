@@ -186,8 +186,12 @@ struct ProjectSettingsSheet: View {
                     Text("MCP External Servers & Detection", bundle: .module)
                         .themedFont(.small, weight: .semibold)
                         .accessibilityAddTraits(.isHeader)
-                    let count = editingProject?.mcpServers.count ?? 0
-                    Text(count > 0 ? "\(count) server(s) configured for this project." : "Import .mcp.json or configure codebase MCP tools.")
+                    // Read the LIVE project, not the sheet-open snapshot:
+                    // the count is wrong after the nested MCP sheet edits
+                    // servers otherwise.
+                    let liveCount = model.projects.first { $0.id == editingProject?.id }?
+                        .mcpServers.count ?? editingProject?.mcpServers.count ?? 0
+                    Text(liveCount > 0 ? "\(liveCount) server(s) configured for this project." : "Import .mcp.json or configure codebase MCP tools.")
                         .themedFont(.small)
                         .foregroundStyle(.secondary)
                 }
@@ -327,6 +331,16 @@ struct ProjectSettingsSheet: View {
             updated.maxAutonomousSteps = Int(maxAutonomousSteps)
             updated.skillStateEnabled = skillStateEnabled
             updated.forgeGuardrailsEnabled = guardrailsPref
+            // `editing` is the snapshot from sheet-open. The nested MCP
+            // sheet edited the LIVE project (servers, allow/deny rules),
+            // so carrying the snapshot's stale copies over `updateProject`
+            // would silently revert every change made there. This sheet
+            // owns none of those fields.
+            if let live = model.projects.first(where: { $0.id == editing.id }) {
+                updated.mcpServers = live.mcpServers
+                updated.permissions.mcpAllowRules = live.permissions.mcpAllowRules
+                updated.permissions.mcpDenyRules = live.permissions.mcpDenyRules
+            }
             model.updateProject(updated)
         } else {
             model.createProject(

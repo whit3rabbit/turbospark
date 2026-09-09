@@ -44,7 +44,7 @@ struct ServerConsoleView: View {
             Divider()
             if rows.isEmpty {
                 Text(model.serverMetrics.records.isEmpty ? "No traffic yet." : "Nothing matches.")
-                    .themedFont(points: 11)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -64,7 +64,7 @@ struct ServerConsoleView: View {
     private var toolbar: some View {
         HStack(spacing: 10) {
             Text("Console", bundle: .module)
-                .themedFont(points: 11, weight: .semibold)
+                .themedFont(.tiny, weight: .semibold)
                 .foregroundStyle(.secondary)
 
             TextField("Filter", text: $search)
@@ -79,7 +79,7 @@ struct ServerConsoleView: View {
 
             Toggle("Errors only", isOn: $showErrorsOnly)
                 .toggleStyle(.checkbox)
-                .themedFont(points: 11)
+                .themedFont(.tiny)
 
             if model.serverMetrics.servingModels.count > 1 {
                 Picker("Model", selection: $modelFilter) {
@@ -98,7 +98,7 @@ struct ServerConsoleView: View {
 
             if model.serverMetrics.droppedEvents > 0 {
                 Label("\(model.serverMetrics.droppedEvents) events dropped", systemImage: "exclamationmark.triangle")
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.orange)
                     .help(
                         "The engine's buffer overran while this pane was not polling. "
@@ -147,25 +147,25 @@ struct ServerConsoleView: View {
 
                 if let served = record.servedModel {
                     Text(served)
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 if record.stream {
                     Image(systemName: "dot.radiowaves.right")
-                        .themedFont(points: 9)
+                        .themedFont(.micro)
                         .foregroundStyle(.secondary)
                         .help("Streamed")
                 }
                 if let tokens = record.newTokens, tokens > 0 {
                     Text("\(tokens) tok", bundle: .module)
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
                 if let duration = record.durationMs {
                     Text("\(duration) ms", bundle: .module)
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .frame(width: 62, alignment: .trailing)
@@ -228,7 +228,7 @@ struct ServerConsoleView: View {
     private func detailLine(_ label: String, _ value: String, help: String? = nil) -> some View {
         HStack(spacing: 6) {
             Text(label)
-                .themedFont(points: 10)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
                 .frame(width: 78, alignment: .leading)
             Text(value)
@@ -236,7 +236,7 @@ struct ServerConsoleView: View {
                 .textSelection(.enabled)
             if let help {
                 Image(systemName: "questionmark.circle")
-                    .themedFont(points: 9)
+                    .themedFont(.micro)
                     .foregroundStyle(.secondary)
                     .help(help)
             }

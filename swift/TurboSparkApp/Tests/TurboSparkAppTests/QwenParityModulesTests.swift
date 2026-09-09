@@ -296,6 +296,94 @@ final class QwenParityModulesTests: XCTestCase {
         XCTAssertEqual(grid?.rows[0], ["x|y", "2"])
     }
 
+    func testFencedExampleTableIsNeverDetectedAsATable() {
+        // An example table inside a code block is CODE. Without fence
+        // tracking the segmentation cut the fence in half: the markdown
+        // renderer received an unclosed fence as one segment and a stray
+        // ``` as another, which swallowed the message's remaining prose.
+        let markdown = """
+        Example:
+
+        ```text
+        | a | b |
+        |---|---|
+        | 1 | 2 |
+        ```
+
+        outro
+        """
+        let segments = MarkdownTableGrid.segments(in: markdown)
+        XCTAssertEqual(segments.count, 1, "one prose segment; no table inside the fence")
+        guard case .markdown(let prose) = segments[0] else { return XCTFail("expected prose") }
+        XCTAssertTrue(prose.contains("```text"))
+        XCTAssertTrue(prose.contains("| a | b |"))
+        XCTAssertTrue(prose.contains("outro"), "the closing fence and the prose after it stay together")
+    }
+
+    func testTableAfterAClosedFenceIsStillDetected() {
+        let markdown = """
+        ```bash
+        echo hi
+        ```
+
+        | a | b |
+        |---|---|
+        | 1 | 2 |
+        | 3 | 4 |
+        """
+        let segments = MarkdownTableGrid.segments(in: markdown)
+        guard case .table(let grid) = segments.last else { return XCTFail("expected table") }
+        XCTAssertEqual(grid.rows, [["1", "2"], ["3", "4"]])
+    }
+
+    func testMarkdownRoundTripsAnEscapedPipeCell() {
+        let grid = MarkdownTableGrid.parse([
+            "| a | b |",
+            "|---|---|",
+            "| x\\|y | 2 |",
+        ])
+        let parsed = grid ?? MarkdownTableGrid(header: [], rows: [])
+        // The copied markdown must re-parse to the SAME grid: an unescaped
+        // pipe in the output would split the cell in two and widen the
+        // table.
+        let reparsed = MarkdownTableGrid.segments(in: parsed.markdown)
+        guard case .table(let roundTripped) = reparsed[0] else {
+            return XCTFail("expected table")
+        }
+        XCTAssertEqual(roundTripped, parsed)
+    }
+
+    func testSortMixedColumnClassifiesTheWholeColumnAsText() {
+        // A column mixing numbers with text: per-PAIR numeric detection was
+        // non-transitive -- "2" < "10" numerically, "10" < "1a" as string,
+        // "1a" < "2" as string is a cycle, and sorting a cyclic comparator
+        // put rows in a genuinely wrong order. The column is classified
+        // once: any non-numeric cell makes it text, so the order is the
+        // plain lexicographic one. (Ties between IDENTICAL values are a
+        // comparator-contract fix with no observable output change, so no
+        // fixture can pin that half; distinct values below.)
+        let mixed = MarkdownTableGrid(header: ["v"], rows: [["1"], ["2"], ["10"], ["1a"]])
+        let ordered = mixed.sorted(byColumn: 0, direction: .ascending)
+        XCTAssertEqual(ordered.rows.map { $0[0] }, ["1", "10", "1a", "2"])
+        let descending = MarkdownTableGrid(header: ["v"], rows: [["1"], ["2"]])
+            .sorted(byColumn: 0, direction: .descending)
+        XCTAssertEqual(descending.rows.map { $0[0] }, ["2", "1"])
+    }
+
+    func testSortedRowIndicesMatchPositionsNotValues() {
+        // Duplicate rows must keep DISTINCT original indices: the view
+        // selects by original position, and a value lookup mapped both
+        // copies to whichever sorted first.
+        let grid = MarkdownTableGrid(header: ["n"], rows: [["5"], ["1"], ["5"]])
+        let order = grid.sortedRowIndices(byColumn: 0, direction: .ascending)
+        XCTAssertEqual(Set(order), Set([0, 1, 2]), "a permutation of ALL row indices")
+        XCTAssertEqual(order.map { grid.rows[$0][0] }, ["1", "5", "5"])
+        let firstDuplicate = order.first { grid.rows[$0] == ["5"] }
+        let secondDuplicate = order.last { grid.rows[$0] == ["5"] }
+        XCTAssertNotEqual(firstDuplicate, secondDuplicate, "the two 5 rows map to distinct positions")
+    }
+
+
     func testRaggedRowsArePaddedNotTruncated() {
         let grid = MarkdownTableGrid.parse([
             "| a | b | c |",

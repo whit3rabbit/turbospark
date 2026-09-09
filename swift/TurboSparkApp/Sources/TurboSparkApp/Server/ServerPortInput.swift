@@ -14,8 +14,19 @@ public enum ServerPortInput {
     public static func parse(_ text: String) -> Result<UInt16, ParseError> {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return .success(0) }
-        guard trimmed.allSatisfy(\.isNumber), let value = Int(trimmed) else {
+        guard trimmed.allSatisfy(\.isNumber) else {
             return .failure(ParseError(message: "Digits only"))
+        }
+        guard let value = Int(trimmed) else {
+            // Every character is a digit yet `Int` refused: a run of ASCII
+            // digits wider than 64 bits reports the RANGE it broke, not a
+            // typo -- the reader of "Digits only" goes looking for a letter
+            // that is not there.
+            return .failure(
+                ParseError(
+                    message: trimmed.allSatisfy(\.isASCII)
+                        ? "Port must be 1 to 65535"
+                        : "Digits only (ASCII)"))
         }
         guard (1...65535).contains(value) else {
             return .failure(ParseError(message: "Port must be 1 to 65535"))

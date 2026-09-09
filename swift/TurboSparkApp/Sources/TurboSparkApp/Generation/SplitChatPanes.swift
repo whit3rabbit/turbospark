@@ -118,7 +118,7 @@ private struct SplitChatPaneView: View {
     private var emptyState: some View {
         VStack(spacing: 6) {
             Image(systemName: "bubble.left.and.bubble.right")
-                .font(theme.ui(points: 18))
+                .font(theme.ui(.title3))
                 .foregroundStyle(.tertiary)
             Text("No messages yet", bundle: .module)
                 .themedFont(.tiny)

@@ -140,11 +140,31 @@ public enum ServerConnectRecipes {
     /// say so with a dummy value rather than omitting the header: most
     /// clients require one to be set even when it is never checked, and
     /// leaving it out produces a confusing client-side failure.
+    ///
+    /// **EVERY INTERPOLATED VALUE IS ESCAPED FOR THE CONTEXT IT LANDS IN.**
+    /// The key is whatever the user typed into the Advanced pane and the
+    /// model id is an install directory's name, and both go straight into
+    /// commands the reader pastes into a terminal: an unescaped quote ends
+    /// the argument, and a `$`, backtick or `;` runs part of the value as
+    /// shell. `TurboSparkAgent.launchCommand` had this fixed for the menu
+    /// bar's agent exports and this surface was missed (same class, one
+    /// pane over). Bash assignments and URLs take the double-quoted form,
+    /// curl's header and JSON body take the single-quoted form, and the
+    /// Python and JSON literals take JSON escaping, which is also a valid
+    /// Python string literal.
     public static func snippets(baseURL: String, modelID: String, apiKey: String?)
         -> [ServerConnectSnippet]
     {
         let key = apiKey ?? "unused"
         let model = modelID.isEmpty ? "<load a model first>" : modelID
+        let curlBody = """
+        {"model":"\(Self.jsonEscaped(model))","stream":true,
+             "messages":[{"role":"user","content":"hello"}]}
+        """
+        let ollamaBody = """
+        {"model":"\(Self.jsonEscaped(model))",
+             "messages":[{"role":"user","content":"hello"}]}
+        """
         return [
             ServerConnectSnippet(
                 id: "claude-code",
@@ -152,8 +172,8 @@ public enum ServerConnectRecipes {
                 note: "Anthropic-native, so nothing sits in between.",
                 language: "bash",
                 body: """
-                    ANTHROPIC_BASE_URL=\(baseURL) \\
-                    ANTHROPIC_API_KEY=\(key) \\
+                    ANTHROPIC_BASE_URL=\(Self.shellDoubleQuoted(baseURL)) \\
+                    ANTHROPIC_API_KEY=\(Self.shellDoubleQuoted(key)) \\
                     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true \\
                       claude
                     """),
@@ -165,9 +185,9 @@ public enum ServerConnectRecipes {
                 body: """
                     from openai import OpenAI
 
-                    client = OpenAI(base_url="\(baseURL)/v1", api_key="\(key)")
+                    client = OpenAI(base_url=\(Self.pythonString(baseURL + "/v1")), api_key=\(Self.pythonString(key)))
                     reply = client.chat.completions.create(
-                        model="\(model)",
+                        model=\(Self.pythonString(model)),
                         messages=[{"role": "user", "content": "hello"}],
                     )
                     print(reply.choices[0].message.content)
@@ -178,11 +198,10 @@ public enum ServerConnectRecipes {
                 note: "Streams as it decodes.",
                 language: "bash",
                 body: """
-                    curl -sN \(baseURL)/v1/chat/completions \\
+                    curl -sN \(Self.shellSingleQuoted("\(baseURL)/v1/chat/completions")) \\
                       -H 'content-type: application/json' \\
-                      -H 'authorization: Bearer \(key)' \\
-                      -d '{"model":"\(model)","stream":true,
-                           "messages":[{"role":"user","content":"hello"}]}'
+                      -H \(Self.shellSingleQuoted("authorization: Bearer \(key)")) \\
+                      -d \(Self.shellSingleQuoted(curlBody))
                     """),
             ServerConnectSnippet(
                 id: "ollama",
@@ -190,11 +209,59 @@ public enum ServerConnectRecipes {
                 note: "Set the host and the tool finds the models by itself.",
                 language: "bash",
                 body: """
-                    OLLAMA_HOST=\(baseURL) ollama list
-                    curl -s \(baseURL)/api/chat \\
-                      -d '{"model":"\(model)",
-                           "messages":[{"role":"user","content":"hello"}]}'
+                    OLLAMA_HOST=\(Self.shellDoubleQuoted(baseURL)) ollama list
+                    curl -s \(Self.shellSingleQuoted("\(baseURL)/api/chat")) \\
+                      -d \(Self.shellSingleQuoted(ollamaBody))
                     """),
         ]
+    }
+
+    /// Escapes for a POSIX double-quoted string: backslash first, then the
+    /// three characters a double-quoted shell context still treats
+    /// specially -- the closing quote, parameter/command substitution, and
+    /// command substitution's other spelling. Same set as
+    /// `TurboSparkAgent.launchCommand`'s helper, restated here because that
+    /// one is private to the TurboSpark module.
+    private static func shellDoubleQuoted(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "$", with: "\\$")
+            .replacingOccurrences(of: "`", with: "\\`")
+        return "\"\(escaped)\""
+    }
+
+    /// Escapes for a POSIX single-quoted string. Nothing is special inside
+    /// single quotes except the closing quote itself, which cannot be
+    /// escaped -- the spelling is to close, escape a bare quote, and reopen.
+    private static func shellSingleQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    /// JSON string escaping without the surrounding quotes, with `/` left
+    /// alone: a JSON encoder would write `\/`, which Python keeps as a
+    /// literal backslash and which turns a pasted URL into a broken one.
+    private static func jsonEscaped(_ value: String) -> String {
+        // The encoder is invoked on the string rather than hand-written so
+        // control characters and unusual scalars follow JSON's own table
+        // rather than a subset somebody remembers.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        guard
+            let data = try? encoder.encode([value]),
+            data.first == UInt8(ascii: "["), data.last == UInt8(ascii: "]")
+        else { return value }
+        let inner = data.dropFirst().dropLast()
+        guard
+            inner.first == UInt8(ascii: "\""), inner.last == UInt8(ascii: "\"")
+        else { return value }
+        return String(decoding: inner.dropFirst().dropLast(), as: UTF8.self)
+    }
+
+    /// A Python double-quoted literal. JSON string escaping is valid Python
+    /// for the characters that matter (`"`, `\`, newlines), so one table
+    /// serves both languages.
+    private static func pythonString(_ value: String) -> String {
+        "\"\(jsonEscaped(value))\""
     }
 }

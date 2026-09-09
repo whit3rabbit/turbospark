@@ -42,12 +42,12 @@ struct PromptModelSelectorPill: View {
         } label: {
             HStack(spacing: 3) {
                 Text(model.selected?.alias ?? "Select Model")
-                    .font(theme.ui(points: 12, weight: .medium))
+                    .font(theme.ui(.small, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.ui(points: 8, weight: .bold))
+                    .font(theme.ui(.micro, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -68,28 +68,28 @@ struct PromptProjectContextPill: View {
         if let project = model.selectedProject {
             HStack(spacing: 6) {
                 Image(systemName: project.agentType.systemImage)
-                    .font(theme.ui(points: 11, weight: .semibold))
+                    .font(theme.ui(.tiny, weight: .semibold))
                     .foregroundStyle(TurboSparkTheme.accentColor)
 
                 Text(project.name)
-                    .font(theme.ui(points: 12, weight: .semibold))
+                    .font(theme.ui(.small, weight: .semibold))
                     .lineLimit(1)
 
                 if let worktree = model.worktree, worktree.isGitRepository {
                     Text(worktree.currentBranch)
-                        .font(theme.code(points: 10, weight: .medium))
+                        .font(theme.code(.callout, weight: .medium))
                         .foregroundStyle(.secondary)
 
                     if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                         HStack(spacing: 2) {
                             if worktree.totalAdditions > 0 {
                                 Text("+\(worktree.totalAdditions)", bundle: .module)
-                                    .font(theme.ui(points: 10, weight: .bold).monospacedDigit())
+                                    .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.green)
                             }
                             if worktree.totalDeletions > 0 {
                                 Text("-\(worktree.totalDeletions)", bundle: .module)
-                                    .font(theme.ui(points: 10, weight: .bold).monospacedDigit())
+                                    .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.red)
                             }
                         }
@@ -143,11 +143,11 @@ struct PromptReasoningPillControl: View {
         } label: {
             HStack(spacing: 3) {
                 Text(model.reasoningLabel(for: model.reasoning))
-                    .font(theme.ui(points: 12, weight: .medium))
+                    .font(theme.ui(.small, weight: .medium))
                     .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.ui(points: 8, weight: .bold))
+                    .font(theme.ui(.micro, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
         }

@@ -22,29 +22,29 @@ public struct StreamingStatusFooterView: View {
             HStack(spacing: 6) {
                 if elapsedSeconds > 0 {
                     Text(formattedElapsedTime)
-                        .themedFont(points: 11, weight: .regular)
+                        .themedFont(.tiny, weight: .regular)
                         .foregroundStyle(.secondary)
                     dotSeparator
                 }
 
                 if model.liveTokenCount > 0 {
                     Text("\(model.liveTokenCount) tokens", bundle: .module)
-                        .themedFont(points: 11, weight: .regular)
+                        .themedFont(.tiny, weight: .regular)
                         .foregroundStyle(.secondary)
                     dotSeparator
                 }
 
                 if let pending = model.pendingToolCall {
                     Text("Needs confirmation for \(pending.name)", bundle: .module)
-                        .themedFont(points: 11, weight: .medium)
+                        .themedFont(.tiny, weight: .medium)
                         .foregroundStyle(Color.orange)
                 } else if model.isEscCancelArmed {
                     Text("Press Esc again to stop", bundle: .module)
-                        .themedFont(points: 11, weight: .medium)
+                        .themedFont(.tiny, weight: .medium)
                         .foregroundStyle(Color.orange)
                 } else {
                     Text(currentStatusText)
-                        .themedFont(points: 11, weight: .regular)
+                        .themedFont(.tiny, weight: .regular)
                         .foregroundStyle(.secondary)
                 }
             }

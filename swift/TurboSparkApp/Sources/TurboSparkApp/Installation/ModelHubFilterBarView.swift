@@ -50,7 +50,7 @@ struct ModelHubFilterBarView: View {
                             filter.clearNarrowing()
                         } label: {
                             Label("Clear", systemImage: "xmark")
-                                .themedFont(points: 10, weight: .medium)
+                                .themedFont(.tiny, weight: .medium)
                                 .labelStyle(.titleOnly)
                                 .padding(.horizontal, 8)
                                 .frame(height: 22)
@@ -95,10 +95,10 @@ struct ModelHubFilterBarView: View {
         } label: {
             HStack(spacing: 4) {
                 Text(selection.wrappedValue ?? title)
-                    .themedFont(points: 11, weight: selection.wrappedValue == nil ? .regular : .medium)
+                    .themedFont(.tiny, weight: selection.wrappedValue == nil ? .regular : .medium)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .themedFont(points: 7, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 9)
@@ -137,9 +137,9 @@ struct ModelHubFilterBarView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.up.arrow.down")
-                    .themedFont(points: 8, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                 Text(filter.sort.rawValue)
-                    .themedFont(points: 11)
+                    .themedFont(.tiny)
                     .lineLimit(1)
             }
             .padding(.horizontal, 9)

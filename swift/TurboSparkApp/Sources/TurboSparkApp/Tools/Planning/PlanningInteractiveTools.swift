@@ -35,6 +35,18 @@ public struct UserQuestionItem: Codable, Sendable, Equatable {
         self.options = options
         self.multiSelect = multiSelect
     }
+
+    /// `multiSelect` decodes as optional, defaulting false: the upstream
+    /// schema marks it optional, and a model that omits the key would
+    /// otherwise fail the WHOLE questions payload rather than lose one bit
+    /// of selection mode.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        question = try container.decode(String.self, forKey: .question)
+        header = try container.decode(String.self, forKey: .header)
+        options = try container.decode([UserQuestionOption].self, forKey: .options)
+        multiSelect = try container.decodeIfPresent(Bool.self, forKey: .multiSelect) ?? false
+    }
 }
 
 /// Input payload for AskUserQuestion containing interactive questions.

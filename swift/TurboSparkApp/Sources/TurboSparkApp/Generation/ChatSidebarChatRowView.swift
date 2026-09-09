@@ -87,11 +87,13 @@ struct ChatSidebarChatRowView: View {
             }
             .disabled(chat.isGhost)
             // The qwen-code "open in split view" action: the chat joins the
-            // pane column without leaving the list.
+            // pane column without leaving the list. The selected chat is
+            // refused by the model (a pane would mirror the main column),
+            // so the item is disabled rather than a silent no-op.
             Button(model.isSplitPane(chatID: chat.id) ? "Close Split Pane" : "Open in Split View") {
                 model.toggleSplitPane(chatID: chat.id)
             }
-            .disabled(chat.isGhost || model.isRunning)
+            .disabled(chat.isGhost || model.isRunning || chat.id == model.selectedChatID)
             Button("Delete", role: .destructive) {
                 chatPendingDeletion = chat
             }
@@ -119,7 +121,7 @@ struct ChatSidebarChatRowView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Text(chat.title)
-                            .font(theme.ui(points: 12.5, weight: isSelected ? .semibold : .regular))
+                            .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                         // The qwen-code workspace accent: one deterministic
@@ -135,7 +137,7 @@ struct ChatSidebarChatRowView: View {
                     }
                     if !chat.preview.isEmpty {
                         Text(chat.preview)
-                            .font(theme.ui(points: 11))
+                            .font(theme.ui(.tiny))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -166,19 +168,19 @@ struct ChatSidebarChatRowView: View {
     private func rowIcon(isSelected: Bool) -> some View {
         if chat.isGhost {
             Image(systemName: "ghost")
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(theme.accent)
                 .accessibilityHidden(true)
         } else if chat.isPinned {
             Image(systemName: "pin.fill")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(isSelected ? theme.accent : Color.secondary)
                 .accessibilityHidden(true)
         } else if isSelected && model.isRunning {
             TaskProgressFlameIcon(size: 13)
         } else {
             Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(isSelected ? theme.accent : Color.secondary)
                 .contentTransition(.symbolEffect(.replace))
                 .accessibilityHidden(true)

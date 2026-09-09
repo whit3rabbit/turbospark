@@ -185,9 +185,13 @@ public enum ToolCallDiffFormatter {
 
             if let targetContent = arguments["TargetContent"] ?? arguments["old_string"] ?? arguments["target"] {
                 deletions = countLines(targetContent)
+                // Zero is "nothing removed" (a pure insertion), which the
+                // badge's absence says better than "-0".
+                if deletions == 0 { deletions = nil }
             }
             if let replacementContent = arguments["ReplacementContent"] ?? arguments["new_string"] ?? arguments["replacement"] {
                 additions = countLines(replacementContent)
+                if additions == 0 { additions = nil }
             }
 
             // If multi_replace chunks are present in JSON
@@ -396,10 +400,15 @@ public enum ToolCallDiffFormatter {
         )
     }
 
-    /// Counts non-empty or total lines in the given text snippet.
+    /// Counts the lines of the given text snippet. An empty body is ZERO
+    /// lines (it used to read 1, so an empty write showed "1 lines" and a
+    /// pure insertion showed "-1"), and a trailing newline does not start a
+    /// phantom last line.
     public static func countLines(_ text: String) -> Int {
-        let lines = text.components(separatedBy: "\n")
-        return max(1, lines.count)
+        guard !text.isEmpty else { return 0 }
+        var lines = text.components(separatedBy: "\n")
+        if lines.last == "" { lines.removeLast() }
+        return lines.count
     }
 
     /// Simplifies command strings for concise single-line presentation.

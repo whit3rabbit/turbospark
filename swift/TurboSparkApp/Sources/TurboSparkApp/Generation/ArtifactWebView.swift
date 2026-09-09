@@ -104,6 +104,13 @@ struct ArtifactWebView: NSViewRepresentable {
         coordinator.loadedNetworkAllowed = networkAllowed
 
         if networkAllowed {
+            // The offline block list a previous load installed must go: it
+            // is enforced in the network process, BELOW the navigation
+            // delegate, so a granted page would still have every remote
+            // load refused no matter what the delegate allows. This webview
+            // only ever receives the one static list, so removing all is
+            // removing exactly that.
+            webView.configuration.userContentController.removeAllContentRuleLists()
             loadDocument(document, in: webView)
             return
         }
@@ -174,10 +181,15 @@ struct ArtifactWebView: NSViewRepresentable {
             if scheme == "file" {
                 // WebKit refuses file reads outside the load's own
                 // allowingReadAccessTo scope, so the folder bound below is
-                // the belt, not the wall.
-                if let folder = loadedDocument?.readAccessFolder,
-                   url.standardizedFileURL.path.hasPrefix(folder.standardizedFileURL.path) {
-                    return .allow
+                // the belt, not the wall. The trailing slash keeps the
+                // prefix check from accepting a SIBLING whose name extends
+                // the folder's ("/x/artifacts-secret" under "/x/artifacts").
+                if let folder = loadedDocument?.readAccessFolder {
+                    let folderPath = folder.standardizedFileURL.path
+                    let path = url.standardizedFileURL.path
+                    if path == folderPath || path.hasPrefix(folderPath + "/") {
+                        return .allow
+                    }
                 }
                 return .cancel
             }

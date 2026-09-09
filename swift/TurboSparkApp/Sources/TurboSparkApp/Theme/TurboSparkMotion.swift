@@ -190,7 +190,7 @@ public struct TSIdlingSparkView: View {
                 // Fallback only for a build whose resource bundle did not
                 // come along; the asset is the product's character.
                 Image(systemName: "flame.fill")
-                    .themedFont(points: size * 0.5)
+                    .themedFont(fitting: size * 0.5)
                     .foregroundStyle(TurboSparkTheme.accentColor)
             }
         }

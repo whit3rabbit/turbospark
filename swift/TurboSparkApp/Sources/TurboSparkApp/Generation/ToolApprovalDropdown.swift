@@ -18,16 +18,16 @@ struct ToolApprovalDropdown: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: currentMode.systemImage)
-                    .themedFont(points: 11, weight: .semibold)
+                    .themedFont(.tiny, weight: .semibold)
                     .foregroundStyle(Color.secondary)
 
                 Text(currentMode.label)
-                    .font(theme.ui(points: 12, weight: .medium))
+                    .font(theme.ui(.small, weight: .medium))
                     .foregroundStyle(Color.primary.opacity(0.85))
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
-                    .themedFont(points: 8, weight: .bold)
+                    .themedFont(.micro, weight: .bold)
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
@@ -73,7 +73,7 @@ struct ToolApprovalMenuPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("How should tool calls be approved?", bundle: .module)
-                .font(theme.ui(points: 11, weight: .medium))
+                .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
@@ -107,18 +107,18 @@ private struct ToolApprovalOptionRow: View {
         Button(action: onSelect) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: mode.systemImage)
-                    .themedFont(points: 13, weight: .semibold)
+                    .themedFont(.callout, weight: .semibold)
                     .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                     .frame(width: 20, height: 20)
                     .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(mode.label)
-                        .font(theme.ui(points: 12, weight: isSelected ? .semibold : .medium))
+                        .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
                         .foregroundStyle(Color.primary)
 
                     Text(mode.descriptionText)
-                        .font(theme.ui(points: 11))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .lineSpacing(1.5)
@@ -128,7 +128,7 @@ private struct ToolApprovalOptionRow: View {
 
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .themedFont(points: 11, weight: .bold)
+                        .themedFont(.tiny, weight: .bold)
                         .foregroundStyle(Color.primary)
                         .padding(.top, 2)
                 }

@@ -44,7 +44,14 @@ struct TasksStatusSheet: View {
                     if !agentRuns.isEmpty {
                         sectionHeader("Agents")
                         ForEach(agentRuns) { run in
-                            agentRow(run)
+                            AgentRunRow(
+                                run: run,
+                                onStop: { id in
+                                    Task { @MainActor in
+                                        _ = try? await model.stopBackgroundAgent(id)
+                                    }
+                                },
+                                onDismiss: { model.dismissBackgroundAgent($0) })
                         }
                     }
                     if !shells.isEmpty {
@@ -58,40 +65,49 @@ struct TasksStatusSheet: View {
         }
     }
 
-    private func agentRow(_ run: SubagentRunState) -> some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(run.status == "running" ? Color.green : Color.secondary.opacity(0.5))
-                .frame(width: 8, height: 8)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(run.displayName.isEmpty ? run.agentName : run.displayName)
-                    .themedFont(.small, weight: .semibold)
-                Text(run.taskDescription.isEmpty ? run.promptHead : run.taskDescription)
-                    .themedFont(.small)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer()
-            if run.status == "running" {
-                Button("Stop") {
-                    Task { @MainActor in
-                        _ = try? await model.stopBackgroundAgent(run.id)
+    /// One agent row, observing ITS OWN run state. `SubagentRunState` is an
+    /// ObservableObject and the runs dictionary only publishes on
+    /// insert/remove, so a row reading the run through the sheet's model
+    /// observation kept the green dot and the Stop button after the run
+    /// finished until some unrelated model publish happened by.
+    private struct AgentRunRow: View {
+        @ObservedObject var run: SubagentRunState
+        let onStop: (String) -> Void
+        let onDismiss: (String) -> Void
+
+        var body: some View {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(run.status == "running" ? Color.green : Color.secondary.opacity(0.5))
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(run.displayName.isEmpty ? run.agentName : run.displayName)
+                        .themedFont(.small, weight: .semibold)
+                    Text(run.taskDescription.isEmpty ? run.promptHead : run.taskDescription)
+                        .themedFont(.small)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                if run.status == "running" {
+                    Button("Stop") {
+                        onStop(run.id)
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.red.opacity(0.8))
+                } else if run.isRecordedComplete {
+                    Button("Dismiss") {
+                        onDismiss(run.id)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.red.opacity(0.8))
-            } else if run.isRecordedComplete {
-                Button("Dismiss") {
-                    model.dismissBackgroundAgent(run.id)
-                }
-                .buttonStyle(.plain)
+                Text(run.status)
+                    .themedCode(.tiny)
+                    .foregroundStyle(.tertiary)
             }
-            Text(run.status)
-                .themedCode(.tiny)
-                .foregroundStyle(.tertiary)
+            .accessibilityElement(children: .combine)
         }
-        .accessibilityElement(children: .combine)
     }
 
     private func shellRow(_ shell: BackgroundShellSummary) -> some View {
@@ -312,7 +328,7 @@ private func sheetFrame<Content: View>(
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .accessibilityHidden(true)
             Text(LocalizedStringKey(title), bundle: .module)
-                .themedFont(points: 15, weight: .semibold)
+                .themedFont(.callout, weight: .semibold)
             Spacer()
             Button {
                 dismiss()

@@ -134,7 +134,7 @@ public struct AppearancePreferencesCardView: View {
                         .labelsHidden()
 
                     Text("\(Int(manager.uiFontSize))", bundle: .module)
-                        .font(theme.ui(points: 14, weight: .medium).monospacedDigit())
+                        .font(theme.ui(.callout, weight: .medium).monospacedDigit())
                         .frame(width: 28, alignment: .center)
 
                     Text("px", bundle: .module)
@@ -184,7 +184,7 @@ public struct AppearancePreferencesCardView: View {
                         .labelsHidden()
 
                     Text("\(Int(manager.codeFontSize))", bundle: .module)
-                        .font(theme.ui(points: 14, weight: .medium).monospacedDigit())
+                        .font(theme.ui(.callout, weight: .medium).monospacedDigit())
                         .frame(width: 28, alignment: .center)
 
                     Text("px", bundle: .module)

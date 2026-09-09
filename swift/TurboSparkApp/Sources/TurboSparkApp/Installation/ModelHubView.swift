@@ -52,18 +52,18 @@ struct ModelHubView: View {
                         .fill(TurboSparkTheme.accentColor.opacity(0.15))
                         .frame(width: 30, height: 30)
                     Image(systemName: "shippingbox.fill")
-                        .themedFont(points: 14, weight: .semibold)
+                        .themedFont(.callout, weight: .semibold)
                         .foregroundStyle(TurboSparkTheme.accentColor)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text("Discover Models", bundle: .module)
-                            .themedFont(points: 14, weight: .semibold)
+                            .themedFont(.callout, weight: .semibold)
                             .accessibilityAddTraits(.isHeader)
 
                         Text("ONLINE CATALOG", bundle: .module)
-                            .themedFont(points: 9, weight: .bold)
+                            .themedFont(.micro, weight: .bold)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
                             .background(TurboSparkTheme.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
@@ -71,7 +71,7 @@ struct ModelHubView: View {
                     }
 
                     Text(summaryText)
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -84,7 +84,7 @@ struct ModelHubView: View {
                 showingProbeSheet = true
             } label: {
                 Label("Probe HF Repo", systemImage: "sparkle.magnifyingglass")
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                     .frame(height: 22)
                     .padding(.horizontal, 9)
                     .contentShape(Rectangle())
@@ -113,12 +113,12 @@ struct ModelHubView: View {
     private var searchField: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
-                .themedFont(points: 10)
+                .themedFont(.tiny)
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
             TextField("Filter", text: $filter.searchText)
                 .textFieldStyle(.plain)
-                .themedFont(points: 11)
+                .themedFont(.tiny)
                 .frame(width: 130)
                 .accessibilityLabel("Search models")
                 .accessibilityHint("Filters by alias, name, family or notes")
@@ -127,7 +127,7 @@ struct ModelHubView: View {
                     filter.searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
@@ -198,7 +198,7 @@ struct ModelHubView: View {
     private var emptyListState: some View {
         VStack(spacing: 8) {
             Image(systemName: filter.tab == .onDevice ? "internaldrive" : "tray")
-                .themedFont(points: 26)
+                .themedFont(.hero)
                 .foregroundStyle(.quaternary)
                 .accessibilityHidden(true)
             Text(emptyTitle)
@@ -242,7 +242,7 @@ struct ModelHubView: View {
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "shippingbox")
-                    .themedFont(points: 30)
+                    .themedFont(.hero)
                     .foregroundStyle(.quaternary)
                     .accessibilityHidden(true)
                 Text("No model selected", bundle: .module)

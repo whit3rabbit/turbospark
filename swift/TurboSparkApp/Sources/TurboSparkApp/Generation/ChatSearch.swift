@@ -224,18 +224,20 @@ enum ChatSearch {
             anchor.lowerBound, offsetBy: -40, limitedBy: text.startIndex) ?? text.startIndex
         var windowStart = leadIn
         if windowStart > text.startIndex {
-            // Walk to the next word boundary, then step past the whitespace
-            // itself -- but only when the walk moved: the boundary may be
-            // the anchor's own word, and stepping then would clip the first
-            // matched character out of the window.
-            var walked = false
+            // Walk forward to the next word boundary -- the first position
+            // whose preceding character is whitespace, i.e. a word start --
+            // and open the window THERE. No second step: a boundary before
+            // the anchor is already past the whitespace, and stepping moved
+            // the window one character INTO a word. When that boundary word
+            // was the anchor itself (a 40-char lead-in with no whitespace
+            // at all: a long URL, a path, CJK text), the step clipped the
+            // MATCH's first character out of the window and lost the
+            // highlight with it.
             while windowStart < anchor.lowerBound,
                 !windowStart.isNextWhitespaceBoundary(in: text)
             {
                 windowStart = text.index(after: windowStart)
-                walked = true
             }
-            if walked, windowStart < text.endIndex { windowStart = text.index(after: windowStart) }
         }
         let windowEnd = text.index(
             anchor.lowerBound, offsetBy: 160, limitedBy: text.endIndex) ?? text.endIndex

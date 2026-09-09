@@ -10,9 +10,9 @@ struct PromptExamplesView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Try an example", bundle: .module)
-                        .font(theme.ui(points: 13, weight: .semibold))
+                        .font(theme.ui(.callout, weight: .semibold))
                     Text("Choose a prompt, edit it, or write your own.", bundle: .module)
-                        .font(theme.ui(points: 11))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -45,11 +45,11 @@ struct PromptExamplesView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(preset.title)
-                        .font(theme.ui(points: 11, weight: .semibold))
+                        .font(theme.ui(.tiny, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                     Text(preset.prompt)
-                        .font(theme.ui(points: 10))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
                         .lineLimit(3)
@@ -83,7 +83,7 @@ struct PromptExamplesView: View {
             }
         } label: {
             Label("More", systemImage: "ellipsis")
-                .font(theme.ui(points: 11, weight: .medium))
+                .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(.secondary)
         }
         .menuStyle(.borderlessButton)

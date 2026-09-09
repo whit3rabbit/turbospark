@@ -2,25 +2,39 @@ import SwiftUI
 
 /// The tappable question card the transcript shows while the model's turn
 /// is parked on an `AskUserQuestion` call (the qwen-code inline question
-/// surface). Single-select answers on tap; multi-select toggles a set and
-/// answers on Submit; Skip tells the model the user declined, which is an
-/// answer it can act on rather than a hang.
+/// surface). One question: single-select answers on tap, multi-select
+/// toggles a set and answers on Submit. Several questions: NOTHING submits
+/// until the footer does, because the executor's waiter is all-or-nothing
+/// -- an early per-question submit would clear the card with questions
+/// 2..N unanswered and the model would see a partial answer. Skip tells the
+/// model the user declined, which is an answer it can act on rather than a
+/// hang.
 @MainActor
 struct InteractiveQuestionCardView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let questions: [UserQuestionItem]
 
-    /// Selected labels per question header, for multiSelect sets. A
-    /// single-select question answers immediately and never touches this.
+    /// Selected labels per question header. Single-select questions record
+    /// their (single) pick here too when the card holds several questions;
+    /// a lone single-select question answers immediately and never touches
+    /// this.
     @State private var selections: [String: Set<String>] = [:]
+
+    /// Whether answers wait for the footer button: any set of more than one
+    /// question must submit as ONE map.
+    private var defersToFooter: Bool { questions.count > 1 }
+
+    private var allQuestionsAnswered: Bool {
+        !questions.isEmpty && questions.allSatisfy { selectedCount($0) > 0 }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(questions.enumerated()), id: \.offset) { _, question in
                 oneQuestion(question)
             }
-            skipFooter
+            footer
         }
         .padding(10)
         .background(TurboSparkTheme.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
@@ -37,8 +51,22 @@ struct InteractiveQuestionCardView: View {
         return "The model asked \(count) question\(count == 1 ? "" : "s")"
     }
 
-    private var skipFooter: some View {
+    @ViewBuilder
+    private var footer: some View {
         HStack {
+            if defersToFooter {
+                Button {
+                    submitAll()
+                } label: {
+                    Text("Submit Answers", bundle: .module)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .themedFont(.small, weight: .semibold)
+                .disabled(!allQuestionsAnswered)
+                .help("Answer every question to submit")
+                .accessibilityLabel("Submit all answers")
+            }
             Spacer()
             Button {
                 model.dismissUserQuestions()
@@ -51,6 +79,19 @@ struct InteractiveQuestionCardView: View {
             .help("Tell the model you are not answering these")
             .accessibilityLabel("Skip questions")
         }
+    }
+
+    /// Sends every question's answer in one map. Only reachable when the
+    /// footer button is enabled, so the guard is belt.
+    private func submitAll() {
+        guard allQuestionsAnswered else { return }
+        var answers: [String: String] = [:]
+        for question in questions {
+            answers[question.header] = (selections[question.header] ?? [])
+                .sorted()
+                .joined(separator: ", ")
+        }
+        model.submitUserQuestionAnswers(answers)
     }
 
     @ViewBuilder
@@ -73,17 +114,19 @@ struct InteractiveQuestionCardView: View {
                         multiRow(question, option)
                     }
                 }
-            Button {
-                submitMulti(question)
-            } label: {
-                Text(submitTitle(question))
-            }
-            .buttonStyle(.plain)
-            .themedFont(.small, weight: .semibold)
-            .foregroundStyle(TurboSparkTheme.accentColor)
-            .disabled(selectedCount(question) == 0)
-            .padding(.top, 2)
-            .accessibilityLabel("Submit answer for \(question.header)")
+                if !defersToFooter {
+                    Button {
+                        submitMulti(question)
+                    } label: {
+                        Text(submitTitle(question))
+                    }
+                    .buttonStyle(.plain)
+                    .themedFont(.small, weight: .semibold)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .disabled(selectedCount(question) == 0)
+                    .padding(.top, 2)
+                    .accessibilityLabel("Submit answer for \(question.header)")
+                }
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
@@ -95,15 +138,23 @@ struct InteractiveQuestionCardView: View {
     }
 
     private func singleRow(_ question: UserQuestionItem, _ option: UserQuestionOption) -> some View {
-        Button {
-            model.submitUserQuestionAnswers([question.header: option.label])
+        let isSelected = selections[question.header]?.contains(option.label) ?? false
+        return Button {
+            if defersToFooter {
+                // Record the pick and wait for the footer: the submit is
+                // all-or-nothing, so an immediate send would strand the
+                // other questions unanswered.
+                selections[question.header] = [option.label]
+            } else {
+                model.submitUserQuestionAnswers([question.header: option.label])
+            }
         } label: {
-            optionRow(option, isSelected: false, systemImage: "circle")
+            optionRow(option, isSelected: isSelected, systemImage: isSelected ? "circle.fill" : "circle")
         }
         .buttonStyle(.plain)
         .help("Answer with: \(option.label)")
         .accessibilityLabel("\(option.label). \(option.description)")
-        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
     private func multiRow(_ question: UserQuestionItem, _ option: UserQuestionOption) -> some View {

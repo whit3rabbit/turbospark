@@ -26,7 +26,7 @@ struct ServerConnectCardView: View {
         VStack(alignment: .leading, spacing: 10) {
             if model.server == nil {
                 Text("Start the server and these fill in with its real address.", bundle: .module)
-                    .themedFont(points: 11)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
 
@@ -41,13 +41,13 @@ struct ServerConnectCardView: View {
             if let snippet = snippets.first(where: { $0.id == selection }) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(snippet.note)
-                        .themedFont(points: 11)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
 
                     ZStack(alignment: .topTrailing) {
                         ScrollView(.horizontal, showsIndicators: false) {
                             Text(snippet.body)
-                                .themedCode(points: 11)
+                                .themedCode(.callout)
                                 .textSelection(.enabled)
                                 .padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -84,7 +84,7 @@ struct ServerConnectCardView: View {
                 // header -- which produces a confusing client-side failure
                 // instead of a working call.
                 Text("No key is set, so the snippets send a placeholder that is never checked.", bundle: .module)
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.secondary)
             }
 
@@ -109,7 +109,7 @@ private struct ServerEndpointListView: View {
 
             HStack {
                 Text("Endpoints", bundle: .module)
-                    .themedFont(points: 11, weight: .semibold)
+                    .themedFont(.tiny, weight: .semibold)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Picker("", selection: $family) {
@@ -123,22 +123,22 @@ private struct ServerEndpointListView: View {
             }
 
             Text(family.blurb)
-                .themedFont(points: 10)
+                .themedFont(.tiny)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(ServerEndpointCatalog.endpoints(for: family)) { endpoint in
                     HStack(spacing: 8) {
                         Text(endpoint.method)
-                            .themedCode(points: 9, weight: .semibold)
+                            .themedCode(.small, weight: .semibold)
                             .foregroundStyle(.secondary)
                             .frame(width: 34, alignment: .leading)
                         Text(endpoint.path)
-                            .themedCode(points: 11)
+                            .themedCode(.callout)
                             .textSelection(.enabled)
                         if endpoint.streams {
                             Text(family == .ollama ? "NDJSON" : "SSE")
-                                .themedFont(points: 8, weight: .medium)
+                                .themedFont(.micro, weight: .medium)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
                                 .background(Color.secondary.opacity(0.15), in: Capsule())
@@ -149,7 +149,7 @@ private struct ServerEndpointListView: View {
                         }
                         Spacer(minLength: 8)
                         Text(endpoint.summary)
-                            .themedFont(points: 10)
+                            .themedFont(.tiny)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)

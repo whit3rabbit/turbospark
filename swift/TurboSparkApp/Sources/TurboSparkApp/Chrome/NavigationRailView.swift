@@ -50,7 +50,7 @@ struct NavigationRailView: View {
             model.activeSection = section
         } label: {
             Image(systemName: isSelected ? section.selectedSystemImage : section.systemImage)
-                .font(theme.ui(points: 15, weight: .medium))
+                .font(theme.ui(.callout, weight: .medium))
                 .foregroundStyle(isSelected ? theme.accent : Color.secondary)
                 .frame(width: itemSize, height: itemSize)
                 .background {
@@ -103,7 +103,7 @@ struct NavigationRailView: View {
     private var settingsButton: some View {
         SettingsLink {
             Image(systemName: "gearshape")
-                .font(theme.ui(points: 15, weight: .medium))
+                .font(theme.ui(.callout, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: itemSize, height: itemSize)
                 .background {
@@ -140,12 +140,12 @@ private struct RailTooltip: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(title)
-                .font(theme.ui(points: 11, weight: .medium))
+                .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(Color.primary)
                 .lineLimit(1)
 
             Text(shortcut)
-                .font(theme.code(points: 9, weight: .semibold))
+                .font(theme.code(.small, weight: .semibold))
                 .foregroundStyle(Color.secondary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1.5)

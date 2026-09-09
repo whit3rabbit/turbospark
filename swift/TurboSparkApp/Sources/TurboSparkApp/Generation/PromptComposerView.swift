@@ -43,7 +43,7 @@ struct PromptComposerView: View {
                         .accessibilityHidden(true)
                     Text("Temporary chat: this conversation can't be recovered.", bundle: .module)
                 }
-                .font(theme.ui(points: 11, weight: .medium))
+                .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .combine)
             }
@@ -143,6 +143,25 @@ struct PromptComposerView: View {
             // mouse.
             promptFocused = true
         }
+        .background {
+            // The Cmd+U the plus menu's help text advertises. A
+            // keyboardShortcut on a Button inside a SwiftUI Menu only
+            // resolves while that menu is OPEN, so registering it there
+            // alone made the chord dead; this window-level hidden button is
+            // the AlternateShortcutBridge pattern for a chord the menu
+            // cannot carry itself. Disabled state mirrors the menu's.
+            Button {
+                documentImportError = nil
+                isImportingDocuments = true
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("u", modifiers: .command)
+            .disabled(model.isRunning)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+        }
         .onChange(of: model.promptText) { _, newValue in
             // The `/` and `@` popup rides the draft text: every keystroke
             // re-derives the trigger from the trailing token.
@@ -167,6 +186,9 @@ struct PromptComposerView: View {
         case .success(let urls):
             importDocuments(urls)
         case .failure(let error):
+            // Dismissing the panel is not an import failure; surfacing the
+            // cancellation as a red line above the composer reads as one.
+            if isUserCancellation(error) { return }
             documentImportError = error.localizedDescription
         }
     }
@@ -176,8 +198,13 @@ struct PromptComposerView: View {
         case .success(let urls):
             importFolders(urls)
         case .failure(let error):
+            if isUserCancellation(error) { return }
             documentImportError = error.localizedDescription
         }
+    }
+
+    private func isUserCancellation(_ error: any Error) -> Bool {
+        (error as? CocoaError)?.code == .userCancelled
     }
 
     private func importDocuments(_ urls: [URL]) {
@@ -280,7 +307,7 @@ private struct QueuedPromptsSection: View {
                 }
                 Text("Queued behind the running turn; drains when it finishes.",
                      bundle: .module)
-                    .themedFont(points: 10)
+                    .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
             }
         }

@@ -50,12 +50,64 @@ The scene-level `.dynamicTypeSize` modifier is gone; every themed site
 scales through `AppFontDescriptor`'s own size now, the more precise of the
 two mechanisms.
 
-`FontPropagationTests.swift` is the regression guard: it walks every file
-under `Sources/TurboSparkApp`, and any file whose text contains `.font(`
-without also containing `themedFont`, `themedCode` or `theme.` fails the
-build. The exempt list is explicit in the test, by relative path and by
-reason, so a change to one of those files is a visible diff rather than a
-silent widening of the exemption.
+`FontPropagationTests.swift` is the regression guard, checked per CALL
+SITE rather than per file since 2026-09-08 (the per-file form read a file
+with one themed call and fifty raw ones as clean): every `.font(` line
+must spell a themed reader, no hardcoded size literal may return, and
+the type scale itself is pinned. See the standardization entry below.
+
+### The type scale standardization (2026-09-08)
+
+The propagation pass left every site free to pick its own size, and two
+coexisting conventions grew beside each other: named steps
+(`AppFontStep`) and explicit `theme.ui(points: N)` literals. A survey at
+standardization time counted about 1,269 step-based and 437 point-based
+call sites across 397 files, with the point sites spelling 28 distinct
+values -- 10, 11 and 12 alone had 114, 118 and 49 sites -- and the same
+role (secondary rows, empty-state symbols, card titles) written at five
+or six neighbouring sizes across files. Confirmed as drift, not design:
+the 09-06 pass chose `.themedFont`/`theme.ui(points:)` per site with no
+stated rule, no doc governed the choice, and no test could see
+step-vs-points disagreement. One survey false-positive class stands and
+was left alone: four "step next to points" pairs
+(`InspectorEssentialsSection` label-vs-badge, `ModelCardView`
+icon-vs-tag, `ToolCallCardView` icon-vs-notice, `ChatGitSheets`
+big-icon-vs-caption) are icon-vs-TEXT pairs, and forcing them equal
+would size the icon to its label.
+
+The fix made `AppFontStep` the canonical scale -- its doc table lists
+every role's rendered size at the 16pt default base -- and DELETED the
+`points:` spellings, so a size that is not a role no longer compiles.
+`.micro` (9pt), `.callout` (14pt) and `.display` (36pt) are new; `.hero`
+was recalibrated 32 to 30 with zero call sites to move; the other
+factors were retuned to exact size/16 ratios that hit the value each
+usage cluster's mode already rendered, so most sites kept their size and
+the rest moved one point. Every role still scales with the UI size,
+code size and Text Size settings exactly as before; the settings
+surface is unchanged.
+
+The one numeric spelling that survives is `.themedFont(fitting:)` /
+`theme.ui(fitting:)`, for glyphs whose size a FRAME dictates (a logo
+letterform at `size * 0.45`, a symbol sized to its icon frame). The
+value must be layout-derived: the test rejects a constant after
+`fitting:`, because a constant is a role the scale is missing, and the
+role -- not the literal -- is what makes future retuning a one-edit
+change. The same test rejects any raw size literal
+(`Font.system(size:)` included) and pins the scale case by case, so a
+retuned factor has to update the documented expectation or the build
+reddens. All three cases are mutation-checked: a raw `.font(.caption2)`
+reddens only the call-site case, a constant `fitting:` only the literal
+case, a moved factor only the pinned-scale case.
+
+**Still open, deliberately:** the AppKit print and transcript surfaces
+(`ResponseMarkdownRenderer`, `InstructionTranscriptDocumentController`)
+size `NSFont` from `NSFont.systemFontSize`, not from the theme. They are
+the NSAttributedString boundary (copy, export, print), which the
+ambient SwiftUI theme does not reach; converting them is a feature
+(theme-aware export), not a consistency fix. The theme preview cards
+(`ThemeTypographyPreviewView`, `ThemeCodePreviewView`) and the font
+picker rows stay exempt from the test for the reasons listed on the
+exempt list itself.
 
 **Two zero-caller theme accessors this audit found were a second copy of
 the SAME `NSApp.effectiveAppearance` bug the resolution fix below closes.**

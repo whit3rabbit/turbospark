@@ -108,11 +108,11 @@ public struct ModelLogoView: View {
 
             if !fallbackLetter.isEmpty {
                 Text(fallbackLetter)
-                    .themedFont(points: size * 0.45, weight: .bold)
+                    .themedFont(fitting: size * 0.45, weight: .bold)
                     .foregroundStyle(.white)
             } else {
                 Image(systemName: fallbackIcon)
-                    .themedFont(points: size * 0.45, weight: .semibold)
+                    .themedFont(fitting: size * 0.45, weight: .semibold)
                     .foregroundStyle(.white)
             }
         }

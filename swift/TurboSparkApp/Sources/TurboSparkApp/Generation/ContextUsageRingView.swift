@@ -108,12 +108,12 @@ struct ContextUsagePopoverView: View {
     private var header: some View {
         HStack {
             Text("Context window", bundle: .module)
-                .font(theme.ui(points: 13, weight: .semibold))
+                .font(theme.ui(.callout, weight: .semibold))
             Spacer()
             if summary != nil {
                 Text(headlineText)
                     .monospacedDigit()
-                    .font(theme.ui(points: 11))
+                    .font(theme.ui(.tiny))
                     .foregroundStyle(.secondary)
             }
         }
@@ -164,7 +164,7 @@ struct ContextUsagePopoverView: View {
             }
         } else {
             Text("Measuring...", bundle: .module)
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
         }
     }
@@ -176,14 +176,14 @@ struct ContextUsagePopoverView: View {
                 .frame(width: 6, height: 6)
             // Verbatim: the label is built at runtime, not a literal key.
             Text(verbatim: label)
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             Spacer(minLength: 8)
             let percent = window > 0 ? Int((Double(tokens) / Double(window) * 100).rounded()) : 0
             Text("\(tokens.formatted(.number.notation(.compactName))) (\(percent)%)")
                 .monospacedDigit()
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.secondary)
         }
     }
@@ -192,23 +192,23 @@ struct ContextUsagePopoverView: View {
     private var footer: some View {
         if model.isCompacting {
             Text("Compacting conversation...", bundle: .module)
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(Color.orange)
         } else if let trigger = summary?.compactionTriggerTokens, summary?.autoCompactEnabled == true {
             Text(
                 "Auto-compact at ~\(trigger.formatted(.number.notation(.compactName))) tokens",
                 bundle: .module)
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
         } else {
             Text("Auto-compact off", bundle: .module)
-                .font(theme.ui(points: 11))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
         }
         Text(
             "The total is exact; the rows apportion it and skip chat-template framing.",
             bundle: .module)
-            .font(theme.ui(points: 10))
+            .font(theme.ui(.tiny))
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
     }

@@ -23,7 +23,7 @@ struct InstalledModelHeroHeaderView: View {
                         .lineLimit(2)
 
                     Text("INSTALLED", bundle: .module)
-                        .themedFont(points: 9, weight: .bold)
+                        .themedFont(.micro, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Color.teal.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
@@ -31,7 +31,7 @@ struct InstalledModelHeroHeaderView: View {
 
                     Button(action: onToggleFavorite) {
                         Image(systemName: isFavorite ? "star.fill" : "star")
-                            .themedFont(points: 14)
+                            .themedFont(.callout)
                             .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
                     }
                     .buttonStyle(.plain)
@@ -77,7 +77,7 @@ struct InstalledModelHeroHeaderView: View {
                             HStack(spacing: 3) {
                                 Text(installedModel.repo)
                                 Image(systemName: "arrow.up.right.square")
-                                    .themedFont(points: 9)
+                                    .themedFont(.micro)
                             }
                             .themedCode(.small)
                             .foregroundStyle(Color.accentColor)

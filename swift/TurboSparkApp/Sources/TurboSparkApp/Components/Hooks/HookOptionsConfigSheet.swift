@@ -42,7 +42,7 @@ public struct HookOptionsConfigSheet: View {
             if group.optionSpecs.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "slider.horizontal.3")
-                        .themedFont(points: 32)
+                        .themedFont(.hero)
                         .foregroundStyle(.secondary)
                     Text("No configurable options declared for this source.", bundle: .module)
                         .themedFont(.small)

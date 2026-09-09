@@ -76,7 +76,7 @@ struct ChatSidebarFooterView: View {
                     avatarView
 
                     Text(profileDisplayName)
-                        .font(theme.ui(points: 12, weight: .medium))
+                        .font(theme.ui(.small, weight: .medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
@@ -113,7 +113,7 @@ struct ChatSidebarFooterView: View {
                 .frame(width: avatarSize, height: avatarSize)
 
             Text(profileInitial)
-                .font(theme.ui(points: 11, weight: .bold))
+                .font(theme.ui(.tiny, weight: .bold))
                 .foregroundStyle(.white)
         }
         .accessibilityHidden(true)
@@ -121,7 +121,7 @@ struct ChatSidebarFooterView: View {
 
     private var badgePill: some View {
         Text("P", bundle: .module)
-            .font(theme.code(points: 9, weight: .bold))
+            .font(theme.code(.small, weight: .bold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
@@ -141,7 +141,7 @@ struct ChatSidebarFooterView: View {
             // Companion / local server indicator
         } label: {
             Image(systemName: "iphone")
-                .font(theme.ui(points: 13, weight: .medium))
+                .font(theme.ui(.callout, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: actionButtonSize, height: actionButtonSize)
                 .contentShape(Rectangle())
@@ -154,7 +154,7 @@ struct ChatSidebarFooterView: View {
     private var settingsButton: some View {
         SettingsLink {
             Image(systemName: "gearshape")
-                .font(theme.ui(points: 13, weight: .medium))
+                .font(theme.ui(.callout, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: actionButtonSize, height: actionButtonSize)
                 .contentShape(Rectangle())

@@ -77,12 +77,12 @@ struct ChatSearchOverlayView: View {
     private var fieldRow: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(theme.ui(points: 12))
+                .font(theme.ui(.small))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             TextField("Search chats...", text: $query)
                 .textFieldStyle(.plain)
-                .font(theme.ui(points: 14))
+                .font(theme.ui(.callout))
                 .focused($fieldFocused)
                 .accessibilityLabel("Search chats")
             if !query.isEmpty {
@@ -91,7 +91,7 @@ struct ChatSearchOverlayView: View {
                     fieldFocused = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(theme.ui(points: 11))
+                        .font(theme.ui(.tiny))
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
@@ -144,16 +144,16 @@ struct ChatSearchOverlayView: View {
     private func emptyState(title: String, detail: String) -> some View {
         VStack(spacing: 6) {
             Image(systemName: "bubble.left.and.bubble.right")
-                .font(theme.ui(points: 20))
+                .font(theme.ui(.title2))
                 .foregroundStyle(.tertiary)
                 .padding(.top, 18)
                 .padding(.bottom, 2)
                 .accessibilityHidden(true)
             Text(title)
-                .font(theme.ui(points: 11, weight: .medium))
+                .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(.secondary)
             Text(detail)
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }
@@ -166,13 +166,13 @@ struct ChatSearchOverlayView: View {
     private var footer: some View {
         HStack {
             Text("Up/Down to navigate, Enter to open, Esc to close", bundle: .module)
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
             Spacer(minLength: 0)
             Text(hits.count == documents.count
                 ? "\(documents.count) chats"
                 : "\(hits.count) of \(documents.count) chats")
-                .font(theme.ui(points: 10))
+                .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 14)

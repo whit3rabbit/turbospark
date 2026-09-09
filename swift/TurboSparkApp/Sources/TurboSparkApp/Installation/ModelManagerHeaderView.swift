@@ -14,7 +14,7 @@ struct ModelManagerHeaderView: View {
                         .fill(Color.teal.opacity(0.15))
                         .frame(width: 30, height: 30)
                     Image(systemName: "internaldrive.fill")
-                        .themedFont(points: 14, weight: .semibold)
+                        .themedFont(.callout, weight: .semibold)
                         .foregroundStyle(Color.teal)
                         .accessibilityHidden(true)
                 }
@@ -22,11 +22,11 @@ struct ModelManagerHeaderView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text("Installed Models", bundle: .module)
-                            .themedFont(points: 14, weight: .semibold)
+                            .themedFont(.callout, weight: .semibold)
                             .accessibilityAddTraits(.isHeader)
 
                         Text("LOCAL STORAGE", bundle: .module)
-                            .themedFont(points: 9, weight: .bold)
+                            .themedFont(.micro, weight: .bold)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
                             .background(Color.teal.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
@@ -34,7 +34,7 @@ struct ModelManagerHeaderView: View {
                     }
 
                     Text(summaryText)
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -46,7 +46,7 @@ struct ModelManagerHeaderView: View {
                 model.showToast("Refreshed model libraries", style: .info)
             } label: {
                 Label("Rescan", systemImage: "arrow.clockwise")
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                     .frame(height: 22)
                     .padding(.horizontal, 8)
             }
@@ -63,7 +63,7 @@ struct ModelManagerHeaderView: View {
                 } icon: {
                     Image(systemName: "folder.badge.plus")
                 }
-                    .themedFont(points: 11, weight: .medium)
+                    .themedFont(.tiny, weight: .medium)
                     .frame(height: 22)
                     .padding(.horizontal, 8)
             }
@@ -77,10 +77,10 @@ struct ModelManagerHeaderView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "shippingbox.fill")
-                        .themedFont(points: 10)
+                        .themedFont(.tiny)
                         .accessibilityHidden(true)
                     Text("Discover Hub ->", bundle: .module)
-                        .themedFont(points: 11, weight: .medium)
+                        .themedFont(.tiny, weight: .medium)
                 }
                 .frame(height: 22)
                 .padding(.horizontal, 10)

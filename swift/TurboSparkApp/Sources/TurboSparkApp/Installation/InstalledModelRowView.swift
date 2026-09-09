@@ -36,7 +36,7 @@ struct InstalledModelRowView: View {
 
                         if isFavorite {
                             Image(systemName: "star.fill")
-                                .themedFont(points: 9)
+                                .themedFont(.micro)
                                 .foregroundStyle(Color.yellow)
                         }
 
@@ -58,7 +58,7 @@ struct InstalledModelRowView: View {
                     // Feature & Source Badges
                     HStack(spacing: 4) {
                         Text(descriptor.storageSource.shortLabel)
-                            .themedFont(points: 8, weight: .semibold)
+                            .themedFont(.micro, weight: .semibold)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1.5)
                             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 3))
@@ -82,7 +82,7 @@ struct InstalledModelRowView: View {
 
                         HStack(spacing: 2) {
                             Image(systemName: "internaldrive")
-                                .themedFont(points: 8)
+                                .themedFont(.micro)
                                 .foregroundStyle(.tertiary)
                             Text(MetricFormat.storage(modelItem.installBytes))
                                 .themedFont(.tiny).monospacedDigit()
@@ -94,7 +94,7 @@ struct InstalledModelRowView: View {
                         HStack(spacing: 3) {
                             ForEach(tags.prefix(3), id: \.self) { tag in
                                 Text(tag)
-                                    .themedFont(points: 8, weight: .medium)
+                                    .themedFont(.micro, weight: .medium)
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
                                     .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))

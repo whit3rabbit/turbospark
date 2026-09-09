@@ -27,7 +27,7 @@ struct MessageVariantSwitcherView: View {
                 step(-1)
             } label: {
                 Image(systemName: "chevron.left")
-                    .themedFont(points: 10, weight: .semibold)
+                    .themedFont(.tiny, weight: .semibold)
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
             }
@@ -45,7 +45,7 @@ struct MessageVariantSwitcherView: View {
                 step(1)
             } label: {
                 Image(systemName: "chevron.right")
-                    .themedFont(points: 10, weight: .semibold)
+                    .themedFont(.tiny, weight: .semibold)
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
             }
