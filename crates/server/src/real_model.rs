@@ -139,6 +139,11 @@ impl RealChatModel {
         kv_bits: runtime::KvQuant,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
+        // Captured this early because the open below consumes `arch`: the
+        // `--vision-sidecar auto` resolution after the open needs the
+        // trunk's own family and hidden size, and both are Copy.
+        let trunk_family = arch.family;
+        let trunk_hidden_size = arch.hidden_size;
         // Resolved here, ahead of `committed_breakdown` below, so the same
         // policy sizes both the context budget and the actual open.
         let expert_cache_slots_policy = match expert_cache_slots {
@@ -273,11 +278,39 @@ impl RealChatModel {
         // attaching here is enough to make the rest of the pipeline pick up
         // the sidecar with no further change.
         //
+        // `--vision-sidecar auto` resolves against the default store AFTER
+        // the trunk is open, by the trunk's own family and hidden size. A
+        // no-op (own tower already present) or an absent tower serves
+        // text-only with the reason on the startup line; an ambiguity is
+        // still a refused open, because the revision pin is load-bearing
+        // and `auto` never picks between towers.
+        //
         // `verify_image_markers` catches a mismatched sidecar/tokenizer
         // pairing HERE, naming the actual ids, rather than letting it
-        // surface deep inside `turbospark_vision_io::splice_and_walk` at the
-        // first image a client sends.
-        if let Some(dir) = vision_sidecar {
+        // surface deep inside `turbospark_vision_io::splice_and_walk` at
+        // the first image a client sends.
+        let requested_auto = vision_sidecar == Some(std::path::Path::new("auto"));
+        let sidecar_dir: Option<std::path::PathBuf> = if requested_auto {
+            let store = catalog::Store::default_store()
+                .map_err(|e| format!("--vision-sidecar auto: {e}"))?;
+            match catalog::resolve_vision_sidecar_auto(
+                &store,
+                runner.has_vision_tower(),
+                trunk_family,
+                trunk_hidden_size,
+            )
+            .map_err(|e| format!("--vision-sidecar auto: {e}"))?
+            {
+                catalog::AutoVisionSidecar::Attached(dir) => Some(dir),
+                catalog::AutoVisionSidecar::TextOnly(reason) => {
+                    eprintln!("vision: auto -- {reason}");
+                    None
+                }
+            }
+        } else {
+            vision_sidecar.map(std::path::Path::to_path_buf)
+        };
+        if let Some(dir) = &sidecar_dir {
             runner
                 .attach_vision_sidecar(dir)
                 .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
@@ -293,7 +326,11 @@ impl RealChatModel {
             // print" shape exists for a fixed toggle every deployment sets
             // one way or the other, not for a flag whose default has
             // nothing to report.
-            eprintln!("vision: sidecar {}", dir.display());
+            eprintln!(
+                "vision: sidecar {}{}",
+                dir.display(),
+                if requested_auto { " (auto)" } else { "" }
+            );
         }
         // Read from `runner.vision_dir()` rather than `model_dir` directly,
         // so a later `--vision-sidecar` attach (vision memory sidecar, Part

@@ -737,10 +737,22 @@ installed tower pairing with a given shape, reading each candidate's own
 silently picking between two towers of the same architecture at different
 revisions: per the revision-pin discipline this page already states for the
 parity gate, two different revisions of one architecture's tower are NOT
-interchangeable. **This function has no caller yet**: `--vision-sidecar
-auto` (resolve by family/hidden-size through the catalog rather than an
-explicit path) is unbuilt in every front end. Every `--vision-sidecar` flag
-today takes an explicit path only.
+interchangeable.
+
+`resolve_vision_sidecar_auto` is the `--vision-sidecar auto` reading of the
+same match, wired in all three front ends (`turbospark-check`,
+`turbospark-server`, and the FFI's `visionSidecar` option, which gives the
+Swift app the behavior for free). It resolves AFTER the trunk opens, by the
+trunk's own family and hidden size, with three outcomes: the trunk already
+declares its own tower (a reported no-op -- a sidecar beside it would be a
+second tower for one session), exactly one installed tower pairs (attach),
+or more than one pairs (the same named refusal as an explicit path, because
+the revision pin is load-bearing and `auto` never picks). The one outcome
+that differs from an explicit path is zero matches: `auto` runs text-only
+with the reason on the startup line rather than refusing, the same
+resolve-report-proceed shape `--speculative auto` and
+`--expert-cache-slots auto` follow. A resolved auto attach prints
+`vision: sidecar <dir> (auto)`; a text-only auto prints the reason once.
 
 The `qwen38-vision-tower` catalog row: `mlx-community/Qwen3.8-27B-4bit`
 pinned at the same revision (`3e6447f0`) both `qwen38-27b.gturbo` and

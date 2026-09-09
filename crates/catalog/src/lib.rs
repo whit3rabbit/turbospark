@@ -54,7 +54,7 @@ pub use recommend::{
     ThroughputBand,
 };
 pub use store::{default_root, directory_bytes, resolve_model_arg, InstalledModel, Store};
-pub use vision::resolve_vision_sidecar;
+pub use vision::{resolve_vision_sidecar, resolve_vision_sidecar_auto, AutoVisionSidecar};
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate's tokenizer

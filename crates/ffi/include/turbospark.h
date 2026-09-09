@@ -186,8 +186,12 @@ void ts_string_free(char *s);
  *   steeringTarget    number | null (for clamp mode, default 0.0)
  *   steeringGate      number | null (activation threshold >= 0, default 0.0)
  *   visionSidecar     string | null (path to a standalone vision-tower
- *                       sidecar install to attach to a text-only trunk).
- *                       null means use the trunk's own tower, if it has one.
+ *                       sidecar install to attach to a text-only trunk, or
+ *                       "auto" to resolve one from the installed store by
+ *                       the trunk's own family and hidden size; with no
+ *                       pairing tower the session stays text-only, and an
+ *                       ambiguity refuses the open). null means use the
+ *                       trunk's own tower, if it has one.
  *   kvBits            "off" | "2" | "3" | "3.5" | "4" | null
  *                       (default off, which is what every release before this
  *                       key existed produced byte for byte). TurboQuant

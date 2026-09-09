@@ -132,6 +132,7 @@ than one, is a parse error.
 | --- | --- | --- | --- |
 | `--image` | path, repeatable | none | image to include; all of them land in ONE turn unless `--image-batch` |
 | `--image-batch` | flag | off | run the prompt once per `--image` instead of once with all of them |
+| `--vision-sidecar` | path, or `auto` | none | attach a standalone vision-tower sidecar install to a text-only trunk. `auto` resolves one from the installed store by the trunk's own family and hidden size after the trunk opens: the trunk's own tower wins, zero installed towers runs text-only with the reason on stderr, and two candidate towers REFUSE the open because the revision pin is load-bearing; see [`docs/VISION.md`](VISION.md) |
 | `--rdadvise` | `off\|normal\|aggressive` | `off` | read-ahead hint mode for streamed expert reads (macOS) |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | routed-expert slot cache size; `auto` never resolves below `16` |
 | `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `TURBOSPARK_PREFILL_CHUNK` environment variable overrides when set |
@@ -237,6 +238,12 @@ Four things this refuses rather than guessing at:
 The install must carry its `preprocessor_config.json`: the pixel budget is
 read from the checkpoint and has no safe default (`crates/vision-io` Gotcha
 6). An install missing it is refused by name.
+
+A text-only trunk can still take images through a standalone tower:
+`--vision-sidecar` attaches an `<alias>.gturbo-vision` install beside it
+(the format and its gates are [`docs/VISION.md`](VISION.md)'s sidecar
+section), and `--vision-sidecar auto` resolves one from the installed store
+by family and hidden size when you would rather not name the path.
 
 ## `turbospark-model`
 

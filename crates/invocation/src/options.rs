@@ -243,7 +243,9 @@ pub const OPTIONS: &[OptionDecl] = &[
         is_required: false,
         is_mode_selecting: false,
         usage_hint: "path to a standalone vision-tower sidecar install to attach to a \
-                     text-only trunk (default: none; the trunk's own tower, if any, is used)",
+                     text-only trunk, or auto to resolve one from the installed store by \
+                     the trunk's own family and hidden size (default: none; the trunk's \
+                     own tower, if any, is used)",
     },
     OptionDecl {
         flag: "--reasoning",

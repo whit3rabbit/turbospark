@@ -53,6 +53,11 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let resolved = catalog::resolve_model_arg(&request.model);
     let model_dir = resolved.as_path();
     let arch = repack::peek_manifest_arch(model_dir)?;
+    // Captured this early because the open below consumes `arch`: the
+    // `--vision-sidecar auto` resolution after the open needs the trunk's
+    // own family and hidden size, and both are Copy.
+    let trunk_family = arch.family;
+    let trunk_hidden_size = arch.hidden_size;
 
     let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
         format!(
@@ -195,24 +200,58 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // so attaching here is enough to make the rest of the vision pipeline
     // pick up the sidecar with no further change.
     //
+    // `--vision-sidecar auto` resolves against the default store AFTER the
+    // trunk is open, by the trunk's own family and hidden size. A no-op
+    // (own tower already present) or an absent tower runs text-only with
+    // the reason on stderr; an ambiguity is still an error, because the
+    // revision pin is load-bearing and `auto` never picks between towers.
+    //
     // `verify_image_markers` catches a mismatched sidecar/tokenizer pairing
     // HERE, naming the actual ids, rather than letting it surface deep
     // inside `turbospark_vision_io::splice_and_walk` at the first image a
     // caller attaches.
-    if let Some(path) = request.vision_sidecar.as_deref() {
-        let dir = std::path::Path::new(path);
+    let sidecar_dir: Option<std::path::PathBuf> = match request.vision_sidecar.as_deref() {
+        Some("auto") => {
+            let store = catalog::Store::default_store()
+                .map_err(|e| format!("--vision-sidecar auto: {e}"))?;
+            match catalog::resolve_vision_sidecar_auto(
+                &store,
+                runner.has_vision_tower(),
+                trunk_family,
+                trunk_hidden_size,
+            )
+            .map_err(|e| format!("--vision-sidecar auto: {e}"))?
+            {
+                catalog::AutoVisionSidecar::Attached(dir) => Some(dir),
+                catalog::AutoVisionSidecar::TextOnly(reason) => {
+                    if !request.quiet {
+                        eprintln!("vision: auto -- {reason}");
+                    }
+                    None
+                }
+            }
+        }
+        Some(path) => Some(std::path::PathBuf::from(path)),
+        None => None,
+    };
+    if let Some(dir) = &sidecar_dir {
+        let auto = request.vision_sidecar.as_deref() == Some("auto");
         runner
             .attach_vision_sidecar(dir)
-            .map_err(|e| format!("--vision-sidecar {path}: {e}"))?;
+            .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
         let vision = runner.vision_config();
         tokenizer
             .verify_image_markers(
                 vision.vision_start_token_id as i32,
                 vision.image_token_id as i32,
             )
-            .map_err(|e| format!("--vision-sidecar {path}: {e}"))?;
+            .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
         if !request.quiet {
-            eprintln!("vision: sidecar {}", dir.display());
+            eprintln!(
+                "vision: sidecar {}{}",
+                dir.display(),
+                if auto { " (auto)" } else { "" }
+            );
         }
     }
 
