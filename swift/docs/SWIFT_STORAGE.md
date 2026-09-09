@@ -122,3 +122,50 @@ directory as a side effect, so every test building a prompt for a project
 would otherwise mkdir inside the user's real `~/.turbospark` -- the exact
 failure this page's header section is about, arrived at through a code path
 that never looks like a storage test.
+
+## `AppStorageRoot` isolates the FILE; a singleton still shares the OBJECT
+
+Found 2026-09-09 from an intermittently red
+`QwenParityFeaturesTests.testCronOneShotFiresAndRemovesItself`: three green
+`swift test` runs, then `["wake word", "wake word"]` against `["wake word"]`
+from a single one-shot, then green again. Running the case under `--filter`
+passed 5 of 5, which is the tell and not an accident.
+
+The case drove `CronScheduler.shared`. Redirecting its file was never the
+problem -- **the shared OBJECT was**. `AppModel.init` calls
+`startCronScheduler()`, which puts a 20-second repeating `Timer` on the main
+run loop calling `CronScheduler.shared.fireDueJobs()`, and nothing ever
+invalidates it (`cronPollTimer` is stored for a shutdown that does not exist,
+and the timer's block does not reference the model at all, so a deallocated
+`AppModel` leaves its timer running). About twenty test files build an
+`AppModel`, so a full run accumulates that many permanent pollers of the
+singleton. `--filter`ing to this one case builds none, which is why isolation
+looked green and a full run did not.
+
+`fireDueJobs` then AWAITS its delivery, and a job's `nextFireAt` is rewritten
+in `completeFire` AFTER the await returns -- so a tick landing in that window
+took the same job a second time and delivered the same prompt twice. That is a
+real double-submit into a user's chat whenever a delivery outlives one tick,
+not only a test artifact; `takeDueJobs` marks a taken id in flight now and
+`completeFire` clears it.
+
+Three things to carry.
+
+**A store seam is not a concurrency seam.** `AppStorageRoot` makes a test's
+writes land somewhere private. It says nothing about a `.shared` whose
+BEHAVIOUR other code is still driving, and a singleton with a background
+poller is exactly that. Give a case its own instance
+(`CronScheduler(directory:)`, `InputHistoryStore(directory:)`) rather than a
+private file under the shared one.
+
+**"Passes under `--filter`, fails in a full run" names the mechanism.** It is
+not a hint that the case is slow or order-sensitive in the usual way: it says
+something ELSE in the process is acting on the same object, and the thing to
+look for is a timer, a task or an observer installed by another test's fixture
+rather than a value left behind in a file.
+
+**A static executor surface needs the same seam.** `CronScheduler`'s
+`execute*` statics reached `shared` directly, so the one case exercising the
+dispatch surface leaked a recurring job into every later case in the process.
+They take `scheduler: CronScheduler = .shared`, which dispatch never passes
+and a test always does.

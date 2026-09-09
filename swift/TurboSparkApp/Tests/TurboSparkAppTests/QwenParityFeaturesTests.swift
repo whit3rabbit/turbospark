@@ -243,56 +243,149 @@ final class QwenParityFeaturesTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(CronSchedule("30 * * * *")).describe(), "Hourly at :30")
     }
 
+    /// A scheduler over a directory of its own, reached by nothing else.
+    ///
+    /// The cron cases used to drive `CronScheduler.shared`, which is the
+    /// object every `AppModel` in the suite installs a 20-second
+    /// `fireDueJobs` poll timer on and never invalidates. A tick landing
+    /// inside `testCronOneShotFiresAndRemovesItself`'s own `await` took
+    /// that case's one-shot a SECOND time and delivered it twice -- which
+    /// is why it fails only in a full run and passes under `--filter`,
+    /// where no `AppModel` is ever built. `shared` also puts every case's
+    /// jobs in one persisted file. An isolated instance is outside both.
+    private func makeIsolatedScheduler() -> CronScheduler {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cron-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        return CronScheduler(directory: directory)
+    }
+
     func testCronSchedulerCreateListToggleDeleteRoundTrip() throws {
+        let scheduler = makeIsolatedScheduler()
         let chatID = UUID()
-        let job = try CronScheduler.shared.create(
+        let job = try scheduler.create(
             cron: "*/5 * * * *", prompt: "run the check", recurring: true, chatID: chatID)
-        XCTAssertTrue(CronScheduler.shared.list().contains { $0.id == job.id })
+        XCTAssertTrue(scheduler.list().contains { $0.id == job.id })
         XCTAssertNotNil(job.nextFireAt)
 
-        XCTAssertThrowsError(try CronScheduler.shared.create(
+        XCTAssertThrowsError(try scheduler.create(
             cron: "not a cron", prompt: "x", recurring: true, chatID: chatID))
-        XCTAssertThrowsError(try CronScheduler.shared.create(
+        XCTAssertThrowsError(try scheduler.create(
             cron: "*/5 * * * *", prompt: "   ", recurring: true, chatID: chatID))
 
-        XCTAssertTrue(CronScheduler.shared.setEnabled(id: job.id, enabled: false))
-        let paused = try XCTUnwrap(CronScheduler.shared.list().first { $0.id == job.id })
+        XCTAssertTrue(scheduler.setEnabled(id: job.id, enabled: false))
+        let paused = try XCTUnwrap(scheduler.list().first { $0.id == job.id })
         XCTAssertNil(paused.nextFireAt)
 
-        XCTAssertTrue(CronScheduler.shared.delete(id: job.id))
-        XCTAssertFalse(CronScheduler.shared.delete(id: job.id))
+        XCTAssertTrue(scheduler.delete(id: job.id))
+        XCTAssertFalse(scheduler.delete(id: job.id))
     }
 
     func testCronExecuteCreateReportsHumanScheduleAndInvalidCronThrows() throws {
+        // Through the static dispatch surface, but against an isolated
+        // store: the happy path creates a RECURRING job and nothing deletes
+        // it, so on `shared` this case leaks one into every later case.
+        let scheduler = makeIsolatedScheduler()
         let chatID = UUID()
         let output = try CronScheduler.executeCreate(
-            arguments: ["cron": "0 9 * * *", "prompt": "morning digest"], chatID: chatID)
+            arguments: ["cron": "0 9 * * *", "prompt": "morning digest"],
+            chatID: chatID, scheduler: scheduler)
         XCTAssertTrue(output.contains("Daily at 09:00"))
         XCTAssertThrowsError(try CronScheduler.executeCreate(
-            arguments: ["cron": "99 * * * *", "prompt": "x"], chatID: chatID))
+            arguments: ["cron": "99 * * * *", "prompt": "x"],
+            chatID: chatID, scheduler: scheduler))
         XCTAssertThrowsError(try CronScheduler.executeCreate(
-            arguments: ["prompt": "no cron at all"], chatID: chatID))
+            arguments: ["prompt": "no cron at all"],
+            chatID: chatID, scheduler: scheduler))
     }
 
     func testCronOneShotFiresAndRemovesItself() async throws {
+        let scheduler = makeIsolatedScheduler()
         let chatID = UUID()
-        // The shared fire handler is nil in tests unless the app installed
-        // it; install one that records and reports delivered.
+        XCTAssertTrue(
+            scheduler.list().isEmpty,
+            "the case owns its store, so nothing another case created is due here")
+
         var delivered: [String] = []
-        let previous = CronScheduler.shared.fireHandler
-        CronScheduler.shared.fireHandler = { job in
+        scheduler.fireHandler = { job in
             delivered.append(job.prompt)
             return true
         }
-        defer { CronScheduler.shared.fireHandler = previous }
 
-        _ = CronScheduler.shared.createOneShot(
+        _ = scheduler.createOneShot(
             fireAt: Date().addingTimeInterval(-1), prompt: "wake word", chatID: chatID)
-        await CronScheduler.shared.fireDueJobs()
+        await scheduler.fireDueJobs()
         XCTAssertEqual(delivered, ["wake word"])
         XCTAssertFalse(
-            CronScheduler.shared.list().contains { $0.prompt == "wake word" },
+            scheduler.list().contains { $0.prompt == "wake word" },
             "a fired one-shot removes itself")
+    }
+
+    func testCronOneShotIsUnmovedByAStaleJobInAnotherStore() async {
+        // The exact leak this isolation is for: a due "wake word" one-shot
+        // left behind somewhere else must not reach this case.
+        let elsewhere = makeIsolatedScheduler()
+        _ = elsewhere.createOneShot(
+            fireAt: Date().addingTimeInterval(-1), prompt: "wake word", chatID: UUID())
+
+        let scheduler = makeIsolatedScheduler()
+        var delivered: [String] = []
+        scheduler.fireHandler = { job in
+            delivered.append(job.prompt)
+            return true
+        }
+        _ = scheduler.createOneShot(
+            fireAt: Date().addingTimeInterval(-1), prompt: "wake word", chatID: UUID())
+        await scheduler.fireDueJobs()
+        XCTAssertEqual(delivered, ["wake word"], "one store, one delivery")
+    }
+
+    func testAnOverlappingPollDoesNotDeliverTheSameJobTwice() async {
+        // The real shape of the intermittent failure. `fireDueJobs` awaits
+        // its delivery and rewrites `nextFireAt` only afterwards, so a
+        // second call entered during that await used to take the same job
+        // again. Every `AppModel` adds a 20-second poll timer on the shared
+        // scheduler and none is ever invalidated, so in the suite one can
+        // tick inside any await -- which is why the case fails only in a
+        // full run and passes 5 of 5 under `--filter`.
+        let scheduler = makeIsolatedScheduler()
+        var delivered: [String] = []
+        scheduler.fireHandler = { job in
+            delivered.append(job.prompt)
+            if delivered.count == 1 { await scheduler.fireDueJobs() }
+            return true
+        }
+        defer { scheduler.fireHandler = nil }
+
+        _ = scheduler.createOneShot(
+            fireAt: Date().addingTimeInterval(-1), prompt: "tick", chatID: UUID())
+        await scheduler.fireDueJobs()
+        XCTAssertEqual(
+            delivered, ["tick"],
+            "a job taken as due is not taken again until its fire completes")
+    }
+
+    func testCronSchedulerReadsOnlyItsOwnFile() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cron-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let writer = CronScheduler(directory: directory)
+        _ = writer.createOneShot(
+            fireAt: Date().addingTimeInterval(3600), prompt: "kept", chatID: UUID())
+
+        XCTAssertTrue(
+            makeIsolatedScheduler().list().isEmpty,
+            "a scheduler over another directory sees none of it")
+        // The half that makes the emptiness above mean isolation rather
+        // than a store that never wrote anything down.
+        XCTAssertEqual(
+            CronScheduler(directory: directory).list().map(\.prompt), ["kept"],
+            "a second reader of the SAME directory does see it")
     }
 
     // MARK: - Syntax highlighter

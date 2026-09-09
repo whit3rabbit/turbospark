@@ -800,7 +800,7 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_GOALS.md` | the `/goal` loop: the stop-seam evaluator, deferral + idle check-ins, stall pause, restore rules |
 | `swift/docs/SWIFT_MESSAGE_EDITING.md` | message retry, edit and branch |
 | `swift/docs/SWIFT_GHOST_MODE.md` | temporary (ghost) chats: the two layers, the three rules that must not break |
-| `swift/docs/SWIFT_STORAGE.md` | the three JSON stores, `AppStorageRoot`, which directories a test may write to |
+| `swift/docs/SWIFT_STORAGE.md` | the three JSON stores, `AppStorageRoot`, which directories a test may write to, and why a redirected FILE does not isolate a shared OBJECT |
 | `swift/docs/SWIFT_CONTEXT_RING.md` | the composer's context-usage indicator; the system prompt as one builder, three consumers |
 | `swift/docs/SWIFT_CHAT_SEARCH.md` | the Cmd+K search dialog: what is searched, ghost exclusion, matching semantics |
 | `swift/docs/SWIFT_MODEL_HUB.md` | install, the model hub's badges and filters, `activeLoadGuard`, selecting/opening/unloading, server multi-model attach |
