@@ -51,6 +51,49 @@ void silu_mul_fp16(
     out[tid] = half((g / (1.0f + exp(-g))) * u);
 }
 
+// Port-local addition: the EXACT-erf GELU as a gated pair,
+// out = gelu_erf(gate) * up. Spark-X2.5's MLP gates with the erf form where
+// Gemma's blocks above use the tanh form, and the two agree to about 5e-4
+// absolute -- close enough that a shared kernel with a mode byte would be
+// invisible in every coarse check, and a specialization axis whose byte
+// missed the pipeline-cache constants key would silently reuse whichever
+// compiled first (crate Gotcha 1). A distinct kernel name is a distinct
+// pipeline by construction, the same reasoning vision.metal's two GELUs
+// record. Metal ships no `erf` (vision.metal's `vision_erf` comment records
+// the trap: the first version that called `erf` failed to COMPILE, it did
+// not silently do something else), so the series is written out -- the same
+// Abramowitz-Stegun 7.1.26 the CPU reference evaluates, deliberately the
+// same approximation rather than a rival one, so the parity bound measures
+// the FP32-vs-FP64 evaluation and the FP16 storage and not a gap between two
+// expansions of erf. Contract: `turbospark_compute::gating::gelu_erf_mul`.
+static inline float utility_erf(float x) {
+    const float a1 =  0.254829592f;
+    const float a2 = -0.284496736f;
+    const float a3 =  1.421413741f;
+    const float a4 = -1.453152027f;
+    const float a5 =  1.061405429f;
+    const float p  =  0.3275911f;
+    const float sign = (x < 0.0f) ? -1.0f : 1.0f;
+    const float ax = fabs(x);
+    const float t = 1.0f / (1.0f + p * ax);
+    const float y = 1.0f - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * exp(-ax * ax);
+    return sign * y;
+}
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void gelu_erf_mul_fp16(
+    device const half* gate [[buffer(0)]],
+    device const half* up   [[buffer(1)]],
+    device half*       out  [[buffer(2)]],
+    constant uint&     count [[buffer(3)]],
+    uint               tid  [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float g = float(gate[tid]);
+    const float u = float(up[tid]);
+    out[tid] = half(0.5f * g * (1.0f + utility_erf(g * M_SQRT1_2_F)) * u);
+}
+
 // out[i] *= sigmoid(gate[i]) — Qwen 3.6 full-attention output gate.
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void sigmoid_gate_mul_fp16(
@@ -77,6 +120,30 @@ void sigmoid_scalar_mul_fp16(
     y[tid] = half(float(y[tid]) / (1.0f + exp(-g)));
 }
 
+// Port-local addition: a per-HEAD output gate, out[i] *= sigmoid(gate[i /
+// head_dim]). Spark-X2.5 carries ONE gate logit per attention head, scaling
+// that head's whole slice of the projection, where sigmoid_gate_mul_fp16
+// above gates per ELEMENT (its gate buffer is as long as the row). Neither
+// kernel subsumes the other: feeding the elementwise kernel a head-broadcast
+// gate would cost a gate buffer head_dim times larger plus a repack of the
+// projection output, so the broadcast is folded into the load. The head
+// index is the same division every per-head kernel here performs
+// (split_q_gate_fp16's `tid / dim`), and the compute/store convention is
+// sigmoid_gate_mul_fp16's own (float sigmoid, division form, half store).
+// Contract: `turbospark_compute::gating::sigmoid_head_gate_mul`.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void sigmoid_head_gate_mul_fp16(
+    device half*       out      [[buffer(0)]],
+    device const half* gate     [[buffer(1)]],
+    constant uint&     head_dim [[buffer(2)]],
+    constant uint&     count    [[buffer(3)]],
+    uint               tid      [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float g = float(gate[tid / head_dim]);
+    out[tid] = half(float(out[tid]) / (1.0f + exp(-g)));
+}
+
 // Qwen 3.6 q_proj emits per-head [query(D) ; gate(D)] pairs. Split them into
 // contiguous q [H, D] and gate [H, D] so the per-head norm, RoPE, and
 // attention kernels see their usual layout.
@@ -95,6 +162,35 @@ void split_q_gate_fp16(
     const uint d = tid % dim;
     q[tid] = packed[h * 2u * dim + d];
     gate[tid] = packed[h * 2u * dim + dim + d];
+}
+
+// Port-local addition: split a FUSED qkv projection output, [q (q_elems) |
+// k (kv_elems) | v (kv_elems)] contiguous, into the three destination
+// buffers the attention kernels consume. Spark's `q_k_v_proj` is one weight,
+// so what three separate GEMVs used to produce arrives as one row and the
+// split moves to the activation side. One thread per output element,
+// index-selecting its source range -- three range copies, not a permute, so
+// the tests can assert exact bits. Contract:
+// `turbospark_compute::gating::split_qkv`.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void split_qkv_fp16(
+    device const half* src      [[buffer(0)]],  // [q_elems + 2*kv_elems]
+    device half*       q        [[buffer(1)]],  // [q_elems]
+    device half*       k        [[buffer(2)]],  // [kv_elems]
+    device half*       v        [[buffer(3)]],  // [kv_elems]
+    constant uint&     q_elems  [[buffer(4)]],
+    constant uint&     kv_elems [[buffer(5)]],
+    uint               tid      [[thread_position_in_grid]]
+) {
+    const uint total = q_elems + 2u * kv_elems;
+    if (tid >= total) return;
+    if (tid < q_elems) {
+        q[tid] = src[tid];
+    } else if (tid < q_elems + kv_elems) {
+        k[tid - q_elems] = src[tid];
+    } else {
+        v[tid - q_elems - kv_elems] = src[tid];
+    }
 }
 
 // hidden[i] += delta[i] — plain pre-norm residual add for architectures

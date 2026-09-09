@@ -74,7 +74,10 @@ pub use encoder::{
     cls_pool_and_normalize, cosine_similarity, encoder_block_forward, encoder_embeddings_lookup,
     EncoderLayerWeights, EncoderReferenceConfig,
 };
-pub use gating::{sigmoid_gate_mul, sigmoid_scalar_mul, split_q_gate};
+pub use gating::{
+    gelu_erf_mul, sigmoid_gate_mul, sigmoid_head_gate_mul, sigmoid_scalar_mul, split_q_gate,
+    split_qkv,
+};
 pub use gdn::{gated_norm_sigmoid, sigmoid, silu, softplus, GdnDims, GdnReference, GDN_RMS_EPS};
 pub use hyper_connection::{hc_inject_add, hc_mix};
 pub use kv_quant::{

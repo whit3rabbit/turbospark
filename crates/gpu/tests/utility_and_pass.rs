@@ -888,3 +888,329 @@ fn dropping_an_uncommitted_pass_does_not_abort() {
     let pass = context.begin_pass();
     drop(pass);
 }
+
+// ===========================================================================
+// The Spark-X2.5 port-local additions to utility.metal: the per-head output
+// gate, the exact-erf gated GELU, and the fused qkv split. Contracts:
+// `turbospark_compute::gating::{sigmoid_head_gate_mul, gelu_erf_mul,
+// split_qkv}`.
+// ===========================================================================
+
+const HEADS: usize = 4;
+const HEAD_DIM: usize = 8;
+
+/// The head-gate fixture: `out` values are kept away from zero (in [0.5,
+/// 2.5]) because the uniformity case below divides the post-gate value by
+/// its input, and a near-zero element would make that ratio noisy under FP16
+/// rounding no matter how correct the kernel is. The four gate logits are
+/// spread so sigmoid separates their scales by at least 0.26.
+fn head_gate_fixture() -> (Vec<f16>, Vec<f16>) {
+    let total = HEADS * HEAD_DIM;
+    let out: Vec<f16> = (0..total)
+        .map(|i| f16::from_f32(1.5 + (i as f32 * 0.19).sin()))
+        .collect();
+    let gate: Vec<f16> = [-2.0f32, -0.5, 0.7, 2.0]
+        .iter()
+        .map(|&g| f16::from_f32(g))
+        .collect();
+    (out, gate)
+}
+
+fn dispatch_head_gate(context: &mut MetalContext, out: &[f16], gate: &[f16]) -> Vec<f16> {
+    let out_buf = context.new_buffer_with_data(&to_le(out));
+    let gate_buf = context.new_buffer_with_data(&to_le(gate));
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_sigmoid_head_gate_mul(
+        context,
+        &pass,
+        (&out_buf, 0),
+        (&gate_buf, 0),
+        HEAD_DIM as u32,
+        (HEADS * HEAD_DIM) as u32,
+    )
+    .expect("dispatch");
+    pass.commit_and_wait();
+    read_halfs(&out_buf, out.len())
+}
+
+#[test]
+fn sigmoid_head_gate_mul_matches_compute_reference() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let (out, gate) = head_gate_fixture();
+    let got = dispatch_head_gate(&mut context, &out, &gate);
+
+    let want = turbospark_compute::sigmoid_head_gate_mul(
+        &out.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
+        &gate.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
+        HEAD_DIM,
+    );
+    let got32: Vec<f32> = got.iter().map(|h| h.to_f32()).collect();
+    let err = turbospark_compute::max_abs_diff(&got32, &want);
+    assert!(err < 1e-2, "err = {err}");
+}
+
+/// The two properties the kernel exists for, on the GPU: the scale is
+/// UNIFORM within a head (one gate logit moves a head's whole slice by one
+/// factor) and DIFFERENT across heads (the fixture's logits are spread so
+/// sigmoid separates them). The ratio bound is loose because each ratio
+/// carries one FP16 output rounding (about 5e-4 relative), but that is an
+/// order below the smallest cross-head gap the fixture produces.
+#[test]
+fn sigmoid_head_gate_scales_each_head_uniformly_and_heads_differently() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let (out, gate) = head_gate_fixture();
+    let got = dispatch_head_gate(&mut context, &out, &gate);
+
+    let mut head_scales = Vec::with_capacity(HEADS);
+    for (h, gate_logit) in gate.iter().enumerate() {
+        let window = h * HEAD_DIM..(h + 1) * HEAD_DIM;
+        let ratios: Vec<f32> = window
+            .clone()
+            .map(|i| got[i].to_f32() / out[i].to_f32())
+            .collect();
+        let mean: f32 = ratios.iter().sum::<f32>() / HEAD_DIM as f32;
+        for (i, r) in window.zip(&ratios) {
+            assert!(
+                (r - mean).abs() < 5e-3,
+                "head {h}: element {i} scaled {r} against the head mean {mean}"
+            );
+        }
+        let want = turbospark_compute::sigmoid(gate_logit.to_f32());
+        assert!(
+            (mean - want).abs() < 5e-3,
+            "head {h}: observed scale {mean} against sigmoid {want}"
+        );
+        head_scales.push(mean);
+    }
+    for h in 1..HEADS {
+        let gap = head_scales[h] - head_scales[h - 1];
+        assert!(
+            gap > 0.1,
+            "head {h} scale not separated from head {}: {gap}",
+            h - 1
+        );
+    }
+}
+
+/// Sized for the job, and that is not the obvious size. The erf and tanh
+/// GELUs agree to about 5e-4 absolute, which FP16 storage at values near 2
+/// cannot resolve, so a small fixture passes against either kernel. Here the
+/// gate spans [-3.5, 3.5], where the two forms diverge to about 24% RELATIVE
+/// on the negative side, and `up` lifts the mul output far above the parity
+/// floor; `gelu_erf_mul_is_not_the_tanh_kernel` asserts the fixture can
+/// actually see the difference.
+fn gelu_erf_fixture() -> (Vec<f16>, Vec<f16>) {
+    let n = 64;
+    let gate: Vec<f16> = (0..n)
+        .map(|i| f16::from_f32((i as f32 * 0.13).sin() * 3.5))
+        .collect();
+    let up: Vec<f16> = (0..n)
+        .map(|i| f16::from_f32(40.0 + (i as f32 * 0.29).sin() * 10.0))
+        .collect();
+    (gate, up)
+}
+
+/// The tolerance convention of the gelu/silu tests above: an absolute floor
+/// for near-zero results plus 2% of the magnitude for FP16 rounding.
+fn gelu_erf_tol(want: f32) -> f32 {
+    2e-3_f32.max(want.abs() * 2e-2)
+}
+
+fn as_f32_vec(v: &[f16]) -> Vec<f32> {
+    v.iter().map(|h| h.to_f32()).collect()
+}
+
+#[test]
+fn gelu_erf_mul_matches_compute_reference() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let (gate, up) = gelu_erf_fixture();
+    let n = gate.len();
+
+    let gate_buf = context.new_buffer_with_data(&to_le(&gate));
+    let up_buf = context.new_buffer_with_data(&to_le(&up));
+    let out_buf = context.new_output_buffer((n * 2) as u64);
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_gelu_erf_mul(
+        &mut context,
+        &pass,
+        (&gate_buf, 0),
+        (&up_buf, 0),
+        (&out_buf, 0),
+        n as u32,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    let got = read_halfs(&out_buf, n);
+
+    let want = turbospark_compute::gelu_erf_mul(&as_f32_vec(&gate), &as_f32_vec(&up));
+    for (i, (&g, &w)) in got.iter().zip(&want).enumerate() {
+        let diff = (g.to_f32() - w).abs();
+        assert!(
+            diff <= gelu_erf_tol(w),
+            "i={i}: got {} want {w}",
+            g.to_f32()
+        );
+    }
+}
+
+/// The kernel must be the ERF form, not the tanh form sitting in the same
+/// shader file. The fixture discrimination is asserted FIRST, from the CPU
+/// references alone, so a future tolerance loosening or a tidier fixture
+/// fails here rather than passing a swapped kernel silently -- the same
+/// discipline as `the_two_gelu_kernels_are_different_pipelines` one file
+/// over, which exists because a fixture where the two GELUs agree proves
+/// nothing.
+#[test]
+fn gelu_erf_mul_is_not_the_tanh_kernel() {
+    let (gate, up) = gelu_erf_fixture();
+    let n = gate.len();
+    let gate32 = as_f32_vec(&gate);
+    let up32 = as_f32_vec(&up);
+
+    let erf_ref = turbospark_compute::gelu_erf_mul(&gate32, &up32);
+    let tanh_act = turbospark_compute::moe::gelu_tanh(&gate32);
+    let tanh_ref: Vec<f32> = tanh_act.iter().zip(&up32).map(|(&g, &u)| g * u).collect();
+    let separating: Vec<usize> = (0..n)
+        .filter(|&i| (erf_ref[i] - tanh_ref[i]).abs() > gelu_erf_tol(tanh_ref[i]))
+        .collect();
+    assert!(
+        separating.len() >= 4,
+        "fixture cannot separate the two GELUs ({} elements)",
+        separating.len()
+    );
+
+    let mut context = MetalContext::new().expect("Metal device");
+    let gate_buf = context.new_buffer_with_data(&to_le(&gate));
+    let up_buf = context.new_buffer_with_data(&to_le(&up));
+    let out_buf = context.new_output_buffer((n * 2) as u64);
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_gelu_erf_mul(
+        &mut context,
+        &pass,
+        (&gate_buf, 0),
+        (&up_buf, 0),
+        (&out_buf, 0),
+        n as u32,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    let got = read_halfs(&out_buf, n);
+
+    let matched_tanh = separating
+        .iter()
+        .filter(|&&i| (got[i].to_f32() - tanh_ref[i]).abs() <= gelu_erf_tol(tanh_ref[i]))
+        .count();
+    assert!(
+        matched_tanh == 0,
+        "the kernel reproduced the tanh GELU on {matched_tanh} of {} separating elements",
+        separating.len()
+    );
+}
+
+/// q_elems and kv_elems deliberately differ (24 against 8): equal sizes
+/// would let a kernel that swaps the k and v ranges pass by symmetry.
+#[test]
+fn split_qkv_copies_the_three_source_ranges() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let (q_elems, kv_elems) = (24usize, 8usize);
+    let src = test_vec(q_elems + 2 * kv_elems, 0.37);
+
+    let src_buf = context.new_buffer_with_data(&to_le(&src));
+    let q_buf = context.new_output_buffer((q_elems * 2) as u64);
+    let k_buf = context.new_output_buffer((kv_elems * 2) as u64);
+    let v_buf = context.new_output_buffer((kv_elems * 2) as u64);
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_split_qkv(
+        &mut context,
+        &pass,
+        (&src_buf, 0),
+        (&q_buf, 0),
+        (&k_buf, 0),
+        (&v_buf, 0),
+        q_elems as u32,
+        kv_elems as u32,
+    )
+    .expect("dispatch");
+    pass.commit_and_wait();
+
+    // A pure copy: assert the exact bits, not a tolerance, against the CPU
+    // contract (same shape as split_q_gate's case above).
+    let (want_q, want_k, want_v) =
+        turbospark_compute::split_qkv(&as_f32_vec(&src), q_elems, kv_elems);
+    let got_q: Vec<f32> = read_halfs(&q_buf, q_elems)
+        .iter()
+        .map(|h| h.to_f32())
+        .collect();
+    let got_k: Vec<f32> = read_halfs(&k_buf, kv_elems)
+        .iter()
+        .map(|h| h.to_f32())
+        .collect();
+    let got_v: Vec<f32> = read_halfs(&v_buf, kv_elems)
+        .iter()
+        .map(|h| h.to_f32())
+        .collect();
+    assert_eq!(got_q, want_q);
+    assert_eq!(got_k, want_k);
+    assert_eq!(got_v, want_v);
+}
+
+/// The stride-confusion guard. Perturbing ONE element of the k range and
+/// re-running must move `k_dest[3]` and nothing else. A kernel that reads k
+/// from the q or v offset (the classic confusion between three adjacent
+/// ranges) shifts the response elsewhere, and the plain copy case cannot see
+/// it because every range is still a valid copy of SOMETHING -- the same
+/// shape as AGENTS.md Gotcha 48's stride blind spot.
+#[test]
+fn perturbing_the_k_range_moves_only_k() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let (q_elems, kv_elems) = (24usize, 8usize);
+    let src = test_vec(q_elems + 2 * kv_elems, 0.37);
+    let victim = q_elems + 3; // inside the k range, not at a boundary
+
+    let run = |context: &mut MetalContext, input: &[f16]| {
+        let src_buf = context.new_buffer_with_data(&to_le(input));
+        let q_buf = context.new_output_buffer((q_elems * 2) as u64);
+        let k_buf = context.new_output_buffer((kv_elems * 2) as u64);
+        let v_buf = context.new_output_buffer((kv_elems * 2) as u64);
+        let pass = context.begin_pass();
+        turbospark_gpu::encode_split_qkv(
+            context,
+            &pass,
+            (&src_buf, 0),
+            (&q_buf, 0),
+            (&k_buf, 0),
+            (&v_buf, 0),
+            q_elems as u32,
+            kv_elems as u32,
+        )
+        .expect("dispatch");
+        pass.commit_and_wait();
+        (
+            read_halfs(&q_buf, q_elems),
+            read_halfs(&k_buf, kv_elems),
+            read_halfs(&v_buf, kv_elems),
+        )
+    };
+
+    let (q1, k1, v1) = run(&mut context, &src);
+    let mut perturbed = src.clone();
+    // One mantissa ulp: every fixture value is a non-zero finite half, so
+    // the flip always changes the value.
+    perturbed[victim] = f16::from_bits(src[victim].to_bits() ^ 1);
+    let (q2, k2, v2) = run(&mut context, &perturbed);
+
+    for i in 0..q_elems {
+        assert_eq!(q1[i].to_bits(), q2[i].to_bits(), "q moved at {i}");
+    }
+    for i in 0..kv_elems {
+        assert_eq!(v1[i].to_bits(), v2[i].to_bits(), "v moved at {i}");
+        if i != victim - q_elems {
+            assert_eq!(k1[i].to_bits(), k2[i].to_bits(), "k moved at {i}");
+        }
+    }
+    assert_ne!(
+        k1[victim - q_elems].to_bits(),
+        k2[victim - q_elems].to_bits(),
+        "the perturbed k element did not reach k_dest"
+    );
+}

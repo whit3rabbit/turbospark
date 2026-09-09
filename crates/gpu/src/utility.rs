@@ -210,6 +210,29 @@ pub fn encode_sigmoid_gate_mul(
     )
 }
 
+/// `out[i] = gelu_erf(gate[i]) * up[i]` -- Spark-X2.5's MLP activation, the
+/// EXACT-erf GELU where [`encode_gelu_mul`] applies Gemma's tanh form. The
+/// two agree to about 5e-4 absolute, which is why this is a separate kernel
+/// and not a mode byte (see the shader). Port-local; the contract is
+/// `turbospark_compute::gating::gelu_erf_mul`.
+pub fn encode_gelu_erf_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    gate: (&metal::Buffer, u64),
+    up: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    encode_elementwise(
+        context,
+        pass,
+        "gelu_erf_mul_fp16",
+        &[(gate.0, 0, gate.1), (up.0, 1, up.1), (out.0, 2, out.1)],
+        count,
+        3,
+    )
+}
+
 /// `y[i] *= sigmoid(gate[0])`, in place -- Qwen 3.6's shared-expert scalar
 /// gate. `gate` is a one-element buffer, the `shared_expert_gate` GEMV's
 /// output; the kernel reads element 0 for every `i`.
@@ -228,6 +251,36 @@ pub fn encode_sigmoid_scalar_mul(
         count,
         2,
     )
+}
+
+/// `out[i] *= sigmoid(gate[i / head_dim])`, in place -- Spark-X2.5's
+/// per-head attention output gate. `gate` holds ONE logit per head
+/// (`total / head_dim` elements), each scaling its own head's whole slice of
+/// `out`, where [`encode_sigmoid_gate_mul`]'s gate is as long as the row.
+/// Port-local; the contract is
+/// `turbospark_compute::gating::sigmoid_head_gate_mul`.
+pub fn encode_sigmoid_head_gate_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    out: (&metal::Buffer, u64),
+    gate: (&metal::Buffer, u64),
+    head_dim: u32,
+    total: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "sigmoid_head_gate_mul_fp16",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(out.0, 0, out.1), (gate.0, 1, gate.1)],
+        &[(u32_bytes(&head_dim), 2), (u32_bytes(&total), 3)],
+        (grid_for(total), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
 }
 
 /// Splits a `[heads, 2 * dim]` packed projection into contiguous
@@ -254,6 +307,45 @@ pub fn encode_split_q_gate(
         &pipeline,
         &[(packed.0, 0, packed.1), (q.0, 1, q.1), (gate.0, 2, gate.1)],
         &[(u32_bytes(&heads), 3), (u32_bytes(&dim), 4)],
+        (grid_for(count), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}
+
+/// Splits a fused `[q (q_elems) | k (kv_elems) | v (kv_elems)]` projection
+/// output into its three destination buffers. Spark's `q_k_v_proj` is one
+/// weight, so what three separate GEMVs used to produce arrives as one row
+/// and the split moves to the activation side. A pure copy (three range
+/// copies, not a permute), so the tests assert exact bits. Port-local; the
+/// contract is `turbospark_compute::gating::split_qkv`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_split_qkv(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    src: (&metal::Buffer, u64),
+    q: (&metal::Buffer, u64),
+    k: (&metal::Buffer, u64),
+    v: (&metal::Buffer, u64),
+    q_elems: u32,
+    kv_elems: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "split_qkv_fp16",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    let count = q_elems + 2 * kv_elems;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[
+            (src.0, 0, src.1),
+            (q.0, 1, q.1),
+            (k.0, 2, k.1),
+            (v.0, 3, v.1),
+        ],
+        &[(u32_bytes(&q_elems), 4), (u32_bytes(&kv_elems), 5)],
         (grid_for(count), 1, 1),
         (THREADS_PER_GROUP, 1, 1),
     );
