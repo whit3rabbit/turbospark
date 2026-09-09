@@ -115,9 +115,9 @@ public enum AskUserQuestionExecutor {
         }
 
         let key = chatID?.uuidString ?? "default"
-        lock.lock()
-        pendingQuestions[key] = items
-        lock.unlock()
+        lock.withLock {
+            pendingQuestions[key] = items
+        }
 
         let answer = await withTaskCancellationHandler {
             await waiter(chatID, items, toolCallID)
@@ -126,9 +126,9 @@ public enum AskUserQuestionExecutor {
             // never wait on a card the user asked to cancel.
             submitAnswer(chatID: chatID, answers: [:], dismissed: true)
         }
-        lock.lock()
-        pendingQuestions[key] = nil
-        lock.unlock()
+        lock.withLock {
+            pendingQuestions[key] = nil
+        }
         return answer
     }
 
