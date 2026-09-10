@@ -216,11 +216,13 @@ fi
 [ -d "$MODEL" ] || { echo "missing install: $MODEL" >&2; exit 2; }
 
 # A competing model process would show up as both a slow arm and other
-# people's watts. Same guard parity.sh uses.
-if pgrep -fl 'Mference(CLI|Server|Mac|DecodeService)|mference-(check|server|bench)|mlx' \
+# people's watts. Include the renamed binaries and desktop app: the old
+# Mference-only pattern silently admitted this engine's own competitors.
+MODEL_PROCESSES='Mference(CLI|Server|Mac|DecodeService)|mference-(check|server|bench)|turbospark-(check|server|bench)|TurboSparkApp|mlx'
+if pgrep -fl "$MODEL_PROCESSES" \
      | grep -v power.sh | grep -q .; then
   echo "another model process is running; results would be contaminated" >&2
-  pgrep -fl 'Mference|mference|mlx' | grep -v power.sh >&2
+  pgrep -fl "$MODEL_PROCESSES" | grep -v power.sh >&2
   exit 2
 fi
 
