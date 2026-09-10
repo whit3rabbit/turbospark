@@ -14,6 +14,19 @@ public struct AppAttachmentReference: Identifiable, Equatable, Sendable {
 
     public var id: UUID { attachment.id }
 
+    /// The subtitle the Files list shows under the file name.
+    ///
+    /// Composed from `attachment.detailText` rather than reassembled, because
+    /// `FileRowView` used to spell its own and the copy had drifted: it
+    /// appended a character count UNCONDITIONALLY, so an image row advertised
+    /// "0 chars" -- the exact zero-from-an-absent-measurement that
+    /// `detailText` exists to avoid, on the one surface
+    /// `testAnImageChipDoesNotAdvertiseAZeroCharacterCount` cannot reach.
+    /// A VALUE here so this surface is testable too (Gotcha 26).
+    public var listDetailText: String {
+        "\(attachment.detailText) • \(chatTitle)"
+    }
+
     public init(attachment: AppPromptAttachment, chatID: UUID, chatTitle: String) {
         self.attachment = attachment
         self.chatID = chatID

@@ -47,7 +47,7 @@ struct FilesSectionView: View {
                     .accessibilityAddTraits(.isHeader)
                 Text(summaryText)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             Spacer(minLength: 8)
@@ -71,8 +71,8 @@ struct FilesSectionView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .background(TurboSparkTheme.accentColor.opacity(0.14), in: Capsule())
-            .foregroundStyle(TurboSparkTheme.accentColor)
+            .background(.appAccent.opacity(0.14), in: Capsule())
+            .foregroundStyle(.appAccent)
             .disabled(isExtracting || model.isRunning)
             .help("Attach documents to the active chat")
             .accessibilityLabel("Add files to the active chat")
@@ -107,7 +107,7 @@ struct FilesSectionView: View {
         .padding(.horizontal, 8)
         .frame(height: 22)
         .background(TurboSparkTheme.surfaceColor, in: Capsule())
-        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
+        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
         .accessibilityLabel("Filter files by name")
     }
 
@@ -128,7 +128,7 @@ struct FilesSectionView: View {
             Spacer(minLength: 0)
             Button("Dismiss") { importError = nil }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .themedFont(.small)
         .padding(.horizontal, 16)
@@ -175,7 +175,7 @@ struct FilesSectionView: View {
                  ? "Attach PDFs, Office documents, or source files to give a chat something to read."
                  : "Nothing matches \u{201C}\(searchText)\u{201D}.")
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
         }
@@ -224,11 +224,14 @@ private struct FileRowView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: attachment.symbolName)
-                .themedFont(.callout)
-                .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
-                .frame(width: 20)
-                .accessibilityHidden(true)
+            AttachmentThumbnailView(
+                url: attachment.thumbnailSourceURL,
+                pixelSize: 28,
+                fallbackSymbol: attachment.symbolName,
+                symbolStep: .callout,
+                symbolTint: isSelected ? TurboSparkTheme.accentColor : Color.secondary
+            )
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.fileName)
@@ -237,7 +240,7 @@ private struct FileRowView: View {
                     .truncationMode(.middle)
                 Text(detailText)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .lineLimit(1)
             }
 
@@ -271,15 +274,7 @@ private struct FileRowView: View {
         .accessibilityHint("Opens this document in the preview pane")
     }
 
-    private var detailText: String {
-        var parts = [attachment.formatLabel]
-        if let size = MetricFormat.fileSize(attachment.sourceByteSize) {
-            parts.append(size)
-        }
-        parts.append("\(attachment.characterCount.formatted(.number.notation(.compactName))) chars")
-        parts.append(reference.chatTitle)
-        return parts.joined(separator: " • ")
-    }
+    private var detailText: String { reference.listDetailText }
 
     private var actionMenu: some View {
         Menu {
@@ -313,7 +308,7 @@ private struct FileRowView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.appSecondary)
         .help("Actions for \(attachment.fileName)")
         .accessibilityLabel("Actions for \(attachment.fileName)")
     }

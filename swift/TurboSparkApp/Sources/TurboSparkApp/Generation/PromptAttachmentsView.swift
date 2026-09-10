@@ -35,10 +35,15 @@ struct PromptAttachmentChipView: View {
         HStack(spacing: 6) {
             Button(action: onPreview) {
                 HStack(spacing: 6) {
-                    Image(systemName: attachment.symbolName)
-                        .themedFont(.tiny)
-                        .foregroundStyle(isPreviewing ? TurboSparkTheme.accentColor : Color.secondary)
-                        .accessibilityHidden(true)
+                    AttachmentThumbnailView(
+                        url: attachment.thumbnailSourceURL,
+                        pixelSize: 16,
+                        fallbackSymbol: attachment.symbolName,
+                        symbolStep: .tiny,
+                        symbolTint: isPreviewing
+                            ? TurboSparkTheme.accentColor : Color.secondary
+                    )
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 0) {
                         Text(attachment.fileName)
                             .themedFont(.tiny, weight: .medium)
@@ -46,7 +51,7 @@ struct PromptAttachmentChipView: View {
                             .truncationMode(.middle)
                         Text(detailText)
                             .themedFont(.micro)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 .contentShape(Rectangle())

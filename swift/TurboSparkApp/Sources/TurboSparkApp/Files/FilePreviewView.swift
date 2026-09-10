@@ -1,5 +1,4 @@
 import AppKit
-import PDFKit
 import SwiftUI
 
 // Isolated explicitly: only `body` is isolated by the protocol on the
@@ -16,6 +15,7 @@ struct FilePreviewView: View {
     let attachment: AppPromptAttachment
 
     @State private var showsExtractedText = false
+    @State private var isMaximized = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +26,7 @@ struct FilePreviewView: View {
             footer
         }
         .background(TurboSparkTheme.barBackgroundColor)
+        .sheet(isPresented: $isMaximized) { maximizedSheet }
         .onChange(of: attachment.id) { showsExtractedText = false }
     }
 
@@ -35,7 +36,7 @@ struct FilePreviewView: View {
         HStack(spacing: 8) {
             Image(systemName: attachment.symbolName)
                 .themedFont(.callout)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
                 .help("\(attachment.formatLabel) file")
                 .accessibilityHidden(true)
 
@@ -46,27 +47,44 @@ struct FilePreviewView: View {
                     .truncationMode(.middle)
                 Text(subtitle)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .lineLimit(1)
             }
 
             Spacer(minLength: 4)
 
-            Button {
-                model.dismissPreview()
-            } label: {
-                Image(systemName: "xmark")
-                    .themedFont(.tiny, weight: .semibold)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+            headerButton(
+                "arrow.up.left.and.arrow.down.right",
+                help: "Open a larger preview",
+                label: "Open a larger preview")
+            {
+                isMaximized = true
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Close preview")
-            .accessibilityLabel("Close preview")
+
+            headerButton("xmark", help: "Close preview", label: "Close preview") {
+                model.dismissPreview()
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private func headerButton(
+        _ systemImage: String,
+        help: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .themedFont(.tiny, weight: .semibold)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.appSecondary)
+        .help(help)
+        .accessibilityLabel(label)
     }
 
     private var subtitle: String {
@@ -98,7 +116,7 @@ struct FilePreviewView: View {
             case .image:
                 imageView
             case .text:
-                extractedTextView
+                textOrQuickLookView
             }
         }
     }
@@ -120,16 +138,46 @@ struct FilePreviewView: View {
     @ViewBuilder
     private var imageView: some View {
         if let url = attachment.sourceURL, let image = NSImage(contentsOf: url) {
-            ScrollView([.horizontal, .vertical]) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(12)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityLabel("Image preview of \(attachment.fileName)")
+            ImagePreviewView(image: image)
+                .accessibilityLabel("Image preview of \(attachment.fileName)")
         } else {
             unavailableView
+        }
+    }
+
+    /// An extraction that produced nothing is not proof the file is unviewable:
+    /// a scanned PDF and some office files extract empty and QuickLook renders
+    /// both. Preferring it here hides nothing, because the Model-text toggle
+    /// still reaches `extractedTextView` (see `hasRenderedAlternative`).
+    @ViewBuilder
+    private var textOrQuickLookView: some View {
+        if let url = quickLookURL {
+            QuickLookPreviewView(url: url)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel("Quick Look preview of \(attachment.fileName)")
+        } else {
+            extractedTextView
+        }
+    }
+
+    /// The source to hand QuickLook, or nil when the extracted text is the
+    /// better answer. Nil whenever there IS text, so a readable document is
+    /// never replaced by a picture of itself.
+    private var quickLookURL: URL? {
+        guard attachment.extractedText.isEmpty, attachment.sourceExists else { return nil }
+        return attachment.sourceURL
+    }
+
+    /// Whether `content` shows anything other than the extracted text, and so
+    /// whether the Model-text toggle has work to do.
+    ///
+    /// NOT `previewKind != .text`, which was the test until the QuickLook arm
+    /// landed: a `.text` attachment rendering through QuickLook would have lost
+    /// its only route back to what the model actually receives.
+    private var hasRenderedAlternative: Bool {
+        switch attachment.previewKind {
+        case .pdf, .image: return true
+        case .text: return quickLookURL != nil
         }
     }
 
@@ -142,7 +190,7 @@ struct FilePreviewView: View {
                 .themedFont(.base, weight: .medium)
             Text("The source file is no longer at its original path.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(20)
@@ -153,7 +201,7 @@ struct FilePreviewView: View {
 
     private var footer: some View {
         HStack(spacing: 6) {
-            if attachment.previewKind != .text {
+            if hasRenderedAlternative {
                 Toggle(isOn: $showsExtractedText) {
                     Text("Model text", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
@@ -200,6 +248,35 @@ struct FilePreviewView: View {
         .padding(.vertical, 6)
     }
 
+    // MARK: - Maximized sheet
+
+    /// Same shape and size as the artifact panel's maximize sheet, deliberately.
+    /// It reuses `content`, so `showsExtractedText` carries into the sheet and
+    /// the Model-text toggle survives the transition in both directions.
+    private var maximizedSheet: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: attachment.symbolName)
+                    .foregroundStyle(.appAccent)
+                    .accessibilityHidden(true)
+                Text(attachment.fileName)
+                    .themedFont(.small, weight: .semibold)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                headerButton("xmark", help: "Close", label: "Close maximized preview") {
+                    isMaximized = false
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            content
+        }
+        .frame(width: 1100, height: 800)
+        .background(TurboSparkTheme.barBackgroundColor)
+    }
+
     private func footerButton(
         _ title: String,
         systemImage: String,
@@ -221,28 +298,5 @@ struct FilePreviewView: View {
         .accessibilityLabel("\(title) \(attachment.fileName)")
         .accessibilityHint(hint ?? title)
         .accessibilityAddTraits(traits)
-    }
-}
-
-/// PDFKit page view, shared with the artifact panel. `autoScales` is what
-/// makes the document fit the narrow preview column rather than opening at
-/// 100% and needing a scroll to see.
-struct PDFDocumentView: NSViewRepresentable {
-    let url: URL
-
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
-        view.backgroundColor = .clear
-        view.document = PDFDocument(url: url)
-        return view
-    }
-
-    func updateNSView(_ view: PDFView, context: Context) {
-        if view.document?.documentURL != url {
-            view.document = PDFDocument(url: url)
-        }
     }
 }
