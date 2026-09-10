@@ -67,12 +67,10 @@ extension AppModel {
 
     // MARK: - Scheduled tasks (cron)
 
-    /// Installs the cron fire handler and starts the poll timer. Called
-    /// once from `init`. The timer itself is not retained by the scheduler:
-    /// a `Timer(repeats:)` holds its block, the block holds this model
-    /// weakly, and the run loop holds the timer -- so `cronPollTimer` here
-    /// is what lets shutdown invalidate it.
+    /// The run loop retains repeating timers, so restart must invalidate
+    /// the previous poller before replacing our reference to it.
     func startCronScheduler() {
+        stopCronScheduler()
         CronScheduler.shared.fireHandler = { [weak self] job in
             guard let self else { return false }
             return await MainActor.run { self.fireCronJob(job) }
@@ -84,6 +82,11 @@ extension AppModel {
         }
         RunLoop.main.add(timer, forMode: .common)
         cronPollTimer = timer
+    }
+
+    func stopCronScheduler() {
+        cronPollTimer?.invalidate()
+        cronPollTimer = nil
     }
 
     /// Delivers a cron prompt into the job's chat.

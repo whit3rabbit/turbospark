@@ -253,6 +253,9 @@ public final class CronScheduler: @unchecked Sendable {
 
     private let lock = NSLock()
     private var jobs: [AppCronJob] = []
+    /// Delivery suspends before `completeFire` advances or removes the job.
+    /// Reserve it under the lock so overlapping polls cannot deliver it twice.
+    private var inFlight: Set<String> = []
 
     /// Installed by `AppModel` at startup. Returns whether the prompt was
     /// actually delivered (a false return records a missed run). ASYNC
@@ -260,11 +263,14 @@ public final class CronScheduler: @unchecked Sendable {
     /// the chat queue live.
     public var fireHandler: ((AppCronJob) async -> Bool)?
 
-    private static var fileURL: URL {
-        AppStorageRoot.directory.appendingPathComponent("cron_jobs.json")
-    }
+    /// A private directory isolates persisted jobs; a separate instance also
+    /// isolates tests from the app's pollers and shared delivery handler.
+    private let fileURL: URL
 
-    private init() {
+    /// The app uses `shared`; a test passes its own directory so its jobs
+    /// cannot reach, or be reached by, anything else.
+    public init(directory: URL = AppStorageRoot.directory) {
+        self.fileURL = directory.appendingPathComponent("cron_jobs.json")
         load()
     }
 
@@ -272,7 +278,7 @@ public final class CronScheduler: @unchecked Sendable {
 
     private func load() {
         guard let archive = AppJSONStore.load(
-            [AppCronJob].self, from: Self.fileURL, label: "cron jobs")
+            [AppCronJob].self, from: fileURL, label: "cron jobs")
         else { return }
         jobs = archive
         // A job that fired before the app quit has a stale nextFireAt; a
@@ -288,7 +294,7 @@ public final class CronScheduler: @unchecked Sendable {
     }
 
     private func save() {
-        AppJSONStore.save(jobs, to: Self.fileURL, label: "Cron jobs")
+        AppJSONStore.save(jobs, to: fileURL, label: "Cron jobs")
     }
 
     // MARK: - Mutations (executor + pane surface)
@@ -389,7 +395,8 @@ public final class CronScheduler: @unchecked Sendable {
         defer { lock.unlock() }
         var due: [AppCronJob] = []
         for job in jobs where job.enabled {
-            if let fireAt = job.nextFireAt, fireAt <= now {
+            if let fireAt = job.nextFireAt, fireAt <= now, !inFlight.contains(job.id) {
+                inFlight.insert(job.id)
                 due.append(job)
             }
         }
@@ -400,6 +407,7 @@ public final class CronScheduler: @unchecked Sendable {
         recordRun(jobID: jobID, status: delivered ? "fired" : "missed")
         var remove = false
         lock.lock()
+        inFlight.remove(jobID)
         if let index = jobs.firstIndex(where: { $0.id == jobID }) {
             if jobs[index].recurring {
                 jobs[index].nextFireAt = CronSchedule(jobs[index].cron)?.nextFire(after: now)
@@ -425,8 +433,15 @@ public final class CronScheduler: @unchecked Sendable {
     }
 
     // MARK: - Tool Executors (static, AppToolRegistry dispatch surface)
+    //
+    // `scheduler` defaults to `shared`, which is what dispatch passes. It is
+    // a parameter so a test can hand in an isolated store rather than
+    // leaving a job in the singleton's file for every later case and every
+    // later run to trip over (see `fileURL`).
 
-    public static func executeCreate(arguments: [String: String], chatID: UUID?) throws -> String {
+    public static func executeCreate(
+        arguments: [String: String], chatID: UUID?, scheduler: CronScheduler = .shared
+    ) throws -> String {
         guard let cron = arguments["cron"] ?? arguments["expression"] ?? arguments["schedule"] else {
             throw NSError(domain: "TurboSparkTool", code: 60, userInfo: [
                 NSLocalizedDescriptionKey: "Missing 'cron' argument for CronCreate."
@@ -444,20 +459,23 @@ public final class CronScheduler: @unchecked Sendable {
                     "CronCreate needs an active chat to deliver its prompt into."
             ])
         }
-        let job = try shared.create(cron: cron, prompt: prompt, recurring: recurring, chatID: chatID)
+        let job = try scheduler.create(
+            cron: cron, prompt: prompt, recurring: recurring, chatID: chatID)
         let human = CronSchedule(job.cron)?.describe() ?? job.cron
         let recurrence = job.recurring ? "recurring" : "one-shot"
         return "Cron job '\(job.id)' created (\(recurrence), \(human)). "
             + "It will submit into this chat; view or remove it in Settings > Scheduled Tasks."
     }
 
-    public static func executeDelete(arguments: [String: String]) throws -> String {
+    public static func executeDelete(
+        arguments: [String: String], scheduler: CronScheduler = .shared
+    ) throws -> String {
         guard let id = arguments["id"] ?? arguments["jobId"] ?? arguments["job_id"] else {
             throw NSError(domain: "TurboSparkTool", code: 63, userInfo: [
                 NSLocalizedDescriptionKey: "Missing 'id' argument for CronDelete."
             ])
         }
-        guard shared.delete(id: id) else {
+        guard scheduler.delete(id: id) else {
             throw NSError(domain: "TurboSparkTool", code: 63, userInfo: [
                 NSLocalizedDescriptionKey: "No cron job with id '\(id)'."
             ])
@@ -465,8 +483,10 @@ public final class CronScheduler: @unchecked Sendable {
         return "Cron job '\(id)' deleted."
     }
 
-    public static func executeList(arguments: [String: String]) -> String {
-        let jobs = shared.list()
+    public static func executeList(
+        arguments: [String: String], scheduler: CronScheduler = .shared
+    ) -> String {
+        let jobs = scheduler.list()
         if jobs.isEmpty {
             return "No scheduled cron jobs. Create one with CronCreate."
         }
@@ -485,7 +505,9 @@ public final class CronScheduler: @unchecked Sendable {
     /// One-shot wakeup (clamped to 60-3600 seconds like the schema says).
     /// `stop` has nothing to stop -- this engine holds no autonomous wakeup
     /// loop -- and says so rather than pretending.
-    public static func executeScheduleWakeup(arguments: [String: String], chatID: UUID?) throws -> String {
+    public static func executeScheduleWakeup(
+        arguments: [String: String], chatID: UUID?, scheduler: CronScheduler = .shared
+    ) throws -> String {
         if let stop = arguments["stop"], stop.lowercased() == "true" {
             return "No active wakeup loop to stop."
         }
@@ -510,7 +532,7 @@ public final class CronScheduler: @unchecked Sendable {
             ])
         }
         let fireAt = Date().addingTimeInterval(TimeInterval(clamped))
-        _ = shared.createOneShot(fireAt: fireAt, prompt: prompt, chatID: chatID)
+        _ = scheduler.createOneShot(fireAt: fireAt, prompt: prompt, chatID: chatID)
         let clampedNote = clamped != requested ? " (clamped from \(requested)s)" : ""
         return "Wakeup scheduled for \(fireAt.formatted(date: .omitted, time: .shortened)) "
             + "in \(clamped)s\(clampedNote)."

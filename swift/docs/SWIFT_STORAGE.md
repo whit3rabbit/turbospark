@@ -122,3 +122,45 @@ directory as a side effect, so every test building a prompt for a project
 would otherwise mkdir inside the user's real `~/.turbospark` -- the exact
 failure this page's header section is about, arrived at through a code path
 that never looks like a storage test.
+
+## Cron stores and background polling
+
+`CronScheduler(directory:)` gives a test its own object and persisted file.
+The four static executors accept `scheduler:` so executor tests can use the
+same isolation. Redirecting `AppStorageRoot` alone still leaves tests sharing
+jobs and a delivery handler with every poller of `CronScheduler.shared`.
+
+The 2026-09-09 cron investigation exposed two independent hazards:
+overlapping polls can take the same job while delivery awaits completion,
+and cases using the singleton can observe jobs created by other cases.
+`inFlight` reserves due jobs under the scheduler lock until completion;
+private scheduler instances keep store tests independent. Passing under
+`--filter` alone does not distinguish these mechanisms.
+
+`AppModel.startCronScheduler()` now stops the previous timer before
+installing another. `stopCronScheduler()` invalidates and clears the timer,
+and model deinitialization invalidates it as well: releasing a `Timer`
+property alone does not remove the run loop's reference. The handler keeps
+its weak model capture; stopping an older model does not clear another
+model's shared handler. This does not cancel deliveries already in progress,
+so the scheduler's overlapping-delivery guard remains necessary.
+
+`CronTimerLifecycleTests` covers restart, explicit stop, and actual model
+release. `QwenParityFeaturesTests` covers re-entrant delivery and a stale
+same-prompt job in a separate store.
+
+Verification on macOS, 2026-09-09: each lifecycle test failed its intended
+assertion when its corresponding invalidation was removed. Removing the
+`inFlight` check also failed the overlapping-poll case in isolation with two
+deliveries. Every mutation was asserted unique and restored. The earlier
+singleton-isolation mutation failed all five full runs, including the stale
+same-prompt case.
+
+The final full-suite comparison on the current dirty tree ran 1,512 tests
+with the original timer code and 1,515 with the fix (one skipped in each).
+Both failed only `SlashParityTests.testArchiveHidesFromSidebarAndUnarchiveRestores`
+at line 100; all cron cases passed. An earlier run also had a transient
+fan-status fixture failure. Rust build, fmt-check and Clippy passed; the
+unrestricted Rust suite failed the unrelated mapped-residency family-count
+assertion in `real_forward_init.rs` (10 entries versus 11 variants). These
+are not claims of a fully green workspace.

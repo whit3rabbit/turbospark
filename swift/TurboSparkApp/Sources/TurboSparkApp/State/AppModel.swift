@@ -781,13 +781,14 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    deinit {
+        // Releasing our reference alone leaves the run loop polling shared state.
+        cronPollTimer?.invalidate()
+    }
+
     /// Combined list of all currently active (enabled) MCP servers from global settings and active project.
     public var activeMcpServers: [McpServerConfig] {
-        var list = globalMcpServers.filter { $0.isEnabled }
-        if let proj = selectedProject {
-            list.append(contentsOf: proj.mcpServers.filter { $0.isEnabled })
-        }
-        return list
+        AppToolCatalogMcp.visibleServers(global: globalMcpServers, project: selectedProject)
     }
 
     /// Currently selected project if any.
