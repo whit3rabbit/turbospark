@@ -14,8 +14,8 @@
 //!
 //! # What it measures, and what it does not
 //!
-//! For `KvQuant::Off` and each TurboQuant width, one open of the SAME
-//! install, at the frozen protocol's own per-family window
+//! Three initial FP16 opens, each TurboQuant width, and a final FP16 open
+//! measure the SAME install at the frozen protocol's own per-family window
 //! (`real_model::protocol_parameters`, the same one every memory oracle
 //! opens at -- see `crates/bench/CLAUDE.md` Gotcha 16):
 //!
@@ -139,7 +139,9 @@ fn decode_and_sample(
 /// families, whose generation prompt ends mid-frame (AGENTS.md Gotcha 46's
 /// `crates/bench/CLAUDE.md` Gotcha 13 sibling). Point this probe at a
 /// non-Harmony install, or read a huge absolute number as that artifact
-/// rather than as TurboQuant damage.
+/// rather than as TurboQuant damage. Spark and museGlimmer also require
+/// assistant prefixes in their quality gates; this unframed probe does not
+/// replace those gates or produce comparable answer-perplexity readings.
 fn reference_ppl(runner: &mut RealForwardRunner, tokenizer: &MfTokenizer) -> f64 {
     let prompt = user_turn_ids(tokenizer);
     let answer = tokenizer.encode(REFERENCE_ANSWER, false);
@@ -167,17 +169,19 @@ fn kv_bits_moves_footprint_and_stays_finite_on_a_real_install() {
         arch.family
     );
 
+    // Repeated references expose warming before and after the width sweep.
     let rows = [
         Row {
             label: "off",
             kv_quant: KvQuant::Off,
         },
         Row {
-            label: "2",
-            kv_quant: KvQuant::TurboQuant {
-                k_bits: 2,
-                v_bits: 2,
-            },
+            label: "off",
+            kv_quant: KvQuant::Off,
+        },
+        Row {
+            label: "off",
+            kv_quant: KvQuant::Off,
         },
         Row {
             label: "3",
@@ -200,6 +204,17 @@ fn kv_bits_moves_footprint_and_stays_finite_on_a_real_install() {
                 v_bits: 4,
             },
         },
+        Row {
+            label: "2",
+            kv_quant: KvQuant::TurboQuant {
+                k_bits: 2,
+                v_bits: 2,
+            },
+        },
+        Row {
+            label: "off",
+            kv_quant: KvQuant::Off,
+        },
     ];
 
     // `slots` matches `PROTOCOL_EXPERT_CACHE_SLOTS`, the same pin every
@@ -209,6 +224,7 @@ fn kv_bits_moves_footprint_and_stays_finite_on_a_real_install() {
 
     let mut off_peak: Option<u64> = None;
     let mut off_ppl: Option<f64> = None;
+    let mut off_peaks = Vec::new();
     println!(
         "\n{:<6} {:>12} {:>10} {:>14} {:>10}",
         "width", "peak MiB", "delta", "ref ppl", "ppl delta"
@@ -284,11 +300,25 @@ fn kv_bits_moves_footprint_and_stays_finite_on_a_real_install() {
             row.label
         );
 
-        if row.label == "off" {
-            off_peak = Some(peak);
-            off_ppl = Some(ppl);
+        if !row.kv_quant.is_on() {
+            // Keep all deltas anchored to the first open, including later references.
+            off_peak.get_or_insert(peak);
+            off_ppl.get_or_insert(ppl);
+            off_peaks.push(peak);
         }
     }
+
+    let min = *off_peaks.iter().min().expect("FP16 references ran") as f64 / 1_048_576.0;
+    let max = *off_peaks.iter().max().expect("FP16 references ran") as f64 / 1_048_576.0;
+    println!(
+        "\nFP16 references: n={} min={min:.1} MiB max={max:.1} MiB spread={:.1} MiB",
+        off_peaks.len(),
+        max - min,
+    );
+    println!(
+        "Deltas within reference spread are unresolved; larger deltas warrant investigation, \
+         not automatic attribution to quantization."
+    );
 
     println!(
         "\nNOTE: read the module doc before quoting the MiB delta as a ceiling -- it is \

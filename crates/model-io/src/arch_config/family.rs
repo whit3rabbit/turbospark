@@ -24,6 +24,31 @@ pub enum ModelFamily {
     /// by `RealLlamaState`: it norms q and k PER HEAD before RoPE, and its
     /// RMS epsilon is 1e-6 where the `llama` architecture's is 1e-5.
     Qwen3Moe,
+    /// The `qwen3` GGUF architecture / HF `model_type: "qwen3"` (Qwen3-0.6B
+    /// through 32B dense, Qwen3-Coder's dense sizes,
+    /// DeepSeek-R1-0528-Qwen3-8B), the TENTH family and the SECOND to run on
+    /// [`ModelFamily::Llama`]'s flow rather than its own.
+    ///
+    /// It is exactly the combination of two switches that flow already
+    /// carries separately, tested together here for the first time: the
+    /// per-head q/k norm and 1e-6 RMS epsilon [`ModelFamily::Qwen3Moe`]
+    /// already keys on `RealLlamaState`, plus the DENSE FFN arm `Llama`
+    /// already derives from `num_experts == 0` for Mistral/Llama 3.x. The
+    /// GGUF tensor inventory confirms it structurally: llama.cpp's
+    /// `MODEL_ARCH.QWEN3` tensor list is `MODEL_ARCH.QWEN3MOE`'s list minus
+    /// the four routed-expert rows, plus plain `FFN_GATE`/`FFN_UP`/
+    /// `FFN_DOWN` -- i.e. `qk_norm=true, dense=true`, nothing else moved.
+    /// Facts: `docs/QWEN3_PHASE0.md`.
+    ///
+    /// **NOT to be confused with [`ModelFamily::QwenGdnDense`]**, which is
+    /// the unrelated gated-DeltaNet dense family (`model_type: "qwen3_5"`).
+    /// The two share only the word "dense": this one is plain GQA, that one
+    /// is a hybrid linear-attention architecture at a different `head_dim`.
+    ///
+    /// `qwen2` / `qwen2.5` (QwQ-32B, the older R1-distill-Qwen line) is a
+    /// SEPARATE architecture string with a different config schema (no
+    /// per-head QK-norm) and is deliberately out of scope here.
+    Qwen3Dense,
     /// The `gpt-oss` GGUF architecture (ROADMAP M5), the third fine-grained
     /// MoE and the FIFTH real family. Chosen by the M5 Phase 0 survey on
     /// AGENTS.md Gotcha 36's axis: 12.6 MiB per expert against Llama 4
@@ -200,8 +225,8 @@ pub enum ModelFamily {
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 10 model families.
-    pub const ALL: [ModelFamily; 10] = [
+    /// Exhaustive list of all 11 model families.
+    pub const ALL: [ModelFamily; 11] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -212,6 +237,7 @@ impl ModelFamily {
         ModelFamily::MuseGlimmer,
         ModelFamily::Qwen4Exp,
         ModelFamily::Spark25,
+        ModelFamily::Qwen3Dense,
     ];
 
     /// Returns static string identifier for the model family.
@@ -247,6 +273,9 @@ impl ModelFamily {
             // Also new, and it matches the GGUF `general.architecture` string
             // AND the HF `model_type`, which agree ("spark2_5").
             ModelFamily::Spark25 => "spark2_5",
+            // Also new, and matches the GGUF `general.architecture` string
+            // AND the HF `model_type`, which agree ("qwen3").
+            ModelFamily::Qwen3Dense => "qwen3",
         }
     }
 
@@ -263,6 +292,7 @@ impl ModelFamily {
             "museGlimmer" => Some(ModelFamily::MuseGlimmer),
             "qwen4exp" => Some(ModelFamily::Qwen4Exp),
             "spark2_5" => Some(ModelFamily::Spark25),
+            "qwen3" => Some(ModelFamily::Qwen3Dense),
             _ => None,
         }
     }
@@ -286,9 +316,10 @@ mod tests {
                 ModelFamily::MuseGlimmer => 7,
                 ModelFamily::Qwen4Exp => 8,
                 ModelFamily::Spark25 => 9,
+                ModelFamily::Qwen3Dense => 10,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 10);
+        assert_eq!(ModelFamily::ALL.len(), 11);
     }
 }

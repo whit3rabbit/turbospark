@@ -15,7 +15,9 @@ pub use gemma::gemma4_26b_a4b;
 pub use gpt_oss::gpt_oss_20b;
 pub use llama::mixtral_8x7b;
 pub use muse_glimmer::{muse_glimmer_30b, muse_glimmer_layer_mask};
-pub use qwen::{qwen3_30b_a3b, qwen4_exp_125b_a6b, qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b};
+pub use qwen::{
+    qwen3_30b_a3b, qwen3_4b, qwen4_exp_125b_a6b, qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b,
+};
 pub use spark::{spark_layer_mask, spark_x25_4b};
 
 use crate::arch_config::{ArchConfig, ModelFamily};
@@ -33,6 +35,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::MuseGlimmer => muse_glimmer_30b(),
         ModelFamily::Qwen4Exp => qwen4_exp_125b_a6b(),
         ModelFamily::Spark25 => spark_x25_4b(),
+        ModelFamily::Qwen3Dense => qwen3_4b(),
     }
 }
 
@@ -48,5 +51,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         muse_glimmer_30b(),
         qwen4_exp_125b_a6b(),
         spark_x25_4b(),
+        qwen3_4b(),
     ]
 }

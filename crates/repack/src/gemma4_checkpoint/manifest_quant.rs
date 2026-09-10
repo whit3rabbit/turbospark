@@ -111,7 +111,13 @@ pub fn manifest_quant_for(
         // 4 or 8 bits either way.
         // `qwen3moe` names every one of these the way the `llama`
         // architecture does, shared expert included (it has none either).
-        ModelFamily::Llama | ModelFamily::Qwen3Moe => (
+        // Dense `qwen3` shares the same tensor names too (plain
+        // `self_attn.q_proj`, dense `mlp.gate_proj`, no router, no shared
+        // expert) but has no safetensors path this pass (GGUF only, see
+        // `docs/QWEN3_PHASE0.md`), so like gpt-oss below it is grouped with
+        // the family whose names it shares rather than given an arm that
+        // cannot run.
+        ModelFamily::Llama | ModelFamily::Qwen3Moe | ModelFamily::Qwen3Dense => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),

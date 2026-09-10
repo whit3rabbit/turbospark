@@ -302,10 +302,15 @@ impl RealForwardRunner {
                     gdn_shape,
                 )?;
             }
-            // One flow for both: `qwen3moe` is the same layer graph, and
-            // `RealLlamaState` carries the two differences (per-head q/k
-            // norms, a different RMS epsilon).
-            model_io::ModelFamily::Llama | model_io::ModelFamily::Qwen3Moe => {
+            // One flow for all three: `qwen3moe` is the same layer graph
+            // with per-head q/k norms, and dense `qwen3` is that SAME
+            // attention switch combined with `Llama`'s own dense-FFN switch
+            // (`num_experts == 0`). `RealLlamaState` carries both switches
+            // already; `qwen3` is simply the first checkpoint to exercise
+            // them together (`docs/QWEN3_PHASE0.md`).
+            model_io::ModelFamily::Llama
+            | model_io::ModelFamily::Qwen3Moe
+            | model_io::ModelFamily::Qwen3Dense => {
                 runner.real_llama = Some(crate::families::llama::RealLlamaState::build(
                     &mut runner.context,
                     &runner.weights,

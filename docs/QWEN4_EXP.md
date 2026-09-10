@@ -1172,14 +1172,82 @@ being busy. More warmup runs would help and cannot fix it. The honest
 options are a smaller checkpoint of the same family, or many more pairs than
 three.
 
+### P0 phase follow-up (2026-09-09): pread measured, speedup inconclusive
+
+The pinned REAP-288 checkpoint was restored from
+`sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit` at
+`668f31bcc56bf9400e64c9463445eee47597c2d9` (68.1 GiB installed), on the
+Apple M4 Max 36 GB machine, AC power. All inference ran serially. Raw
+commands, output, phase rows, binary hashes, and the harness are saved in
+[the verification evidence](verification/p0-2026-09-09.json).
+
+Both arms used the same temporary CLI binary, built from `7a0773a` plus
+the recorded working Rust diff. Its only diagnostic change makes
+`TURBOSPARK_PREFILL_CHUNK=0` return the sequential path; the production CLI
+ignores zero, so merely setting that variable on the production binary
+would not be a valid control. The chunked arm sets 128. The exact patch is
+saved in the evidence; no production flag, API, or runtime implementation
+was changed.
+
+Settings were identical: context 2048, 16 slots, 48 new tokens, temperature
+0.0001, top-k 1, seed 1, speculation off, KV quantization off, and
+`TURBOSPARK_PHASES=1`. User-message framing of the frozen
+`short-explanation` and `medium-review` prompts gives 62 and 426 tokens.
+The latter is the longer prompt here; both remain below the QSA threshold.
+Every run stopped at MaxTokens with exactly 48 new tokens. Output bytes
+were identical within each prompt, including across sequential/chunked
+arms. This is a timing experiment, not a full-answer smoke.
+
+The phase table divides by **109 / 473 forward calls**, not by 48 decoded
+tokens. Multiplying its rounded ms/token by that divisor reproduces the
+total pread bucket within rounding error in every row. Differences below
+use the less-rounded total bucket printed by the same table.
+
+| Run (execution order) | Prefill s | Forward total ms | Pread total ms |
+| --- | ---: | ---: | ---: |
+| long seq warmup, discarded | 31.76 | 35509 | 18895.6 |
+| short seq reference 1 | 6.66 | 10943 | 6320.6 |
+| short seq reference 2 | 6.09 | 10175 | 5857.9 |
+| short seq reference 3 | 6.07 | 10124 | 5837.6 |
+| pair 1 long seq | 31.49 | 35207 | 18660.2 |
+| pair 1 long chunk | 30.60 | 34267 | 18484.5 |
+| pair 2 long chunk | 30.62 | 34255 | 18319.9 |
+| pair 2 long seq | 30.93 | 34578 | 18376.7 |
+| pair 3 long seq | 30.88 | 34706 | 18256.6 |
+| pair 3 long chunk | 30.54 | 34153 | 18392.8 |
+| short seq closing reference | 6.47 | 10629 | 6199.5 |
+
+**Pread is a substantial measured cost, about half the increment.** The
+long-minus-short sequential means give 24.363 s additional forward time
+and 12.377 s additional pread time (50.8%). Cross-combining the observed
+reference extremes gives 23.635-25.083 s additional forward time and
+11.936-12.823 s pread. These are observed range bounds, not confidence
+intervals. They put pread at roughly 48-54% of the increment. Equal decode
+budgets do not force equal routed experts across different prompts, so the
+subtraction is an estimate of added prefill cost, not a pure isolated
+prefill counter. This supports the large-I/O-cost explanation, but not an
+exclusive pread bottleneck or a claim that all remaining time is removable.
+
+**The chunked speedup remains inconclusive.** Sequential prefill spans
+30.88-31.49 s (0.61 s, 1.020x), decreasing monotonically again. Chunked
+spans 30.54-30.62 s. All pairs favor chunked, by 0.89 / 0.31 / 0.34 s
+(1.029x / 1.010x / 1.011x), but the mean difference, 0.513 s, is smaller
+than the reference's own spread. This does not support a reproducible
+speedup magnitude. Pread means are nearly unchanged between long arms,
+18.431 s sequential and 18.399 s chunked, well inside sequential pread's
+0.404 s spread. The 2048-token frozen benchmark window and all baselines
+remain unchanged. After all probes, smoke, gates and phase runs finished,
+logs and checkpoint metadata were saved and the task-created install was
+removed. Existing user models were retained.
+
 ### What remains
 
-- **The throughput measurement**: ATTEMPTED 2026-09-05 and NOT CITABLE, see
-  the section above. The sequential reference arm's own spread (1.440x,
-  monotone) exceeds the effect, and the three paired ratios do not agree on a
-  sign. A null result is what the pread-bound arithmetic predicts for this
-  checkpoint, but that prediction is untested: the cheap next step is one
-  `TURBOSPARK_PHASES=1` run read for its `pread` bucket, not another A/B.
+- **A reproducible throughput gain** remains unestablished. The 2026-09-09
+  follow-up above completed the phase and repeated-reference measurements:
+  pread is about half the added forward cost, while the mean chunked saving
+  is smaller than the sequential reference spread. The older 2026-09-05
+  ratios also remain non-citable. Do not report either attempt as a frozen
+  speedup or change the benchmark window to obtain a different result.
 
   Note WHICH INSTRUMENT that comparison needs. `turbospark-bench` grew a
   `--prefill-chunk` flag on 2026-09-05 and can now drive the chunked path

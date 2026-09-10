@@ -111,6 +111,16 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // 2026-09-06) rather than a fork, so the name mapping below mirrors code
     // that is merged, tagged and stable.
     ("spark2_5", ModelFamily::Spark25),
+    // The TENTH family, and the second to run on `llama`'s decode flow
+    // rather than its own. Read off `Qwen/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf`
+    // (`turbospark-model probe`, header-only, 2026-09-09; `docs/QWEN3_PHASE0.md`)
+    // and cross-checked against llama.cpp's own `gguf-py/gguf/constants.py`:
+    // `MODEL_ARCH.QWEN3` is a distinct string from `MODEL_ARCH.QWEN3MOE`
+    // (`"qwen3"` against `"qwen3moe"`), and its tensor list is `QWEN3MOE`'s
+    // minus the four routed-expert rows, plus plain `FFN_GATE`/`FFN_UP`/
+    // `FFN_DOWN` -- exactly `Qwen3Moe`'s attention switch plus `Llama`'s
+    // dense-FFN switch, both already carried by `RealLlamaState`.
+    ("qwen3", ModelFamily::Qwen3Dense),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.
@@ -168,6 +178,17 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
 /// one makes every byte resident (AGENTS.md Gotcha 19). Hence `llama`'s
 /// note naming its two halves separately.
 const PLANNED_GGUF: &[(&str, PlannedArch)] = &[
+    // Header-only witness checked 2026-09-10. The Q/K norm spans all
+    // heads and the routing bias selects experts without weighting them;
+    // aliasing Qwen3-MoE would silently change both operations.
+    (
+        "minimax-m2",
+        PlannedArch {
+            needs: "whole-projection Q/K RMS normalization, partial RoPE, and sigmoid \
+                    expert routing with selection-only correction bias (docs/MINIMAX_M2_PHASE0.md)",
+            witness: "https://huggingface.co/unsloth/MiniMax-M2-GGUF/resolve/main/Q4_K_M/MiniMax-M2-Q4_K_M-00001-of-00003.gguf",
+        },
+    ),
     // ROADMAP M5 Phase 0 REWROTE THIS CLAUSE, and the correction is the
     // point: the original named a layer graph, and the binding obstacle is
     // arithmetic that has nothing to do with one. Scout is 16 experts of

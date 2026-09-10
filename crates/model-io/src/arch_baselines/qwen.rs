@@ -240,6 +240,84 @@ pub fn qwen3_30b_a3b() -> ArchConfig {
     }
 }
 
+/// Canonical dense `qwen3` baseline (`ModelFamily::Qwen3Dense`): plain GQA
+/// with per-head QK-norm, a dense SwiGLU FFN, full-head NeoX RoPE, no
+/// sliding window, no softcap. Shape fields are `Qwen/Qwen3-4B`'s
+/// (`config.json`, read 2026-09-09); behavioral fields are
+/// [`qwen3_30b_a3b`]'s, since the two share the SAME attention block
+/// (`docs/QWEN3_PHASE0.md`).
+///
+/// **This baseline serves every dense `qwen3` size (0.6B through 32B,
+/// Qwen3-Coder's dense sizes, DeepSeek-R1-0528-Qwen3-8B), not just the 4B
+/// checkpoint it is named for.** As with every other GGUF-intake family,
+/// shape fields (`hidden_size`, `num_layers`, `num_heads`, `num_kv_heads`,
+/// `vocab_size`, `tie_word_embeddings`, ...) are overridden per-checkpoint
+/// by `arch_from_gguf` reading the file's own metadata
+/// (`crates/repack/src/gguf_config/mod.rs`); only the numbers below that
+/// `arch_from_gguf` never touches -- `attn_output_gate`, `attention_scale`,
+/// `ffn_sandwich_norms`, `rope_neox_subdim`, etc. -- are the ones a real
+/// install actually inherits from this function. `head_dim` is 128 at every
+/// published dense `qwen3` size checked (0.6B/4B/8B), independent of
+/// `hidden_size / num_heads`, so `attention_scale` (`head_dim^-0.5`) is
+/// stable across the whole family exactly as it is for
+/// [`qwen3_30b_a3b`]'s MoE sibling; `arch_from_gguf` still reads
+/// `attention.key_length` per file rather than trusting that agreement.
+///
+/// `tie_word_embeddings` varies by published size (Qwen3-4B: true,
+/// Qwen3-8B: false) and is read from the GGUF's own `output.weight` tensor
+/// presence at repack time, not fixed here.
+pub fn qwen3_4b() -> ArchConfig {
+    ArchConfig {
+        hidden_size: 2560,
+        intermediate_size: 9728,
+        // Dense: no routed experts, so no routed width.
+        moe_intermediate_size: 0,
+        num_heads: 32,
+        num_kv_heads: 8,
+        num_full_kv_heads: 8,
+        head_dim: 128,
+        full_head_dim: 128,
+        vocab_size: 151_936,
+        sliding_window: 0,
+        final_logit_softcap: 0.0,
+        rope_theta: 1_000_000.0,
+        full_rope_theta: 1_000_000.0,
+        // Full rotary, as `qwen3moe`.
+        partial_rotary_factor: 1.0,
+        num_layers: 36,
+        num_experts: 0,
+        top_k_experts: 0,
+        // `Qwen/Qwen3-4B`'s own value; per-checkpoint after that (see doc).
+        tie_word_embeddings: true,
+        attention_k_eq_v: false,
+        // Every layer is full attention: dense `qwen3` publishes no
+        // `attention.sliding_window` key, same as `qwen3moe`.
+        full_attention_layer_mask: vec![1u8; 36],
+        hidden_activation: "silu".to_string(),
+        family: ModelFamily::Qwen3Dense,
+        attn_output_gate: false,
+        // 128^-0.5 = 2^-3.5, the same value `qwen3_30b_a3b` uses for the
+        // same head_dim; AGENTS.md Gotcha 24's round-trip warning applies.
+        attention_scale: 0.088_388_347_648_318_45,
+        embedding_scaled_by_sqrt_hidden: false,
+        router_scaled: false,
+        ffn_sandwich_norms: false,
+        // No shared expert to gate: the FFN is dense.
+        shared_expert_gated: false,
+        rope_neox_subdim: false,
+        linear_attention: LinearAttentionConfig::NONE,
+        compressed_attention: CompressedAttentionConfig::NONE,
+        hyper_connections: HyperConnectionConfig::NONE,
+        num_hash_routed_layers: 0,
+        router_scoring_func: "softmax".to_string(),
+        routed_scaling_factor: 1.0,
+        swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
+        vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
+    }
+}
+
 /// Canonical `qwen4_exp` (Qwen3.8-Flash-Next) baseline: a 48-layer hybrid of
 /// 36 gated-DeltaNet linear layers and 12 full-attention ones (every 4th),
 /// 512 routed experts at top-10 plus a gated shared expert, a FOUR-STREAM

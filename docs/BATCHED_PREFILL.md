@@ -738,6 +738,51 @@ So this is one phase followed by an optional one, rather than a fork:
    independent attempts (7 of 7 timed pairs plus both warmups, batched never
    slower); magnitude remains open.
 
+   **A THIRD ATTEMPT 2026-09-09 IS CITABLE, AND THE CONTAMINATION SOURCE WAS
+   NEITHER OF THE FIRST TWO.** Same command, same prompt, one discarded
+   warmup, three interleaved pairs, `prefill=Ntok/Ss` footer, AND a
+   contamination monitor polling `ps -A -o %cpu,comm | sort -rn | head`
+   every 10s for the whole run (the fix both prior attempts called for).
+   Pair 1 ran clean. Pairs 2 and 3 did not: `mediaanalysisd` (Apple's Photos
+   / media-analysis daemon) ramped from 77% to over 200% starting mid-way
+   through pair 2, dragging in `ANECompilerService` and `corespotlightd`
+   alongside it, and stayed hot through the end of pair 3 -- a THIRD
+   contamination source, distinct from both the browser/MCP load of the
+   first attempt and the `cargo build` of the second, and one the monitor's
+   original `rustc`/`cargo`/`ld` grep would not have caught (it was only
+   found because the monitor also logged the top-3 CPU processes by name,
+   not just a fixed grep list). Pair 2's ratio dropped to 0.943x (the
+   batched arm read SLOWER, the first inversion of the direction across all
+   three attempts) and pair 3's baseline arm read 57.99s against the other
+   two pairs' ~42-43s -- both consistent with contamination landing
+   unevenly across arms rather than with a real effect.
+
+   Discarding pairs 2 and 3 and re-running them once `mediaanalysisd` quieted
+   (confirmed via the same top-3 CPU log, this time idle) gives:
+
+   | pair | no `BATCHED_GEMV` | with `BATCHED_GEMV` | ratio |
+   | ---: | ---: | ---: | ---: |
+   | 1 | 42.78 s | 35.86 s | 1.193x |
+   | 2 (re-run) | 42.37 s | 36.08 s | 1.174x |
+   | 3 (re-run) | 42.46 s | 35.84 s | 1.185x |
+   | mean | 42.54 s | 35.93 s | **1.18x** |
+
+   Spread across the three clean pairs is 1.174x-1.193x, under 2% -- the
+   first citable magnitude this A/B has produced, and it lands inside the
+   first attempt's own directional range (1.02x-1.38x, mean 1.19x). Prefill
+   throughput: 70.9 tok/s baseline against 83.9 tok/s batched, on the frozen
+   3,015-token `long-synthesis` prompt, `--expert-cache-slots 24`, AC power.
+
+   **The generalizable lesson is not "watch for `mediaanalysisd` specifically",
+   it is that a contamination monitor keyed to a fixed process-name list only
+   catches contamination it already anticipated.** Two attempts named
+   `rustc`/`cargo`/`ld` after the fact; this one would have missed
+   `mediaanalysisd` under the same fixed-list design if it had not also
+   logged the top-3 CPU consumers by name at every poll, unfiltered. A
+   monitor for this kind of A/B should always log the top few processes by
+   CPU share, not merely grep for the specific process that burned the
+   previous attempt.
+
    **A SECOND FAMILY WIRED TO THIS SEAM 2026-08-29, THE DENSE HALF OF THE
    QWEN LINEAR-ATTENTION FLOW, AND IT COST NO DISPATCH CODE AT ALL** --
    less than Gemma 4's did, which needed new batched encoders written.

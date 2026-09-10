@@ -8,8 +8,9 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-1,435 tests as of 2026-08-29, plus 157 that are `#[ignore]`d, re-counted
-2026-09-06 (see below). **Re-count before quoting either number.** Both were stale by more
+1,435 tests as of 2026-08-29, plus 161 that are `#[ignore]`d, re-counted
+2026-09-09 (see below). The two dates differ because only the second is
+greppable: the first needs a build and was not re-derived on 2026-09-09. **Re-count before quoting either number.** Both were stale by more
 than 2x when this line was last corrected (they read 458 and 18, unchanged
 since 2026-08-08 while eleven families and phases landed), and nothing goes
 red when they rot: a count is prose. The one-liners that produce them are
@@ -145,8 +146,8 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-85 targets carry `#[ignore]`d tests, 157 functions between them as of
-2026-09-06 (`bench` 39/59, `repack` 33/61, `gpu` 4/15, `runtime` 3/7,
+89 targets carry `#[ignore]`d tests, 161 functions between them as of
+2026-09-09 (`bench` 43/63, `repack` 33/61, `gpu` 4/15, `runtime` 3/7,
 `selection` 2/4, `catalog` 2/3, `server` 1/5, `tokenizer` 1/3). Each has a reason string and
 a module doc with the exact command. The commands below are the ones that are gates.
 

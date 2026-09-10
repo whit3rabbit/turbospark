@@ -173,8 +173,11 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // publishes `attention.sliding_window`, and Mistral 7B's window is a
         // property of that model rather than of the architecture.
         // Qwen3-MoE is the same story: no `attention.sliding_window` key on
-        // the published file, every layer full attention.
-        ModelFamily::Llama | ModelFamily::Qwen3Moe => vec![1u8; num_layers as usize],
+        // the published file, every layer full attention. Dense `qwen3`
+        // agrees: no sliding window at any published size (`docs/QWEN3_PHASE0.md`).
+        ModelFamily::Llama | ModelFamily::Qwen3Moe | ModelFamily::Qwen3Dense => {
+            vec![1u8; num_layers as usize]
+        }
         ModelFamily::GptOss => gpt_oss_layer_mask(&m, num_layers as usize)?,
         // Refused rather than defaulted: no GGUF exists for either, so any
         // mask here would be invented. `muse_glimmer`'s is doubly so -- its

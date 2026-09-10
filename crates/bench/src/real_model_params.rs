@@ -93,10 +93,17 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
         // UNVERIFIED until an install exists: the first memory-oracle run
         // is what confirms it, and a `long-synthesis` that stops on
         // maxTokens is what would refute it.
+        // Dense `qwen3` shares this row on the SAME tokenizer evidence as
+        // `Qwen3Moe`, more literally than any other arm here: both declare
+        // `vocab_size: 151936` under the same ChatML dialect, the identical
+        // BPE tokenizer rather than merely a similarly-sized one
+        // (`docs/QWEN3_PHASE0.md`). UNVERIFIED until an install exists, same
+        // as every other row in this arm.
         ModelFamily::Gemma4
         | ModelFamily::QwenGdnMoe
         | ModelFamily::QwenGdnDense
         | ModelFamily::Qwen3Moe
+        | ModelFamily::Qwen3Dense
         | ModelFamily::DeepseekV4Flash => ProtocolParameters {
             family,
             max_context: PROTOCOL_MAX_CONTEXT,

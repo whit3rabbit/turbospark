@@ -62,7 +62,9 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     keyed on the family inside that flow rather than given a fourth copy
     of it
   - `"gpt-oss"` -> `ModelFamily::GptOss` (MXFP4 experts, attention sinks)
-  - `"llama4"`, `"deepseek2"`, `"phi3"` are recognized but unported: the
+  - `"spark2_5"` -> `ModelFamily::Spark25` (fused QKV, per-class RoPE,
+    headwise output gate; GGUF intake, HF safetensors intake deferred)
+  - `"minimax-m2"`, `"llama4"`, `"deepseek2"`, `"phi3"` are recognized but unported: the
     refusal names what each would need, and `tests/arch_registry_network.rs`
     re-reads every row's witness header so the string cannot rot silently
   - anything else -> refused as unknown. The audited candidate strings for
@@ -105,9 +107,9 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
 
 ## 2. Complete Model Family Parity Matrix
 
-The table records what the code does TODAY: the ten `ModelFamily` variants
-(nine running, one scaffolded), the three registered-but-unported strings,
-and the closest comparisons across `llama.cpp`, `mlx-lm`, and
+The table records completed family bring-ups, scaffolded support,
+registered-but-unported strings, and the closest comparisons across
+`llama.cpp`, `mlx-lm`, and
 `turbo-fieldfare`. **The forward-looking family list is deliberately not this
 page's job**: bring-up scoping and ordering are ROADMAP priority questions.
 What this page does carry is STATUS: the census subsection below folds in the
@@ -163,10 +165,24 @@ rather than the "recognized, needs X" one.
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks, per-projection biases, YaRN, clamped SwiGLU | **Full Support** | *Planned* | Full Support | Full Support | *MoE at 12.6 MiB per expert; 20B keeps the ceiling at 4.73 GiB of slot cache, 120B does not stream usefully* |
 | **Muse Glimmer 30B** (`muse_glimmer`, HF only) | Dense GQA, 3-sliding/1-full 2048 window, **NoPE on the full layers**, separate attention output gate, CENTERED per-layer norms against a PLAIN final one, TWO RMS epsilons, logit softcap behind an output multiplier | **Full Support** | *Not supported* | Full Support (`muse-glimmer`, published after this row was written) | Full Support (mlx-vlm) | **~535 MiB RAM** (dense at 8,192 context; see note) |
-| **Spark-X2.5-4B** (`spark2_5`) | Dense GQA, the muse window at 512 (3 sliding : 1 full), **per-class RoPE** (full: theta 5e6 over the leading quarter; SWA: theta 1e4 whole head), fused `q_k_v_proj`, **headwise scalar sigmoid output gate**, exact-erf GELU, tied head, 1M trained context | **Full Support** (GGUF intake; HF safetensors intake deferred) | *Not supported* | Full Support (upstream PR 27868, 2026-09-06; this port mirrors its conventions) | Full Support (community MLX conversions) | *dense: KV ~93 MiB at the 8,192 bench window (see note); oracle row pending its first run* |
+| **Spark-X2.5-4B** (`spark2_5`) | Dense GQA, the muse window at 512 (3 sliding : 1 full), **per-class RoPE** (full: theta 5e6 over the leading quarter; SWA: theta 1e4 whole head), fused `q_k_v_proj`, **headwise scalar sigmoid output gate**, exact-erf GELU, tied head, 1M trained context | **Full Support** (GGUF intake; HF safetensors intake deferred) | *Not supported* | Full Support (upstream PR 27868, 2026-09-06; this port mirrors its conventions) | Full Support (community MLX conversions) | *dense at 8,192 context; oracle passed. See [measured peak and KV verification](TRUBOQUANT.md#spark-real-install-probe)* |
 | **Phi-3 / Phi-3.5** (`phi3`; Phi-4 reports the same string) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 
-Every family not named above is UNREGISTERED here and refused as unknown --
+**Execution support and verification status are separate.** The P0 verification
+follow-up completed Spark's KV-quantization fixture suite and real-model oracle,
+plus the remaining real-install probes and CLI smokes. It also recorded open
+gpt-oss KV4 greedy-completion, museGlimmer FP16 sampled-golden, and Qwen4 KV4
+sampled-answer findings. "Full Support" denotes the implemented execution
+path, not a clean result on every quality check. Read
+[TurboQuant verification](TRUBOQUANT.md#p0-verification-follow-up-2026-09-09)
+for those findings and framing limits, and
+[Qwen4 phase measurements](QWEN4_EXP.md#p0-phase-follow-up-2026-09-09-pread-measured-speedup-inconclusive)
+for the unresolved throughput effect. Frozen benchmark windows and baselines
+are unchanged.
+
+The registry is authoritative for evolving bring-ups; a working-tree enum or
+registry addition alone does not establish a completed parity-matrix row.
+Families outside both this matrix and the registry are refused as unknown --
 including Command-R, Grok, DBRX, StarCoder, Falcon, Baichuan, InternLM,
 MiniCPM, OLMo, Exaone and the GPT-2/NeoX/MPT/Bloom legacy lines, which an
 earlier version of this table carried as "*Planned*" without a registry row,
@@ -203,8 +219,8 @@ GGUF-witnessed group below is row-eligible, not merely plausible.
 | --- | --- |
 | Running in BOTH engines | `gemma4` / `gemma4_text`, `qwen3_5`, `qwen3_5_moe`, `qwen3_moe`, `gpt_oss`, `muse_glimmer`, `llama` / `mixtral` -- with the two splits the matrix rows above record (Llama 3.1+ refused on `rope_freqs.weight`; Mixtral runs on the GGUF path only, no HF writer exists here) |
 | Running HERE, ABSENT from mlx-lm | `qwen4_exp` (running here) and `deepseek4` (scaffolded here): no model file and no remap entry in mlx-lm on 2026-09-08. The other direction is format-level, not a family: this port reads GGUF natively, mlx-lm reads MLX safetensors only |
-| Registered, planned here; running there | `phi3` (the row's string also covers Phi-4, witnessed), `llama4` / `llama4_text`, `deepseek2` (mlx-lm's `deepseek_v2` / `deepseek_v3`; the audit's highest-leverage unlock -- one MLA bring-up covers Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3, and mlx-lm's own `kimi_k2 -> deepseek_v3` remap corroborates the shape), `kimi_k25` (mlx-lm ships a native file; here it reports the witnessed `deepseek2` string and is unported) |
-| GGUF-witnessed, unregistered here (Unsloth audit) | `qwen3` (the usage-weighted first bring-up: 0.6B-32B, Coder, QwQ, R1 distills), `qwen2` / `qwen2_moe` (the 2.5 line; SmolLM2, Yi and Zephyr ride the same dense shapes), `gemma3` / `gemma3_text` / `gemma2` / `gemma3n`, `qwen3_next` (`qwen3next`, 512 top-10 GDN -- its OWN string despite sharing `qwen36`'s layer graph), `minimax` (`minimax-m2`, 256 top-8 over ffn 1536, the best pure streaming shape the audit found), `glm4_moe` (`glm4moe`), `glm_moe_dsa` (`glm-dsa`, the GLM-5 DSA line), `nemotron_h` (`nemotron_h_moe`, 128 top-6 up to 512 top-22), `hunyuan` / `hunyuan_v1_dense` (`hunyuan-moe`), `ernie4_5` / `ernie4_5_moe` (`ernie4_5-moe`), `mistral3` / `ministral3` (`mistral3` -- dense, and a separate string from `llama`, so Devstral Small 2 needs its own row despite the name) |
+| Registered, planned here; running there | `minimax` (GGUF `minimax-m2`, recognized 2026-09-10; [Phase 0](MINIMAX_M2_PHASE0.md)), `phi3` (the row's string also covers Phi-4, witnessed), `llama4` / `llama4_text`, `deepseek2` (mlx-lm's `deepseek_v2` / `deepseek_v3`; the audit's highest-leverage unlock -- one MLA bring-up covers Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3, and mlx-lm's own `kimi_k2 -> deepseek_v3` remap corroborates the shape), `kimi_k25` (mlx-lm ships a native file; here it reports the witnessed `deepseek2` string and is unported) |
+| GGUF-witnessed, unregistered here (Unsloth audit) | `qwen3` (the usage-weighted first bring-up: 0.6B-32B, Coder, QwQ, R1 distills), `qwen2` / `qwen2_moe` (the 2.5 line; SmolLM2, Yi and Zephyr ride the same dense shapes), `gemma3` / `gemma3_text` / `gemma2` / `gemma3n`, `qwen3_next` (`qwen3next`, 512 top-10 GDN -- its OWN string despite sharing `qwen36`'s layer graph), `glm4_moe` (`glm4moe`), `glm_moe_dsa` (`glm-dsa`, the GLM-5 DSA line), `nemotron_h` (`nemotron_h_moe`, 128 top-6 up to 512 top-22), `hunyuan` / `hunyuan_v1_dense` (`hunyuan-moe`), `ernie4_5` / `ernie4_5_moe` (`ernie4_5-moe`), `mistral3` / `ministral3` (`mistral3` -- dense, and a separate string from `llama`, so Devstral Small 2 needs its own row despite the name) |
 | Audit-noted model_type, no GGUF witness here | `deepseek_v32` (DeepSeek V3.2 -- rides omlx's `glm_moe_dsa` patch; needs MLA latent KV plus a token-level sparse indexer, where `qwen4_exp`'s QSA indexes blocks), `bailing_moe` / `bailing_moe_linear` / `bailing_moe_v3` (the Ling line; omlx audits `bailing_hybrid`, Ling 3.0 Flash -- MLA and KDA in one model), `laguna`, `longcat_flash` / `longcat_flash_ngram`, `mimo` / `mimo_v2_flash`, `step3p5` (omlx notes `step3p7`, the same vendor line) |
 | Refused by measurement, not by absence | `kimi_k3`: witnessed `kimi-k3` -- 896 experts top-16, about 727M parameters per expert, roughly 7x Mixtral's blob -- so Gotcha 36's header arithmetic says unstreamable here at any legal slot count; recorded so nobody re-derives it after a download |
 | In mlx-lm, no witness here, unregistered (refused as unknown) | `Klear`, `afm7`, `afmoe`, `apertus`, `baichuan_m1`, `bitnet`, `cohere` (Command-R), `cohere2`, `dbrx`, `deepseek` (V1), `dots1`, `exaone` / `exaone4` / `exaone_moe`, `falcon_h1`, `gear`, `glm` / `glm4` / `glm4_moe_lite`, `gpt2`, `gpt_bigcode`, `gpt_neox`, `gptj`, `granite` / `granitemoe` / `granitemoehybrid`, `helium`, `internlm2` / `internlm3`, `iquestloopcoder`, `jamba`, `kimi_linear`, `lfm2` / `lfm2_moe` / `lfm2-vl`, `lille-130m`, `mamba` / `mamba2`, `mellum`, `minicpm` / `minicpm3`, `nanbeige`, `nanochat`, `nemotron` / `nemotron-nas`, `olmo` / `olmo2` / `olmo3` / `olmoe`, `openelm`, `phi` / `phi3small` / `phimoe` / `phixtral`, `plamo` / `plamo2` / `plamo3`, `qwen` (Qwen 1), `recurrent_gemma`, `rwkv7`, `seed_oss`, `smollm3`, `solar_open`, `stablelm`, `starcoder2`, `talkie`, `telechat3`, `youtu_llm` |
@@ -249,6 +265,11 @@ this port runs exactly one tower, and the nearest-term vision gap is Gemma
 ---
 
 
+MiniMax-M2 now has a witnessed planned registry row. Its probe remains
+`REFUSED`, with the missing normalization and routing behavior named.
+[Phase 0](MINIMAX_M2_PHASE0.md) records the source contracts and remaining
+implementation gates. No MiniMax install or execution support is claimed.
+
 ## 3. How `llama.cpp` Handles Architectures vs. `turbospark`
 
 `llama.cpp` handles architecture discovery using a centralized enum and dynamic graph construction:
@@ -261,10 +282,10 @@ this port runs exactly one tower, and the nearest-term vision gap is Gemma
 ### How `turbospark` Implements This Strategy
 `turbospark` follows a clean, strongly-typed Rust implementation of the same pattern:
 - **Architecture Registry** (`crates/repack/src/arch_registry.rs`): the string tables, split into what runs and what is merely recognized. llama.cpp's `llm_arch` enum conflates the two because every variant it names has a graph builder; here they are separate, so a recognized-but-unported architecture is a better error rather than a half-wired family.
-- **`ModelFamily` Enum** (`crates/model-io/src/arch_config/family.rs`): nine
-  discriminators -- `Gemma4`, `QwenGdnMoe`, `Llama`, `Qwen3Moe`, `GptOss`,
-  `QwenGdnDense`, `MuseGlimmer`, `Qwen4Exp`, and `DeepseekV4Flash`
-  (declared, scaffolded, no baseline yet). The planned strings deliberately
+- **`ModelFamily` Enum** (`crates/model-io/src/arch_config/family.rs`):
+  `ModelFamily::ALL` is the authoritative discriminator list, including
+  `Spark25` for `spark2_5`. `DeepseekV4Flash` remains declared and scaffolded,
+  without a baseline. The planned strings deliberately
   get NO variant: `known_architecture` is exhaustive and `arch_validation`
   compares its result field by field, so a placeholder would validate
   installs against invented numbers (`arch_registry.rs`'s own doc).

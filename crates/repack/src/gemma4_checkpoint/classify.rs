@@ -193,7 +193,11 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         | ModelFamily::Qwen3Moe
         | ModelFamily::GptOss
         | ModelFamily::MuseGlimmer
-        | ModelFamily::Spark25 => ".experts.switch_glu.",
+        // Dense `qwen3` is GGUF-intake-only for the same reason
+        // (`docs/QWEN3_PHASE0.md`) and has no MoE sibling marker to borrow
+        // either, so it rides along too.
+        | ModelFamily::Spark25
+        | ModelFamily::Qwen3Dense => ".experts.switch_glu.",
     }
 }
 

@@ -89,9 +89,11 @@ ONLY through a separate, more-parameterized opener
 protocol opener calls with `KvQuant::Off` explicitly -- the same
 structural guard `DraftPolicies` and `SteeringPolicy` already use so a new
 axis cannot reach a frozen memory-oracle or quality-gate row by accident
-(AGENTS.md Gotcha 35, `crates/bench/CLAUDE.md` Gotchas 4-5). Every family's
-real-forward test suite gained a `real_forward_<family>_kv_quant.rs`
-fixture-level suite.
+(AGENTS.md Gotcha 35, `crates/bench/CLAUDE.md` Gotchas 4-5). Every family that existed when this
+landed gained a `real_forward_<family>_kv_quant.rs` fixture-level suite.
+Spark landed later and initially lacked that coverage. The P0 follow-up
+below adds its seventh suite and real-install reading through the same
+shared `kv_write` seam; 9 of its 36 layers are full attention.
 
 **RUN 2026-09-07** on the real `~/models/qwen38-27b.gturbo` install (M4
 Max, AC), `TURBOSPARK_KV_QUANT_INSTALL_DIR=~/models/qwen38-27b.gturbo
@@ -119,7 +121,347 @@ context, where KV is a bigger fraction of `phys_footprint`.
 no error, and the text stayed coherent through 400 new tokens on both
 models (gemma4 42.5/42.3 tok/s greedy/sampled, qwen38-27b 18.2/18.4).
 `--kv-bits off` byte-identical to `HEAD~1` (a two-binary diff) is still
-owed and not run this session.
+owed and not run this session. Structurally, every family's fixture-level
+suite already carries a `kv_quant_off_matches_the_original_open_entry_point`
+case that asserts `KvQuant::Off` reproduces `RealForwardRunner::open`'s
+logits exactly on synthetic weights -- a weaker guarantee than a real-binary
+diff (untrained weights cannot see a real numerics regression), but it does
+mean the off path is provably the SAME CODE, not merely unchanged output on
+one run.
+
+**RUN 2026-09-09, on battery (correctness-only, no throughput/power
+claims made from these numbers): extended `kv_quant_probe` to the three
+remaining wired families that had real installs on disk.**
+
+`gpt-oss-20b` (`~/.turbospark/models/gptoss-20b.gturbo`, family `GptOss`):
+
+| width | peak MiB | delta | ref ppl | ppl delta |
+|-------|----------|-------|---------|-----------|
+| off   | 5428.6   | (baseline) | 161002.5320 | (baseline) |
+| 2     | 5253.3   | -175.3 (-3.2%) | 626.8034 | -160375.7286 |
+| 3     | 5392.6   | -35.9 (-0.7%)  | 172868.2789 | +11865.7469 |
+| 3.5   | 5393.0   | -35.6 (-0.7%)  | 97664.5041 | -63338.0279 |
+| 4     | 5399.4   | -29.2 (-0.5%)  | 1007.1123 | -159995.4197 |
+
+All five widths finite and deterministic (the test's own pass/fail
+criteria). **The perplexity column is not a quality reading on this
+install and should not be quoted as one**: this is the exact artifact
+`reference_ppl`'s own doc comment and `crates/bench/CLAUDE.md` Gotcha 13
+describe -- the probe's assistant prefix is empty, which is correct for
+Gemma/ChatML/Mistral/Qwen and "understates badly" for Harmony, whose
+generation prompt ends mid-frame before `<|channel|>`. A five-figure,
+non-monotone perplexity that swings by orders of magnitude between
+adjacent widths (2-bit reading BETTER than off) is that framing artifact
+dominating the signal, not TurboQuant damage; the module doc's own advice
+("read a huge absolute number as that artifact rather than as TurboQuant
+damage") applies verbatim. Getting a real quality read on this family
+would need `reference_ppl` to splice in `<|channel|>final<|message|>`
+first, which this probe does not do. The footprint delta is small and
+that direction is real: `gpt-oss`'s counted peak is expert-slot-cache
+dominated (Gotcha 1/36), not KV, so quantizing KV alone should move
+little of it.
+
+`qwen3moe` (`~/.turbospark/models/qwen3moe.gturbo`, the `llama` flow's
+Qwen3-MoE half, ChatML dialect, no known framing artifact):
+
+| width | peak MiB | delta | ref ppl | ppl delta |
+|-------|----------|-------|---------|-----------|
+| off   | 2755.3   | (baseline) | 14.5988 | (baseline) |
+| 2     | 2427.0   | -328.3 (-11.9%) | 46.4347 | +31.8360 |
+| 3     | 2480.1   | -275.2 (-10.0%) | 14.2285 | -0.3702 |
+| 3.5   | 2508.6   | -246.6 (-9.0%)  | 15.4556 | +0.8569 |
+| 4     | 2519.8   | -235.4 (-8.5%)  | 14.9719 | +0.3732 |
+
+Clean and legible: all five widths finite and deterministic, footprint
+down 8.5-11.9% (bigger than gpt-oss's, still a minority of the counted
+peak on an MoE family), and the perplexity delta is small at 3/3.5/4-bit
+(-0.37 to +0.86 nats) with a visible quality cliff at 2-bit (+31.8 nats)
+-- exactly the shape the original 2026-08-15 assessment predicted for
+sub-4-bit widths on a D=128 family (the "Ideas worth taking" item 2, now
+overridden to ship anyway as opt-in). This is the third family with a
+clean, quotable real-install reading, after gemma4 and qwen38-27b (dense).
+
+`qwen4_exp` (`~/.turbospark/models/qwen4-reap288.gturbo`, 68 GiB, 288
+experts top-10, ~10 minutes to run):
+
+| width | peak MiB | delta | ref ppl | ppl delta |
+|-------|----------|-------|---------|-----------|
+| off   | 2541.6   | (baseline) | 8.7224 | (baseline) |
+| 2     | 2472.3   | -69.2 (-2.7%)  | 9.4305 | +0.7081 |
+| 3     | 2675.3   | +133.8 (+5.3%) | 8.7502 | +0.0278 |
+| 3.5   | 2677.4   | +135.8 (+5.3%) | 8.6615 | -0.0609 |
+| 4     | 2679.2   | +137.6 (+5.4%) | 8.7539 | +0.0315 |
+
+All five widths finite and deterministic. Perplexity is the tightest
+reading of any family measured so far (-0.06 to +0.71 nats), which is
+plausible: this family's QSA/GDN layer mix leaves few full-attention
+layers eligible for quantization at all (`model_io::kv_quant::layer_is_
+quantized`), so there is little KV in play to damage.
+
+**One genuine anomaly, and TWO REFUTED EXPLANATIONS OF IT** (amended
+2026-09-09): at 3, 3.5 and 4-bit widths the counted footprint INCREASES
+over `off`, the only family measured here where quantizing KV costs MiB
+rather than saving them, and only 2-bit shows the expected decrease.
+
+The first version of this paragraph offered codec overhead (per-row norms
+stored separately, the Hadamard sign vectors, group scale planes)
+outweighing the bit savings on a family with little quantizable KV. **The
+source refutes that by arithmetic and it should not be repeated.** Every
+extra allocation is KiB-scale and fixed: `KvQuantTables` is one sign
+vector plus a codebook and its midpoints per side
+(`crates/gpu/src/kv_quant_tables.rs`), and `DecodeScratch::kv_stage` and
+`tq_attn` are tens to hundreds of KiB
+(`crates/runtime/src/real_forward_types.rs`). The quantized cache
+REPLACES the FP16 one rather than shadowing it -- `crates/gpu/src/
+kv_cache.rs` sizes each layer's buffer from `kv_layer_strides`, and
+`tq_row_bytes` is strictly smaller than FP16 at every supported width. A
+few hundred KiB cannot produce +137 MiB.
+
+The tempting replacement is one-time MSL pipeline compilation, which
+`crates/bench/CLAUDE.md` Gotcha 1 measures at +139.2 MiB, within a few MiB
+of this cluster. **That does not survive the SHAPE of the data.** `bits`
+rides as a runtime uniform rather than a function constant
+(`crates/gpu/src/kv_quantize.rs` passes an empty `FunctionConstantValues`,
+and `attention_tq.rs` passes `k_bits`/`v_bits` as buffer arguments), so
+all four widths share ONE pipeline. The 2-bit row opens first among the
+quantized rows and would pay any compilation, yet 2-bit is the only row
+that goes DOWN.
+
+So the mechanism is unexplained, and the honest reason is that **the
+probe cannot separate it as written**: `off` runs exactly once, always
+first, and is never repeated, so there is no spread bound at all on a
++/-135 MiB delta. `crates/bench/CLAUDE.md` Gotcha 23's "measure the
+reference arm's own spread first" is not applied here. The discriminator
+is one line -- append a second `off` row to `rows` and reorder so `2` is
+not the first quantized open -- and until it runs, this number is neither
+a regression nor noise. It is tracked as `ROADMAP.md` Priority 0 item 6.
+
+`museGlimmer` has no install on disk (`CLAUDE.local.md`'s "gone from
+disk" list) and was not attempted.
+
+**Coverage after this session: 5 of 7 wired families have a real-install
+`kv_quant_probe` reading** (gemma4, qwen38-27b dense, gpt-oss, qwen3moe,
+qwen4_exp), all finite and deterministic at every width, with 4 of the 5
+also giving a legible perplexity signal (gpt-oss's is masked by the
+Harmony framing artifact above). The remaining "still owed" items: the
+literal two-binary `--kv-bits off` diff against a pre-feature build (the
+structural fixture-level proof above is a substitute, not that proof
+itself), a museGlimmer reading once that install exists again, and
+`AGENTS.md`'s greedy-then-sampled CLI-level coherence smoke specifically
+with `--kv-bits` on for `gpt-oss`, `qwen3moe` and `qwen4_exp` (this
+session ran the memory/perplexity probe on all three but not that smoke).
+Added 2026-09-09: `spark2_5` has neither a fixture suite nor a reading,
+and unlike museGlimmer its install is already on disk
+(`~/.turbospark/models/spark25.gturbo`, 2.4G), so nothing blocks it.
+
+## P0 verification follow-up (2026-09-09)
+
+This follow-up supersedes earlier "still owed" notes. Older single-reference
+footprint deltas above remain historical observations; their causal wording
+is not supported by a measured reference spread and should not be reused as
+a quantified savings claim.
+
+The probe now opens `off, off, off, 3, 3.5, 4, 2, off`. Every delta stays
+anchored to the FIRST off row; subsequent references no longer replace the
+baseline. The footer reports all four FP16 peaks' minimum, maximum, and
+spread. A delta inside that spread is unresolved. A larger delta warrants
+investigation, not automatic attribution to quantization. Row order and
+process history remain potential confounds; this is an observed spread,
+not a statistical confidence interval.
+
+Spark now has `real_forward_spark_kv_quant.rs`: five non-ignored Metal
+fixture cases covering off equivalence, finite/deterministic width sweeps
+past the eight-token sliding window, quantization engagement, chunked
+prefill agreement, and named batched-GEMV refusal. Eight fixture layers
+leave only layer 3 quantized. The fixture supplies Spark's own fused QKV,
+per-class RoPE, and headwise gate. All five pass on the host GPU.
+
+Mutation checks: changing the off-comparison runner to K2/V2, the second
+width-sweep runner to off, the engagement runner to off, and the chunked
+comparison runner to off each fail their respective assertion. Disabling
+the runtime's batched-GEMV refusal fails the refusal case. Every mutation
+was uniquely matched, read back, and restored; the restored suite passes.
+The first four are mismatched-configuration negative controls, not claims
+of exhaustive kernel mutation coverage.
+
+Workspace build, formatting and Clippy passed. The workspace test run
+failed in the unrelated mapped-residency family-list assertion: an existing
+working-tree `Qwen3Dense` addition makes `ModelFamily::ALL` length 11 while
+that test lists 10. Remaining test targets were run with `--no-fail-fast`;
+there were no additional failures. The concurrent family change was not
+modified. Raw commands and failures are retained in the evidence.
+
+### Literal pre-feature compatibility
+
+Built `673341e^` and `673341e` from separate source archives and separate
+Cargo target directories. On the existing Gemma install, both greedy
+(seed 1, T=0.0001, top-k 1) and sampled (seed 20260721, CLI sampling
+defaults) runs use 4096 context, 16 slots, 400 new tokens and speculation
+off. The old binary receives no KV flag; the feature binary receives
+`--kv-bits off`. Only the generated answer bytes are compared, stripping
+the explicit diagnostic preamble and keeping the answer's newline.
+
+Both comparisons are byte-identical: greedy 1895 bytes, SHA-256
+`f0484a2e3090922d560e37d64b162cbde8a244405da945239b4d8b972d4992a3`;
+sampled 1950 bytes, SHA-256
+`6b9fd953ce05d3ef12a1a887eaf75006bd77444f34b39d61550b627146b5d2f4`.
+This isolates the feature commit; it does not assert every later commit
+is byte-identical to that historical revision.
+
+### gpt-oss greedy completion remains open
+
+With K4/V4, greedy generation on the bare wetlands ask still exhausts the
+family's 3072-token budget in repetitive reasoning without a visible
+answer. The matched FP16 greedy control reaches EndOfTurn at 2170 tokens
+and emits an answer. Sampled K4/V4 reaches EndOfTurn at 1521 tokens with
+coherent prose. All use 8192 context, 16 slots, speculation off and the
+same seeds/sampling settings as the other smoke runs. This is an open
+quality finding, not a proven kernel mechanism and not a passing greedy
+smoke. Earlier 400-token runs exhausted the budget in both FP16 and K4/V4;
+those short controls could not distinguish the arms.
+
+The separate, correctly framed FP16 quality gate reproduced perplexity
+12.0801 and both digests. Its memory oracle passed all three cases at
+EndOfTurn, peak 5415.9 MiB against 5700, and replay growth 0.00 MiB. Neither
+baseline gate establishes the quantized greedy arm's quality. Do not
+substitute the CLI process's zero exit status for a coherence verdict.
+
+### Qwen3-MoE smoke completed
+
+Reinstalled the catalog's Qwen3-30B-A3B GGUF Q4_K_M into a task-owned
+path. K4/V4, 4096 context, 16 slots and speculation off: the initial
+400-token runs were coherent but truncated. With the family's 1024-token
+budget, greedy (seed 1, T=0.0001, top-k 1) reaches EndOfTurn at 540 tokens;
+sampled (seed 20260721, CLI defaults) at 620. Both answers remain coherent.
+The quality gate reproduces perplexity 14.5988 and both frozen digests.
+The memory oracle passes all three cases at EndOfTurn, peak 2740.2 MiB
+against 2900, replay growth 0.22 MiB. The task-owned install was removed
+only after its metadata, commands, outputs and results were saved.
+
+### Spark real-install probe
+
+Apple M4 Max, existing `spark25.gturbo`, frozen 8192 context, 16 slots,
+48 greedy decode steps per probe row. No concurrent inference run was
+started by this session. Raw run took 135 seconds; all rows finite and all
+quantized replays deterministic.
+
+| width | peak MiB | delta from first off MiB | unframed ref ppl |
+| --- | ---: | ---: | ---: |
+| off | 573.5 | baseline | 12.0190 |
+| off | 582.1 | +8.6 | 12.0190 |
+| off | 592.5 | +19.1 | 12.0190 |
+| 3 | 395.2 | -178.3 | 12.2784 |
+| 3.5 | 419.8 | -153.7 | 12.1145 |
+| 4 | 440.1 | -133.4 | 12.0312 |
+| 2 | 420.4 | -153.1 | 12.6491 |
+| off | 627.6 | +54.1 | 12.0190 |
+
+FP16 reference spread is **54.1 MiB**. Every quantized row is below every
+FP16 reference in this run, but the non-monotone width ordering is not a
+ranking of codec memory efficiency. The probe leaves Spark's think frame
+open; its perplexity is not the answer-slot reading from
+`spark_quality_gate`. That separate gate reproduced **12.6162**, both
+frozen digests, and the constrained-cache digest unchanged.
+
+Greedy and sampled CLI smoke with `--kv-bits 4`, 8192 context, 16 slots,
+400-token budget, seeds 1/20260721 and speculation off produced coherent
+wetlands explanations, both reaching EndOfTurn (377/400 new tokens).
+The memory oracle also passed: session peak 572.9 MiB against 700 MiB,
+all three protocol cases at EndOfTurn, replay growth 0.00 MiB. Full commands
+and output are retained in the [verification evidence](verification/p0-2026-09-09.json).
+
+### museGlimmer real-install probe
+
+Restored `mlx-community/Muse-Glimmer-30B-4bit` at revision
+`3e7677d7a40d348a3daba263a2b1c0aa41910710` into a task-owned temporary
+install (14.6 GiB). Apple M4 Max on AC, frozen 8192 context, 16 requested
+slots, 48 greedy steps per row, no concurrent inference. The revised
+probe passed in 343.60 seconds, all rows finite and quantized replays
+deterministic.
+
+| width | peak MiB | delta from first off MiB | unframed ref ppl |
+| --- | ---: | ---: | ---: |
+| off | 544.4 | baseline | 6.5606 |
+| off | 465.8 | -78.6 | 6.5606 |
+| off | 514.1 | -30.3 | 6.5606 |
+| 3 | 452.8 | -91.6 | 6.6954 |
+| 3.5 | 428.0 | -116.4 | 6.5963 |
+| 4 | 399.8 | -144.5 | 6.6255 |
+| 2 | 384.2 | -160.2 | 6.6825 |
+| off | 489.5 | -54.9 | 6.5606 |
+
+FP16 minimum/maximum/spread: **465.8 / 544.4 / 78.6 MiB**. All quantized
+reductions exceed this observed spread, warranting further attribution
+work rather than establishing exact savings or a width ranking. The
+unframed perplexity here differs from the answer-slot quality gate: this
+probe does not append museGlimmer's `to=user` assistant prefix.
+
+The `--kv-bits 4` greedy/sampled CLI pair used 8192 context, 2048 new-token
+budget, 16 slots, speculation off and seeds 1/20260721. Both produced
+coherent wetlands answers and reached EndOfTurn at 995/857 new tokens.
+The frozen quality gate reproduced perplexity 6.2810 and the greedy and
+constrained-cache digests, but FAILED its sampled golden: actual
+`4125a2a664f8df3e6af1ed7c5a497d8c433c952540a1be010bb878e5baadc1c9`,
+expected `b8349cd1a303346812d3262e32020158eef6c5c15583dfa25dc7599e23fb508a`.
+This gate runs with KV quantization OFF. Its failure is retained separately
+from the successful KV4 smoke; the golden is not changed.
+
+A second current-source run and an isolated `673341e` build both reproduced
+the same actual sampled digest, perplexity and greedy digest. That excludes
+this task's verification edits and later working-tree changes as the source
+of this mismatch, but does not establish its underlying cause. The sampled
+golden remains an open finding. The memory oracle passed all three cases
+at EndOfTurn, peak 533.0 MiB against 650 MiB, replay growth 0.00 MiB.
+After saving the raw logs and checkpoint metadata, only this task-created
+museGlimmer install was removed.
+
+### Qwen4 REAP-288 spread-controlled probe
+
+Restored `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit` at revision
+`668f31bcc56bf9400e64c9463445eee47597c2d9` into a task-owned 68.1 GiB
+install. Apple M4 Max on AC, frozen 2048 context, 16 slots, 48 greedy steps
+per row. The revised probe passed in 464.89 seconds: every row finite,
+every quantized replay deterministic.
+
+| width | peak MiB | delta from first off MiB | ref ppl |
+| --- | ---: | ---: | ---: |
+| off | 2527.4 | baseline | 8.7224 |
+| off | 2503.8 | -23.6 | 8.7224 |
+| off | 2572.1 | +44.6 | 8.7224 |
+| 3 | 2537.3 | +9.9 | 8.7502 |
+| 3.5 | 2538.7 | +11.3 | 8.6615 |
+| 4 | 2540.3 | +12.9 | 8.7539 |
+| 2 | 2535.3 | +7.9 | 9.4305 |
+| off | 2575.5 | +48.0 | 8.7224 |
+
+FP16 minimum/maximum/spread: **2503.8 / 2575.5 / 71.6 MiB**, independently
+rounded from raw bytes. Every quantized delta is within that spread and
+every quantized peak is inside the reference range. These differences are
+**unresolved**. The earlier approximately +135 MiB pattern at 3/3.5/4-bit
+does not reproduce under this row order, but that does not identify its
+cause or establish a quantization memory win. Both earlier refuted causal
+explanations remain refuted; no production policy or frozen baseline changes.
+
+The KV4 CLI pair used 4096 context, 1024 new-token budget, 16 slots,
+speculation off and seeds 1/20260721. Both reached EndOfTurn (499/542 new
+tokens). Greedy remained readable, but the sampled answer explicitly denied
+that coastal wetlands reduce flood damage. A matched `--kv-bits off`
+sampled control completed at 676 tokens and kept the correct overall premise,
+while also making unsupported numerical claims. Retain this as a sampled
+answer-quality concern from one matched pair, not a clean smoke pass or a
+proven general quantization regression.
+
+The separate frozen FP16 quality gate PASSED: perplexity 8.7224, greedy
+digest `9f9ed49203dda1aad1b379eb503a3dd8b565d53ccc38ff417fb35e43ed9e0795`,
+sampled `4cf6da5560936e306df09fa09bca7bd19950429e910cee2b66c93c8ed0335772`.
+The family has no legal constrained-cache arm below 16 slots. Its memory
+oracle also passed at the frozen 2048 window: both supported protocol cases
+at EndOfTurn, peak 2514.4 MiB against 3000 MiB, replay growth +0.23 MiB.
+Neither baseline gate uses KV quantization and neither dismisses the
+sampled KV4 answer concern.
+After the phase measurements documented in `QWEN4_EXP.md` completed, raw
+logs and checkpoint metadata were saved and only the task-created Qwen4
+install was removed. All pre-existing user installs were retained.
 
 ## The original assessment (2026-08-15)
 
@@ -381,13 +723,13 @@ other than off, which nothing here proposes today:
   today it is third), the shipped kernel is already the throughput lever;
   nothing further needs building.
 
-## Real-model verification owed
+## Real-model verification policy
 
-Everything above the codec's own unit and parity tests is fixture-level.
-Before quoting a memory or quality number for any `--kv-bits` width on a
-real install: run `crates/bench/tests/kv_quant_probe.rs`
+Real-install results and remaining failures are recorded in the dated
+sections above. Before quoting a new memory or quality number for any
+`--kv-bits` width: run `crates/bench/tests/kv_quant_probe.rs`
 (`TURBOSPARK_KV_QUANT_INSTALL_DIR=<install> cargo test -p turbospark-bench
 --test kv_quant_probe --release -- --ignored --nocapture`) and the
 standard greedy-then-sampled real-model smoke from `AGENTS.md` with
-`--kv-bits` set, per family. Neither has been run from this sandboxed
-development environment, which has no real model installs.
+`--kv-bits` set, per family. Interpret footprint against the repeated-off
+spread and retain framing limitations and failed gates in the report.

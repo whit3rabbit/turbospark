@@ -47,11 +47,17 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // its only small per-layer tensor is the headwise `attn_gate`, which
         // the flow reads as FP16 and which takes the BF16 default like every
         // other small tensor.
+        //
+        // Dense `qwen3` is DENSE the same way (`num_experts == 0`) and its
+        // real GGUFs ARE walked by this function -- unlike `qwen3_5` above,
+        // this is not an unreached arm. There is simply no router or
+        // shared-expert gate tensor in the file to transcode.
         ModelFamily::DeepseekV4Flash
         | ModelFamily::QwenGdnDense
         | ModelFamily::MuseGlimmer
         | ModelFamily::Qwen4Exp
-        | ModelFamily::Spark25 => &[],
+        | ModelFamily::Spark25
+        | ModelFamily::Qwen3Dense => &[],
     }
 }
 

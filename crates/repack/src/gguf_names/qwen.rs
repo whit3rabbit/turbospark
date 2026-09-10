@@ -142,3 +142,30 @@ pub fn map_qwen3moe_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
         _ => None,
     }
 }
+
+/// Dense `qwen3` (`ModelFamily::Qwen3Dense`): [`map_qwen3moe_layer`]'s table
+/// minus the four routed-expert rows, plus plain `ffn_gate`/`ffn_up`/
+/// `ffn_down`. Confirmed structurally against llama.cpp's own
+/// `gguf-py/gguf/constants.py`: `MODEL_ARCH.QWEN3`'s tensor list is
+/// `MODEL_ARCH.QWEN3MOE`'s list with `FFN_GATE_INP`/`FFN_GATE_EXPS`/
+/// `FFN_UP_EXPS`/`FFN_DOWN_EXPS` removed and plain `FFN_GATE`/`FFN_DOWN`/
+/// `FFN_UP` added -- nothing else differs, including the two QK-norm rows
+/// (`docs/QWEN3_PHASE0.md`).
+pub fn map_qwen3_dense_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
+    let p = layer_prefix(layer);
+    let resident = |tail: &str| Some(GgufMapping::Resident(format!("{p}{tail}")));
+    match suffix {
+        "attn_q.weight" => resident("self_attn.q_proj.weight"),
+        "attn_k.weight" => resident("self_attn.k_proj.weight"),
+        "attn_v.weight" => resident("self_attn.v_proj.weight"),
+        "attn_output.weight" => resident("self_attn.o_proj.weight"),
+        "attn_q_norm.weight" => resident("self_attn.q_norm.weight"),
+        "attn_k_norm.weight" => resident("self_attn.k_norm.weight"),
+        "attn_norm.weight" => resident("input_layernorm.weight"),
+        "ffn_norm.weight" => resident("post_attention_layernorm.weight"),
+        "ffn_gate.weight" => resident("mlp.gate_proj.weight"),
+        "ffn_up.weight" => resident("mlp.up_proj.weight"),
+        "ffn_down.weight" => resident("mlp.down_proj.weight"),
+        _ => None,
+    }
+}

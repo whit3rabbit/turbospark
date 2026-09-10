@@ -284,8 +284,10 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         F::QwenGdnMoe | F::QwenGdnDense => true,
         // `families/llama/`, both halves: Mixtral's routed experts and the
         // dense Llama / Mistral FFN join at the same boundary, and
-        // `Qwen3Moe` runs the same flow.
-        F::Llama | F::Qwen3Moe => true,
+        // `Qwen3Moe` runs the same flow. Dense `qwen3` runs the same flow
+        // too (`docs/QWEN3_PHASE0.md`) and joins at the same dense-FFN
+        // boundary `Llama`'s own dense half does.
+        F::Llama | F::Qwen3Moe | F::Qwen3Dense => true,
         // `families/gemma4/`, THREE call sites: the sequential/decode routed
         // tail (`mod.rs`), the chunked prefill driver's per-token routed
         // loop (`prefill.rs`, which calls the same tail function and so
