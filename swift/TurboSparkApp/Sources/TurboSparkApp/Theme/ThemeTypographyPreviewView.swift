@@ -22,11 +22,11 @@ public struct ThemeTypographyPreviewView: View {
     }
 
     private var bgFillColor: Color {
-        isDark ? Color(red: 0.11, green: 0.11, blue: 0.12) : Color(red: 0.96, green: 0.96, blue: 0.97)
+        manager.activeBackgroundColor(isDark: isDark)
     }
 
     private var cardBgColor: Color {
-        isDark ? Color(red: 0.16, green: 0.16, blue: 0.18) : Color.white
+        manager.activeBackgroundColor(isDark: isDark)
     }
 
     private var accentColor: Color {

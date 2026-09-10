@@ -104,6 +104,7 @@ pub(crate) fn build_manifest_json(
             "attentionScale": arch.attention_scale,
             "embeddingScaledBySqrtHidden": arch.embedding_scaled_by_sqrt_hidden,
             "routerScaled": arch.router_scaled,
+            "routerScoringFunc": arch.router_scoring_func,
             "ffnSandwichNorms": arch.ffn_sandwich_norms,
             "sharedExpertGated": arch.shared_expert_gated,
             "ropeNeoxSubdim": arch.rope_neox_subdim,

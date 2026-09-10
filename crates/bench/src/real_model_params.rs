@@ -79,6 +79,12 @@ const SPARK_MAX_NEW: u32 = 2048;
 /// occasions those `#[ignore]`d targets run with an install present.
 pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
     match family {
+        // Provisional reasoning budget; freeze only after real completions.
+        ModelFamily::MiniMaxM2 => ProtocolParameters {
+            family,
+            max_context: 8192,
+            max_new: 4096,
+        },
         // The shared protocol, and what every frozen row in
         // `docs/BENCHMARKS.md` was measured at.
         // `qwen3_5` is here on the TOKENIZER's evidence rather than on a

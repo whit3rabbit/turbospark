@@ -316,20 +316,17 @@ public struct AgentsSettingsPaneView: View {
                 // Configuration metadata
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Configuration", bundle: .module)
-                    .settingsControl("Configuration", pane: .agents, timing: .nextTurn)
                         .themedFont(.base, weight: .semibold)
 
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                         GridRow {
                             Text("Agent Identifier:", bundle: .module)
-                    .settingsControl("Agent Identifier:", pane: .agents, timing: .nextTurn)
                                 .foregroundStyle(.appSecondary)
                             Text("`\(agent.name)`", bundle: .module)
                                 .themedCode(.base)
                         }
                         GridRow {
                             Text("Max Turns:", bundle: .module)
-                    .settingsControl("Max Turns:", pane: .agents, timing: .nextTurn)
                                 .foregroundStyle(.appSecondary)
                             Text("\(agent.maxTurns)", bundle: .module)
                         }
@@ -340,7 +337,6 @@ public struct AgentsSettingsPaneView: View {
                         if let disallowed = agent.disallowedTools, !disallowed.isEmpty {
                             GridRow {
                                 Text("Disallowed Tools:", bundle: .module)
-                    .settingsControl("Disallowed Tools:", pane: .agents, timing: .nextTurn)
                                     .foregroundStyle(.appSecondary)
                                 Text(disallowed.joined(separator: ", "))
                                     .themedFont(.small)
@@ -350,7 +346,6 @@ public struct AgentsSettingsPaneView: View {
                         if let allowed = agent.tools, !allowed.isEmpty {
                             GridRow {
                                 Text("Allowed Tools:", bundle: .module)
-                    .settingsControl("Allowed Tools:", pane: .agents, timing: .nextTurn)
                                     .foregroundStyle(.appSecondary)
                                 Text(allowed.joined(separator: ", "))
                                     .themedFont(.small)
@@ -359,7 +354,6 @@ public struct AgentsSettingsPaneView: View {
                         if let path = agent.filePath {
                             GridRow {
                                 Text("File Location:", bundle: .module)
-                    .settingsControl("File Location:", pane: .agents, timing: .nextTurn)
                                     .foregroundStyle(.appSecondary)
                                 Text(path)
                                     .themedFont(.small)
@@ -375,7 +369,6 @@ public struct AgentsSettingsPaneView: View {
                 // System Prompt / Instructions
                 VStack(alignment: .leading, spacing: 8) {
                     Text("System Instructions", bundle: .module)
-                    .settingsControl("System Instructions", pane: .agents, timing: .nextTurn)
                         .themedFont(.base, weight: .semibold)
 
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -394,7 +387,6 @@ public struct AgentsSettingsPaneView: View {
                 if agent.isEnabled {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("REPL Chat Invocation", bundle: .module)
-                    .settingsControl("REPL Chat Invocation", pane: .agents, timing: .nextTurn)
                             .themedFont(.small, weight: .bold)
                         Text("You can invoke this subagent in chat or via slash command with clean context isolation:", bundle: .module)
                             .themedFont(.small)
@@ -418,7 +410,6 @@ public struct AgentsSettingsPaneView: View {
                 .themedFont(.display)
                 .foregroundStyle(.tertiary)
             Text("No Agents Found", bundle: .module)
-                    .settingsControl("No Agents Found", pane: .agents, timing: .nextTurn)
                 .themedFont(.title3, weight: .bold)
             Text("No agent definitions match the selected scope filter.", bundle: .module)
                 .themedFont(.base)

@@ -218,3 +218,34 @@ final class PluginMarketplaceTests: XCTestCase {
         XCTAssertEqual(records.first?.installPath, "/b")
     }
 }
+
+extension PluginMarketplaceTests {
+    func testLedgerWriteFailureRollsBackNewAndReplacementCaches() async throws {
+        let source = try makeLocalPlugin(name: "rollback", version: "1")
+        let entry = PluginManifestParser.MarketplaceEntry(name: "rollback",
+            sourceValue: ["type": "directory", "path": source.path], strict: true, raw: ["name": "rollback"])
+        // A directory at the ledger path makes the atomic file write fail
+        // without relying on host identity or permission escalation.
+        try FileManager.default.createDirectory(at: ledger.ledgerURL, withIntermediateDirectories: true)
+        let cache = marketplaceManager.installCacheDirectory.appendingPathComponent("test/rollback/1")
+        for replacing in [false, true] {
+            if replacing {
+                try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+                try Data("previous install".utf8).write(to: cache.appendingPathComponent("marker"))
+            }
+            do {
+                _ = try await marketplaceManager.install(entry: entry, marketplaceName: "test",
+                    checkoutDirectory: nil, scope: "project", projectRootURL: root.appendingPathComponent("project"))
+                XCTFail("An installation without a persisted scope must fail")
+            } catch {
+                XCTAssertEqual((error as NSError).domain, NSCocoaErrorDomain)
+            }
+            if replacing {
+                XCTAssertEqual(try Data(contentsOf: cache.appendingPathComponent("marker")), Data("previous install".utf8))
+                XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appendingPathComponent("skills").path))
+            } else {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path))
+            }
+        }
+    }
+}

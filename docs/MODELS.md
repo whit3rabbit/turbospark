@@ -321,15 +321,15 @@ the same schema and the same validation. `list` marks the rows it introduced.
 cargo test -p turbospark-catalog --test catalog_network --release -- --ignored --nocapture
 ```
 
-A file list and a HEAD per row, ~26 seconds for the whole table, downloads
-nothing. It checks that every sidecar named in a row exists in the repository
-that row names for it, that the weights file exists at the size recorded, and
-that every GGUF's `general.architecture` still resolves to the family the row
-claims.
+Reads file lists, HEAD responses, and GGUF headers, without downloading weight
+payloads. It checks that every named sidecar exists, that the complete weights
+set exists at the recorded size, and that every GGUF's `general.architecture`
+still resolves to the row's family. Split GGUF rows name the first shard and
+record the total `download_bytes` across all shards; verification uses the
+same shard discovery and validation as probe and install.
 
-**Why the size matters more than it looks.** Every GGUF row is pinned at
-`main`, because those publishers offer nothing else. A floating row's frozen
-numbers stop meaning anything the moment the file is re-uploaded, and
+**Why the size matters more than it looks.** For a GGUF row pinned at
+`main`, frozen numbers stop meaning anything the moment the file is re-uploaded, and
 `download_bytes` is the only fingerprint that would notice. That is why the
 tolerance is 2% and why every figure in the table was read off this test's own
 HEAD requests: an earlier draft carried round numbers at 10%, under which

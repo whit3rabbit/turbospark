@@ -304,6 +304,7 @@ impl MfTokenizer {
             // renderer would have to guess, and guessing one wrong is fluent
             // output that is not an answer. A real install always ships the
             // template; this refusal is what a MALFORMED install gets.
+            ChatDialect::MiniMax => Err(TokenizerError::UnsupportedForDialect("MiniMax requires its checkpoint chat template".into())),
             ChatDialect::Spark => Err(TokenizerError::UnsupportedForDialect(
                 "spark2_5 has no fallback renderer; the install must carry its own \
                  chat_template.jinja (or tokenizer_config.json's chat_template key)"
@@ -348,6 +349,7 @@ impl MfTokenizer {
             // never trained to continue is the one frame that reads as
             // malformed. `prompt_opens_thought` keys on the rendered tag, so
             // the structured decoder lands in Thought to match.
+            ChatDialect::MiniMax => format!("]~b]user\n{content}[e~[\n]~b]ai\n<think>\n"),
             ChatDialect::Spark => format!(
                 "{SPARK_BOS_MARK}{SPARK_USER_MARK}{content}{SPARK_EOS_MARK}\
                  {SPARK_BOS_MARK}{SPARK_BOT_MARK}<think>"

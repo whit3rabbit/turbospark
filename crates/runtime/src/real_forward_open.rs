@@ -87,7 +87,12 @@ impl RealForwardRunner {
         if let Some(entry) = index
             .entries
             .values()
-            .filter(|e| !readable_resident_dtype(&e.name, e.dtype))
+            .filter(|e| {
+                !readable_resident_dtype(&e.name, e.dtype)
+                    && !(expecting.family == model_io::ModelFamily::MiniMaxM2
+                        && e.dtype == 3
+                        && crate::families::llama::router::fp32_tensor(&e.name))
+            })
             .min_by_key(|e| &e.name)
         {
             return Err(RealForwardError::Unsupported(format!(
@@ -310,7 +315,8 @@ impl RealForwardRunner {
             // them together (`docs/QWEN3_PHASE0.md`).
             model_io::ModelFamily::Llama
             | model_io::ModelFamily::Qwen3Moe
-            | model_io::ModelFamily::Qwen3Dense => {
+            | model_io::ModelFamily::Qwen3Dense
+            | model_io::ModelFamily::MiniMaxM2 => {
                 runner.real_llama = Some(crate::families::llama::RealLlamaState::build(
                     &mut runner.context,
                     &runner.weights,

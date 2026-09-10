@@ -171,7 +171,13 @@ pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
             && declared
                 .iter()
                 .all(|t| EXECUTABLE_GGUF_TYPES.contains(&t.to_lowercase().as_str()));
-        if !(affine || affine_1bit || affine_2bit || gguf) {
+        let raw_router = name == "router"
+            && slot.scheme == "raw"
+            && slot.weight_bits == 32
+            && slot.scale_type == "none"
+            && slot.bias_type == "none"
+            && slot.group_size == 0;
+        if !(affine || affine_1bit || affine_2bit || gguf || raw_router) {
             let detail = match slot.scheme.to_lowercase().as_str() {
                 // An affine slot has four fields that can each be wrong and a
                 // bare "unsupported" names none of them. It matters most on

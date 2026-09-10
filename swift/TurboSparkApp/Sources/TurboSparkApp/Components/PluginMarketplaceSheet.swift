@@ -298,17 +298,20 @@ struct PluginMarketplaceSheet: View {
         guard let name = selectedMarketplaceName,
             let source = marketplaces[name]
         else { return }
+        let targetProjectID = projectID
         isLoading = true
         loadError = nil
-        defer { isLoading = false }
+        defer { if targetProjectID == projectID && name == selectedMarketplaceName { isLoading = false } }
         do {
             // Refresh re-clones/pulls; a plain selection reuses the cache
             // when the source is already checked out.
             let checkout = try await PluginMarketplaceManager.shared.fetchMarketplace(
                 name: name, source: source)
+            guard targetProjectID == projectID && name == selectedMarketplaceName else { return }
             entries = checkout.manifest.entries
             checkoutDirectory = checkout.directory
         } catch {
+            guard targetProjectID == projectID && name == selectedMarketplaceName else { return }
             loadError = error.localizedDescription
             entries = []
         }
@@ -323,14 +326,19 @@ struct PluginMarketplaceSheet: View {
     }
 
     private func install(entry: PluginManifestParser.MarketplaceEntry, scope: PluginInstallScope) {
+        guard projectID == nil || scopedProject != nil else {
+            model.showToast(String(localized: "The target project no longer exists.", bundle: .module), style: .error)
+            return
+        }
         guard let marketplaceName = selectedMarketplaceName else { return }
+        let targetCheckout = checkoutDirectory
         isLoading = true
         Task {
             defer { isLoading = false }
             let outcome = await model.installPlugin(
                 entry: entry,
                 marketplaceName: marketplaceName,
-                checkoutDirectory: checkoutDirectory,
+                checkoutDirectory: targetCheckout,
                 scope: scope)
             if outcome != nil {
                 refreshInstalledIDs()

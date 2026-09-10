@@ -31,7 +31,7 @@ public struct ThemeCodePreviewView: View {
     }
 
     private var bgFillColor: Color {
-        isDark ? Color(red: 0.11, green: 0.11, blue: 0.12) : Color(red: 0.96, green: 0.96, blue: 0.97)
+        manager.activeBackgroundColor(isDark: isDark)
     }
 
     private var redDiffBg: Color {
@@ -106,15 +106,15 @@ public struct ThemeCodePreviewView: View {
             if let keyword = keyword, let typeName = typeName {
                 HStack(spacing: 4) {
                     Text(keyword).foregroundStyle(Color.purple)
-                    Text(verbatim: "themePreview:").foregroundStyle(isDark ? Color.white : Color.black)
+                    Text(verbatim: "themePreview:").foregroundStyle(manager.activeForegroundColor(isDark: isDark))
                     Text(typeName).foregroundStyle(Color.blue)
-                    Text(verbatim: "= {").foregroundStyle(isDark ? Color.white : Color.black)
+                    Text(verbatim: "= {").foregroundStyle(manager.activeForegroundColor(isDark: isDark))
                 }
             } else if isProperty {
                 formattedPropertyLine(text: text, valueColor: valueColor)
             } else {
                 Text(text)
-                    .foregroundStyle(isDark ? Color.white.opacity(0.9) : Color.black.opacity(0.85))
+                    .foregroundStyle(manager.activeForegroundColor(isDark: isDark))
             }
             Spacer(minLength: 0)
         }
@@ -168,7 +168,7 @@ public struct ThemeCodePreviewView: View {
                     .foregroundStyle(valueColor ?? (isDark ? Color(red: 0.45, green: 0.85, blue: 0.55) : Color(red: 0.15, green: 0.6, blue: 0.25)))
             } else {
                 Text(text)
-                    .foregroundStyle(isDark ? Color.white.opacity(0.9) : Color.black.opacity(0.85))
+                    .foregroundStyle(manager.activeForegroundColor(isDark: isDark))
             }
         }
     }

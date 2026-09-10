@@ -73,7 +73,6 @@ public struct SafetySettingsPaneView: View {
             }
             .padding(.vertical, 2)
         }
-            .settingsControl("What this is", pane: .safety, timing: .nextTurn)
     }
 
     private var activationSection: some View {
@@ -123,7 +122,6 @@ public struct SafetySettingsPaneView: View {
         Section("Directions") {
             if model.steeringPresets.isEmpty {
                 Text("No directions registered.", bundle: .module)
-                    .settingsControl("No directions registered.", pane: .safety, timing: .nextTurn)
                     .foregroundStyle(.appSecondary)
             }
             ForEach(model.steeringPresets) { preset in
@@ -168,7 +166,6 @@ public struct SafetySettingsPaneView: View {
                 LabeledContent("Steering", value: "Off")
             }
         }
-            .settingsControl("Loaded model", pane: .safety, timing: .nextTurn)
     }
 
     private var steeringBinding: Binding<Bool> {

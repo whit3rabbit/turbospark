@@ -222,11 +222,13 @@ pub enum ModelFamily {
     /// matrix -- is composition over existing kernels. Facts:
     /// `docs/SPARK_PHASE0.md`.
     Spark25,
+    /// MiniMax-M2: full GQA with whole-projection Q/K norms and sigmoid MoE.
+    MiniMaxM2,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 11 model families.
-    pub const ALL: [ModelFamily; 11] = [
+    /// Exhaustive list of all 12 model families.
+    pub const ALL: [ModelFamily; 12] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -238,6 +240,7 @@ impl ModelFamily {
         ModelFamily::Qwen4Exp,
         ModelFamily::Spark25,
         ModelFamily::Qwen3Dense,
+        ModelFamily::MiniMaxM2,
     ];
 
     /// Returns static string identifier for the model family.
@@ -276,6 +279,7 @@ impl ModelFamily {
             // Also new, and matches the GGUF `general.architecture` string
             // AND the HF `model_type`, which agree ("qwen3").
             ModelFamily::Qwen3Dense => "qwen3",
+            ModelFamily::MiniMaxM2 => "minimax_m2",
         }
     }
 
@@ -293,6 +297,7 @@ impl ModelFamily {
             "qwen4exp" => Some(ModelFamily::Qwen4Exp),
             "spark2_5" => Some(ModelFamily::Spark25),
             "qwen3" => Some(ModelFamily::Qwen3Dense),
+            "minimax_m2" => Some(ModelFamily::MiniMaxM2),
             _ => None,
         }
     }
@@ -317,9 +322,10 @@ mod tests {
                 ModelFamily::Qwen4Exp => 8,
                 ModelFamily::Spark25 => 9,
                 ModelFamily::Qwen3Dense => 10,
+                ModelFamily::MiniMaxM2 => 11,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 11);
+        assert_eq!(ModelFamily::ALL.len(), 12);
     }
 }

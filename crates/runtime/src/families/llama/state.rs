@@ -2,11 +2,8 @@
 //! allocates once when it opens a `llama`-architecture install (ROADMAP
 //! Phase M2).
 //!
-//! Much smaller than its Gemma and Qwen siblings, and the absences are the
-//! point: no recurrent state, no packed q/gate split, no shared expert, no
-//! per-head norms, no logit softcap. What is left is the unit router scales
-//! (this architecture has neither a `router.scale` nor a `per_expert_scale`,
-//! exactly as Qwen does not) plus two pieces of per-token scratch.
+//! Shared full-attention state, including family-selected Q/K normalization
+//! and router scoring. No recurrent state, output gates, or shared expert.
 
 use model_io::{ArchConfig, ModelFamily, ResidentIndex};
 
@@ -18,17 +15,23 @@ use crate::real_forward_utils::entry;
 /// BF16 bit pattern for 1.0.
 const BF16_ONE: u16 = 0x3F80;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum QkNorm {
+    None,
+    PerHead,
+    Projection,
+}
+
 pub(crate) struct RealLlamaState {
-    /// Rotated PAIRS per head: `head_dim * partial_rotary_factor / 2`, which
-    /// at this architecture's `partial_rotary_factor = 1.0` is `head_dim / 2`
-    /// -- i.e. default full-head NeoX, the whole head rotated.
+    /// Rotated pairs per head. MiniMax rotates only the first 64 elements;
+    /// the other families use the full head width.
     pub(crate) rotated_pairs: u32,
-    /// Norm q and k PER HEAD, with a learned `[head_dim]` weight, before
-    /// RoPE. False for the `llama` architecture (Mixtral norms neither),
-    /// true for `qwen3moe`. Derived from the FAMILY and never from whether
+    /// Family-selected Q/K normalization before RoPE. MiniMax spans the
+    /// entire projection; Qwen3 uses independent heads. Never inferred from whether
     /// the tensors happen to be present: a name probe cannot tell a model
     /// that has no q-norm from an install that lost one.
-    pub(crate) qk_norm: bool,
+    pub(super) qk_norm: QkNorm,
+    pub(super) correction_bias: Vec<Vec<f32>>,
     /// RMS epsilon. `llama` publishes 1e-5 and `qwen3moe` 1e-6, and this is
     /// not an `ArchConfig` field, so the family carries it. Small enough to
     /// be invisible in a smoke test and large enough to move a perplexity
@@ -78,6 +81,9 @@ impl RealLlamaState {
         arch: &ArchConfig,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
+        if arch.family == ModelFamily::MiniMaxM2 && arch.tie_word_embeddings {
+            return unsupported("MiniMax requires an untied output head".into());
+        }
 
         // Every behavioural extension this architecture does NOT have.
         // Checked rather than assumed, because each one is a manifest field
@@ -88,7 +94,7 @@ impl RealLlamaState {
             || arch.embedding_scaled_by_sqrt_hidden
             || arch.attn_output_gate
             || arch.shared_expert_gated
-            || arch.rope_neox_subdim
+            || (arch.rope_neox_subdim && arch.family != ModelFamily::MiniMaxM2)
             || arch.attention_k_eq_v
         {
             return unsupported(
@@ -164,8 +170,13 @@ impl RealLlamaState {
         // the FAMILY rather than sniffed, per Gotcha 12's rule: two
         // architectures that share a tensor-name contract cannot be told
         // apart by their tensor names.
-        let qk_norm = arch.family == ModelFamily::Qwen3Moe;
-        let rms_eps = if qk_norm { 1e-6 } else { 1e-5 };
+        let qk_norm = match arch.family {
+            ModelFamily::MiniMaxM2 => QkNorm::Projection,
+            ModelFamily::Qwen3Moe | ModelFamily::Qwen3Dense => QkNorm::PerHead,
+            _ => QkNorm::None,
+        };
+        let rms_eps = if qk_norm != QkNorm::None { 1e-6 } else { 1e-5 };
+        let mut correction_bias = Vec::new();
 
         // Fail at open, not at token 1.
         let hidden = arch.hidden_size as usize;
@@ -197,10 +208,48 @@ impl RealLlamaState {
             for suffix in ffn {
                 entry(index, &layer_tensor(layer, suffix))?;
             }
-            if qk_norm {
-                for suffix in ["self_attn.q_norm.weight", "self_attn.k_norm.weight"] {
-                    entry(index, &layer_tensor(layer, suffix))?;
+            if qk_norm != QkNorm::None {
+                for (suffix, heads) in [
+                    ("self_attn.q_norm.weight", arch.num_heads),
+                    ("self_attn.k_norm.weight", arch.num_full_kv_heads),
+                ] {
+                    let width = head_dim as usize
+                        * if qk_norm == QkNorm::Projection {
+                            heads as usize
+                        } else {
+                            1
+                        };
+                    crate::real_forward_utils::norm_view(
+                        weights,
+                        index,
+                        &layer_tensor(layer, suffix),
+                        width,
+                    )?;
                 }
+            }
+        }
+        if arch.family == ModelFamily::MiniMaxM2 {
+            if dense || arch.router_scoring_func != "sigmoid" || !arch.rope_neox_subdim {
+                return unsupported("MiniMax requires sigmoid MoE and subdimension RoPE".into());
+            }
+            for layer in 0..arch.num_layers as usize {
+                for (tail, count) in [
+                    ("mlp.gate.weight", hidden * num_experts),
+                    ("mlp.e_score_correction_bias", num_experts),
+                ] {
+                    let name = layer_tensor(layer, tail);
+                    let e = entry(index, &name)?;
+                    if e.dtype != 3 || e.size_bytes as usize != count * 4 {
+                        return unsupported(format!("{name}: expected FP32 with {count} elements"));
+                    }
+                }
+                let e = entry(index, &layer_tensor(layer, "mlp.e_score_correction_bias"))?;
+                let off = weights.gpu_offset(e.file_offset - index.header.index_size) as usize;
+                let bias = gpu::read_f32_buffer_at(weights.buffer(), off / 4, num_experts);
+                if bias.iter().any(|v| !v.is_finite()) {
+                    return unsupported("non-finite MiniMax correction bias".into());
+                }
+                correction_bias.push(bias);
             }
         }
         let head_name = if arch.tie_word_embeddings {
@@ -222,6 +271,7 @@ impl RealLlamaState {
             qk_norm,
             rms_eps,
             router_ones,
+            correction_bias,
             dense,
             per_expert_ones: vec![1.0; num_experts],
             // `new_output_buffer(0)` is not a thing worth finding out about

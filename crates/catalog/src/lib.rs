@@ -23,6 +23,7 @@
 mod auth;
 mod catalog;
 mod entry;
+mod gguf_source;
 mod hf;
 mod install;
 mod probe;

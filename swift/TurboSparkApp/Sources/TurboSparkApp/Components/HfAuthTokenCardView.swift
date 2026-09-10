@@ -53,6 +53,7 @@ public struct HfAuthTokenCardView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text("Hugging Face API Token", bundle: .module)
+                .settingsControl("Hugging Face API Token", pane: .models, timing: .action)
                         .font(theme.ui(.base, weight: .semibold))
                     if savedToken != nil {
                         Text("Configured", bundle: .module)
@@ -210,6 +211,7 @@ public struct HfAuthTokenCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Mirror Endpoint ($HF_ENDPOINT)", bundle: .module)
+                .settingsControl("Mirror Endpoint ($HF_ENDPOINT)", pane: .models, timing: .action)
                     .font(theme.ui(.small, weight: .medium))
                 Spacer()
                 if !savedMirrorEndpoint.isEmpty && savedMirrorEndpoint != "https://huggingface.co" {

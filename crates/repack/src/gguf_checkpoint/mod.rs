@@ -3,7 +3,9 @@
 mod conventions;
 mod manifest;
 mod plan;
+mod sizing;
 mod transcode;
+pub use sizing::{minimax_gguf_sizing, MiniMaxSizing};
 mod types;
 
 pub use manifest::gguf_manifest_quant;

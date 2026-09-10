@@ -106,6 +106,10 @@ public final class PluginLedgerStore: @unchecked Sendable {
 
     /// Upserts one record: same plugin, scope and project path replaces.
     public func upsertRecord(_ record: InstalledPluginRecord, for pluginID: String) {
+        try? upsertRecordChecked(record, for: pluginID)
+    }
+
+    public func upsertRecordChecked(_ record: InstalledPluginRecord, for pluginID: String) throws {
         var ledger = load()
         var list = ledger.plugins[pluginID] ?? []
         list.removeAll {
@@ -113,7 +117,7 @@ public final class PluginLedgerStore: @unchecked Sendable {
         }
         list.append(record)
         ledger.plugins[pluginID] = list
-        save(ledger)
+        try saveChecked(ledger)
     }
 
     /// Removes the records matching a scope (and project, for project

@@ -1,0 +1,13 @@
+date         2026-09-10T11:04:57Z
+chip         Apple M4 Max
+memory       36 GB
+macos        26.6.2 (25G83)
+power        Now drawing from 'AC Power'
+label        ac
+arms         seq,chunked
+cooling      auto
+rev          7fda1bf (dirty)
+install      /Users/whit3rabbit/models/gemma4.gturbo
+manifest sha d4eb5607509240363c126e743abf7b2f6040c7f3e92347044e8b2f7df878ce9f
+pairs        2
+interval     200 ms

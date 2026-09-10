@@ -156,3 +156,9 @@ pub mod trained_context_meta {
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.
 pub use foundation::TokenId;
+
+mod gguf_set;
+pub use gguf_set::{gguf_shard_names, GgufSet};
+pub use synthetic_gguf::build_synthetic_minimax_gguf;
+
+pub use gguf_checkpoint::{minimax_gguf_sizing, MiniMaxSizing};

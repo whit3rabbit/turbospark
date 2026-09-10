@@ -18,7 +18,7 @@ public struct ChatMessageMarkdownView: View {
 
     public var body: some View {
         Markdown(text)
-            .markdownTheme(.turboSpark(ui: theme.uiFontDescriptor, code: theme.codeFontDescriptor, onPreviewHTML: onPreviewHTML))
+            .markdownTheme(.turboSpark(ui: theme.uiFontDescriptor, code: theme.codeFontDescriptor, palette: theme, onPreviewHTML: onPreviewHTML))
             .id("\(theme.uiFontDescriptor.family)-\(theme.uiFontDescriptor.size)-\(theme.uiFontDescriptor.weight)-\(theme.codeFontDescriptor.family)-\(theme.codeFontDescriptor.size)-\(theme.codeFontDescriptor.weight)")
             .foregroundStyle(theme.foreground)
             .textSelection(.enabled)
@@ -43,9 +43,11 @@ extension Theme {
     public static func turboSpark(
         ui: AppFontDescriptor,
         code: AppFontDescriptor,
+        palette: ResolvedAppTheme? = nil,
         onPreviewHTML: ((String) -> Void)? = nil
     ) -> Theme {
-        Theme()
+        let palette = palette ?? .fallback
+        return Theme()
         .text {
             FontFamily(ui.markdownFamily)
             FontSize(ui.size)
@@ -54,10 +56,10 @@ extension Theme {
         .code {
             FontFamily(code.markdownFamily)
             FontSize(.em(0.88))
-            BackgroundColor(Color.primary.opacity(0.06))
+            BackgroundColor(palette.foreground.opacity(0.06))
         }
         .link {
-            ForegroundColor(Color.accentColor)
+            ForegroundColor(palette.accent)
             UnderlineStyle(.single)
         }
         .heading1 { configuration in
@@ -118,11 +120,11 @@ extension Theme {
         .blockquote { configuration in
             HStack(spacing: 0) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.accentColor.opacity(0.7))
+                    .fill(palette.accent.opacity(0.7))
                     .relativeFrame(width: .em(0.25))
                 configuration.label
                     .markdownTextStyle {
-                        ForegroundColor(Color.secondary)
+                        ForegroundColor(palette.secondaryText)
                     }
                     .relativePadding(.horizontal, length: .em(0.8))
             }
@@ -131,9 +133,9 @@ extension Theme {
         .table { configuration in
             configuration.label
                 .fixedSize(horizontal: false, vertical: true)
-                .markdownTableBorderStyle(.init(color: Color(nsColor: .separatorColor).opacity(0.5)))
+                .markdownTableBorderStyle(.init(color: palette.border))
                 .markdownTableBackgroundStyle(
-                    .alternatingRows(Color.clear, Color.primary.opacity(0.03))
+                    .alternatingRows(Color.clear, palette.surface)
                 )
                 .markdownMargin(top: 8, bottom: 12)
         }
@@ -243,11 +245,11 @@ private struct CodeBlockContainer<Content: View>: View {
                 if let language, !language.isEmpty {
                     Text(language.lowercased())
                         .themedCode(.tiny, weight: .semibold)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.secondaryText)
                 } else {
                     Text("code", bundle: .module)
                         .themedCode(.tiny, weight: .semibold)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(theme.secondaryText)
                 }
                 Spacer()
                 if isPreviewableHTML {
@@ -260,7 +262,7 @@ private struct CodeBlockContainer<Content: View>: View {
                             Text("Preview", bundle: .module)
                         }
                         .themedFont(.tiny, weight: .medium)
-                        .foregroundStyle(Color.secondary)
+                        .foregroundStyle(theme.secondaryText)
                     }
                     .buttonStyle(.plain)
                     .help("Open this HTML in the sandboxed preview panel")
@@ -276,7 +278,7 @@ private struct CodeBlockContainer<Content: View>: View {
                             Text("Preview", bundle: .module)
                         }
                         .themedFont(.tiny, weight: .medium)
-                        .foregroundStyle(Color.secondary)
+                        .foregroundStyle(theme.secondaryText)
                     }
                     .buttonStyle(.plain)
                     .help("Render this chart in the preview panel")
@@ -292,7 +294,7 @@ private struct CodeBlockContainer<Content: View>: View {
                         Text(isCopied ? "Copied" : "Copy")
                     }
                     .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(isCopied ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isCopied ? theme.accent : theme.secondaryText)
                 }
                 .buttonStyle(.plain)
                 .help("Copy code block to clipboard")
@@ -301,7 +303,7 @@ private struct CodeBlockContainer<Content: View>: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(Color.primary.opacity(0.04))
+            .background(theme.surface)
 
             Divider()
 
@@ -323,11 +325,11 @@ private struct CodeBlockContainer<Content: View>: View {
             }
             .padding(12)
         }
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+        .background(theme.elevatedSurface)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.5)
+                .stroke(theme.border, lineWidth: 0.5)
         )
         .markdownMargin(top: 8, bottom: 12)
     }

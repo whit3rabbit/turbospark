@@ -66,8 +66,11 @@ struct MarketplaceSourcesView: View {
     }
 
     private func origin(_ name: String) -> String {
-        guard let project = model.projects.first(where: { $0.id == projectID }) else { return "User" }
-        return project.marketplaces.sources[kind.rawValue]?[name] == nil ? "Inherited from user" : project.name
+        guard let project = model.projects.first(where: { $0.id == projectID }) else {
+            return String(localized: "User", bundle: .module)
+        }
+        return project.marketplaces.sources[kind.rawValue]?[name] == nil
+            ? String(localized: "Inherited from user", bundle: .module) : project.name
     }
 
     private func addSource() {

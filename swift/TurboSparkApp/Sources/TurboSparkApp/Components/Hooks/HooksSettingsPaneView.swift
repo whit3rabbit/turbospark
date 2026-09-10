@@ -335,7 +335,6 @@ public struct HooksSettingsPaneView: View {
             // to read `No hooks found matching ''`.
             if searchText.isEmpty {
                 Text("No hooks configured", bundle: .module)
-                    .settingsControl("No hooks configured", pane: .hooks, timing: .nextTurn)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                 Button {

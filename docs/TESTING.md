@@ -8,14 +8,14 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-1,435 tests as of 2026-08-29, plus 161 that are `#[ignore]`d, re-counted
-2026-09-09 (see below). The two dates differ because only the second is
-greppable: the first needs a build and was not re-derived on 2026-09-09. **Re-count before quoting either number.** Both were stale by more
+1,435 tests as of 2026-08-29, plus 145 that are `#[ignore]`d, re-counted
+2026-09-10 (see below). The two dates differ because only the second is
+greppable: the first needs a build and was not re-derived on 2026-09-10. **Re-count before quoting either number.** Both were stale by more
 than 2x when this line was last corrected (they read 458 and 18, unchanged
 since 2026-08-08 while eleven families and phases landed), and nothing goes
 red when they rot: a count is prose. The one-liners that produce them are
 `cargo test --workspace` for the first and, for the second,
-`for d in crates/*/tests; do grep -rh '#\[ignore' $d/*.rs; done | wc -l`. On macOS this includes every Metal test, which needs a real
+`rg '^\s*#\[ignore' crates --glob '**/tests/*.rs' | wc -l`. On macOS this includes every Metal test, which needs a real
 Metal-capable device and Xcode's `metal` toolchain
 (`xcrun -sdk macosx metal`). On Linux `crates/gpu` compiles to nothing and
 the GPU-dependent test files compile away with it, so the same command
@@ -146,15 +146,14 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-89 targets carry `#[ignore]`d tests, 161 functions between them as of
-2026-09-09 (`bench` 43/63, `repack` 33/61, `gpu` 4/15, `runtime` 3/7,
-`selection` 2/4, `catalog` 2/3, `server` 1/5, `tokenizer` 1/3). Each has a reason string and
+92 targets carry `#[ignore]`d tests, 145 functions between them as of
+2026-09-10 (`bench` 46/51, `repack` 34/60, `gpu` 4/15, `runtime` 2/6,
+`selection` 2/4, `catalog` 1/2, `server` 1/4, `tokenizer` 2/3). Each has a reason string and
 a module doc with the exact command. The commands below are the ones that are gates.
 
-Those numbers read 147 across 80 targets until 2026-09-06, unchanged since
-2026-08-29 while ten more landed. Nothing goes red when they rot, which is
-what the paragraph above says and is worth demonstrating rather than only
-asserting. **The one-liner counts `crates/*/tests` only**, so an `#[ignore]`
+The previous substring-counting command also counted `#[ignore]` mentions
+in comments. The command above now matches attribute lines only; the
+2026-09-10 recount excludes those mentions rather than removing tests. **The one-liner counts `crates/*/tests` only**, so an `#[ignore]`
 inside a crate's `src/` (there is one, in `crates/ffi`) is not in it.
 
 **The BENCHMARK targets are not gates and report rather than assert**, so
@@ -265,10 +264,11 @@ TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
 # families in one process cannot each have a ceiling.
 #
 # THE TWO BLOCKS BELOW ARE EXAMPLES, NOT THE FULL LIST, and the list has
-# grown past what is worth duplicating here: TWELVE oracle targets (gemma4,
+# grown past what is worth duplicating here: FIFTEEN oracle targets (gemma4,
 # qwen36, qwen3moe, mistral, gptoss, museglimmer, ornith9b, ornith35b,
-# qwen38, qwen4exp, ternary, vision) and ELEVEN quality gates (the same
-# list without mistral and vision, which have none, plus iq3's).
+# qwen38, qwen4exp, ternary, vision, spark, minimax, qwen3_dense) and FOURTEEN quality
+# gates (the same list without mistral and vision, plus iq3's).
+# MiniMax has no accepted baseline yet; see docs/MINIMAX_M2_PHASE0.md.
 #
 # Those two numbers read SEVEN and SEVEN until 2026-09-06, which is the
 # rot this very paragraph tells you to check for -- run the `ls` below

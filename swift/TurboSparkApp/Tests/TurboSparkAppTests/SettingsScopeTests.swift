@@ -70,6 +70,16 @@ final class SettingsScopeTests: XCTestCase {
         XCTAssertThrowsError(try manager.saveSkill(skill))
         XCTAssertThrowsError(try manager.deleteSkill(skill))
         XCTAssertEqual(try String(contentsOf: source), "original")
+        let owned = root.appendingPathComponent("project/.turbospark/skills/alias")
+        try FileManager.default.createDirectory(at: owned, withIntermediateDirectories: true)
+        let link = owned.appendingPathComponent("SKILL.md")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+        let alias = AppSkill(manifest: skill.manifest, content: "replacement", sourceURL: link,
+            skillDirectoryURL: owned, scope: .projectLocal(projectPath: root.appendingPathComponent("project").path),
+            agentOrigin: .custom, isEnabled: true)
+        XCTAssertThrowsError(try manager.saveSkill(alias))
+        XCTAssertThrowsError(try manager.deleteSkill(alias))
+        XCTAssertEqual(try String(contentsOf: source), "original")
     }
 }
 
@@ -112,5 +122,140 @@ extension SettingsScopeTests {
         XCTAssertTrue(manager.resolve(projectURL: nil).plugins.isEmpty)
         XCTAssertTrue(manager.resolve(projectURL: URL(fileURLWithPath: "/tmp/project-two")).plugins.isEmpty)
         XCTAssertEqual(manager.resolve(projectURL: URL(fileURLWithPath: "/tmp/project-one")).plugins.map(\.id), ["sample@test"])
+    }
+}
+
+extension SettingsScopeTests {
+    @MainActor
+    func testMcpOverrideActionIsIsolatedAndInheritsAgain() {
+        let model = AppModel()
+        let server = McpServerConfig(name: "scope-test", transport: .stdio(command: "/usr/bin/true", args: [], env: [:]))
+        let one = AppProject(name: "One", rootDirectoryPath: "/tmp/mcp-one")
+        let two = AppProject(name: "Two", rootDirectoryPath: "/tmp/mcp-two")
+        model.projects = [one, two]
+        model.setMcpOverride(serverID: server.id, enabled: false, projectID: one.id)
+        XCTAssertFalse(AppToolCatalogMcp.resolvedServers(global: [server], project: model.projects[0])[0].isEnabled)
+        XCTAssertTrue(AppToolCatalogMcp.resolvedServers(global: [server], project: model.projects[1])[0].isEnabled)
+        model.setMcpOverride(serverID: server.id, enabled: nil, projectID: one.id)
+        XCTAssertTrue(AppToolCatalogMcp.resolvedServers(global: [server], project: model.projects[0])[0].isEnabled)
+    }
+
+    func testFinalUninstallRemovesAllCachedVersionsButKeepsAnotherProfile() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = PluginMarketplaceManager(root: root.appendingPathComponent("one"))
+        let second = PluginMarketplaceManager(root: root.appendingPathComponent("two"))
+        for manager in [first, second] {
+            let family = manager.installCacheDirectory.appendingPathComponent("test/sample")
+            for version in ["1", "2"] {
+                try FileManager.default.createDirectory(at: family.appendingPathComponent(version), withIntermediateDirectories: true)
+            }
+            try PluginLedgerStore(root: manager.root).saveChecked(InstalledPluginLedger(plugins: ["sample@test": [
+                InstalledPluginRecord(scope: "user", installPath: family.appendingPathComponent("2").path, version: "2")
+            ]]))
+        }
+        try first.uninstall(pluginID: "sample@test", scope: "user")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.installCacheDirectory.appendingPathComponent("test/sample").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.installCacheDirectory.appendingPathComponent("test/sample/2").path))
+        XCTAssertNotNil(PluginLedgerStore(root: second.root).load().plugins["sample@test"])
+    }
+
+    func testSourceRemovalReportsUnreadableArchiveWithoutDestroyingIt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manager = PluginMarketplaceManager(root: root)
+        try FileManager.default.createDirectory(at: manager.knownMarketplacesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = Data("invalid archive".utf8)
+        try original.write(to: manager.knownMarketplacesURL)
+        XCTAssertThrowsError(try manager.removeKnownMarketplace(name: "test"))
+        XCTAssertEqual(try Data(contentsOf: manager.knownMarketplacesURL), original)
+    }
+}
+
+extension SettingsScopeTests {
+    @MainActor
+    func testFailedUninstallActionRetainsRecordCacheAndPreference() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+            try? fm.removeItem(at: root)
+        }
+        let manager = PluginMarketplaceManager(root: root)
+        let cache = manager.installCacheDirectory.appendingPathComponent("test/sample/1")
+        try fm.createDirectory(at: cache, withIntermediateDirectories: true)
+        let ledger = PluginLedgerStore(root: root)
+        try ledger.saveChecked(InstalledPluginLedger(plugins: ["sample@test": [
+            InstalledPluginRecord(scope: "user", installPath: cache.path, version: "1")
+        ]]))
+        let before = ledger.load()
+        let model = AppModel()
+        model.pluginEnableState["sample@test"] = false
+        // The ledger remains readable, but quarantine creation cannot succeed.
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+        XCTAssertFalse(model.uninstallPluginID("sample@test", scope: .user, manager: manager))
+        XCTAssertEqual(ledger.load(), before)
+        XCTAssertTrue(fm.fileExists(atPath: cache.path))
+        XCTAssertEqual(model.pluginEnableState["sample@test"], false)
+    }
+}
+
+extension SettingsScopeTests {
+    func testSkillInstallFailurePreservesExistingProjectCopyAndRejectsTraversal() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let project = root.appendingPathComponent("project")
+        let destination = project.appendingPathComponent(".turbospark/skills/deploy")
+        let source = root.appendingPathComponent("source")
+        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        let old = Data("---\nname: deploy\ndescription: Original\n---\nKeep me".utf8)
+        try old.write(to: destination.appendingPathComponent("SKILL.md"))
+        try Data("partial download".utf8).write(to: source.appendingPathComponent("README.md"))
+        let manager = SkillMarketplaceManager()
+        for (name, code) in [("deploy", 5), ("../escape", 7)] {
+            let entry = MarketplaceSkillEntry(name: name, description: "test", source: .directory(path: source.path))
+            do {
+                _ = try await manager.installSkill(entry: entry, targetScope: .projectLocal(projectPath: project.path))
+                XCTFail("Invalid installation must fail")
+            } catch {
+                XCTAssertEqual((error as NSError).domain, "SkillMarketplace")
+                XCTAssertEqual((error as NSError).code, code)
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("SKILL.md")), old)
+        XCTAssertFalse(fm.fileExists(atPath: destination.appendingPathComponent("README.md").path))
+        XCTAssertFalse(fm.fileExists(atPath: project.appendingPathComponent(".turbospark/escape").path))
+    }
+}
+
+extension SettingsScopeTests {
+    func testDeletingOwnedSkillRetainsOtherInstallationRecords() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let manager = SkillMarketplaceManager()
+        let previousLedger = try? Data(contentsOf: manager.installedLedgerURL)
+        defer {
+            try? fm.removeItem(at: root)
+            if let previousLedger { try? previousLedger.write(to: manager.installedLedgerURL) }
+            else { try? fm.removeItem(at: manager.installedLedgerURL) }
+        }
+        let project = root.appendingPathComponent("one")
+        let folder = project.appendingPathComponent(".turbospark/skills/shared")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("SKILL.md")
+        try Data("owned".utf8).write(to: file)
+        let records = [InstalledSkillRecord(skillName: "shared", scope: "project", projectPath: project.path, installPath: folder.path),
+            InstalledSkillRecord(skillName: "shared", scope: "project", projectPath: root.appendingPathComponent("two").path, installPath: root.appendingPathComponent("two/.turbospark/skills/shared").path),
+            InstalledSkillRecord(skillName: "shared", scope: "user", installPath: root.appendingPathComponent("user/shared").path)]
+        try fm.createDirectory(at: manager.installedLedgerURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(["shared": records]).write(to: manager.installedLedgerURL)
+        let skill = AppSkill(manifest: SkillManifest(name: "shared", description: "test"), content: "owned",
+            sourceURL: file, skillDirectoryURL: folder, scope: .projectLocal(projectPath: project.path), agentOrigin: .custom, isEnabled: true)
+        try SkillManager().deleteSkill(skill)
+        let remaining = try JSONDecoder().decode([String: [InstalledSkillRecord]].self, from: Data(contentsOf: manager.installedLedgerURL))
+        XCTAssertEqual(remaining["shared"]?.map(\.installPath), Array(records.dropFirst()).map(\.installPath))
+        XCTAssertFalse(fm.fileExists(atPath: folder.path))
     }
 }

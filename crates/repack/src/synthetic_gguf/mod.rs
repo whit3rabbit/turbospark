@@ -22,3 +22,6 @@ mod gptoss;
 pub use builder::{GgufBuilder, GgufFileAndRanges};
 pub use gemma4::{build_synthetic_gemma4_gguf, QuantMix, SyntheticGgufShape};
 pub use gptoss::{build_synthetic_gpt_oss_gguf, SyntheticGptOssShape};
+
+mod minimax;
+pub use minimax::build_synthetic_minimax_gguf;

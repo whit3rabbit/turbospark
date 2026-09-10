@@ -30,6 +30,8 @@ struct EngineSettingsPaneView: View {
             inProcessServerSection
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(.appPage)
         .padding(16)
     }
 
@@ -97,7 +99,6 @@ struct EngineSettingsPaneView: View {
                     .foregroundStyle(model.topPEnabled ? .primary : .secondary)
             }
         }
-            .settingsControl("Generation Defaults", pane: .engine, timing: .nextTurn)
     }
 
     /// The sampling and engine-load knobs that used to live ONLY in the
@@ -239,7 +240,6 @@ struct EngineSettingsPaneView: View {
                         model.persistSettingsDebounced()
                     }
                 Text("tok/s", bundle: .module)
-                    .settingsControl("tok/s", pane: .engine, timing: .nextTurn)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .frame(width: 44, alignment: .leading)
@@ -264,7 +264,6 @@ struct EngineSettingsPaneView: View {
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
         }
-            .settingsControl("Advanced Generation", pane: .engine, timing: .nextTurn)
     }
 
     private var coolingSection: some View {
@@ -279,7 +278,7 @@ struct EngineSettingsPaneView: View {
                     }
                 )) {
                     Text("Keep fans pinned when TurboSpark quits", bundle: .module)
-                    .settingsControl("Keep fans pinned when TurboSpark quits", pane: .engine, timing: .nextTurn)
+                    .settingsControl("Keep fans pinned when TurboSpark quits", pane: .engine, timing: .immediate)
                 }
 
                 Text(
@@ -292,7 +291,6 @@ struct EngineSettingsPaneView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("ThermalForge Not Installed", bundle: .module)
-                    .settingsControl("ThermalForge Not Installed", pane: .engine, timing: .nextTurn)
                             .themedFont(.base, weight: .medium)
                         Text(
                             "Fan speed cannot be controlled without ThermalForge installed. "
@@ -305,7 +303,6 @@ struct EngineSettingsPaneView: View {
                     Link(destination: URL(string: "https://github.com/ProducerGuy/ThermalForge")!) {
                         HStack(spacing: 4) {
                             Text("ThermalForge", bundle: .module)
-                    .settingsControl("ThermalForge", pane: .engine, timing: .nextTurn)
                             Image(systemName: "arrow.up.forward.app")
                         }
                     }
@@ -314,7 +311,6 @@ struct EngineSettingsPaneView: View {
                 }
             }
         }
-            .settingsControl("Cooling & Fan Control", pane: .engine, timing: .nextTurn)
     }
 
     private var reasoningEffortSection: some View {
@@ -340,7 +336,6 @@ struct EngineSettingsPaneView: View {
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
         }
-            .settingsControl("Thinking & Reasoning Effort", pane: .engine, timing: .nextTurn)
     }
 
     private var guardrailsSection: some View {
@@ -360,7 +355,6 @@ struct EngineSettingsPaneView: View {
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
         }
-            .settingsControl("Forge Tool-Call Guardrails", pane: .engine, timing: .nextTurn)
     }
 
     private var speculationSection: some View {
@@ -370,7 +364,7 @@ struct EngineSettingsPaneView: View {
                     Text(opt.menuLabel).tag(opt)
                 }
             }
-            .settingsControl("Speculation Mode", pane: .engine, timing: .nextTurn)
+            .settingsControl("Speculation Mode", pane: .engine, timing: .modelReload)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.speculation) { _, _ in
                 model.persistSettingsDebounced()
@@ -389,7 +383,6 @@ struct EngineSettingsPaneView: View {
                 }
             }
         }
-            .settingsControl("Speculative Decoding", pane: .engine, timing: .modelReload)
     }
 
     /// **READS BACK WHAT THE LOADED SESSION ACTUALLY RESOLVED, RATHER THAN
@@ -408,7 +401,7 @@ struct EngineSettingsPaneView: View {
                     Text(opt.menuLabel).tag(opt)
                 }
             }
-            .settingsControl("KV-Cache Width", pane: .engine, timing: .nextTurn)
+            .settingsControl("KV-Cache Width", pane: .engine, timing: .modelReload)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.kvBits) { _, _ in
                 model.persistSettingsDebounced()
@@ -417,7 +410,6 @@ struct EngineSettingsPaneView: View {
             if let info = model.session?.info {
                 HStack {
                     Text("Resolved", bundle: .module)
-                    .settingsControl("Resolved", pane: .engine, timing: .nextTurn)
                     Spacer()
                     Text(info.kvBits)
                         .themedFont(.tiny, systemDesign: .monospaced)
@@ -436,7 +428,6 @@ struct EngineSettingsPaneView: View {
             .themedFont(.tiny)
             .foregroundStyle(.appSecondary)
         }
-            .settingsControl("TurboQuant KV-Cache Quantization", pane: .engine, timing: .nextTurn)
     }
 
     private var inProcessServerSection: some View {
@@ -467,7 +458,6 @@ struct EngineSettingsPaneView: View {
 
                 HStack {
                     Text("Address", bundle: .module)
-                    .settingsControl("Address", pane: .engine, timing: .nextTurn)
                     Spacer()
                     Text(rows.address)
                         .themedCode(.small)
@@ -477,7 +467,6 @@ struct EngineSettingsPaneView: View {
 
                 HStack {
                     Text("Auth", bundle: .module)
-                    .settingsControl("Auth", pane: .engine, timing: .nextTurn)
                     Spacer()
                     Text(rows.authLabel)
                         .themedFont(.small)
@@ -500,6 +489,5 @@ struct EngineSettingsPaneView: View {
             .themedFont(.small)
             .foregroundStyle(.appSecondary)
         }
-            .settingsControl("In-Process Server", pane: .engine, timing: .nextTurn)
     }
 }

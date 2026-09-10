@@ -85,7 +85,9 @@ pub fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::
     let or_attention = |found: &'static str| if found == "absent" { attention } else { found };
 
     let router_source = or_attention(type_of(&["ffn_gate_inp.weight"]));
-    let router = if router_source == "F32" {
+    let router = if header.architecture() == Some("minimax-m2") {
+        serde_json::json!({"weightBits": 32, "scheme": "raw", "scaleType": "none", "biasType": "none", "groupSize": 0})
+    } else if router_source == "F32" {
         serde_json::json!({
             "weightBits": 8,
             "scheme": "affine",

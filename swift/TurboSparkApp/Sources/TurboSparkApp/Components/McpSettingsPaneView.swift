@@ -51,7 +51,6 @@ public struct McpSettingsPaneView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Servers", bundle: .module)
-                    .settingsControl("Servers", pane: .mcp, timing: .nextTurn)
                             .themedFont(.small, weight: .semibold)
                             .foregroundStyle(.appSecondary)
 
@@ -337,7 +336,6 @@ public struct McpSettingsPaneView: View {
                 .themedFont(.display)
                 .foregroundStyle(.secondary.opacity(0.5))
             Text("No MCP Servers Configured", bundle: .module)
-                    .settingsControl("No MCP Servers Configured", pane: .mcp, timing: .nextTurn)
                 .themedFont(.base, weight: .semibold)
             Text("Add external MCP servers (like memory, GitHub, filesystem, database, or browser tools) to extend assistant capabilities.", bundle: .module)
                 .themedFont(.small)

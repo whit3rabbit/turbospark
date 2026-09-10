@@ -275,6 +275,26 @@ pub fn run_quality_gate_full(
     max_context: u32,
     pressure_slots: Option<usize>,
 ) {
+    run_quality_gate_with_slots(
+        dir,
+        rows,
+        assistant_prefix,
+        max_context,
+        pressure_slots,
+        PROTOCOL_EXPERT_CACHE_SLOTS,
+    )
+}
+
+/// Keeps existing callers at sixteen slots; MiniMax starts at eight.
+#[allow(dead_code)]
+pub fn run_quality_gate_with_slots(
+    dir: &Path,
+    rows: &[ChipQuality],
+    assistant_prefix: &str,
+    max_context: u32,
+    pressure_slots: Option<usize>,
+    slots: usize,
+) {
     let brand = chip_brand_string();
     let row = brand
         .as_deref()
@@ -290,9 +310,9 @@ pub fn run_quality_gate_full(
         ),
     }
 
+    eprintln!("quality_gate: {max_context} context, {slots} expert slots");
     let (mut runner, tokenizer) =
-        open_model_runner_with_context(dir, PROTOCOL_EXPERT_CACHE_SLOTS, max_context)
-            .expect("real install should open");
+        open_model_runner_with_context(dir, slots, max_context).expect("real install should open");
     let prompt_ids = user_turn_ids(&tokenizer);
 
     // 1. Perplexity of the reference answer in the assistant slot.
@@ -378,7 +398,7 @@ pub fn run_quality_gate_full(
             eprintln!(
                 "quality_gate: constrained ({pressure_slots} slots) digest \
                  {constrained_digest}, {constrained_tok_s:.3} tok/s against \
-                 {baseline_tok_s:.3} at {PROTOCOL_EXPERT_CACHE_SLOTS} ({:.2}x)",
+                 {baseline_tok_s:.3} at {slots} slots ({:.2}x)",
                 throughput_ratio
             );
             assert_eq!(
@@ -395,7 +415,7 @@ pub fn run_quality_gate_full(
             assert_eq!(
                 constrained_digest, greedy_digest,
                 "greedy output at {pressure_slots} expert-cache slots \
-                 differs from the same generation at {PROTOCOL_EXPERT_CACHE_SLOTS}: \
+                 differs from the same generation at {slots} slots: \
                  the routed-slot dispatch order has become a function of cache state \
                  again, so output depends on how many experts happened to be resident"
             );
@@ -409,9 +429,8 @@ pub fn run_quality_gate_full(
             );
         }
         None => eprintln!(
-            "quality_gate: skipping the constrained-working-set arm (no legal \
-             expert-cache size below {PROTOCOL_EXPERT_CACHE_SLOTS} holds this \
-             family's routed width; see run_quality_gate_full's header)"
+            "quality_gate: constrained-working-set arm disabled for this gate; \
+             see the target's documented slot policy"
         ),
     }
 

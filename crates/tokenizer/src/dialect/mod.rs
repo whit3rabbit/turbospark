@@ -8,6 +8,7 @@
 //! `chat_template` for why the two came apart.
 
 mod config;
+mod minimax;
 mod resolve;
 mod resolvers;
 
@@ -99,6 +100,8 @@ pub enum ChatDialect {
     /// every such id resolves to [`NO_SUCH_TOKEN_ID`] and the markup flows
     /// as ordinary content, where a rescue layer can reach it.
     Spark,
+    /// MiniMax-M2 checkpoint framing and EOS; native tool parsing is deferred.
+    MiniMax,
 }
 
 /// Whether a dialect's own markup carries tool calls that this engine PARSES.
@@ -175,7 +178,7 @@ impl ChatDialect {
             // a rescue layer can parse it, rather than muse's reasoning
             // stream: unlike muse's header/body DSL, Spark's call syntax is
             // self-contained plain text a caller's parser can read.
-            ChatDialect::Spark => ToolCallSupport::Prompted,
+            ChatDialect::Spark | ChatDialect::MiniMax => ToolCallSupport::Prompted,
         }
     }
 
@@ -190,6 +193,7 @@ impl ChatDialect {
                      calls are reported as reasoning rather than handed over. A tool call \
                      has to be prompted for and parsed by the caller."
                     .to_string(),
+                ChatDialect::MiniMax => "MiniMax native tool-call parsing is not implemented; markup remains reply text for caller-side recovery.".to_string(),
                 ChatDialect::Spark => "this checkpoint frames tool calls as <tool_call> / \
                      <arg_key> / <arg_value> markup, which this engine does not parse yet, \
                      so the markup is reported as ordinary content. A tool call has to be \

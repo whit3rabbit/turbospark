@@ -226,6 +226,21 @@ impl<'a> StructuredAssistantDecoder<'a> {
         }
         match self.tokenizer.dialect {
             ChatDialect::ChatMl => return self.consume_chatml(token_id, delta),
+            ChatDialect::MiniMax => {
+                if Some(token_id) == self.tokenizer.think_start_id {
+                    self.channel = Channel::Thought;
+                } else if Some(token_id) == self.tokenizer.think_end_id {
+                    self.channel = Channel::Visible;
+                } else if !delta.is_empty() {
+                    let event = if self.channel == Channel::Thought {
+                        StructuredAssistantEvent::Reasoning(delta.to_string())
+                    } else {
+                        StructuredAssistantEvent::Content(delta.to_string())
+                    };
+                    return Ok(vec![event]);
+                }
+                return Ok(Vec::new());
+            }
             // Spark SHARES the DeepSeek arm on purpose: its reasoning frame
             // is the same think-open/think-close pair resolved into the same
             // ids, so the channel split is identical. What differs is only

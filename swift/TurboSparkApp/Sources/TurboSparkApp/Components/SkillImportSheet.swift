@@ -350,7 +350,7 @@ public struct SkillImportSheet: View {
 
     private func scanCandidates() {
         isLoading = true
-        let projectURL = project?.rootDirectoryURL
+        let projectURL = importToProjectScope ? project?.rootDirectoryURL : nil
         DispatchQueue.global(qos: .userInitiated).async {
             let manager = SkillManager.shared
             var found: [ImportableSkillCandidate] = []
@@ -398,6 +398,10 @@ public struct SkillImportSheet: View {
     }
 
     private func selectCustomFolder() {
+        guard !importToProjectScope || project?.rootDirectoryURL != nil else {
+            model.showToast(String(localized: "The target project no longer exists.", bundle: .module), style: .error)
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
@@ -417,6 +421,10 @@ public struct SkillImportSheet: View {
     }
 
     private func importSelectedSkills() {
+        guard !importToProjectScope || project?.rootDirectoryURL != nil else {
+            model.showToast(String(localized: "The target project no longer exists.", bundle: .module), style: .error)
+            return
+        }
         let targetScope: SkillScope
         if importToProjectScope, let path = project?.rootDirectoryPath {
             targetScope = .projectLocal(projectPath: path)
@@ -434,7 +442,7 @@ public struct SkillImportSheet: View {
 
     private func fetchRemoteMarketplace(source explicitSource: MarketplaceSource? = nil) {
         let input = remoteInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty else { return }
+        guard explicitSource != nil || !input.isEmpty else { return }
 
         isFetchingRemote = true
         remoteError = nil
@@ -469,8 +477,12 @@ public struct SkillImportSheet: View {
     }
 
     private func installRemoteEntry(_ entry: MarketplaceSkillEntry) {
+        guard !importToProjectScope || project?.rootDirectoryURL != nil else {
+            model.showToast(String(localized: "The target project no longer exists.", bundle: .module), style: .error)
+            return
+        }
         let targetScope: SkillScope
-        let projectURL = project?.rootDirectoryURL
+        let projectURL = importToProjectScope ? project?.rootDirectoryURL : nil
         if importToProjectScope, let path = project?.rootDirectoryPath {
             targetScope = .projectLocal(projectPath: path)
         } else {

@@ -35,6 +35,7 @@
 mod gemma4;
 mod gpt_oss;
 mod llama;
+mod minimax;
 mod qwen;
 mod spark;
 
@@ -166,6 +167,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::QwenGdnDense => qwen::map_qwen_gdn_dense_layer(suffix, layer),
             ModelFamily::Spark25 => spark::map_spark_layer(suffix, layer),
             ModelFamily::Qwen3Dense => qwen::map_qwen3_dense_layer(suffix, layer),
+            ModelFamily::MiniMaxM2 => minimax::map_layer(suffix, layer),
             // Neither of the first two is published as a GGUF; an unmapped
             // name is the right answer rather than a neighbour's table,
             // which would map names these families do not have.
@@ -218,6 +220,7 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // (`MODEL_ARCH.QWEN3 => "qwen3"`) and confirmed against the real
         // `Qwen/Qwen3-4B-GGUF` header, distinct from `qwen3moe` above.
         ModelFamily::Qwen3Dense => Some("qwen3"),
+        ModelFamily::MiniMaxM2 => Some("minimax-m2"),
         // Neither of the first two is published as a GGUF. `None` is the
         // honest answer: inventing a string here would make
         // `family_for_architecture` claim to recognize a file that does not

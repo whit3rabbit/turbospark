@@ -35,7 +35,7 @@ bench (ROADMAP Phase P2). The two kinds cannot be mixed in one run: the
 arm name is a single column of `rows.tsv` and a single grouping key in the
 summary, so mixing them would compare two different seams under one label.
 
-## EVERY ROW BELOW IS A SEQUENTIAL-PREFILL ROW
+## Accepted baselines below use sequential prefill
 
 Stated up front because until 2026-09-05 it could not have been otherwise
 and nothing said so. `scripts/power.sh` drives `turbospark-bench`, and that
@@ -58,6 +58,48 @@ produces a row that belongs beside its predecessor rather than replacing
 it. Chunked prefill is the DEFAULT for the CLI and the server, so a chunked
 row is arguably the more representative one for a user, and that is an
 argument for measuring it, never for overwriting a sequential row with it.
+
+### Sequential/chunked capture, 2026-09-10: not accepted as a baseline
+
+The user ran `LABEL=ac ARMS=seq,chunked scripts/power.sh 2` on an M4 Max
+with 36 GB, macOS 26.6.2, automatic cooling, and the Gemma install. Capture
+started at 11:04:57 UTC, revision `7fda1bf` dirty. The benchmark header
+confirms context 4096, max_new 1024, 16 expert slots, KV quantization off,
+protocol sampling, and chunk size 128; routed_batch and batched_gemv were
+both unset. This compares sequential with chunked prefill, not the separate
+batched-GEMV switch. All measured arms stopped at endOfTurn.
+
+Preserved evidence: [raw rows](verification/prefill-energy-2026-09-10.tsv)
+and [machine provenance](verification/prefill-energy-2026-09-10-system.txt).
+The TSV has the harness's 18 columns, in order: case, label, arm, run,
+phase, seconds, tokens, joules, watts, J/token, CPU mW, GPU mW, E residency,
+P residency, thermal pressure, samples, battery watts, cooling. Full logs
+remain at `/tmp/roadmap-prefill-energy-20260910/`.
+
+The timeline drift was -0.8 s over 1264.6 s, within the harness's 2 s
+warning threshold. The minimum CPU power was 895 mW, below its steady-load
+warning threshold. Neither establishes a clean capture: medium and long
+arms reached Moderate or Heavy thermal pressure, and the long sequential
+prefill's CPU power changed from 17.60 W to 4.89 W between repeats.
+Intermittent background load is possible; the capture does not identify
+its source. Short prefill windows integrated only 4-7 samples.
+
+The repeated long-prefill readings show why the means are not baselines:
+
+| Pair | Sequential s | Chunked s | Sequential J/token | Chunked J/token |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 76.54 | 58.82 | 0.9930 | 0.8109 |
+| 2 | 63.70 | 50.70 | 0.4427 | 0.4108 |
+
+Chunked prefill was faster in all six pairs, but the long-prefill energy
+spread was 76.7% sequential and 65.5% chunked. Even the all-Nominal short
+case had prefill energy spreads of 14.2% and 24.6%. Do not freeze the
+averages or claim a reproducible energy saving from this run.
+
+A controlled retry should use a quiet machine and `COOLING=max`, which
+previously held Nominal on this hardware, then check pressure and spread
+again. A successful forced-cooling row belongs beside the automatic-cooling
+baselines and does not close the shipping-cooling measurement by itself.
 
 ## Run provenance
 

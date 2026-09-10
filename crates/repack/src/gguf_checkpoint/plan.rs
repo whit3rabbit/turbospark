@@ -65,7 +65,19 @@ pub fn classify<'a>(
             continue;
         }
         match map_gguf_name(name, family)? {
-            GgufMapping::Resident(_) => plan.resident.push(name.as_str()),
+            GgufMapping::Resident(canonical) => {
+                if family == ModelFamily::MiniMaxM2
+                    && (canonical.ends_with(".mlp.gate.weight")
+                        || canonical.ends_with(".mlp.e_score_correction_bias"))
+                    && header.tensors[name].ggml_type != 0
+                {
+                    return Err(GgufRepackError::ShapeMismatch {
+                        tensor: name.to_string(),
+                        detail: "MiniMax router and correction bias must be F32".into(),
+                    });
+                }
+                plan.resident.push(name.as_str());
+            }
             GgufMapping::Routed { layer, role } => {
                 plan.routed.entry(layer).or_default().push(RoutedSource {
                     name,

@@ -1,12 +1,9 @@
 //! The `llama` architecture's attention block: plain grouped-query attention
 //! (ROADMAP Phase M2).
 //!
-//! Written out rather than shared with the Gemma or Qwen blocks because what
-//! it does NOT do is most of it. No per-head q/k/v norms (Gemma norms three,
-//! Qwen two, this none), no packed query/gate split, no output gate, no
-//! sliding window, no `attention_k_eq_v` aliasing of the V buffer, one RoPE
-//! base for every layer. `docs/NEW_MODEL.md` Phase 0 asks for the layer as ten
-//! lines of pseudocode; this file is those ten lines.
+//! Q/K normalization is family-selected: none for Llama, per-head for
+//! Qwen3, whole-projection for MiniMax. RoPE follows normalization and can
+//! leave an unrotated tail. All use full attention without output gates.
 
 use model_io::{ArchConfig, ResidentIndex};
 
@@ -74,29 +71,45 @@ pub(crate) fn encode_attention_block(
         )?;
     }
 
-    // QK-NORM, and note the ORDER: after the projections, before RoPE. Both
-    // reference implementations norm the raw head then rotate; rotating
-    // first and norming after is a different function that still produces
-    // finite, plausible-looking text. `qwen3moe` only; `llama` skips it.
-    if llama.qk_norm {
-        let head_norm = |suffix: &str| {
-            crate::real_forward_utils::norm_view(weights, index, &name(suffix), head_dim as usize)
-        };
-        for (data, heads, suffix) in [
-            ((&scratch.q, 0u64), num_heads, "q_norm.weight"),
-            ((k_buf, k_off), num_kv, "k_norm.weight"),
-        ] {
-            gpu::encode_rms_norm_bf16w_perhead(
-                context,
-                pass,
-                data,
-                head_norm(suffix)?,
-                data,
-                heads,
-                head_dim,
-                llama.rms_eps,
-            )
-            .map_err(gpu_err)?;
+    // Normalize before RoPE: learned norm weights make the reverse order
+    // a different function, even when its outputs look plausible.
+    for (data, heads, suffix) in [
+        ((&scratch.q, 0u64), num_heads, "q_norm.weight"),
+        ((k_buf, k_off), num_kv, "k_norm.weight"),
+    ] {
+        use super::state::QkNorm;
+        match llama.qk_norm {
+            QkNorm::None => {}
+            QkNorm::PerHead => {
+                let w = crate::real_forward_utils::norm_view(
+                    weights,
+                    index,
+                    &name(suffix),
+                    head_dim as usize,
+                )?;
+                gpu::encode_rms_norm_bf16w_perhead(
+                    context,
+                    pass,
+                    data,
+                    w,
+                    data,
+                    heads,
+                    head_dim,
+                    llama.rms_eps,
+                )
+                .map_err(gpu_err)?;
+            }
+            QkNorm::Projection => {
+                let width = heads * head_dim;
+                let w = crate::real_forward_utils::norm_view(
+                    weights,
+                    index,
+                    &name(suffix),
+                    width as usize,
+                )?;
+                gpu::encode_rms_norm_bf16w(context, pass, data, w, data, width, llama.rms_eps)
+                    .map_err(gpu_err)?;
+            }
         }
     }
 
@@ -104,17 +117,31 @@ pub(crate) fn encode_attention_block(
     // and no `freq_base_swa`, so `arch_from_gguf` sets both fields from it.
     let theta = arch.full_rope_theta as f32;
     for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
-        gpu::encode_rope_proportional_neox(
-            context,
-            pass,
-            data,
-            position as u32,
-            heads,
-            head_dim,
-            llama.rotated_pairs,
-            theta,
-        )
-        .map_err(gpu_err)?;
+        if arch.rope_neox_subdim {
+            gpu::encode_rope_neox_subdim(
+                context,
+                pass,
+                data,
+                position as u32,
+                heads,
+                head_dim,
+                llama.rotated_pairs * 2,
+                theta,
+            )
+            .map_err(gpu_err)?;
+        } else {
+            gpu::encode_rope_proportional_neox(
+                context,
+                pass,
+                data,
+                position as u32,
+                heads,
+                head_dim,
+                llama.rotated_pairs,
+                theta,
+            )
+            .map_err(gpu_err)?;
+        }
     }
 
     // No-op on an FP16 layer; quantizes the (now normed and RoPE'd) staging
@@ -237,38 +264,17 @@ impl crate::real_forward::RealForwardRunner {
         )
         .map_err(gpu_err)?;
 
-        let router_name = layer_tensor(layer, "mlp.gate.weight");
-        let router = crate::real_forward_utils::entry(&self.index, &router_name)?;
-        if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
-            return Err(RealForwardError::Unsupported(format!(
-                "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got \
-                 dtype {} with {} packed bytes",
-                router.dtype, router.size_bytes
-            )));
-        }
-        let base = self.index.header.index_size;
-        gpu::encode_router_gemv_gemma4(
+        super::router::encode(
             &mut self.context,
             pass,
-            (
-                self.weights.buffer(),
-                self.weights.gpu_offset(router.file_offset - base),
-            ),
-            (
-                self.weights.buffer(),
-                self.weights.gpu_offset(router.scale_offset - base),
-            ),
-            (
-                self.weights.buffer(),
-                self.weights.gpu_offset(router.bias_offset - base),
-            ),
-            (&llama.moe_x, x_off),
-            (&llama.router_ones, 0),
-            (&llama.router_logits_f32, (t * num_experts * 4) as u64),
-            num_experts as u32,
-            hidden as u32,
-        )
-        .map_err(gpu_err)?;
+            &self.weights,
+            &self.index,
+            llama,
+            layer,
+            t,
+            hidden,
+            num_experts,
+        )?;
 
         Ok(())
     }

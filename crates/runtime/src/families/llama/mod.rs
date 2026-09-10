@@ -3,48 +3,35 @@
 //! Mixtral 8x7B / 8x22B on routed experts, and Mistral / Llama 2 / 3.x on a
 //! dense gated FFN. `RealLlamaState.dense` picks, off `num_experts`.
 //!
-//! **TWO FAMILIES RUN THROUGH THIS ONE FLOW**, `llama` (Mixtral) and
-//! `qwen3moe` (Qwen3-30B-A3B), because the layer graph below is the same
-//! graph for both. They differ in exactly two places, both carried by
-//! [`RealLlamaState`] and both keyed on `ArchConfig.family`: Qwen3 norms q
-//! and k per head before RoPE, and its RMS epsilon is 1e-6 against 1e-5.
-//! A third copy of this file with two lines changed would be the more
-//! likely source of a divergence bug than the shared one is.
+//! Llama/Mixtral, dense and MoE Qwen3, and MiniMax-M2 share this flow.
+//! Family-selected state carries Q/K normalization, RMS epsilon, rotary
+//! width, and router scoring. MiniMax normalizes whole projections and
+//! selects experts using biased sigmoid scores with unbiased weights.
 //!
-//! One decoder layer, which is the pseudocode `docs/NEW_MODEL.md` Phase 0
-//! asks for before any of this is written:
+//! One decoder layer (`docs/NEW_MODEL.md` Phase 0):
 //!
 //! ```text
 //! h      = rms_norm(x, input_layernorm)
-//! q,k,v  = h @ {q,k,v}_proj                 // 32 q heads over 8 kv heads
-//! q,k    = per_head_norm(q, k)               // qwen3moe ONLY, before rope
-//! q,k    = rope(q, k, pos, base 1e6)        // full-head NeoX
-//! a      = attention(q, k, v) @ o_proj      // no gate, no window, no norms
-//! x      = x + a                            // RAW, no sandwich norm
+//! q,k,v  = h @ {q,k,v}_proj
+//! q,k    = family_qk_norm(q, k)             // before RoPE
+//! q,k    = rope(q, k, pos)                  // family rotary width/theta
+//! a      = attention(q, k, v) @ o_proj
+//! x      = x + a
 //! m      = rms_norm(x, post_attention_layernorm)
-//! r      = softmax_topk(m @ router)[:2]     // 8 experts, top-2
-//! x      = x + sum(r_w * expert(m))         // no shared expert
+//! r      = family_topk(m @ router)
+//! x      = x + sum(r_w * expert(m))
 //! ```
 //!
-//! The dense half replaces the last two lines with one gated FFN and nothing
-//! else changes (`dense.rs`):
-//!
-//! ```text
-//! x      = x + down_proj(silu(gate_proj @ m) * (up_proj @ m))
-//! ```
-//!
-//! Then a final norm and an untied head, with no softcap.
-//!
-//! Every difference from the two existing flows is an ABSENCE, which is why
-//! this file is the shortest of the three: Gemma's sandwich norms, per-head
-//! q/k/v norms, router scales, shared expert and logit softcap are all gone,
-//! and so are Qwen's linear layers, output gate and gated shared expert.
+//! Dense models replace routing and expert reduction with one gated FFN
+//! (`dense.rs`). All use full attention, no shared expert or sandwich norm,
+//! and a final norm followed by a raw-logit head.
 
 mod attn;
 mod dense;
 mod moe;
 mod moe_prefill;
 mod prefill;
+pub(crate) mod router;
 mod state;
 
 pub(crate) use state::RealLlamaState;
@@ -55,7 +42,7 @@ use foundation::LogitValue;
 
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
-use crate::real_forward_utils::{entry, norm_view};
+use crate::real_forward_utils::norm_view;
 use crate::resid_capture::encode_resid_capture;
 use crate::steering::encode_steering;
 
@@ -110,7 +97,6 @@ impl RealForwardRunner {
         }
 
         let embed_name = "language_model.model.embed_tokens.weight";
-        let base = self.index.header.index_size;
 
         let mut pass = self.context.begin_pass_labeled("cb1 (attn+router)");
         // No `sqrt(hidden)` embedding scale: that is Gemma's, and this
@@ -255,37 +241,17 @@ impl RealForwardRunner {
                 continue;
             }
 
-            let router_name = layer_tensor(layer, "mlp.gate.weight");
-            let router = entry(index, &router_name)?;
-            if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
-                return Err(RealForwardError::Unsupported(format!(
-                    "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got dtype {} \
-                     with {} packed bytes",
-                    router.dtype, router.size_bytes
-                )));
-            }
-            gpu::encode_router_gemv_gemma4(
+            router::encode(
                 context,
                 &pass,
-                (
-                    weights.buffer(),
-                    weights.gpu_offset(router.file_offset - base),
-                ),
-                (
-                    weights.buffer(),
-                    weights.gpu_offset(router.scale_offset - base),
-                ),
-                (
-                    weights.buffer(),
-                    weights.gpu_offset(router.bias_offset - base),
-                ),
-                (&llama.moe_x, 0),
-                (&llama.router_ones, 0),
-                (&llama.router_logits_f32, 0),
-                num_experts as u32,
-                hidden as u32,
-            )
-            .map_err(gpu_err)?;
+                weights,
+                index,
+                llama,
+                layer,
+                0,
+                hidden,
+                num_experts,
+            )?;
 
             let t_wait = Instant::now();
             phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;

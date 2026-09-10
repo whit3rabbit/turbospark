@@ -79,7 +79,6 @@ public struct PermissionsSettingsPaneView: View {
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Text("Governed by macOS TCC & Sandbox", bundle: .module)
-                    .settingsControl("Governed by macOS TCC & Sandbox", pane: .permissions, timing: .immediate)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
@@ -204,7 +203,6 @@ public struct PermissionsSettingsPaneView: View {
                             .themedFont(.title2)
                             .foregroundStyle(.secondary.opacity(0.6))
                         Text("No custom folders authorized yet.", bundle: .module)
-                    .settingsControl("No custom folders authorized yet.", pane: .permissions, timing: .immediate)
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
                         Text("Add a folder here to clear the macOS access prompt for it up front.", bundle: .module)
@@ -384,7 +382,6 @@ public struct PermissionsSettingsPaneView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("TurboSpark Safety & Sandbox Guarantee", bundle: .module)
-                    .settingsControl("TurboSpark Safety & Sandbox Guarantee", pane: .permissions, timing: .immediate)
                     .themedFont(.small, weight: .semibold)
                 Text("Model tools (`FileRead`, `FileWrite`, `FileEdit`, `Terminal`) operate under strict workspace containment checks (`resolveSecurePath`). High-risk operations (e.g., editing files outside project root, deleting directories, or executing destructive terminal commands) require manual user confirmation unless overridden in Project Settings.", bundle: .module)
                     .themedFont(.small)

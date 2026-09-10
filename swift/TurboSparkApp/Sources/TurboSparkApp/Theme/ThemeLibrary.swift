@@ -79,7 +79,7 @@ extension AppearanceManager {
         return selectedThemeID
     }
     public var currentThemeName: String {
-        availableThemes.first { $0.id == currentThemeID }?.name ?? "Custom"
+        availableThemes.first { $0.id == currentThemeID }?.name ?? String(localized: "Custom", bundle: .module)
     }
 
     @discardableResult

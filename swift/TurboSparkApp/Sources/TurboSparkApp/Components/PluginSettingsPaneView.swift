@@ -54,7 +54,7 @@ public struct PluginSettingsPaneView: View {
             } else {
                 HStack(spacing: 0) {
                     pluginList
-                        .frame(width: 300)
+                        .frame(width: 220)
                         .background(.appSurface.opacity(0.5))
 
                     Rectangle()
@@ -65,7 +65,6 @@ public struct PluginSettingsPaneView: View {
                         pluginDetail(plugin)
                     } else {
                         Text("Select a plugin to inspect its contributions.", bundle: .module)
-                    .settingsControl("Select a plugin to inspect its contributions.", pane: .plugins, timing: .nextTurn)
                             .themedFont(.base)
                             .foregroundStyle(.appSecondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -158,6 +157,7 @@ public struct PluginSettingsPaneView: View {
                     .tag(plugin.id)
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
         }
     }
 
@@ -198,7 +198,6 @@ public struct PluginSettingsPaneView: View {
                 if !plugin.manifest.unsupportedNotes.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Not applied by this client", bundle: .module)
-                    .settingsControl("Not applied by this client", pane: .plugins, timing: .nextTurn)
                             .font(theme.ui(.base, weight: .semibold))
                         ForEach(plugin.manifest.unsupportedNotes, id: \.self) { note in
                             Label(note, systemImage: "minus.circle")
@@ -252,7 +251,6 @@ public struct PluginSettingsPaneView: View {
         let counts = PluginContributionCounts(plugin: plugin)
         return VStack(alignment: .leading, spacing: 6) {
             Text("Contributions", bundle: .module)
-                    .settingsControl("Contributions", pane: .plugins, timing: .nextTurn)
                 .font(theme.ui(.base, weight: .semibold))
             HStack(spacing: 14) {
                 ContributionCount(label: "Commands", count: counts.commands)
@@ -367,7 +365,6 @@ public struct PluginSettingsPaneView: View {
                 .themedFont(.display)
                 .foregroundStyle(.tertiary)
             Text("No plugins installed.", bundle: .module)
-                    .settingsControl("No plugins installed.", pane: .plugins, timing: .nextTurn)
                 .themedFont(.base)
                 .foregroundStyle(.appSecondary)
             Text("Browse a marketplace, or add a local folder containing .claude-plugin/plugin.json.", bundle: .module)

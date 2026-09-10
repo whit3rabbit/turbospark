@@ -88,6 +88,7 @@ public struct LocalModelDefaultsSectionView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Minimum AutoFit context length", bundle: .module)
+                .settingsControl("Minimum AutoFit context length", pane: .models, timing: .modelReload)
                         .themedFont(.base)
                     Spacer()
                     Text(floorLabel)
@@ -125,6 +126,7 @@ public struct LocalModelDefaultsSectionView: View {
     private var loadGuardSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Model loading guardrails", bundle: .module)
+                .settingsControl("Model loading guardrails", pane: .models, timing: .modelReload)
                 .themedFont(.base, weight: .semibold)
 
             VStack(alignment: .leading, spacing: 12) {
@@ -182,6 +184,7 @@ public struct LocalModelDefaultsSectionView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Maximum allocation", bundle: .module)
+                .settingsControl("Maximum allocation", pane: .models, timing: .modelReload)
                     .themedFont(.base)
                 Spacer()
                 Text(ceilingLabel)

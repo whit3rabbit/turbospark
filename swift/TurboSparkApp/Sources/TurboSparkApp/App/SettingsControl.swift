@@ -13,6 +13,16 @@ struct SettingsControlDescriptor: Identifiable {
     let pane: AppSettingsView.SettingsTab
     let timing: SettingsApplicationTiming
     var id: String { pane.rawValue + ":" + title }
+    var navigationID: String {
+        // A menu item is not mounted until its parent menu opens.
+        if pane == .appearance {
+            if ["Copy theme JSON", "Export JSON file", "Import JSON file", "Import from clipboard"].contains(title) {
+                return pane.rawValue + ":Import / Export"
+            }
+            if ["Delete saved theme", "Rename"].contains(title) { return pane.rawValue + ":Theme gallery" }
+        }
+        return id
+    }
 }
 
 private struct SettingsTargetKey: EnvironmentKey { static let defaultValue: String? = nil }
@@ -42,7 +52,7 @@ private struct SettingsControlModifier: ViewModifier {
                         .padding(-4).allowsHitTesting(false)
                 }
             }
-            .help(Text(LocalizedStringKey(descriptor.timing.rawValue), bundle: .module))
+            .accessibilityHint(Text(LocalizedStringKey(descriptor.timing.rawValue), bundle: .module))
     }
 }
 

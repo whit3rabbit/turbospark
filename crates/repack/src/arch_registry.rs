@@ -121,6 +121,7 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // `FFN_DOWN` -- exactly `Qwen3Moe`'s attention switch plus `Llama`'s
     // dense-FFN switch, both already carried by `RealLlamaState`.
     ("qwen3", ModelFamily::Qwen3Dense),
+    ("minimax-m2", ModelFamily::MiniMaxM2),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.
@@ -129,6 +130,8 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
 /// model in `text_config`, which carries its own suffixed `model_type`. Both
 /// were read off the pinned `mlx-community` checkpoints.
 const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
+    // Recognition guards other parsers; catalog safetensors intake remains refused.
+    ("minimax_m2", ModelFamily::MiniMaxM2),
     ("gemma4", ModelFamily::Gemma4),
     ("gemma4_text", ModelFamily::Gemma4),
     ("qwen3_5_moe", ModelFamily::QwenGdnMoe),
@@ -178,17 +181,6 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
 /// one makes every byte resident (AGENTS.md Gotcha 19). Hence `llama`'s
 /// note naming its two halves separately.
 const PLANNED_GGUF: &[(&str, PlannedArch)] = &[
-    // Header-only witness checked 2026-09-10. The Q/K norm spans all
-    // heads and the routing bias selects experts without weighting them;
-    // aliasing Qwen3-MoE would silently change both operations.
-    (
-        "minimax-m2",
-        PlannedArch {
-            needs: "whole-projection Q/K RMS normalization, partial RoPE, and sigmoid \
-                    expert routing with selection-only correction bias (docs/MINIMAX_M2_PHASE0.md)",
-            witness: "https://huggingface.co/unsloth/MiniMax-M2-GGUF/resolve/main/Q4_K_M/MiniMax-M2-Q4_K_M-00001-of-00003.gguf",
-        },
-    ),
     // ROADMAP M5 Phase 0 REWROTE THIS CLAUSE, and the correction is the
     // point: the original named a layer graph, and the binding obstacle is
     // arithmetic that has nothing to do with one. Scout is 16 experts of

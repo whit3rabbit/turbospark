@@ -13,7 +13,7 @@ use crate::install::{InstallPlan, INSTALL_CANCELLED};
 /// The one place every `HttpRangeSource` of a walk is built, so the cancel
 /// flag is attached to each of them exactly once. `None` is the CLI's
 /// unstoppable shape, byte-for-byte as before.
-fn range_source(
+pub(crate) fn range_source(
     url: String,
     byte_progress: Option<&ByteProgressCallback>,
     client: &Client,
@@ -53,18 +53,20 @@ pub(crate) fn stream_gguf(
         .file
         .as_deref()
         .ok_or_else(|| "a gguf install needs a filename".to_string())?;
-    let url = plan.weights.file_url(file);
-    let source = range_source(url, byte_progress, client, cancel);
-    let header = repack::fetch_gguf_header(&source)
-        .map_err(|e| format!("reading the GGUF header of {file}: {e}"))?;
+    let source = crate::gguf_source::load(client, &plan.weights, file, byte_progress, cancel)?;
+    let header = &source.header;
+    if header.architecture() == Some("minimax-m2") {
+        let size = repack::minimax_gguf_sizing(header).map_err(|e| e.to_string())?;
+        progress(&format!("MiniMax storage preflight: download {}, install allowance {}, resident {}, eight slots {}, FP16 KV at 8192 {} bytes", source.bytes, size.install_bytes(), size.resident_bytes, size.eight_slot_bytes, size.kv_8192_bytes));
+    }
     let model_id = plan.weights.repo.clone();
-    let arch = repack::write_gguf_install_streamed(dir, &header, &source, &model_id, |stage| {
+    let arch = repack::write_gguf_install_streamed(dir, header, &source, &model_id, |stage| {
         progress(&format!("[repack] {stage}"))
     })
     .map_err(|e| format!("streaming {file}: {e}"))?;
     record_trained_context(
         dir,
-        repack::trained_context_meta::from_gguf(&header),
+        repack::trained_context_meta::from_gguf(header),
         progress,
     );
     Ok(arch)

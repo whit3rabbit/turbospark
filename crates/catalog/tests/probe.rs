@@ -310,3 +310,16 @@ fn a_repo_reference_parses_with_and_without_a_revision() {
         assert!(RepoRef::parse(bad).is_err(), "{bad:?} should not parse");
     }
 }
+
+#[test]
+fn minimax_safetensors_remain_explicitly_refused() {
+    let report = evaluate_config(r#"{"model_type":"minimax_m2"}"#, &repo(), None).unwrap();
+    assert_eq!(report.family, Some(model_io::ModelFamily::MiniMaxM2));
+    let Verdict::Refused(reason) = report.verdict else {
+        panic!("MiniMax safetensors must not be admitted")
+    };
+    assert!(
+        reason.contains("safetensors intake is not wired"),
+        "{reason}"
+    );
+}

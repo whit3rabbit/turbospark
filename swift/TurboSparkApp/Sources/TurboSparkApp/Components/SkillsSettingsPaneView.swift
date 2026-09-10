@@ -93,7 +93,7 @@ public struct SkillsSettingsPaneView: View {
                 HStack(spacing: 0) {
                     // Left list
                     skillsListView
-                        .frame(width: 300)
+                        .frame(width: 220)
                         .background(.appSurface.opacity(0.5))
 
                     Rectangle()
@@ -149,15 +149,6 @@ public struct SkillsSettingsPaneView: View {
     // MARK: - Header Bar
     private var headerControlBar: some View {
         HStack(spacing: 12) {
-            Picker("Scope", selection: $scopeFilter) {
-                ForEach(SkillScopeFilter.allCases) { filter in
-                    Text(filter.rawValue).tag(filter)
-                }
-            }
-            .settingsControl("Scope", pane: .skills, timing: .nextTurn)
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 280)
-
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .themedFont(.small)
@@ -199,7 +190,7 @@ public struct SkillsSettingsPaneView: View {
                 Label("New Skill", systemImage: "plus")
             }
             .buttonStyle(.borderedProminent)
-            .tint(TurboSparkTheme.accentColor)
+            .fixedSize()
         }
     }
 
@@ -213,6 +204,7 @@ public struct SkillsSettingsPaneView: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
     }
 
     private func skillRowView(skill: AppSkill) -> some View {
@@ -276,9 +268,14 @@ public struct SkillsSettingsPaneView: View {
     /// Whether a USER-scoped skill's name is currently overridden by a
     /// project skill (the comparison is the same case-insensitive key the
     /// precedence merge itself uses).
+    private func isPluginSkill(_ skill: AppSkill) -> Bool {
+        if case .plugin = skill.scope { return true }
+        return false
+    }
+
     private func isShadowedByProject(_ skill: AppSkill) -> Bool {
         guard skill.scope.isProjectScope == false else { return false }
-        return model.shadowedUserSkillNames.contains {
+        return SkillManager.shared.shadowedUserSkillNames(projectURL: scopedProject?.rootDirectoryURL).contains {
             $0.caseInsensitiveCompare(skill.name) == .orderedSame
         }
     }
@@ -288,7 +285,6 @@ public struct SkillsSettingsPaneView: View {
             Image(systemName: "arrow.2.squarepath")
                 .themedFont(.micro)
             Text("Shadowed", bundle: .module)
-                    .settingsControl("Shadowed", pane: .skills, timing: .nextTurn)
                 .themedFont(.micro, weight: .semibold)
         }
         .padding(.horizontal, 6)
@@ -325,7 +321,7 @@ public struct SkillsSettingsPaneView: View {
             VStack(alignment: .leading, spacing: 18) {
                 // Header card
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
                                 Text(skill.name)
@@ -337,9 +333,7 @@ public struct SkillsSettingsPaneView: View {
                                 .foregroundStyle(.appSecondary)
                         }
 
-                        Spacer()
-
-                        VStack(alignment: .trailing, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 8) {
                             if let project = scopedProject {
                                 ExtensionOverridePicker(enabled: Binding(
                                     get: { project.enabledSkills[skill.name.lowercased()] },
@@ -348,7 +342,7 @@ public struct SkillsSettingsPaneView: View {
                             // The list greys a disabled skill and this pane
                             // had no way to re-enable it; the only toggle was
                             // in the composer's plus menu.
-                            if scopedProject == nil {
+                            if scopedProject == nil && !isPluginSkill(skill) {
                             Toggle("Enabled", isOn: Binding(
                                 get: { skill.isEnabled },
                                 set: { _ in model.toggleSkillEnabled(skill) }
@@ -357,7 +351,7 @@ public struct SkillsSettingsPaneView: View {
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             } else {
-                                Text(skill.isEnabled ? "Enabled" : "Disabled").themedFont(.small)
+                                Text(LocalizedStringKey(skill.isEnabled ? "Enabled" : "Disabled"), bundle: .module).themedFont(.small)
                             }
                             if case .plugin = skill.scope {
                                 Button { model.openSettings(tab: .plugins) } label: { Text("Manage plugin", bundle: .module) }
@@ -374,9 +368,9 @@ public struct SkillsSettingsPaneView: View {
                             }
                             if !SkillManager.shared.ownsSkill(skill) {
                                 Menu {
-                                    Button("Copy to User") { _ = model.importSkill(from: skill.skillDirectoryURL ?? skill.sourceURL, targetScope: .userGlobal) }
+                                    Button { _ = model.importSkill(from: skill.skillDirectoryURL ?? skill.sourceURL, targetScope: .userGlobal) } label: { Text("Copy to User", bundle: .module) }
                                     if let path = scopedProject?.rootDirectoryPath {
-                                        Button("Copy to Project") { _ = model.importSkill(from: skill.skillDirectoryURL ?? skill.sourceURL, targetScope: .projectLocal(projectPath: path)) }
+                                        Button { _ = model.importSkill(from: skill.skillDirectoryURL ?? skill.sourceURL, targetScope: .projectLocal(projectPath: path)) } label: { Text("Copy to Project", bundle: .module) }
                                     }
                                 } label: { Text("Copy to TurboSpark", bundle: .module)
                     .settingsControl("Copy to TurboSpark", pane: .skills, timing: .nextTurn) }
@@ -428,7 +422,6 @@ public struct SkillsSettingsPaneView: View {
                 if !skill.manifest.paths.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Activation Path Triggers", bundle: .module)
-                    .settingsControl("Activation Path Triggers", pane: .skills, timing: .nextTurn)
                             .themedFont(.base, weight: .semibold)
                         FlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(skill.manifest.paths, id: \.self) { pathPattern in
@@ -476,7 +469,6 @@ public struct SkillsSettingsPaneView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Instruction Body (SKILL.md)", bundle: .module)
-                    .settingsControl("Instruction Body (SKILL.md)", pane: .skills, timing: .nextTurn)
                             .themedFont(.base, weight: .semibold)
                         Spacer()
                         Button {
@@ -530,7 +522,6 @@ public struct SkillsSettingsPaneView: View {
                 .foregroundStyle(.appSecondary)
 
             Text("No Skills Installed", bundle: .module)
-                    .settingsControl("No Skills Installed", pane: .skills, timing: .nextTurn)
                 .themedFont(.title2, weight: .bold)
 
             Text("Skills allow you to package and inject specialized prompts, workflow instructions, reference scripts, and tool permissions into conversations.", bundle: .module)
@@ -546,7 +537,7 @@ public struct SkillsSettingsPaneView: View {
                     Label("Create First Skill", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(TurboSparkTheme.accentColor)
+                .fixedSize()
 
                 Button {
                     isImportingSkill = true

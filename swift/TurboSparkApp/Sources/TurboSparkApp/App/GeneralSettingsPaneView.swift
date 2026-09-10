@@ -24,7 +24,6 @@ struct GeneralSettingsPaneView: View {
                 if let keyboard = LanguageDetector.currentKeyboardLayoutName() {
                     HStack {
                         Text("Active Keyboard Layout:", bundle: .module)
-                    .settingsControl("Active Keyboard Layout:", pane: .general, timing: .immediate)
                             .font(theme.ui(.small))
                             .foregroundStyle(.appSecondary)
                         Spacer()
@@ -45,7 +44,6 @@ struct GeneralSettingsPaneView: View {
             .settingsControl("Text Readability", pane: .general, timing: .immediate)
                 .pickerStyle(.segmented)
             }
-            .settingsControl("Text Size & Readability", pane: .general, timing: .immediate)
 
             // Its own computed property: a Section inline in a larger Form
             // expression is the shape that blew the macOS 14 SDK type-checker.
@@ -91,7 +89,6 @@ struct GeneralSettingsPaneView: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
         }
-            .settingsControl("Menu Bar & Server", pane: .general, timing: .immediate)
     }
 
     private var hfAuthSection: some View {
@@ -118,7 +115,6 @@ struct GeneralSettingsPaneView: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
         }
-            .settingsControl("Temporary Chats", pane: .general, timing: .immediate)
     }
 
     private var compactionSection: some View {

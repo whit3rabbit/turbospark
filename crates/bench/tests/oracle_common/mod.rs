@@ -136,6 +136,28 @@ pub fn run_oracle_over_cases(
     max_new: u32,
     cases: &[ProtocolCase],
 ) {
+    run_oracle_over_cases_with_slots(
+        dir,
+        baselines,
+        unknown_ceiling_mib,
+        max_context,
+        max_new,
+        cases,
+        PROTOCOL_EXPERT_CACHE_SLOTS,
+    )
+}
+
+/// Same protocol with an explicit cache size for large expert families.
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn run_oracle_over_cases_with_slots(
+    dir: &Path,
+    baselines: &[ChipBaseline],
+    unknown_ceiling_mib: u64,
+    max_context: u32,
+    max_new: u32,
+    cases: &[ProtocolCase],
+    slots: usize,
+) {
     assert!(
         !cases.is_empty(),
         "an oracle over zero cases has nothing to measure"
@@ -157,9 +179,9 @@ pub fn run_oracle_over_cases(
         ),
     }
 
+    eprintln!("memory_oracle: {max_new} max_new, {slots} expert slots");
     let (mut runner, tokenizer) =
-        open_model_runner_with_context(dir, PROTOCOL_EXPERT_CACHE_SLOTS, max_context)
-            .expect("real install should open");
+        open_model_runner_with_context(dir, slots, max_context).expect("real install should open");
     let mut sampler = AppMemorySampler::new();
 
     let mut measured = Vec::new();

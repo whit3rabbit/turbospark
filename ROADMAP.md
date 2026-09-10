@@ -1,6 +1,6 @@
 # Roadmap
 
-The forward-looking roadmap and prioritized task tracker for this engine, last reconciled against the tree on 2026-09-09. All core port phases (Q, P1, G, S, P2, M1-M5) are complete and green. This document functions as an active TODO list for forward engineering, measurements, and architectural bring-ups.
+The forward-looking roadmap and prioritized task tracker for this engine, last reconciled for MiniMax-M2 and dense Qwen3 on 2026-09-10. All core port phases (Q, P1, G, S, P2, M1-M5) are complete and green. This document functions as an active TODO list for forward engineering, measurements, and architectural bring-ups.
 
 All completed work, historical milestones, and landed features have been removed to focus strictly on remaining tasks.
 
@@ -8,8 +8,8 @@ All completed work, historical milestones, and landed features have been removed
 
 ## Current Status
 
-- **Test Suite**: the count lives in `docs/TESTING.md` and is deliberately not restated here. `AGENTS.md` records it rotting past 2x twice, and a second copy in this file is exactly that rot. The one figure that is greppable rather than build-derived: 161 `#[ignore]`d functions across 89 targets as of 2026-09-09, via `docs/TESTING.md`'s own one-liner (the checkpoint downloads, memory oracles, quality gates, sensitivity proof, cross-engine dumps, and offline benchmarks).
-- **Architectures**: 9 `ModelFamily` variants running across 22 curated catalog rows (`gemma4`, `qwenGdnMoe`, `llama`, `qwen3moe`, `gptOss`, `museGlimmer`, `qwenGdnDense`, `qwen4Exp`, `spark2_5`). A tenth variant, `deepseekV4Flash`, is declared and scaffolded only.
+- **Test Suite**: Counts and gating conventions live in [docs/TESTING.md](docs/TESTING.md). Workspace build, tests with Metal, formatting, and Clippy passed after the MiniMax-M2 changes on 2026-09-10.
+- **Architectures**: 12 declared `ModelFamily` variants. Dense `qwen3` GGUF execution is verified on 0.6B Q8_0. MiniMax-M2 GGUF execution is implemented, but repetitive low-temperature smokes block release and catalog promotion. `deepseekV4Flash` remains scaffolded. The full support matrix lives in [docs/MODEL_FAMILY.md](docs/MODEL_FAMILY.md).
 
 ---
 
@@ -23,7 +23,7 @@ Low-friction, high-impact fixes, unblocked measurement runs, or low-hanging symm
 - **Objective**: Run `ARMS=seq,chunked scripts/power.sh` on AC quiet machine (~12 min, sudo) to capture baseline chunked prefill power and J/tok.
 - **Why Open**: Tooling was unblocked (`turbospark-bench --prefill-chunk off|auto|N` and `scripts/power.sh seq|chunked` wired), but clean baseline row run is still owed.
 - **Preflight repair (2026-09-10)**: `scripts/power.sh` now refuses competing `turbospark-check`, `turbospark-server`, `turbospark-bench`, and `TurboSparkApp` processes alongside the legacy names. `python3 scripts/test_power_preflight.py` checks refusal before capture setup and sudo, plus the idle path. Removing either new name group fails its matching cases.
-- **Capture prerequisite**: Run from a terminal with sudo authentication on a quiet AC machine. The 2026-09-10 attempt stopped at preflight: agent-side sudo authentication was unavailable and TurboSparkApp plus background build activity were present. No energy row was captured.
+- **Capture attempted (2026-09-10)**: The user completed two sequential/chunked pairs per case on AC with automatic cooling. Medium/long arms reached Moderate or Heavy pressure; long-prefill J/token spread was 76.7% sequential and 65.5% chunked. The capture is recorded in `docs/POWER_BASELINE.md`, with raw rows in `docs/verification/prefill-energy-2026-09-10.tsv`, but is not an accepted baseline. Retry on a quiet machine with controlled cooling; keep any `COOLING=max` result separate from the automatic-cooling baseline still owed.
 - **Files to Touch / Run**:
   - `scripts/power.sh` (execute benchmark)
   - `docs/POWER_BASELINE.md` (record resulting rows)
@@ -148,12 +148,13 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 
 #### 2. Dense `qwen3` / `qwen2.5` Architecture Bring-up (Usage-Weighted Priority)
 - **Objective**: Bring up dense Qwen family (0.6B to 32B, Coder, QwQ, R1 distills) which forms the primary backbone of user-downloaded GGUF repositories.
-- **Why Open**: Our qwen family currently covers GDN and MoE lines, but standard dense Qwen is missing from the architecture registry.
+- **Landed (2026-09-10)**: Dense `qwen3` GGUF registration and execution use the shared Llama flow. Per-head Q/K normalization is fixed and verified on Qwen3-0.6B Q8_0 with greedy/sample smokes, memory, and a mutation-checked frozen quality gate. See [the regression record](docs/MINIMAX_M2_PHASE0.md#shared-flow-regression-checks).
+- **Why Open**: Dense `qwen2` / Qwen2.5 intake and execution remain unported; larger Qwen3 checkpoints and derivatives still need their own validation.
 - **Files to Touch / Create**:
   - `crates/model-io/src/arch_config/family.rs`
   - `crates/model-io/src/manifest.rs`
   - `crates/repack/src/`
-  - `crates/runtime/src/families/qwen_dense/` [NEW]
+  - `crates/runtime/src/families/llama/` (reuse the existing dense full-attention flow where the checkpoint contract agrees)
   - `docs/NEW_MODEL.md`, `docs/MODEL_FAMILY.md`
 
 #### 3. `deepseek2` Architecture Support (High-Leverage Multi-Model Unlock)
@@ -222,6 +223,28 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   - `crates/repack/src/arch_registry.rs` (`SUPPORTED_HF` rows), `crates/catalog/src/` (`evaluate_config`, `stream_mlx`)
   - `crates/tokenizer/src/structured_decoder/` (the fifth tool-call DSL)
   - `scripts/kld_llamacpp.py` (one `CHECKPOINTS` row)
+
+#### 11. Native Z-Image-Turbo Image Generation (CLI, then App)
+
+- **Objective**: Add local, quantized text-to-image generation through native Rust/Metal, first in the unified CLI and then through the existing C ABI/Swift package in an explicit image mode in chat.
+- **Why Open**: Expert streaming, sequential vision-block loading, load guards, and app bindings exist; diffusion conditioning, transformer/scheduler execution, VAE decoding, image installation, and generated-artifact handling still require bring-up.
+- **Design and Gates**: [Native image generation](docs/IMAGE_GENERATION.md) owns the architecture, proposed interfaces, evidence requirements, and release boundaries. Proposed on 2026-09-10; implementation and measurements remain open.
+- **Sequence**:
+  - [ ] **IG0**: Pin model/reference revisions and component contracts; capture intermediate fixtures; select compatible quantization and define the target memory/latency envelope.
+  - [ ] **IG1**: Validate native conditioning, transformer blocks, scheduler updates, and VAE against the pinned reference.
+  - [ ] **IG2**: Deliver a complete quantized install and staged CLI pipeline with PNG output, metadata, progress, and cancellation.
+  - [ ] **IG3**: Prove bounded lifetimes and measured memory; add sequential block streaming only where the target budget requires it. Required before advertising that budget.
+  - [ ] **IG4**: Expose the same runtime through Swift; add chat image mode, job serialization, preview/save/regeneration, and profile-scoped artifact persistence.
+  - [ ] **IG5**: Tune measured bottlenecks without weakening quality or memory gates; approximation work needs a separate proposal.
+- **First Release Boundary**: One image per prompt, native Metal, exact dense execution with validated quantization. Image editing, LoRA, batching, agent tools, HTTP image endpoints, PISA, and approximate timestep reuse are deferred. Existing text consumers must retain their behavior.
+
+#### 12. MiniMax-M2 Release Gates (GGUF Execution Implemented)
+
+- **Landed (2026-09-10)**: Validated split-GGUF streaming, FP32 router/bias preservation, whole-projection Q/K normalization, partial RoPE, sigmoid expert selection, and checkpoint framing. The pinned Q4_K_M artifact is installed; synthetic Metal tests and shared Llama/Qwen3 regressions pass.
+- **Verified**: The real memory oracle passes at 8192 context and eight slots; both short-answer EOS checks pass. Two fresh quality processes reproduce perplexity and digests. [The implementation record](docs/MINIMAX_M2_PHASE0.md) owns pins and measured figures.
+- **Release Blocker**: Greedy and low-temperature sampled coastal-wetlands smokes repeat reasoning and exhaust 400 tokens. Temperature 1 completes coherently at 1240 tokens, but does not waive those failures.
+- **Remaining**: Resolve the repetition, pass the release smokes, review/freeze quality and quiet-machine performance baselines, then add the exact artifact to the catalog and promote support.
+- **Deferred**: Safetensors/FP8 intake, mapped expert residency, native tool-call parsing, MTP, vision, and later MiniMax variants.
 
 ---
 
@@ -326,6 +349,17 @@ Re-derived from `ls ~/models` and `ls ~/.turbospark/models` on 2026-09-09, with 
 | `vision-probe-qwen38/` | 4.8G | `mlx-community/Qwen3.8-27B-4bit` tower (revision `3e6447f0`) |
 | `vision-probe/` | 879M | `prism-ml/Bonsai-27B-mlx-1bit` tower |
 
+Additions verified on 2026-09-10 (the older inventory above remains a dated snapshot):
+
+| Path in `~/models/` | Size | Status / Associated Targets |
+|---|---|---|
+| `minimax-m2-q4km.gturbo` | 128.9 GiB | Installed; memory/EOS checks pass, low-temperature smoke blocks release |
+| `qwen3-06b-regression.gturbo` | 604 MiB resident | Dense Qwen3 Q8_0 memory and frozen quality gates |
+| `qwen3moe-gguf.gturbo` | 17.3 GiB | Qwen3 MoE smokes and existing memory/quality gates pass |
+| `mistral7b-dense.gturbo` | 4.07 GiB resident | Mistral smokes and existing memory oracle pass |
+
+Storage preflights retained at least 20 GiB headroom. Only disposable compiler caches were reclaimed; no models were deleted. Exact install bytes and fingerprints live in [the MiniMax record](docs/MINIMAX_M2_PHASE0.md).
+
 Store models in `~/.turbospark/models/`:
 
 | Path in `~/.turbospark/models/` | Size | Status / Associated Targets |
@@ -342,7 +376,6 @@ Store models in `~/.turbospark/models/`:
 - `ornith9b.gturbo` (8.9G)
 - `ornith35b.gturbo` (18G)
 - `ornith35b-gguf.gturbo` (34G)
-- `mistral7b.gturbo`
 - `llama3-8b-instruct.gturbo`
 
 ---

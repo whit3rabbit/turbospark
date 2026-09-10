@@ -197,7 +197,8 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // (`docs/QWEN3_PHASE0.md`) and has no MoE sibling marker to borrow
         // either, so it rides along too.
         | ModelFamily::Spark25
-        | ModelFamily::Qwen3Dense => ".experts.switch_glu.",
+        | ModelFamily::Qwen3Dense
+        | ModelFamily::MiniMaxM2 => ".experts.switch_glu.",
     }
 }
 

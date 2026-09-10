@@ -287,7 +287,7 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // `Qwen3Moe` runs the same flow. Dense `qwen3` runs the same flow
         // too (`docs/QWEN3_PHASE0.md`) and joins at the same dense-FFN
         // boundary `Llama`'s own dense half does.
-        F::Llama | F::Qwen3Moe | F::Qwen3Dense => true,
+        F::Llama | F::Qwen3Moe | F::Qwen3Dense | F::MiniMaxM2 => true,
         // `families/gemma4/`, THREE call sites: the sequential/decode routed
         // tail (`mod.rs`), the chunked prefill driver's per-token routed
         // loop (`prefill.rs`, which calls the same tail function and so

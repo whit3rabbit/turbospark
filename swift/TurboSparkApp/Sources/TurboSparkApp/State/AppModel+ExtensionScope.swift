@@ -19,7 +19,8 @@ extension SkillManager {
         let prefix = root.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         let target = (skill.skillDirectoryURL ?? skill.sourceURL)
             .standardizedFileURL.resolvingSymlinksInPath().path
-        return target.hasPrefix(prefix)
+        let source = skill.sourceURL.standardizedFileURL.resolvingSymlinksInPath().path
+        return target.hasPrefix(prefix) && source.hasPrefix(prefix)
     }
 
     func requireOwnedSkill(_ skill: AppSkill) throws {

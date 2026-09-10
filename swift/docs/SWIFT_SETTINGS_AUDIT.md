@@ -14,7 +14,11 @@ it out.
 Two stores hold everything. `State/MacAppSettings.swift` writes
 `settings.json` and `Theme/AppearanceSettings.swift` writes
 `appearance.json`, both under `AppStorageRoot`
-(`swift/docs/SWIFT_STORAGE.md`). Thirteen tabs edit them.
+(`swift/docs/SWIFT_STORAGE.md`). Fifteen tabs edit them.
+
+The 2026-09-10 scope, theme library and control-search pass is documented in
+[SWIFT_SETTINGS_SCOPE_AND_THEMES.md](SWIFT_SETTINGS_SCOPE_AND_THEMES.md),
+including the control inventory, changed contracts and verification limits.
 
 Two other surfaces moved off their old stores (2026-09-05/06) and neither
 is tested the same way. The server API key lives in the login Keychain
@@ -263,9 +267,9 @@ if the mechanism matters.
   (`commandAdvisoryVeto`) had no keyword entry, which is the general
   failure mode -- a keyword list drifts the moment a control is added.
   `ServerAndAppearanceStoreTests.testSettingsKeywordsCoverRecentlyAddedControls`
-  pins it. Search still matches only the tab title and this hand-typed
-  list, never rendered pane content; real content-indexing search is a
-  separate, larger feature.
+  pins it. The 2026-09-10 pass adds a generated control index, pane navigation,
+  scroll-to-target and highlighting. Keywords remain a supplementary category
+  filter; declarations beside controls are now the control-search source.
 - **Subagent sampling**: every subagent turn ran at a hardcoded
   `temperature: 0.2` regardless of the Engine pane's setting.
   `AppModel.samplingOptions()` is now the one place that reads sampling

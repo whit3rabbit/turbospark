@@ -58,7 +58,10 @@ public struct AppearanceSettingsPaneView: View {
             .padding(20)
         }
         .background(.appPage.opacity(0.6))
-        .onChange(of: settingsTarget, initial: true) { _, target in if target != nil { showsCustomization = true } }
+        .onChange(of: settingsTarget, initial: true) { _, target in
+            let colorTargets = ["Customize colors", "Accent", "Background", "Foreground", "Contrast", "Translucent sidebar"]
+            if colorTargets.contains(where: { target == "appearance:" + $0 }) { showsCustomization = true }
+        }
     }
 
     // MARK: - Reset to Defaults

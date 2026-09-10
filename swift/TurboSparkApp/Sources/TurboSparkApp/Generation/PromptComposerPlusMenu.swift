@@ -303,8 +303,11 @@ struct PromptComposerPlusMenu: View {
             } else {
                 model.toggleGlobalMcpServer(id: server.id, isEnabled: !server.isEnabled)
             }
-        } else if let proj = model.selectedProject {
+        } else if let proj = model.selectedProject, proj.mcpServers.contains(where: { $0.id == server.id }) {
             model.toggleProjectMcpServer(projectID: proj.id, serverID: server.id, isEnabled: !server.isEnabled)
+        } else {
+            // Plugin contributions share their owner's enablement and trust decisions.
+            model.openSettings(tab: .plugins)
         }
     }
 

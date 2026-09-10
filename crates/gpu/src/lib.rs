@@ -300,3 +300,8 @@ pub use metal::Buffer as MetalBuffer;
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.
 pub use foundation::TokenId;
+
+#[cfg(target_os = "macos")]
+mod minimax_router;
+#[cfg(target_os = "macos")]
+pub use minimax_router::encode_minimax_router;

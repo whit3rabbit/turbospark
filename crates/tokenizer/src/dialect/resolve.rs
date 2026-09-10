@@ -121,7 +121,12 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
     // is therefore tested for POSITIVELY, and only after Gemma's own
     // marker has been ruled out -- `</s>` is far too common a token to
     // decide a dialect on its own.
-    if special_token_id(tokenizer, DEEPSEEK_USER_MARK).is_some() {
+    if special_token_id(tokenizer, "]~!b[").is_some()
+        && special_token_id(tokenizer, "]~b]").is_some()
+        && special_token_id(tokenizer, "[e~[").is_some()
+    {
+        ChatDialect::MiniMax
+    } else if special_token_id(tokenizer, DEEPSEEK_USER_MARK).is_some() {
         ChatDialect::Deepseek
     } else if special_token_id(tokenizer, SPARK_BOT_MARK).is_some() {
         // Spark-X2.5, probed BEFORE ChatML on a marker no other table
@@ -208,5 +213,6 @@ pub(crate) fn resolve_dialect(
         ChatDialect::MuseGlimmer => resolve_muse_glimmer(tokenizer),
         ChatDialect::Llama3 => resolve_llama3(tokenizer),
         ChatDialect::Spark => resolve_spark(tokenizer),
+        ChatDialect::MiniMax => super::minimax::resolve(tokenizer),
     }
 }

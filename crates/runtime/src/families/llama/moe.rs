@@ -65,8 +65,11 @@ pub(crate) fn encode_llama_layer_moe(
         slot.token * num_experts,
         num_experts,
     );
-    let (selected, route_weights) =
-        router_topk_gemma4(&router_logits, top_k, &llama.per_expert_ones);
+    let (selected, route_weights) = if let Some(bias) = llama.correction_bias.get(layer) {
+        super::router::sigmoid_topk(&router_logits, bias, top_k)
+    } else {
+        router_topk_gemma4(&router_logits, top_k, &llama.per_expert_ones)
+    };
     if let Some(hist) = router_hist.as_mut() {
         hist.record(layer, &selected);
     }

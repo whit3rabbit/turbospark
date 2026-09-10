@@ -330,6 +330,10 @@ public struct McpImportSheet: View {
     private func install(_ entry: McpMarketplaceEntry, marketplaceName: String) {
         entryErrors[entry.id] = nil
         let project = self.project
+        guard !installToProjectScope || project != nil else {
+            entryErrors[entry.id] = String(localized: "The target project no longer exists.", bundle: .module)
+            return
+        }
         let useProjectScope = installToProjectScope && project != nil
 
         // A project server collides with the GLOBAL names too: `executeMcpCall`

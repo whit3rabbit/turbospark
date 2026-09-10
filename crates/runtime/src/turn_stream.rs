@@ -112,7 +112,7 @@ impl<'a> TurnSplitter<'a> {
         let wanted = !tools.is_empty()
             || matches!(
                 tokenizer.dialect,
-                ChatDialect::Harmony | ChatDialect::MuseGlimmer
+                ChatDialect::Harmony | ChatDialect::MuseGlimmer | ChatDialect::MiniMax
             )
             // Spark joins the reasoning-on arm on ChatML's grounds: its
             // template FORCES the think frame open in the generation prompt
@@ -286,6 +286,36 @@ mod tests {
             id,
             delta: text.to_string(),
         }
+    }
+
+    #[test]
+    fn minimax_always_splits_its_forced_thought() {
+        // The driver only needs the common think markers; actual MiniMax
+        // token resolution is independently tested in the tokenizer crate.
+        let mut tok = fixture("ChatMLTokenizer");
+        tok.dialect = tokenizer::ChatDialect::MiniMax;
+        let start = tok.think_start_id.unwrap();
+        let end = tok.think_end_id.unwrap();
+        let mut split = TurnSplitter::new(
+            &tok,
+            &HashSet::new(),
+            ReasoningEffort::Off,
+            String::new,
+            &[start],
+        );
+        let mut events = Vec::new();
+        feed_all(
+            &mut split,
+            &mut events,
+            &[delta(-1, "reasoning"), delta(end, ""), delta(-1, "answer")],
+        );
+        assert_eq!(
+            events,
+            [
+                TurnEvent::Reasoning("reasoning".into()),
+                TurnEvent::Content("answer".into())
+            ]
+        );
     }
 
     #[test]

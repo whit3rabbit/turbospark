@@ -117,7 +117,10 @@ pub fn manifest_quant_for(
         // `docs/QWEN3_PHASE0.md`), so like gpt-oss below it is grouped with
         // the family whose names it shares rather than given an arm that
         // cannot run.
-        ModelFamily::Llama | ModelFamily::Qwen3Moe | ModelFamily::Qwen3Dense => (
+        ModelFamily::Llama
+        | ModelFamily::Qwen3Moe
+        | ModelFamily::Qwen3Dense
+        | ModelFamily::MiniMaxM2 => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),

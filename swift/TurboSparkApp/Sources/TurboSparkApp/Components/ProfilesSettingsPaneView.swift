@@ -82,7 +82,6 @@ struct ProfilesSettingsPaneView: View {
                     .foregroundStyle(.appSecondary)
             }
         }
-            .settingsControl("Users on this Mac", pane: .profiles, timing: .immediate)
     }
 
     private var defaultProfileRow: some View {
@@ -124,7 +123,6 @@ struct ProfilesSettingsPaneView: View {
                         .font(theme.ui(.base, weight: .medium))
                     if isCurrent {
                         Text("Current", bundle: .module)
-                    .settingsControl("Current", pane: .profiles, timing: .relaunch)
                             .font(theme.ui(.tiny, weight: .semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)

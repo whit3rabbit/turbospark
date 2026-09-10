@@ -11,7 +11,8 @@
 //! result is a table that reads as authoritative and sends a user into a
 //! twenty-minute stream that 404s at the end.
 //!
-//! Costs a file list and a HEAD per row, seconds each, and downloads NOTHING.
+//! Costs file lists and HEAD requests, plus GGUF headers for shard discovery.
+//! Downloads no weight payloads.
 //! That budget is deliberate: a guard that costs a download is a guard nobody
 //! runs.
 //!
@@ -42,7 +43,7 @@ use turbospark_catalog::{Catalog, Client, RepoRef, SourceKind};
 const SIZE_TOLERANCE: f64 = 0.02;
 
 #[test]
-#[ignore = "network: one file list and a HEAD per catalog row"]
+#[ignore = "network: file lists, HEAD requests, and GGUF headers per catalog row"]
 fn every_row_still_names_files_that_exist_at_the_size_it_records() {
     let catalog = Catalog::embedded().expect("catalog");
     let client = Client::new();
@@ -61,10 +62,8 @@ fn every_row_still_names_files_that_exist_at_the_size_it_records() {
         };
 
         // The weights themselves.
-        let (weight_url, present) = match (&entry.source.kind, &entry.source.file) {
-            (SourceKind::Gguf, Some(file)) => {
-                (weights.file_url(file), files.iter().any(|f| f == file))
-            }
+        let present = match (&entry.source.kind, &entry.source.file) {
+            (SourceKind::Gguf, Some(file)) => files.iter().any(|f| f == file),
             _ => {
                 let shards: Vec<&String> = files
                     .iter()
@@ -74,7 +73,7 @@ fn every_row_still_names_files_that_exist_at_the_size_it_records() {
                     findings.push(format!("{}: no .safetensors in {weights}", entry.alias));
                     continue;
                 }
-                (weights.file_url(shards[0]), true)
+                true
             }
         };
         if !present {
@@ -88,11 +87,23 @@ fn every_row_still_names_files_that_exist_at_the_size_it_records() {
 
         // The size, which for a `main`-pinned row is the only fingerprint.
         let published: u64 = match entry.source.kind {
-            SourceKind::Gguf => client
-                .content_length(&weight_url)
-                .ok()
-                .flatten()
-                .unwrap_or(0),
+            // Probe shares split discovery with installation. A HEAD on just
+            // the first filename would undercount a split catalog artifact.
+            SourceKind::Gguf => match turbospark_catalog::probe(
+                &client,
+                &weights,
+                entry.source.file.as_deref(),
+                None,
+            ) {
+                Ok(report) => report.download_bytes.unwrap_or(0),
+                Err(error) => {
+                    findings.push(format!(
+                        "{}: GGUF shard validation failed: {error}",
+                        entry.alias
+                    ));
+                    continue;
+                }
+            },
             SourceKind::Mlx => files
                 .iter()
                 .filter(|f| f.ends_with(".safetensors"))

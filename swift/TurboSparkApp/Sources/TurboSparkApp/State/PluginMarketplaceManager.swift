@@ -294,15 +294,15 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
             .appendingPathComponent(Self.sanitizedComponent(marketplaceName), isDirectory: true)
             .appendingPathComponent(Self.sanitizedComponent(entry.name), isDirectory: true)
             .appendingPathComponent(Self.sanitizedVersion(version), isDirectory: true)
-        if FileManager.default.fileExists(atPath: cachePath.path) {
-            try FileManager.default.removeItem(at: cachePath)
-        }
+        let previousCache = staging.appendingPathComponent("previous-cache")
+        let replacesCache = FileManager.default.fileExists(atPath: cachePath.path)
         try FileManager.default.createDirectory(
             at: cachePath.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FileManager.default.moveItem(at: stagedRoot, to: cachePath)
-
         let pluginID = "\(entry.name)@\(marketplaceName)"
-        ledger.upsertRecord(
+        if replacesCache { try FileManager.default.moveItem(at: cachePath, to: previousCache) }
+        do {
+            try FileManager.default.moveItem(at: stagedRoot, to: cachePath)
+            try ledger.upsertRecordChecked(
             InstalledPluginRecord(
                 scope: scope,
                 projectPath: projectRootURL?.standardizedFileURL.path,
@@ -310,6 +310,15 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
                 version: version,
                 gitCommitSha: sha),
             for: pluginID)
+        } catch {
+            // A failed project install must not leave an untracked cache that
+            // discovery could mistake for a legacy user installation.
+            if FileManager.default.fileExists(atPath: cachePath.path) {
+                try FileManager.default.removeItem(at: cachePath)
+            }
+            if replacesCache { try FileManager.default.moveItem(at: previousCache, to: cachePath) }
+            throw error
+        }
 
         return InstallOutcome(
             pluginID: pluginID,

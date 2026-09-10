@@ -117,6 +117,7 @@ public struct ModelsSettingsPaneView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("LM Studio Library Integration", systemImage: "arrow.triangle.2.circlepath")
+                .settingsControl("LM Studio Library Integration", pane: .models, timing: .immediate)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Toggle("", isOn: Binding(
@@ -196,7 +197,6 @@ public struct ModelsSettingsPaneView: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Zero-Copy In-Place Inference", bundle: .module)
-                    .settingsControl("Zero-Copy In-Place Inference", pane: .models, timing: .immediate)
                             .themedFont(.small, weight: .semibold)
                         Text("Models discovered in LM Studio are indexed in-place. TurboSpark reads weights directly from your LM Studio folder without duplicating disk space or copying gigabytes of parameters.", bundle: .module)
                             .themedFont(.tiny)

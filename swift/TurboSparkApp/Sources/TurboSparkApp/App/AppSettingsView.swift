@@ -132,19 +132,19 @@ public struct AppSettingsView: View {
                             Image(systemName: tab.systemImage)
                                 .font(theme.ui(.callout, weight: .medium))
                                 .frame(width: 18)
-                                .foregroundStyle(isSelected ? theme.accent : .secondary)
+                                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                                 .accessibilityHidden(true)
 
                             Text(tab.title)
                                 .font(theme.ui(.base))
-                                .foregroundStyle(isSelected ? .primary : .secondary)
+                                .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
 
                             Spacer()
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(
-                            isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+                            isSelected ? theme.selection : Color.clear,
                             in: RoundedRectangle(cornerRadius: 6, style: .continuous)
                         )
                     }
@@ -163,6 +163,7 @@ public struct AppSettingsView: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let results = SettingsControlCatalog.entries.filter {
             $0.title.localizedCaseInsensitiveContains(query)
+                || NSLocalizedString($0.title, bundle: .module, comment: "").localizedCaseInsensitiveContains(query)
         }
         return VStack(alignment: .leading, spacing: 8) {
             if results.isEmpty {
@@ -171,7 +172,7 @@ public struct AppSettingsView: View {
             ForEach(results) { result in
                 Button {
                     selectedTab = result.pane
-                    highlightedControl = result.id
+                    highlightedControl = result.navigationID
                     searchText = ""
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {

@@ -75,7 +75,6 @@ struct MemorySettingsPaneView: View {
             } else {
                 HStack {
                     Text("No project attached. The shared memory root:", bundle: .module)
-                    .settingsControl("No project attached. The shared memory root:", pane: .memory, timing: .nextTurn)
                         .font(theme.ui(.small))
                         .foregroundStyle(.appSecondary)
                     Spacer()
@@ -119,7 +118,6 @@ struct MemorySettingsPaneView: View {
                 }
             } else {
                 Text("Attach a project to see its memories.", bundle: .module)
-                    .settingsControl("Attach a project to see its memories.", pane: .memory, timing: .nextTurn)
                     .font(theme.ui(.small))
                     .foregroundStyle(.appSecondary)
             }

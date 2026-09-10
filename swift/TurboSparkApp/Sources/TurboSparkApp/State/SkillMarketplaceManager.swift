@@ -225,8 +225,16 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
             throw NSError(domain: "SkillMarketplace", code: 6, userInfo: [NSLocalizedDescriptionKey: "A marketplace skill cannot be installed into plugin scope."])
         }
 
-        let targetSkillDir = destBaseDir.appendingPathComponent(entry.name, isDirectory: true)
+        guard !entry.name.isEmpty, entry.name != ".", entry.name != "..",
+              !entry.name.contains("/"), !entry.name.contains("\\"), !entry.name.contains("\0") else {
+            throw NSError(domain: "SkillMarketplace", code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "The marketplace skill name is not a directory name."])
+        }
+        let destination = destBaseDir.appendingPathComponent(entry.name, isDirectory: true)
+        let staging = fileManager.temporaryDirectory.appendingPathComponent("skill-install-" + UUID().uuidString)
+        let targetSkillDir = staging.appendingPathComponent("new")
         try fileManager.createDirectory(at: targetSkillDir, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: staging) }
 
         var installedMdURL: URL?
 
@@ -273,22 +281,26 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
             throw NSError(domain: "SkillMarketplace", code: 5, userInfo: [NSLocalizedDescriptionKey: "SKILL.md was not found after install."])
         }
 
-        let parsedSkill = try SkillParser.parseFile(
-            at: skillFile,
-            scope: targetScope,
-            agentOrigin: .custom,
-            containedIn: projectRootURL
-        )
-
-        // Record installation in ledger
-        recordInstallation(InstalledSkillRecord(
-            skillName: entry.name,
-            scope: scopeKey,
-            projectPath: projectRootURL?.path,
-            installPath: targetSkillDir.path,
-            version: entry.version,
-            gitCommitSha: nil
-        ))
+        _ = try SkillParser.parseFile(at: skillFile, scope: targetScope,
+            agentOrigin: .custom, containedIn: targetSkillDir)
+        try fileManager.createDirectory(at: destBaseDir, withIntermediateDirectories: true)
+        let previous = staging.appendingPathComponent("previous")
+        let replacing = fileManager.fileExists(atPath: destination.path)
+        if replacing { try fileManager.moveItem(at: destination, to: previous) }
+        let parsedSkill: AppSkill
+        do {
+            try fileManager.moveItem(at: targetSkillDir, to: destination)
+            parsedSkill = try SkillParser.parseFile(at: destination.appendingPathComponent("SKILL.md"),
+                scope: targetScope, agentOrigin: .custom, containedIn: targetScope.projectRootURL)
+            try recordInstallation(InstalledSkillRecord(
+                skillName: entry.name, scope: scopeKey,
+                projectPath: targetScope.projectRootURL?.standardizedFileURL.path,
+                installPath: destination.path, version: entry.version, gitCommitSha: nil))
+        } catch {
+            if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
+            if replacing { try fileManager.moveItem(at: previous, to: destination) }
+            throw error
+        }
 
         SkillManager.shared.invalidateResolutionCache()
         return parsedSkill
@@ -307,7 +319,7 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
         }
     }
 
-    private func recordInstallation(_ record: InstalledSkillRecord) {
+    private func recordInstallation(_ record: InstalledSkillRecord) throws {
         lock.lock()
         defer { lock.unlock() }
         var ledger: [String: [InstalledSkillRecord]] = [:]
@@ -322,8 +334,24 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(ledger) {
-            try? data.write(to: installedLedgerURL, options: .atomic)
+        try fileManager.createDirectory(at: installedLedgerURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try encoder.encode(ledger).write(to: installedLedgerURL, options: .atomic)
+    }
+
+    public func removeInstallationRecord(for skill: AppSkill) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard fileManager.fileExists(atPath: installedLedgerURL.path) else { return }
+        var ledger = try JSONDecoder().decode([String: [InstalledSkillRecord]].self,
+            from: Data(contentsOf: installedLedgerURL))
+        let path = (skill.skillDirectoryURL ?? skill.sourceURL.deletingLastPathComponent())
+            .standardizedFileURL.path
+        for name in Array(ledger.keys) {
+            let remaining = ledger[name, default: []].filter {
+                URL(fileURLWithPath: $0.installPath).standardizedFileURL.path != path
+            }
+            ledger[name] = remaining.isEmpty ? nil : remaining
         }
+        try JSONEncoder().encode(ledger).write(to: installedLedgerURL, options: .atomic)
     }
 }

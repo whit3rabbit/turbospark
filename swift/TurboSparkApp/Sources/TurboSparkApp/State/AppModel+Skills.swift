@@ -83,9 +83,9 @@ extension AppModel {
 
     /// Deletes a skill from disk.
     public func removeSkill(_ skill: AppSkill) {
+        defer { reloadSkills() }
         do {
             try SkillManager.shared.deleteSkill(skill)
-            reloadSkills()
             showToast("Removed skill '\(skill.name)'.", style: .info)
         } catch {
             showToast("Failed to delete skill: \(error.localizedDescription)", style: .error)

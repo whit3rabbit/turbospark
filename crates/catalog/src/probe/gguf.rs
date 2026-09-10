@@ -20,13 +20,13 @@ pub(super) fn probe_gguf(
     repo: &RepoRef,
     file: &str,
 ) -> Result<ProbeReport, String> {
-    let url = repo.file_url(file);
-    let source = repack::HttpRangeSource::new(&url).with_optional_token(client.token());
-    let header = repack::fetch_gguf_header(&source).map_err(|e| {
-        format!("reading the GGUF header of {file}: {e}. A split GGUF puts its whole header in shard 1; point at that shard.")
-    })?;
-    let bytes = client.content_length(&url).unwrap_or(None);
-    Ok(evaluate_gguf(&header, repo, file, bytes))
+    let source = crate::gguf_source::load(client, repo, file, None, None)?;
+    Ok(evaluate_gguf(
+        &source.header,
+        repo,
+        file,
+        Some(source.bytes),
+    ))
 }
 
 /// Every GGUF gate, against a header that is already in hand.
@@ -92,6 +92,15 @@ pub fn evaluate_gguf(
     match repack::arch_from_gguf(header) {
         Ok(arch) => {
             report.expert_stride = gguf_expert_stride(header, &arch);
+            if arch.family == model_io::ModelFamily::MiniMaxM2 {
+                match repack::minimax_gguf_sizing(header) {
+                    Ok(size) => {
+                        report.expert_stride = Some(size.max_expert_stride);
+                        warnings.push(format!("MiniMax header sizing (bytes): resident {}, expert files {}, complete install allowance {}, eight slots {}, FP16 KV at 8192 {}. These are allocations/storage, not measured footprint.", size.resident_bytes, size.expert_file_bytes, size.install_bytes(), size.eight_slot_bytes, size.kv_8192_bytes));
+                    }
+                    Err(e) => report.refuse(format!("MiniMax sizing: {e}")),
+                }
+            }
             report.arch = Some(arch);
         }
         Err(e) => {

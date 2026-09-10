@@ -19,6 +19,7 @@ struct CustomModelFoldersSectionView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Additional Model Folders", systemImage: "folder.badge.plus")
+                .settingsControl("Additional Model Folders", pane: .models, timing: .action)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Button {

@@ -57,7 +57,8 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         | ModelFamily::MuseGlimmer
         | ModelFamily::Qwen4Exp
         | ModelFamily::Spark25
-        | ModelFamily::Qwen3Dense => &[],
+        | ModelFamily::Qwen3Dense
+        | ModelFamily::MiniMaxM2 => &[],
     }
 }
 
@@ -94,12 +95,26 @@ pub fn transcode_f32(
     dims: &[u64],
     arch: &ArchConfig,
 ) -> Result<Transcoded, GgufRepackError> {
-    let family = arch.family;
     let mut values = f32_values(bytes);
     if values.len() * 4 != bytes.len() {
         return Err(GgufRepackError::ShapeMismatch {
             tensor: name.to_string(),
             detail: format!("{} bytes is not a whole number of F32 values", bytes.len()),
+        });
+    }
+    let family = arch.family;
+    if family == ModelFamily::MiniMaxM2
+        && (canonical.ends_with("mlp.gate.weight")
+            || canonical.ends_with("mlp.e_score_correction_bias"))
+    {
+        return Ok(Transcoded {
+            spec: ResidentEntrySpec::Raw(RawTensorSpec {
+                name: canonical,
+                dtype: crate::resident_writer::DTYPE_FP32,
+                bytes: bytes.to_vec(),
+                shape: logical_shape(dims),
+            }),
+            lossy: 0,
         });
     }
     apply_source_convention(name, &canonical, arch, row_and_col(dims).1, &mut values)?;

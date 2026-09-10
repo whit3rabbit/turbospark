@@ -43,6 +43,7 @@ read the page before proposing the thing it refutes.
 | `docs/QWEN4_PHASE0.md` | `qwen4_exp` (Qwen3.8-Flash-Next) Phase 0 fact-finding: config, tensor layout, two independent references cross-checked | reading a `qwen4_exp` fact, or continuing that bring-up |
 | `docs/QWEN4_EXP.md` | `qwen4_exp` bring-up beyond Phase 0: intake, decode wiring, memory policy, the router/shared-expert-gate dtype bug and fix, first real-hardware decode | touching `families/qwen4/` or the safetensors write path, or continuing that bring-up |
 | `docs/SPARK_PHASE0.md` | `spark2_5` (Spark-X2.5-4B) Phase 0 fact-finding: config, per-class RoPE, the headwise gate, the fused QKV, GGUF tensor inventory, tokenizer frame | reading a `spark2_5` fact, or touching `families/spark/` |
+| `docs/MINIMAX_M2_PHASE0.md` | MiniMax-M2 split-GGUF intake, FP32 sigmoid routing, whole-projection norms, pinned evidence, and release-gate status | continuing MiniMax-M2 bring-up or changing its intake and execution contract |
 | `docs/SKILL_STATE.md` | the SKILL.state bounded-state agent runtime, a measured POSITIVE with its scale caveat | proposing agent context compaction, structured output, or constrained decoding |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `swift/docs/SWIFT_TOOLS.md` | Swift native tool implementation: execution, containment, adding new tools | implementing or changing tools in TurboSparkApp |
@@ -381,8 +382,9 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
 cargo run --release -p turbospark-cli --bin turbospark-model -- \
   pull --repo owner/name --alias mine --sidecar-repo owner/original
 
-# The catalog's rot guard: does every row still describe a real artifact? A
-# file list and a HEAD per row, ~26 s for the whole table, downloads NOTHING.
+# The catalog's rot guard: does every row still describe a real artifact?
+# Reads file lists, HEAD responses, and GGUF headers, including all split
+# shards. Downloads no weight payloads.
 # Run it after adding or editing a row and paste its published byte figure
 # back -- `download_bytes` is the only fingerprint a `main`-pinned row has.
 cargo test -p turbospark-catalog --test catalog_network --release -- --ignored --nocapture

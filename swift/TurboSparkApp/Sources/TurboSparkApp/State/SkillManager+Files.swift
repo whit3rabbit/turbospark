@@ -100,6 +100,7 @@ extension SkillManager {
         } else {
             try fileManager.removeItem(at: skill.sourceURL)
         }
+        try SkillMarketplaceManager.shared.removeInstallationRecord(for: skill)
     }
 
     /// Imports a skill directory or file into TurboSpark user or project scope.

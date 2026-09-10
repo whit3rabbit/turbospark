@@ -110,6 +110,37 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     };
 
     let mut arch = model_io::known_architecture(family);
+    if family == ModelFamily::MiniMaxM2 {
+        // Missing weights must not silently change this untied architecture.
+        if !header.tensors.contains_key("output.weight") {
+            return Err(GgufConfigError::MissingTensor {
+                name: "output.weight".into(),
+            });
+        }
+        for (key, expected) in [
+            ("attention.key_length", 128),
+            ("attention.value_length", 128),
+            ("rope.dimension_count", 64),
+            ("expert_gating_func", 2),
+        ] {
+            if m.i64(key)? != expected {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key(key),
+                    detail: format!("MiniMax-M2 requires {expected}"),
+                });
+            }
+        }
+        if m.opt_f64("attention.layer_norm_rms_epsilon")
+            .map(|v| v as f32)
+            != Some(1e-6f32)
+        {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.layer_norm_rms_epsilon"),
+                detail: "MiniMax-M2 requires RMS epsilon 1e-6".into(),
+            });
+        }
+    }
+
     // `block_count` COUNTS THE MULTI-TOKEN-PREDICTION BLOCK, and this port's
     // `num_layers` is the trunk alone. llama.cpp writes the head as one more
     // `blk.<n>.` block and declares how many of the trailing ones are hers in
@@ -142,6 +173,12 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     // does not), so they are optional and default to the dense answer.
     arch.num_experts = m.opt_i64("expert_count")?.unwrap_or(0);
     arch.top_k_experts = m.opt_i64("expert_used_count")?.unwrap_or(0);
+    if family == ModelFamily::MiniMaxM2 && arch.num_experts <= 0 {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("expert_count"),
+            detail: "MiniMax expert count must be positive".into(),
+        });
+    }
     // Gemma and Qwen publish a separate expert width; the `llama`
     // architecture does not, and its experts are `feed_forward_length` wide.
     // Measured absent on both Mixtral conversions, and asserted so in
@@ -175,7 +212,10 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // Qwen3-MoE is the same story: no `attention.sliding_window` key on
         // the published file, every layer full attention. Dense `qwen3`
         // agrees: no sliding window at any published size (`docs/QWEN3_PHASE0.md`).
-        ModelFamily::Llama | ModelFamily::Qwen3Moe | ModelFamily::Qwen3Dense => {
+        ModelFamily::Llama
+        | ModelFamily::Qwen3Moe
+        | ModelFamily::Qwen3Dense
+        | ModelFamily::MiniMaxM2 => {
             vec![1u8; num_layers as usize]
         }
         ModelFamily::GptOss => gpt_oss_layer_mask(&m, num_layers as usize)?,

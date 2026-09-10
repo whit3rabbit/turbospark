@@ -30,7 +30,7 @@ extension AppModel {
         }
         if let projectID {
             guard var project = projects.first(where: { $0.id == projectID }) else {
-                throw PluginLoadError(pluginName: nil, reason: "The target project no longer exists.")
+                throw PluginLoadError(pluginName: nil, reason: String(localized: "The target project no longer exists.", bundle: .module))
             }
             project.marketplaces.sources[kind.rawValue, default: [:]][name] = source
             project.marketplaces.hidden[kind.rawValue, default: []].remove(name)
@@ -62,7 +62,7 @@ extension AppModel {
                 }
             }
         } else {
-            throw PluginLoadError(pluginName: nil, reason: "The target project no longer exists.")
+            throw PluginLoadError(pluginName: nil, reason: String(localized: "The target project no longer exists.", bundle: .module))
         }
     }
 

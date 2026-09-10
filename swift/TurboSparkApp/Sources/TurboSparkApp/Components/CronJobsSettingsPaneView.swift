@@ -60,7 +60,6 @@ struct CronJobsSettingsPaneView: View {
                 .padding(.bottom, 2)
                 .accessibilityHidden(true)
             Text("No scheduled tasks", bundle: .module)
-                    .settingsControl("No scheduled tasks", pane: .automation, timing: .immediate)
                 .themedFont(.base, weight: .medium)
             Text("Ask the assistant to schedule one, for example: \"every morning at 9, summarize my notes\" -- it will use CronCreate and the job appears here.", bundle: .module)
                 .themedFont(.small)
@@ -133,13 +132,11 @@ struct CronJobsSettingsPaneView: View {
                             .foregroundStyle(.appSecondary)
                             .monospacedDigit()
                         Text("next run", bundle: .module)
-                    .settingsControl("next run", pane: .automation, timing: .immediate)
                             .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
                     }
                 } else if !job.enabled {
                     Text("Paused", bundle: .module)
-                    .settingsControl("Paused", pane: .automation, timing: .immediate)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
@@ -187,7 +184,6 @@ struct CronJobsSettingsPaneView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     if job.recentRuns.isEmpty {
                         Text("This schedule has not fired yet.", bundle: .module)
-                    .settingsControl("This schedule has not fired yet.", pane: .automation, timing: .immediate)
                             .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
                     }
