@@ -10,20 +10,20 @@ extension InspectorView {
                 LabeledContent("Physical RAM") {
                     Text(MetricFormat.storage(t.physicalMemoryBytes))
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 if let rec = t.recommendedWorkingSetBytes {
                     LabeledContent("Recommended max") {
                         Text(MetricFormat.storage(rec))
                             .themedFont(.small).monospacedDigit()
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 if let chip = t.chip {
                     LabeledContent("Chip") {
                         Text(chip)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 LabeledContent("Low Power Mode") {
@@ -42,23 +42,23 @@ extension InspectorView {
                 LabeledContent("Dialect") {
                     Text(info.dialect)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 LabeledContent("Vocab Size") {
                     Text("\(info.vocabSize)", bundle: .module)
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 LabeledContent("Resolved Context") {
                     Text("\(info.maxContext)", bundle: .module)
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 if let trained = info.trainedContext {
                     LabeledContent("Trained Context") {
                         Text("\(trained)", bundle: .module)
                             .themedFont(.small).monospacedDigit()
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 if info.pastTrainedContext {
@@ -69,33 +69,33 @@ extension InspectorView {
                 LabeledContent("Resolved Slots") {
                     Text("\(info.expertCacheSlots)", bundle: .module)
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 if let block = info.speculation.block {
                     LabeledContent("Speculative") {
                         Text("\(info.speculation.drafter?.rawValue ?? "on") x\(block)", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 } else if let reason = info.speculation.reason {
                     LabeledContent("Speculative") {
                         Text("Off (\(reason))", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 if info.steering.active {
                     LabeledContent("Active Steering") {
                         Text(info.steering.summary ?? (info.steering.mode ?? "Active"))
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 if !info.specialTokens.stopTokenIds.isEmpty {
                     LabeledContent("Stop Token IDs") {
                         Text(info.specialTokens.stopTokenIds.map { "\($0)" }.joined(separator: ", "))
                         .themedFont(.tiny).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     }
                 }
             }

@@ -63,7 +63,7 @@ private struct DiagnosticRow: View {
         LabeledContent(label) {
             Text(value)
                 .themedFont(.small).monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
     }
 }

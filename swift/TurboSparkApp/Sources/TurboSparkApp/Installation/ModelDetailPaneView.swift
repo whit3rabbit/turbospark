@@ -92,8 +92,8 @@ struct ModelDetailPaneView: View {
                         .themedFont(.micro, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(TurboSparkTheme.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .background(.appAccent.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(.appAccent)
 
                     statusSeal
                 }
@@ -101,7 +101,7 @@ struct ModelDetailPaneView: View {
                 HStack(spacing: 8) {
                     Text(entry.alias)
                         .themedCode(.small, weight: .medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
 
                     Text("\u{2022}", bundle: .module)
                         .foregroundStyle(.tertiary)
@@ -113,7 +113,7 @@ struct ModelDetailPaneView: View {
                         Text(visuals.family)
                     }
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .help("Model Family: \(visuals.family)")
 
                     Text("\u{2022}", bundle: .module)
@@ -143,7 +143,7 @@ struct ModelDetailPaneView: View {
         case "verified":
             Image(systemName: "checkmark.seal.fill")
                 .themedFont(.title3)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
                 .help("Verified: this port has run this row end to end")
                 .accessibilityHidden(true)
         case "caveat":
@@ -200,8 +200,8 @@ struct ModelDetailPaneView: View {
                         .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-                        .overlay(Capsule().stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 0.5))
+                        .background(.appSurface, in: Capsule())
+                        .overlay(Capsule().stroke(.appBorder.opacity(0.6), lineWidth: 0.5))
                 }
             }
         }
@@ -213,7 +213,7 @@ struct ModelDetailPaneView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Quantization & Format", bundle: .module)
                         .themedFont(.small, weight: .medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     HStack(spacing: 6) {
                         Text(visuals.formatLabel)
                             .themedFont(.base, weight: .semibold)
@@ -221,7 +221,7 @@ struct ModelDetailPaneView: View {
                             .foregroundStyle(.tertiary)
                         Text("\(MetricFormat.storage(entry.downloadBytes)) download", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
 
@@ -331,7 +331,7 @@ struct ModelDetailPaneView: View {
             HStack {
                 Text(model.installStageText ?? "Downloading weights...")
                     .themedFont(.small, weight: .medium)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
 
                 Spacer()
 
@@ -370,7 +370,7 @@ struct ModelDetailPaneView: View {
                 }
             }
             .themedFont(.tiny).monospacedDigit()
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
         }
     }
 }

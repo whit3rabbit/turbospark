@@ -9,6 +9,7 @@ public struct ProjectMcpSettingsSheet: View {
     let projectID: UUID
     let onDismiss: () -> Void
 
+    @State private var showingMarketplace = false
     @State private var detectedFiles: [DetectedProjectMcpFile] = []
     @State private var isDetecting: Bool = false
     @State private var showingEditorSheet: Bool = false
@@ -49,7 +50,11 @@ public struct ProjectMcpSettingsSheet: View {
                         }
                     )
                     Divider()
+                    inheritedServersSection
                     serversSection
+                    Button { showingMarketplace = true } label: {
+                        Text("Browse Marketplace", bundle: .module)
+                    }
                     Divider()
                     permissionRulesSection
                 }
@@ -58,7 +63,10 @@ public struct ProjectMcpSettingsSheet: View {
             Divider()
             footer
         }
-        .frame(width: 600, height: 680)
+        .frame(minWidth: 560, minHeight: 520)
+        .sheet(isPresented: $showingMarketplace) {
+            McpImportSheet(model: model, projectID: projectID) { showingMarketplace = false }
+        }
         .onAppear(perform: runDetection)
         .sheet(isPresented: $showingEditorSheet) {
             McpServerEditorSheet(
@@ -92,22 +100,39 @@ public struct ProjectMcpSettingsSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Image(systemName: "folder.badge.gearshape")
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                         .help("Project MCP Tool Configuration")
                     Text("\(project?.name ?? "Project") - MCP External Tools", bundle: .module)
                         .themedFont(.base, weight: .semibold)
                 }
                 Text("Manage project-specific MCP servers and import configs from codebase.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button("Close") { onDismiss() }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    private var inheritedServersSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Inherited user servers", bundle: .module).themedFont(.base, weight: .semibold)
+            ForEach(model.globalMcpServers) { server in
+                HStack {
+                    Text(server.name).themedFont(.base)
+                    Spacer()
+                    ExtensionOverridePicker(enabled: Binding(
+                        get: { project?.enabledMcpServers[server.id.uuidString] },
+                        set: { model.setMcpOverride(serverID: server.id, enabled: $0, projectID: projectID) }))
+                    Text((project?.enabledMcpServers[server.id.uuidString] ?? server.isEnabled) ? "Enabled" : "Disabled")
+                        .themedFont(.small)
+                }
+            }
+        }
     }
 
     private var serversSection: some View {
@@ -118,7 +143,7 @@ public struct ProjectMcpSettingsSheet: View {
                         .themedFont(.small, weight: .semibold)
                     Text("Active servers are available to the assistant during turns in this project.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Button {
@@ -134,7 +159,7 @@ public struct ProjectMcpSettingsSheet: View {
                 VStack(spacing: 8) {
                     Text("No project MCP servers configured.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity)
@@ -186,14 +211,14 @@ public struct ProjectMcpSettingsSheet: View {
                     .themedFont(.small, weight: .semibold)
                 Text("`mcp__server` covers every tool on a server; `mcp__server__tool` covers one. Deny also hides the tool from the assistant.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             let permissions = project?.permissions
             if (permissions?.mcpAllowRules.isEmpty ?? true) && (permissions?.mcpDenyRules.isEmpty ?? true) {
                 Text("No MCP permission rules for this project.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.secondary.opacity(0.06))
@@ -224,14 +249,14 @@ public struct ProjectMcpSettingsSheet: View {
             } label: {
                 Image(systemName: "trash")
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .buttonStyle(.plain)
             .help("Remove this rule")
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
+        .background(.appSurface.opacity(0.8))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 

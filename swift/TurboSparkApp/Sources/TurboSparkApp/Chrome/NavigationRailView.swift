@@ -2,11 +2,17 @@ import SwiftUI
 
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// Always-visible icon rail carrying the top-level sections.
+/// The icon rail: the sidebar's COLLAPSED presentation.
 ///
-/// The rail is what makes the rest of the chrome collapsible: with sections
-/// living here, the chat sidebar holds only conversations and can be hidden
-/// without stranding navigation.
+/// This used to be a permanent band of its own, sitting to the left of the
+/// chat sidebar, and the reason was that sections had to stay reachable while
+/// the sidebar was hidden. That constraint has not gone away -- it is met by
+/// the COLUMN now rather than by having two of them. `AppSidebarView` shows
+/// this view when collapsed and `SidebarSectionNavView` when expanded, so
+/// navigation is on screen in both states and in every section.
+///
+/// Nothing here changed in the merge, which is the point: the collapsed
+/// sidebar IS the rail that was already shipping.
 ///
 /// Redesign notes: selection is now a single indicator bar that SLIDES
 /// between rows (`matchedGeometryEffect`) instead of a tinted rounded rect
@@ -104,7 +110,7 @@ struct NavigationRailView: View {
         SettingsLink {
             Image(systemName: "gearshape")
                 .font(theme.ui(.callout, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .frame(width: itemSize, height: itemSize)
                 .background {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -162,7 +168,7 @@ private struct RailTooltip: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                .stroke(.appBorder, lineWidth: 0.5)
         )
         .fixedSize()
         .allowsHitTesting(false)

@@ -13,6 +13,7 @@ public struct AppearancePreferencesCardView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Preferences", bundle: .module)
+                    .settingsControl("Preferences", pane: .appearance, timing: .immediate)
                 .font(theme.ui(.large, weight: .semibold))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -139,15 +140,15 @@ public struct AppearancePreferencesCardView: View {
 
                     Text("px", bundle: .module)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.appSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                        .stroke(.appBorder.opacity(0.4), lineWidth: 1)
                 )
             }
 
@@ -189,15 +190,15 @@ public struct AppearancePreferencesCardView: View {
 
                     Text("px", bundle: .module)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.appSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                        .stroke(.appBorder.opacity(0.4), lineWidth: 1)
                 )
             }
 
@@ -219,11 +220,11 @@ public struct AppearancePreferencesCardView: View {
             }
 
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+        .background(.appSurface.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
         )
     }
 
@@ -235,12 +236,13 @@ public struct AppearancePreferencesCardView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
+                    .settingsControl(title, pane: .appearance)
                     .font(theme.ui(.base, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
 
                 Text(description)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer(minLength: 16)
             accessory()
@@ -268,10 +270,14 @@ public struct AppearancePreferencesCardView: View {
             .labelsHidden()
 
             Picker("", selection: weight) {
-                Text("Regular", bundle: .module).font(AppFontDescriptor(family: family.wrappedValue, weight: .regular, size: 13, isCode: isCodeFont).font).tag("Regular")
-                Text("Medium", bundle: .module).font(AppFontDescriptor(family: family.wrappedValue, weight: .medium, size: 13, isCode: isCodeFont).font).tag("Medium")
-                Text("Semibold", bundle: .module).font(AppFontDescriptor(family: family.wrappedValue, weight: .semibold, size: 13, isCode: isCodeFont).font).tag("Semibold")
-                Text("Bold", bundle: .module).font(AppFontDescriptor(family: family.wrappedValue, weight: .bold, size: 13, isCode: isCodeFont).font).tag("Bold")
+                Text("Regular", bundle: .module)
+                    .settingsControl("Regular", pane: .appearance, timing: .immediate).font(AppFontDescriptor(family: family.wrappedValue, weight: .regular, size: 13, isCode: isCodeFont).font).tag("Regular")
+                Text("Medium", bundle: .module)
+                    .settingsControl("Medium", pane: .appearance, timing: .immediate).font(AppFontDescriptor(family: family.wrappedValue, weight: .medium, size: 13, isCode: isCodeFont).font).tag("Medium")
+                Text("Semibold", bundle: .module)
+                    .settingsControl("Semibold", pane: .appearance, timing: .immediate).font(AppFontDescriptor(family: family.wrappedValue, weight: .semibold, size: 13, isCode: isCodeFont).font).tag("Semibold")
+                Text("Bold", bundle: .module)
+                    .settingsControl("Bold", pane: .appearance, timing: .immediate).font(AppFontDescriptor(family: family.wrappedValue, weight: .bold, size: 13, isCode: isCodeFont).font).tag("Bold")
             }
             .pickerStyle(.menu)
             .frame(width: 100)

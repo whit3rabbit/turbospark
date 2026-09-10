@@ -44,7 +44,7 @@ struct McpStdioTransportFields: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Working Directory (Optional)", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             HStack(spacing: 6) {
                 TextField("Defaults to the project root", text: $cwdText)
                     .textFieldStyle(.roundedBorder)
@@ -54,7 +54,7 @@ struct McpStdioTransportFields: View {
             }
             Text("Leave empty to launch the server in the active project's root.", bundle: .module)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
     }
 
@@ -62,14 +62,14 @@ struct McpStdioTransportFields: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Environment Passthrough (one variable NAME per line)", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             monospacedEditor(text: $envPassthroughText, height: 50)
             Text(
                 "Forwards these variables from this app's own environment. "
                 + "PATH, HOME, LANG and TMPDIR are always forwarded; nothing else is, "
                 + "so a server never receives a credential it was not named.")
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
     }
 
@@ -91,7 +91,7 @@ struct McpStdioTransportFields: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             content()
         }
     }
@@ -101,7 +101,7 @@ struct McpStdioTransportFields: View {
             .themedCode(.small)
             .frame(height: height)
             .padding(4)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
@@ -127,7 +127,7 @@ struct McpRemoteTransportFields: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Server URL", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 TextField("https://example.com/sse", text: $urlText)
                     .textFieldStyle(.roundedBorder)
                 if !urlIsValid && !urlText.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -140,12 +140,12 @@ struct McpRemoteTransportFields: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Headers (Header: Value per line)", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 TextEditor(text: $headersText)
                     .themedCode(.small)
                     .frame(height: 60)
                     .padding(4)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(.appSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
@@ -174,7 +174,7 @@ struct McpRemoteTransportFields: View {
                 + "saved here can be configured but every tool call against it will "
                 + "fail. Use a local subprocess for now.")
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)

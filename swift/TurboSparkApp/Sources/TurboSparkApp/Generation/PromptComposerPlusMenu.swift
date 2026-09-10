@@ -41,7 +41,7 @@ struct PromptComposerPlusMenu: View {
                         .themedFont(.small, weight: .semibold)
                     Image(systemName: "chevron.down")
                         .themedFont(.micro, weight: .bold)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .frame(height: iconButtonSize)
                 .padding(.horizontal, 7)
@@ -130,7 +130,7 @@ struct PromptComposerPlusMenu: View {
     private var connectorsSection: some View {
         Section {
             Menu {
-                let allMcpServers = model.globalMcpServers + (model.selectedProject?.mcpServers ?? [])
+                let allMcpServers = AppToolCatalogMcp.resolvedServers(global: model.globalMcpServers, project: model.selectedProject)
                 if allMcpServers.isEmpty {
                     Text("No MCP Servers Configured", bundle: .module)
                 } else {
@@ -222,7 +222,7 @@ struct PromptComposerPlusMenu: View {
         Section {
             Menu {
                 Button {
-                    model.selectProject(id: nil)
+                    model.chooseProjectForTask(id: nil)
                 } label: {
                     Label(
                         "All Chats (No Project)",
@@ -234,7 +234,7 @@ struct PromptComposerPlusMenu: View {
                     Divider()
                     ForEach(model.projects) { project in
                         Button {
-                            model.selectProject(id: project.id)
+                            model.chooseProjectForTask(id: project.id)
                         } label: {
                             Label(
                                 project.name,
@@ -298,7 +298,11 @@ struct PromptComposerPlusMenu: View {
 
     private func toggleMcpServer(_ server: McpServerConfig) {
         if model.globalMcpServers.contains(where: { $0.id == server.id }) {
-            model.toggleGlobalMcpServer(id: server.id, isEnabled: !server.isEnabled)
+            if let project = model.selectedProject {
+                model.setMcpOverride(serverID: server.id, enabled: !server.isEnabled, projectID: project.id)
+            } else {
+                model.toggleGlobalMcpServer(id: server.id, isEnabled: !server.isEnabled)
+            }
         } else if let proj = model.selectedProject {
             model.toggleProjectMcpServer(projectID: proj.id, serverID: server.id, isEnabled: !server.isEnabled)
         }

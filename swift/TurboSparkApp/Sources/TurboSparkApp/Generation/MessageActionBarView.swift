@@ -172,7 +172,7 @@ struct MessageTimestampBadge: View {
                 .accessibilityHidden(true)
             Text(isHovered ? MessageTimestampFormatter.standardString(for: date) : MessageTimestampFormatter.relativeString(for: date))
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .lineLimit(1)
         }
         .padding(.horizontal, 6)

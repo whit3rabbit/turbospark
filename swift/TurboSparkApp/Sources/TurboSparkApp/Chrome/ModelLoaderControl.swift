@@ -4,7 +4,8 @@ import TurboSpark
 
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// The top bar's model loader: pick a model, watch it open, eject it.
+/// The chat's model loader, under the prompt composer: pick a model, watch
+/// it open, eject it.
 ///
 /// Replaces the round-1-era control that read `gptoss-20b [play] Load` with
 /// no status line and no eject affordance until a session already existed.
@@ -48,8 +49,18 @@ import TurboSpark
 struct ModelLoaderControl: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
+    var density: Density = .regular
 
-    @ScaledMetric private var barHeight: CGFloat = 34
+    // Both densities are declared and one is selected, rather than feeding
+    // `density` into a single metric: a property wrapper's initial value
+    // cannot read another stored property, and writing the init by hand to
+    // get around that also forces spelling `_model` out longhand.
+    @ScaledMetric private var regularBarHeight: CGFloat = 34
+    @ScaledMetric private var compactBarHeight: CGFloat = 24
+
+    private var barHeight: CGFloat {
+        density == .compact ? compactBarHeight : regularBarHeight
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -123,20 +134,42 @@ struct ModelLoaderControl: View {
                 }
             }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: density == .compact ? 6 : 8) {
                 ModelStatusDot(state: loaderState, accent: theme.accent)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(primaryText)
-                        .font(theme.ui(.small, weight: .semibold))
-                        .lineLimit(1)
-                        .foregroundStyle(.primary)
-
-                    if let secondaryText {
-                        Text(secondaryText)
-                            .font(theme.ui(.micro))
+                // Same two strings either way, so `Ready -- 65,536 ctx` stays
+                // the checkpoint's own figure in both densities (see the
+                // "not abbreviated" note at the top of this file). Compact
+                // separates them by weight and colour rather than by a glyph,
+                // which also keeps this arm free of any new localized string.
+                if density == .compact {
+                    HStack(spacing: 5) {
+                        Text(primaryText)
+                            .font(theme.ui(.tiny, weight: .semibold))
                             .lineLimit(1)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appText)
+
+                        if let secondaryText {
+                            Text(secondaryText)
+                                .font(theme.ui(.tiny))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .foregroundStyle(.appSecondary)
+                        }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(primaryText)
+                            .font(theme.ui(.small, weight: .semibold))
+                            .lineLimit(1)
+                            .foregroundStyle(.appText)
+
+                        if let secondaryText {
+                            Text(secondaryText)
+                                .font(theme.ui(.micro))
+                                .lineLimit(1)
+                                .foregroundStyle(.appSecondary)
+                        }
                     }
                 }
 
@@ -155,8 +188,8 @@ struct ModelLoaderControl: View {
                         .accessibilityHidden(true)
                 }
             }
-            .padding(.leading, 10)
-            .padding(.trailing, 9)
+            .padding(.leading, density == .compact ? 8 : 10)
+            .padding(.trailing, density == .compact ? 7 : 9)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
         }
@@ -175,7 +208,10 @@ struct ModelLoaderControl: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .frame(maxWidth: 320)
+        // 320 was sized for the two-line label. One line is much wider, and
+        // clipping it would truncate exactly the context figure this control
+        // goes out of its way to print in full.
+        .frame(maxWidth: density == .compact ? 420 : 320)
         .help(chooserHelp)
         // Without this the two Texts are two elements, and VoiceOver reads
         // "Active model" twice.
@@ -258,7 +294,7 @@ struct ModelLoaderControl: View {
 
     private var separator: some View {
         Rectangle()
-            .fill(TurboSparkTheme.hairlineColor)
+            .fill(.appBorder)
             .frame(width: 0.5, height: barHeight * 0.55)
     }
 
@@ -298,7 +334,7 @@ struct ModelLoaderControl: View {
                 Text("Eject", bundle: .module)
                     .font(theme.ui(.tiny, weight: .medium))
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
             .padding(.horizontal, 11)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
@@ -311,6 +347,15 @@ struct ModelLoaderControl: View {
     }
 
     // MARK: - State
+
+    /// How much vertical room the pill has. `.regular` is the two-line 34pt
+    /// capsule this control was designed as; `.compact` is the one-line 24pt
+    /// capsule the chat carries under its composer, where every point of
+    /// height comes out of the transcript.
+    enum Density: Equatable {
+        case regular
+        case compact
+    }
 
     /// The six states the control has to render, named once so the dot, the
     /// secondary line and the accessibility value cannot disagree about which
@@ -395,9 +440,9 @@ struct ModelLoaderControl: View {
 ///
 /// Grey when there is nothing to run, accent when a session is live, and
 /// pulsing accent while one is being built. The pulse is the ONLY animated
-/// thing in the top bar chrome and it is state-driven rather than per token,
-/// so it does not reintroduce the redraw cost that kept throughput out of
-/// this bar.
+/// thing in this control and it is state-driven rather than per token, which
+/// is what lets it sit directly under a streaming transcript without paying a
+/// redraw per decoded token.
 private struct ModelStatusDot: View {
     let state: ModelLoaderControl.LoaderState
     let accent: Color

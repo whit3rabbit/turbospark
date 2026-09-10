@@ -24,6 +24,9 @@ struct ProjectSettingsSheet: View {
     @State private var guardrailsOption: AppProjectGuardrailsOption = .auto
     @State private var rulesAutoDetectedMessage: String?
     @State private var showingMcpSheet = false
+    @State private var showingSkills = false
+    @State private var showingPlugins = false
+    @State private var showingAdvancedSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,32 +35,66 @@ struct ProjectSettingsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     generalSection
-                    agentSection
-                    ProjectPermissionsSectionView(
-                        permissionMode: $permissionMode,
-                        fileReadPermission: $fileReadPermission,
-                        fileWritePermission: $fileWritePermission,
-                        terminalPermission: $terminalPermission,
-                        webPermission: $webPermission,
-                        mcpPermission: $mcpPermission,
-                        automationPermission: $automationPermission,
-                        guardrailsOption: $guardrailsOption
-                    )
-                    mcpSection
-                    ProjectRulesSectionView(
-                        rootDirectoryPath: rootDirectoryPath,
-                        rulePreference: $rulePreference,
-                        customInstructions: $customInstructions,
-                        rulesAutoDetectedMessage: $rulesAutoDetectedMessage,
-                        onAutoDetect: autoDetectRules
-                    )
+                    DisclosureGroup(isExpanded: $showingAdvancedSettings) {
+                        VStack(alignment: .leading, spacing: 20) {
+                            agentSection
+                            ProjectPermissionsSectionView(
+                                permissionMode: $permissionMode,
+                                fileReadPermission: $fileReadPermission,
+                                fileWritePermission: $fileWritePermission,
+                                terminalPermission: $terminalPermission,
+                                webPermission: $webPermission,
+                                mcpPermission: $mcpPermission,
+                                automationPermission: $automationPermission,
+                                guardrailsOption: $guardrailsOption
+                            )
+                            mcpSection
+                            if editingProject != nil {
+                                HStack {
+                                    Button { showingSkills = true } label: { Text("Skills", bundle: .module) }
+                                    Button { showingPlugins = true } label: { Text("Plugins", bundle: .module) }
+                                }
+                            }
+                            ProjectRulesSectionView(
+                                rootDirectoryPath: rootDirectoryPath,
+                                rulePreference: $rulePreference,
+                                customInstructions: $customInstructions,
+                                rulesAutoDetectedMessage: $rulesAutoDetectedMessage,
+                                onAutoDetect: autoDetectRules
+                            )
+                        }
+                        .padding(.top, 12)
+                    } label: {
+                        Text("Settings", bundle: .module)
+                            .themedFont(.small, weight: .medium)
+                    }
                 }
-                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
             }
             Divider()
             footer
         }
-        .frame(width: 580, height: 680)
+        .frame(width: 580, height: showingAdvancedSettings ? 660 : 390)
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(.appBorder, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .sheet(isPresented: $showingSkills) {
+            VStack {
+                Button("Done") { showingSkills = false }
+                SkillsSettingsPaneView(model: model, projectID: editingProject?.id)
+            }.frame(minWidth: 780, minHeight: 580)
+        }
+        .sheet(isPresented: $showingPlugins) {
+            VStack {
+                Button("Done") { showingPlugins = false }
+                PluginSettingsPaneView(model: model, projectID: editingProject?.id)
+            }.frame(minWidth: 780, minHeight: 580)
+        }
         .onAppear(perform: populateInitialValues)
         .sheet(isPresented: $showingMcpSheet) {
             if let project = editingProject {
@@ -77,12 +114,12 @@ struct ProjectSettingsSheet: View {
                     .themedFont(.base, weight: .semibold)
                 Text("Manage codebase root, agent profile, rules, and execution permissions.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button("Close") { onDismiss() }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -97,19 +134,35 @@ struct ProjectSettingsSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Project Name", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 TextField("e.g. My Rust Engine", text: $name)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .themedFont(.base)
+                    .padding(10)
+                    .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(.appBorder, lineWidth: 1)
+                            .allowsHitTesting(false)
+                    }
                     .accessibilityLabel("Project name")
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Codebase Root Directory", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 HStack(spacing: 8) {
                     TextField("/path/to/codebase", text: $rootDirectoryPath)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.plain)
+                        .themedFont(.base)
+                        .padding(10)
+                        .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(.appBorder, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
                         .accessibilityLabel("Codebase root directory path")
                     Button("Choose...") {
                         selectFolder()
@@ -139,20 +192,20 @@ struct ProjectSettingsSheet: View {
 
             Text(agentType.descriptionText)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Autonomous Step Limit", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Spacer()
                     Text("\(Int(maxAutonomousSteps)) steps", bundle: .module)
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Slider(value: $maxAutonomousSteps, in: 1...15, step: 1)
                     .accessibilityLabel("Autonomous step limit")
@@ -171,11 +224,11 @@ struct ProjectSettingsSheet: View {
                             + "grow until they hit the context window."
                 )
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -193,7 +246,7 @@ struct ProjectSettingsSheet: View {
                         .mcpServers.count ?? editingProject?.mcpServers.count ?? 0
                     Text(liveCount > 0 ? "\(liveCount) server(s) configured for this project." : "Import .mcp.json or configure codebase MCP tools.")
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 if editingProject != nil {
@@ -207,11 +260,11 @@ struct ProjectSettingsSheet: View {
                 } else {
                     Text("Save project to configure MCPs", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
             .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -232,7 +285,8 @@ struct ProjectSettingsSheet: View {
                 save()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || model.isRunning || model.submitting || model.pendingToolCall != nil)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -240,6 +294,7 @@ struct ProjectSettingsSheet: View {
 
     private func populateInitialValues() {
         if let editing = editingProject {
+            showingAdvancedSettings = true
             name = editing.name
             rootDirectoryPath = editing.rootDirectoryPath ?? ""
             agentType = editing.agentType
@@ -256,7 +311,7 @@ struct ProjectSettingsSheet: View {
             skillStateEnabled = editing.skillStateEnabled
             guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
         } else {
-            name = "New Project"
+            name = ""
             agentType = .coder
             rulePreference = .agentsFirst
             guardrailsOption = .auto
@@ -306,6 +361,7 @@ struct ProjectSettingsSheet: View {
     }
 
     private func save() {
+        guard !model.isRunning, !model.submitting, model.pendingToolCall == nil else { return }
         let perms = AppProjectPermissions(
             mode: permissionMode,
             fileRead: fileReadPermission,
@@ -321,7 +377,7 @@ struct ProjectSettingsSheet: View {
         let guardrailsPref = guardrailsOption.asOptionalBool
 
         if let editing = editingProject {
-            var updated = editing
+            var updated = model.projects.first { $0.id == editing.id } ?? editing
             updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
             updated.rootDirectoryPath = resolvedPath
             updated.agentType = agentType
@@ -343,6 +399,7 @@ struct ProjectSettingsSheet: View {
             }
             model.updateProject(updated)
         } else {
+            model.setInteractionMode(.projects)
             model.createProject(
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                 rootDirectoryPath: resolvedPath,

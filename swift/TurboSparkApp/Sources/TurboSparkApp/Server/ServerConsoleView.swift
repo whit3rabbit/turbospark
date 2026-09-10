@@ -45,7 +45,7 @@ struct ServerConsoleView: View {
             if rows.isEmpty {
                 Text(model.serverMetrics.records.isEmpty ? "No traffic yet." : "Nothing matches.")
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -58,14 +58,14 @@ struct ServerConsoleView: View {
                 }
             }
         }
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+        .background(.appElevated.opacity(0.4))
     }
 
     private var toolbar: some View {
         HStack(spacing: 10) {
             Text("Console", bundle: .module)
                 .themedFont(.tiny, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             TextField("Filter", text: $search)
                 .textFieldStyle(.roundedBorder)
@@ -136,7 +136,7 @@ struct ServerConsoleView: View {
 
                 Text(record.method)
                     .font(theme.code(.tiny))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .frame(width: 38, alignment: .leading)
 
                 Text(record.path)
@@ -148,26 +148,26 @@ struct ServerConsoleView: View {
                 if let served = record.servedModel {
                     Text(served)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                 }
                 if record.stream {
                     Image(systemName: "dot.radiowaves.right")
                         .themedFont(.micro)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .help("Streamed")
                 }
                 if let tokens = record.newTokens, tokens > 0 {
                     Text("\(tokens) tok", bundle: .module)
                         .themedFont(.tiny)
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 if let duration = record.durationMs {
                     Text("\(duration) ms", bundle: .module)
                         .themedFont(.tiny)
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .frame(width: 62, alignment: .trailing)
                 }
             }
@@ -229,7 +229,7 @@ struct ServerConsoleView: View {
         HStack(spacing: 6) {
             Text(label)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .frame(width: 78, alignment: .leading)
             Text(value)
                 .font(theme.code(.tiny))
@@ -237,7 +237,7 @@ struct ServerConsoleView: View {
             if let help {
                 Image(systemName: "questionmark.circle")
                     .themedFont(.micro)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .help(help)
             }
         }

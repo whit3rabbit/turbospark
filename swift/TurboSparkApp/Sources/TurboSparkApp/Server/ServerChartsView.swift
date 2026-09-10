@@ -21,7 +21,7 @@ struct ServerChartsView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Traffic", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             if points.isEmpty {
                 emptyState
@@ -37,7 +37,7 @@ struct ServerChartsView: View {
     private var emptyState: some View {
         Text("No requests yet. Charts fill in as traffic arrives.", bundle: .module)
             .themedFont(.tiny)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 18)
     }
@@ -115,7 +115,7 @@ struct ServerChartsView: View {
                 if !subtitle.isEmpty {
                     Text(subtitle)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .monospacedDigit()
                 }
             }
@@ -125,9 +125,9 @@ struct ServerChartsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor)))
+                .fill(.appSurface))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
+                .stroke(.appBorder, lineWidth: 0.5))
     }
 }

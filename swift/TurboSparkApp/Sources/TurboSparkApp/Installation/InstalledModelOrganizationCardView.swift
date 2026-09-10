@@ -19,7 +19,7 @@ struct InstalledModelOrganizationCardView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Custom Tags", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
 
                 FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(orgStore.tags(alias: installedModel.alias, path: installedModel.path), id: \.self) { tag in
@@ -60,7 +60,7 @@ struct InstalledModelOrganizationCardView: View {
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 4))
+                        .background(.appElevated, in: RoundedRectangle(cornerRadius: 4))
                         .overlay { RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 0.5) }
                     } else {
                         Button {
@@ -73,7 +73,7 @@ struct InstalledModelOrganizationCardView: View {
                         }
                         .buttonStyle(.plain)
                         .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     }
                 }
             }
@@ -84,21 +84,21 @@ struct InstalledModelOrganizationCardView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Personal Notes", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
 
                 TextField("Add personal notes for this model (e.g., best for Swift, fast test runner)...", text: $notesText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .themedFont(.small)
                     .padding(8)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                    .overlay { RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor), lineWidth: 0.5) }
+                    .background(.appElevated, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay { RoundedRectangle(cornerRadius: 6).stroke(.appBorder, lineWidth: 0.5) }
                     .onChange(of: notesText) { _, newValue in
                         orgStore.setNotes(newValue, for: installedModel.alias, path: installedModel.path)
                     }
             }
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
         .onAppear {
             syncState()
         }

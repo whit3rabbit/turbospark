@@ -62,7 +62,7 @@ struct ServerPaneView: View {
                     .frame(height: consoleHeight)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.appPage)
         // The pane is not the only thing that can stop a server (unloading a
         // model from Chat can), so the timer follows the SERVER rather than
         // this view's lifetime. Appearing here only picks polling back up if
@@ -75,6 +75,6 @@ struct ServerPaneView: View {
     private func sectionLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .themedFont(.small, weight: .semibold)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
     }
 }

@@ -7,6 +7,7 @@ public struct AppSettingsView: View {
     @ObservedObject private var appearanceManager = AppearanceManager.shared
 
     @State private var selectedTab: SettingsTab = .appearance
+    @State private var highlightedControl: String?
     @State private var searchText: String = ""
 
     public init(model: AppModel) {
@@ -17,10 +18,10 @@ public struct AppSettingsView: View {
         HStack(spacing: 0) {
             settingsSidebar
                 .frame(width: 220)
-                .background(Color(nsColor: .windowBackgroundColor).opacity(0.85))
+                .background(.appPage.opacity(0.85))
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(width: 1)
 
             VStack(spacing: 0) {
@@ -32,14 +33,24 @@ public struct AppSettingsView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 16)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(.appPage)
 
                 Rectangle()
-                    .fill(TurboSparkTheme.hairlineColor)
+                    .fill(.appBorder)
                     .frame(height: 1)
 
-                tabContent
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ScrollViewReader { proxy in
+                    tabContent
+                        .environment(\.settingsTarget, highlightedControl)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .task(id: highlightedControl) {
+                            guard let id = highlightedControl else { return }
+                            // The target pane must mount before its scroll view knows the anchor.
+                            try? await Task.sleep(for: .milliseconds(150))
+                            guard !Task.isCancelled else { return }
+                            proxy.scrollTo(id, anchor: .center)
+                        }
+                }
             }
         }
         .font(theme.ui(.base))
@@ -57,7 +68,7 @@ public struct AppSettingsView: View {
             // Search field
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .font(theme.ui(.small))
                     .accessibilityHidden(true)
                 TextField("Search settings...", text: $searchText)
@@ -67,17 +78,20 @@ public struct AppSettingsView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 1)
+                    .stroke(.appBorder.opacity(0.3), lineWidth: 1)
             )
             .padding(.horizontal, 12)
             .padding(.top, 14)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        controlSearchResults
+                    }
                     sidebarCategory(
                         title: "Personal",
                         tabs: SettingsTab.allCases.filter { $0.category == "Personal" }
@@ -104,7 +118,7 @@ public struct AppSettingsView: View {
             if !filtered.isEmpty {
                 Text(title)
                     .font(theme.ui(.tiny, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .accessibilityAddTraits(.isHeader)
@@ -118,7 +132,7 @@ public struct AppSettingsView: View {
                             Image(systemName: tab.systemImage)
                                 .font(theme.ui(.callout, weight: .medium))
                                 .frame(width: 18)
-                                .foregroundStyle(isSelected ? appearanceManager.activeAccentColor(isDark: false) : .secondary)
+                                .foregroundStyle(isSelected ? theme.accent : .secondary)
                                 .accessibilityHidden(true)
 
                             Text(tab.title)
@@ -145,6 +159,34 @@ public struct AppSettingsView: View {
         }
     }
 
+    private var controlSearchResults: some View {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let results = SettingsControlCatalog.entries.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            if results.isEmpty {
+                Text("No matching controls", bundle: .module).themedFont(.small)
+            }
+            ForEach(results) { result in
+                Button {
+                    selectedTab = result.pane
+                    highlightedControl = result.id
+                    searchText = ""
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(LocalizedStringKey(result.title), bundle: .module).themedFont(.small, weight: .medium)
+                        Text(result.pane.title).themedFont(.tiny).foregroundStyle(.appSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+                .help(Text(LocalizedStringKey(result.timing.rawValue), bundle: .module))
+            }
+        }
+    }
+
     // MARK: - Tab Content
     @ViewBuilder
     private var tabContent: some View {
@@ -166,7 +208,7 @@ public struct AppSettingsView: View {
         case .safety:
             SafetySettingsPaneView(model: model)
         case .mcp:
-            McpSettingsPaneView(model: model)
+            McpManagementView(model: model)
         case .skills:
             SkillsSettingsPaneView(model: model)
         case .memory:

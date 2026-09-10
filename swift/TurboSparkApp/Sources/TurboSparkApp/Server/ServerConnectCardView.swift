@@ -27,7 +27,7 @@ struct ServerConnectCardView: View {
             if model.server == nil {
                 Text("Start the server and these fill in with its real address.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             Picker("", selection: $selection) {
@@ -42,7 +42,7 @@ struct ServerConnectCardView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(snippet.note)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
 
                     ZStack(alignment: .topTrailing) {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -71,10 +71,10 @@ struct ServerConnectCardView: View {
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color(nsColor: .textBackgroundColor).opacity(0.5)))
+                            .fill(.appElevated.opacity(0.5)))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
+                            .stroke(.appBorder, lineWidth: 0.5))
                 }
             }
 
@@ -85,7 +85,7 @@ struct ServerConnectCardView: View {
                 // instead of a working call.
                 Text("No key is set, so the snippets send a placeholder that is never checked.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             ServerEndpointListView()
@@ -110,7 +110,7 @@ private struct ServerEndpointListView: View {
             HStack {
                 Text("Endpoints", bundle: .module)
                     .themedFont(.tiny, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
                 Picker("", selection: $family) {
                     ForEach(ServerAPIFamily.allCases) { option in
@@ -124,14 +124,14 @@ private struct ServerEndpointListView: View {
 
             Text(family.blurb)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(ServerEndpointCatalog.endpoints(for: family)) { endpoint in
                     HStack(spacing: 8) {
                         Text(endpoint.method)
                             .themedCode(.small, weight: .semibold)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .frame(width: 34, alignment: .leading)
                         Text(endpoint.path)
                             .themedCode(.callout)
@@ -150,7 +150,7 @@ private struct ServerEndpointListView: View {
                         Spacer(minLength: 8)
                         Text(endpoint.summary)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }

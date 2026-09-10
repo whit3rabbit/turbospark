@@ -13,7 +13,7 @@ struct SessionStatsSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: "chart.bar")
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text("Session Stats", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
@@ -80,7 +80,7 @@ struct SessionStatsSheet: View {
                         } else {
                             Text("No recorded usage yet. Tokens are counted from the model's own per-turn totals as turns complete.", bundle: .module)
                                 .themedFont(.small)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
                 }
@@ -98,7 +98,7 @@ struct SessionStatsSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title, bundle: bundle)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             VStack(alignment: .leading, spacing: 4) {
                 rows()
             }
@@ -113,7 +113,7 @@ struct SessionStatsSheet: View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Spacer(minLength: 12)
             Text(value)
                 .themedFont(.small, weight: .medium)
@@ -135,7 +135,7 @@ struct HelpSheetView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: "questionmark.circle")
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text("Help", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
@@ -172,7 +172,7 @@ struct HelpSheetView: View {
                         ForEach(KeyboardShortcutCatalog.sections) { section in
                             Text(section.title)
                                 .themedFont(.small, weight: .semibold)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                                 .padding(.top, 6)
                             ForEach(section.rows) { row in
                                 HStack(alignment: .firstTextBaseline) {
@@ -181,7 +181,7 @@ struct HelpSheetView: View {
                                     Spacer(minLength: 12)
                                     Text(row.keys)
                                         .themedCode(.small)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(.appSecondary)
                                 }
                             }
                         }
@@ -215,11 +215,11 @@ struct HelpSheetView: View {
         HStack(alignment: .firstTextBaseline) {
             Text(name)
                 .font(mono ? theme.code(.small) : theme.ui(.small, weight: .medium))
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
             Spacer(minLength: 12)
             Text(detail)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.trailing)
         }
     }

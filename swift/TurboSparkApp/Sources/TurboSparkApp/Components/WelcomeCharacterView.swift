@@ -90,6 +90,12 @@ public struct WelcomeHeroView: View {
             VStack(spacing: 12) {
                 PromptComposerView(model: model)
                 ErrorBanner(model: model)
+                // Appended in both chat hosts rather than placed at a fixed
+                // index: the two order the error banner differently, and last
+                // is the only position that keeps the pill at the floor of the
+                // chrome in both without wedging between a composer and its
+                // error.
+                ModelLoaderControl(model: model, density: .compact)
             }
             .frame(maxWidth: 700)
             .tsEntrance(delay: 0.08)
@@ -163,7 +169,7 @@ public struct WelcomeHeroView: View {
             Button(action: cycleGreeting) {
                 Text(displayGreeting)
                     .font(theme.ui(.display, weight: .regular, systemDesign: .serif))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     // The greeting is re-rolled on click, so the swap is a
@@ -178,7 +184,7 @@ public struct WelcomeHeroView: View {
 
             Text("Everything here runs on your Mac. Nothing leaves it.", bundle: .module)
                 .font(theme.ui(.callout))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .onAppear {
             if currentGreeting == nil {
@@ -247,12 +253,12 @@ public struct WelcomeHeroView: View {
 
                 Text(suggestion.title)
                     .font(theme.ui(.small, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .lineLimit(1)
 
                 Text(suggestion.detail)
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }

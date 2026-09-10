@@ -29,6 +29,7 @@ struct MemorySettingsPaneView: View {
                     model.memoryEnabled = newValue
                     model.persistSettingsDebounced()
                 }))
+            .settingsControl("Let the model remember across conversations", pane: .memory, timing: .nextTurn)
             Text(
                 "With a project attached, the model gets a persistent memory directory and a "
                     + "`memory` tool: it saves durable facts about you and the project as it "
@@ -37,8 +38,9 @@ struct MemorySettingsPaneView: View {
                     + "to save one yourself, or /memory to open the folder."
             )
             .font(theme.ui(.small))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
         }
+            .settingsControl("Memory", pane: .memory, timing: .nextTurn)
     }
 
     /// The selected chat's project root, by the same resolution the submit
@@ -62,7 +64,7 @@ struct MemorySettingsPaneView: View {
                 HStack {
                     Text(directory.path)
                         .font(theme.code(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                         .truncationMode(.head)
                     Spacer()
@@ -73,8 +75,9 @@ struct MemorySettingsPaneView: View {
             } else {
                 HStack {
                     Text("No project attached. The shared memory root:", bundle: .module)
+                    .settingsControl("No project attached. The shared memory root:", pane: .memory, timing: .nextTurn)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Spacer()
                     Button("Open Folder") {
                         NSWorkspace.shared.open(MemoryStore.defaultBase())
@@ -82,6 +85,7 @@ struct MemorySettingsPaneView: View {
                 }
             }
         }
+            .settingsControl("Storage", pane: .memory, timing: .nextTurn)
     }
 
     private var contentsSection: some View {
@@ -92,7 +96,7 @@ struct MemorySettingsPaneView: View {
                 if entries.isEmpty {
                     Text("Nothing yet. The model saves memories as it learns durable facts; you can save one with `#` followed by text.", bundle: .module)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 } else {
                     ForEach(entries, id: \.fileName) { entry in
                         VStack(alignment: .leading, spacing: 2) {
@@ -102,12 +106,12 @@ struct MemorySettingsPaneView: View {
                                 Spacer()
                                 Text(entry.fileName)
                                     .font(theme.code(.small))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
                             if !entry.hook.isEmpty {
                                 Text(entry.hook)
                                     .font(theme.ui(.small))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
                         }
                         .padding(.vertical, 2)
@@ -115,9 +119,11 @@ struct MemorySettingsPaneView: View {
                 }
             } else {
                 Text("Attach a project to see its memories.", bundle: .module)
+                    .settingsControl("Attach a project to see its memories.", pane: .memory, timing: .nextTurn)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
+            .settingsControl("What This Project Remembers", pane: .memory, timing: .nextTurn)
     }
 }

@@ -66,13 +66,13 @@ public struct HfAuthTokenCardView: View {
                         if let source = tokenSource {
                             Text("via \(source)", bundle: .module)
                                 .font(theme.ui(.tiny))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
                 }
                 Text("Authenticate to inspect and download gated or private repositories.", bundle: .module)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Link(destination: URL(string: "https://huggingface.co/settings/tokens")!) {
@@ -106,7 +106,7 @@ public struct HfAuthTokenCardView: View {
                     isRevealed.toggle()
                 } label: {
                     Image(systemName: isRevealed ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .themedFont(.callout)
                 }
                 .buttonStyle(.plain)
@@ -115,7 +115,7 @@ public struct HfAuthTokenCardView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
@@ -131,7 +131,7 @@ public struct HfAuthTokenCardView: View {
                     scheduleDebouncedValidation()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
                 .help("Clear field")
@@ -149,7 +149,7 @@ public struct HfAuthTokenCardView: View {
                     .controlSize(.small)
                 Text("Validating token with Hugging Face...", bundle: .module)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         } else if let status = validationStatus {
             switch status {
@@ -165,13 +165,13 @@ public struct HfAuthTokenCardView: View {
                             if let name, !name.isEmpty {
                                 Text("signed in as @\(name)", bundle: .module)
                                     .font(theme.ui(.small))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
                         }
                         if let detail = userDetailString(fullname: fullname, email: email) {
                             Text(detail)
                                 .font(theme.ui(.tiny))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
                 }
@@ -194,10 +194,10 @@ public struct HfAuthTokenCardView: View {
             case .unavailable(let message):
                 HStack(spacing: 6) {
                     Image(systemName: "wifi.slash")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Text("Could not reach Hugging Face: \(message)", bundle: .module)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             case .missing:
                 EmptyView()
@@ -218,7 +218,7 @@ public struct HfAuthTokenCardView: View {
                     }
                     .buttonStyle(.plain)
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .appPointerCursor()
                 }
             }
@@ -228,7 +228,7 @@ public struct HfAuthTokenCardView: View {
                     .font(theme.code(.base))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.8))
+                    .background(.appElevated.opacity(0.8))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
@@ -244,7 +244,7 @@ public struct HfAuthTokenCardView: View {
             }
             Text("Useful for regions with restricted Hugging Face access, e.g. https://hf-mirror.com", bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
     }
 

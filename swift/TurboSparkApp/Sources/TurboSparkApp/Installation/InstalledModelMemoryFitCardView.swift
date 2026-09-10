@@ -33,7 +33,7 @@ struct InstalledModelMemoryFitCardView: View {
                 allocationRow(fit)
                 Text(workingSetExplanation(fit))
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let ladder, !ladder.rungs.isEmpty {
@@ -47,15 +47,15 @@ struct InstalledModelMemoryFitCardView: View {
             } else {
                 Text("RAM requirement: unknown", bundle: .module)
                     .themedFont(.small, weight: .medium).monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text("Nothing has read this checkpoint's header, so its working set is unknown. `turbospark-model recommend --probe` reads it without downloading anything.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
     }
 
     /// The two byte figures, which answer different questions.
@@ -70,7 +70,7 @@ struct InstalledModelMemoryFitCardView: View {
             HStack(spacing: 6) {
                 Text("Allocates", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text(MetricFormat.storage(fit.countedBytes))
                     .themedFont(.small, weight: .medium).monospacedDigit()
                     .foregroundStyle(Color.accentColor)
@@ -91,11 +91,11 @@ struct InstalledModelMemoryFitCardView: View {
             // count: Gemma 4 reads 2,175 MiB at 16 slots and 3,654 at 32.
             Text(configurationCaption(fit))
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             HStack(spacing: 6) {
                 Text("Reads", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text("\(MetricFormat.storage(installedModel.installBytes)) on disk", bundle: .module)
                     .themedFont(.small).monospacedDigit()
             }

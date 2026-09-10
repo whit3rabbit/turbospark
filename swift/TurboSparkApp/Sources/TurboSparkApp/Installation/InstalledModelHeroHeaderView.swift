@@ -52,7 +52,7 @@ struct InstalledModelHeroHeaderView: View {
                         Text(visuals.family)
                     }
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
 
                     Text("\u{2022}", bundle: .module)
                         .foregroundStyle(.tertiary)
@@ -60,7 +60,7 @@ struct InstalledModelHeroHeaderView: View {
 
                     Text(MetricFormat.storage(installedModel.installBytes))
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
 
                     Text("\u{2022}", bundle: .module)
                         .foregroundStyle(.tertiary)
@@ -68,7 +68,7 @@ struct InstalledModelHeroHeaderView: View {
 
                     Text(descriptor.storageSource.shortLabel)
                         .themedFont(.small, weight: .medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 if !installedModel.repo.isEmpty && installedModel.repo != "local" {
@@ -128,7 +128,7 @@ struct InstalledModelHeroHeaderView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.4), in: Capsule())
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
         }
     }
 }

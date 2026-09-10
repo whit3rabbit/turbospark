@@ -20,7 +20,7 @@ struct KeyboardShortcutsSettingsPaneView: View {
             Section {
                 Text("Shortcuts are fixed. There is no rebinding in this version.", bundle: .module)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .formStyle(.grouped)
@@ -35,17 +35,17 @@ struct KeyboardShortcutsSettingsPaneView: View {
             if let alt {
                 Text("also \(alt)", bundle: .module)
                     .font(theme.code(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Text(shortcut)
                 .font(theme.code(.small))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.appSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 1)
+                        .stroke(.appBorder.opacity(0.3), lineWidth: 1)
                 )
         }
     }

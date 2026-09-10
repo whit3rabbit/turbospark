@@ -53,7 +53,7 @@ struct ModelManagerView: View {
                 .frame(maxHeight: .infinity)
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(width: AppChromeLayout.dividerWidth)
 
             detailPane
@@ -82,7 +82,7 @@ struct ModelManagerView: View {
                             HStack {
                                 Text(group.groupTitle)
                                     .themedFont(.small, weight: .bold)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                                 Spacer()
                                 Text("\(group.models.count)", bundle: .module)
                                     .themedFont(.tiny).monospacedDigit()
@@ -124,7 +124,7 @@ struct ModelManagerView: View {
                 ? "Download models from the Discover catalog or scan an external folder."
                 : "Try clearing search or filter terms.")
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 240)
 
@@ -162,7 +162,7 @@ struct ModelManagerView: View {
                     .themedFont(.base, weight: .medium)
                 Text("Select an installed model to view specifications, runtime options, or load it into memory.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 300)
             }

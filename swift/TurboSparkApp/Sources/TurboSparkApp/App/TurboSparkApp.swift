@@ -9,6 +9,51 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
         AppFontRegistrar.registerBundledFonts()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        Self.adoptRoomierDefaultFrameOnce()
+    }
+
+    /// One-time, ever: grow an existing install's window to the new roomy
+    /// default.
+    ///
+    /// `.defaultSize` on the scene only decides the FIRST launch. macOS then
+    /// autosaves the window's frame and restores it forever after, so raising
+    /// the default is invisible to anyone who has already run the app -- which
+    /// is everyone with the app installed. This runs once, keyed on a
+    /// UserDefaults flag, and never again: after it, resizing the window is
+    /// the user's business and nothing here fights it.
+    ///
+    /// It runs ASYNC because at `applicationDidFinishLaunching` the SwiftUI
+    /// scene has not built its window yet, so `NSApp.windows` is empty.
+    ///
+    /// A window that is already at least this big is left alone: someone who
+    /// had already sized it wide should not have it nudged.
+    private static func adoptRoomierDefaultFrameOnce() {
+        let key = "TurboSpark.didAdoptRoomierDefaultWindowFrame"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        DispatchQueue.main.async {
+            guard let window = NSApp.windows.first(where: { $0.canBecomeMain }),
+                  let screen = window.screen ?? NSScreen.main
+            else { return }
+
+            let target = TurboSparkApp.defaultWindowSize
+            // Per axis, and only upward. A `width < target || height < target`
+            // test plus a flat assignment SHRINKS whichever axis was already
+            // past the target, which is how growing a window makes it narrower.
+            let width = max(window.frame.width, target.width)
+            let height = max(window.frame.height, target.height)
+            guard width > window.frame.width || height > window.frame.height
+            else { return }
+
+            let visible = screen.visibleFrame
+            let frame = NSRect(
+                x: visible.midX - width / 2,
+                y: visible.midY - height / 2,
+                width: width,
+                height: height)
+            window.setFrame(frame, display: true, animate: false)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -57,6 +102,33 @@ struct TurboSparkApp: App {
         AppFontRegistrar.registerBundledFonts()
     }
 
+    /// The FIRST-LAUNCH window size: nearly the whole visible screen.
+    ///
+    /// `.defaultSize` used to be a flat 1280x760, which is a small window on
+    /// any modern display and left the app opening into a fraction of the
+    /// screen while every pane it has (rail, chat sidebar, transcript,
+    /// inspector) wants width. This asks the screen instead, and takes 94% of
+    /// its VISIBLE frame -- visible rather than full, so the menu bar and the
+    /// Dock are already subtracted and the window does not open underneath
+    /// either one.
+    ///
+    /// Only the first launch is affected. macOS restores a `Window` scene's
+    /// frame from its own autosave after that, so this cannot fight a size the
+    /// user has chosen, and it does not force full screen: the window is still
+    /// an ordinary resizable one, with the green button free to zoom it.
+    ///
+    /// `NSScreen.main` is nil in some launch contexts (no attached display,
+    /// certain headless runs), and the fallback is the old constant rather
+    /// than a computed guess.
+    static var defaultWindowSize: CGSize {
+        guard let visible = NSScreen.main?.visibleFrame else {
+            return CGSize(width: 1280, height: 760)
+        }
+        return CGSize(
+            width: max(AppChromeLayout.minimumHeight, visible.width * 0.94),
+            height: max(AppChromeLayout.minimumHeight, visible.height * 0.94))
+    }
+
     var body: some Scene {
         let currentLanguage = AppLanguage.resolve(languageRawValue)
         Window("TurboSpark", id: "main") {
@@ -66,7 +138,8 @@ struct TurboSparkApp: App {
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1280, height: 760)
+        .defaultSize(Self.defaultWindowSize)
+        .defaultPosition(.center)
         .windowResizability(.contentMinSize)
         .commands {
             // Menu-bar chrome takes its text from `Text(_:bundle:)` labels

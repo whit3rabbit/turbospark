@@ -104,11 +104,11 @@ struct InteractiveMarkdownTableView: View {
                     }
                 }
             }
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+            .background(.appElevated.opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.5)
+                    .stroke(.appBorder.opacity(0.4), lineWidth: 0.5)
             )
         }
         .markdownMargin(top: 8, bottom: 12)
@@ -130,7 +130,7 @@ struct InteractiveMarkdownTableView: View {
                         : "\(selectedRowIndices.count) rows selected",
                     bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Button("Clear") { selectedRowIndices.removeAll() }
                     .buttonStyle(.plain)
                     .themedFont(.tiny)

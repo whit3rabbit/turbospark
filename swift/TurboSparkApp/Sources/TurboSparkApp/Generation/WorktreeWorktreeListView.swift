@@ -36,13 +36,13 @@ public struct WorktreeWorktreeListView: View {
         HStack {
             Text("Linked Worktrees", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
 
             Spacer()
 
             Text("\(worktree.worktrees.count) worktrees", bundle: .module)
                 .themedFont(.tiny).monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -57,7 +57,7 @@ public struct WorktreeWorktreeListView: View {
                 .padding(.top, 40)
             Text("No Additional Worktrees", bundle: .module)
                 .themedFont(.base, weight: .medium)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text("This repository only has the primary working directory.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.tertiary)
@@ -70,11 +70,11 @@ public struct WorktreeWorktreeListView: View {
             HStack(spacing: 6) {
                 Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
                     .themedFont(.tiny)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
 
                 Text(wt.branch)
                     .font(theme.code(.small, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
 
                 if wt.isCurrent {
                     Text("Current", bundle: .module)
@@ -82,7 +82,7 @@ public struct WorktreeWorktreeListView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
-                        .background(TurboSparkTheme.accentColor, in: Capsule())
+                        .background(.appAccent, in: Capsule())
                 }
 
                 Spacer()
@@ -94,7 +94,7 @@ public struct WorktreeWorktreeListView: View {
 
             Text(wt.path)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
 

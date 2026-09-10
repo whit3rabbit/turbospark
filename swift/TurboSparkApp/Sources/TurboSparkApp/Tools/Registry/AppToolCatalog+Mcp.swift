@@ -26,8 +26,19 @@ public enum AppToolCatalogMcp {
     /// global and project servers, plus the plugin-contributed ones. The
     /// same composition the "Connected MCP Servers" prompt section uses.
     public static func visibleServers(global: [McpServerConfig], project: AppProject?) -> [McpServerConfig] {
-        (global + (project?.mcpServers ?? [])).filter { $0.isEnabled }
-            + PluginManager.shared.pluginMcpServers(projectURL: project?.rootDirectoryURL)
+        resolvedServers(global: global, project: project).filter { $0.isEnabled }
+    }
+
+    public static func resolvedServers(global: [McpServerConfig], project: AppProject?) -> [McpServerConfig] {
+        let inherited = global.map { server in
+            var result = server
+            result.isEnabled = project?.enabledMcpServers[server.id.uuidString] ?? server.isEnabled
+            return result
+        }
+        var seen = Set<String>()
+        return (inherited + (project?.mcpServers ?? [])
+            + PluginManager.shared.pluginMcpServers(projectURL: project?.rootDirectoryURL))
+            .filter { seen.insert($0.name.lowercased()).inserted }
     }
 
     /// One `OpenAITool` per discovered tool across `servers`, with denied

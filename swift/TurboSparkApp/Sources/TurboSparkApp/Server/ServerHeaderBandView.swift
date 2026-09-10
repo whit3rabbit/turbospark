@@ -20,7 +20,7 @@ struct ServerHeaderBandView: View {
                         .themedFont(.callout, weight: .semibold)
                     Text(stateSubtitle)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 Spacer(minLength: 12)
@@ -52,16 +52,16 @@ struct ServerHeaderBandView: View {
                         + "Requests get a 503 until you add one below.",
                     systemImage: "info.circle")
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor)))
+                .fill(.appSurface))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
+                .stroke(.appBorder, lineWidth: 0.5))
     }
 
     private var stateDot: some View {
@@ -161,7 +161,7 @@ struct ServerHeaderBandView: View {
 
     private func stat(_ label: String, _ value: String, tint: Color? = nil) -> some View {
         HStack(spacing: 4) {
-            Text(label).foregroundStyle(.secondary)
+            Text(label).foregroundStyle(.appSecondary)
             Text(value)
                 .monospacedDigit()
                 .foregroundStyle(tint ?? .primary)

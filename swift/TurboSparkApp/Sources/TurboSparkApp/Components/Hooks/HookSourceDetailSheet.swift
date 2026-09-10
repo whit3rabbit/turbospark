@@ -27,13 +27,13 @@ public struct HookSourceDetailSheet: View {
                         HStack(spacing: 8) {
                             Image(systemName: "gearshape")
                                 .themedFont(.title3)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                             Text(group.title)
                                 .themedFont(.title2, weight: .bold)
                         }
                         Text(group.subtitle)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
 
                     Spacer()
@@ -52,9 +52,9 @@ public struct HookSourceDetailSheet: View {
                     } label: {
                         Image(systemName: "xmark")
                             .themedFont(.callout, weight: .semibold)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .frame(width: 24, height: 24)
-                            .background(Color(nsColor: .controlBackgroundColor))
+                            .background(.appSurface)
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -63,7 +63,7 @@ public struct HookSourceDetailSheet: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 20)
                 .padding(.bottom, 14)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(.appPage)
 
                 Divider()
 
@@ -81,10 +81,10 @@ public struct HookSourceDetailSheet: View {
                             VStack(spacing: 12) {
                                 Image(systemName: "link.badge.plus")
                                     .themedFont(.display)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                                 Text("No hooks registered in \(group.title).", bundle: .module)
                                     .themedFont(.small)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 40)
@@ -99,7 +99,7 @@ public struct HookSourceDetailSheet: View {
             } else {
                 VStack(spacing: 12) {
                     Text("Source group not found.", bundle: .module)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Button("Close") { dismiss() }
                 }
                 .padding(40)
@@ -139,13 +139,13 @@ public struct HookSourceDetailSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Hooks can run outside of the sandbox so we ask you to review any recently installed or modified hooks", bundle: .module)
                     .themedFont(.small, weight: .medium)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
 
                 if group.unreviewedCount > 0 {
                     HStack(spacing: 12) {
                         Text("\(group.unreviewedCount) hook\(group.unreviewedCount == 1 ? "" : "s") pending trust review", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
 
                         Button {
                             hookStore.trustAllInGroup(group.id)
@@ -179,14 +179,14 @@ public struct HookSourceDetailSheet: View {
             HStack(spacing: 8) {
                 Image(systemName: event.systemImage)
                     .themedFont(.callout, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(event.displayName)
                         .themedFont(.base, weight: .semibold)
                     Text(event.eventDescription)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 Spacer()
@@ -213,11 +213,11 @@ public struct HookSourceDetailSheet: View {
                     hookRow(hook: hook)
                 }
             }
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+            .background(.appSurface.opacity(0.6))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+                    .stroke(.appBorder.opacity(0.35), lineWidth: 1)
             )
         }
     }
@@ -248,10 +248,10 @@ public struct HookSourceDetailSheet: View {
                         if hook.isAsync {
                             Text("async", bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
-                                .background(Color(nsColor: .separatorColor).opacity(0.3))
+                                .background(.appBorder.opacity(0.3))
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                         }
 
@@ -280,7 +280,7 @@ public struct HookSourceDetailSheet: View {
                     } label: {
                         Image(systemName: "arrow.up.right.square")
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     .buttonStyle(.plain)
                     .help("Reveal source file: \(sourcePath)")
@@ -298,7 +298,7 @@ public struct HookSourceDetailSheet: View {
                 } label: {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .themedFont(.small, weight: .semibold)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
 
@@ -338,14 +338,14 @@ public struct HookSourceDetailSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(hook.type == .command ? "Command Script" : (hook.type == .http ? "Webhook URL" : "Prompt"))
                             .themedFont(.tiny, weight: .semibold)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
 
                         Text(hook.command)
                             .themedCode(.small)
                             .textSelection(.enabled)
                             .padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(nsColor: .textBackgroundColor).opacity(0.7))
+                            .background(.appElevated.opacity(0.7))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
 
@@ -354,16 +354,16 @@ public struct HookSourceDetailSheet: View {
                         if let ifCond = hook.ifCondition, !ifCond.isEmpty {
                             Label("If: \(ifCond)", systemImage: "line.3.horizontal.decrease.circle")
                                 .themedFont(.small)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
 
                         Label("Shell: \(hook.shell.rawValue)", systemImage: "terminal")
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
 
                         Label("Timeout: \(Int(hook.timeoutSeconds))s", systemImage: "clock")
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
 
                         Spacer()
 
@@ -381,7 +381,7 @@ public struct HookSourceDetailSheet: View {
                     }
                 }
                 .padding(14)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+                .background(.appSurface.opacity(0.3))
             }
         }
     }

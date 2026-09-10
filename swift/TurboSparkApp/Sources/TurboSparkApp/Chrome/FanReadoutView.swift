@@ -21,7 +21,7 @@ struct FanReadoutView: View {
             HStack(spacing: 0) {
                 if showsLeadingDivider {
                     Rectangle()
-                        .fill(TurboSparkTheme.hairlineColor)
+                        .fill(.appBorder)
                         .frame(width: 0.5, height: 11)
                         .padding(.horizontal, 9)
                 }
@@ -54,7 +54,7 @@ struct FanReadoutView: View {
                     .accessibilityHidden(true)
                 Text(rpmText)
                     .monospacedDigit()
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                 if isPinned {
                     Text("MAX", bundle: .module)
                         .font(theme.ui(.micro, weight: .semibold))
@@ -86,11 +86,11 @@ struct FanReadoutView: View {
                 ForEach(status.fans) { fan in
                     HStack {
                         Text("Fan \(fan.index)", bundle: .module)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Spacer()
                         Text("\(fan.actualRPM.formatted()) RPM", bundle: .module)
                             .monospacedDigit()
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
                         Text(fan.isHeld ? "held" : "auto")
                             .foregroundStyle(fan.isHeld ? Color.orange : Color.secondary)
                     }

@@ -36,7 +36,7 @@ public struct HookEditorSheet: View {
                         .themedFont(.base, weight: .semibold)
                     Text("Configure deterministic actions, guardrails, and lifecycle event handlers.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Button {
@@ -44,13 +44,13 @@ public struct HookEditorSheet: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .themedFont(.title3)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
 
             Divider()
 
@@ -97,15 +97,15 @@ public struct HookEditorSheet: View {
                             .themedCode(.base)
                             .frame(minHeight: 90)
                             .padding(4)
-                            .background(Color(nsColor: .controlBackgroundColor))
+                            .background(.appSurface)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                                    .stroke(.appBorder.opacity(0.4), lineWidth: 1)
                             )
                         Text("Payload is supplied via JSON over stdin. Exit code 2 blocks PreToolUse execution.", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
 
                     // Matchers & Filters
@@ -148,7 +148,7 @@ public struct HookEditorSheet: View {
                                 .frame(width: 80)
                             Text("Hooks discovered from Claude Code config default to 600s when unset.", bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -187,7 +187,7 @@ public struct HookEditorSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
         }
         .frame(minWidth: 540, minHeight: 480)
         .onAppear {

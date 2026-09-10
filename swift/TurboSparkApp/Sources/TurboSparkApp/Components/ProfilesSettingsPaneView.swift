@@ -79,9 +79,10 @@ struct ProfilesSettingsPaneView: View {
             if model.profiles.isEmpty {
                 Text("Only the Default user exists. Add one below to give it its own settings, chats, and skills.", bundle: .module)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
+            .settingsControl("Users on this Mac", pane: .profiles, timing: .immediate)
     }
 
     private var defaultProfileRow: some View {
@@ -115,7 +116,7 @@ struct ProfilesSettingsPaneView: View {
         HStack(spacing: 10) {
             Image(systemName: "person.crop.circle")
                 .font(theme.ui(.title3))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -123,6 +124,7 @@ struct ProfilesSettingsPaneView: View {
                         .font(theme.ui(.base, weight: .medium))
                     if isCurrent {
                         Text("Current", bundle: .module)
+                    .settingsControl("Current", pane: .profiles, timing: .relaunch)
                             .font(theme.ui(.tiny, weight: .semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -132,7 +134,7 @@ struct ProfilesSettingsPaneView: View {
                 }
                 Text(subtitle)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             // Combining only the text keeps the Switch button and the actions
             // menu individually reachable to VoiceOver; combining the whole
@@ -153,7 +155,7 @@ struct ProfilesSettingsPaneView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(theme.ui(.base))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -188,8 +190,9 @@ struct ProfilesSettingsPaneView: View {
             }
             Text("New users start empty: their own settings, chats, skills, and MCP servers, isolated from the Default user and the shared ~/.turbospark folders.", bundle: .module)
                 .font(theme.ui(.small))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
+            .settingsControl("Add a User", pane: .profiles, timing: .immediate)
     }
 
     private func addProfile() {
@@ -208,7 +211,7 @@ struct ProfilesSettingsPaneView: View {
                         + "~/.turbospark folders, and every other profile is self-contained. "
                         + "Downloaded models are shared by all users.")
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Button("Reveal Profiles Folder in Finder") {
                     model.revealProfilesInFinder()
                 }
@@ -221,6 +224,7 @@ struct ProfilesSettingsPaneView: View {
     private func renameSheet(_ profile: UserProfile) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Rename Profile", bundle: .module)
+                    .settingsControl("Rename Profile", pane: .profiles, timing: .relaunch)
                 .font(theme.ui(.title3, weight: .semibold))
             TextField("Profile name", text: $renameText)
                 .textFieldStyle(.roundedBorder)

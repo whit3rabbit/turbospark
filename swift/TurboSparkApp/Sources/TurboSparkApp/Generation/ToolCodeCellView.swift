@@ -20,16 +20,16 @@ struct ToolCodeCellView: View {
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(code)
                     .font(theme.code(.small))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .textSelection(.enabled)
                     .padding(8)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+            .background(.appElevated.opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.25), lineWidth: 1)
+                    .stroke(.appBorder.opacity(0.25), lineWidth: 1)
             )
         }
         .padding(.leading, 8)
@@ -45,7 +45,7 @@ struct ToolCodeCellView: View {
         HStack(spacing: 8) {
             Text(label.uppercased())
                 .themedCode(.callout, weight: .bold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             Spacer()
 

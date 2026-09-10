@@ -80,7 +80,7 @@ public struct CollapsibleMessageContentView: View {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .themedFont(.micro, weight: .bold)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .padding(.top, 2)
                     .contentShape(Rectangle())
                 }

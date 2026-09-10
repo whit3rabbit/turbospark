@@ -1,6 +1,13 @@
 import SwiftUI
 
-/// Flat top bar: sidebar toggles, live machine load, model loader.
+/// Flat top bar: sidebar toggles, live machine load.
+///
+/// **The model loader is no longer here.** It moved under the prompt
+/// composer, where "which model, is it loaded" reads as the chat's own
+/// footer rather than as window chrome. This band now answers only what
+/// the machine is doing. The trailing group keeps its
+/// `frame(maxWidth: .infinity)` even though one control is left in it:
+/// that frame is half of what holds the fixed-size centre still.
 ///
 /// **The Chat/Projects segment is gone from here.** It was the second copy of
 /// a control that already lives in `ChatSidebarView.tabSelector`, and the two
@@ -26,7 +33,6 @@ struct TopBarView: View {
     let toggleInspector: () -> Void
 
     @ScaledMetric private var buttonSize: CGFloat = 26
-    @State private var confirmingEndGhost = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -46,9 +52,7 @@ struct TopBarView: View {
                 .fixedSize()
 
             HStack(spacing: 8) {
-                ModelLoaderControl(model: model)
                 inspectorToggle
-                ghostButton
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -58,7 +62,7 @@ struct TopBarView: View {
         .background(TurboSparkTheme.barBackgroundColor)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 0.5)
         }
     }
@@ -110,52 +114,6 @@ struct TopBarView: View {
         .accessibilityValue(presentation.accessibilityValue)
     }
 
-    /// Ghost Mode: start a temporary chat, or end the one being viewed.
-    private var ghostButton: some View {
-        Button {
-            if model.isInGhostChat {
-                if model.ghostChatHasContent {
-                    confirmingEndGhost = true
-                } else {
-                    model.endGhostChat()
-                }
-            } else {
-                model.enterGhostChat()
-            }
-        } label: {
-            Image(systemName: "ghost")
-                .font(theme.ui(.callout, weight: .medium))
-                .frame(width: buttonSize, height: buttonSize)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(TSPressScaleStyle(scale: 0.9))
-        .foregroundStyle(model.isInGhostChat ? theme.accent : Color.secondary)
-        // `enterGhostChat()`/`endGhostChat()` both no-op under exactly this
-        // guard, matching the File menu's "New Temporary Chat".
-        .disabled(model.generating || model.submitting || model.pendingToolCall != nil)
-        .help(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
-        .accessibilityLabel(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
-        .accessibilityHint(
-            model.isInGhostChat
-                ? "Discards the temporary conversation. It is never saved."
-                : "Starts a temporary chat that lives only in memory and is never saved.")
-        .accessibilityAddTraits(model.isInGhostChat ? [.isButton, .isSelected] : .isButton)
-        .confirmationDialog(
-            "End temporary chat?", isPresented: $confirmingEndGhost,
-            titleVisibility: .visible
-        ) {
-            Button("Discard Temporary Chat", role: .destructive) {
-                model.endGhostChat()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "This conversation exists only in memory and cannot be recovered "
-                    + "once discarded."
-            )
-        }
-    }
-
     private func gitPill(worktree: WorktreeModel) -> some View {
         Button {
             NotificationCenter.default.post(name: .toggleInspector, object: nil)
@@ -167,7 +125,7 @@ struct TopBarView: View {
 
                 Text(worktree.currentBranch)
                     .font(theme.code(.small, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
 
                 if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                     HStack(spacing: 2) {
@@ -231,7 +189,7 @@ struct ChromeTelemetryView: View {
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                .stroke(.appBorder, lineWidth: 0.5)
         }
         .onAppear(perform: refresh)
         .onReceive(poll) { _ in refresh() }
@@ -239,7 +197,7 @@ struct ChromeTelemetryView: View {
 
     private var divider: some View {
         Rectangle()
-            .fill(TurboSparkTheme.hairlineColor)
+            .fill(.appBorder)
             .frame(width: 1, height: 13)
     }
 
@@ -247,12 +205,12 @@ struct ChromeTelemetryView: View {
         HStack(spacing: 6) {
             Image(systemName: "memorychip")
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             Text(MetricFormat.memory(memoryBytes))
                 .font(theme.code(.callout, weight: .medium))
                 .monospacedDigit()
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
             if let fraction = memoryFraction {
                 TSMeterBar(fraction: fraction, tint: memoryTint(fraction))
                     .frame(width: 34)
@@ -268,12 +226,12 @@ struct ChromeTelemetryView: View {
         HStack(spacing: 6) {
             Image(systemName: "cpu")
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             Text(cpuText)
                 .font(theme.code(.callout, weight: .medium))
                 .monospacedDigit()
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
             Text("CPU", bundle: .module)
                 .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
@@ -288,12 +246,12 @@ struct ChromeTelemetryView: View {
         HStack(spacing: 6) {
             Image(systemName: "chart.line.uptrend.xyaxis")
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             Text(gpuWaitText)
                 .font(theme.code(.callout, weight: .medium))
                 .monospacedDigit()
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
             Text("GPU wait", bundle: .module)
                 .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
@@ -401,13 +359,13 @@ struct GenerationPhaseIndicator: View {
                         PulsingIndicatorDot()
                     } else {
                         Circle()
-                            .fill(TurboSparkTheme.accentColor)
+                            .fill(.appAccent)
                             .frame(width: 6, height: 6)
                     }
                     Text(statusText)
                         .font(theme.ui(.tiny, weight: .medium))
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                 }
                 .padding(.horizontal, 8)
@@ -440,7 +398,7 @@ struct GenerationPhaseIndicator: View {
 private struct PulsingIndicatorDot: View {
     var body: some View {
         Circle()
-            .fill(TurboSparkTheme.accentColor)
+            .fill(.appAccent)
             .frame(width: 6, height: 6)
             .phaseAnimator([0.4, 1.0]) { dot, opacity in
                 dot.opacity(opacity)

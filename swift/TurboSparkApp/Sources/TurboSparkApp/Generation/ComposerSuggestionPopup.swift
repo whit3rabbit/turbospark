@@ -46,9 +46,9 @@ struct ComposerSuggestionPopup: View {
     private func hintRow(_ text: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text(text)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Spacer(minLength: 0)
         }
         .themedFont(.small)
@@ -69,7 +69,7 @@ struct ComposerSuggestionPopup: View {
             HStack(spacing: 8) {
                 Image(systemName: suggestion.iconName)
                     .frame(width: 16)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(suggestion.title)
                         .lineLimit(1)
@@ -77,7 +77,7 @@ struct ComposerSuggestionPopup: View {
                     if let subtitle = suggestion.subtitle {
                         Text(subtitle)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }

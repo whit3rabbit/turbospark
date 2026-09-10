@@ -2,10 +2,12 @@ import AppKit
 import SwiftUI
 
 public struct AppearanceSettingsPaneView: View {
+    @Environment(\.settingsTarget) private var settingsTarget
     @Environment(\.appTheme) private var theme
     @ObservedObject private var manager = AppearanceManager.shared
     @Environment(\.colorScheme) private var colorScheme
 
+    @State private var showsCustomization = false
     @State private var showsResetConfirmation = false
 
     public init() {}
@@ -25,11 +27,13 @@ public struct AppearanceSettingsPaneView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 themeSelectionSection
+                ThemeGalleryView(manager: manager)
 
                 ThemeTypographyPreviewView(manager: manager, isDark: isCurrentlyDark)
 
                 ThemeCodePreviewView(manager: manager, isDark: isCurrentlyDark)
 
+                DisclosureGroup(isExpanded: $showsCustomization) {
                 ThemeConfigCardView(
                     title: "Light theme",
                     isDark: false,
@@ -44,13 +48,17 @@ public struct AppearanceSettingsPaneView: View {
                     manager: manager
                 )
 
+                } label: { Text("Customize colors", bundle: .module)
+                    .settingsControl("Customize colors", pane: .appearance, timing: .immediate) }
+
                 AppearancePreferencesCardView(manager: manager)
 
                 resetSection
             }
             .padding(20)
         }
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
+        .background(.appPage.opacity(0.6))
+        .onChange(of: settingsTarget, initial: true) { _, target in if target != nil { showsCustomization = true } }
     }
 
     // MARK: - Reset to Defaults
@@ -59,18 +67,19 @@ public struct AppearanceSettingsPaneView: View {
     /// caption and the confirmation dialog's message so the two cannot
     /// drift apart.
     private var resetDescription: Text {
-        Text("Restores theme mode, colors, fonts, text size, dock icon, and every preference on this pane. This cannot be undone.", bundle: .module)
+        Text("Restores theme mode, colors, fonts, text size, dock icon, and every preference on this pane. Saved themes are kept.", bundle: .module)
     }
 
     private var resetSection: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Reset Appearance", bundle: .module)
+                    .settingsControl("Reset Appearance", pane: .appearance, timing: .immediate)
                     .font(theme.ui(.base, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                 resetDescription
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button("Reset to Defaults...") {
@@ -78,11 +87,11 @@ public struct AppearanceSettingsPaneView: View {
             }
         }
         .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+        .background(.appSurface.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
         )
         .confirmationDialog(
             Text("Reset Appearance", bundle: .module),
@@ -101,9 +110,10 @@ public struct AppearanceSettingsPaneView: View {
     // MARK: - Theme Mode Selector
     private var themeSelectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Theme", bundle: .module)
+            Text("Appearance mode", bundle: .module)
+                    .settingsControl("Appearance mode", pane: .appearance, timing: .immediate)
                 .font(theme.ui(.large, weight: .semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
 
             HStack(spacing: 16) {
                 themeCard(mode: .system, title: "System") {
@@ -137,7 +147,7 @@ public struct AppearanceSettingsPaneView: View {
             VStack(spacing: 8) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor))
+                        .fill(.appSurface)
 
                     preview()
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -161,57 +171,6 @@ public struct AppearanceSettingsPaneView: View {
         .appPointerCursor()
     }
 
-    private var lightThumbnailMockup: some View {
-        ZStack {
-            Color(red: 0.94, green: 0.94, blue: 0.96)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Circle().fill(Color.gray.opacity(0.4)).frame(width: 5, height: 5)
-                    RoundedRectangle(cornerRadius: 2).fill(Color.gray.opacity(0.3)).frame(width: 28, height: 4)
-                }
-                .padding(.top, 6)
-                .padding(.leading, 8)
-
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.white)
-                    .padding(.horizontal, 6)
-                    .overlay(
-                        VStack(alignment: .leading, spacing: 3) {
-                            RoundedRectangle(cornerRadius: 1.5).fill(Color.gray.opacity(0.4)).frame(width: 40, height: 3)
-                            RoundedRectangle(cornerRadius: 1.5).fill(Color.gray.opacity(0.2)).frame(width: 55, height: 3)
-                            RoundedRectangle(cornerRadius: 1.5).fill(Color.gray.opacity(0.2)).frame(width: 32, height: 3)
-                        }
-                        .padding(6),
-                        alignment: .topLeading
-                    )
-            }
-        }
-    }
-
-    private var darkThumbnailMockup: some View {
-        ZStack {
-            Color(red: 0.12, green: 0.12, blue: 0.14)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Circle().fill(Color.gray.opacity(0.5)).frame(width: 5, height: 5)
-                    RoundedRectangle(cornerRadius: 2).fill(Color.gray.opacity(0.4)).frame(width: 28, height: 4)
-                }
-                .padding(.top, 6)
-                .padding(.leading, 8)
-
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(red: 0.18, green: 0.18, blue: 0.20))
-                    .padding(.horizontal, 6)
-                    .overlay(
-                        VStack(alignment: .leading, spacing: 3) {
-                            RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.4)).frame(width: 40, height: 3)
-                            RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.2)).frame(width: 55, height: 3)
-                            RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.2)).frame(width: 32, height: 3)
-                        }
-                        .padding(6),
-                        alignment: .topLeading
-                    )
-            }
-        }
-    }
+    private var lightThumbnailMockup: some View { ThemeModeThumbnail(config: manager.lightConfig) }
+    private var darkThumbnailMockup: some View { ThemeModeThumbnail(config: manager.darkConfig) }
 }

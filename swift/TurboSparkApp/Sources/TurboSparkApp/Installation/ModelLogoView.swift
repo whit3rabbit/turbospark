@@ -42,14 +42,14 @@ public struct ModelLogoView: View {
     public var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(.appSurface)
 
             if let image = resolvedImage {
                 Image(nsImage: image)
                     .renderingMode(Self.isMonochromeMark(logoName) ? .template : .original)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .padding(size * 0.18)
             } else {
                 fallbackView

@@ -17,7 +17,7 @@ struct ServerLoadedModelsView: View {
             HStack {
                 Text("Serving", bundle: .module)
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
                 if model.session != nil, !rows.contains(where: \.isChatSession) {
                     // The cheap path, and worth its own button: the chat
@@ -40,7 +40,7 @@ struct ServerLoadedModelsView: View {
             if rows.isEmpty {
                 Text("Nothing attached yet.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 10)
             } else {
@@ -54,10 +54,10 @@ struct ServerLoadedModelsView: View {
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor)))
+                        .fill(.appSurface))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
+                        .stroke(.appBorder, lineWidth: 0.5))
             }
 
             memoryFootprintBar
@@ -88,7 +88,7 @@ struct ServerLoadedModelsView: View {
                 }
                 Text(detailLine(row))
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 // READ-ONLY, and only when this model is steering. Steering
                 // resolves at OPEN and this server serves already-open
                 // sessions, so it is a property of the model's load rather
@@ -108,7 +108,7 @@ struct ServerLoadedModelsView: View {
             Text("\(row.requestsServed) req", bundle: .module)
                 .themedFont(.tiny)
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             Button {
                 NSPasteboard.general.clearContents()
@@ -176,7 +176,7 @@ struct ServerLoadedModelsView: View {
                     "\(byteText(UInt64(used))) peak of \(byteText(telemetry.physicalMemoryBytes)) "
                         + "unified memory")
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
     }
@@ -209,7 +209,7 @@ private struct ServerModelPickerSheet: View {
             if candidates.isEmpty {
                 Text("Every installed model is already attached.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .padding(24)
                     .frame(maxWidth: .infinity)
             } else {
@@ -233,7 +233,7 @@ private struct ServerModelPickerSheet: View {
                 // failure after it.
                 Text("Each model is opened separately and holds its own memory.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -254,11 +254,11 @@ private struct ServerModelPickerSheet: View {
                         .themedFont(.small, weight: .medium)
                     Text((candidate.path as NSString).lastPathComponent)
                         .themedCode(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Image(systemName: "plus.circle")
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
             }
             .contentShape(Rectangle())

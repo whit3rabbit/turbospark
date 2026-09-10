@@ -31,12 +31,12 @@ struct InstalledModelDeveloperCommandsView: View {
             )
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func cliSnippet(title: String, command: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).themedFont(.tiny).foregroundStyle(.secondary)
+            Text(title).themedFont(.tiny).foregroundStyle(.appSecondary)
             HStack {
                 Text(command)
                     .themedCode(.small)
@@ -54,7 +54,7 @@ struct InstalledModelDeveloperCommandsView: View {
                 .help("Copy command")
             }
             .padding(6)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 4))
+            .background(.appElevated, in: RoundedRectangle(cornerRadius: 4))
         }
     }
 }

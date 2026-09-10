@@ -9,7 +9,7 @@ struct InstalledModelFeatureBadgesView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Model Highlights & Features", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             FlowLayout(spacing: 6, lineSpacing: 6) {
                 // MoE vs Dense
@@ -126,6 +126,6 @@ struct InstalledModelFeatureBadgesView: View {
             }
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
     }
 }

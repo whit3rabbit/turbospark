@@ -21,7 +21,7 @@ public struct WorktreeCommitListView: View {
                 commitList
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.4))
+        .background(.appSurface.opacity(0.4))
     }
 
     private var header: some View {
@@ -38,7 +38,7 @@ public struct WorktreeCommitListView: View {
 
                 Text("All changes", bundle: .module)
                     .font(theme.ui(.small, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
 
                 Spacer()
 
@@ -108,7 +108,7 @@ public struct WorktreeCommitListView: View {
 
                     Text(commit.author)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
 
                     Text("-", bundle: .module)

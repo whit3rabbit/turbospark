@@ -57,7 +57,7 @@ private struct ThinkingLevelControl: View {
                     Text("FROM TEMPLATE", bundle: .module)
                         .themedFont(.micro, weight: .semibold)
                         .tracking(0.5)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
@@ -164,7 +164,7 @@ private struct ContextLadderPicker: View {
                 if let physical = model.telemetry?.physicalMemoryBytes, physical > 0 {
                     Text("\(MetricFormat.memory(physical)) on this Mac", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .monospacedDigit()
                 }
             }
@@ -179,7 +179,7 @@ private struct ContextLadderPicker: View {
             if let rungs = ladder?.rungs, !rungs.isEmpty {
                 Text("Each row is priced by the engine, not scaled from one figure.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if rungs.contains(where: \.pastTrained) {
@@ -188,13 +188,13 @@ private struct ContextLadderPicker: View {
                     // checkpoints ship YaRN scaling meant to exceed it.
                     Text("Windows past the trained one still load. Quality beyond it is the checkpoint's business, not this engine's.", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else if loadFailed {
                 Text("Memory cost per window is unavailable for this model.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .padding(.vertical, 2)
@@ -336,7 +336,7 @@ private struct ContextSelectionButton: View {
                 .monospacedDigit()
             Text(MetricFormat.storage(rung.counted))
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .monospacedDigit()
             Text(presentation.compactLabel)
                 .font(theme.ui(.tiny))
@@ -509,7 +509,7 @@ private struct ContextSelectionPopover: View {
                     if let secondary {
                         secondary
                             .font(theme.ui(.tiny))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

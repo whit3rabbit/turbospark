@@ -119,7 +119,7 @@ private struct ToolApprovalOptionRow: View {
 
                     Text(mode.descriptionText)
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .lineSpacing(1.5)
                 }

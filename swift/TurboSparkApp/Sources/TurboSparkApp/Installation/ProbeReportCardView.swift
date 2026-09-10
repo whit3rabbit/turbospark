@@ -24,7 +24,7 @@ struct ProbeReportCardView: View {
             }
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Verdict and identity
@@ -79,7 +79,7 @@ struct ProbeReportCardView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Memory at \(fit.context.formatted()) tokens, \(fit.slotCacheSlots) slots", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             // Guarded on the SOURCE, not on the number. A row nothing has
             // sized reports zeros, and a zero rendered as a figure reads as
@@ -87,7 +87,7 @@ struct ProbeReportCardView: View {
             if fit.countedSource == .unknown {
                 Text("Nothing has read this checkpoint's shape, so its footprint is unknown.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             } else {
                 specRow("Allocates", MetricFormat.storage(fit.countedBytes))
                 if fit.slotCacheBytes > 0 {
@@ -131,7 +131,7 @@ struct ProbeReportCardView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Block types", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             ForEach(report.types, id: \.name) { t in
                 HStack(spacing: 6) {
                     Text(t.name)
@@ -139,7 +139,7 @@ struct ProbeReportCardView: View {
                         .frame(width: 74, alignment: .leading)
                     Text("\(t.tensors) tensors", bundle: .module)
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .frame(width: 90, alignment: .leading)
                     // **UNSIZED, NEVER 0 BYTES.** A type this port cannot
                     // size is usually the one carrying the model, and a zero
@@ -181,7 +181,7 @@ struct ProbeReportCardView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .frame(width: 118, alignment: .leading)
             Text(value)
                 .themedFont(.small).monospacedDigit()

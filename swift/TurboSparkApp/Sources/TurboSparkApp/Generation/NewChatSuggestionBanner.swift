@@ -33,7 +33,7 @@ struct NewChatSuggestionBanner: View {
                     .accessibilityHidden(true)
                 Text("This conversation is close to filling its context window. Starting a new chat keeps responses sharp.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer(minLength: 8)
                 Button {
                     model.dismissedNewChatSuggestionChatIDs.insert(model.selectedChatID)
@@ -42,7 +42,7 @@ struct NewChatSuggestionBanner: View {
                         .themedFont(.small)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .help("Hide this suggestion for this chat")
                 .accessibilityLabel("Dismiss new chat suggestion")
                 Button {

@@ -236,7 +236,7 @@ struct ToolCallCardView: View {
                 if let range = summary.lineRange {
                     Text(range)
                         .font(theme.code(.tiny))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 if let risk = call.riskAssessment, risk.level != .safe {
@@ -304,10 +304,10 @@ struct ToolCallCardView: View {
             HStack(spacing: 4) {
                 Text("Search:", bundle: .module)
                     .themedFont(.base, weight: .medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text("\"\(query)\"", bundle: .module)
                     .font(theme.code(.small, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
             }
             .strikethrough(isCancelled, color: .secondary)
             .lineLimit(1)
@@ -353,7 +353,7 @@ struct ToolCallCardView: View {
             ForEach(risk.reasons, id: \.self) { reason in
                 Text("- \(reason)", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .padding(8)
@@ -435,12 +435,12 @@ struct ToolCallCardView: View {
                             .themedFont(.tiny, weight: .bold)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(TurboSparkTheme.accentColor.opacity(0.15), in: Capsule())
-                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .background(.appAccent.opacity(0.15), in: Capsule())
+                            .foregroundStyle(.appAccent)
 
                         Text(q.question)
                             .themedFont(.base, weight: .medium)
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
                     }
 
                     VStack(alignment: .leading, spacing: 3) {
@@ -448,15 +448,15 @@ struct ToolCallCardView: View {
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: "circle")
                                     .themedFont(.tiny)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                                     .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(opt.label)
                                         .themedFont(.small, weight: .semibold)
-                                        .foregroundStyle(.primary)
+                                        .foregroundStyle(.appText)
                                     Text(opt.description)
                                         .themedFont(.tiny)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(.appSecondary)
                                 }
                             }
                             .padding(.vertical, 1)
@@ -485,7 +485,7 @@ struct ToolCallCardView: View {
 
                         Text(f.file + (f.line.map { ":\($0)" } ?? ""))
                             .font(theme.code(.small, weight: .bold))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
 
                         if let cat = f.category {
                             Text(cat)
@@ -493,17 +493,17 @@ struct ToolCallCardView: View {
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(Color.secondary.opacity(0.12), in: Capsule())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
 
                     Text(f.summary)
                         .themedFont(.base)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.appText)
 
                     Text("Scenario: \(f.failureScenario)", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .padding(.vertical, 2)
                 if idx < findings.count - 1 {
@@ -535,13 +535,13 @@ struct ToolCallCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "person.2.wave.2")
                     .themedFont(.tiny, weight: .bold)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                 Text(agentType)
                     .themedFont(.tiny, weight: .bold)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(TurboSparkTheme.accentColor.opacity(0.15), in: Capsule())
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .background(.appAccent.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.appAccent)
 
                 if isBackground {
                     HStack(spacing: 3) {
@@ -559,7 +559,7 @@ struct ToolCallCardView: View {
                 if !description.isEmpty && description != prompt {
                     Text(description)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                 }
             }
@@ -588,10 +588,10 @@ struct ToolCallCardView: View {
                 .foregroundStyle(Color.red)
             Text("Stop Background Agent:", bundle: .module)
                 .themedFont(.small, weight: .medium)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text(taskId)
                 .font(theme.code(.small, weight: .bold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -618,15 +618,15 @@ struct ToolCallCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "doc.badge.plus")
                     .themedFont(.small)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                 Text(targetPath)
                     .font(theme.code(.small, weight: .bold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                 Spacer()
                 let lineCount = ToolCallDiffFormatter.countLines(content)
                 Text("\(lineCount) lines", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             if !content.isEmpty {
@@ -666,10 +666,10 @@ struct ToolCallCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "doc.badge.ellipsis")
                     .themedFont(.small)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                 Text(targetPath)
                     .font(theme.code(.small, weight: .bold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
             }
 
             if !oldStr.isEmpty {
@@ -744,10 +744,10 @@ struct ToolCallCardView: View {
         return HStack(spacing: 8) {
             Image(systemName: "doc.text")
                 .themedFont(.small)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
             Text(targetPath)
                 .font(theme.code(.small, weight: .semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
 
             if let start, let end, !start.isEmpty, !end.isEmpty {
                 Text("Lines \(start)-\(end)", bundle: .module)
@@ -755,7 +755,7 @@ struct ToolCallCardView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.secondary.opacity(0.12), in: Capsule())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .padding(10)
@@ -775,17 +775,17 @@ struct ToolCallCardView: View {
         return HStack(spacing: 8) {
             Image(systemName: "globe")
                 .themedFont(.small)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
 
             if let url = URL(string: urlString), url.scheme != nil {
                 Link(urlString, destination: url)
                     .font(theme.code(.small, weight: .semibold))
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .lineLimit(1)
             } else {
                 Text(urlString)
                     .font(theme.code(.small, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .lineLimit(1)
             }
 
@@ -796,7 +796,7 @@ struct ToolCallCardView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(Color.secondary.opacity(0.12), in: Capsule())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -811,13 +811,13 @@ struct ToolCallCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "puzzlepiece.extension")
                     .themedFont(.small)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                 Text(skillName)
                     .themedFont(.tiny, weight: .bold)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(TurboSparkTheme.accentColor.opacity(0.15), in: Capsule())
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .background(.appAccent.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.appAccent)
             }
 
             if !otherArgs.isEmpty {
@@ -825,10 +825,10 @@ struct ToolCallCardView: View {
                     HStack(alignment: .top, spacing: 6) {
                         Text("\(key):", bundle: .module)
                             .font(theme.code(.small, weight: .medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Text(val)
                             .font(theme.code(.small))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
                     }
                 }
             }
@@ -849,7 +849,7 @@ struct ToolCallCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "shippingbox")
                     .themedFont(.small)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                 if !server.isEmpty {
                     Text(server)
                         .themedFont(.tiny, weight: .bold)
@@ -861,7 +861,7 @@ struct ToolCallCardView: View {
                 if !tool.isEmpty {
                     Text(tool)
                         .font(theme.code(.small, weight: .bold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.appText)
                 }
             }
 
@@ -870,10 +870,10 @@ struct ToolCallCardView: View {
                     HStack(alignment: .top, spacing: 6) {
                         Text("\(key):", bundle: .module)
                             .font(theme.code(.small, weight: .medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Text(val)
                             .font(theme.code(.small))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
                             .lineLimit(6)
                     }
                 }
@@ -909,24 +909,24 @@ struct ToolCallCardView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("ARGUMENTS", bundle: .module)
                 .themedCode(.callout, weight: .bold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(call.arguments.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                     HStack(alignment: .top, spacing: 6) {
                         Text("\(key):", bundle: .module)
                             .font(theme.code(.small, weight: .medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Text(value)
                             .font(theme.code(.small))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
                             .lineLimit(6)
                     }
                 }
             }
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+            .background(.appElevated.opacity(0.4))
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .padding(.leading, 8)
@@ -950,7 +950,7 @@ struct ToolCallCardView: View {
                         .foregroundStyle(Color.orange)
                     Text(notice)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(8)
@@ -962,7 +962,7 @@ struct ToolCallCardView: View {
 
             Text("This action requires your confirmation to execute.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             HStack(spacing: 8) {
                 Button {

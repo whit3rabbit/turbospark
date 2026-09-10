@@ -23,12 +23,12 @@ struct ExcludedScanPathsSectionView: View {
                         + "here, so they can be restored."
                 )
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             } else {
                 ForEach(orgStore.excludedScanPaths.sorted(), id: \.self) { path in
                     HStack(spacing: 8) {
                         Image(systemName: "eye.slash")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Text(path)
                             .themedCode(.small)
                             .lineLimit(1)
@@ -50,6 +50,6 @@ struct ExcludedScanPathsSectionView: View {
             }
         }
         .padding(16)
-        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(.appPage, in: RoundedRectangle(cornerRadius: 10))
     }
 }

@@ -106,7 +106,7 @@ public struct LocalModelDefaultsSectionView: View {
                         + "An explicitly chosen context length is not affected."
                 )
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
                 Slider(
                     value: floorIndex,
@@ -135,7 +135,7 @@ public struct LocalModelDefaultsSectionView: View {
                         + "figure for this engine was measured under."
                 )
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
                 ForEach(AppLoadGuardOption.allCases) { option in
                     guardRow(option)
@@ -165,10 +165,10 @@ public struct LocalModelDefaultsSectionView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(option.menuLabel)
                         .themedFont(.base)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.appText)
                     Text(option.detailText)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
             }
@@ -201,7 +201,7 @@ public struct LocalModelDefaultsSectionView: View {
                     + "streaming from storage."
             )
             .themedFont(.small)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
 
             Slider(
                 value: ceilingIndex,

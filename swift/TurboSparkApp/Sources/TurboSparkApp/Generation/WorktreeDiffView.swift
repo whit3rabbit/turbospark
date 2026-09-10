@@ -60,7 +60,7 @@ public struct WorktreeDiffView: View {
             Divider()
             diffContent
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+        .background(.appSurface.opacity(0.3))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -76,7 +76,7 @@ public struct WorktreeDiffView: View {
 
             Text(file.fileName)
                 .font(theme.code(.base, weight: .semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
 
             if !file.directoryPath.isEmpty {
                 Text(file.directoryPath)
@@ -126,7 +126,7 @@ public struct WorktreeDiffView: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
                 .help("Close diff view")
@@ -134,7 +134,7 @@ public struct WorktreeDiffView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.8))
+        .background(.appPage.opacity(0.8))
     }
 
     private var diffContent: some View {
@@ -178,7 +178,7 @@ public struct WorktreeDiffView: View {
                     .foregroundStyle(.tertiary)
                 Text("\(count) unmodified lines", bundle: .module)
                     .font(theme.code(.small, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
             }
             .padding(.horizontal, 10)

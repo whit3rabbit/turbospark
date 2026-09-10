@@ -36,7 +36,7 @@ struct CatalogSheet: View {
                     .accessibilityAddTraits(.isHeader)
                 Text("Install models locally from the curated catalog or Hugging Face.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button("Done") { dismiss() }
@@ -88,7 +88,7 @@ struct CatalogSheet: View {
                     Text(MetricFormat.percent(fraction * 100))
                 }
                 .themedFont(.small).monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             } else {
                 ProgressView()
             }
@@ -106,7 +106,7 @@ struct CatalogSheet: View {
             if model.installed.isEmpty {
                 Text("No models currently installed.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             } else {
                 ForEach(model.installed) { item in
                     let visuals = ModelFamilyVisuals.resolve(alias: item.alias, family: item.family, name: item.alias)
@@ -119,14 +119,14 @@ struct CatalogSheet: View {
                                     .themedFont(.base, weight: .medium)
                                 Text("\(visuals.family) | \(MetricFormat.storage(item.installBytes))", bundle: .module)
                                     .themedFont(.small)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
                         }
                         Spacer()
                         if model.selected?.alias == item.alias && model.session != nil {
                             Text("Active", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                                .foregroundStyle(TurboSparkTheme.accentColor)
+                                .foregroundStyle(.appAccent)
                         }
                         Button("Delete", role: .destructive) {
                             model.deleteModel(item)
@@ -138,7 +138,7 @@ struct CatalogSheet: View {
                         .accessibilityHint("Removes this installed model from disk")
                     }
                     .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
@@ -173,7 +173,7 @@ struct CatalogSheet: View {
                             }
                             Text(entry.name)
                                 .themedFont(.small)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                             Text("Download: \(MetricFormat.storage(entry.downloadBytes)) | Disk: \(MetricFormat.storage(entry.installBytes))", bundle: .module)
                                 .themedFont(.tiny)
                                 .foregroundStyle(.tertiary)
@@ -183,7 +183,7 @@ struct CatalogSheet: View {
                     if entry.installed {
                         Text("Installed", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     } else {
                         Button("Install") {
                             model.installModel(alias: entry.alias)
@@ -197,7 +197,7 @@ struct CatalogSheet: View {
                     }
                 }
                 .padding(8)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
             }
         }
     }

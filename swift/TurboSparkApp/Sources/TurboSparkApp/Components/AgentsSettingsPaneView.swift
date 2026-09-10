@@ -92,11 +92,11 @@ public struct AgentsSettingsPaneView: View {
                     .themedFont(.small)
                 }
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            .background(.appSurface.opacity(0.5))
         }
     }
 
@@ -106,10 +106,10 @@ public struct AgentsSettingsPaneView: View {
             headerControlBar
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(.appPage)
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
             overrideDisclosureBanner
@@ -121,10 +121,10 @@ public struct AgentsSettingsPaneView: View {
                     // Left list
                     agentsListView
                         .frame(width: 300)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                        .background(.appSurface.opacity(0.5))
 
                     Rectangle()
-                        .fill(TurboSparkTheme.hairlineColor)
+                        .fill(.appBorder)
                         .frame(width: 1)
 
                     // Right detail
@@ -138,7 +138,7 @@ public struct AgentsSettingsPaneView: View {
                                 .foregroundStyle(.tertiary)
                             Text("Select an agent to inspect system instructions and capabilities.", bundle: .module)
                                 .themedFont(.base)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -166,6 +166,7 @@ public struct AgentsSettingsPaneView: View {
                 agentToDelete = nil
             } label: {
                 Text("Delete", bundle: .module)
+                    .settingsControl("Delete", pane: .agents, timing: .nextTurn)
             }
             Button {
                 agentToDelete = nil
@@ -186,19 +187,20 @@ public struct AgentsSettingsPaneView: View {
                     Text(filter.rawValue).tag(filter)
                 }
             }
+            .settingsControl("Scope", pane: .agents, timing: .nextTurn)
             .pickerStyle(.segmented)
             .frame(width: 320)
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 TextField("Search agents...", text: $searchQuery)
                     .textFieldStyle(.plain)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(TurboSparkTheme.hairlineColor, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 6).fill(.appElevated))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.appBorder, lineWidth: 1))
 
             Spacer()
 
@@ -245,7 +247,7 @@ public struct AgentsSettingsPaneView: View {
 
                         Text(agent.agentDescription)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .lineLimit(2)
                     }
                 }
@@ -274,7 +276,7 @@ public struct AgentsSettingsPaneView: View {
 
                         Text(agent.agentDescription)
                             .themedFont(.base)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
 
                     Spacer()
@@ -305,6 +307,7 @@ public struct AgentsSettingsPaneView: View {
                         get: { agent.isEnabled },
                         set: { _ in model.toggleAgentEnabled(agent) }
                     ))
+            .settingsControl("Enabled", pane: .agents, timing: .nextTurn)
                     .toggleStyle(.switch)
                 }
 
@@ -313,18 +316,21 @@ public struct AgentsSettingsPaneView: View {
                 // Configuration metadata
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Configuration", bundle: .module)
+                    .settingsControl("Configuration", pane: .agents, timing: .nextTurn)
                         .themedFont(.base, weight: .semibold)
 
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                         GridRow {
                             Text("Agent Identifier:", bundle: .module)
-                                .foregroundStyle(.secondary)
+                    .settingsControl("Agent Identifier:", pane: .agents, timing: .nextTurn)
+                                .foregroundStyle(.appSecondary)
                             Text("`\(agent.name)`", bundle: .module)
                                 .themedCode(.base)
                         }
                         GridRow {
                             Text("Max Turns:", bundle: .module)
-                                .foregroundStyle(.secondary)
+                    .settingsControl("Max Turns:", pane: .agents, timing: .nextTurn)
+                                .foregroundStyle(.appSecondary)
                             Text("\(agent.maxTurns)", bundle: .module)
                         }
                         // No "Model Override" row: `agent.model` is parsed
@@ -334,7 +340,8 @@ public struct AgentsSettingsPaneView: View {
                         if let disallowed = agent.disallowedTools, !disallowed.isEmpty {
                             GridRow {
                                 Text("Disallowed Tools:", bundle: .module)
-                                    .foregroundStyle(.secondary)
+                    .settingsControl("Disallowed Tools:", pane: .agents, timing: .nextTurn)
+                                    .foregroundStyle(.appSecondary)
                                 Text(disallowed.joined(separator: ", "))
                                     .themedFont(.small)
                                     .foregroundStyle(.red)
@@ -343,7 +350,8 @@ public struct AgentsSettingsPaneView: View {
                         if let allowed = agent.tools, !allowed.isEmpty {
                             GridRow {
                                 Text("Allowed Tools:", bundle: .module)
-                                    .foregroundStyle(.secondary)
+                    .settingsControl("Allowed Tools:", pane: .agents, timing: .nextTurn)
+                                    .foregroundStyle(.appSecondary)
                                 Text(allowed.joined(separator: ", "))
                                     .themedFont(.small)
                             }
@@ -351,7 +359,8 @@ public struct AgentsSettingsPaneView: View {
                         if let path = agent.filePath {
                             GridRow {
                                 Text("File Location:", bundle: .module)
-                                    .foregroundStyle(.secondary)
+                    .settingsControl("File Location:", pane: .agents, timing: .nextTurn)
+                                    .foregroundStyle(.appSecondary)
                                 Text(path)
                                     .themedFont(.small)
                                     .lineLimit(1)
@@ -361,11 +370,12 @@ public struct AgentsSettingsPaneView: View {
                     }
                 }
                 .padding()
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(.appSurface))
 
                 // System Prompt / Instructions
                 VStack(alignment: .leading, spacing: 8) {
                     Text("System Instructions", bundle: .module)
+                    .settingsControl("System Instructions", pane: .agents, timing: .nextTurn)
                         .themedFont(.base, weight: .semibold)
 
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -375,7 +385,7 @@ public struct AgentsSettingsPaneView: View {
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(.appSurface))
                 }
 
                 // REPL Usage hint. Only for an ENABLED agent: the slash
@@ -384,14 +394,15 @@ public struct AgentsSettingsPaneView: View {
                 if agent.isEnabled {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("REPL Chat Invocation", bundle: .module)
+                    .settingsControl("REPL Chat Invocation", pane: .agents, timing: .nextTurn)
                             .themedFont(.small, weight: .bold)
                         Text("You can invoke this subagent in chat or via slash command with clean context isolation:", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Text("`/\(agent.name) <task description>`", bundle: .module)
                             .themedCode(.small)
                             .padding(8)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                            .background(RoundedRectangle(cornerRadius: 6).fill(.appElevated))
                     }
                 }
             }
@@ -407,10 +418,11 @@ public struct AgentsSettingsPaneView: View {
                 .themedFont(.display)
                 .foregroundStyle(.tertiary)
             Text("No Agents Found", bundle: .module)
+                    .settingsControl("No Agents Found", pane: .agents, timing: .nextTurn)
                 .themedFont(.title3, weight: .bold)
             Text("No agent definitions match the selected scope filter.", bundle: .module)
                 .themedFont(.base)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

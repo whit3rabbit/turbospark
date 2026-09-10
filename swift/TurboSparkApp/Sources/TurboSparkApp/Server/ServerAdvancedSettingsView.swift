@@ -24,7 +24,7 @@ struct ServerAdvancedSettingsView: View {
             if isRunning {
                 Text("These take effect the next time the server starts.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             field(
@@ -115,7 +115,7 @@ struct ServerAdvancedSettingsView: View {
                     } else if model.serverPinnedPort == 0 {
                         Text("automatic", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
             }
@@ -236,14 +236,14 @@ struct ServerAdvancedSettingsView: View {
             content()
             Text(help)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
     }
 
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            Text("-", bundle: .module).themedFont(.tiny).foregroundStyle(.secondary)
-            Text(text).themedFont(.tiny).foregroundStyle(.secondary)
+            Text("-", bundle: .module).themedFont(.tiny).foregroundStyle(.appSecondary)
+            Text(text).themedFont(.tiny).foregroundStyle(.appSecondary)
         }
     }
 }

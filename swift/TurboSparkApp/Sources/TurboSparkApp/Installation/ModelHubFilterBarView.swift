@@ -57,7 +57,7 @@ struct ModelHubFilterBarView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .help("Clear every filter")
                         .accessibilityLabel("Clear filters")
                     }
@@ -114,7 +114,7 @@ struct ModelHubFilterBarView: View {
                 ? TurboSparkTheme.surfaceColor
                 : TurboSparkTheme.accentColor.opacity(0.14),
             in: Capsule())
-        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
+        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
         .disabled(options.isEmpty && selection.wrappedValue == nil)
         .help("Filter by \(title.lowercased())")
         .accessibilityLabel("\(title) filter")
@@ -149,9 +149,9 @@ struct ModelHubFilterBarView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.appSecondary)
         .background(TurboSparkTheme.surfaceColor, in: Capsule())
-        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
+        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
         .help("Sort the list")
         .accessibilityLabel("Sort order")
         .accessibilityValue(filter.sort.rawValue)

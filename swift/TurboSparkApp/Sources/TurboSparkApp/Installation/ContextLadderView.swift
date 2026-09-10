@@ -22,12 +22,12 @@ struct ContextLadderView: View {
             HStack {
                 Label("Memory by context window", systemImage: "arrow.left.and.right")
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
                 if let trained = trainedContext {
                     Text("trained to \(trained.formatted())", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
 
@@ -41,7 +41,7 @@ struct ContextLadderView: View {
                 // YaRN scaling meant to exceed it.
                 Text("Windows past the trained one still load. Quality beyond it is the checkpoint's business, not this engine's.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -58,7 +58,7 @@ struct ContextLadderView: View {
             Text(MetricFormat.storage(rung.counted))
                 .themedFont(.small).monospacedDigit()
                 .frame(width: 78, alignment: .trailing)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Circle()
                 .fill(p.color)
                 .frame(width: 7, height: 7)
@@ -69,7 +69,7 @@ struct ContextLadderView: View {
             Spacer()
             Text(marker(rung, isCurrent: isCurrent))
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(.vertical, 1)
         .padding(.horizontal, 4)
@@ -108,7 +108,7 @@ struct ThroughputRowView: View {
             HStack(spacing: 6) {
                 Text("Decode", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text(
                     String(
                         format: "%.1f to %.1f tok/s", band.minTokensPerSecond,
@@ -128,7 +128,7 @@ struct ThroughputRowView: View {
             if !band.measuredOnThisChip {
                 Text("measured on \(band.chip), not this machine. Rates do not transfer across silicon.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

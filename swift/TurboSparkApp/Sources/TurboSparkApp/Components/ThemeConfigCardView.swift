@@ -39,7 +39,7 @@ public struct ThemeConfigCardView: View {
                     }
                     .buttonStyle(.plain)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .appPointerCursor()
 
                     Button(copiedToast ? "Copied!" : "Copy theme") {
@@ -47,7 +47,7 @@ public struct ThemeConfigCardView: View {
                     }
                     .buttonStyle(.plain)
                     .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .appPointerCursor()
 
                     // Preset menu
@@ -73,11 +73,11 @@ public struct ThemeConfigCardView: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(.appSurface)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
                         )
                     }
                     .menuStyle(.borderlessButton)
@@ -111,17 +111,18 @@ public struct ThemeConfigCardView: View {
                 contrastRow
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+        .background(.appSurface.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
         )
     }
 
     private var accentRow: some View {
         HStack {
             Text("Accent", bundle: .module)
+                    .settingsControl("Accent", pane: .appearance, timing: .immediate)
                 .font(theme.ui(.base))
             Spacer()
 
@@ -181,6 +182,7 @@ public struct ThemeConfigCardView: View {
     private var translucentSidebarRow: some View {
         HStack {
             Text("Translucent sidebar", bundle: .module)
+                    .settingsControl("Translucent sidebar", pane: .appearance, timing: .immediate)
                 .font(theme.ui(.base))
             Spacer()
 
@@ -196,6 +198,7 @@ public struct ThemeConfigCardView: View {
     private var contrastRow: some View {
         HStack(spacing: 16) {
             Text("Contrast", bundle: .module)
+                    .settingsControl("Contrast", pane: .appearance, timing: .immediate)
                 .font(theme.ui(.base))
             Spacer()
 
@@ -204,7 +207,7 @@ public struct ThemeConfigCardView: View {
 
             Text("\(Int(config.contrast))%", bundle: .module)
                 .font(theme.ui(.small).monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .frame(width: 36, alignment: .trailing)
         }
         .padding(.horizontal, 16)

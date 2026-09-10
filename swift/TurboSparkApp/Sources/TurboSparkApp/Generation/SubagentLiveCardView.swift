@@ -83,7 +83,7 @@ struct SubagentLiveCardView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+        .background(.appSurface.opacity(0.7))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(isRunning
@@ -104,7 +104,7 @@ struct SubagentLiveCardView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2.wave.2")
                         .themedFont(.small, weight: .bold)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                         .accessibilityHidden(true)
                     Text(state.displayName)
                         .themedFont(.small, weight: .semibold)

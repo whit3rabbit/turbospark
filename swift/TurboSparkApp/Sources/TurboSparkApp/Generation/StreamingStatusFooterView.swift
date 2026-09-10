@@ -23,14 +23,14 @@ public struct StreamingStatusFooterView: View {
                 if elapsedSeconds > 0 {
                     Text(formattedElapsedTime)
                         .themedFont(.tiny, weight: .regular)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     dotSeparator
                 }
 
                 if model.liveTokenCount > 0 {
                     Text("\(model.liveTokenCount) tokens", bundle: .module)
                         .themedFont(.tiny, weight: .regular)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     dotSeparator
                 }
 
@@ -45,7 +45,7 @@ public struct StreamingStatusFooterView: View {
                 } else {
                     Text(currentStatusText)
                         .themedFont(.tiny, weight: .regular)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
         }

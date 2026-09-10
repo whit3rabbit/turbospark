@@ -34,7 +34,7 @@ struct ProjectMcpServerRowView: View {
                     }
                     Text(server.commandSummary)
                         .themedCode(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                 }
 
@@ -114,7 +114,7 @@ struct ProjectMcpServerRowView: View {
                         Text(isExpanded ? "Hide Discovered Tools" : "Show Discovered Tools (\(server.discoveredTools.count))")
                             .themedFont(.tiny, weight: .medium)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
 
@@ -124,27 +124,27 @@ struct ProjectMcpServerRowView: View {
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: "wrench.and.screwdriver")
                                     .themedFont(.tiny)
-                                    .foregroundStyle(TurboSparkTheme.accentColor)
+                                    .foregroundStyle(.appAccent)
                                     .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(tool.name)
                                         .themedCode(.small, weight: .semibold)
                                     Text(tool.description)
                                         .themedFont(.tiny)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(.appSecondary)
                                 }
                             }
                             .padding(.vertical, 2)
                         }
                     }
                     .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                    .background(.appSurface.opacity(0.6))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }
         }
         .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.15), lineWidth: 0.5))
     }

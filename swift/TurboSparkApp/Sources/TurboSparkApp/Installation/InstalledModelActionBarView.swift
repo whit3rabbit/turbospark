@@ -61,7 +61,7 @@ struct InstalledModelActionBarView: View {
             }
             .buttonStyle(.plain)
             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
-            .foregroundStyle(.primary)
+            .foregroundStyle(.appText)
             .help("Show model files in Finder: \(installedModel.path)")
             .accessibilityLabel("Reveal in Finder")
             .accessibilityHint("Opens Finder showing the model files at \(installedModel.path)")

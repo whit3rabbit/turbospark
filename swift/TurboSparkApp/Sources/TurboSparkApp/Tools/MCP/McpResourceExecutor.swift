@@ -5,8 +5,7 @@ public enum McpResourceExecutor {
     public static func listResources(arguments: [String: String], project: AppProject?, rootURL: URL) async throws -> String {
         let serverFilter = arguments["server"] ?? arguments["server_name"]
         let globalServers = GlobalMcpFileStore.load().servers
-        let projectServers = project?.mcpServers ?? []
-        var allServers = globalServers + projectServers
+        var allServers = AppToolCatalogMcp.resolvedServers(global: globalServers, project: project)
 
         if let serverFilter {
             allServers = allServers.filter { $0.name.lowercased() == serverFilter.lowercased() }
@@ -48,8 +47,7 @@ public enum McpResourceExecutor {
         }
 
         let globalServers = GlobalMcpFileStore.load().servers
-        let projectServers = project?.mcpServers ?? []
-        let allServers = globalServers + projectServers
+        let allServers = AppToolCatalogMcp.resolvedServers(global: globalServers, project: project)
 
         guard let server = allServers.first(where: { $0.name.lowercased() == serverName.lowercased() }) else {
             throw NSError(

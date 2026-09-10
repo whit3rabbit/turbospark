@@ -36,7 +36,7 @@ struct ModelTechnicalSpecsCardView: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text("Installed Path", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Spacer(minLength: 16)
                         Button {
                             ModelStorageManager.revealInFinder(path: inst.path)
@@ -64,7 +64,7 @@ struct ModelTechnicalSpecsCardView: View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Spacer(minLength: 16)
             Text(value)
                 .themedCode(.small)
@@ -80,7 +80,7 @@ struct ModelTechnicalSpecsCardView: View {
 
             Text(notes)
                 .themedFont(.base)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .modelCardStyle()
@@ -91,7 +91,7 @@ extension View {
     func modelCardStyle() -> some View {
         self
             .padding(16)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.appBorder.opacity(0.5), lineWidth: 0.5))
     }
 }

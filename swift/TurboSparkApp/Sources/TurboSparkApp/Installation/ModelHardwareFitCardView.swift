@@ -41,7 +41,7 @@ struct ModelHardwareFitCardView: View {
 
             Text(rec.verdictSummary)
                 .themedFont(.base)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             Divider()
 
@@ -91,7 +91,7 @@ struct ModelHardwareFitCardView: View {
             HStack(spacing: 8) {
                 Image(systemName: "gauge.with.needle")
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .accessibilityHidden(true)
                 Text("Hardware Compatibility", bundle: .module)
                     .themedFont(.base, weight: .semibold)
@@ -103,12 +103,12 @@ struct ModelHardwareFitCardView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Color.secondary.opacity(0.16), in: Capsule())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             Text("This row has no memory sizing for this machine, so whether it fits, how much it would pin, and its largest usable context are all unknown.", bundle: .module)
                 .themedFont(.base)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Divider()
@@ -137,7 +137,7 @@ struct ModelHardwareFitCardView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text(value)
                 .themedFont(.base, weight: .medium).monospacedDigit()
         }

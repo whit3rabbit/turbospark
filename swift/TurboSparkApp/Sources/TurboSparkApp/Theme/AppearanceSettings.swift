@@ -75,10 +75,15 @@ public final class AppearanceManager: ObservableObject {
         didSet { persist() }
     }
 
+    @Published public var savedThemes: [SavedTheme] { didSet { persist() } }
+    @Published public var selectedThemeID: String? { didSet { persist() } }
+
     public init() {
         let (archive, migrated) = AppearanceFileStore.load()
         needsLegacyCleanup = migrated
 
+        self.savedThemes = archive.savedThemes
+        self.selectedThemeID = archive.selectedThemeID
         self.appearance = AppAppearance.resolve(archive.appearance)
         self.textSize = AppTextSize.resolve(archive.textSize)
         self.lightConfig = archive.lightConfig
@@ -174,7 +179,8 @@ public final class AppearanceManager: ObservableObject {
             reduceMotion: reduceMotion.rawValue,
             uiFontSize: uiFontSize,
             codeFontSize: codeFontSize,
-            diffMarkers: diffMarkers.rawValue)
+            diffMarkers: diffMarkers.rawValue,
+            savedThemes: savedThemes, selectedThemeID: currentThemeID)
         guard AppearanceFileStore.save(archive) else { return }
         if needsLegacyCleanup {
             AppearanceFileStore.removeLegacyKeys()
@@ -219,6 +225,7 @@ public final class AppearanceManager: ObservableObject {
             self.lightConfig = light
             self.darkConfig = dark
         }
+        selectedThemeID = isDark == nil ? preset.id : nil
     }
 
     /// Retrieves active theme config for the specified brightness mode.
@@ -277,6 +284,7 @@ public final class AppearanceManager: ObservableObject {
     /// and re-renders the dock icon.
     public func resetToDefaults() {
         let defaults = AppearanceArchive()
+        selectedThemeID = "sparkblue"
         appearance = AppAppearance.resolve(defaults.appearance)
         textSize = AppTextSize.resolve(defaults.textSize)
         lightConfig = defaults.lightConfig

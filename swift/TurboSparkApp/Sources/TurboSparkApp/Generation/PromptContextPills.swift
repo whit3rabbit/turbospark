@@ -43,7 +43,7 @@ struct PromptModelSelectorPill: View {
             HStack(spacing: 3) {
                 Text(model.selected?.alias ?? "Select Model")
                     .font(theme.ui(.small, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.up.chevron.down")
@@ -69,7 +69,7 @@ struct PromptProjectContextPill: View {
             HStack(spacing: 6) {
                 Image(systemName: project.agentType.systemImage)
                     .font(theme.ui(.tiny, weight: .semibold))
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
 
                 Text(project.name)
                     .font(theme.ui(.small, weight: .semibold))
@@ -78,7 +78,7 @@ struct PromptProjectContextPill: View {
                 if let worktree = model.worktree, worktree.isGitRepository {
                     Text(worktree.currentBranch)
                         .font(theme.code(.callout, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
 
                     if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                         HStack(spacing: 2) {
@@ -98,8 +98,8 @@ struct PromptProjectContextPill: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(TurboSparkTheme.accentColor.opacity(0.1), in: Capsule())
-            .overlay(Capsule().stroke(TurboSparkTheme.accentColor.opacity(0.25), lineWidth: 0.5))
+            .background(.appAccent.opacity(0.1), in: Capsule())
+            .overlay(Capsule().stroke(.appAccent.opacity(0.25), lineWidth: 0.5))
             .fixedSize()
             .help("Active project: \(project.name)")
             .accessibilityElement(children: .combine)

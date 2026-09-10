@@ -33,7 +33,7 @@ struct ModelCardView: View {
                     HStack(alignment: .center, spacing: 4) {
                         Text(alias)
                             .themedFont(.base, weight: .semibold)
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
                             .lineLimit(1)
 
                         statusSeal
@@ -64,14 +64,14 @@ struct ModelCardView: View {
                                 Circle().fill(.green).frame(width: 5, height: 5)
                                 Text("Installed", bundle: .module)
                                     .themedFont(.tiny, weight: .medium)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
                         }
                     }
 
                     Text(name)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
 
@@ -88,7 +88,7 @@ struct ModelCardView: View {
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1.5)
                         .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
 
                         Text(visuals.formatLabel)
                             .themedFont(.tiny, weight: .medium)
@@ -97,7 +97,7 @@ struct ModelCardView: View {
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1.5)
                             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
 
                         if let rec = recommendation {
                             verdictBadge(rec.verdict)
@@ -174,7 +174,7 @@ struct ModelCardView: View {
         case "verified":
             Image(systemName: "checkmark.seal.fill")
                 .themedFont(.tiny)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
                 .help("Verified: this port has run this row end to end")
                 .accessibilityHidden(true)
         case "caveat":

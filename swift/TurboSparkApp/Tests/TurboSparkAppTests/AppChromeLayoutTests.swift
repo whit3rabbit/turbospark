@@ -106,9 +106,9 @@ final class AppChromeLayoutTests: XCTestCase {
 
     func testTheMinimumWidthGrowsByExactlyTheArtifactPanelWhenItIsTheClaimant() {
         let bare = AppChromeLayout.minimumWindowWidth(
-            isChatSidebarVisible: true, rightColumn: .none)
+            isSidebarExpanded: true, rightColumn: .none)
         let withPanel = AppChromeLayout.minimumWindowWidth(
-            isChatSidebarVisible: true, rightColumn: .artifact(artifactID))
+            isSidebarExpanded: true, rightColumn: .artifact(artifactID))
 
         // EQUALS, not "is larger": a wrong arm reusing `inspectorWidth` is
         // also larger, and the whole reason the panel is 420 rather than 320
@@ -116,6 +116,53 @@ final class AppChromeLayoutTests: XCTestCase {
         XCTAssertEqual(
             withPanel - bare,
             AppChromeLayout.artifactPanelWidth + AppChromeLayout.dividerWidth)
+    }
+
+    func testExpandingTheSidebarReplacesTheRailRatherThanStackingOnIt() {
+        // The two left columns merged, so the expanded sidebar's width takes
+        // the place of the rail's instead of adding to it. Before the merge
+        // this delta was `chatSidebarWidth + dividerWidth` (a whole second
+        // column); it is now the difference between the two presentations of
+        // ONE column, with the divider counted once either way.
+        let collapsed = AppChromeLayout.minimumWindowWidth(
+            isSidebarExpanded: false, rightColumn: .none)
+        let expanded = AppChromeLayout.minimumWindowWidth(
+            isSidebarExpanded: true, rightColumn: .none)
+
+        XCTAssertEqual(
+            expanded - collapsed,
+            AppChromeLayout.chatSidebarWidth - AppChromeLayout.navigationRailWidth)
+    }
+
+    func testTheWindowMinimumCountsTheLeftColumnExactlyOnce() {
+        // ABSOLUTE, not a delta between two `minimumWindowWidth` calls.
+        // Found by mutation: re-adding `navigationRailWidth` to the sum
+        // SURVIVES the delta assertion above, because a constant added to
+        // both arms of a subtraction cancels. The regression this whole
+        // change is about -- a rail's width still being reserved on top of
+        // the sidebar -- is therefore invisible to any relative test.
+        XCTAssertEqual(
+            AppChromeLayout.minimumWindowWidth(isSidebarExpanded: true, rightColumn: .none),
+            AppChromeLayout.chatSidebarWidth
+                + AppChromeLayout.dividerWidth
+                + AppChromeLayout.primaryMinimumWidth)
+
+        XCTAssertEqual(
+            AppChromeLayout.minimumWindowWidth(isSidebarExpanded: false, rightColumn: .none),
+            AppChromeLayout.navigationRailWidth
+                + AppChromeLayout.dividerWidth
+                + AppChromeLayout.primaryMinimumWidth)
+    }
+
+    func testTheSidebarColumnIsTheRailWhenCollapsedAndTheChatWidthWhenExpanded() {
+        // Named so a future reader cannot read the rail width as belonging to
+        // a separate band: it is one of this column's two sizes.
+        XCTAssertEqual(
+            AppChromeLayout.sidebarColumnWidth(isExpanded: false),
+            AppChromeLayout.navigationRailWidth)
+        XCTAssertEqual(
+            AppChromeLayout.sidebarColumnWidth(isExpanded: true),
+            AppChromeLayout.chatSidebarWidth)
     }
 
     func testTheArtifactPanelIsWiderThanTheInspector() {

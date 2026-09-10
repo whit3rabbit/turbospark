@@ -60,7 +60,7 @@ struct TodoItemRow: View {
                 if item.isInProgress && !item.activeForm.isEmpty && item.activeForm != item.content {
                     Text(item.activeForm)
                         .themedFont(.tiny)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                 }
             }
 
@@ -153,7 +153,7 @@ struct TaskChecklistPanelView: View {
 
             Text(TodoChecklistSummary.text(todos))
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             Spacer()
 
@@ -165,7 +165,7 @@ struct TaskChecklistPanelView: View {
                 } label: {
                     Image(systemName: showsRowsWhenSettled ? "chevron.up" : "chevron.down")
                         .themedFont(.tiny, weight: .medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(
@@ -185,7 +185,7 @@ struct TaskChecklistPanelView: View {
             if display.foldedCompleted > 0 {
                 Text("+\(display.foldedCompleted) completed", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .padding(.leading, 20)
             }
         }

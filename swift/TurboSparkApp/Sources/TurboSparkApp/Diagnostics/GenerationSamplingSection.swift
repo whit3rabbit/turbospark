@@ -65,11 +65,11 @@ struct GenerationSamplingSection: View {
             if model.session == nil {
                 Text("Load a model to see the reasoning levels its chat template accepts.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             } else if !model.isReasoningSupported {
                 Text("This checkpoint ships no reasoning knob, so a level would change nothing.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             LabeledContent("Max New Tokens") {
@@ -235,7 +235,7 @@ struct GenerationSamplingSection: View {
                     "No sampling presets saved yet. Set the knobs above, then save them under a name.",
                     bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             } else {
                 ForEach(model.samplingPresets) { preset in
                     LabeledContent {

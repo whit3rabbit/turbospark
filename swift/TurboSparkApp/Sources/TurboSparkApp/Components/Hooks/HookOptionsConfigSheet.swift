@@ -21,7 +21,7 @@ public struct HookOptionsConfigSheet: View {
                         .themedFont(.base, weight: .semibold)
                     Text("Configure environment variables and options for \(group.title).", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Button {
@@ -29,13 +29,13 @@ public struct HookOptionsConfigSheet: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .themedFont(.title3)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
 
             Divider()
 
@@ -43,10 +43,10 @@ public struct HookOptionsConfigSheet: View {
                 VStack(spacing: 12) {
                     Image(systemName: "slider.horizontal.3")
                         .themedFont(.hero)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Text("No configurable options declared for this source.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(40)
@@ -74,7 +74,7 @@ public struct HookOptionsConfigSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
         }
         .frame(minWidth: 460, minHeight: 340)
         .onAppear {
@@ -95,16 +95,16 @@ public struct HookOptionsConfigSheet: View {
                 Spacer()
                 Text("$\(spec.key.uppercased())", bundle: .module)
                     .themedCode(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(.appSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             }
 
             Text(spec.description)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             switch spec.type {
             case .boolean:
@@ -175,11 +175,11 @@ public struct HookOptionsConfigSheet: View {
             }
         }
         .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+        .background(.appSurface.opacity(0.6))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 1)
+                .stroke(.appBorder.opacity(0.3), lineWidth: 1)
         )
     }
 

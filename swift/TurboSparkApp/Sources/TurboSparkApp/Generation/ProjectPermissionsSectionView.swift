@@ -57,23 +57,23 @@ struct ProjectPermissionsSectionView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Execution Mode", bundle: .module)
                     .themedFont(.small, weight: .medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
 
                 Picker("Execution Mode", selection: $permissionMode) {
                     ForEach(AppPermissionMode.allCases) { mode in
                         Label(mode.shortLabel, systemImage: mode.systemImage).tag(mode)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .accessibilityLabel("Permission execution mode")
 
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: permissionMode.systemImage)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                         .themedFont(.small)
                     Text(permissionMode.descriptionText)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -90,7 +90,7 @@ struct ProjectPermissionsSectionView: View {
                 permissionRow(title: "Automation & Crons", desc: "Schedule background tasks and monitors", selection: $automationPermission)
             }
             .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
 
             // Forge Guardrails project option
             HStack {
@@ -99,7 +99,7 @@ struct ProjectPermissionsSectionView: View {
                         .themedFont(.base, weight: .medium)
                     Text("Repair malformed dialect calls and validate schemas", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Picker("", selection: $guardrailsOption) {
@@ -112,7 +112,7 @@ struct ProjectPermissionsSectionView: View {
                 .accessibilityLabel("Forge Guardrails project preference")
             }
             .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -123,7 +123,7 @@ struct ProjectPermissionsSectionView: View {
                     .themedFont(.base, weight: .medium)
                 Text(desc)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Picker("", selection: selection) {

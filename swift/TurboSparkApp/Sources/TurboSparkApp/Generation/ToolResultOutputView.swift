@@ -42,7 +42,7 @@ struct ToolResultOutputView: View {
                     .padding(.vertical, 3)
                     .background(Color.primary.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
                 .help("Expand complete output")

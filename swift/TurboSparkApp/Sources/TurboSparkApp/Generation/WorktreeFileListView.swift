@@ -52,7 +52,7 @@ public struct WorktreeFileListView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             TextField("Filter changed files...", text: $worktree.searchQuery)
                 .textFieldStyle(.plain)
@@ -88,7 +88,7 @@ public struct WorktreeFileListView: View {
                 .padding(.top, 24)
             Text(hasQuery ? "No matching changed files" : "No changes", bundle: .module)
                 .themedFont(.base, weight: .medium)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text(
                 hasQuery
                     ? "Try clearing the search filter."
@@ -212,11 +212,11 @@ struct WorktreeTreeNodeRow: View {
 
                 Image(systemName: isExpanded ? "folder.fill" : "folder")
                     .themedFont(.small)
-                    .foregroundStyle(TurboSparkTheme.accentColor.opacity(0.85))
+                    .foregroundStyle(.appAccent.opacity(0.85))
 
                 Text(node.name)
                     .themedFont(.base, weight: .medium)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .lineLimit(1)
 
                 Spacer(minLength: 4)

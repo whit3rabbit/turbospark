@@ -37,10 +37,10 @@ struct InteractiveQuestionCardView: View {
             footer
         }
         .padding(10)
-        .background(TurboSparkTheme.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appAccent.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(TurboSparkTheme.accentColor.opacity(0.35), lineWidth: 1)
+                .stroke(.appAccent.opacity(0.35), lineWidth: 1)
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
@@ -75,7 +75,7 @@ struct InteractiveQuestionCardView: View {
             }
             .buttonStyle(.plain)
             .themedFont(.small)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
             .help("Tell the model you are not answering these")
             .accessibilityLabel("Skip questions")
         }
@@ -102,11 +102,11 @@ struct InteractiveQuestionCardView: View {
                     .themedFont(.tiny, weight: .bold)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(TurboSparkTheme.accentColor.opacity(0.15), in: Capsule())
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .background(.appAccent.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.appAccent)
                 Text(question.question)
                     .themedFont(.base, weight: .medium)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
             }
             if question.multiSelect {
                 VStack(alignment: .leading, spacing: 4) {
@@ -122,7 +122,7 @@ struct InteractiveQuestionCardView: View {
                     }
                     .buttonStyle(.plain)
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .disabled(selectedCount(question) == 0)
                     .padding(.top, 2)
                     .accessibilityLabel("Submit answer for \(question.header)")
@@ -179,10 +179,10 @@ struct InteractiveQuestionCardView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(option.label)
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                 Text(option.description)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .padding(6)

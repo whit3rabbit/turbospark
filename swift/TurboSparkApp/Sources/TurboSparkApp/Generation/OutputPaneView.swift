@@ -335,14 +335,14 @@ private struct TurnCollapseToggleRow: View {
             HStack(spacing: 5) {
                 Image(systemName: "chevron.down")
                     .themedFont(.tiny)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text(
                     count == 1
                         ? "1 hidden step from this turn"
                         : "\(count) hidden steps from this turn")
                     .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -409,7 +409,7 @@ private struct MessageRowView: View {
                 HStack(spacing: 6) {
                     Image(systemName: artifact.symbolName)
                         .themedFont(.tiny, weight: .semibold)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                         .accessibilityHidden(true)
                     Text(artifact.fileName)
                         .themedFont(.tiny, weight: .medium)
@@ -417,7 +417,7 @@ private struct MessageRowView: View {
                         .truncationMode(.middle)
                     Text(artifact.formatLabel)
                         .themedCode(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Spacer(minLength: 4)
                     Image(systemName: "sidebar.right")
                         .themedFont(.micro)
@@ -430,7 +430,7 @@ private struct MessageRowView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.5)
+                        .stroke(.appBorder.opacity(0.4), lineWidth: 0.5)
                 )
                 .contentShape(Rectangle())
             }
@@ -453,7 +453,7 @@ private struct MessageRowView: View {
                 )
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                .background(.appSurface.opacity(0.85))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
@@ -504,7 +504,7 @@ private struct MessageRowView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "terminal")
                             .themedFont(.tiny, weight: .semibold)
-                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .foregroundStyle(.appAccent)
                             .accessibilityHidden(true)
                         Text(shell.command)
                             .themedCode(.small, weight: .medium)
@@ -523,10 +523,10 @@ private struct MessageRowView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                .background(.appSurface.opacity(0.85))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(TurboSparkTheme.accentColor.opacity(0.25), lineWidth: 1)
+                        .stroke(.appAccent.opacity(0.25), lineWidth: 1)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
@@ -604,7 +604,7 @@ private struct MessageRowView: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "brain")
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text("Saved to memory", bundle: .module)
                     .themedFont(.small, weight: .semibold)
@@ -615,10 +615,10 @@ private struct MessageRowView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+            .background(.appSurface.opacity(0.85))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(TurboSparkTheme.accentColor.opacity(0.25), lineWidth: 1)
+                    .stroke(.appAccent.opacity(0.25), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
@@ -641,7 +641,7 @@ private struct MessageRowView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles")
                             .themedFont(.small, weight: .bold)
-                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .foregroundStyle(.appAccent)
                             .accessibilityHidden(true)
                         Text(model.selected?.alias ?? "TurboSpark")
                             .themedFont(.small, weight: .semibold)
@@ -740,7 +740,7 @@ private struct ActiveStreamingRowView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .themedFont(.small, weight: .bold)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text(model.selected?.alias ?? "TurboSpark")
                     .themedFont(.small, weight: .semibold)
@@ -883,7 +883,7 @@ private struct BackgroundShellsStripView: View {
         HStack(spacing: 8) {
             Image(systemName: "terminal")
                 .themedFont(.small, weight: .bold)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 if let description = shell.description, !description.isEmpty {
@@ -926,10 +926,10 @@ private struct BackgroundShellsStripView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+        .background(.appSurface.opacity(0.7))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(TurboSparkTheme.accentColor.opacity(0.45), lineWidth: 1)
+                .stroke(.appAccent.opacity(0.45), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .combine)
@@ -966,7 +966,7 @@ private struct CompactionDividerView: View {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.compress.vertical")
                     .themedFont(.tiny)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text(
                     summarizedRows == 1
@@ -1019,7 +1019,7 @@ private struct ReasoningDisclosureView: View {
             HStack(spacing: 6) {
                 Image(systemName: "brain")
                     .themedFont(.small)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text("Thought process", bundle: .module)
                     .themedFont(.small, weight: .medium)

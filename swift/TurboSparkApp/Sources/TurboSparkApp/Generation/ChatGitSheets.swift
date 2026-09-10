@@ -13,7 +13,7 @@ struct GitInfoSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.triangle.branch")
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text("Git", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
@@ -29,7 +29,7 @@ struct GitInfoSheet: View {
                 if let branch = model.worktree?.currentBranch, !branch.isEmpty {
                     Text(branch)
                         .themedCode(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Button {
                     dismiss()
@@ -91,7 +91,7 @@ struct GitInfoSheet: View {
                 if let range = model.gitDiffText.range(of: "\n\n") {
                     Text(String(model.gitDiffText[..<range.lowerBound]))
                         .themedCode(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .textSelection(.enabled)
                     diffLines(String(model.gitDiffText[range.upperBound...]))
                 } else {
@@ -139,7 +139,7 @@ struct GitInfoSheet: View {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(commit.shortHash)
                             .themedCode(.tiny, weight: .semibold)
-                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .foregroundStyle(.appAccent)
                             .textSelection(.enabled)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(commit.summary)
@@ -147,7 +147,7 @@ struct GitInfoSheet: View {
                                 .lineLimit(2)
                             Text("\(commit.author) - \(commit.relativeDate)", bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                         Spacer(minLength: 8)
                         Button {
@@ -185,14 +185,14 @@ struct GitInfoSheet: View {
                         prStateIcon(pr.state)
                         Text("#\(pr.number)", bundle: .module)
                             .themedCode(.tiny, weight: .semibold)
-                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .foregroundStyle(.appAccent)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(pr.title)
                                 .themedFont(.small, weight: .medium)
                                 .lineLimit(2)
                             Text(pr.headBranch)
                                 .themedCode(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                         Spacer(minLength: 8)
                         if let url = URL(string: pr.url) {
@@ -237,7 +237,7 @@ struct GitInfoSheet: View {
                 .accessibilityHidden(true)
             Text(message)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .lineLimit(3)
             Spacer()
         }
@@ -253,7 +253,7 @@ struct GitInfoSheet: View {
                 .foregroundStyle(.tertiary)
             Text(text)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.top, 40)

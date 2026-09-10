@@ -21,7 +21,7 @@ struct ProjectMcpDetectionSectionView: View {
                         .themedFont(.small, weight: .semibold)
                     Text("Scans project root for .mcp.json, opencode.json, .cursor, .vscode, and .agents configs.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Button {
@@ -44,10 +44,10 @@ struct ProjectMcpDetectionSectionView: View {
                 if detectedFiles.isEmpty {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Text("No external MCP config files detected in \(root.lastPathComponent).", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -63,7 +63,7 @@ struct ProjectMcpDetectionSectionView: View {
             } else {
                 Text("Assign a Codebase Root Directory in Project Settings to enable automatic MCP file detection.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .padding(8)
                     .background(Color.secondary.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -75,13 +75,13 @@ struct ProjectMcpDetectionSectionView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "doc.text.fill")
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(file.formatLabel)
                         .themedFont(.small, weight: .semibold)
                     Text(file.relativePath)
                         .themedCode(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Button("Import All (\(file.servers.count))") {
@@ -99,7 +99,7 @@ struct ProjectMcpDetectionSectionView: View {
                                 .themedCode(.small, weight: .semibold)
                             Text(server.commandSummary)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                                 .lineLimit(1)
                         }
                         Spacer()
@@ -107,7 +107,7 @@ struct ProjectMcpDetectionSectionView: View {
                         if alreadyImported {
                             Text("Imported", bundle: .module)
                                 .themedFont(.tiny, weight: .medium)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(Color.secondary.opacity(0.12))
@@ -124,12 +124,12 @@ struct ProjectMcpDetectionSectionView: View {
                 }
             }
             .padding(8)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
+            .background(.appSurface.opacity(0.8))
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(TurboSparkTheme.accentColor.opacity(0.3), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.appAccent.opacity(0.3), lineWidth: 1))
     }
 }

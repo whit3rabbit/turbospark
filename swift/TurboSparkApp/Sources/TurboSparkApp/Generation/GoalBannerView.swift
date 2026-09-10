@@ -25,13 +25,13 @@ struct GoalBannerView: View {
             HStack(spacing: 6) {
                 Image(systemName: goal.isPaused ? "pause.circle" : "circle.dotted")
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
                 Text("Goal active", bundle: .module)
                     .themedFont(.small, weight: .semibold)
                 Text(AppModel.formatGoalElapsed(since: goal.setAt, now: now))
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
                 Button {
                     model.clearGoal(chatID: model.selectedChatID)
@@ -53,7 +53,7 @@ struct GoalBannerView: View {
                     Text(verbatim: "\(goal.iterations)")
                 }
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
                 if model.isEvaluatingGoal {
                     HStack(spacing: 4) {
@@ -61,7 +61,7 @@ struct GoalBannerView: View {
                             .controlSize(.mini)
                         Text("Evaluating", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 if goal.deferredSince != nil {
@@ -72,7 +72,7 @@ struct GoalBannerView: View {
                             .accessibilityHidden(true)
                     }
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 }
                 if goal.isPaused {
                     Label {
@@ -82,14 +82,14 @@ struct GoalBannerView: View {
                             .accessibilityHidden(true)
                     }
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 }
                 Spacer()
             }
             if let reason = goal.lastReason, !reason.isEmpty {
                 Text(reason)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .lineLimit(2)
                     .textSelection(.enabled)
             }

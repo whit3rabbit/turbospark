@@ -36,7 +36,7 @@ struct McpCatalogSourceFormView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Source", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             HStack(spacing: 6) {
                 TextField(placeholder, text: $sourceText)
                     .textFieldStyle(.roundedBorder)
@@ -60,7 +60,7 @@ struct McpCatalogSourceFormView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Git Ref", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             TextField("main", text: $gitRef)
                 .textFieldStyle(.roundedBorder)
         }
@@ -70,19 +70,19 @@ struct McpCatalogSourceFormView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Sparse Paths (one per line, optional)", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             TextEditor(text: $sparsePathsText)
                 .themedCode(.small)
                 .frame(height: 50)
                 .padding(4)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.appSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
             Text("Checks out only these subtrees, for a repository too large to clone whole.", bundle: .module)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
     }
 

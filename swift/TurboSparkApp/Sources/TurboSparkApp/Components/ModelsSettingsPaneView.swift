@@ -72,8 +72,9 @@ public struct ModelsSettingsPaneView: View {
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Text("Install Destination", bundle: .module)
+                    .settingsControl("Install Destination", pane: .models, timing: .immediate)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -97,17 +98,17 @@ public struct ModelsSettingsPaneView: View {
                     .help("Opens the TurboSpark models directory in Finder")
                 }
                 .padding(10)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.appSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 Text("Catalog installs and Hugging Face pulls always land here. To run models kept elsewhere, add their folders under Additional Model Folders below; they are scanned in place, never copied.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .padding(14)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
         }
     }
 
@@ -133,7 +134,7 @@ public struct ModelsSettingsPaneView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Automatically detect and run GGUF models downloaded by LM Studio without copying or redownloading files.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
 
                 HStack(spacing: 8) {
                     Image(systemName: isLmStudioPresent ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -147,7 +148,7 @@ public struct ModelsSettingsPaneView: View {
 
                 HStack(spacing: 8) {
                     Image(systemName: "folder")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Text(activeLmStudioPath)
                         .themedCode(.small)
                         .textSelection(.enabled)
@@ -183,7 +184,7 @@ public struct ModelsSettingsPaneView: View {
                     }
                 }
                 .padding(8)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.appSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
                 // Zero-copy explanation callout
@@ -195,10 +196,11 @@ public struct ModelsSettingsPaneView: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Zero-Copy In-Place Inference", bundle: .module)
+                    .settingsControl("Zero-Copy In-Place Inference", pane: .models, timing: .immediate)
                             .themedFont(.small, weight: .semibold)
                         Text("Models discovered in LM Studio are indexed in-place. TurboSpark reads weights directly from your LM Studio folder without duplicating disk space or copying gigabytes of parameters.", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -210,7 +212,7 @@ public struct ModelsSettingsPaneView: View {
                     if isLmStudioPresent && model.enableLMStudioDetection {
                         Text("\(lmStudioModelCount) model\(lmStudioModelCount == 1 ? "" : "s") found in LM Studio folder", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     Spacer()
                     Button {
@@ -228,9 +230,9 @@ public struct ModelsSettingsPaneView: View {
             .task(id: "\(activeLmStudioPath)|\(model.enableLMStudioDetection)") {
                 rescanLmStudioCount()
             }
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
         }
     }
 

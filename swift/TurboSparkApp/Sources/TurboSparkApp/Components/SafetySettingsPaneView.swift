@@ -62,37 +62,41 @@ public struct SafetySettingsPaneView: View {
                         + "has no opinion about what one encodes: the same code path serves "
                         + "concept steering, style vectors and refusal-direction work."
                 )
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 Text(
                     "Extract one with scripts/extract_direction.py, or use a published set. "
                         + "docs/OBLITERATION.md has the measurements, including what happens at "
                         + "full strength."
                 )
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             }
             .padding(.vertical, 2)
         }
+            .settingsControl("What this is", pane: .safety, timing: .nextTurn)
     }
 
     private var activationSection: some View {
         Section("Activation") {
             Toggle("Apply steering when a model loads", isOn: steeringBinding)
+            .settingsControl("Apply steering when a model loads", pane: .safety, timing: .nextTurn)
                 .disabled(model.steeringDisabledReason != nil)
                 .help(model.steeringDisabledReason ?? "Applied at the next model load.")
 
             Picker("Active direction", selection: presetBinding) {
-                Text("None", bundle: .module).tag(UUID?.none)
+                Text("None", bundle: .module)
+                    .settingsControl("None", pane: .safety, timing: .nextTurn).tag(UUID?.none)
                 ForEach(model.steeringPresets) { preset in
                     Text(preset.displayName).tag(UUID?.some(preset.id))
                 }
             }
+            .settingsControl("Active direction", pane: .safety, timing: .nextTurn)
             .disabled(model.steeringPresets.isEmpty)
 
             if let reason = model.steeringDisabledReason {
                 Label(reason, systemImage: "exclamationmark.triangle")
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             // **STEERING RESOLVES ONCE, AT OPEN.** Without this note the
@@ -112,13 +116,15 @@ public struct SafetySettingsPaneView: View {
                 }
             }
         }
+            .settingsControl("Activation", pane: .safety, timing: .nextTurn)
     }
 
     private var presetsSection: some View {
         Section("Directions") {
             if model.steeringPresets.isEmpty {
                 Text("No directions registered.", bundle: .module)
-                    .foregroundStyle(.secondary)
+                    .settingsControl("No directions registered.", pane: .safety, timing: .nextTurn)
+                    .foregroundStyle(.appSecondary)
             }
             ForEach(model.steeringPresets) { preset in
                 SteeringPresetRow(
@@ -142,6 +148,7 @@ public struct SafetySettingsPaneView: View {
                 Label("Add a direction", systemImage: "plus")
             }
         }
+            .settingsControl("Directions", pane: .safety, timing: .nextTurn)
     }
 
     /// What the LOADED session reports, read back rather than restated. The
@@ -149,7 +156,8 @@ public struct SafetySettingsPaneView: View {
     private var statusSection: some View {
         Section("Loaded model") {
             if model.session == nil {
-                Text("No model loaded.", bundle: .module).foregroundStyle(.secondary)
+                Text("No model loaded.", bundle: .module)
+                    .settingsControl("No model loaded.", pane: .safety, timing: .nextTurn).foregroundStyle(.appSecondary)
             } else if let summary = model.activeSteeringSummary {
                 LabeledContent("Steering", value: summary)
             } else if model.steeringFamilySupported == false {
@@ -160,6 +168,7 @@ public struct SafetySettingsPaneView: View {
                 LabeledContent("Steering", value: "Off")
             }
         }
+            .settingsControl("Loaded model", pane: .safety, timing: .nextTurn)
     }
 
     private var steeringBinding: Binding<Bool> {
@@ -197,7 +206,7 @@ struct SteeringPresetRow: View {
             }
             Text(detailLine)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Label(compatibility.summary, systemImage: compatibilityIcon)
                 .themedFont(.small)
                 .foregroundStyle(compatibility.allowsEnabling ? Color.secondary : Color.red)

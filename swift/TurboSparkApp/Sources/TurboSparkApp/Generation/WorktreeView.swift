@@ -30,7 +30,7 @@ struct WorktreeView: View {
                 tabContent
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.appPage)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             seedExpandedDirectories()
@@ -116,7 +116,7 @@ struct WorktreeView: View {
                 } label: {
                     Image(systemName: worktree.viewMode.systemImage)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
@@ -166,7 +166,7 @@ struct WorktreeView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .rotationEffect(worktree.isRefreshing ? .degrees(360) : .degrees(0))
                     .animation(
                         worktree.isRefreshing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default,
@@ -193,7 +193,7 @@ struct WorktreeView: View {
             } label: {
                 Image(systemName: "xmark")
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .buttonStyle(.plain)
             .help("Close inspector")
@@ -272,7 +272,7 @@ struct WorktreeView: View {
             HStack(spacing: 4) {
                 Text(comparisonLabel)
                     .font(theme.code(.base, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
@@ -300,7 +300,7 @@ struct WorktreeView: View {
             Spacer()
             Text("\(worktree.filteredFiles.count) \(worktree.filteredFiles.count == 1 ? "file" : "files")", bundle: .module)
                 .themedFont(.tiny).monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
@@ -346,7 +346,7 @@ struct WorktreeView: View {
                         ProgressView().controlSize(.small)
                         Text("Loading diff for \(file.fileName)...", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let diff = worktree.selectedFileDiff {
@@ -376,7 +376,7 @@ struct WorktreeView: View {
                         .foregroundStyle(.tertiary)
                     Text("Select a file to inspect diff", bundle: .module)
                         .themedFont(.base, weight: .medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Text("Click any file to view modifications.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.tertiary)
@@ -399,7 +399,7 @@ struct WorktreeView: View {
                         ProgressView().controlSize(.mini)
                         Text("Loading diff...", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     .padding(8)
                 } else if let diff = worktree.selectedFileDiff {
@@ -425,16 +425,16 @@ struct WorktreeView: View {
         VStack(spacing: 12) {
             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
                 .themedFont(.hero)
-                .foregroundStyle(TurboSparkTheme.accentColor.opacity(0.8))
+                .foregroundStyle(.appAccent.opacity(0.8))
                 .padding(.top, 40)
 
             Text("No Git Repository Detected", bundle: .module)
                 .themedFont(.base, weight: .semibold)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
 
             Text("The current workspace folder is not tracked by Git. Initialize a repository to enable version control, change inspection, and diffs.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
 

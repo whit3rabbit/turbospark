@@ -57,11 +57,11 @@ struct ChatSearchOverlayView: View {
         VStack(spacing: 0) {
             fieldRow
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 0.5)
             resultsList
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 0.5)
             footer
         }
@@ -69,7 +69,7 @@ struct ChatSearchOverlayView: View {
         .background(TurboSparkTheme.surfaceColor, in: .rect(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
+                .stroke(.appBorder, lineWidth: 0.5))
         .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
         .background(hiddenShortcutButtons)
     }
@@ -78,7 +78,7 @@ struct ChatSearchOverlayView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(theme.ui(.small))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             TextField("Search chats...", text: $query)
                 .textFieldStyle(.plain)
@@ -151,7 +151,7 @@ struct ChatSearchOverlayView: View {
                 .accessibilityHidden(true)
             Text(title)
                 .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text(detail)
                 .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)

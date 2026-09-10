@@ -644,10 +644,11 @@ public enum AppToolRegistry {
         // precedence: their names are namespaced `plugin:<plugin>:<server>`,
         // which no user or project config can collide with.
         let globalServers = GlobalMcpFileStore.load().servers
-        let projectServers = project?.mcpServers ?? []
-        let pluginServers = PluginManager.shared.pluginMcpServers(
-            projectURL: project?.rootDirectoryURL)
-        let allServers = globalServers + projectServers + pluginServers
+        // Re-read the project so a change made during a turn gates its next call.
+        let currentProject = project.flatMap { captured in
+            AppProjectFileStore.load().projects.first { $0.id == captured.id } ?? captured
+        }
+        let allServers = AppToolCatalogMcp.resolvedServers(global: globalServers, project: currentProject)
 
         guard let matchedServer = allServers.first(where: { $0.name.lowercased() == serverName.lowercased() }) else {
             throw NSError(domain: "TurboSparkTool", code: 7, userInfo: [NSLocalizedDescriptionKey: "MCP server '\(serverName)' not found in project, global, or plugin configurations."])

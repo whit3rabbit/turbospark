@@ -49,11 +49,11 @@ struct ModelHubView: View {
             HStack(spacing: 8) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(TurboSparkTheme.accentColor.opacity(0.15))
+                        .fill(.appAccent.opacity(0.15))
                         .frame(width: 30, height: 30)
                     Image(systemName: "shippingbox.fill")
                         .themedFont(.callout, weight: .semibold)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -66,13 +66,13 @@ struct ModelHubView: View {
                             .themedFont(.micro, weight: .bold)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
-                            .background(TurboSparkTheme.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .background(.appAccent.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(.appAccent)
                     }
 
                     Text(summaryText)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
 
@@ -90,8 +90,8 @@ struct ModelHubView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .background(TurboSparkTheme.accentColor.opacity(0.14), in: Capsule())
-            .foregroundStyle(TurboSparkTheme.accentColor)
+            .background(.appAccent.opacity(0.14), in: Capsule())
+            .foregroundStyle(.appAccent)
             .help("Probe an arbitrary Hugging Face repository by header alone")
             .accessibilityLabel("Probe a Hugging Face repository")
         }
@@ -137,7 +137,7 @@ struct ModelHubView: View {
         .padding(.horizontal, 8)
         .frame(height: 22)
         .background(TurboSparkTheme.surfaceColor, in: Capsule())
-        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
+        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
     }
 
     // MARK: - List and detail
@@ -149,7 +149,7 @@ struct ModelHubView: View {
                 .frame(maxHeight: .infinity)
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(width: AppChromeLayout.dividerWidth)
 
             detailPane
@@ -205,7 +205,7 @@ struct ModelHubView: View {
                 .themedFont(.base, weight: .medium)
             Text(emptyDetail)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
             if filter.isNarrowed {
                 Button("Clear filters") { filter.clearNarrowing() }
@@ -249,7 +249,7 @@ struct ModelHubView: View {
                     .themedFont(.base, weight: .medium)
                 Text("Pick a row to see what it costs and whether it fits this machine.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 320)
             }

@@ -96,17 +96,17 @@ struct ToolGroupView: View {
                 } else {
                     Image(systemName: "wrench.and.screwdriver")
                         .themedFont(.small, weight: .semibold)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                 }
 
                 Text(groupLabel)
                     .themedFont(.base, weight: .medium)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
 
                 if hasRunningTool {
                     Text("running...", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                 } else if hasPendingApproval {
                     Text("approval required", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
@@ -122,11 +122,11 @@ struct ToolGroupView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+            .background(.appSurface.opacity(0.6))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.2), lineWidth: 1)
+                    .stroke(.appBorder.opacity(0.2), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }

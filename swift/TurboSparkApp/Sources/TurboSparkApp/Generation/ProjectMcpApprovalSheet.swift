@@ -36,13 +36,13 @@ struct ProjectMcpApprovalSheet: View {
             HStack(spacing: 10) {
                 Image(systemName: "server.rack")
                     .themedFont(.title2)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("MCP Server Approval", bundle: .module)
                         .themedFont(.base, weight: .semibold)
                     Text("Project \"\(projectName(approval))\" declares MCP servers in its config files.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 if model.pendingMcpApprovals.count > 1 {
@@ -60,22 +60,22 @@ struct ProjectMcpApprovalSheet: View {
                     .themedCode(.base, weight: .semibold)
                 Text(approval.config.commandSummary)
                     .themedCode(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .textSelection(.enabled)
                     .lineLimit(3)
                 Text("Declared in \(approval.sourceRelativePath)", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(TurboSparkTheme.hairlineColor, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder, lineWidth: 1))
 
             Text("Approving runs this server's commands on this machine. Auto-approval stays off: tool calls still ask unless you opt in later.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             HStack(spacing: 10) {
                 Button("Approve All Future") {

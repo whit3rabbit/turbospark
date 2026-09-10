@@ -50,10 +50,10 @@ public struct AgentEditorSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
             ScrollView {
@@ -68,7 +68,7 @@ public struct AgentEditorSheet: View {
                             Text("The name the `agent` tool and /slash commands resolve. Fixed once created.",
                                  bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -83,7 +83,7 @@ public struct AgentEditorSheet: View {
                             if isProjectScope && model.selectedProject == nil && agentToEdit == nil {
                                 Text("Open a project to write a project-scoped agent.", bundle: .module)
                                     .themedFont(.tiny)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
                         }
                     }
@@ -104,7 +104,7 @@ public struct AgentEditorSheet: View {
                             Text("Upper bound on the agent's autonomous turns (1 to \(AppAgentDefinition.maxTurnsCeiling)).",
                                  bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
 
@@ -123,7 +123,7 @@ public struct AgentEditorSheet: View {
                                 .textFieldStyle(.roundedBorder)
                             Text("Leave empty for the default tool set.", bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -133,7 +133,7 @@ public struct AgentEditorSheet: View {
                                 .textFieldStyle(.roundedBorder)
                             Text("Refused even if the allowlist would permit them.", bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
 
@@ -144,11 +144,11 @@ public struct AgentEditorSheet: View {
                             .themedCode(.base)
                             .frame(minHeight: 180)
                             .padding(4)
-                            .background(Color(nsColor: .textBackgroundColor))
+                            .background(.appElevated)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .stroke(TurboSparkTheme.hairlineColor, lineWidth: 1)
+                                    .stroke(.appBorder, lineWidth: 1)
                             )
                     }
                 }
@@ -156,7 +156,7 @@ public struct AgentEditorSheet: View {
             }
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
             HStack {
@@ -173,7 +173,7 @@ public struct AgentEditorSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
         }
         .frame(minWidth: 620, minHeight: 520)
         .onAppear(perform: loadEditingAgent)

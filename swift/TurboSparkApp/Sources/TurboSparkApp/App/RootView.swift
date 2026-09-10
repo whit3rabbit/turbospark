@@ -13,8 +13,12 @@ import SwiftUI
 struct RootView: View {
     @ObservedObject var model: AppModel
     @State private var conversationChromeHeight: CGFloat = 0
+    // The storage KEY is unchanged so an existing preference carries over;
+    // only the name is, because the flag stopped meaning "shown" when the
+    // rail and the chat sidebar became one column (`AppSidebarView`). True is
+    // still the roomy state either way.
     @AppStorage("TurboSpark.chatSidebarVisible")
-    private var isChatSidebarVisible = true
+    private var isSidebarExpanded = true
     @AppStorage("TurboSpark.inspectorVisible")
     private var isInspectorVisible = false
     @ObservedObject private var appearanceManager = AppearanceManager.shared
@@ -27,19 +31,19 @@ struct RootView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            NavigationRailView(model: model)
+            AppSidebarView(model: model, isExpanded: isSidebarExpanded)
                 .zIndex(10)
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(width: AppChromeLayout.dividerWidth)
 
             VStack(spacing: 0) {
                 TopBarView(
                     model: model,
-                    isChatSidebarVisible: isChatSidebarVisible,
+                    isChatSidebarVisible: isSidebarExpanded,
                     isInspectorVisible: isInspectorVisible,
-                    toggleChatSidebar: { isChatSidebarVisible.toggle() },
+                    toggleChatSidebar: { isSidebarExpanded.toggle() },
                     toggleInspector: { isInspectorVisible.toggle() })
 
                 workingArea
@@ -49,13 +53,19 @@ struct RootView: View {
         }
         .frame(
             minWidth: AppChromeLayout.minimumWindowWidth(
-                isChatSidebarVisible: isChatSidebarVisible && showsChatSidebar,
+                // A function of the toggle ALONE. This used to be
+                // conjoined with `activeSection == .chat`, which is now
+                // `AppSidebarView`'s business and was never this one's: the
+                // column is present in every section, so anding the section in
+                // here would let the window shrink under its own sidebar in
+                // Files and Server.
+                isSidebarExpanded: isSidebarExpanded,
                 rightColumn: rightColumnClaimant),
             minHeight: AppChromeLayout.minimumHeight)
         .clipped()
-        .background(TurboSparkTheme.pageBackgroundColor)
+        .background(.appPage)
         .appThemed()
-        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isChatSidebarVisible)
+        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isSidebarExpanded)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isInspectorVisible)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.previewAttachmentID)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.openArtifactID)
@@ -76,7 +86,7 @@ struct RootView: View {
             // Ctrl+1..5). Mounted at the window root like the palette above
             // so they work from any section, including while the prompt
             // editor is first responder.
-            AlternateShortcutBridge(model: model, toggleSidebar: { isChatSidebarVisible.toggle() })
+            AlternateShortcutBridge(model: model, toggleSidebar: { isSidebarExpanded.toggle() })
         }
         .sheet(isPresented: Binding(
             get: { !model.pendingMcpApprovals.isEmpty },
@@ -90,7 +100,7 @@ struct RootView: View {
             ProjectMcpApprovalSheet(model: model)
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
-            isChatSidebarVisible.toggle()
+            isSidebarExpanded.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showChatSearch)) { _ in
             isChatSearchPresented.toggle()
@@ -126,26 +136,8 @@ struct RootView: View {
         }
     }
 
-    /// The chat list is only meaningful beside a conversation.
-    private var showsChatSidebar: Bool {
-        model.activeSection == .chat
-    }
-
     private var workingArea: some View {
         HStack(spacing: 0) {
-            if isChatSidebarVisible && showsChatSidebar {
-                ChatSidebarView(model: model)
-                    .frame(width: AppChromeLayout.chatSidebarWidth)
-                    .frame(maxHeight: .infinity)
-                    .background(TurboSparkTheme.sidebarBackgroundColor)
-                    .clipped()
-                    .layoutPriority(1)
-                    .zIndex(1)
-                    .transition(effectiveReduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
-
-                verticalHairline
-            }
-
             primaryContent
                 .frame(
                     minWidth: AppChromeLayout.primaryMinimumWidth,
@@ -234,7 +226,7 @@ struct RootView: View {
         }
         .frame(width: currentWidth)
         .frame(maxHeight: .infinity)
-        .background(TurboSparkTheme.pageBackgroundColor)
+        .background(.appPage)
         .clipped()
         .layoutPriority(1)
         .zIndex(1)
@@ -243,7 +235,7 @@ struct RootView: View {
 
     private var verticalHairline: some View {
         Rectangle()
-            .fill(TurboSparkTheme.hairlineColor)
+            .fill(.appBorder)
             .frame(width: AppChromeLayout.dividerWidth)
             .zIndex(1)
     }
@@ -311,6 +303,10 @@ struct RootView: View {
         VStack(spacing: 8) {
             ErrorBanner(model: model)
             PromptComposerView(model: model)
+            // Last, so it is the floor of the chat. `ConversationChromeHeightKey`
+            // measures this whole VStack, so the transcript's bottom padding
+            // grows by the pill's height with no arithmetic here.
+            ModelLoaderControl(model: model, density: .compact)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 12)

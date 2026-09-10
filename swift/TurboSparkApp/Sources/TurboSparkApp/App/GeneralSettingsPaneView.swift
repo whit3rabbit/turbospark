@@ -18,20 +18,23 @@ struct GeneralSettingsPaneView: View {
                         Text(language.label).tag(language.rawValue)
                     }
                 }
+            .settingsControl("Language", pane: .general, timing: .immediate)
                 .pickerStyle(.menu)
 
                 if let keyboard = LanguageDetector.currentKeyboardLayoutName() {
                     HStack {
                         Text("Active Keyboard Layout:", bundle: .module)
+                    .settingsControl("Active Keyboard Layout:", pane: .general, timing: .immediate)
                             .font(theme.ui(.small))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Spacer()
                         Text(keyboard)
                             .font(theme.code(.small))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
             }
+            .settingsControl("Language & Localization", pane: .general, timing: .immediate)
 
             Section("Text Size & Readability") {
                 Picker("Text Readability", selection: $appearanceManager.textSize) {
@@ -39,8 +42,10 @@ struct GeneralSettingsPaneView: View {
                         Text(size.label).tag(size)
                     }
                 }
+            .settingsControl("Text Readability", pane: .general, timing: .immediate)
                 .pickerStyle(.segmented)
             }
+            .settingsControl("Text Size & Readability", pane: .general, timing: .immediate)
 
             // Its own computed property: a Section inline in a larger Form
             // expression is the shape that blew the macOS 14 SDK type-checker.
@@ -64,31 +69,36 @@ struct GeneralSettingsPaneView: View {
                     model.showMenuBarItem = newValue
                     model.persistSettingsDebounced()
                 }))
+            .settingsControl("Show TurboSpark in menu bar", pane: .general, timing: .immediate)
             Toggle("Automatically start server on app launch", isOn: Binding(
                 get: { model.serverAutoStartOnLaunch },
                 set: { newValue in
                     model.serverAutoStartOnLaunch = newValue
                     model.persistSettingsDebounced()
                 }))
+            .settingsControl("Automatically start server on app launch", pane: .general, timing: .relaunch)
             Toggle("Keep running in background when window is closed", isOn: Binding(
                 get: { model.keepServerRunningInBackground },
                 set: { newValue in
                     model.keepServerRunningInBackground = newValue
                     model.persistSettingsDebounced()
                 }))
+            .settingsControl("Keep running in background when window is closed", pane: .general, timing: .immediate)
             Text(
                 "When enabled, closing the main window leaves the server and menu bar active. "
                     + "Use Quit TurboSpark from the menu bar or Command-Q to exit."
             )
             .font(theme.ui(.small))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
         }
+            .settingsControl("Menu Bar & Server", pane: .general, timing: .immediate)
     }
 
     private var hfAuthSection: some View {
         Section("Hugging Face Authentication") {
             HfAuthTokenCardView(model: model)
         }
+            .settingsControl("Hugging Face Authentication", pane: .general, timing: .immediate)
     }
 
     private var temporaryChatSection: some View {
@@ -99,14 +109,16 @@ struct GeneralSettingsPaneView: View {
                     model.alwaysStartInGhostMode = newValue
                     model.persistSettingsDebounced()
                 }))
+            .settingsControl("Always start in Ghost Mode", pane: .general, timing: .relaunch)
             Text(
                 "Every launch opens a temporary chat that exists only in memory. "
                     + "It is never saved, even when tied to a profile, and is "
                     + "encrypted while the app runs. Ghost chats cannot be recovered."
             )
             .font(theme.ui(.small))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
         }
+            .settingsControl("Temporary Chats", pane: .general, timing: .immediate)
     }
 
     private var compactionSection: some View {
@@ -117,6 +129,7 @@ struct GeneralSettingsPaneView: View {
                     model.autoCompactEnabled = newValue
                     model.persistSettingsDebounced()
                 }))
+            .settingsControl("Summarize older turns automatically", pane: .general, timing: .nextTurn)
             Text(
                 "As the conversation approaches the context window, older messages "
                     + "are summarized by the model and the newer turns kept verbatim. "
@@ -124,7 +137,7 @@ struct GeneralSettingsPaneView: View {
                     + "You can also run /compact at any time."
             )
             .font(theme.ui(.small))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
 
             Picker("Keep recent messages verbatim", selection: Binding(
                 get: { model.compactionKeepRecentTurns },
@@ -136,7 +149,9 @@ struct GeneralSettingsPaneView: View {
                     Text("\(count)", bundle: .module).tag(count)
                 }
             }
+            .settingsControl("Keep recent messages verbatim", pane: .general, timing: .nextTurn)
             .pickerStyle(.menu)
         }
+            .settingsControl("Context Compaction", pane: .general, timing: .immediate)
     }
 }

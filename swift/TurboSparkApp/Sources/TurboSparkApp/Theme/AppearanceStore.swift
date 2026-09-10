@@ -26,6 +26,8 @@ public struct AppearanceArchive: Codable, Equatable, Sendable {
     public var uiFontSize: Double
     public var codeFontSize: Double
     public var diffMarkers: String
+    public var savedThemes: [SavedTheme]
+    public var selectedThemeID: String?
 
     public init(
         appearance: String = AppAppearance.system.rawValue,
@@ -38,7 +40,8 @@ public struct AppearanceArchive: Codable, Equatable, Sendable {
         reduceMotion: String = ReduceMotionPreference.system.rawValue,
         uiFontSize: Double = 16.0,
         codeFontSize: Double = 12.0,
-        diffMarkers: String = DiffMarkerPreference.color.rawValue
+        diffMarkers: String = DiffMarkerPreference.color.rawValue,
+        savedThemes: [SavedTheme] = [], selectedThemeID: String? = "sparkblue"
     ) {
         self.appearance = appearance
         self.textSize = textSize
@@ -51,6 +54,8 @@ public struct AppearanceArchive: Codable, Equatable, Sendable {
         self.uiFontSize = uiFontSize
         self.codeFontSize = codeFontSize
         self.diffMarkers = diffMarkers
+        self.savedThemes = savedThemes
+        self.selectedThemeID = selectedThemeID
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,6 +71,14 @@ public struct AppearanceArchive: Codable, Equatable, Sendable {
         self.uiFontSize = try container.decodeIfPresent(Double.self, forKey: .uiFontSize) ?? 16.0
         self.codeFontSize = try container.decodeIfPresent(Double.self, forKey: .codeFontSize) ?? 12.0
         self.diffMarkers = try container.decodeIfPresent(String.self, forKey: .diffMarkers) ?? DiffMarkerPreference.color.rawValue
+        self.savedThemes = (try container.decodeIfPresent([SavedTheme].self, forKey: .savedThemes) ?? []).compactMap { try? $0.validated() }
+        if container.contains(.selectedThemeID) {
+            self.selectedThemeID = try container.decodeIfPresent(String.self, forKey: .selectedThemeID)
+        } else {
+            self.selectedThemeID = (ThemePreset.presets + ThemePreset.additionalPresets).first {
+                lightConfig.matchesPalette($0.light) && darkConfig.matchesPalette($0.dark)
+            }?.id
+        }
     }
 }
 

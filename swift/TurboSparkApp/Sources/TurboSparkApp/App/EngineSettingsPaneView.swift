@@ -17,6 +17,8 @@ struct EngineSettingsPaneView: View {
     /// eventually.
     var body: some View {
         Form {
+            Text("Sampling and prompt changes apply to the next turn. Load settings apply after model reload.", bundle: .module)
+                .themedFont(.small).foregroundStyle(.appSecondary)
             systemPromptSection
             generationDefaultsSection
             advancedGenerationSection
@@ -48,19 +50,21 @@ struct EngineSettingsPaneView: View {
                     + "Leave empty for none."
                 )
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 Text("\(model.defaultSystemPrompt.count) characters", bundle: .module)
                     .themedFont(.small)
                     .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
+            .settingsControl("Default System Prompt", pane: .engine, timing: .nextTurn)
     }
 
     private var generationDefaultsSection: some View {
         Section("Generation Defaults") {
             HStack {
                 Text("Temperature", bundle: .module)
+                    .settingsControl("Temperature", pane: .engine, timing: .nextTurn)
                 Spacer()
                 Slider(value: $model.temperature, in: 0.0...1.5, step: 0.05)
                     .frame(width: 160)
@@ -74,6 +78,7 @@ struct EngineSettingsPaneView: View {
 
             HStack {
                 Text("Top-P Sampling", bundle: .module)
+                    .settingsControl("Top-P Sampling", pane: .engine, timing: .nextTurn)
                 Spacer()
                 Toggle("", isOn: $model.topPEnabled)
                     .labelsHidden()
@@ -92,6 +97,7 @@ struct EngineSettingsPaneView: View {
                     .foregroundStyle(model.topPEnabled ? .primary : .secondary)
             }
         }
+            .settingsControl("Generation Defaults", pane: .engine, timing: .nextTurn)
     }
 
     /// The sampling and engine-load knobs that used to live ONLY in the
@@ -103,6 +109,7 @@ struct EngineSettingsPaneView: View {
         Section("Advanced Generation") {
             HStack {
                 Text("Context Window", bundle: .module)
+                    .settingsControl("Context Window", pane: .engine, timing: .modelReload)
                 Spacer()
                 TextField("auto", value: $model.maxContextTokens, format: .number.grouping(.never))
                     .labelsHidden()
@@ -113,12 +120,13 @@ struct EngineSettingsPaneView: View {
                     }
                 Text(model.maxContextTokens == 0 ? "auto" : "tokens")
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .frame(width: 44, alignment: .leading)
             }
 
             HStack {
                 Text("Max New Tokens", bundle: .module)
+                    .settingsControl("Max New Tokens", pane: .engine, timing: .nextTurn)
                 Spacer()
                 TextField("2048", value: $model.maxNewTokens, format: .number.grouping(.never))
                     .labelsHidden()
@@ -133,6 +141,7 @@ struct EngineSettingsPaneView: View {
 
             HStack {
                 Text("Top-K Sampling", bundle: .module)
+                    .settingsControl("Top-K Sampling", pane: .engine, timing: .nextTurn)
                 Spacer()
                 Toggle("", isOn: $model.topKEnabled)
                     .labelsHidden()
@@ -153,6 +162,7 @@ struct EngineSettingsPaneView: View {
 
             HStack {
                 Text("Repetition Penalty", bundle: .module)
+                    .settingsControl("Repetition Penalty", pane: .engine, timing: .nextTurn)
                 Spacer()
                 Toggle("", isOn: $model.repetitionPenaltyEnabled)
                     .labelsHidden()
@@ -173,6 +183,7 @@ struct EngineSettingsPaneView: View {
 
             HStack {
                 Text("Fixed Seed", bundle: .module)
+                    .settingsControl("Fixed Seed", pane: .engine, timing: .nextTurn)
                 Spacer()
                 Toggle("", isOn: $model.seedEnabled)
                     .labelsHidden()
@@ -193,6 +204,7 @@ struct EngineSettingsPaneView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Stop Sequences", bundle: .module)
+                    .settingsControl("Stop Sequences", pane: .engine, timing: .nextTurn)
                 TextField("comma-separated", text: $model.stopSequences)
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
@@ -201,7 +213,7 @@ struct EngineSettingsPaneView: View {
                     }
                 Text("Generation stops when the model emits any of these comma-separated strings.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             Picker("Power Profile", selection: $model.runtimeOptions.powerProfile) {
@@ -209,6 +221,7 @@ struct EngineSettingsPaneView: View {
                     Text(profile.menuLabel).tag(profile)
                 }
             }
+            .settingsControl("Power Profile", pane: .engine, timing: .modelReload)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.powerProfile) { _, _ in
                 model.persistSettingsDebounced()
@@ -216,6 +229,7 @@ struct EngineSettingsPaneView: View {
 
             HStack {
                 Text("Output Rate Cap", bundle: .module)
+                    .settingsControl("Output Rate Cap", pane: .engine, timing: .modelReload)
                 Spacer()
                 TextField("Uncapped", value: $model.runtimeOptions.maxTokensPerSec, format: .number)
                     .labelsHidden()
@@ -225,8 +239,9 @@ struct EngineSettingsPaneView: View {
                         model.persistSettingsDebounced()
                     }
                 Text("tok/s", bundle: .module)
+                    .settingsControl("tok/s", pane: .engine, timing: .nextTurn)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .frame(width: 44, alignment: .leading)
             }
 
@@ -235,6 +250,7 @@ struct EngineSettingsPaneView: View {
                     Text(tier.menuLabel).tag(tier)
                 }
             }
+            .settingsControl("Memory Load Guard", pane: .engine, timing: .modelReload)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.loadGuard) { _, _ in
                 model.persistSettingsDebounced()
@@ -246,8 +262,9 @@ struct EngineSettingsPaneView: View {
             // "Uncapped" clipping the Inspector had already fixed.
             Text("Context 0 means the checkpoint's trained context, capped by memory. Stop sequences, power profile, output rate cap and memory load guard also appear in the Inspector and edit the same values.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
+            .settingsControl("Advanced Generation", pane: .engine, timing: .nextTurn)
     }
 
     private var coolingSection: some View {
@@ -262,6 +279,7 @@ struct EngineSettingsPaneView: View {
                     }
                 )) {
                     Text("Keep fans pinned when TurboSpark quits", bundle: .module)
+                    .settingsControl("Keep fans pinned when TurboSpark quits", pane: .engine, timing: .nextTurn)
                 }
 
                 Text(
@@ -269,23 +287,25 @@ struct EngineSettingsPaneView: View {
                         + "from the status bar fan readout."
                 )
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             } else {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("ThermalForge Not Installed", bundle: .module)
+                    .settingsControl("ThermalForge Not Installed", pane: .engine, timing: .nextTurn)
                             .themedFont(.base, weight: .medium)
                         Text(
                             "Fan speed cannot be controlled without ThermalForge installed. "
                                 + "Install ThermalForge to monitor and pin fan speeds for sustained performance."
                         )
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     }
                     Spacer()
                     Link(destination: URL(string: "https://github.com/ProducerGuy/ThermalForge")!) {
                         HStack(spacing: 4) {
                             Text("ThermalForge", bundle: .module)
+                    .settingsControl("ThermalForge", pane: .engine, timing: .nextTurn)
                             Image(systemName: "arrow.up.forward.app")
                         }
                     }
@@ -294,6 +314,7 @@ struct EngineSettingsPaneView: View {
                 }
             }
         }
+            .settingsControl("Cooling & Fan Control", pane: .engine, timing: .nextTurn)
     }
 
     private var reasoningEffortSection: some View {
@@ -312,12 +333,14 @@ struct EngineSettingsPaneView: View {
                     Text(model.reasoningLabel(for: level)).tag(level)
                 }
             }
+            .settingsControl("Default Reasoning Level", pane: .engine, timing: .nextTurn)
             .pickerStyle(.menu)
 
             Text("Controls internal chain-of-thought depth. The accepted levels belong to each checkpoint's own chat template, not to this app: Qwen 3.8 tops out at Extra High and refuses High, while gpt-oss is the other way round. A level a model cannot express is clamped to its nearest one on load, and your choice is remembered per model.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
+            .settingsControl("Thinking & Reasoning Effort", pane: .engine, timing: .nextTurn)
     }
 
     private var guardrailsSection: some View {
@@ -327,6 +350,7 @@ struct EngineSettingsPaneView: View {
                     Text(mode.label).tag(mode)
                 }
             }
+            .settingsControl("Guardrails Mode", pane: .engine, timing: .nextTurn)
             .pickerStyle(.menu)
             .onChange(of: model.guardrailsMode) { _, _ in
                 model.persistSettings()
@@ -334,8 +358,9 @@ struct EngineSettingsPaneView: View {
 
             Text(model.guardrailsMode.descriptionText)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
+            .settingsControl("Forge Tool-Call Guardrails", pane: .engine, timing: .nextTurn)
     }
 
     private var speculationSection: some View {
@@ -345,6 +370,7 @@ struct EngineSettingsPaneView: View {
                     Text(opt.menuLabel).tag(opt)
                 }
             }
+            .settingsControl("Speculation Mode", pane: .engine, timing: .nextTurn)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.speculation) { _, _ in
                 model.persistSettingsDebounced()
@@ -356,12 +382,14 @@ struct EngineSettingsPaneView: View {
                         Text(drafter.menuLabel).tag(drafter)
                     }
                 }
+            .settingsControl("Speculative Drafter", pane: .engine, timing: .modelReload)
                 .pickerStyle(.menu)
                 .onChange(of: model.runtimeOptions.speculativeDrafter) { _, _ in
                     model.persistSettingsDebounced()
                 }
             }
         }
+            .settingsControl("Speculative Decoding", pane: .engine, timing: .modelReload)
     }
 
     /// **READS BACK WHAT THE LOADED SESSION ACTUALLY RESOLVED, RATHER THAN
@@ -380,6 +408,7 @@ struct EngineSettingsPaneView: View {
                     Text(opt.menuLabel).tag(opt)
                 }
             }
+            .settingsControl("KV-Cache Width", pane: .engine, timing: .nextTurn)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.kvBits) { _, _ in
                 model.persistSettingsDebounced()
@@ -388,10 +417,11 @@ struct EngineSettingsPaneView: View {
             if let info = model.session?.info {
                 HStack {
                     Text("Resolved", bundle: .module)
+                    .settingsControl("Resolved", pane: .engine, timing: .nextTurn)
                     Spacer()
                     Text(info.kvBits)
                         .themedFont(.tiny, systemDesign: .monospaced)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
 
@@ -404,8 +434,9 @@ struct EngineSettingsPaneView: View {
                     + "next model load."
             )
             .themedFont(.tiny)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
         }
+            .settingsControl("TurboQuant KV-Cache Quantization", pane: .engine, timing: .nextTurn)
     }
 
     private var inProcessServerSection: some View {
@@ -415,6 +446,7 @@ struct EngineSettingsPaneView: View {
                     get: { model.server != nil },
                     set: { $0 ? model.startServer() : model.stopServer() }
                 ))
+            .settingsControl("Enable server", pane: .engine, timing: .immediate)
                 .disabled(model.session == nil || model.serverBusy)
 
                 if model.serverBusy {
@@ -435,15 +467,17 @@ struct EngineSettingsPaneView: View {
 
                 HStack {
                     Text("Address", bundle: .module)
+                    .settingsControl("Address", pane: .engine, timing: .nextTurn)
                     Spacer()
                     Text(rows.address)
                         .themedCode(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .textSelection(.enabled)
                 }
 
                 HStack {
                     Text("Auth", bundle: .module)
+                    .settingsControl("Auth", pane: .engine, timing: .nextTurn)
                     Spacer()
                     Text(rows.authLabel)
                         .themedFont(.small)
@@ -452,6 +486,7 @@ struct EngineSettingsPaneView: View {
             }
 
             SecureField("API key (optional)", text: $model.serverAPIKeyInput)
+            .settingsControl("API key (optional)", pane: .engine, timing: .action)
                 .disabled(model.server != nil)
 
             Text(
@@ -463,7 +498,8 @@ struct EngineSettingsPaneView: View {
                     + "here can reach it."
             )
             .themedFont(.small)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
         }
+            .settingsControl("In-Process Server", pane: .engine, timing: .nextTurn)
     }
 }

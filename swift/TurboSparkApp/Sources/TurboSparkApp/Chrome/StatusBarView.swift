@@ -41,13 +41,13 @@ struct StatusBarView: View {
             viewModeToggleButton
         }
         .font(theme.ui(.tiny))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.appSecondary)
         .padding(.horizontal, 12)
         .frame(height: AppChromeLayout.statusBarHeight)
         .background(TurboSparkTheme.barBackgroundColor)
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 0.5)
         }
         .onAppear { refreshMetrics() }
@@ -57,7 +57,7 @@ struct StatusBarView: View {
 
     private var barDivider: some View {
         Rectangle()
-            .fill(TurboSparkTheme.hairlineColor)
+            .fill(.appBorder)
             .frame(width: 0.5, height: 11)
             .padding(.horizontal, 9)
     }
@@ -189,7 +189,7 @@ struct StatusBarView: View {
             }
             Text(rateText)
                 .monospacedDigit()
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
             Text("tok/s", bundle: .module)
                 .foregroundStyle(.tertiary)
         }
@@ -203,7 +203,7 @@ struct StatusBarView: View {
         HStack(spacing: 5) {
             Text(tokensText)
                 .monospacedDigit()
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
             Text("tokens", bundle: .module)
                 .foregroundStyle(.tertiary)
         }

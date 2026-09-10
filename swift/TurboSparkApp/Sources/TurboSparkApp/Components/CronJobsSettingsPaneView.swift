@@ -60,10 +60,11 @@ struct CronJobsSettingsPaneView: View {
                 .padding(.bottom, 2)
                 .accessibilityHidden(true)
             Text("No scheduled tasks", bundle: .module)
+                    .settingsControl("No scheduled tasks", pane: .automation, timing: .immediate)
                 .themedFont(.base, weight: .medium)
             Text("Ask the assistant to schedule one, for example: \"every morning at 9, summarize my notes\" -- it will use CronCreate and the job appears here.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
         }
@@ -76,7 +77,7 @@ struct CronJobsSettingsPaneView: View {
             HStack {
                 Text("Scheduled tasks: \(jobs.count)", bundle: .module)
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
                 Button {
                     revision += 1
@@ -129,16 +130,18 @@ struct CronJobsSettingsPaneView: View {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(next, style: .relative)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .monospacedDigit()
                         Text("next run", bundle: .module)
+                    .settingsControl("next run", pane: .automation, timing: .immediate)
                             .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
                     }
                 } else if !job.enabled {
                     Text("Paused", bundle: .module)
+                    .settingsControl("Paused", pane: .automation, timing: .immediate)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Toggle("", isOn: Binding(
                     get: { job.enabled },
@@ -165,7 +168,7 @@ struct CronJobsSettingsPaneView: View {
 
             Text(job.prompt)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .lineLimit(2)
 
             Button {
@@ -184,6 +187,7 @@ struct CronJobsSettingsPaneView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     if job.recentRuns.isEmpty {
                         Text("This schedule has not fired yet.", bundle: .module)
+                    .settingsControl("This schedule has not fired yet.", pane: .automation, timing: .immediate)
                             .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
                     }
@@ -200,7 +204,7 @@ struct CronJobsSettingsPaneView: View {
                                 ? String(localized: "delivered", bundle: .module)
                                 : String(localized: "chat missing", bundle: .module))
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
                 }

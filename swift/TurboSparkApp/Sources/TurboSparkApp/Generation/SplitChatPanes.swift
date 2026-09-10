@@ -51,7 +51,7 @@ private struct SplitChatPaneView: View {
                 emptyState
             }
         }
-        .background(TurboSparkTheme.pageBackgroundColor)
+        .background(.appPage)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Split pane: \(chat?.title ?? "chat")")
     }
@@ -73,7 +73,7 @@ private struct SplitChatPaneView: View {
             } label: {
                 Image(systemName: "arrow.up.left.to.line")
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .buttonStyle(.plain)
             .disabled(model.isRunning)
@@ -122,7 +122,7 @@ private struct SplitChatPaneView: View {
                 .foregroundStyle(.tertiary)
             Text("No messages yet", bundle: .module)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -144,7 +144,7 @@ private struct SplitPaneMessageRow: View {
                     .themedFont(.small)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                    .background(.appSurface.opacity(0.85))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .stroke(Color.primary.opacity(0.08), lineWidth: 1)
@@ -160,11 +160,11 @@ private struct SplitPaneMessageRow: View {
                     HStack(spacing: 5) {
                         Image(systemName: "wrench.and.screwdriver")
                             .themedFont(.tiny)
-                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .foregroundStyle(.appAccent)
                             .accessibilityHidden(true)
                         Text(call.name)
                             .themedCode(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .lineLimit(1)
                     }
                 }

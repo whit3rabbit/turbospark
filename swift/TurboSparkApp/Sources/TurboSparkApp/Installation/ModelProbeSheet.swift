@@ -58,7 +58,7 @@ struct ModelProbeSheet: View {
                     .accessibilityAddTraits(.isHeader)
                 Text("Check compatibility by reading checkpoint headers without downloading.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button("Done") { dismiss() }
@@ -78,7 +78,7 @@ struct ModelProbeSheet: View {
                         ProgressView().controlSize(.small)
                         Text("Probing repository headers...", bundle: .module)
                             .themedFont(.base)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     .padding(.vertical, 8)
                 }
@@ -95,7 +95,7 @@ struct ModelProbeSheet: View {
                                     .foregroundStyle(.orange)
                                 Text("This repository may require Hugging Face authentication.", bundle: .module)
                                     .themedFont(.tiny)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                                 Button("Open Settings") {
                                     model.openSettings(tab: .general)
                                 }
@@ -188,7 +188,7 @@ struct ModelProbeSheet: View {
                 if let listed = variants, listed.shardedSkipped > 0 {
                     Text("\(listed.shardedSkipped) multi-part file\(listed.shardedSkipped == 1 ? "" : "s") not listed: this port cannot walk a shard set.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
         }

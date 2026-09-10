@@ -22,13 +22,13 @@ extension InspectorView {
                 }
             }
 
-            LabeledContent("Path") {
+            LabeledContent {
                 HStack(spacing: 6) {
                     Text(model.modelPathText)
                         .themedFont(.small)
                         .truncationMode(.middle)
                         .lineLimit(1)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .help(model.modelPathText)
                     Button {
                         NSPasteboard.general.clearContents()
@@ -42,6 +42,9 @@ extension InspectorView {
                     .accessibilityLabel("Copy model path")
                     .accessibilityHint("Copies the on-disk model path to the clipboard")
                 }
+            } label: {
+                Text("Path", bundle: .module)
+                    .themedFont(.small)
             }
 
             Button("Choose Model Folder…") {
@@ -62,12 +65,15 @@ extension InspectorView {
 
             if let selected = model.selected {
                 let visuals = ModelFamilyVisuals.resolve(alias: selected.alias, family: selected.family, name: selected.alias)
-                LabeledContent("Installed size") {
+                LabeledContent {
                     Text(MetricFormat.storage(selected.installBytes))
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Installed size", bundle: .module)
+                        .themedFont(.small)
                 }
-                LabeledContent("Family") {
+                LabeledContent {
                     HStack(spacing: 4) {
                         Image(systemName: visuals.iconSystemName)
                             .themedFont(.tiny)
@@ -76,8 +82,11 @@ extension InspectorView {
                         Text(visuals.family)
                     }
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .help("Architecture: \(visuals.family)")
+                } label: {
+                    Text("Family", bundle: .module)
+                        .themedFont(.small)
                 }
             }
         }
@@ -158,7 +167,7 @@ extension InspectorView {
                     // "tok/s" reads as a cap of zero tokens per second.
                     Text(rateCapIsUncapped ? "uncapped" : "tok/s")
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .accessibilityHidden(true)
                 }
                 .fixedSize()

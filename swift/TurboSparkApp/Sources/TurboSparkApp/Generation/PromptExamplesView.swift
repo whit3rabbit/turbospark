@@ -13,7 +13,7 @@ struct PromptExamplesView: View {
                         .font(theme.ui(.callout, weight: .semibold))
                     Text("Choose a prompt, edit it, or write your own.", bundle: .module)
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 moreExamples
@@ -26,7 +26,7 @@ struct PromptExamplesView: View {
         .padding(14)
         .background {
             RoundedRectangle(cornerRadius: 18)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(.appSurface)
                 .overlay {
                     RoundedRectangle(cornerRadius: 18)
                         .stroke(.separator.opacity(0.5), lineWidth: 0.5)
@@ -46,11 +46,11 @@ struct PromptExamplesView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(preset.title)
                         .font(theme.ui(.tiny, weight: .semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.appText)
                         .lineLimit(2)
                     Text(preset.prompt)
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .multilineTextAlignment(.leading)
                         .lineLimit(3)
                     Spacer(minLength: 0)
@@ -62,7 +62,7 @@ struct PromptExamplesView: View {
             .buttonStyle(.plain)
             .background {
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .fill(.appPage)
                     .overlay {
                         RoundedRectangle(cornerRadius: 14)
                             .stroke(.separator.opacity(0.4), lineWidth: 0.5)
@@ -84,7 +84,7 @@ struct PromptExamplesView: View {
         } label: {
             Label("More", systemImage: "ellipsis")
                 .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

@@ -25,22 +25,22 @@ private struct UsageDashboardSectionView: View {
             if totals.turns == 0 {
                 Text("No recorded usage yet. Tokens are counted from the model's own per-turn totals as turns complete.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             } else {
                 LabeledContent("Turns") {
                     Text(totals.turns.formatted())
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 LabeledContent("Prompt tokens") {
                     Text(totals.promptTokens.formatted())
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 LabeledContent("Output tokens") {
                     Text(totals.outputTokens.formatted())
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 heatmap(totals: totals)
@@ -67,7 +67,7 @@ private struct UsageDashboardSectionView: View {
         return VStack(alignment: .leading, spacing: 6) {
             Text("Last 12 weeks", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             HStack(alignment: .top, spacing: 3) {
                 ForEach(weeks.indices, id: \.self) { weekIndex in
                     VStack(spacing: 3) {
@@ -102,13 +102,13 @@ private struct UsageDashboardSectionView: View {
         return VStack(alignment: .leading, spacing: 6) {
             Text("Output tokens, last 30 days", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Chart(series, id: \.date) { entry in
                 BarMark(
                     x: .value("Day", entry.date, unit: .day),
                     y: .value("Tokens", entry.tokens)
                 )
-                .foregroundStyle(TurboSparkTheme.accentColor.opacity(0.75))
+                .foregroundStyle(.appAccent.opacity(0.75))
             }
             .chartXAxis {
                 AxisMarks(values: .stride(by: .day, count: 7)) {
@@ -131,7 +131,7 @@ private struct UsageDashboardSectionView: View {
         return VStack(alignment: .leading, spacing: 6) {
             Text("Top chats", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             ForEach(Array(rows)) { chat in
                 Button {
                     model.selectChat(id: chat.id)
@@ -145,7 +145,7 @@ private struct UsageDashboardSectionView: View {
                         Text((chat.usage!.totalPromptTokens + chat.usage!.totalOutputTokens)
                             .formatted(.number.notation(.compactName)))
                             .themedFont(.small).monospacedDigit()
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     .contentShape(Rectangle())
                 }

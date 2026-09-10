@@ -263,7 +263,7 @@ public enum AppToolPermissionEngine {
             // `globalMcpServers` where it is already in memory; this runs
             // on the main actor and `GlobalMcpFileStore.load()` is a disk
             // read per evaluation.
-            let allServers = globalServers + (project?.mcpServers ?? [])
+            let allServers = AppToolCatalogMcp.resolvedServers(global: globalServers, project: project)
             let matched = allServers.first(where: { $0.name.lowercased() == target.server.lowercased() })
             if let server = matched, server.autoApprove && !risk.isHighRisk {
                 return .allow

@@ -61,7 +61,7 @@ struct ModelInstallView: View {
                     .themedFont(.small, weight: .semibold)
                 Text("Found models at ~/.lmstudio/models. TurboSpark can run your LM Studio models directly without copying files.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             Spacer()
@@ -84,7 +84,7 @@ struct ModelInstallView: View {
         VStack(spacing: 8) {
             Image(systemName: "bolt.horizontal.circle.fill")
                 .themedFont(.display)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
                 .help("TurboSpark Local Inference")
                 .accessibilityHidden(true)
 
@@ -94,7 +94,7 @@ struct ModelInstallView: View {
 
             Text("No local models found in ~/.turbospark. Choose a recommended model below to start.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
         }
     }
@@ -109,7 +109,7 @@ struct ModelInstallView: View {
                         .themedFont(.base, weight: .semibold)
                     Text("Ranked by compatibility with your \(model.telemetry?.chip ?? "device") memory budget.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Picker("Filter", selection: $selectedFilter) {
@@ -128,7 +128,7 @@ struct ModelInstallView: View {
                         .controlSize(.small)
                     Text("Calculating hardware fit recommendations...", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)

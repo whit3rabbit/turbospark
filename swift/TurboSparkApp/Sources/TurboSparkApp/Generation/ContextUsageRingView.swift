@@ -114,7 +114,7 @@ struct ContextUsagePopoverView: View {
                 Text(headlineText)
                     .monospacedDigit()
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
     }
@@ -177,14 +177,14 @@ struct ContextUsagePopoverView: View {
             // Verbatim: the label is built at runtime, not a literal key.
             Text(verbatim: label)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
                 .lineLimit(1)
             Spacer(minLength: 8)
             let percent = window > 0 ? Int((Double(tokens) / Double(window) * 100).rounded()) : 0
             Text("\(tokens.formatted(.number.notation(.compactName))) (\(percent)%)")
                 .monospacedDigit()
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
     }
 

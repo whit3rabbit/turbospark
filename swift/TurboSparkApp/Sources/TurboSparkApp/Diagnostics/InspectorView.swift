@@ -30,14 +30,14 @@ struct InspectorView: View {
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
         }
-        .background(TurboSparkTheme.pageBackgroundColor)
+        .background(.appPage)
     }
 
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "slider.horizontal.3")
                 .themedFont(.callout, weight: .semibold)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
                 .help("Model loading, generation, and steering options for the active model")
                 .accessibilityHidden(true)
             Text("Model Settings", bundle: .module)
@@ -49,7 +49,7 @@ struct InspectorView: View {
         .background(TurboSparkTheme.barBackgroundColor)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 0.5)
         }
         .accessibilityElement(children: .combine)

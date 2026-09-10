@@ -100,6 +100,20 @@ public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
         return .text
     }
 
+    /// The file to draw a thumbnail from, or nil when the SF Symbol says more.
+    ///
+    /// Images and PDFs only. QuickLook will happily thumbnail a `.txt` or a
+    /// `.swift` as well, and what comes back is a generic page icon that
+    /// carries LESS information than the themed symbol it would replace --
+    /// and costs a generator round trip to say nothing. `previewKind` already
+    /// resolves `.text` for a missing source, so this is nil for one too.
+    public var thumbnailSourceURL: URL? {
+        switch previewKind {
+        case .image, .pdf: return sourceURL
+        case .text: return nil
+        }
+    }
+
     /// The subtitle a chip or row shows under the file name.
     ///
     /// A VALUE rather than inline view code, which is the only reason it can

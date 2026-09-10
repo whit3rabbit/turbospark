@@ -62,7 +62,7 @@ struct InstalledModelRowView: View {
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1.5)
                             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 3))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
 
                         if descriptor.routingType == .moe {
                             ModelFeatureBadgeView.moe(details: "MoE", style: .compact)
@@ -86,7 +86,7 @@ struct InstalledModelRowView: View {
                                 .foregroundStyle(.tertiary)
                             Text(MetricFormat.storage(modelItem.installBytes))
                                 .themedFont(.tiny).monospacedDigit()
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
 

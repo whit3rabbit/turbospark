@@ -219,6 +219,6 @@ struct ModelManagerFilterBarView: View {
         .padding(.horizontal, 8)
         .frame(height: 22)
         .background(TurboSparkTheme.surfaceColor, in: Capsule())
-        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
+        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
     }
 }

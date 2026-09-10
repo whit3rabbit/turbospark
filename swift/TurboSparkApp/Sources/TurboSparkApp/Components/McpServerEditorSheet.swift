@@ -84,12 +84,12 @@ public struct McpServerEditorSheet: View {
                     .themedFont(.base, weight: .semibold)
                 Text("Configure Model Context Protocol server parameters and execution transport.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button("Close") { onDismiss() }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -103,7 +103,7 @@ public struct McpServerEditorSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Server Name", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 TextField("e.g. codebase-memory-mcp", text: $name)
                     .textFieldStyle(.roundedBorder)
             }
@@ -111,7 +111,7 @@ public struct McpServerEditorSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Description (Optional)", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 TextField("e.g. Knowledge graph and symbol search", text: $serverDescription)
                     .textFieldStyle(.roundedBorder)
             }
@@ -196,14 +196,14 @@ public struct McpServerEditorSheet: View {
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: "wrench.fill")
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                                 .padding(.top, 2)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(tool.name)
                                     .themedCode(.small, weight: .semibold)
                                 Text(tool.description)
                                     .themedFont(.tiny)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                                     .lineLimit(2)
                             }
                         }

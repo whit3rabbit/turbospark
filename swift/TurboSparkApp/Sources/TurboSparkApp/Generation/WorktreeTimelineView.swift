@@ -40,7 +40,7 @@ public struct WorktreeTimelineView: View {
                 .padding(.top, 40)
             Text("No Commit History Found", bundle: .module)
                 .themedFont(.base, weight: .medium)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text("Commit your changes to view the project timeline.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.tertiary)
@@ -99,7 +99,7 @@ public struct WorktreeTimelineView: View {
                         HStack(spacing: 6) {
                             Text(commit.author)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
 
                             Text("-", bundle: .module)
                                 .foregroundStyle(.tertiary)
@@ -136,7 +136,7 @@ public struct WorktreeTimelineView: View {
             HStack {
                 Text("Files changed in this commit:", bundle: .module)
                     .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
 
                 Spacer()
 
@@ -154,7 +154,7 @@ public struct WorktreeTimelineView: View {
                     ProgressView().controlSize(.mini)
                     Text("Loading commit files...", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .padding(.vertical, 4)
             } else if worktree.selectedCommitFiles.isEmpty {
@@ -170,7 +170,7 @@ public struct WorktreeTimelineView: View {
             }
         }
         .padding(8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+        .background(.appSurface.opacity(0.6))
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(
             RoundedRectangle(cornerRadius: 6)

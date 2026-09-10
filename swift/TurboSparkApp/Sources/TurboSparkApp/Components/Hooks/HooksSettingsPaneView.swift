@@ -50,8 +50,9 @@ public struct HooksSettingsPaneView: View {
                         if !configGroups.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("From Config", bundle: .module)
+                    .settingsControl("From Config", pane: .hooks, timing: .nextTurn)
                                     .themedFont(.small, weight: .semibold)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
 
                                 ForEach(configGroups) { group in
                                     sourceGroupCard(group: group)
@@ -64,8 +65,9 @@ public struct HooksSettingsPaneView: View {
                         if !pluginGroups.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Plugins", bundle: .module)
+                    .settingsControl("Plugins", pane: .hooks, timing: .nextTurn)
                                     .themedFont(.small, weight: .semibold)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
 
                                 ForEach(pluginGroups) { group in
                                     sourceGroupCard(group: group)
@@ -78,8 +80,9 @@ public struct HooksSettingsPaneView: View {
                         if !customGroups.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Custom & App Hooks", bundle: .module)
+                    .settingsControl("Custom & App Hooks", pane: .hooks, timing: .nextTurn)
                                     .themedFont(.small, weight: .semibold)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
 
                                 ForEach(customGroups) { group in
                                     sourceGroupCard(group: group)
@@ -117,11 +120,12 @@ public struct HooksSettingsPaneView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Hooks", bundle: .module)
+                    .settingsControl("Hooks", pane: .hooks, timing: .nextTurn)
                     .themedFont(.title2, weight: .bold)
                 HStack(spacing: 4) {
                     Text("Manage lifecycle hooks from config and enabled plugins.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Button("Learn more") {
                         if let url = URL(string: "https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks") {
                             NSWorkspace.shared.open(url)
@@ -204,7 +208,7 @@ public struct HooksSettingsPaneView: View {
                     ForEach(Array(hookStore.discoveryDiagnostics.enumerated()), id: \.offset) { _, message in
                         Text(message)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .textSelection(.enabled)
                     }
                 }
@@ -225,7 +229,7 @@ public struct HooksSettingsPaneView: View {
     private var searchBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .themedFont(.small)
             TextField("Search hooks, commands, plugins...", text: $searchText)
                 .textFieldStyle(.plain)
@@ -236,18 +240,18 @@ public struct HooksSettingsPaneView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 1)
+                .stroke(.appBorder.opacity(0.3), lineWidth: 1)
         )
     }
 
@@ -261,20 +265,20 @@ public struct HooksSettingsPaneView: View {
                 // Icon
                 Image(systemName: groupIcon(for: group.sourceType))
                     .themedFont(.base)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .frame(width: 28, height: 28)
-                    .background(Color(nsColor: .windowBackgroundColor))
+                    .background(.appPage)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
 
                 // Title and hook count
                 VStack(alignment: .leading, spacing: 2) {
                     Text(group.title)
                         .themedFont(.small, weight: .semibold)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.appText)
 
                     Text("\(group.hooks.count) hook\(group.hooks.count == 1 ? "" : "s")", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 Spacer()
@@ -297,15 +301,15 @@ public struct HooksSettingsPaneView: View {
 
                 Image(systemName: "chevron.right")
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+            .background(.appSurface.opacity(0.6))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+                    .stroke(.appBorder.opacity(0.35), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -326,13 +330,14 @@ public struct HooksSettingsPaneView: View {
         VStack(spacing: 12) {
             Image(systemName: "link.badge.plus")
                 .themedFont(.display)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             // Two states, two sentences: a fresh install with no hooks used
             // to read `No hooks found matching ''`.
             if searchText.isEmpty {
                 Text("No hooks configured", bundle: .module)
+                    .settingsControl("No hooks configured", pane: .hooks, timing: .nextTurn)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Button {
                     showingAddHookSheet = true
                 } label: {
@@ -342,7 +347,7 @@ public struct HooksSettingsPaneView: View {
             } else {
                 Text("No hooks found matching '\(searchText)'", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

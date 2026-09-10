@@ -51,8 +51,9 @@ public struct McpSettingsPaneView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Servers", bundle: .module)
+                    .settingsControl("Servers", pane: .mcp, timing: .nextTurn)
                             .themedFont(.small, weight: .semibold)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
 
                         ForEach(filteredServers) { server in
                             serverCard(server)
@@ -94,11 +95,12 @@ public struct McpSettingsPaneView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("MCP Servers", bundle: .module)
+                    .settingsControl("MCP Servers", pane: .mcp, timing: .nextTurn)
                     .themedFont(.title2, weight: .bold)
                 HStack(spacing: 4) {
                     Text("Manage Model Context Protocol servers, external tools, and integrations.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     if let url = URL(string: "https://modelcontextprotocol.io") {
                         Link("Documentation", destination: url)
                             .themedFont(.small)
@@ -149,7 +151,7 @@ public struct McpSettingsPaneView: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .themedFont(.small)
                 TextField("Search MCP servers", text: $searchText)
                     .textFieldStyle(.plain)
@@ -157,7 +159,7 @@ public struct McpSettingsPaneView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
             .frame(width: 200)
@@ -168,10 +170,10 @@ public struct McpSettingsPaneView: View {
         HStack(spacing: 4) {
             Text(label)
                 .themedFont(.small, weight: .medium)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text(value)
                 .themedFont(.small, weight: .bold).monospacedDigit()
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -193,7 +195,7 @@ public struct McpSettingsPaneView: View {
                     HStack(spacing: 6) {
                         Text(server.name)
                             .themedFont(.base, weight: .semibold)
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
 
                         if !server.discoveredTools.isEmpty {
                             Text("\(server.discoveredTools.count) tools", bundle: .module)
@@ -207,7 +209,7 @@ public struct McpSettingsPaneView: View {
 
                     Text(server.commandSummary)
                         .themedCode(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                 }
 
@@ -294,7 +296,7 @@ public struct McpSettingsPaneView: View {
                         Text(isExpanded ? "Hide Discovered Tools" : "Show Discovered Tools (\(server.discoveredTools.count))")
                             .themedFont(.tiny, weight: .medium)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
 
@@ -304,27 +306,27 @@ public struct McpSettingsPaneView: View {
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: "wrench.and.screwdriver")
                                     .themedFont(.tiny)
-                                    .foregroundStyle(TurboSparkTheme.accentColor)
+                                    .foregroundStyle(.appAccent)
                                     .padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(tool.name)
                                         .themedCode(.small, weight: .semibold)
                                     Text(tool.description)
                                         .themedFont(.tiny)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(.appSecondary)
                                 }
                             }
                             .padding(.vertical, 2)
                         }
                     }
                     .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                    .background(.appSurface.opacity(0.6))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }
         }
         .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15), lineWidth: 0.5))
     }
@@ -335,10 +337,11 @@ public struct McpSettingsPaneView: View {
                 .themedFont(.display)
                 .foregroundStyle(.secondary.opacity(0.5))
             Text("No MCP Servers Configured", bundle: .module)
+                    .settingsControl("No MCP Servers Configured", pane: .mcp, timing: .nextTurn)
                 .themedFont(.base, weight: .semibold)
             Text("Add external MCP servers (like memory, GitHub, filesystem, database, or browser tools) to extend assistant capabilities.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
             Button {

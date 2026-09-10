@@ -10,7 +10,7 @@ struct HardwareScanCard: View {
             HStack(spacing: 8) {
                 Image(systemName: "memorychip")
                     .themedFont(.base, weight: .semibold)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                     .help("Apple Silicon unified memory and hardware analysis")
                     .accessibilityHidden(true)
                 Text("Hardware & Memory Analysis", bundle: .module)
@@ -60,7 +60,7 @@ struct HardwareScanCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 0.5)
+                .stroke(.appBorder.opacity(0.6), lineWidth: 0.5)
         )
     }
 
@@ -69,10 +69,10 @@ struct HardwareScanCard: View {
             HStack(spacing: 4) {
                 Image(systemName: icon)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text(label)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Text(value)
                 .themedFont(.base, weight: .semibold)
@@ -94,7 +94,7 @@ struct MoESpotlightCard: View {
                     .accessibilityHidden(true)
                 Text("MoE (Mixture of Experts) Architecture Spotlight", bundle: .module)
                     .themedFont(.small, weight: .bold)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Text("RAM Saver", bundle: .module)
@@ -108,7 +108,7 @@ struct MoESpotlightCard: View {
 
             Text("MoE models stream weights directly from fast NVMe storage and only cache active experts in **~2-4 GB RAM**. This delivers **26B-35B parameter intelligence** on Apple Silicon without exhausting memory.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 12) {
@@ -144,11 +144,11 @@ struct MoESpotlightCard: View {
                 .accessibilityHidden(true)
             Text(text)
                 .themedFont(.tiny, weight: .medium)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
+        .background(.appPage.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -187,7 +187,7 @@ struct ActiveInstallCard: View {
                     Text(MetricFormat.percent(fraction * 100))
                 }
                 .themedFont(.small).monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             }
         }
         .padding(16)

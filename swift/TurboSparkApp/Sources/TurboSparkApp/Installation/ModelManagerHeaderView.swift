@@ -35,7 +35,7 @@ struct ModelManagerHeaderView: View {
 
                     Text(summaryText)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
 
@@ -86,8 +86,8 @@ struct ModelManagerHeaderView: View {
                 .padding(.horizontal, 10)
             }
             .buttonStyle(.plain)
-            .background(TurboSparkTheme.accentColor.opacity(0.14), in: Capsule())
-            .foregroundStyle(TurboSparkTheme.accentColor)
+            .background(.appAccent.opacity(0.14), in: Capsule())
+            .foregroundStyle(.appAccent)
             .help("Browse the curated catalog and download models")
             .accessibilityLabel("Discover models in hub")
         }

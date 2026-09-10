@@ -46,7 +46,7 @@ public struct ToastOverlayView: View {
 
             Text(toast.message)
                 .themedFont(.base, weight: .medium)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
                 .lineLimit(2)
 
             Button {
@@ -56,7 +56,7 @@ public struct ToastOverlayView: View {
             } label: {
                 Image(systemName: "xmark")
                     .themedFont(.tiny, weight: .bold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .frame(width: dismissButtonSize, height: dismissButtonSize)
                     .contentShape(Circle())
             }
@@ -69,7 +69,7 @@ public struct ToastOverlayView: View {
         .padding(.vertical, 10)
         .background {
             Capsule()
-                .fill(Color(nsColor: .windowBackgroundColor))
+                .fill(.appPage)
                 .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
                 .overlay {
                     Capsule().stroke(Color.primary.opacity(0.12), lineWidth: 0.5)

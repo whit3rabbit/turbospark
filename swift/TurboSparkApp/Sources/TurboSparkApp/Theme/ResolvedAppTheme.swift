@@ -206,6 +206,7 @@ public struct AppThemeInjector: ViewModifier {
         return content
             .environment(\.appTheme, theme)
             .tint(theme.accent)
+            .foregroundStyle(theme.foreground)
             .font(theme.uiFont)
     }
 }

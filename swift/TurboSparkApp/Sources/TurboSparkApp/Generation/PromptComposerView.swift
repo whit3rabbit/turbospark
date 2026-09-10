@@ -17,6 +17,11 @@ struct PromptComposerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if model.interactionMode == .projects {
+                ProjectPickerView(model: model) {
+                    showingProjectSettingsSheet = true
+                }
+            }
             if !model.promptAttachments.isEmpty {
                 PromptAttachmentsView(model: model)
             }
@@ -39,12 +44,12 @@ struct PromptComposerView: View {
                 // is certain to look as they compose. Persistent rather than
                 // first-send-only, so a return to the chat re-warns too.
                 HStack(spacing: 4) {
-                    Image(systemName: "ghost")
+                    GhostGlyph(size: 11, color: .secondary)
                         .accessibilityHidden(true)
                     Text("Temporary chat: this conversation can't be recovered.", bundle: .module)
                 }
                 .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityElement(children: .combine)
             }
             PromptComposerFooter(

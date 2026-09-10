@@ -52,7 +52,7 @@ public struct ChatSystemPromptSheet: View {
                             .stroke(Color.secondary.opacity(0.25)))
                 Text(effectiveSourceDescription)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16)

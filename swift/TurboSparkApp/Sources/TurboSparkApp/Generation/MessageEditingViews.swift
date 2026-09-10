@@ -37,7 +37,7 @@ struct MessageVariantSwitcherView: View {
 
             Text("\(position) / \(count)")
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .monospacedDigit()
                 .padding(.horizontal, 2)
 
@@ -84,10 +84,10 @@ struct MessageEditComposerView: View {
                 .frame(minWidth: 320, maxWidth: 640, minHeight: 56, maxHeight: 240, alignment: .leading)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                .background(.appSurface.opacity(0.85))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(TurboSparkTheme.accentColor.opacity(0.45), lineWidth: 1)
+                        .stroke(.appAccent.opacity(0.45), lineWidth: 1)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .focused($isFocused)
@@ -137,7 +137,7 @@ struct BranchEditSheet: View {
                     bundle: .module
                 )
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             }
 
             TextEditor(text: $text)
@@ -145,7 +145,7 @@ struct BranchEditSheet: View {
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 120, maxHeight: 280, alignment: .leading)
                 .padding(8)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                .background(.appSurface.opacity(0.85))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(Color.primary.opacity(0.12), lineWidth: 1)

@@ -121,7 +121,7 @@ struct ArtifactPanelView: View {
         HStack(spacing: 8) {
             Image(systemName: symbolName)
                 .themedFont(.callout)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
                 .help(subtitle)
                 .accessibilityHidden(true)
 
@@ -132,7 +132,7 @@ struct ArtifactPanelView: View {
                     .truncationMode(.middle)
                 Text(subtitle)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .lineLimit(1)
             }
 
@@ -230,7 +230,7 @@ struct ArtifactPanelView: View {
                     .themedFont(.tiny, weight: .medium)
                 Text("Pages load only local files from the artifact's own folder.", bundle: .module)
                     .themedFont(.micro)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer(minLength: 4)
             Button {
@@ -249,7 +249,7 @@ struct ArtifactPanelView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
             .help("Dismiss")
             .accessibilityLabel("Dismiss network banner")
         }
@@ -296,12 +296,7 @@ struct ArtifactPanelView: View {
             monospacedSourceView
         case .image:
             if let url = artifact.url, let image = NSImage(contentsOf: url) {
-                ScrollView([.horizontal, .vertical]) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(12)
-                }
+                ImagePreviewView(image: image)
             } else {
                 unavailableView("The image is no longer at its written path.")
             }
@@ -312,25 +307,23 @@ struct ArtifactPanelView: View {
                 unavailableView("The file is no longer at its written path.")
             }
         case .opaque:
-            VStack(spacing: 8) {
-                Image(systemName: "questionmark.folder")
-                    .themedFont(.title2)
-                    .foregroundStyle(.quaternary)
-                Text("No in-app preview for this format.", bundle: .module)
-                    .themedFont(.base, weight: .medium)
-                if artifact.existsOnDisk {
+            if artifact.existsOnDisk, let url = artifact.url {
+                VStack(spacing: 0) {
+                    QuickLookPreviewView(url: url)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityLabel("Quick Look preview of \(title)")
+                    Divider()
                     Button {
-                        if let url = artifact.url {
-                            NSWorkspace.shared.open(url)
-                        }
+                        NSWorkspace.shared.open(url)
                     } label: {
                         Text("Open with default app", bundle: .module)
                     }
                     .controlSize(.small)
+                    .padding(.vertical, 6)
                 }
+            } else {
+                unavailableView("The file is no longer at its written path.")
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -364,7 +357,7 @@ struct ArtifactPanelView: View {
                 .themedFont(.base, weight: .medium)
             Text(reason, bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
             Button {
                 close()
@@ -383,7 +376,7 @@ struct ArtifactPanelView: View {
         VStack(spacing: 0) {
             HStack {
                 Image(systemName: symbolName)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
                 Text(title)
                     .themedFont(.small, weight: .semibold)
                     .lineLimit(1)
@@ -397,7 +390,7 @@ struct ArtifactPanelView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .help("Close")
                 .accessibilityLabel("Close maximized preview")
             }

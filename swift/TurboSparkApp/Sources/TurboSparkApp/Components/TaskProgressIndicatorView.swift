@@ -24,7 +24,7 @@ public struct TaskProgressIndicatorView: View {
                 if let text = text, !text.isEmpty {
                     Text(LocalizedStringKey(text))
                         .themedFont(fitting: max(11, size * 0.8), weight: .regular)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
             .onAppear {

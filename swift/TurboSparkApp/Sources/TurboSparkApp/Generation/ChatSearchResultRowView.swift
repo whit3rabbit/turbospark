@@ -18,12 +18,12 @@ struct ChatSearchResultRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(hit.title)
                     .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                     .lineLimit(1)
                 if let snippet = hit.snippet {
                     snippetText(snippet)
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(2)
                 }
             }
@@ -32,7 +32,7 @@ struct ChatSearchResultRowView: View {
                 if hit.matchCount > 0 {
                     Text(hit.matchCount == 1 ? "1 match" : "\(hit.matchCount) matches")
                         .font(theme.ui(.tiny, weight: .medium))
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                 }
                 Text(ChatSearch.dateBucket(hit.updatedAt))
                     .font(theme.ui(.tiny))

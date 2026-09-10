@@ -16,7 +16,7 @@ struct PromptTipsButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.appSecondary)
         .help("Prompt tips")
         .accessibilityLabel("Prompt tips")
         .accessibilityHint("Shows a popover with prompt writing guidance")
@@ -51,7 +51,7 @@ struct PromptTipsGuideView: View {
     private func tipSection(_ title: String, _ detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).fontWeight(.semibold)
-            Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(detail).foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -82,7 +82,7 @@ struct PromptAttachDocumentButton: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.appSecondary)
         .onHover { isHovered = $0 }
         .disabled(isRunning || isExtracting)
         .help("Attach PDF, Word, Excel, code, or text files")
@@ -121,7 +121,7 @@ struct SearchToggleButton: View {
             .overlay {
                 if model.webSearchEnabled {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(TurboSparkTheme.accentColor.opacity(0.3), lineWidth: 0.5)
+                        .stroke(.appAccent.opacity(0.3), lineWidth: 0.5)
                 }
             }
             .contentShape(Rectangle())

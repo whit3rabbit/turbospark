@@ -22,7 +22,9 @@ public struct McpImportSheet: View {
     }
 
     let onDismiss: () -> Void
+    private let capturedProjectID: UUID?
 
+    @State private var showsSources = false
     @State private var sourceKind: SourceKind = .github
     @State private var sourceText: String = ""
     @State private var gitRef: String = "main"
@@ -35,10 +37,14 @@ public struct McpImportSheet: View {
     @State private var installedNames: Set<String> = []
     @State private var entryErrors: [String: String] = [:]
 
-    public init(model: AppModel, onDismiss: @escaping () -> Void) {
+    public init(model: AppModel, projectID: UUID? = nil, onDismiss: @escaping () -> Void) {
         self.model = model
+        self.capturedProjectID = projectID ?? model.selectedProject?.id
+        self._installToProjectScope = State(initialValue: projectID != nil)
         self.onDismiss = onDismiss
     }
+
+    private var project: AppProject? { model.projects.first { $0.id == capturedProjectID } }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -48,6 +54,7 @@ public struct McpImportSheet: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    Button { showsSources = true } label: { Text("Manage sources", bundle: .module) }
                     sourceForm
                     if let fetchError {
                         errorRow(fetchError)
@@ -61,7 +68,13 @@ public struct McpImportSheet: View {
             Divider()
             footer
         }
+        .sheet(isPresented: $showsSources) {
+            MarketplaceSourcesView(model: model, kind: .mcp, projectID: installToProjectScope ? capturedProjectID : nil) { source in
+                Task { await fetchCatalog(source: source) }
+            }
+        }
         .frame(width: 620, height: 660)
+        .onChange(of: installToProjectScope) { _, _ in installedNames = []; entryErrors = [:] }
     }
 
     // MARK: - Chrome
@@ -73,12 +86,12 @@ public struct McpImportSheet: View {
                     .themedFont(.base, weight: .semibold)
                 Text("Install servers from a catalog published in a Git repository or a local folder.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button("Close") { onDismiss() }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -94,17 +107,17 @@ public struct McpImportSheet: View {
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
-            .disabled(model.selectedProject == nil)
+            .disabled(project == nil)
             Spacer()
-            if model.selectedProject == nil {
+            if project == nil {
                 Text("Open a project to install into one.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.4))
+        .background(.appSurface.opacity(0.4))
     }
 
     private var footer: some View {
@@ -157,19 +170,19 @@ public struct McpImportSheet: View {
                 Spacer()
                 Text("\(manifest.servers.count) servers", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             if let description = manifest.manifestDescription {
                 Text(description)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             if manifest.servers.isEmpty {
                 Text("This catalog lists no servers.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             } else {
                 ForEach(manifest.servers) { entry in
                     entryRow(entry, marketplaceName: manifest.name)
@@ -188,21 +201,21 @@ public struct McpImportSheet: View {
                         if let version = entry.version {
                             Text(version)
                                 .themedCode(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                         if let category = entry.category {
                             Text(category)
                                 .themedFont(.tiny)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(TurboSparkTheme.accentColor.opacity(0.12))
+                                .background(.appAccent.opacity(0.12))
                                 .clipShape(Capsule())
                         }
                     }
                     if !entry.entryDescription.isEmpty {
                         Text(entry.entryDescription)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     // **THE COMMAND IS SHOWN BEFORE THE BUTTON, ON PURPOSE.**
                     // A catalog entry names a binary this app will spawn. What
@@ -210,11 +223,11 @@ public struct McpImportSheet: View {
                     // somebody else's repository.
                     Text(entry.commandSummary)
                         .themedCode(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .textSelection(.enabled)
                         .padding(6)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+                        .background(.appSurface.opacity(0.7))
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
                 Spacer(minLength: 8)
@@ -228,7 +241,7 @@ public struct McpImportSheet: View {
             }
         }
         .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -259,7 +272,7 @@ public struct McpImportSheet: View {
                 .foregroundStyle(.orange)
             Text(message)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -295,18 +308,19 @@ public struct McpImportSheet: View {
         }
     }
 
-    private func fetchCatalog() async {
+    private func fetchCatalog(source explicitSource: MarketplaceSource? = nil) async {
         isFetching = true
         fetchError = nil
         manifest = nil
         entryErrors = [:]
         installedNames = []
 
-        let source = resolvedSource
+        let source = explicitSource ?? resolvedSource
+        let sourceProjectID = installToProjectScope ? capturedProjectID : nil
         do {
             let fetched = try await McpMarketplaceManager.shared.fetchMarketplace(source: source)
             manifest = fetched
-            McpMarketplaceManager.shared.register(name: fetched.name, source: source)
+            try model.saveMarketplace(name: fetched.name, source: source, kind: .mcp, projectID: sourceProjectID)
         } catch {
             fetchError = error.localizedDescription
         }
@@ -315,7 +329,7 @@ public struct McpImportSheet: View {
 
     private func install(_ entry: McpMarketplaceEntry, marketplaceName: String) {
         entryErrors[entry.id] = nil
-        let project = model.selectedProject
+        let project = self.project
         let useProjectScope = installToProjectScope && project != nil
 
         // A project server collides with the GLOBAL names too: `executeMcpCall`

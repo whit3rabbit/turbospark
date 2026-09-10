@@ -21,11 +21,11 @@ struct AgentModeHintsSectionView: View {
                 Spacer()
                 Text("Used when the tool approval mode is \"Agent (classifier)\"", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Text("In Agent mode a local classifier judges each tool call the static rules would have asked about. These lists steer that judgment as plain sentences -- not shell patterns. Allow lines describe work to auto-approve in this workspace. Soft-deny lines describe destructive actions to refuse unless your recent request clearly asked for them. Hard-deny lines describe boundaries the classifier must refuse whatever you asked. Environment lines are facts about this machine it should know.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             hintEditor(
@@ -54,9 +54,9 @@ struct AgentModeHintsSectionView: View {
                 placeholder: "This is a private monorepo with strict commit signing")
         }
         .padding(14)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.appPage)
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
     }
 
     private func hintEditor(
@@ -67,10 +67,10 @@ struct AgentModeHintsSectionView: View {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text(title, bundle: .module)
                     .themedFont(.tiny, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text("one sentence per line", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.tertiary)
@@ -91,7 +91,7 @@ struct AgentModeHintsSectionView: View {
                 .frame(minHeight: 44, maxHeight: 110)
                 .scrollContentBackground(.hidden)
                 .padding(6)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+                .background(.appElevated.opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)

@@ -41,10 +41,10 @@ struct CustomModelFoldersSectionView: View {
                         VStack(spacing: 6) {
                             Image(systemName: "folder.badge.questionmark")
                                 .themedFont(.title2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                             Text("No additional model scan folders configured.", bundle: .module)
                                 .themedFont(.small)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                         .padding(.vertical, 16)
                         Spacer()
@@ -53,7 +53,7 @@ struct CustomModelFoldersSectionView: View {
                     ForEach(model.customModelDirectories, id: \.self) { dir in
                         HStack(spacing: 8) {
                             Image(systemName: "folder")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                             Text(dir)
                                 .themedCode(.small)
                                 .lineLimit(1)
@@ -63,7 +63,7 @@ struct CustomModelFoldersSectionView: View {
                             let found = scannedCounts[dir] ?? 0
                             Text("\(found) model\(found == 1 ? "" : "s")", bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
 
                             Button {
                                 ModelStorageManager.revealInFinder(path: dir)
@@ -83,19 +83,19 @@ struct CustomModelFoldersSectionView: View {
                             .help("Remove this folder from scan list")
                         }
                         .padding(8)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(.appSurface)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
 
                 Text("Add folders on external drives or secondary locations to scan for .gturbo bundles and .gguf models.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .padding(14)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
         }
         .task(id: model.customModelDirectories) {
             rescanCounts()

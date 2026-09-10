@@ -86,7 +86,7 @@ struct TasksStatusSheet: View {
                         .themedFont(.small, weight: .semibold)
                     Text(run.taskDescription.isEmpty ? run.promptHead : run.taskDescription)
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(2)
                 }
                 Spacer()
@@ -151,7 +151,7 @@ struct ToolsListSheet: View {
                             .themedCode(.small, weight: .semibold)
                         Text(tool.function.description)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     .accessibilityElement(children: .combine)
                 }
@@ -215,7 +215,7 @@ struct RewindSheet: View {
                     "Pick a prompt to rewind to. Everything after it is dropped from "
                         + "this conversation; files on disk are not touched.")
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 let targets = model.rewindTargets
                 if targets.isEmpty {
                     emptyText("Nothing to rewind: this conversation has no finished turn yet.")
@@ -284,7 +284,7 @@ struct RecapSheet: View {
                             .controlSize(.small)
                         Text("Summarizing this conversation...", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                 } else {
                     ScrollView {
@@ -325,7 +325,7 @@ private func sheetFrame<Content: View>(
     VStack(alignment: .leading, spacing: 0) {
         HStack {
             Image(systemName: iconName)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
                 .accessibilityHidden(true)
             Text(LocalizedStringKey(title), bundle: .module)
                 .themedFont(.callout, weight: .semibold)
@@ -358,14 +358,14 @@ private func sheetFrame<Content: View>(
 private func sectionHeader(_ title: String) -> some View {
     Text(title)
         .themedFont(.small, weight: .bold)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.appSecondary)
         .textCase(.uppercase)
 }
 
 private func emptyText(_ text: String) -> some View {
     Text(text)
         .themedFont(.small)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.appSecondary)
         .padding(.vertical, 20)
         .frame(maxWidth: .infinity)
 }
@@ -384,7 +384,7 @@ private func statusRow(_ label: String, _ value: String) -> some View {
     HStack(alignment: .firstTextBaseline) {
         Text(label)
             .themedFont(.small)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
         Spacer(minLength: 12)
         Text(value)
             .themedCode(.small)

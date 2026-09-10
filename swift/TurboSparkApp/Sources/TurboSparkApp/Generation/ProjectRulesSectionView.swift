@@ -29,7 +29,7 @@ struct ProjectRulesSectionView: View {
             HStack {
                 Text("Conflict Preference", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
                 Picker("Conflict Preference", selection: $rulePreference) {
                     ForEach(AppRulePreference.allCases) { pref in
@@ -44,14 +44,14 @@ struct ProjectRulesSectionView: View {
             if let rulesAutoDetectedMessage {
                 Text(rulesAutoDetectedMessage)
                     .themedFont(.small)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(.appAccent)
             }
 
             TextEditor(text: $customInstructions)
                 .themedCode(.base)
                 .frame(height: 100)
                 .padding(4)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
                 .accessibilityLabel("Project rules and instructions")
                 .accessibilityHint("Free-form text sent to the model as project-specific guidance")

@@ -39,10 +39,11 @@ public struct PermissionsSettingsPaneView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Files & Privacy Permissions", bundle: .module)
+                    .settingsControl("Files & Privacy Permissions", pane: .permissions, timing: .immediate)
                     .themedFont(.title2, weight: .bold)
                 Text("Inspect and manage macOS filesystem access, protected user folders, and tool execution permissions.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button {
@@ -74,11 +75,13 @@ public struct PermissionsSettingsPaneView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("macOS Protected Folders", bundle: .module)
+                    .settingsControl("macOS Protected Folders", pane: .permissions, timing: .immediate)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Text("Governed by macOS TCC & Sandbox", bundle: .module)
+                    .settingsControl("Governed by macOS TCC & Sandbox", pane: .permissions, timing: .immediate)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
 
             VStack(spacing: 8) {
@@ -104,12 +107,12 @@ public struct PermissionsSettingsPaneView: View {
                         .themedFont(.small, weight: .semibold)
                     Text(folder.pathDisplay)
                         .themedCode(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 Text(folder.description)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .lineLimit(1)
             }
 
@@ -135,6 +138,7 @@ public struct PermissionsSettingsPaneView: View {
                         permissionsManager.requestFolderAccess(for: folder)
                     } label: {
                         Text("Grant Access", bundle: .module)
+                    .settingsControl("Grant Access", pane: .permissions, timing: .immediate)
                             .themedFont(.small)
                     }
                     .buttonStyle(.borderedProminent)
@@ -155,7 +159,7 @@ public struct PermissionsSettingsPaneView: View {
             }
         }
         .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -169,10 +173,11 @@ public struct PermissionsSettingsPaneView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Authorized Workspace Folders", bundle: .module)
+                    .settingsControl("Authorized Workspace Folders", pane: .permissions, timing: .immediate)
                         .themedFont(.base, weight: .semibold)
                     Text("Folders you have granted macOS read access to. This does not widen what file tools may reach: those stay inside the selected project's root.", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Button {
@@ -180,6 +185,7 @@ public struct PermissionsSettingsPaneView: View {
                 } label: {
                     Label {
                         Text("Add Folder…", bundle: .module)
+                    .settingsControl("Add Folder…", pane: .permissions, timing: .immediate)
                     } icon: {
                         Image(systemName: "plus")
                     }
@@ -198,8 +204,9 @@ public struct PermissionsSettingsPaneView: View {
                             .themedFont(.title2)
                             .foregroundStyle(.secondary.opacity(0.6))
                         Text("No custom folders authorized yet.", bundle: .module)
+                    .settingsControl("No custom folders authorized yet.", pane: .permissions, timing: .immediate)
                             .themedFont(.small)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Text("Add a folder here to clear the macOS access prompt for it up front.", bundle: .module)
                             .themedFont(.tiny)
                             .foregroundStyle(.secondary.opacity(0.8))
@@ -207,7 +214,7 @@ public struct PermissionsSettingsPaneView: View {
                     .padding(.vertical, 14)
                     Spacer()
                 }
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                .background(.appSurface.opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
@@ -218,7 +225,7 @@ public struct PermissionsSettingsPaneView: View {
                     ForEach(permissionsManager.customFolders) { customFolder in
                         HStack(spacing: 10) {
                             Image(systemName: "folder.fill")
-                                .foregroundStyle(TurboSparkTheme.accentColor)
+                                .foregroundStyle(.appAccent)
                                 .themedFont(.small)
 
                             VStack(alignment: .leading, spacing: 1) {
@@ -226,7 +233,7 @@ public struct PermissionsSettingsPaneView: View {
                                     .themedFont(.small, weight: .medium)
                                 Text(customFolder.path)
                                     .themedCode(.small)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                                     .lineLimit(1)
                             }
 
@@ -253,7 +260,7 @@ public struct PermissionsSettingsPaneView: View {
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(.appSurface)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
@@ -269,6 +276,7 @@ public struct PermissionsSettingsPaneView: View {
     private var systemPrivacyLinksSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("macOS System Settings Links", bundle: .module)
+                    .settingsControl("macOS System Settings Links", pane: .permissions, timing: .immediate)
                 .themedFont(.base, weight: .semibold)
 
             HStack(spacing: 10) {
@@ -304,26 +312,26 @@ public struct PermissionsSettingsPaneView: View {
                 HStack {
                     Image(systemName: icon)
                         .themedFont(.base, weight: .semibold)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
+                        .foregroundStyle(.appAccent)
                     Spacer()
                     Image(systemName: "arrow.up.forward.app")
                         .themedFont(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 Text(title)
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
 
                 Text(subtitle)
                     .themedFont(.tiny)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
@@ -358,13 +366,13 @@ public struct PermissionsSettingsPaneView: View {
             }
             Text("Lets the local command classifier send an ALLOWLISTED shell command to the approval sheet when it scores it as hazardous. Off by default on purpose: held out by generator the classifier scores 0.70 against 0.997 in distribution, so no threshold stops it prompting on commands the Auto tier promises to run silently. Its reasons are shown either way on commands that were already going to ask.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.appPage)
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
     }
 
     // MARK: - Security Model Callout
@@ -372,23 +380,24 @@ public struct PermissionsSettingsPaneView: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "shield.lefthalf.filled")
                 .themedFont(.title2)
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("TurboSpark Safety & Sandbox Guarantee", bundle: .module)
+                    .settingsControl("TurboSpark Safety & Sandbox Guarantee", pane: .permissions, timing: .immediate)
                     .themedFont(.small, weight: .semibold)
                 Text("Model tools (`FileRead`, `FileWrite`, `FileEdit`, `Terminal`) operate under strict workspace containment checks (`resolveSecurePath`). High-risk operations (e.g., editing files outside project root, deleting directories, or executing destructive terminal commands) require manual user confirmation unless overridden in Project Settings.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(12)
-        .background(TurboSparkTheme.accentColor.opacity(0.08))
+        .background(.appAccent.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(TurboSparkTheme.accentColor.opacity(0.25), lineWidth: 0.5)
+                .stroke(.appAccent.opacity(0.25), lineWidth: 0.5)
         )
     }
 }

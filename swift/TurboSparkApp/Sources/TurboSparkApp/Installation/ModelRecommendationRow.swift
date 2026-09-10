@@ -47,7 +47,7 @@ struct ModelRecommendationRow: View {
 
                 Text(recommendation.name)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .lineLimit(1)
 
                 HStack(spacing: 8) {
@@ -57,7 +57,7 @@ struct ModelRecommendationRow: View {
                         Text(isMoE ? "RAM: ~\(MetricFormat.storage(recommendation.countedBytes)) (Cache)" : "RAM: ~\(MetricFormat.storage(recommendation.countedBytes))")
                     }
                     .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .help("Estimated unified memory footprint")
 
                     Text("-", bundle: .module)
@@ -70,7 +70,7 @@ struct ModelRecommendationRow: View {
                         Text("Disk: \(MetricFormat.storage(recommendation.installBytes))", bundle: .module)
                     }
                     .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .help("On-disk installation size")
 
                     if let minRate = recommendation.toksPerSecondMin, let maxRate = recommendation.toksPerSecondMax {
@@ -79,7 +79,7 @@ struct ModelRecommendationRow: View {
                             .foregroundStyle(.tertiary)
                         Text("\(Int(minRate))-\(Int(maxRate)) tok/s", bundle: .module)
                             .themedFont(.tiny).monospacedDigit()
-                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .foregroundStyle(.appAccent)
                     }
                 }
             }
