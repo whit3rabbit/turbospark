@@ -201,6 +201,9 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
         scope: String,
         projectRootURL: URL? = nil
     ) async throws -> InstallOutcome {
+        guard scope == "user" || (scope == "project" && projectRootURL != nil) else {
+            throw PluginLoadError(pluginName: entry.name, reason: "A project installation requires a project directory.")
+        }
         guard let sourceValue = entry.sourceValue else {
             throw PluginLoadError(
                 pluginName: entry.name,
@@ -333,20 +336,47 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
         }
         guard !matching.isEmpty else { return }
 
-        ledger.removeRecords(pluginID: pluginID, scope: scope, projectPath: projectRootURL?.standardizedFileURL.path)
-        if !ledger.hasRemainingRecords(pluginID: pluginID) {
-            for record in matching {
-                let dir = URL(fileURLWithPath: record.installPath)
-                // Only ever delete INSIDE our own cache root: a ledger row
-                // pointing elsewhere (hand-edited, or a seed dir) is left
-                // alone rather than removed.
-                let standardized = dir.standardizedFileURL.path
-                let cachePrefix = installCacheDirectory.standardizedFileURL.path
-                if standardized.hasPrefix(cachePrefix + "/") {
-                    try? FileManager.default.removeItem(at: dir)
+        var archive = ledger.load()
+        let remaining = records.filter { !matching.contains($0) }
+        archive.plugins[pluginID] = remaining.isEmpty ? nil : remaining
+        let fm = FileManager.default
+        let staging = root.appendingPathComponent(".uninstall-" + UUID().uuidString)
+        var moved: [(URL, URL)] = []
+        do {
+            if remaining.isEmpty {
+                // Quarantine complete version families before committing removal. Older
+                // versions must not reappear as untracked cache plugins on the next scan.
+                let parts = pluginID.split(separator: "@", maxSplits: 1).map(String.init)
+                let family = parts.count == 2 ? installCacheDirectory
+                    .appendingPathComponent(Self.sanitizedComponent(parts[1]))
+                    .appendingPathComponent(Self.sanitizedComponent(parts[0])) : nil
+                var targets = Set<URL>()
+                for record in matching {
+                    let dir = URL(fileURLWithPath: record.installPath).standardizedFileURL.resolvingSymlinksInPath()
+                    let prefix = installCacheDirectory.resolvingSymlinksInPath().path + "/"
+                    guard dir.path.hasPrefix(prefix) else { continue }
+                    if let family, dir.deletingLastPathComponent() == family.resolvingSymlinksInPath() {
+                        targets.insert(family)
+                    } else { targets.insert(dir) }
+                }
+                if parts.count == 2 {
+                    targets.insert(root.appendingPathComponent("data")
+                        .appendingPathComponent(Self.sanitizedComponent(parts[0] + "-" + parts[1])))
+                }
+                for target in targets.sorted(by: { $0.path < $1.path }) where fm.fileExists(atPath: target.path) {
+                    try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+                    let parked = staging.appendingPathComponent(String(moved.count))
+                    try fm.moveItem(at: target, to: parked)
+                    moved.append((target, parked))
                 }
             }
+            try ledger.saveChecked(archive)
+        } catch {
+            for (original, parked) in moved.reversed() { try fm.moveItem(at: parked, to: original) }
+            try? fm.removeItem(at: staging)
+            throw error
         }
+        if fm.fileExists(atPath: staging.path) { try fm.removeItem(at: staging) }
     }
 
     /// Removes a locally-registered folder plugin (no cache to delete).

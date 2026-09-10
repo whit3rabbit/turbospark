@@ -174,13 +174,16 @@ public final class PluginManager: @unchecked Sendable {
         }
 
         // 2. Locally-registered folders (the --plugin-dir analog).
-        for url in localPluginDirectories() {
+        let projectFolders = AppProjectFileStore.load().projects.first {
+            $0.rootDirectoryURL?.standardizedFileURL.path == projectKey
+        }?.localPluginPaths ?? []
+        for url in localPluginDirectories() + projectFolders.map({ URL(fileURLWithPath: $0) }) {
             loadPlugin(at: url, origin: .local, marketplaceName: nil, admit: admit, errors: &errors)
         }
 
         // 3. The versioned install caches, ours then Claude Code's.
         let ourLedger = ledgerInstallPaths(root: turboSparkRoot)
-        for (marketplace, _, version, url) in cachePluginDirectories(in: turboSparkRoot) {
+        for (marketplace, _, version, url) in scopedCacheDirectories(projectKey: projectKey) {
             loadPlugin(
                 at: url, origin: .marketplace, marketplaceName: marketplace,
                 fallbackVersion: ourLedger[url.standardizedFileURL.path]?.version ?? version,
@@ -316,6 +319,35 @@ public final class PluginManager: @unchecked Sendable {
             }
         }
         return results
+    }
+
+    private func scopedCacheDirectories(projectKey: String) -> [(String, String, String, URL)] {
+        let ledger = PluginLedgerStore(root: turboSparkRoot).load()
+        var result: [(String, String, String, URL)] = []
+        for id in ledger.plugins.keys.sorted() {
+            guard let records = ledger.plugins[id] else { continue }
+            let matching = records.filter {
+                $0.scope == "user" || ($0.scope == "project" && !($0.projectPath ?? "").isEmpty
+                    && $0.projectPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path } == projectKey)
+            }
+            // A project-specific version takes precedence over an inherited user version.
+            guard let record = matching.first(where: { $0.scope == "project" }) ?? matching.first else { continue }
+            let parts = id.split(separator: "@", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            result.append((parts[1], parts[0], record.version, URL(fileURLWithPath: record.installPath)))
+        }
+        for entry in cachePluginDirectories(in: turboSparkRoot) {
+            let id = "\(entry.plugin)@\(entry.marketplace)"
+            let trackedFamily = ledger.plugins.keys.contains { key in
+                let parts = key.split(separator: "@", maxSplits: 1).map(String.init)
+                return parts.count == 2 && PluginMarketplaceManager.sanitizedComponent(parts[0]) == entry.plugin
+                    && PluginMarketplaceManager.sanitizedComponent(parts[1]) == entry.marketplace
+            }
+            if ledger.plugins[id] == nil && !trackedFamily {
+                result.append((entry.marketplace, entry.plugin, entry.version, entry.url))
+            }
+        }
+        return result
     }
 
     private func localPluginDirectories() -> [URL] {

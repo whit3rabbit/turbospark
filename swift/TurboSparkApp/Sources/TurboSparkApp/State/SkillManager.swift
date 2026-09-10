@@ -41,13 +41,20 @@ public final class SkillManager: @unchecked Sendable {
     /// name-only keys are still honoured on read so nobody's existing
     /// preference is silently forgotten.
     private static func disabledKey(scope: SkillScope, name: String) -> String {
-        "\(scope.isProjectScope ? "project" : "user"):\(name.lowercased())"
+        if case .projectLocal(let path) = scope {
+            let root = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+            return "project:\(root):\(name.lowercased())"
+        }
+        return "user:\(name.lowercased())"
     }
 
     /// Whether the given skill is persisted as user-disabled.
     public func isSkillDisabled(scope: SkillScope, name: String) -> Bool {
         let names = disabledSkillNames
-        return names.contains(Self.disabledKey(scope: scope, name: name))
+        let key = Self.disabledKey(scope: scope, name: name)
+        if names.contains("enabled:" + key) { return false }
+        return names.contains(key)
+            || (scope.isProjectScope && names.contains("project:" + name.lowercased()))
             || names.contains(name.lowercased())
     }
 
@@ -59,8 +66,9 @@ public final class SkillManager: @unchecked Sendable {
             names.remove(key)
             // Also clears a pre-scope key, or re-enabling would appear to do
             // nothing for anyone upgrading.
-            names.remove(name.lowercased())
+            names.insert("enabled:" + key)
         } else {
+            names.remove("enabled:" + key)
             names.insert(key)
         }
         disabledSkillNames = names
@@ -339,7 +347,18 @@ public final class SkillManager: @unchecked Sendable {
             mergedMap[skill.name.lowercased()] = skill
         }
 
-        return Array(mergedMap.values).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let project = AppProjectFileStore.load().projects.first {
+            $0.rootDirectoryURL?.standardizedFileURL.resolvingSymlinksInPath()
+                == projectURL.standardizedFileURL.resolvingSymlinksInPath()
+        }
+        return mergedMap.values.map { skill in
+            var result = skill
+            if let enabled = project?.enabledSkills[skill.name.lowercased()] {
+                // Disabling a plugin still removes all its contributions upstream.
+                result.isEnabled = enabled
+            }
+            return result
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     // MARK: - Argument Substitution & Execution

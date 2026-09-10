@@ -17,27 +17,43 @@ public struct SkillsSettingsPaneView: View {
     }
 
     @State private var scopeFilter: SkillScopeFilter = .all
+    @State private var projectID: UUID?
     @State private var searchQuery: String = ""
-    @State private var selectedSkillID: UUID? = nil
+    @State private var selectedSkillID: String? = nil
     @State private var isCreatingSkill: Bool = false
     @State private var isEditingSkill: Bool = false
     @State private var isImportingSkill: Bool = false
     @State private var skillToDelete: AppSkill? = nil
     @State private var isConfirmingDelete: Bool = false
 
-    public init(model: AppModel) {
+    public init(model: AppModel, projectID: UUID? = nil) {
         self.model = model
+        self._projectID = State(initialValue: projectID)
     }
+
+    private var managedSkills: [AppSkill] {
+        var result = model.userSkills
+        if let root = scopedProject?.rootDirectoryURL {
+            result += SkillManager.shared.discoverProjectSkills(projectRootURL: root)
+        }
+        result += PluginManager.shared.pluginSkills(projectURL: scopedProject?.rootDirectoryURL)
+        return result.map { skill in
+            var copy = skill
+            copy.isEnabled = scopedProject?.enabledSkills[skill.name.lowercased()] ?? skill.isEnabled
+            return copy
+        }
+    }
+    private var scopedProject: AppProject? { model.projects.first { $0.id == projectID } }
 
     private var filteredSkills: [AppSkill] {
         let list: [AppSkill]
         switch scopeFilter {
         case .all:
-            list = model.allManagedSkills
+            list = managedSkills
         case .user:
-            list = model.userSkills
+            list = managedSkills.filter { !$0.scope.isProjectScope }
         case .project:
-            list = model.projectSkills
+            list = managedSkills.filter { $0.scope.isProjectScope }
         }
 
         if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -53,34 +69,35 @@ public struct SkillsSettingsPaneView: View {
 
     private var selectedSkill: AppSkill? {
         if let id = selectedSkillID {
-            return model.allManagedSkills.first { $0.id == id }
+            return managedSkills.first { $0.sourceURL.path == id }
         }
         return filteredSkills.first
     }
 
     public var body: some View {
         VStack(spacing: 0) {
+            ExtensionScopePicker(model: model, projectID: $projectID)
             // Header bar
             headerControlBar
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(.appPage)
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
-            if model.allManagedSkills.isEmpty {
+            if managedSkills.isEmpty {
                 emptyStateView
             } else {
                 HStack(spacing: 0) {
                     // Left list
                     skillsListView
                         .frame(width: 300)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                        .background(.appSurface.opacity(0.5))
 
                     Rectangle()
-                        .fill(TurboSparkTheme.hairlineColor)
+                        .fill(.appBorder)
                         .frame(width: 1)
 
                     // Right detail
@@ -94,7 +111,7 @@ public struct SkillsSettingsPaneView: View {
                                 .foregroundStyle(.tertiary)
                             Text("Select a skill to inspect instructions and parameters.", bundle: .module)
                                 .themedFont(.base)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -102,7 +119,7 @@ public struct SkillsSettingsPaneView: View {
             }
         }
         .sheet(isPresented: $isCreatingSkill) {
-            SkillEditorSheet(model: model, skillToEdit: nil, defaultScope: scopeFilter == .project ? .projectLocal(projectPath: model.selectedProject?.rootDirectoryPath ?? "") : .userGlobal)
+            SkillEditorSheet(model: model, skillToEdit: nil, defaultScope: projectID != nil ? .projectLocal(projectPath: scopedProject?.rootDirectoryPath ?? "") : .userGlobal)
         }
         .sheet(isPresented: $isEditingSkill) {
             if let skill = selectedSkill {
@@ -110,7 +127,7 @@ public struct SkillsSettingsPaneView: View {
             }
         }
         .sheet(isPresented: $isImportingSkill) {
-            SkillImportSheet(model: model)
+            SkillImportSheet(model: model, projectID: projectID)
         }
         .confirmationDialog(
             "Delete Skill",
@@ -119,7 +136,7 @@ public struct SkillsSettingsPaneView: View {
         ) { skill in
             Button("Delete '\(skill.name)'", role: .destructive) {
                 model.removeSkill(skill)
-                if selectedSkillID == skill.id {
+                if selectedSkillID == skill.sourceURL.path {
                     selectedSkillID = nil
                 }
             }
@@ -137,24 +154,25 @@ public struct SkillsSettingsPaneView: View {
                     Text(filter.rawValue).tag(filter)
                 }
             }
+            .settingsControl("Scope", pane: .skills, timing: .nextTurn)
             .pickerStyle(.segmented)
-            .frame(width: 280)
+            .frame(maxWidth: 280)
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 TextField("Search skills...", text: $searchQuery)
                     .textFieldStyle(.plain)
                     .themedFont(.base)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(TurboSparkTheme.hairlineColor, lineWidth: 1)
+                    .stroke(.appBorder, lineWidth: 1)
             )
 
             Spacer()
@@ -190,7 +208,7 @@ public struct SkillsSettingsPaneView: View {
         List(selection: $selectedSkillID) {
             ForEach(filteredSkills) { skill in
                 skillRowView(skill: skill)
-                    .tag(skill.id)
+                    .tag(skill.sourceURL.path)
                     .padding(.vertical, 4)
             }
         }
@@ -224,7 +242,7 @@ public struct SkillsSettingsPaneView: View {
 
             Text(skill.skillDescription)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .lineLimit(2)
 
             HStack(spacing: 8) {
@@ -270,6 +288,7 @@ public struct SkillsSettingsPaneView: View {
             Image(systemName: "arrow.2.squarepath")
                 .themedFont(.micro)
             Text("Shadowed", bundle: .module)
+                    .settingsControl("Shadowed", pane: .skills, timing: .nextTurn)
                 .themedFont(.micro, weight: .semibold)
         }
         .padding(.horizontal, 6)
@@ -315,22 +334,36 @@ public struct SkillsSettingsPaneView: View {
                             }
                             Text(skill.skillDescription)
                                 .themedFont(.base)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
 
                         Spacer()
 
-                        HStack(spacing: 8) {
+                        VStack(alignment: .trailing, spacing: 8) {
+                            if let project = scopedProject {
+                                ExtensionOverridePicker(enabled: Binding(
+                                    get: { project.enabledSkills[skill.name.lowercased()] },
+                                    set: { model.setSkillOverride(name: skill.name, enabled: $0, projectID: project.id) }))
+                            }
                             // The list greys a disabled skill and this pane
                             // had no way to re-enable it; the only toggle was
                             // in the composer's plus menu.
+                            if scopedProject == nil {
                             Toggle("Enabled", isOn: Binding(
                                 get: { skill.isEnabled },
                                 set: { _ in model.toggleSkillEnabled(skill) }
                             ))
+            .settingsControl("Enabled", pane: .skills, timing: .nextTurn)
                             .toggleStyle(.switch)
                             .controlSize(.small)
+                            } else {
+                                Text(skill.isEnabled ? "Enabled" : "Disabled").themedFont(.small)
+                            }
+                            if case .plugin = skill.scope {
+                                Button { model.openSettings(tab: .plugins) } label: { Text("Manage plugin", bundle: .module) }
+                            }
 
+                            if SkillManager.shared.ownsSkill(skill) {
                             Button {
                                 isEditingSkill = true
                             } label: {
@@ -338,6 +371,16 @@ public struct SkillsSettingsPaneView: View {
                             }
                             .buttonStyle(.bordered)
 
+                            }
+                            if !SkillManager.shared.ownsSkill(skill) {
+                                Menu {
+                                    Button("Copy to User") { _ = model.importSkill(from: skill.skillDirectoryURL ?? skill.sourceURL, targetScope: .userGlobal) }
+                                    if let path = scopedProject?.rootDirectoryPath {
+                                        Button("Copy to Project") { _ = model.importSkill(from: skill.skillDirectoryURL ?? skill.sourceURL, targetScope: .projectLocal(projectPath: path)) }
+                                    }
+                                } label: { Text("Copy to TurboSpark", bundle: .module)
+                    .settingsControl("Copy to TurboSpark", pane: .skills, timing: .nextTurn) }
+                            }
                             Button {
                                 NSWorkspace.shared.activateFileViewerSelecting([skill.sourceURL])
                             } label: {
@@ -345,6 +388,7 @@ public struct SkillsSettingsPaneView: View {
                             }
                             .buttonStyle(.bordered)
 
+                            if SkillManager.shared.ownsSkill(skill) {
                             Button(role: .destructive) {
                                 skillToDelete = skill
                                 isConfirmingDelete = true
@@ -352,6 +396,7 @@ public struct SkillsSettingsPaneView: View {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.bordered)
+                            }
                         }
                     }
 
@@ -367,11 +412,11 @@ public struct SkillsSettingsPaneView: View {
                     }
                 }
                 .padding(16)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(.appSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(TurboSparkTheme.hairlineColor, lineWidth: 1)
+                        .stroke(.appBorder, lineWidth: 1)
                 )
 
                 // No "Allowed Tools & Permissions" section. `allowed-tools`
@@ -383,6 +428,7 @@ public struct SkillsSettingsPaneView: View {
                 if !skill.manifest.paths.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Activation Path Triggers", bundle: .module)
+                    .settingsControl("Activation Path Triggers", pane: .skills, timing: .nextTurn)
                             .themedFont(.base, weight: .semibold)
                         FlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(skill.manifest.paths, id: \.self) { pathPattern in
@@ -412,14 +458,14 @@ public struct SkillsSettingsPaneView: View {
                                 HStack(spacing: 6) {
                                     Image(systemName: "doc")
                                         .themedFont(.small)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(.appSecondary)
                                     Text(fileName)
                                         .themedCode(.small)
                                     Spacer()
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                                .background(.appSurface.opacity(0.6))
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
                             }
                         }
@@ -430,6 +476,7 @@ public struct SkillsSettingsPaneView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Instruction Body (SKILL.md)", bundle: .module)
+                    .settingsControl("Instruction Body (SKILL.md)", pane: .skills, timing: .nextTurn)
                             .themedFont(.base, weight: .semibold)
                         Spacer()
                         Button {
@@ -446,11 +493,11 @@ public struct SkillsSettingsPaneView: View {
                         .themedCode(.base)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(nsColor: .textBackgroundColor))
+                        .background(.appElevated)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 1)
+                                .stroke(.appBorder, lineWidth: 1)
                         )
                 }
             }
@@ -462,7 +509,7 @@ public struct SkillsSettingsPaneView: View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
@@ -480,14 +527,15 @@ public struct SkillsSettingsPaneView: View {
         VStack(spacing: 16) {
             Image(systemName: "wand.and.stars")
                 .themedFont(.display)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
 
             Text("No Skills Installed", bundle: .module)
+                    .settingsControl("No Skills Installed", pane: .skills, timing: .nextTurn)
                 .themedFont(.title2, weight: .bold)
 
             Text("Skills allow you to package and inject specialized prompts, workflow instructions, reference scripts, and tool permissions into conversations.", bundle: .module)
                 .themedFont(.base)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 440)
 

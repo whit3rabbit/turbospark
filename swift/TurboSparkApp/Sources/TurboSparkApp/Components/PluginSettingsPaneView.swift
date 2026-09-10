@@ -12,70 +12,86 @@ public struct PluginSettingsPaneView: View {
     @ObservedObject private var hookStore = AppHookStore.shared
     @Environment(\.appTheme) private var theme
 
+    @State private var projectID: UUID?
     @State private var selectedPluginID: String? = nil
     @State private var isShowingMarketplace = false
     @State private var pluginToRemove: LoadedPlugin? = nil
     @State private var isConfirmingRemove = false
 
-    public init(model: AppModel) {
+    public init(model: AppModel, projectID: UUID? = nil) {
         self.model = model
+        self._projectID = State(initialValue: projectID)
+    }
+
+    private var scopedProject: AppProject? { model.projects.first { $0.id == projectID } }
+    private var plugins: [LoadedPlugin] {
+        // Reading the published revision makes a management edit refresh this resolution.
+        _ = model.installedPlugins
+        return PluginManager.shared.resolve(projectURL: scopedProject?.rootDirectoryURL).plugins
     }
 
     private var selectedPlugin: LoadedPlugin? {
         if let selectedPluginID {
-            return model.installedPlugins.first { $0.id == selectedPluginID }
+            return plugins.first { $0.id == selectedPluginID }
         }
-        return model.installedPlugins.first
+        return plugins.first
     }
 
     public var body: some View {
         VStack(spacing: 0) {
+            ExtensionScopePicker(model: model, projectID: $projectID)
             headerControlBar
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(.appPage)
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
-            if model.installedPlugins.isEmpty {
+            if plugins.isEmpty {
                 emptyState
             } else {
                 HStack(spacing: 0) {
                     pluginList
                         .frame(width: 300)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                        .background(.appSurface.opacity(0.5))
 
                     Rectangle()
-                        .fill(TurboSparkTheme.hairlineColor)
+                        .fill(.appBorder)
                         .frame(width: 1)
 
                     if let plugin = selectedPlugin {
                         pluginDetail(plugin)
                     } else {
                         Text("Select a plugin to inspect its contributions.", bundle: .module)
+                    .settingsControl("Select a plugin to inspect its contributions.", pane: .plugins, timing: .nextTurn)
                             .themedFont(.base)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
             }
         }
         .sheet(isPresented: $isShowingMarketplace) {
-            PluginMarketplaceSheet(model: model)
+            PluginMarketplaceSheet(model: model, projectID: projectID)
         }
         .confirmationDialog(
             "Remove Plugin",
             isPresented: $isConfirmingRemove,
             presenting: pluginToRemove
         ) { plugin in
-            Button("Remove '\(plugin.name)'", role: .destructive) {
-                model.uninstallPlugin(plugin, scope: .user)
+            ForEach(model.pluginInstallationScopes(plugin.id), id: \.label) { scope in
+                Button("Remove from \(scope.label)", role: .destructive) {
+                    model.uninstallPlugin(plugin, scope: scope)
+                }
+            }
+            if plugin.origin == .local {
+                Button("Unregister folder", role: .destructive) { model.removeLocalPluginFolder(plugin, scope: scopedProject.map(PluginInstallScope.project) ?? .user) }
             }
             Button("Cancel", role: .cancel) {}
         } message: { plugin in
-            Text("Uninstalls the plugin from user scope and removes its install cache. Hooks it contributed stop immediately.", bundle: .module)
+            Text("Removes only the selected installation. Other projects keep their installation. Shared files remain until the last installation is removed.", bundle: .module)
         }
     }
 
@@ -113,7 +129,7 @@ public struct PluginSettingsPaneView: View {
         panel.allowsMultipleSelection = false
         panel.message = "Choose a folder containing .claude-plugin/plugin.json or plugin directories"
         if panel.runModal() == .OK, let url = panel.url {
-            model.addLocalPluginFolder(at: url.path)
+            model.addLocalPluginFolder(at: url.path, scope: scopedProject.map(PluginInstallScope.project) ?? .user)
         }
     }
 
@@ -131,14 +147,14 @@ public struct PluginSettingsPaneView: View {
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Rectangle().fill(TurboSparkTheme.hairlineColor).frame(height: 1)
+                Rectangle().fill(.appBorder).frame(height: 1)
             }
 
-            List(model.installedPlugins, selection: $selectedPluginID) { plugin in
+            List(plugins, selection: $selectedPluginID) { plugin in
                 PluginListRow(
                     plugin: plugin,
-                    isEnabled: model.isPluginEnabled(plugin),
-                    toggle: { model.setPluginEnabled(plugin, $0) })
+                    isEnabled: PluginManager.shared.isEnabled(pluginID: plugin.id, projectURL: scopedProject?.rootDirectoryURL),
+                    toggle: { model.setPluginPreference(id: plugin.id, enabled: $0, scope: scopedProject.map(PluginInstallScope.project) ?? .user) })
                     .tag(plugin.id)
             }
             .listStyle(.sidebar)
@@ -155,7 +171,7 @@ public struct PluginSettingsPaneView: View {
                         .font(theme.ui(.title3, weight: .semibold))
                     Text(plugin.version)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Spacer()
                     originBadge(plugin)
                 }
@@ -163,7 +179,7 @@ public struct PluginSettingsPaneView: View {
                 if !plugin.pluginDescription.isEmpty {
                     Text(plugin.pluginDescription)
                         .font(theme.ui(.base))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 LabeledRow(label: "ID", value: plugin.id)
@@ -176,24 +192,25 @@ public struct PluginSettingsPaneView: View {
                         "Installed by Claude Code and managed read-only here. Removing it only clears TurboSpark's enable record.",
                         systemImage: "info.circle")
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
 
                 if !plugin.manifest.unsupportedNotes.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Not applied by this client", bundle: .module)
+                    .settingsControl("Not applied by this client", pane: .plugins, timing: .nextTurn)
                             .font(theme.ui(.base, weight: .semibold))
                         ForEach(plugin.manifest.unsupportedNotes, id: \.self) { note in
                             Label(note, systemImage: "minus.circle")
                                 .font(theme.ui(.small))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
                 }
 
                 optionsEditor(plugin)
 
-                if model.selectedProject != nil {
+                if scopedProject != nil {
                     projectOverrideSection(plugin)
                 }
 
@@ -235,6 +252,7 @@ public struct PluginSettingsPaneView: View {
         let counts = PluginContributionCounts(plugin: plugin)
         return VStack(alignment: .leading, spacing: 6) {
             Text("Contributions", bundle: .module)
+                    .settingsControl("Contributions", pane: .plugins, timing: .nextTurn)
                 .font(theme.ui(.base, weight: .semibold))
             HStack(spacing: 14) {
                 ContributionCount(label: "Commands", count: counts.commands)
@@ -245,7 +263,7 @@ public struct PluginSettingsPaneView: View {
             }
             Text("Counts reflect what this client loads from the plugin as installed. Hooks always pass the SHA-256 trust review before they run.", bundle: .module)
                 .font(theme.ui(.small))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
     }
 
@@ -256,6 +274,7 @@ public struct PluginSettingsPaneView: View {
             if !specs.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Options", bundle: .module)
+                    .settingsControl("Options", pane: .plugins, timing: .nextTurn)
                         .font(theme.ui(.base, weight: .semibold))
                     ForEach(specs) { spec in
                         HStack {
@@ -264,7 +283,7 @@ public struct PluginSettingsPaneView: View {
                                 if !spec.description.isEmpty {
                                     Text(spec.description)
                                         .font(theme.ui(.small))
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(.appSecondary)
                                 }
                             }
                             Spacer()
@@ -273,7 +292,7 @@ public struct PluginSettingsPaneView: View {
                     }
                     Text("Values reach the plugin's hooks and MCP servers as CLAUDE_PLUGIN_OPTION_<KEY> environment variables and ${user_config.KEY} substitutions. Sensitive values are masked and never substituted into visible content.", bundle: .module)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
         }
@@ -309,10 +328,11 @@ public struct PluginSettingsPaneView: View {
     }
 
     private func projectOverrideSection(_ plugin: LoadedPlugin) -> some View {
-        let project = model.selectedProject!
+        let project = scopedProject!
         let resolved = project.enabledPlugins[plugin.id].map { $0 ? "on" : "off" }
         return VStack(alignment: .leading, spacing: 6) {
             Text("Project override", bundle: .module)
+                    .settingsControl("Project override", pane: .plugins, timing: .nextTurn)
                 .font(theme.ui(.base, weight: .semibold))
             HStack {
                 Text("For \(project.name):", bundle: .module)
@@ -322,16 +342,14 @@ public struct PluginSettingsPaneView: View {
                     get: { resolved ?? "inherit" },
                     set: { newValue in
                         switch newValue {
-                        case "on": model.setPluginEnabledForSelectedProject(plugin, true)
-                        case "off": model.setPluginEnabledForSelectedProject(plugin, false)
+                        case "on": model.setPluginPreference(id: plugin.id, enabled: true, scope: .project(project))
+                        case "off": model.setPluginPreference(id: plugin.id, enabled: false, scope: .project(project))
                         default:
-                            var updated = project
-                            updated.enabledPlugins.removeValue(forKey: plugin.id)
-                            model.updateProject(updated)
-                            model.reloadPlugins()
+                            model.setPluginPreference(id: plugin.id, enabled: nil, scope: .project(project))
                         }
                     })) {
-                    Text("Inherit user setting", bundle: .module).tag("inherit")
+                    Text("Inherit user setting", bundle: .module)
+                    .settingsControl("Inherit user setting", pane: .plugins, timing: .nextTurn).tag("inherit")
                     Text("Enabled", bundle: .module).tag("on")
                     Text("Disabled", bundle: .module).tag("off")
                 }
@@ -349,8 +367,9 @@ public struct PluginSettingsPaneView: View {
                 .themedFont(.display)
                 .foregroundStyle(.tertiary)
             Text("No plugins installed.", bundle: .module)
+                    .settingsControl("No plugins installed.", pane: .plugins, timing: .nextTurn)
                 .themedFont(.base)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Text("Browse a marketplace, or add a local folder containing .claude-plugin/plugin.json.", bundle: .module)
                 .themedFont(.base)
                 .foregroundStyle(.tertiary)
@@ -378,7 +397,7 @@ private struct PluginListRow: View {
                     .themedFont(.base, weight: .medium)
                 Text("\(plugin.originKey) - \(plugin.version)", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Toggle("", isOn: Binding(get: { isEnabled }, set: toggle))
@@ -399,7 +418,7 @@ private struct ContributionCount: View {
                 .themedFont(.title3, weight: .semibold)
             Text(label)
                 .themedFont(.tiny)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(count) \(label)")
@@ -417,7 +436,7 @@ private struct LabeledRow: View {
                 .frame(width: 80, alignment: .leading)
             Text(value)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .textSelection(.enabled)
             Spacer()
         }

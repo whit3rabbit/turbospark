@@ -51,7 +51,7 @@ extension AppModel {
         scope: SkillScope
     ) -> Result<AppSkill, Error> {
         do {
-            let projectURL = selectedProject?.rootDirectoryURL
+            let projectURL = scope.projectRootURL
             let skill = try SkillManager.shared.createSkill(
                 name: name,
                 description: description,
@@ -116,7 +116,7 @@ extension AppModel {
     @discardableResult
     public func importSkill(from sourceURL: URL, targetScope: SkillScope) -> Result<AppSkill, Error> {
         do {
-            let projectURL = selectedProject?.rootDirectoryURL
+            let projectURL = targetScope.projectRootURL
             let skill = try SkillManager.shared.importSkill(
                 from: sourceURL,
                 targetScope: targetScope,

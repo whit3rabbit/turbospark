@@ -84,6 +84,7 @@ extension SkillManager {
 
     /// Saves modifications to an existing skill on disk.
     public func saveSkill(_ skill: AppSkill) throws {
+        try requireOwnedSkill(skill)
         let serialized = SkillParser.serializeSkill(skill)
         let targetURL = skill.sourceURL
         let targetDir = targetURL.deletingLastPathComponent()
@@ -93,6 +94,7 @@ extension SkillManager {
 
     /// Deletes a skill and its containing folder if it is directory-based.
     public func deleteSkill(_ skill: AppSkill) throws {
+        try requireOwnedSkill(skill)
         if skill.isDirectoryBased, let dirURL = skill.skillDirectoryURL {
             try fileManager.removeItem(at: dirURL)
         } else {

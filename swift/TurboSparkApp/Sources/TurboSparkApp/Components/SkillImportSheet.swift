@@ -22,6 +22,7 @@ public struct SkillImportSheet: View {
         var isSelected: Bool = false
     }
 
+    @State private var showsSources = false
     @State private var mode: ImportMode = .localHarnesses
     @State private var candidates: [ImportableSkillCandidate] = []
     @State private var isLoading: Bool = true
@@ -34,22 +35,27 @@ public struct SkillImportSheet: View {
     @State private var remoteError: String? = nil
     @State private var installingSkillNames: Set<String> = []
 
-    public init(model: AppModel) {
+    private let capturedProjectID: UUID?
+    public init(model: AppModel, projectID: UUID? = nil) {
         self.model = model
+        self.capturedProjectID = projectID ?? model.selectedProject?.id
+        self._importToProjectScope = State(initialValue: projectID != nil)
     }
+    private var project: AppProject? { model.projects.first { $0.id == capturedProjectID } }
 
     public var body: some View {
         VStack(spacing: 0) {
             headerBar
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
+            Button { showsSources = true } label: { Text("Manage sources", bundle: .module) }
             modeSelectorBar
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
             switch mode {
@@ -60,6 +66,12 @@ public struct SkillImportSheet: View {
             }
         }
         .frame(minWidth: 640, minHeight: 480)
+        .sheet(isPresented: $showsSources) {
+            MarketplaceSourcesView(model: model, kind: .skills, projectID: importToProjectScope ? capturedProjectID : nil) { source in
+                mode = .remoteMarketplace
+                fetchRemoteMarketplace(source: source)
+            }
+        }
         .onAppear {
             scanCandidates()
         }
@@ -74,7 +86,7 @@ public struct SkillImportSheet: View {
                     .themedFont(.base, weight: .semibold)
                 Text("Acquire skills from local agent harnesses (Claude, Cursor, Codex) or remote Git/HTTPS marketplaces.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button("Close") {
@@ -84,7 +96,7 @@ public struct SkillImportSheet: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.appPage)
     }
 
     private var modeSelectorBar: some View {
@@ -107,11 +119,11 @@ public struct SkillImportSheet: View {
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
-            .disabled(model.selectedProject == nil && !importToProjectScope)
+            .disabled(project == nil && !importToProjectScope)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.4))
+        .background(.appSurface.opacity(0.4))
     }
 
     // MARK: - Local Harness Content
@@ -123,17 +135,17 @@ public struct SkillImportSheet: View {
                 ProgressView()
                 Text("Scanning agent skill directories...", bundle: .module)
                     .themedFont(.base)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if candidates.isEmpty {
             VStack(spacing: 16) {
                 Image(systemName: "folder.badge.questionmark")
                     .themedFont(.display)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text("No external skills found in standard agent locations.", bundle: .module)
                     .themedFont(.base)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
 
                 Button("Choose Custom Folder...") {
                     selectCustomFolder()
@@ -162,7 +174,7 @@ public struct SkillImportSheet: View {
                                 }
                                 Text(cand.skill.skillDescription)
                                     .themedFont(.small)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                                     .lineLimit(1)
                                 Text(cand.sourceLocationDescription)
                                     .themedFont(.tiny)
@@ -175,7 +187,7 @@ public struct SkillImportSheet: View {
                 }
 
                 Rectangle()
-                    .fill(TurboSparkTheme.hairlineColor)
+                    .fill(.appBorder)
                     .frame(height: 1)
 
                 HStack {
@@ -205,7 +217,7 @@ public struct SkillImportSheet: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(.appPage)
             }
         }
     }
@@ -233,10 +245,10 @@ public struct SkillImportSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.2))
+            .background(.appSurface.opacity(0.2))
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
             if let error = remoteError {
@@ -246,7 +258,7 @@ public struct SkillImportSheet: View {
                         .foregroundStyle(.red)
                     Text(error)
                         .themedFont(.base)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -260,7 +272,7 @@ public struct SkillImportSheet: View {
                             if let desc = manifest.description {
                                 Text(desc)
                                     .themedFont(.small)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
                         }
                         Spacer()
@@ -270,10 +282,10 @@ public struct SkillImportSheet: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
-                    .background(Color(nsColor: .windowBackgroundColor))
+                    .background(.appPage)
 
                     Rectangle()
-                        .fill(TurboSparkTheme.hairlineColor)
+                        .fill(.appBorder)
                         .frame(height: 1)
 
                     List(manifest.skills) { entry in
@@ -285,7 +297,7 @@ public struct SkillImportSheet: View {
                                     if let v = entry.version {
                                         Text(v)
                                             .themedFont(.tiny)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(.appSecondary)
                                     }
                                     if let cat = entry.category {
                                         Text(cat)
@@ -298,7 +310,7 @@ public struct SkillImportSheet: View {
                                 }
                                 Text(entry.description)
                                     .themedFont(.small)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.appSecondary)
                             }
 
                             Spacer()
@@ -321,10 +333,10 @@ public struct SkillImportSheet: View {
                 VStack(spacing: 12) {
                     Image(systemName: "globe.badge.chevron.backward")
                         .themedFont(.display)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                     Text("Enter a GitHub repository (e.g. 'whit3rabbit/agent-skills') or direct HTTPS URL to browse and install remote skills.", bundle: .module)
                         .themedFont(.base)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 440)
                 }
@@ -338,7 +350,7 @@ public struct SkillImportSheet: View {
 
     private func scanCandidates() {
         isLoading = true
-        let projectURL = model.selectedProject?.rootDirectoryURL
+        let projectURL = project?.rootDirectoryURL
         DispatchQueue.global(qos: .userInitiated).async {
             let manager = SkillManager.shared
             var found: [ImportableSkillCandidate] = []
@@ -394,7 +406,7 @@ public struct SkillImportSheet: View {
 
         if panel.runModal() == .OK, let selectedURL = panel.url {
             let targetScope: SkillScope
-            if importToProjectScope, let path = model.selectedProject?.rootDirectoryPath {
+            if importToProjectScope, let path = project?.rootDirectoryPath {
                 targetScope = .projectLocal(projectPath: path)
             } else {
                 targetScope = .userGlobal
@@ -406,7 +418,7 @@ public struct SkillImportSheet: View {
 
     private func importSelectedSkills() {
         let targetScope: SkillScope
-        if importToProjectScope, let path = model.selectedProject?.rootDirectoryPath {
+        if importToProjectScope, let path = project?.rootDirectoryPath {
             targetScope = .projectLocal(projectPath: path)
         } else {
             targetScope = .userGlobal
@@ -420,7 +432,7 @@ public struct SkillImportSheet: View {
         dismiss()
     }
 
-    private func fetchRemoteMarketplace() {
+    private func fetchRemoteMarketplace(source explicitSource: MarketplaceSource? = nil) {
         let input = remoteInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return }
 
@@ -429,7 +441,8 @@ public struct SkillImportSheet: View {
         remoteManifest = nil
 
         let source: MarketplaceSource
-        if input.hasPrefix("http://") || input.hasPrefix("https://") {
+        if let explicitSource { source = explicitSource }
+        else if input.hasPrefix("http://") || input.hasPrefix("https://") {
             source = .url(url: input, headers: nil)
         } else if input.contains("/") && !input.contains(":") {
             source = .github(repo: input, ref: "main", path: "marketplace.json", sparsePaths: nil)
@@ -437,9 +450,11 @@ public struct SkillImportSheet: View {
             source = .git(url: input, ref: nil, path: nil, sparsePaths: nil)
         }
 
+        let sourceProjectID = importToProjectScope ? capturedProjectID : nil
         Task {
             do {
                 let manifest = try await SkillMarketplaceManager.shared.fetchMarketplace(source: source)
+                try model.saveMarketplace(name: manifest.name, source: source, kind: .skills, projectID: sourceProjectID)
                 await MainActor.run {
                     self.remoteManifest = manifest
                     self.isFetchingRemote = false
@@ -455,8 +470,8 @@ public struct SkillImportSheet: View {
 
     private func installRemoteEntry(_ entry: MarketplaceSkillEntry) {
         let targetScope: SkillScope
-        let projectURL = model.selectedProject?.rootDirectoryURL
-        if importToProjectScope, let path = model.selectedProject?.rootDirectoryPath {
+        let projectURL = project?.rootDirectoryURL
+        if importToProjectScope, let path = project?.rootDirectoryPath {
             targetScope = .projectLocal(projectPath: path)
         } else {
             targetScope = .userGlobal

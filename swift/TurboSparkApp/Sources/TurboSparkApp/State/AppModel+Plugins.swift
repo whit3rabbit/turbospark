@@ -39,7 +39,7 @@ extension AppModel {
     /// Every path a plugin's contributions reach a turn through has to see
     /// the same state at the same time, so one change invalidates all of
     /// them together.
-    private func pluginStateChanged() {
+    func pluginStateChanged() {
         PluginManager.shared.invalidateResolutionCache()
         SkillManager.shared.invalidateResolutionCache()
         AgentManager.shared.invalidateResolutionCache()
@@ -47,6 +47,7 @@ extension AppModel {
         reloadSkills()
         reloadAgents()
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
+        refreshMcpToolCatalog(for: selectedProject)
     }
 
     // MARK: - Local folder plugins
@@ -55,7 +56,7 @@ extension AppModel {
     /// directory with neither a manifest nor a contribution directory,
     /// because a registered non-plugin would otherwise appear enabled while
     /// contributing nothing at all.
-    public func addLocalPluginFolder(at path: String) {
+    public func addLocalPluginFolder(at path: String, scope: PluginInstallScope) {
         let url = URL(fileURLWithPath: path, isDirectory: true)
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else {
@@ -70,14 +71,28 @@ extension AppModel {
                 style: .error)
             return
         }
-        PluginLedgerStore(root: nil).addLocalPluginPath(url.standardizedFileURL.path)
+        switch scope {
+        case .user: PluginLedgerStore(root: nil).addLocalPluginPath(url.standardizedFileURL.path)
+        case .project(let captured):
+            guard var project = projects.first(where: { $0.id == captured.id }) else { return }
+            if !project.localPluginPaths.contains(url.standardizedFileURL.path) {
+                project.localPluginPaths.append(url.standardizedFileURL.path)
+                updateProject(project)
+            }
+        }
         pluginStateChanged()
         showToast("Registered plugin folder \(url.lastPathComponent).", style: .info)
     }
 
-    public func removeLocalPluginFolder(_ plugin: LoadedPlugin) {
-        PluginLedgerStore(root: nil).removeLocalPluginPath(
-            plugin.directoryURL.standardizedFileURL.path)
+    public func removeLocalPluginFolder(_ plugin: LoadedPlugin, scope: PluginInstallScope) {
+        switch scope {
+        case .user:
+            PluginLedgerStore(root: nil).removeLocalPluginPath(plugin.directoryURL.standardizedFileURL.path)
+        case .project(let captured):
+            guard var project = projects.first(where: { $0.id == captured.id }) else { return }
+            project.localPluginPaths.removeAll { $0 == plugin.directoryURL.standardizedFileURL.path }
+            updateProject(project)
+        }
         pluginStateChanged()
         showToast("Removed plugin folder \(plugin.name).", style: .info)
     }
@@ -103,8 +118,7 @@ extension AppModel {
                 projectRootURL: scope.projectRootURL)
             // Default ON: an explicit `false` from a previous install would
             // otherwise survive a reinstall and read as a broken install.
-            pluginEnableState.removeValue(forKey: outcome.pluginID)
-            persistSettings()
+            setPluginPreference(id: outcome.pluginID, enabled: true, scope: scope)
             pluginStateChanged()
             showToast(
                 "Installed \(outcome.pluginName) \(outcome.version).",
@@ -117,27 +131,8 @@ extension AppModel {
     }
 
     public func uninstallPlugin(_ plugin: LoadedPlugin, scope: PluginInstallScope) {
-        do {
-            try PluginMarketplaceManager.shared.uninstall(
-                pluginID: plugin.id,
-                scope: scope.ledgerValue,
-                projectRootURL: scope.projectRootURL)
-        } catch {
-            showToast("Uninstall failed: \(error.localizedDescription)", style: .error)
-            return
-        }
-        switch plugin.origin {
-        case .local:
-            removeLocalPluginFolder(plugin)
-        case .turboSpark, .marketplace, .claudeInterop:
-            // Claude interop plugins are read-only on disk; only the enable
-            // record here is removed.
-            break
-        }
-        pluginEnableState.removeValue(forKey: plugin.id)
-        persistSettings()
-        pluginStateChanged()
-        showToast("Uninstalled \(plugin.name).", style: .info)
+        if plugin.origin == .local { removeLocalPluginFolder(plugin, scope: scope); return }
+        _ = uninstallPluginID(plugin.id, scope: scope)
     }
 
     // MARK: - Project-scope override

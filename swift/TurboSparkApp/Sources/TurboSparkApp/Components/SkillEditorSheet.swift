@@ -7,6 +7,7 @@ public struct SkillEditorSheet: View {
 
     var skillToEdit: AppSkill?
     var defaultScope: SkillScope
+    private let capturedProjectPath: String?
 
     @State private var name: String = ""
     @State private var descriptionText: String = ""
@@ -21,6 +22,7 @@ public struct SkillEditorSheet: View {
         self.model = model
         self.skillToEdit = skillToEdit
         self.defaultScope = defaultScope
+        self.capturedProjectPath = defaultScope.projectRootURL?.path ?? model.selectedProject?.rootDirectoryPath
     }
 
     public var body: some View {
@@ -37,10 +39,10 @@ public struct SkillEditorSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
             // Form Content
@@ -63,7 +65,7 @@ public struct SkillEditorSheet: View {
                                 Text("Project Scope (.turbospark/skills)", bundle: .module).tag(true)
                             }
                             .pickerStyle(.segmented)
-                            .disabled(model.selectedProject == nil && !isProjectScope)
+                            .disabled(capturedProjectPath == nil && !isProjectScope)
                         }
                     }
 
@@ -83,7 +85,7 @@ public struct SkillEditorSheet: View {
                             .textFieldStyle(.roundedBorder)
                         Text("Tool permissions allowed during execution of this skill.", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
 
                     // Path Triggers
@@ -94,7 +96,7 @@ public struct SkillEditorSheet: View {
                             .textFieldStyle(.roundedBorder)
                         Text("Glob patterns that will trigger activation when editing matching files.", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
 
                     // Markdown Content
@@ -105,18 +107,18 @@ public struct SkillEditorSheet: View {
                             Spacer()
                             Text("Supports ${arg_name}, ${SKILL_DIR}, and ${SESSION_ID}", bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                         }
 
                         TextEditor(text: $content)
                             .themedCode(.base)
                             .frame(minHeight: 200)
                             .padding(4)
-                            .background(Color(nsColor: .textBackgroundColor))
+                            .background(.appElevated)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .stroke(TurboSparkTheme.hairlineColor, lineWidth: 1)
+                                    .stroke(.appBorder, lineWidth: 1)
                             )
                     }
                 }
@@ -124,7 +126,7 @@ public struct SkillEditorSheet: View {
             }
 
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 1)
 
             // Footer
@@ -140,7 +142,7 @@ public struct SkillEditorSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(.appPage)
         }
         .frame(minWidth: 560, minHeight: 480)
         .onAppear {
@@ -172,7 +174,7 @@ public struct SkillEditorSheet: View {
             .filter { !$0.isEmpty }
 
         let targetScope: SkillScope
-        if isProjectScope, let path = model.selectedProject?.rootDirectoryPath {
+        if isProjectScope, let path = capturedProjectPath {
             targetScope = .projectLocal(projectPath: path)
         } else {
             targetScope = .userGlobal

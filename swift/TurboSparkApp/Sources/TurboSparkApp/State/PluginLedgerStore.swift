@@ -91,15 +91,17 @@ public final class PluginLedgerStore: @unchecked Sendable {
     }
 
     public func save(_ ledger: InstalledPluginLedger) {
+        try? saveChecked(ledger)
+    }
+
+    public func saveChecked(_ ledger: InstalledPluginLedger) throws {
         lock.lock()
         defer { lock.unlock() }
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(ledger) {
-            try? data.write(to: ledgerURL, options: .atomic)
-        }
+        try encoder.encode(ledger).write(to: ledgerURL, options: .atomic)
     }
 
     /// Upserts one record: same plugin, scope and project path replaces.

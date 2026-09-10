@@ -10,6 +10,8 @@ struct PluginMarketplaceSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) private var theme
 
+    @State private var showsSources = false
+    @State var projectID: UUID? = nil
     @State private var marketplaces: [String: MarketplaceSource] = [:]
     @State private var selectedMarketplaceName: String? = nil
     @State private var entries: [PluginManifestParser.MarketplaceEntry] = []
@@ -36,21 +38,38 @@ struct PluginMarketplaceSheet: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
 
-            Rectangle().fill(TurboSparkTheme.hairlineColor).frame(height: 1)
+            ExtensionScopePicker(model: model, projectID: $projectID)
+            Button { showsSources = true } label: { Text("Manage sources", bundle: .module) }
+            Text("Removing a source keeps installed items.", bundle: .module).themedFont(.small)
+            Rectangle().fill(.appBorder).frame(height: 1)
 
             HStack(spacing: 0) {
                 marketplaceList
                     .frame(width: 250)
 
-                Rectangle().fill(TurboSparkTheme.hairlineColor).frame(width: 1)
+                Rectangle().fill(.appBorder).frame(width: 1)
 
                 entryList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(minWidth: 760, minHeight: 520)
+        .sheet(isPresented: $showsSources, onDismiss: { marketplaces = model.marketplaceSources(kind: .plugins, projectID: projectID) }) {
+            MarketplaceSourcesView(model: model, kind: .plugins, projectID: projectID) { source in
+                if let match = model.marketplaceSources(kind: .plugins, projectID: projectID).first(where: { $0.value == source }) {
+                    marketplaces = model.marketplaceSources(kind: .plugins, projectID: projectID)
+                    selectedMarketplaceName = match.key
+                    Task { await loadSelected() }
+                }
+            }
+        }
+        .onChange(of: projectID) { _, _ in
+            refreshInstalledIDs()
+            marketplaces = model.marketplaceSources(kind: .plugins, projectID: projectID)
+            selectedMarketplaceName = nil; entries = []; checkoutDirectory = nil
+        }
         .task {
-            marketplaces = PluginMarketplaceManager.shared.loadKnownMarketplaces()
+            marketplaces = model.marketplaceSources(kind: .plugins, projectID: projectID)
             refreshInstalledIDs()
             if selectedMarketplaceName == nil {
                 selectedMarketplaceName = marketplaces.keys.sorted().first
@@ -59,13 +78,16 @@ struct PluginMarketplaceSheet: View {
         }
     }
 
+    private var scopedProject: AppProject? { model.projects.first { $0.id == projectID } }
+    private var installScope: PluginInstallScope { scopedProject.map(PluginInstallScope.project) ?? .user }
+
     // MARK: - Marketplace list
 
     private var marketplaceList: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Sources", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .padding([.horizontal, .top], 14)
 
             ForEach(marketplaces.keys.sorted(), id: \.self) { name in
@@ -153,8 +175,8 @@ struct PluginMarketplaceSheet: View {
             source = .directory(path: path)
         }
         do {
-            try PluginMarketplaceManager.shared.saveKnownMarketplace(name: name, source: source)
-            marketplaces = PluginMarketplaceManager.shared.loadKnownMarketplaces()
+            try model.saveMarketplace(name: name, source: source, kind: .plugins, projectID: projectID)
+            marketplaces = model.marketplaceSources(kind: .plugins, projectID: projectID)
             newMarketplaceName = ""
             newGitHubRepo = ""
             newGitURL = ""
@@ -179,8 +201,8 @@ struct PluginMarketplaceSheet: View {
                         Task { await loadSelected(force: true) }
                     }
                     Button("Remove", role: .destructive) {
-                        PluginMarketplaceManager.shared.removeKnownMarketplace(name: name)
-                        marketplaces = PluginMarketplaceManager.shared.loadKnownMarketplaces()
+                        model.removeMarketplace(name: name, kind: .plugins, projectID: projectID)
+                        marketplaces = model.marketplaceSources(kind: .plugins, projectID: projectID)
                         selectedMarketplaceName = marketplaces.keys.sorted().first
                         entries = []
                         Task { await loadSelected() }
@@ -190,7 +212,7 @@ struct PluginMarketplaceSheet: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
-            Rectangle().fill(TurboSparkTheme.hairlineColor).frame(height: 1)
+            Rectangle().fill(.appBorder).frame(height: 1)
 
             if let loadError {
                 Label(loadError, systemImage: "exclamationmark.triangle")
@@ -227,7 +249,7 @@ struct PluginMarketplaceSheet: View {
                     if let version = entry.version {
                         Text(version)
                             .font(theme.ui(.small))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                     }
                     if !entry.strict {
                         Text("non-strict", bundle: .module)
@@ -241,7 +263,7 @@ struct PluginMarketplaceSheet: View {
                 if let description = entry.descriptionText, !description.isEmpty {
                     Text(description)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(2)
                 }
             }
@@ -250,30 +272,20 @@ struct PluginMarketplaceSheet: View {
                 Label("Installed", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(theme.ui(.small))
-                Button("Uninstall") {
-                    uninstall(entry: entry)
-                }
-                .controlSize(.small)
+                Button(role: .destructive) {
+                    uninstall(entry: entry, scope: installScope)
+                } label: { Text("Uninstall", bundle: .module) }
+                .help("Removes only the installation in the selected scope.")
             } else {
-                Menu {
-                    Button("Install for all chats (user scope)") {
-                        install(entry: entry, scope: .user)
-                    }
-                    if let project = model.selectedProject {
-                        Button("Install for project \(project.name)") {
-                            install(entry: entry, scope: .project(project))
-                        }
-                    }
-                } label: {
-                    Label("Install", systemImage: "arrow.down.circle")
+                Button { install(entry: entry, scope: installScope) } label: {
+                    Text("Install", bundle: .module)
                 }
-                .controlSize(.small)
             }
         }
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor)))
+                .fill(.appSurface))
     }
 
     // MARK: - Actions
@@ -300,7 +312,10 @@ struct PluginMarketplaceSheet: View {
 
     private func refreshInstalledIDs() {
         let records = PluginLedgerStore(root: nil).load().plugins
-        installedIDs = Set(records.keys.filter { !($0 as NSString).hasSuffix("@local") })
+        let scope = installScope
+        installedIDs = Set(records.keys.filter { id in
+            records[id]?.contains { $0.scope == scope.ledgerValue && $0.projectPath == scope.projectRootURL?.standardizedFileURL.path } == true
+        })
     }
 
     private func install(entry: PluginManifestParser.MarketplaceEntry, scope: PluginInstallScope) {
@@ -320,24 +335,9 @@ struct PluginMarketplaceSheet: View {
         }
     }
 
-    private func uninstall(entry: PluginManifestParser.MarketplaceEntry) {
-        guard let marketplaceName = selectedMarketplaceName else { return }
-        let id = "\(entry.name)@\(marketplaceName)"
-        let ledger = PluginLedgerStore(root: nil)
-        let records = ledger.load().plugins[id] ?? []
-        for record in records {
-            try? PluginMarketplaceManager.shared.uninstall(
-                pluginID: id,
-                scope: record.scope,
-                projectRootURL: record.projectPath.map { URL(fileURLWithPath: $0) })
-        }
-        model.pluginEnableState.removeValue(forKey: id)
-        model.persistSettings()
-        model.reloadPlugins()
-        SkillManager.shared.invalidateResolutionCache()
-        AgentManager.shared.invalidateResolutionCache()
-        AppHookStore.shared.refresh(
-            projectDirectory: model.selectedProject?.rootDirectoryPath)
+    private func uninstall(entry: PluginManifestParser.MarketplaceEntry, scope: PluginInstallScope) {
+        guard let name = selectedMarketplaceName else { return }
+        model.uninstallPluginID("\(entry.name)@\(name)", scope: scope)
         refreshInstalledIDs()
     }
 }
