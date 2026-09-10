@@ -122,7 +122,7 @@ struct ChatSidebarChatRowView: View {
                     HStack(spacing: 4) {
                         Text(chat.title)
                             .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.appText)
                             .lineLimit(1)
                         // The qwen-code workspace accent: one deterministic
                         // dot per project, so chats from different roots
@@ -138,7 +138,7 @@ struct ChatSidebarChatRowView: View {
                     if !chat.preview.isEmpty {
                         Text(chat.preview)
                             .font(theme.ui(.tiny))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
@@ -167,9 +167,7 @@ struct ChatSidebarChatRowView: View {
     @ViewBuilder
     private func rowIcon(isSelected: Bool) -> some View {
         if chat.isGhost {
-            Image(systemName: "ghost")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(theme.accent)
+            GhostGlyph(size: 13, color: theme.accent)
                 .accessibilityHidden(true)
         } else if chat.isPinned {
             Image(systemName: "pin.fill")

@@ -2004,11 +2004,16 @@ upstream code rather than a fork or a fresh conversion.
   second variant or a per-checkpoint baseline scheme, which is a design
   decision (`ModelFamily::QwenGdnDense`'s doc records why the baseline is
   per-ARCHITECTURE) -- not a config change.
-- **The bench protocol row is derived, not measured.**
-  `protocol_parameters(Spark25)` takes muse's 8,192/2,048 on the reasoning
-  that the forced-open think frame carries a completion budget; the first
-  real oracle run confirms or moves it
-  (`crates/bench/src/real_model_params.rs`'s arm says so beside the code).
+- ~~**The bench protocol row is derived, not measured.**~~ CLOSED
+  2026-09-08, the same way the entry said it would be. The first real
+  oracle run confirmed the derived 8,192/2,048 rather than moving it (all
+  three protocol cases stopped `endOfTurn` at that pair), and both gates
+  are frozen from it: `spark_memory_oracle` at 575 MiB measured with a 700
+  MiB ceiling and a 32.0 tok/s floor, `spark_quality_gate` at perplexity
+  12.6162. The row is now measured, and the caveat that remains is the
+  weaker one the oracle states about itself: ONE reading, where crate
+  Gotcha 15 asks for more, with a tight 44.8 to 49.6 tok/s spread across
+  the three cases.
 - **No cross-engine KL yet.** Upstream llama.cpp runs this architecture
   since PR 27868, so the `scripts/kld_llamacpp.py` shape applies once the
   stock binary is built; the keyed `CHECKPOINTS` table needs one row.

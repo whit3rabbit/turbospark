@@ -382,6 +382,10 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     /// (`swift/docs/SWIFT_PLUGINS.md`). Overrides the user setting: a project may
     /// turn off a plugin it does not trust without turning it off everywhere.
     public var enabledPlugins: [String: Bool]
+    public var enabledSkills: [String: Bool] = [:]
+    public var marketplaces = ProjectMarketplaces()
+    public var localPluginPaths: [String] = []
+    public var enabledMcpServers: [String: Bool] = [:]
     /// MCP servers from the project's own config files the user has
     /// APPROVED. A name here (or covered by `approveAllProjectMcpServers`)
     /// imports without re-prompting when the config re-declares it.
@@ -440,7 +444,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, name, rootDirectoryPath, agentType, rulePreference, customInstructions
         case permissions, maxAutonomousSteps, mcpServers, forgeGuardrailsEnabled
-        case skillStateEnabled, enabledPlugins, createdAt, updatedAt
+        case skillStateEnabled, enabledPlugins, enabledSkills, enabledMcpServers, marketplaces, localPluginPaths, createdAt, updatedAt
         case approvedMcpJsonServers, rejectedMcpJsonServers, approveAllProjectMcpServers
     }
 
@@ -465,6 +469,10 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.forgeGuardrailsEnabled = try container.decodeIfPresent(Bool.self, forKey: .forgeGuardrailsEnabled)
         self.skillStateEnabled = try container.decodeIfPresent(Bool.self, forKey: .skillStateEnabled) ?? false
         self.enabledPlugins = try container.decodeIfPresent([String: Bool].self, forKey: .enabledPlugins) ?? [:]
+        self.localPluginPaths = try container.decodeIfPresent([String].self, forKey: .localPluginPaths) ?? []
+        self.marketplaces = try container.decodeIfPresent(ProjectMarketplaces.self, forKey: .marketplaces) ?? ProjectMarketplaces()
+        self.enabledSkills = try container.decodeIfPresent([String: Bool].self, forKey: .enabledSkills) ?? [:]
+        self.enabledMcpServers = try container.decodeIfPresent([String: Bool].self, forKey: .enabledMcpServers) ?? [:]
         self.approvedMcpJsonServers = try container.decodeIfPresent([String].self, forKey: .approvedMcpJsonServers) ?? []
         self.rejectedMcpJsonServers = try container.decodeIfPresent([String].self, forKey: .rejectedMcpJsonServers) ?? []
         self.approveAllProjectMcpServers = try container.decodeIfPresent(Bool.self, forKey: .approveAllProjectMcpServers) ?? false

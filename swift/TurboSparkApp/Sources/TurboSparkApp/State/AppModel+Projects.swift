@@ -1,6 +1,16 @@
 import Foundation
 
 extension AppModel {
+    /// Enter coding mode as one navigation action, without moving a running turn.
+    public func chooseProjectForTask(id: UUID?) {
+        guard !isRunning, !submitting, pendingToolCall == nil else { return }
+        guard id == nil || projects.contains(where: { $0.id == id }) else { return }
+        setInteractionMode(.projects)
+        selectProject(id: id)
+        // Clearing the sidebar filter alone leaves the old project chat active.
+        if id == nil { createChat() }
+    }
+
     /// Filtered list of chats according to the active project selection.
     ///
     /// Excludes ghost chats: they are session-scoped and entered through a

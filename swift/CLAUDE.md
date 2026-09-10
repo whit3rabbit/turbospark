@@ -393,24 +393,49 @@ keeps resolving.
     directly (not through the actor) and is why Stop is immediate.
 
 17. **THE WINDOW IS FOUR CHROME BANDS AND EACH ONE OWNS ONE QUESTION.**
-    `RootView` is a rail (sections), a top bar (which model, is it loaded,
-    and what the machine is doing), the working panes, and a status strip
-    (context fill, fans, tok/s, tokens, thermal, memory pressure). Sections
-    live in the RAIL so the chat sidebar can be hidden without stranding
-    navigation (`showsChatSidebar` gates on `activeSection == .chat`).
+    `RootView` is a sidebar (sections, and the chat list when there is one),
+    a top bar (what the machine is doing),
+    the working panes, and a status strip (context fill, fans, tok/s,
+    tokens, thermal, memory pressure). "Which model, is it loaded" is NOT a
+    top-bar question since 2026-09-09: `ModelLoaderControl` moved under the
+    prompt composer, in a compact one-line density, and is chat-scoped
+    rather than window-scoped -- so it is absent from the Files, Installed,
+    Discover and Server sections by design.
+
+    **THE LEFT COLUMN IS ONE SURFACE IN TWO PRESENTATIONS, NOT TWO BANDS.**
+    A permanent 52pt icon rail used to sit beside a 260pt chat sidebar, which
+    read as two vertical bars stacked together. `AppSidebarView` is the single
+    column since 2026-09-09: expanded it is `SidebarSectionNavView`'s labeled
+    rows over `ChatSidebarView`, collapsed it is `NavigationRailView`
+    unchanged. **The toggle no longer HIDES anything**, and that is the whole
+    design rather than a detail -- the old split existed so sections stayed
+    reachable while the sidebar was hidden, and folding navigation into a
+    hideable sidebar would strand it twice, once on Cmd+B and once in the four
+    sections that never showed a chat list. Collapsing to the rail satisfies
+    the same constraint with one column. Three consequences. The window
+    minimum drops by `navigationRailWidth + dividerWidth` when expanded,
+    because the sidebar's width REPLACES the rail's instead of stacking on it
+    (`minimumWindowWidth` takes `isSidebarExpanded:` and adds one column).
+    `RootView.showsChatSidebar` is gone; `activeSection == .chat` is
+    `AppSidebarView`'s business and must NOT be re-conjoined into the width
+    call, or the window can shrink under its own sidebar in Files and Server.
+    And the profile/settings footer moved OUT of `ChatSidebarView` into
+    `AppSidebarView`, because it has to be present in the sections that have
+    no chat list to hang it off.
 
     **The top bar is THREE GROUPS, and the middle one is `.fixedSize()`.**
     It used to be one left-aligned run, on the reasoning that the phase
     indicator appears and disappears once per turn and a centred model
     loader would slide every time it does. Since 2026-09-07 the bar is a
     leading group (sidebar toggle, phase indicator, git pill), a fixed-size
-    `ChromeTelemetryView` in the centre, and a trailing group (model loader,
-    inspector toggle, ghost). Both outer groups are
-    `frame(maxWidth: .infinity)`, so an HStack splits the slack evenly and
-    the centre does not move; the model loader is pinned to the trailing
-    edge and does not move either. The original hazard is still real -- it
-    is the LAYOUT that defuses it, so keep the `.fixedSize()` and both
-    flexible frames if you touch that band.
+    `ChromeTelemetryView` in the centre, and a trailing group (inspector
+    toggle). Both outer groups are `frame(maxWidth: .infinity)`, so an
+    HStack splits the slack evenly and the centre does not move. **KEEP THE
+    TRAILING GROUP'S FLEXIBLE FRAME even though one control is left in it**
+    -- it is half of what holds the centre still, and it looks exactly like
+    the kind of wrapper a cleanup deletes. The original hazard is still
+    real: it is the LAYOUT that defuses it, so keep the `.fixedSize()` and
+    both flexible frames if you touch that band.
 
     **`ChromeTelemetryView` polls memory and CPU on the same 2-second timer
     the status strip used, and that is the whole reason it is allowed up
@@ -429,6 +454,20 @@ keeps resolving.
     rather than inserted, so the four that existed keep the numbers anyone
     has already learned. `testEverySectionHasAUniqueTitleAndShortcut`
     guards a missing or duplicated tooltip.
+
+    **THE WINDOW OPENS AT 94% OF THE SCREEN'S VISIBLE FRAME, AND
+    `.defaultSize` ALONE COULD NOT DELIVER THAT.** That modifier decides the
+    FIRST launch only; macOS autosaves a `Window` scene's frame and restores
+    it forever after, so raising the default is invisible to every existing
+    install, which is everyone. `ForegroundAppDelegate` therefore carries a
+    one-time migration keyed on
+    `TurboSpark.didAdoptRoomierDefaultWindowFrame`, which grows the restored
+    frame PER AXIS and only upward -- the first cut tested
+    `width < target || height < target` and then assigned the target flat,
+    which grew the height and made the window NARROWER on a machine already
+    wider than the target. It runs async, because at
+    `applicationDidFinishLaunching` the SwiftUI scene has not built its
+    window yet and `NSApp.windows` is empty.
 
     The right column is one slot, not two: `previewAttachment != nil` takes
     it from the inspector, which is why `.toggleInspector` closes the

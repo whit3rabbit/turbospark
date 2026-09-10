@@ -27,7 +27,19 @@ struct ChatSidebarGroupedProjectsView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                if filteredProjects.isEmpty && unorganizedChats.isEmpty {
+                if model.projects.isEmpty {
+                    Button {
+                        projectBeingEdited = nil
+                        showingProjectSettingsSheet = true
+                    } label: {
+                        Label("Add Project", systemImage: "folder.badge.plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isRunning || model.submitting || model.pendingToolCall != nil)
+                }
+                if filteredProjects.isEmpty && unorganizedChats.isEmpty && !trimmedSearch.isEmpty {
                     emptyState
                 } else {
                     ForEach(filteredProjects) { project in
@@ -142,7 +154,7 @@ struct ChatSidebarGroupedProjectsView: View {
                         } label: {
                             Text(isExpanded ? "Show less" : "Show more")
                                 .font(theme.ui(.tiny, weight: .medium))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.appSecondary)
                                 .padding(.leading, 24)
                                 .padding(.vertical, 4)
                                 .contentShape(.rect)
@@ -171,7 +183,7 @@ struct ChatSidebarGroupedProjectsView: View {
 
                     Text(project.name)
                         .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.appText)
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
@@ -189,7 +201,7 @@ struct ChatSidebarGroupedProjectsView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(theme.ui(.tiny, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .frame(width: actionButtonSize, height: actionButtonSize)
                         .contentShape(Circle())
                 }
@@ -382,10 +394,10 @@ struct ChatSidebarGroupedProjectsView: View {
             HStack(spacing: 7) {
                 Image(systemName: "tray")
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Text("Other Tasks", bundle: .module)
                     .font(theme.ui(.small, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                 Spacer()
             }
             .padding(.horizontal, 6)
@@ -409,7 +421,7 @@ struct ChatSidebarGroupedProjectsView: View {
                 .padding(.top, 24)
             Text("No projects match filter", bundle: .module)
                 .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             Button("Add Project") {
                 projectBeingEdited = nil
                 showingProjectSettingsSheet = true

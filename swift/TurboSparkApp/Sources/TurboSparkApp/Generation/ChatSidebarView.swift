@@ -3,14 +3,17 @@ import SwiftUI
 
 // Isolated explicitly: only body is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// The adaptive sidebar changing depending on active tabs (Chat vs Projects) and active project.
+/// The CHAT LIST: tabs (Chat vs Projects), filter, and the rows themselves.
+///
+/// It is one child of `AppSidebarView` rather than the whole sidebar, and it
+/// renders only while `activeSection == .chat`. The profile/settings footer
+/// used to hang off the bottom of this view and moved up to `AppSidebarView`
+/// when the two left columns merged: the footer has to be present in Files
+/// and Server too, where there is no chat list to attach it to.
 @MainActor
 struct ChatSidebarView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
-    @AppStorage(AppLanguage.storageKey)
-    private var languageRawValue = AppLanguage.system.rawValue
-
     @State private var searchText = ""
     @State private var chatBeingRenamed: AppChat?
     @State private var chatForSystemPrompt: AppChat?
@@ -34,14 +37,6 @@ struct ChatSidebarView: View {
             Divider()
 
             contentView
-
-            ChatSidebarFooterView(
-                // "local chats stored" is a machine-wide figure, so it
-                // counts every persisted chat regardless of the selected
-                // project or the archive filter the list above applies.
-                chatCount: model.chats.filter { !$0.isGhost }.count,
-                languageRawValue: $languageRawValue
-            )
         }
         .sheet(isPresented: $showingProjectSettingsSheet) {
             ProjectSettingsSheet(
@@ -132,7 +127,7 @@ struct ChatSidebarView: View {
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                .stroke(.appBorder, lineWidth: 0.5)
         )
     }
 
@@ -170,7 +165,7 @@ struct ChatSidebarView: View {
         .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                .stroke(.appBorder, lineWidth: 0.5)
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(model.interactionMode == .projects ? "Filter projects and tasks" : "Filter chats")
@@ -193,7 +188,7 @@ struct ChatSidebarView: View {
             HStack {
                 Text("Projects", bundle: .module)
                     .font(theme.ui(.tiny, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
                     .accessibilityAddTraits(.isHeader)
 
                 Spacer()
@@ -204,7 +199,7 @@ struct ChatSidebarView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(theme.ui(.tiny, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                         .frame(width: 20, height: 20)
                         .contentShape(Circle())
                 }
@@ -232,6 +227,15 @@ struct ChatSidebarView: View {
 
     private var chatContent: some View {
         VStack(spacing: 0) {
+            ScrollView {
+                ChatSidebarProjectsSectionView(
+                    model: model,
+                    showingProjectSettingsSheet: $showingProjectSettingsSheet,
+                    projectBeingEdited: $projectBeingEdited,
+                    projectForMcpSettings: $projectForMcpSettings)
+            }
+            .frame(height: min(200, CGFloat(72 + model.projects.count * 48)))
+            Divider()
             newChatButton
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
@@ -251,11 +255,11 @@ struct ChatSidebarView: View {
         HStack(spacing: 5) {
             Image(systemName: "folder.fill")
                 .font(theme.ui(.tiny))
-                .foregroundStyle(TurboSparkTheme.accentColor)
+                .foregroundStyle(.appAccent)
 
             Text("Project: \(project.name)", bundle: .module)
                 .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
                 .lineLimit(1)
 
             Spacer()
@@ -269,7 +273,7 @@ struct ChatSidebarView: View {
                     Image(systemName: "xmark")
                         .font(theme.ui(.micro))
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(Color.primary.opacity(0.06), in: Capsule())
@@ -309,7 +313,7 @@ struct ChatSidebarView: View {
             in: .rect(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                .stroke(.appBorder, lineWidth: 0.5)
         }
         .disabled(model.isRunning)
         .help("Create a new chat (Cmd+N)")
@@ -329,7 +333,7 @@ struct ChatSidebarView: View {
                             .accessibilityHidden(true)
                         Text(searchText.isEmpty ? "No chats yet" : "No matching chats")
                             .font(theme.ui(.tiny, weight: .medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                         Text(searchText.isEmpty ? "Start a conversation to see history here" : "Try a different search term")
                             .font(theme.ui(.tiny))
                             .foregroundStyle(.tertiary)
@@ -360,7 +364,7 @@ struct ChatSidebarView: View {
                     ForEach(dateGroupedChats(approach: unpinned), id: \.bucket) { group in
                         Text(group.bucket.label)
                             .font(theme.ui(.tiny, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.appSecondary)
                             .padding(.leading, 10)
                             .padding(.top, 8)
                             .textCase(nil)
@@ -441,7 +445,7 @@ struct ChatSidebarView: View {
                     archived.count == 1 ? "Archived (1 chat)" : "Archived (\(archived.count) chats)",
                     systemImage: "archivebox")
                     .font(theme.ui(.tiny, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
             .padding(.top, 10)
         }

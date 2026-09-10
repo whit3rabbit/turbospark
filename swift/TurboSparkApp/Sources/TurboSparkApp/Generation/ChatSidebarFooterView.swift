@@ -5,12 +5,14 @@ import SwiftUI
 struct ChatSidebarFooterView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @ObservedObject var model: AppModel
     let chatCount: Int
     @Binding var languageRawValue: String
 
     @ScaledMetric private var actionButtonSize: CGFloat = 24
     @ScaledMetric private var avatarSize: CGFloat = 26
     @ScaledMetric private var sidebarFooterMinHeight: CGFloat = 46
+    @State private var confirmingEndGhost = false
 
     private var profileDisplayName: String {
         let active = UserProfileStore.active
@@ -77,7 +79,7 @@ struct ChatSidebarFooterView: View {
 
                     Text(profileDisplayName)
                         .font(theme.ui(.small, weight: .medium))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.appText)
                         .lineLimit(1)
 
                     badgePill
@@ -88,6 +90,12 @@ struct ChatSidebarFooterView: View {
             .menuIndicator(.hidden)
             .help("User Profile: \(profileDisplayName)")
             .accessibilityLabel("User Profile \(profileDisplayName)")
+
+            // Beside the profile menu rather than the top bar: ghost mode is
+            // a property of WHOSE chat this is (temporary, tied to nobody's
+            // history), which reads as an extension of the profile row
+            // rather than of window chrome.
+            ghostButton
 
             Spacer(minLength: 4)
 
@@ -101,7 +109,7 @@ struct ChatSidebarFooterView: View {
         .frame(minHeight: sidebarFooterMinHeight)
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(TurboSparkTheme.hairlineColor)
+                .fill(.appBorder)
                 .frame(height: 0.5)
         }
     }
@@ -122,7 +130,7 @@ struct ChatSidebarFooterView: View {
     private var badgePill: some View {
         Text("P", bundle: .module)
             .font(theme.code(.small, weight: .bold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.appSecondary)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
             .background(
@@ -131,9 +139,53 @@ struct ChatSidebarFooterView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                    .stroke(.appBorder, lineWidth: 0.5)
             )
             .accessibilityLabel("Profile badge")
+    }
+
+    /// Ghost Mode: start a temporary chat, or end the one being viewed.
+    private var ghostButton: some View {
+        Button {
+            if model.isInGhostChat {
+                if model.ghostChatHasContent {
+                    confirmingEndGhost = true
+                } else {
+                    model.endGhostChat()
+                }
+            } else {
+                model.enterGhostChat()
+            }
+        } label: {
+            GhostGlyph(size: 14, color: model.isInGhostChat ? theme.accent : Color.secondary)
+                .frame(width: actionButtonSize, height: actionButtonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // `enterGhostChat()`/`endGhostChat()` both no-op under exactly this
+        // guard, matching the File menu's "New Temporary Chat".
+        .disabled(model.generating || model.submitting || model.pendingToolCall != nil)
+        .help(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
+        .accessibilityLabel(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
+        .accessibilityHint(
+            model.isInGhostChat
+                ? "Discards the temporary conversation. It is never saved."
+                : "Starts a temporary chat that lives only in memory and is never saved.")
+        .accessibilityAddTraits(model.isInGhostChat ? [.isButton, .isSelected] : .isButton)
+        .confirmationDialog(
+            "End temporary chat?", isPresented: $confirmingEndGhost,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Temporary Chat", role: .destructive) {
+                model.endGhostChat()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This conversation exists only in memory and cannot be recovered "
+                    + "once discarded."
+            )
+        }
     }
 
     private var deviceButton: some View {
@@ -142,7 +194,7 @@ struct ChatSidebarFooterView: View {
         } label: {
             Image(systemName: "iphone")
                 .font(theme.ui(.callout, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .frame(width: actionButtonSize, height: actionButtonSize)
                 .contentShape(Rectangle())
         }
@@ -155,7 +207,7 @@ struct ChatSidebarFooterView: View {
         SettingsLink {
             Image(systemName: "gearshape")
                 .font(theme.ui(.callout, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .frame(width: actionButtonSize, height: actionButtonSize)
                 .contentShape(Rectangle())
         }
