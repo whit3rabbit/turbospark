@@ -51,6 +51,27 @@ fn a_planned_architecture_is_recognized_but_has_no_family() {
     }
 }
 
+/// The spelling is witnessed from a GGUF, and must stay a refusal until
+/// MiniMax's normalization and routing contracts have an executable flow.
+#[test]
+fn minimax_m2_is_recognized_and_refused_before_config_parsing() {
+    let Some(ArchSupport::Planned(planned)) = gguf_arch_support("minimax-m2") else {
+        panic!("MiniMax-M2 must be recognized without claiming execution support");
+    };
+    assert!(planned
+        .needs
+        .contains("whole-projection Q/K RMS normalization"));
+    assert!(planned.needs.contains("selection-only correction bias"));
+    let bytes = minimal_gguf("minimax-m2");
+    let header =
+        turbospark_repack::parse_gguf_header(&bytes, bytes.len() as u64).expect("parse header");
+    let message = arch_from_gguf(&header)
+        .expect_err("MiniMax has no flow")
+        .to_string();
+    assert_eq!(message, describe_gguf_architecture("minimax-m2"));
+    assert_eq!(gguf_arch_support("minimax_m2"), None);
+}
+
 #[test]
 fn an_unknown_architecture_resolves_to_nothing() {
     assert_eq!(gguf_arch_support("not-a-real-architecture"), None);
