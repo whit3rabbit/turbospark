@@ -89,7 +89,7 @@ public struct HookOptionsConfigSheet: View {
                 Text(spec.title)
                     .themedFont(.small, weight: .semibold)
                 if spec.isRequired {
-                    Text("*", bundle: .module)
+                    Text(verbatim: "*")
                         .foregroundStyle(.red)
                 }
                 Spacer()

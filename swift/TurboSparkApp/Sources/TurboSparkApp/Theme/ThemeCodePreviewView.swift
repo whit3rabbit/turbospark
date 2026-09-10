@@ -106,9 +106,9 @@ public struct ThemeCodePreviewView: View {
             if let keyword = keyword, let typeName = typeName {
                 HStack(spacing: 4) {
                     Text(keyword).foregroundStyle(Color.purple)
-                    Text("themePreview:", bundle: .module).foregroundStyle(isDark ? Color.white : Color.black)
+                    Text(verbatim: "themePreview:").foregroundStyle(isDark ? Color.white : Color.black)
                     Text(typeName).foregroundStyle(Color.blue)
-                    Text("= {", bundle: .module).foregroundStyle(isDark ? Color.white : Color.black)
+                    Text(verbatim: "= {").foregroundStyle(isDark ? Color.white : Color.black)
                 }
             } else if isProperty {
                 formattedPropertyLine(text: text, valueColor: valueColor)

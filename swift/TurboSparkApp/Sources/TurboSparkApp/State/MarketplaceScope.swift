@@ -47,17 +47,22 @@ extension AppModel {
         }
     }
 
-    public func removeMarketplace(name: String, kind: MarketplaceKind, projectID: UUID?) {
+    public func removeMarketplace(name: String, kind: MarketplaceKind, projectID: UUID?) throws {
         if let projectID, var project = projects.first(where: { $0.id == projectID }) {
             project.marketplaces.sources[kind.rawValue, default: [:]].removeValue(forKey: name)
             project.marketplaces.hidden[kind.rawValue, default: []].insert(name)
             updateProject(project)
         } else if projectID == nil {
             switch kind {
-            case .plugins: PluginMarketplaceManager.shared.removeKnownMarketplace(name: name)
-            case .skills: SkillMarketplaceManager.shared.removeKnownMarketplace(name: name)
-            case .mcp: _ = McpMarketplaceManager.shared.unregister(name: name)
+            case .plugins: try PluginMarketplaceManager.shared.removeKnownMarketplace(name: name)
+            case .skills: try SkillMarketplaceManager.shared.removeKnownMarketplace(name: name)
+            case .mcp:
+                guard McpMarketplaceManager.shared.unregister(name: name) else {
+                    throw PluginLoadError(pluginName: nil, reason: "Could not remove marketplace source.")
+                }
             }
+        } else {
+            throw PluginLoadError(pluginName: nil, reason: "The target project no longer exists.")
         }
     }
 

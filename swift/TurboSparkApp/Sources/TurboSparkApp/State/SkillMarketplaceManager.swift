@@ -134,13 +134,11 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
         try data.write(to: knownMarketplacesURL, options: .atomic)
     }
 
-    public func removeKnownMarketplace(name: String) {
+    public func removeKnownMarketplace(name: String) throws {
         var sources = loadKnownMarketplaces()
         sources.removeValue(forKey: name)
-        do {
-            try fileManager.createDirectory(at: marketplacesDirectory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(sources).write(to: knownMarketplacesURL, options: .atomic)
-        } catch { /* Retain the on-disk subscriptions when removal cannot be saved. */ }
+        try fileManager.createDirectory(at: marketplacesDirectory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(sources).write(to: knownMarketplacesURL, options: .atomic)
     }
 
     private var defaultMarketplaces: [String: MarketplaceSource] {

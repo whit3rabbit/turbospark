@@ -138,7 +138,7 @@ public struct AppearancePreferencesCardView: View {
                         .font(theme.ui(.callout, weight: .medium).monospacedDigit())
                         .frame(width: 28, alignment: .center)
 
-                    Text("px", bundle: .module)
+                    Text(verbatim: "px")
                         .font(theme.ui(.small))
                         .foregroundStyle(.appSecondary)
                 }
@@ -188,7 +188,7 @@ public struct AppearancePreferencesCardView: View {
                         .font(theme.ui(.callout, weight: .medium).monospacedDigit())
                         .frame(width: 28, alignment: .center)
 
-                    Text("px", bundle: .module)
+                    Text(verbatim: "px")
                         .font(theme.ui(.small))
                         .foregroundStyle(.appSecondary)
                 }

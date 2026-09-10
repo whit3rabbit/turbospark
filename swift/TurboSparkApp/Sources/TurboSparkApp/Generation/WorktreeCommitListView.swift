@@ -103,7 +103,7 @@ public struct WorktreeCommitListView: View {
                         .font(theme.code(.small))
                         .foregroundStyle(.tertiary)
 
-                    Text("-", bundle: .module)
+                    Text(verbatim: "-")
                         .foregroundStyle(.tertiary)
 
                     Text(commit.author)
@@ -111,7 +111,7 @@ public struct WorktreeCommitListView: View {
                         .foregroundStyle(.appSecondary)
                         .lineLimit(1)
 
-                    Text("-", bundle: .module)
+                    Text(verbatim: "-")
                         .foregroundStyle(.tertiary)
 
                     Text(commit.relativeDate)

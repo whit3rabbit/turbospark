@@ -298,7 +298,7 @@ struct ChatSidebarView: View {
                 Text("New chat", bundle: .module)
                     .font(theme.ui(.small, weight: .medium))
                 Spacer()
-                Text("Cmd+N", bundle: .module)
+                Text(verbatim: "Cmd+N")
                     .font(theme.ui(.tiny))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)

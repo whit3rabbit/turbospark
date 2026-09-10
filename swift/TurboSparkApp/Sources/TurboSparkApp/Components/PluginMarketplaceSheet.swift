@@ -201,7 +201,11 @@ struct PluginMarketplaceSheet: View {
                         Task { await loadSelected(force: true) }
                     }
                     Button("Remove", role: .destructive) {
-                        model.removeMarketplace(name: name, kind: .plugins, projectID: projectID)
+                        do { try model.removeMarketplace(name: name, kind: .plugins, projectID: projectID) }
+                        catch {
+                            model.showToast(error.localizedDescription, style: .error)
+                            return
+                        }
                         marketplaces = model.marketplaceSources(kind: .plugins, projectID: projectID)
                         selectedMarketplaceName = marketplaces.keys.sorted().first
                         entries = []

@@ -60,7 +60,7 @@ struct ModelRecommendationRow: View {
                     .foregroundStyle(.appSecondary)
                     .help("Estimated unified memory footprint")
 
-                    Text("-", bundle: .module)
+                    Text(verbatim: "-")
                         .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
 
@@ -74,7 +74,7 @@ struct ModelRecommendationRow: View {
                     .help("On-disk installation size")
 
                     if let minRate = recommendation.toksPerSecondMin, let maxRate = recommendation.toksPerSecondMax {
-                        Text("-", bundle: .module)
+                        Text(verbatim: "-")
                             .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
                         Text("\(Int(minRate))-\(Int(maxRate)) tok/s", bundle: .module)

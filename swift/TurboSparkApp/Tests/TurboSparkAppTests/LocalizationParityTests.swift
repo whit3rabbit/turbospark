@@ -334,6 +334,137 @@ final class LocalizationParityTests: XCTestCase {
                 + problems.joined(separator: "\n"))
     }
 
+
+    // MARK: 7. Every bundled literal resolves to a catalog key
+
+    /// The literal that starts a call body, with escapes resolved -- which is
+    /// what `LocalizedStringKey` actually looks up, and therefore what the
+    /// catalog must carry as a key. `\u{2022}` is resolved because a literal
+    /// spelled that way and one spelled with the character itself are the SAME
+    /// key; comparing raw source text would report a false gap for one of them.
+    private static func leadingLiteral(_ body: String) -> (key: String, interpolated: Bool)? {
+        guard body.hasPrefix("\"") else { return nil }
+        var raw: [Character] = []
+        var escape = false
+        var closed = false
+        for character in body.dropFirst() {
+            if escape {
+                raw.append(character)
+                escape = false
+            } else if character == "\\" {
+                raw.append(character)
+                escape = true
+            } else if character == "\"" {
+                closed = true
+                break
+            } else {
+                raw.append(character)
+            }
+        }
+        guard closed else { return nil }
+
+        // Scanned on the RAW literal rather than on the whole call body: a
+        // LATER argument containing an interpolation must not make this call
+        // look interpolated and silently escape the check.
+        var interpolated = false
+        var scan = raw.startIndex
+        while raw.index(after: scan) < raw.endIndex {
+            if raw[scan] == "\\", raw[raw.index(after: scan)] == "(" {
+                interpolated = true
+                break
+            }
+            scan = raw.index(after: scan)
+        }
+
+        var out = ""
+        var index = raw.startIndex
+        while index < raw.endIndex {
+            guard raw[index] == "\\", raw.index(after: index) < raw.endIndex else {
+                out.append(raw[index])
+                index = raw.index(after: index)
+                continue
+            }
+            let next = raw[raw.index(after: index)]
+            if next == "u", raw.index(index, offsetBy: 2) < raw.endIndex,
+               raw[raw.index(index, offsetBy: 2)] == "{",
+               let close = raw[raw.index(index, offsetBy: 3)...].firstIndex(of: "}"),
+               let scalarValue = UInt32(String(raw[raw.index(index, offsetBy: 3)..<close]), radix: 16),
+               let scalar = Unicode.Scalar(scalarValue) {
+                out.append(Character(scalar))
+                index = raw.index(after: close)
+                continue
+            }
+            switch next {
+            case "n": out.append("\n")
+            case "t": out.append("\t")
+            default: out.append(next)
+            }
+            index = raw.index(index, offsetBy: 2)
+        }
+        return (out, interpolated)
+    }
+
+    /// Passing `bundle: .module` is only HALF of localizing a string: the key
+    /// still has to exist in the catalog, and when it does not the site renders
+    /// its English source under all 21 languages -- silently, and identically
+    /// to never having been converted at all. Test 5 cannot see this, because
+    /// it only asks whether the argument is present. That gap is not
+    /// hypothetical: it is how 416 bundled literals (58% of the bundled
+    /// surface, whole settings paragraphs among them) shipped keyless while the
+    /// whole suite stayed green, and it is what this test exists to make
+    /// impossible to repeat.
+    ///
+    /// INTERPOLATED literals are skipped on purpose rather than allowlisted.
+    /// `Text("Loading \(name)...", bundle: .module)` looks up a FORMAT STRING
+    /// (`Loading %@...`), whose specifier depends on the interpolated
+    /// expression's TYPE -- `%@` for a String, `%lld` for an Int -- which this
+    /// scan cannot infer from source text. Guessing would either invent keys
+    /// nothing looks up, or worse, put a wrong specifier in 21 translations,
+    /// which test 2 calls the crash direction. Those call sites are a known,
+    /// documented hole (`swift/docs/SWIFT_LOCALIZATION.md`), not a covered case.
+    func testEveryBundledLiteralHasACatalogKey() throws {
+        let strings = try loadCatalogStrings()
+        var problems: [String] = []
+        let enumerator = FileManager.default.enumerator(
+            at: sourcesRoot, includingPropertiesForKeys: nil)
+        while let url = enumerator?.nextObject() as? URL {
+            guard url.pathExtension == "swift" else { continue }
+            let source = try String(contentsOf: url, encoding: .utf8)
+            let lineOf: (Int) -> Int = { offset in
+                source[..<source.index(source.startIndex, offsetBy: min(offset, source.count))]
+                    .components(separatedBy: "\n").count
+            }
+            for trigger in ["Text(", "LocalizedStringKey("] {
+                var searchRange = source.startIndex..<source.endIndex
+                while let found = source.range(of: trigger, range: searchRange) {
+                    let offset = source.distance(from: source.startIndex, to: found.lowerBound)
+                    let previous = offset > 0 ? Array(source)[offset - 1] : " "
+                    let isBareCall = !previous.isLetter && !previous.isNumber && previous != "_"
+                    searchRange = found.upperBound..<source.endIndex
+                    guard isBareCall else { continue }
+                    guard let body = Self.callBody(
+                        Array(source), from: offset + trigger.count - 1)
+                    else { continue }
+                    guard body.contains("bundle:") else { continue }
+                    guard let literal = Self.leadingLiteral(body) else { continue }
+                    // A literal carrying an interpolation resolves to a format
+                    // string, not to itself; see the note above.
+                    if literal.interpolated { continue }
+                    if strings[literal.key] == nil {
+                        problems.append("\(url.lastPathComponent):\(lineOf(offset)) "
+                            + "bundled literal has no catalog key: \(literal.key)")
+                    }
+                }
+            }
+        }
+        XCTAssertTrue(
+            problems.isEmpty,
+            "bundled literals with no catalog key (they render English under "
+                + "every language; add the key with all 21 translations, or use "
+                + "`Text(verbatim:)` when there is nothing to translate):\n"
+                + problems.joined(separator: "\n"))
+    }
+
     // MARK: 6. greetings.json parity
 
     /// The greetings are a deliberate SECOND translation surface -- content

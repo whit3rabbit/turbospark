@@ -101,7 +101,7 @@ public struct WorktreeTimelineView: View {
                                 .themedFont(.tiny)
                                 .foregroundStyle(.appSecondary)
 
-                            Text("-", bundle: .module)
+                            Text(verbatim: "-")
                                 .foregroundStyle(.tertiary)
 
                             Text(commit.relativeDate)

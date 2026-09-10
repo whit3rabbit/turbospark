@@ -135,7 +135,7 @@ struct EngineSettingsPaneView: View {
                     .onChange(of: model.maxNewTokens) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("", bundle: .module)
+                Text(verbatim: "")
                     .frame(width: 44)
             }
 
@@ -156,7 +156,7 @@ struct EngineSettingsPaneView: View {
                     .onChange(of: model.topK) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("", bundle: .module)
+                Text(verbatim: "")
                     .frame(width: 44)
             }
 
@@ -177,7 +177,7 @@ struct EngineSettingsPaneView: View {
                     .onChange(of: model.repetitionPenalty) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("", bundle: .module)
+                Text(verbatim: "")
                     .frame(width: 44)
             }
 
@@ -198,7 +198,7 @@ struct EngineSettingsPaneView: View {
                     .onChange(of: model.seed) { _, _ in
                         model.persistSettingsDebounced()
                     }
-                Text("", bundle: .module)
+                Text(verbatim: "")
                     .frame(width: 44)
             }
 

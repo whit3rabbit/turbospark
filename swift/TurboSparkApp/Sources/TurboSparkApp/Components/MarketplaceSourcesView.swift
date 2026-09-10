@@ -28,7 +28,12 @@ struct MarketplaceSourcesView: View {
                         Button(name) { if let source = sources[name] { select(source); dismiss() } }
                         Spacer()
                         Text(origin(name)).themedFont(.small)
-                        Button(role: .destructive) { model.removeMarketplace(name: name, kind: kind, projectID: projectID) }
+                        Button(role: .destructive) {
+                            do {
+                                try model.removeMarketplace(name: name, kind: kind, projectID: projectID)
+                                error = nil
+                            } catch { self.error = error.localizedDescription }
+                        }
                             label: { Text("Remove source", bundle: .module) }
                     }
                 }

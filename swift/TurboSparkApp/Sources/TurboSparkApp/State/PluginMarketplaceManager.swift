@@ -75,18 +75,16 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
         try data.write(to: knownMarketplacesURL, options: .atomic)
     }
 
-    public func removeKnownMarketplace(name: String) {
+    public func removeKnownMarketplace(name: String) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard var current = try? JSONDecoder().decode(
+        guard FileManager.default.fileExists(atPath: knownMarketplacesURL.path) else { return }
+        var current = try JSONDecoder().decode(
             [String: MarketplaceSource].self, from: Data(contentsOf: knownMarketplacesURL))
-        else { return }
         current.removeValue(forKey: name)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(current) {
-            try? data.write(to: knownMarketplacesURL, options: .atomic)
-        }
+        try encoder.encode(current).write(to: knownMarketplacesURL, options: .atomic)
     }
 
     // MARK: - Fetching a marketplace checkout
