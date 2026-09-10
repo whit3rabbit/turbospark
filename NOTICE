@@ -88,3 +88,14 @@ Four faces of each (Regular, Medium, SemiBold, Bold), 3.8 MB in total.
 
 Fira Code's release archive carries no license file, so `OFL-FiraCode.txt`
 was taken from `LICENSE` at the head of that repository instead.
+
+## Ghost mode icon
+
+`swift/TurboSparkApp/Sources/TurboSparkApp/Resources/Icons/ghost.svg` is
+the unmodified `ghost` icon from Lucide
+(<https://github.com/lucide-icons/lucide>, commit `1bcad8fccbcfc9633dcab54b48264855e1cc1f45`,
+path `icons/ghost.svg`), ISC licensed. The full license text sits beside
+it at `LICENSE-lucide.txt` in the same directory, taken from the head of
+that repository. This particular icon is not one of the Feather-derived
+names the same LICENSE file lists under a second, MIT grant, so only the
+ISC terms apply here.
