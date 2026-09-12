@@ -8,7 +8,7 @@ which lists a tool name has to appear in, and which tests pin the result.
 
 It does not restate what other pages own. `docs/PERMISSION_GATE.md` owns the
 terminal command classifier and every number about it, and its "Where it
-hooks" section is the decision ladder for a shell command. Section 16 below
+hooks" section is the decision ladder for a shell command. Section 17 below
 is this page's own Gotchas, and `swift/docs/SWIFT_STATE_LEDGER.md` is the
 incident history behind every parenthesised `state#` on this page.
 
@@ -246,9 +246,9 @@ five files adding a tool touches.
 | `Tools/Guardrails/ForgeGuardrailsEngine.swift` | tool-call rescue and schema check before parsing. Not the memory guardrails (Gotcha 24) |
 | `Tools/Custom/` | `CustomToolDefinition`, `CustomToolParser`, `CustomToolManager` (scopes and directories), `CustomToolExecutor` |
 | `Tools/MCP/` | `McpClientEngine` (stdio and SSE), `McpServerSpec`, `McpTools` (resource tool schemas), `McpResourceExecutor`, `ProjectMcpDetector` |
-| `Tools/File/` | `FileReadWriteTools`, `FileSearchTools`, `ApplyPatchTool` (schemas), `NotebookEditExecutor`, `SnipExecutor`, `SendUserFileExecutor`, `ApplyPatchExecutor`, `FileSnapshotStore` |
+| `Tools/File/` | `FileReadWriteTools` (multi-mode reading: lines, stats, preview, diff, time_machine, search; editing commands: str_replace, insert, pattern_replace, undo_edit), `FileSearchTools`, `ApplyPatchTool` (schemas), `NotebookEditExecutor`, `SnipExecutor`, `SendUserFileExecutor`, `ApplyPatchExecutor`, `FileSnapshotStore` (snapshots and rollback backup cache) |
 | `Tools/Terminal/` | `TerminalTools` (schemas: `Bash`, `BashOutput`, `KillShell`), `ShellCommandRunner` (the execution path: wrapping, timeout clamp, output shaping, background handoff), `BackgroundShellManager` (the background registry), `ShellCwdTracker`, `ShellOutputFormatting`, `TerminalCommandClassifier` (the auto-approve allowlist, and `isCollapsible` which is presentation only) |
-| `Tools/Web/` | `WebTools` (schemas), `WebSearchExecutor` (Exa, Parallel, Brave, SearXNG), `WebFetchExecutor` |
+| `Tools/Web/` | `WebTools` (schemas, including `HttpRequest`), `HttpRequestTools`, `HttpRequestExecutor` (REST client: HTTP methods, auth headers, response formatters, SSRF guard), `WebSearchExecutor` (Exa, Parallel, Brave, SearXNG, Tavily), `WebFetchExecutor` |
 | `Tools/Tasks/` | `AgentTools`, `TaskItemTools` (schemas), `TaskManager`, `TodoWriteExecutor` |
 | `Tools/Planning/` | `PlanningInteractiveTools`, `PlanningInteractiveExecutors` (interactive questionnaires, plan mode, findings, skills/goals), `SkillTool` (schemas) |
 | `Tools/Projects/` | `ArtifactWorktreeTools`, `ProjectDocTools`, `WorktreeExecutor` (git worktree isolation) |
@@ -281,6 +281,7 @@ Tests, all under `Tests/TurboSparkAppTests/`:
 - `McpAndIntegrationToolsTests.swift`: MCP tools and resources, web search/fetch,
   skills, agent loop.
 - `ExtendedToolExecutionTests.swift`: multi-tool integration matrix.
+- `EnhancedToolsAndHttpTests.swift`: multi-mode read_file (stats, preview, search, diff, time_machine), edit_file / editor commands (insert, pattern_replace, undo_edit), and HttpRequest REST client SSRF gating and registration.
 - `CustomToolsTests.swift`, `FileToolExecutionTests.swift`,
   `ToolCallParserTests.swift`, `TodoWriteExecutorTests.swift`,
   `ProcessExecutorTests.swift`, `ApplyPatchExecutorTests.swift`,
@@ -808,8 +809,13 @@ silently clobber a file the user changed mid-session did not.
 - Every successful patch operation records (delete: removes) its snapshot,
   so `edit_file`/`write_file` right after a patch compare against the
   POST-patch bytes instead of refusing everything until a re-read.
+- `undo_edit` rollback backups: `FileSnapshotStore.recordBackup(url:content:)`
+  saves the pre-modification bytes on every destructive edit. A subsequent
+  `undo_edit` command on that path restores the recorded content, re-records
+  the snapshot hash, and returns confirmation, allowing safe multi-step trial
+  and recovery.
 
-Tests: `FileFreshnessTests`.
+Tests: `FileFreshnessTests`, `EnhancedToolsAndHttpTests`.
 
 ## 15. Invisible-character sanitization on prompts
 
@@ -835,7 +841,65 @@ output is user-visible through its tool card anyway. Applying the strip
 to tool output would corrupt real content to guard a visible channel.
 Tests: `UnicodeSanitizationTests`.
 
-## 16. Gotchas
+## 16. Enhanced file operations, rollbacks, and native HTTP request tool
+
+The native tool suite incorporates the operational ergonomics from
+`strands-agents-tools` while maintaining TurboSparkApp's strict sandboxing,
+multi-list synchronization, and fresh snapshot tracking.
+
+### Multi-mode file inspection (`read_file`)
+
+`read_file` supports structured operational modes via the `mode` parameter:
+- `lines` (default): Standard 1-based bounded line slice.
+- `stats`: Returns comprehensive file metadata: byte size, total lines, word
+  count, character count, SHA256 checksum, and last modified timestamp.
+- `preview`: Returns bounded head and tail slices of the file with line
+  numbering and an explicit count of omitted lines between them.
+- `search`: In-file regular expression or substring search. Returns matching
+  lines prefixed with line numbers and configured context lines (`context_lines`).
+- `diff`: Compares the target file against another file (`comparison_path`)
+  within the workspace and produces a unified diff.
+- `time_machine`: Inspects git revision history and commit patches for the
+  specified file (`num_revisions`).
+
+### Enhanced editing and single-step rollbacks (`edit_file` / `editor`)
+
+`edit_file` (and its `editor` alias) provides targeted transformation commands:
+- `str_replace` (default): Exact old_string to new_string substitution.
+- `insert`: Injects `new_string` before or after a target line number
+  (`insert_line`) or target substring anchor (`position: "before" | "after"`).
+- `pattern_replace`: Replaces regular expression matches (`regex_pattern`)
+  supporting regex capture group expansions (e.g., `$1`).
+- `undo_edit`: Restores the immediate prior file state before the last edit.
+  On every destructive edit, `FileSnapshotStore.recordBackup(url:content:)`
+  preserves pre-modification content. `undo_edit` writes that content back,
+  updates the snapshot hash, and confirms the rollback.
+
+### Native HTTP / REST request client (`HttpRequest`)
+
+`HttpRequest` (`http_request`) executes REST API requests directly without
+requiring a shell process:
+- Methods: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`.
+- Authentication: `bearer` (Authorization: Bearer <token>), `basic` (RFC 7617
+  base64 encoded credentials), `api_key` (X-API-Key header), or custom headers.
+- Formatters: `json` (indented pretty-printed JSON), `markdown` (HTML converted
+  to Markdown with tag stripping), or `raw`.
+- Containment and SSRF Protection: Every request destination passes through
+  `AppToolSandbox.isPrivateOrMetadataHost(host)`. Requests to loopback (127.0.0.1,
+  localhost, ::1), RFC 1918 private subnets (10.0.0.0/8, 172.16.0.0/12,
+  192.168.0.0/16), link-local addresses (169.254.0.0/16), and cloud metadata
+  endpoints are blocked with a safety refusal.
+
+### Tavily web search and direct answer extraction
+
+`WebSearchExecutor` supports Tavily alongside Exa, Brave, and SearXNG:
+- `searchTavily`: Queries Tavily's search API, returning structured hits and
+  direct AI answers when available.
+- `extractTavily`: Extracts clean webpage content for a list of URLs.
+
+Tests: `EnhancedToolsAndHttpTests`, `WebSearchTests`.
+
+## 17. Gotchas
 
 **`resolveSecurePath` did not check containment until 2026-08-28, and its
 name said it did.** It standardized the caller's path and appended it to

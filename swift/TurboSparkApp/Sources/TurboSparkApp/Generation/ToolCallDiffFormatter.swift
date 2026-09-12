@@ -169,8 +169,8 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 8. File Edits: replace_file_content, edit_file, etc.
-        if lowerName.contains("replace") || lowerName.contains("edit") {
+        // 8. File Edits: replace_file_content, edit_file, editor, etc.
+        if lowerName.contains("replace") || lowerName.contains("edit") || lowerName == "editor" {
             let targetPath = arguments["TargetFile"]
                 ?? arguments["AbsolutePath"]
                 ?? arguments["path"]
@@ -243,8 +243,9 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 10. Web Fetch
-        if lowerName.contains("fetch") || lowerName.contains("read_url") {
+        // 10. Web Fetch & HTTP Request
+        if lowerName.contains("fetch") || lowerName.contains("read_url") || lowerName.contains("http") {
+            let method = arguments["method"]?.uppercased() ?? (lowerName.contains("http") ? "HTTP" : "Fetched")
             let rawUrl = arguments["url"] ?? arguments["uri"] ?? arguments["Url"] ?? arguments["URL"] ?? "url"
             let targetStr: String
             if let parsed = URL(string: rawUrl), let host = parsed.host {
@@ -254,7 +255,7 @@ public enum ToolCallDiffFormatter {
                 targetStr = String(rawUrl.prefix(30))
             }
             return ToolCallSummaryInfo(
-                action: "Fetched",
+                action: method,
                 target: targetStr
             )
         }

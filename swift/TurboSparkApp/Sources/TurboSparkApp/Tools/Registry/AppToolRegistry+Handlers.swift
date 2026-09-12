@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Size ceilings for every file this app reads on a model's instruction.
 ///
@@ -121,8 +122,45 @@ extension AppToolRegistry {
         return results.joined(separator: "\n")
     }
 
+    private static func generateSimpleDiff(pathA: String, contentA: String, pathB: String, contentB: String) -> String {
+        let linesA = contentA.components(separatedBy: "\n")
+        let linesB = contentB.components(separatedBy: "\n")
+        var diffLines: [String] = [
+            "--- \(pathA)",
+            "+++ \(pathB)"
+        ]
+        let maxLines = max(linesA.count, linesB.count)
+        var diffCount = 0
+        for i in 0..<maxLines {
+            let lineA = i < linesA.count ? linesA[i] : nil
+            let lineB = i < linesB.count ? linesB[i] : nil
+            if lineA != lineB {
+                diffCount += 1
+                if let la = lineA {
+                    diffLines.append(String(format: "-%4d | %@", i + 1, la))
+                }
+                if let lb = lineB {
+                    diffLines.append(String(format: "+%4d | %@", i + 1, lb))
+                }
+            }
+        }
+        if diffCount == 0 {
+            return "Files \(pathA) and \(pathB) are identical."
+        }
+        return compactOutput(diffLines.joined(separator: "\n"), maxLines: 150)
+    }
+
     static func readFile(
-        relPath: String, rootURL: URL, startLine: Int?, endLine: Int?, limit: Int? = nil
+        relPath: String,
+        rootURL: URL,
+        startLine: Int? = nil,
+        endLine: Int? = nil,
+        limit: Int? = nil,
+        mode: String? = nil,
+        searchPattern: String? = nil,
+        contextLines: Int? = nil,
+        comparisonPath: String? = nil,
+        numRevisions: Int? = nil
     ) async throws -> String {
         let targetURL = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         guard FileManager.default.fileExists(atPath: targetURL.path) else {
@@ -142,36 +180,135 @@ extension AppToolRegistry {
         if !ShellOutputFormatting.isUnderSpillRoot(targetURL) {
             await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: content)
         }
-        let allLines = content.components(separatedBy: "\n")
 
-        let sLine = max(1, startLine ?? 1)
-        if sLine > allLines.count {
-            return "File has \(allLines.count) lines. Requested start line \(sLine) is out of bounds."
-        }
-        // **`end_line` AND `limit` ARE DIFFERENT QUESTIONS AND ARE NO LONGER
-        // ALIASED.** The schema advertises "start_line and end_line bounds"
-        // while the two keys were collapsed into one value treated as a
-        // COUNT, so `read_file(start_line: 500, end_line: 520)` -- exactly
-        // what the schema's own example invites -- returned 520 lines instead
-        // of 21. `end_line` is absolute (the schema's word), `limit` is a
-        // count (the Claude/OpenAI convention), and each is read from its own
-        // key. Clamping rather than trusting a model-supplied value is what
-        // keeps `(sLine - 1)..<eLine` valid and non-empty: an unclamped
-        // `eLine < sLine - 1` previously trapped the process.
-        let eLine: Int
-        if let endLine {
-            eLine = min(allLines.count, max(sLine, endLine))
-        } else {
-            let requestedCount = limit ?? 120
-            eLine = min(allLines.count, max(sLine, sLine + requestedCount - 1))
-        }
+        let selectedMode = mode?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? "lines"
+        switch selectedMode {
+        case "stats":
+            let attrs = (try? FileManager.default.attributesOfItem(atPath: targetURL.path)) ?? [:]
+            let fileSize = (attrs[.size] as? Int64) ?? 0
+            let modDate = (attrs[.modificationDate] as? Date)?.description ?? "unknown"
+            let rawLines = content.components(separatedBy: "\n")
+            let lineCount = content.isEmpty ? 0 : (content.hasSuffix("\n") ? rawLines.count - 1 : rawLines.count)
+            let wordCount = content.split { $0.isWhitespace || $0.isNewline }.count
+            let sha = SHA256.hash(data: Data(content.utf8)).map { String(format: "%02x", $0) }.joined()
+            return """
+            File Statistics for: \(relPath)
+            - Path: \(relPath)
+            - Size: \(fileSize) bytes
+            - Lines: \(lineCount)
+            - Words: \(wordCount)
+            - Characters: \(content.count)
+            - SHA256: \(sha)
+            - Last Modified: \(modDate)
+            """
 
-        let slice = allLines[(sLine - 1)..<eLine]
-        var outputLines: [String] = ["File: \(relPath) (lines \(sLine)-\(eLine) of \(allLines.count))"]
-        for (offset, line) in slice.enumerated() {
-            outputLines.append(String(format: "%4d | %@", sLine + offset, line))
+        case "preview":
+            let allLines = content.components(separatedBy: "\n")
+            let previewCount = min(allLines.count, max(1, limit ?? 50))
+            let slice = allLines.prefix(previewCount)
+            var previewLines: [String] = ["Preview of \(relPath) (first \(previewCount) of \(allLines.count) lines):"]
+            for (idx, line) in slice.enumerated() {
+                previewLines.append(String(format: "%4d | %@", idx + 1, line))
+            }
+            if allLines.count > previewCount {
+                previewLines.append("... [\(allLines.count - previewCount) more lines omitted] ...")
+            }
+            return previewLines.joined(separator: "\n")
+
+        case "diff":
+            guard let compRel = comparisonPath, !compRel.isEmpty else {
+                throw NSError(domain: "TurboSparkTool", code: 12, userInfo: [NSLocalizedDescriptionKey: "Missing 'comparison_path' for diff mode."])
+            }
+            let compURL = try resolveSecurePath(relPath: compRel, rootURL: rootURL)
+            guard FileManager.default.fileExists(atPath: compURL.path) else {
+                throw NSError(domain: "TurboSparkTool", code: 12, userInfo: [NSLocalizedDescriptionKey: "Comparison file not found: \(compRel)"])
+            }
+            let compContent = try AppFileReadLimits.readTextFile(at: compURL, describing: compRel)
+            return generateSimpleDiff(pathA: relPath, contentA: content, pathB: compRel, contentB: compContent)
+
+        case "time_machine":
+            let revCount = max(1, min(20, numRevisions ?? 5))
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["log", "-p", "-n", "\(revCount)", "--", targetURL.path]
+            process.currentDirectoryURL = rootURL
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            try process.run()
+            process.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let gitOutput = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if process.terminationStatus != 0 || gitOutput.isEmpty || gitOutput.contains("not a git repository") {
+                return "No git history found for \(relPath)."
+            }
+            return compactOutput(gitOutput, maxLines: 150)
+
+        case "search":
+            guard let pattern = searchPattern, !pattern.isEmpty else {
+                throw NSError(domain: "TurboSparkTool", code: 13, userInfo: [NSLocalizedDescriptionKey: "Missing 'search_pattern' for search mode."])
+            }
+            let regex = try NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+            let lines = content.components(separatedBy: "\n")
+            let ctx = max(0, min(10, contextLines ?? 3))
+            var matchIndices = Set<Int>()
+            for (idx, line) in lines.enumerated() {
+                let range = NSRange(location: 0, length: (line as NSString).length)
+                if regex.firstMatch(in: line, options: [], range: range) != nil {
+                    matchIndices.insert(idx)
+                }
+            }
+            if matchIndices.isEmpty {
+                return "No matches found for pattern '\(pattern)' in \(relPath)."
+            }
+            var outputLines: [String] = ["Found \(matchIndices.count) matching line(s) for '\(pattern)' in \(relPath):"]
+            var shownIndices = Set<Int>()
+            for matchIdx in matchIndices.sorted() {
+                let start = max(0, matchIdx - ctx)
+                let end = min(lines.count - 1, matchIdx + ctx)
+                for i in start...end {
+                    if !shownIndices.contains(i) {
+                        shownIndices.insert(i)
+                        let marker = matchIndices.contains(i) ? ">" : " "
+                        outputLines.append(String(format: "%@%4d | %@", marker, i + 1, lines[i]))
+                    }
+                }
+                outputLines.append("---")
+            }
+            return outputLines.joined(separator: "\n")
+
+        default:
+            // "lines" mode
+            let allLines = content.components(separatedBy: "\n")
+            let sLine = max(1, startLine ?? 1)
+            if sLine > allLines.count {
+                return "File has \(allLines.count) lines. Requested start line \(sLine) is out of bounds."
+            }
+            // **`end_line` AND `limit` ARE DIFFERENT QUESTIONS AND ARE NO LONGER
+            // ALIASED.** The schema advertises "start_line and end_line bounds"
+            // while the two keys were collapsed into one value treated as a
+            // COUNT, so `read_file(start_line: 500, end_line: 520)` -- exactly
+            // what the schema's own example invites -- returned 520 lines instead
+            // of 21. `end_line` is absolute (the schema's word), `limit` is a
+            // count (the Claude/OpenAI convention), and each is read from its own
+            // key. Clamping rather than trusting a model-supplied value is what
+            // keeps `(sLine - 1)..<eLine` valid and non-empty: an unclamped
+            // `eLine < sLine - 1` previously trapped the process.
+            let eLine: Int
+            if let endLine {
+                eLine = min(allLines.count, max(sLine, endLine))
+            } else {
+                let requestedCount = limit ?? 120
+                eLine = min(allLines.count, max(sLine, sLine + requestedCount - 1))
+            }
+
+            let slice = allLines[(sLine - 1)..<eLine]
+            var outputLines: [String] = ["File: \(relPath) (lines \(sLine)-\(eLine) of \(allLines.count))"]
+            for (offset, line) in slice.enumerated() {
+                outputLines.append(String(format: "%4d | %@", sLine + offset, line))
+            }
+            return outputLines.joined(separator: "\n")
         }
-        return outputLines.joined(separator: "\n")
     }
 
     static func writeFile(relPath: String, content: String, rootURL: URL) async throws -> String {
@@ -252,11 +389,33 @@ extension AppToolRegistry {
         return lines.map { $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }.joined(separator: "\n")
     }
 
-    static func editFile(relPath: String, oldString: String, newString: String, replaceAll: Bool, rootURL: URL) async throws -> String {
+    static func editFile(
+        relPath: String,
+        oldString: String = "",
+        newString: String = "",
+        replaceAll: Bool = false,
+        rootURL: URL,
+        command: String? = nil,
+        insertLine: String? = nil,
+        position: String? = nil,
+        regexPattern: String? = nil
+    ) async throws -> String {
         let targetURL = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         try AppToolSandbox.validateWritePath(targetURL, rootURL: rootURL)
         guard FileManager.default.fileExists(atPath: targetURL.path) else {
             throw NSError(domain: "TurboSparkTool", code: 11, userInfo: [NSLocalizedDescriptionKey: "File not found: \(relPath)"])
+        }
+
+        let selectedCommand = command?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? "str_replace"
+        if selectedCommand == "undo_edit" || selectedCommand == "undo" {
+            guard let previous = await FileSnapshotStore.shared.restoreBackup(url: targetURL) else {
+                throw NSError(domain: "TurboSparkTool", code: 17, userInfo: [
+                    NSLocalizedDescriptionKey: "No previous backup found to undo for \(relPath)."
+                ])
+            }
+            try previous.write(to: targetURL, atomically: true, encoding: .utf8)
+            await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: previous)
+            return "Successfully rolled back \(relPath) to previous snapshot."
         }
 
         if await FileSnapshotStore.shared.isStale(url: targetURL) {
@@ -266,6 +425,57 @@ extension AppToolRegistry {
         }
 
         let content = try AppFileReadLimits.readTextFile(at: targetURL, describing: relPath)
+        // Record backup for undo_edit capability
+        await FileSnapshotStore.shared.recordBackup(url: targetURL, content: content)
+
+        if selectedCommand == "insert" {
+            guard let target = insertLine, !target.isEmpty else {
+                throw NSError(domain: "TurboSparkTool", code: 18, userInfo: [
+                    NSLocalizedDescriptionKey: "Missing 'insert_line' argument for insert command."
+                ])
+            }
+            var lines = content.components(separatedBy: "\n")
+            var targetIndex: Int?
+            if let lineNum = Int(target) {
+                targetIndex = max(0, min(lines.count - 1, lineNum - 1))
+            } else {
+                targetIndex = lines.firstIndex(where: { $0.contains(target) })
+            }
+            guard let idx = targetIndex else {
+                throw NSError(domain: "TurboSparkTool", code: 18, userInfo: [
+                    NSLocalizedDescriptionKey: "Could not find line or text matching '\(target)' in \(relPath)."
+                ])
+            }
+            let insertionPos = (position ?? "after").lowercased()
+            let insertionIdx = insertionPos == "before" ? idx : idx + 1
+            let newLines = newString.components(separatedBy: "\n")
+            lines.insert(contentsOf: newLines, at: min(lines.count, max(0, insertionIdx)))
+            let updated = lines.joined(separator: "\n")
+            try updated.write(to: targetURL, atomically: true, encoding: .utf8)
+            await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: updated)
+            return "Successfully inserted \(newLines.count) line(s) \(insertionPos) line \(idx + 1) in \(relPath)."
+        }
+
+        if selectedCommand == "pattern_replace" {
+            guard let pattern = regexPattern, !pattern.isEmpty else {
+                throw NSError(domain: "TurboSparkTool", code: 19, userInfo: [
+                    NSLocalizedDescriptionKey: "Missing 'regex_pattern' argument for pattern_replace command."
+                ])
+            }
+            let regex = try NSRegularExpression(pattern: pattern, options: [])
+            let nsContent = content as NSString
+            let matches = regex.matches(in: content, options: [], range: NSRange(location: 0, length: nsContent.length))
+            if matches.isEmpty {
+                throw NSError(domain: "TurboSparkTool", code: 19, userInfo: [
+                    NSLocalizedDescriptionKey: "Pattern '\(pattern)' did not match any content in \(relPath)."
+                ])
+            }
+            let updated = regex.stringByReplacingMatches(in: content, options: [], range: NSRange(location: 0, length: nsContent.length), withTemplate: newString)
+            try updated.write(to: targetURL, atomically: true, encoding: .utf8)
+            await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: updated)
+            return "Successfully replaced \(matches.count) pattern match(es) in \(relPath)."
+        }
+
         let isMarkdown = relPath.lowercased().hasSuffix(".md") || relPath.lowercased().hasSuffix(".mdx")
 
         // 1. Exact match attempt

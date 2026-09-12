@@ -132,11 +132,11 @@ public enum AppToolCatalog {
             return .mcp
         }
         switch name {
-        case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "apply_patch", "applypatch", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills", "memory", "remember":
+        case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "editor", "apply_patch", "applypatch", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills", "memory", "remember":
             return .fileWrite
         case "bash", "run_command", "repl", "shell", "exec", "terminal", "bashoutput", "bash_output", "killshell", "kill_shell", "enterworktree", "enter_worktree", "exitworktree", "exit_worktree":
             return .terminal
-        case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content":
+        case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content", "http_request", "httprequest":
             return .web
         case "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
