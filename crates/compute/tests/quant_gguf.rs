@@ -12,9 +12,10 @@
 //! merely too small.
 
 use turbospark_compute::{
-    dequant_q4_k_gemv, dequant_q5_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q4_k,
-    dequantize_q5_k, dequantize_q6_k, dequantize_q8_0, pearson, quantize_q4_k, quantize_q6_k,
-    quantize_q8_0, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q5_K_BLOCK_BYTES,
+    dequant_q2_k_gemv, dequant_q4_k_gemv, dequant_q5_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv,
+    dequantize_q2_k, dequantize_q4_k, dequantize_q5_k, dequantize_q6_k, dequantize_q8_0, pearson,
+    quantize_q2_k, quantize_q4_k, quantize_q6_k, quantize_q8_0, Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
+    Q2_K_SUB_ELEMS, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q5_K_BLOCK_BYTES,
     Q5_K_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS, Q8_0_BLOCK_BYTES,
     Q8_0_BLOCK_ELEMS,
 };
@@ -37,6 +38,55 @@ fn a_block_is_a_scale_then_thirty_two_weights() {
     assert_eq!(Q8_0_BLOCK_BYTES, 2 + Q8_0_BLOCK_ELEMS);
     let bytes = quantize_q8_0(&weights(96, 7));
     assert_eq!(bytes.len(), 3 * Q8_0_BLOCK_BYTES);
+}
+
+#[test]
+fn q2_k_hand_packed_superblock_obeys_ggmls_two_bit_plane_order() {
+    let mut block = vec![0u8; Q2_K_BLOCK_BYTES];
+    // d = 0.5, dmin = 0.25. Each scale byte uses low nibble scale, high
+    // nibble min. The values exercise both halves and all four bit planes.
+    for (sub, byte) in block.iter_mut().take(16).enumerate() {
+        *byte = ((sub % 8) as u8 + 1) | (((sub % 4) as u8 + 1) << 4);
+    }
+    block[80..82].copy_from_slice(&0x3800u16.to_le_bytes());
+    block[82..84].copy_from_slice(&0x3400u16.to_le_bytes());
+    for half in 0..2 {
+        for lane in 0..16 {
+            block[16 + half * 32 + lane] = (lane as u8 & 3)
+                | (((lane as u8 + 1) & 3) << 2)
+                | (((lane as u8 + 2) & 3) << 4)
+                | (((lane as u8 + 3) & 3) << 6);
+        }
+    }
+    let got = dequantize_q2_k(&block, Q2_K_BLOCK_ELEMS);
+    for e in 0..Q2_K_BLOCK_ELEMS {
+        let sub = e / Q2_K_SUB_ELEMS;
+        let q_byte = block[16 + (e / 128) * 32 + ((e % 32) / 16) * 16 + e % 16];
+        let q = (q_byte >> (2 * ((e % 128) / 32))) & 3;
+        let scale = (block[sub] & 15) as f32;
+        let min = (block[sub] >> 4) as f32;
+        assert_eq!(got[e], 0.5 * scale * q as f32 - 0.25 * min, "element {e}");
+    }
+}
+
+#[test]
+fn q2_k_fixture_encoder_has_the_declared_shape_and_gemv_contract() {
+    let n = 2 * Q2_K_BLOCK_ELEMS;
+    let rows: Vec<Vec<u8>> = (0..3)
+        .map(|seed| quantize_q2_k(&weights(n, seed)))
+        .collect();
+    assert!(rows.iter().all(|r| r.len() == 2 * Q2_K_BLOCK_BYTES));
+    let x = weights(n, 17);
+    let refs: Vec<&[u8]> = rows.iter().map(Vec::as_slice).collect();
+    let got = dequant_q2_k_gemv(&refs, &x);
+    for (row, value) in rows.iter().zip(got) {
+        let want: f32 = dequantize_q2_k(row, n)
+            .iter()
+            .zip(&x)
+            .map(|(w, x)| w * x)
+            .sum();
+        assert_eq!(value, want);
+    }
 }
 
 #[test]

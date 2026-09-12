@@ -1264,8 +1264,9 @@ live network).
   decodes a Q8_0 install rather than only opening one.
   **A THIRD SET EXISTS AND IS DELIBERATELY WIDER THAN BOTH: what the
   header PARSER can size.** `gguf_header.rs::ggml_type_block` also lists
-  Q2_K, Q3_K, Q5_0, Q5_1, Q5_K, IQ3_XXS, IQ4_NL and IQ4_XS, none of which
-  has a kernel and none of which is executable. They are there so a
+  Q3_K, Q5_0 and Q5_1 without a kernel. Q2_K, IQ3_XXS, IQ4_NL, IQ4_XS and
+  the dense GSQ-RCO IQ1/IQ2/IQ3 layouts now have resident kernels; Q5_K is
+  resident-only. They are listed so a
   candidate checkpoint can be HEADER-PROBED for scoping (ROADMAP Phase S)
   without downloading it, and adding a row buys nothing but parsing. The
   consequence to know is that the walk will now happily WRITE an install of

@@ -24,7 +24,8 @@
 //! `docs/BATCHED_PREFILL.md`, "Step 5's two arms, measured before building
 //! either".
 //!
-//! The shader source is the `moe_gguf` chain, then
+//! The shader source is the `moe_gguf` chain, including its generated IQ
+//! tables, then
 //! `moe_prefill_batch.metal`, then `moe_prefill_batch_gguf.metal`. The last
 //! needs BOTH halves: `RoutedBlobsWide` and `MoePrefillRoute` from the
 //! affine batched file, and `dequant_mxfp4_row_simd` /
@@ -46,6 +47,7 @@ pub const SOURCE: &str = concat!(
     include_str!("shaders/moe.metal"),
     include_str!("shaders/dequant_q4_k.metal"),
     include_str!("shaders/dequant_q6_k.metal"),
+    include_str!("shaders/dequant_iq_lowbit_tables.metal"),
     include_str!("shaders/dequant_iq.metal"),
     include_str!("shaders/moe_gguf.metal"),
     include_str!("shaders/moe_prefill_batch.metal"),
@@ -68,7 +70,7 @@ const THREADS_PER_GROUP: u64 = 256;
 /// dead. What the value DOES decide is which pipeline specialization
 /// compiles: the argument encoder and every dispatch must agree on
 /// `constants_key`, and a caller free to pass either value could silently
-/// compile a second copy of the seven-file concatenation mid-prefill
+/// compile a second copy of the eight-file concatenation mid-prefill
 /// (Gotcha 1's cost). `true` matches the runtime's choice for this family
 /// (`families/gptoss/moe.rs`: silu is the nearer wrong answer if a layout
 /// ever resolved to a non-MXFP4 kernel).
