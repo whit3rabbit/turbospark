@@ -1,0 +1,74 @@
+{
+  "mutations": [
+    {
+      "mutation": "cache-reset",
+      "exit": 1,
+      "assertions": [
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:44: error: -[TurboSparkAppTests.McpCacheLifecycleTests testResetRejectsPendingDiscovery] : XCTAssertNil failed: \"[TurboSparkApp.McpDiscoveredTool(name: \"late\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)]\""
+      ]
+    },
+    {
+      "mutation": "cache-removal",
+      "exit": 1,
+      "assertions": [
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:44: error: -[TurboSparkAppTests.McpCacheLifecycleTests testRemovalRejectsPendingDiscovery] : XCTAssertNil failed: \"[TurboSparkApp.McpDiscoveredTool(name: \"late\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)]\""
+      ]
+    },
+    {
+      "mutation": "cache-disable",
+      "exit": 1,
+      "assertions": [
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:44: error: -[TurboSparkAppTests.McpCacheLifecycleTests testDisableRejectsPendingDiscovery] : XCTAssertNil failed: \"[TurboSparkApp.McpDiscoveredTool(name: \"late\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)]\"",
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:44: error: -[TurboSparkAppTests.McpCacheLifecycleTests testPruningRejectsPendingDiscovery] : XCTAssertNil failed: \"[TurboSparkApp.McpDiscoveredTool(name: \"late\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)]\""
+      ]
+    },
+    {
+      "mutation": "cache-identity",
+      "exit": 1,
+      "assertions": [
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:86: error: -[TurboSparkAppTests.McpCacheLifecycleTests testTransportReplacementRejectsOldFailure] : XCTAssertTrue failed",
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:83: error: -[TurboSparkAppTests.McpCacheLifecycleTests testTransportReplacementRejectsOldSuccess] : XCTAssertNil failed: \"[TurboSparkApp.McpDiscoveredTool(name: \"old\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)]\"",
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:86: error: -[TurboSparkAppTests.McpCacheLifecycleTests testTransportReplacementRejectsOldSuccess] : XCTAssertTrue failed"
+      ]
+    },
+    {
+      "mutation": "cache-manual",
+      "exit": 1,
+      "assertions": [
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:118: error: -[TurboSparkAppTests.McpCacheLifecycleTests testExplicitToolsSupersedePendingDiscovery] : XCTAssertEqual failed: (\"Optional([TurboSparkApp.McpDiscoveredTool(name: \"late\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)])\") is not equal to (\"Optional([TurboSparkApp.McpDiscoveredTool(name: \"manual\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)])\")"
+      ]
+    },
+    {
+      "mutation": "cache-retry",
+      "exit": 1,
+      "assertions": [
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:130: error: -[TurboSparkAppTests.McpCacheLifecycleTests testFailureRetainsCacheAndAllowsRetry] : XCTUnwrap failed: expected non-nil value of type \"Task<(), Never>\""
+      ]
+    },
+    {
+      "mutation": "fan-default",
+      "exit": 1,
+      "assertions": [
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/FanControllerTests.swift:223: error: -[TurboSparkAppTests.FanControllerTests test_sharedControllerCannotReachHardwareInTests] : XCTAssertFalse failed"
+      ]
+    },
+    {
+      "mutation": "same-transport-identity",
+      "exit": 1,
+      "assertions": [
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:83: error: -[TurboSparkAppTests.McpCacheLifecycleTests testResetReplacementRejectsOldSuccess] : XCTAssertNil failed: \"[TurboSparkApp.McpDiscoveredTool(name: \"old\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)]\"",
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/swift/TurboSparkApp/Tests/TurboSparkAppTests/McpCacheLifecycleTests.swift:94: error: -[TurboSparkAppTests.McpCacheLifecycleTests testResetReplacementRejectsOldSuccess] : XCTAssertEqual failed: (\"Optional([TurboSparkApp.McpDiscoveredTool(name: \"old\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)])\") is not equal to (\"Optional([TurboSparkApp.McpDiscoveredTool(name: \"new\", description: \"fixture\", inputSchemaJSON: \"{}\", serverName: \"fixture\", annotations: nil)])\")"
+      ]
+    }
+  ],
+  "swift_suite": {
+    "tests": 1545,
+    "skipped": 1,
+    "failures": 0
+  },
+  "standalone_cache_probe": "passed",
+  "rust_build": "passed",
+  "rust_fmt": "passed",
+  "rust_clippy": "passed",
+  "rust_tests": "passed with host Metal access"
+}

@@ -107,6 +107,71 @@ fn auto_slots(physical_bytes: u64, resident_bytes: u64, bytes_per_slot: u64) -> 
         .unwrap_or(floor)
 }
 
+/// Which side of the streamed/mapped residency split an open takes
+/// (ROADMAP P1 item 3, `docs/EXPERT_RESIDENCY.md`).
+///
+/// The MODE is chosen FIRST and the slot count only if `Streamed` won --
+/// mapped residency has no slot cache to size, which is most of its
+/// measured 3 GiB footprint win. This enum is the REQUEST, mirror of
+/// `turbospark_invocation::ExpertResidency` exactly as
+/// [`ExpertCacheSlots`] mirrors that crate's slots enum; the RESOLUTION
+/// (including the `TURBOSPARK_EXPERT_RESIDENCY` seam `Auto` defers to)
+/// lives in `runtime::resolve_expert_residency`, because reading the
+/// environment is not something this pure crate does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExpertResidency {
+    /// Defer to the `TURBOSPARK_EXPERT_RESIDENCY=mapped` seam when set, and
+    /// otherwise to the memory-headroom rule -- which TODAY always resolves
+    /// down to `Streamed`, deliberately: `docs/EXPERT_RESIDENCY.md` records
+    /// that flipping `Auto` up to mapped requires the eviction behaviour
+    /// under real memory pressure to be measured first
+    /// (`crates/bench/tests/mapped_residency_eviction.rs`), and no frozen
+    /// row may move because a default started sensing (AGENTS.md Gotcha 35).
+    #[default]
+    Auto,
+    /// The `pread` streamer with its pinned slot cache. What every frozen
+    /// row was measured on.
+    Streamed,
+    /// Read each routed expert in place out of the layer's `mmap`; no slot
+    /// cache, no streamer (families wired for it are admitted by
+    /// `mapped_residency_refusal`, the rest are refused by name).
+    Mapped,
+}
+
+impl ExpertResidency {
+    /// The flag's value set, `auto|streamed|mapped`, case-insensitive.
+    /// None rather than a fallback so the parsers can refuse a typo by name
+    /// (AGENTS.md Gotcha 2's const-set discipline, one allowed-value set per
+    /// knob).
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "streamed" => Some(Self::Streamed),
+            "mapped" => Some(Self::Mapped),
+            _ => None,
+        }
+    }
+}
+
+/// What [`ExpertResidency`] resolved to for one open. Carried separately
+/// because the ANSWER (not the request) is what the startup line prints and
+/// what `committed_breakdown` sizes against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedExpertResidency {
+    Streamed,
+    Mapped,
+}
+
+impl ResolvedExpertResidency {
+    /// The startup line's word for this mode.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Streamed => "streamed",
+            Self::Mapped => "mapped",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +322,37 @@ mod tests {
     #[test]
     fn the_default_is_auto() {
         assert_eq!(ExpertCacheSlots::default(), ExpertCacheSlots::Auto);
+    }
+
+    /// The residency flag's value set: exact matches accepted
+    /// case-insensitively, everything else refused (None) so the parsers
+    /// can reject a typo by name rather than silently streaming.
+    #[test]
+    fn residency_parses_its_three_spellings_and_refuses_everything_else() {
+        assert_eq!(ExpertResidency::parse("auto"), Some(ExpertResidency::Auto));
+        assert_eq!(
+            ExpertResidency::parse("Mapped"),
+            Some(ExpertResidency::Mapped)
+        );
+        assert_eq!(
+            ExpertResidency::parse(" STREAMED "),
+            Some(ExpertResidency::Streamed)
+        );
+        // No whitespace-only variants here: `parse` trims, so "auto" and
+        // " auto " are the same spelling by design and the positive case
+        // above asserts that.
+        for bad in ["", "map", "mmap", "0", "resident", "Automatic"] {
+            assert_eq!(ExpertResidency::parse(bad), None, "{bad:?}");
+        }
+    }
+
+    /// The DEFAULT is `Auto`, pinned the same way the slots default is: a
+    /// caller that says nothing must land on the mode every frozen row was
+    /// measured on once the seam is unset, and `Auto` (not `Streamed`) is
+    /// what keeps the env seam reachable for the harnesses that set it.
+    #[test]
+    fn the_residency_default_is_auto() {
+        assert_eq!(ExpertResidency::default(), ExpertResidency::Auto);
     }
 
     /// `qwen4_exp`'s own arithmetic (`docs/QWEN4_PHASE0.md` Phase 4): 48

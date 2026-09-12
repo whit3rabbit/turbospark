@@ -138,6 +138,8 @@ pub enum ServerEvent {
         id: RequestId,
         status: u16,
         duration_ms: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     /// A model joined or left a running server's registry.
     #[serde(rename_all = "camelCase")]

@@ -205,6 +205,10 @@ merely a plausible install of the same size. `turbospark-check --model
 qwen38-27b-mtp` opens it, and at `--temperature 0` speculative decoding
 auto-enables (`speculative decoding: on, mtp head (step drafter), block 2`)
 with output byte-identical to the same prompt run without a head present.
+At a positive temperature the step drafter has speculated since 2026-09-11
+through exact rejection sampling, exact IN DISTRIBUTION rather than in
+bytes (`docs/SPECULATIVE_DECODING.md`'s sampled section); the startup line
+says "any temperature".
 
 **A caller who already has `qwen38-27b` installed does not have to pay for
 the trunk a second time.** `--reuse-trunk-from <alias>` (`turbospark-model

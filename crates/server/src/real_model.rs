@@ -3,18 +3,23 @@
 //!
 //! Concurrency contract: ONE runner per process. It owns a multi-gigabyte
 //! resident mapping, the Metal pipelines, and a KV cache, so it is neither
-//! cheap to open nor safe to share; a mutex serializes generation and
-//! concurrent requests queue on it (each waiter holding a tokio blocking
-//! thread). That is the right shape for a loopback single-user server, not
-//! for a fleet one. So throughput is one request at a time regardless, and
-//! a `--max-tokens-per-sec` cap lengthens the lock hold in proportion, which
-//! is acceptable for the same reason: the queue is already serial. A client
-//! that disconnects mid-stream DOES now abort the queued or in-flight
-//! generation it was waiting on -- `run_completion`'s `cancel` predicate,
-//! polled once per prefill and decoded token, is what a waiter's dropped
-//! request sets (`crates/server/CLAUDE.md` Gotcha 25) -- but the lock itself
-//! is still held until that generation actually stops, so a cancel shortens
-//! the wait rather than skipping the queue.
+//! cheap to open nor safe to share; generation is serialized on the runner
+//! mutex, and ADMISSION to that mutex is ordered by the FIFO gate this
+//! backend exposes through [`ChatModel::generation_queue`]
+//! (`crate::queue`, ROADMAP P1 item 5): permits are granted in arrival
+//! order, a queued request holds no blocking thread while it waits (the
+//! wait is async and only the request that actually generates enters
+//! `spawn_blocking`), and a request whose client disconnects while queued
+//! releases without generating at all. So throughput is one request at a
+//! time regardless, and a `--max-tokens-per-sec` cap lengthens the permit
+//! hold in proportion, which is acceptable for the same reason: the queue
+//! is already serial. A client that disconnects mid-stream DOES abort the
+//! queued or in-flight generation it was waiting on --
+//! `run_completion`'s `cancel` predicate, polled once per prefill and
+//! decoded token, is what a waiter's dropped request sets
+//! (`crates/server/CLAUDE.md` Gotcha 25) -- but the permit itself is still
+//! held until that generation actually stops, so a cancel shortens the
+//! wait rather than skipping the queue.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -71,6 +76,11 @@ pub struct RealChatModel {
     /// generation holding the lock: enough of them pin every worker and
     /// `/health` stops answering, which Gotcha 22 says it must not.
     vision_info: Option<crate::vision::VisionInfo>,
+    /// The FIFO admission gate this runner's generations queue on
+    /// (ROADMAP P1 item 5). One per RUNNER: the registry could hold two
+    /// real backends someday and each serializes on its own gate, not on a
+    /// process-global one.
+    queue: std::sync::Arc<crate::queue::GenerationQueue>,
 }
 
 impl RealChatModel {
@@ -442,6 +452,7 @@ impl RealChatModel {
             default_system,
             preprocess_params,
             vision_info,
+            queue: crate::queue::GenerationQueue::shared(),
         })
     }
 
@@ -537,13 +548,12 @@ impl RealChatModel {
         match &self.speculation {
             runtime::SpeculationPlan::Enabled { block } => {
                 let which = match self.drafter {
-                    runtime::SpeculativeDrafter::Dflash => "dflash2 (block drafter)",
-                    _ => "mtp head (step drafter)",
+                    runtime::SpeculativeDrafter::Dflash => {
+                        "dflash2 (block drafter, temperature-0 requests only)"
+                    }
+                    _ => "mtp head (step drafter, any temperature)",
                 };
-                format!(
-                    "speculative decoding: on, {which}, block {block} \
-                     (temperature-0 requests only)"
-                )
+                format!("speculative decoding: on, {which}, block {block}")
             }
             runtime::SpeculationPlan::Disabled { reason: Some(why) } => {
                 format!("speculative decoding: off ({why})")
@@ -608,6 +618,10 @@ impl ChatModel for RealChatModel {
         self.rate
     }
 
+    fn generation_queue(&self) -> Option<std::sync::Arc<crate::queue::GenerationQueue>> {
+        Some(self.queue.clone())
+    }
+
     fn guardrails(&self) -> crate::GuardrailConfig {
         self.guardrails
     }
@@ -632,20 +646,23 @@ impl ChatModel for RealChatModel {
     /// can be served by it; the sequential loop otherwise.
     ///
     /// **THE SECOND CONDITION IS PER REQUEST, AND THAT IS THE ONE THING THIS
-    /// SERVER CANNOT INHERIT FROM THE CLI.** Acceptance is
-    /// `argmax(target) == proposal`, exact only at temperature 0. On the CLI
-    /// that is a property of the process, so `open_session` can refuse once
-    /// and be done. Here it is a property of the REQUEST, so the check has to
-    /// be made per call and the answer differs between two requests to one
-    /// server.
+    /// SERVER CANNOT INHERIT FROM THE CLI.** Whether the speculative loop
+    /// can serve a request exactly is a property of the request's
+    /// temperature AND of the drafter: the MTP step drafter serves any
+    /// temperature through exact rejection sampling (ROADMAP P1 item 4),
+    /// while the DFlash2 block drafter has no distribution to ratio against
+    /// and remains temperature-0 only. On the CLI that split is a property
+    /// of the process, so `open_session` can resolve it once. Here the
+    /// temperature arrives per request, so the check is made per call.
     ///
-    /// A sampled request falls back SILENTLY rather than failing. It is the
-    /// normal case -- OpenAI and Anthropic clients send a non-zero temperature
-    /// by default, so a server started with `--speculative` speculates on a
-    /// minority of its traffic -- and a per-request warning for the normal
-    /// case is noise that trains an operator to ignore the startup line that
-    /// matters. Refusing would be worse still: it turns a valid request into
-    /// an error for a setting the caller never sent.
+    /// A sampled request on the BLOCK drafter falls back SILENTLY rather
+    /// than failing, and a sampled request on the STEP drafter speculates.
+    /// The silent half is the normal case for a dflash server -- OpenAI and
+    /// Anthropic clients send a non-zero temperature by default -- and a
+    /// per-request warning for the normal case is noise that trains an
+    /// operator to ignore the startup line that matters. Refusing would be
+    /// worse still: it turns a valid request into an error for a setting
+    /// the caller never sent.
     fn run_completion(
         &self,
         prompt_ids: &[foundation::TokenId],
@@ -664,7 +681,13 @@ impl ChatModel for RealChatModel {
             return self.run_with_images(prompt_ids, config, images, cancel, on_progress);
         }
         let block = match &self.speculation {
-            runtime::SpeculationPlan::Enabled { block } if config.shaping.is_deterministic() => {
+            // Greedy requests speculate under either drafter; sampled ones
+            // only under the STEP drafter (see the doc above for why the
+            // block drafter cannot serve them exactly).
+            runtime::SpeculationPlan::Enabled { block }
+                if config.shaping.is_deterministic()
+                    || self.drafter == runtime::SpeculativeDrafter::Mtp =>
+            {
                 *block
             }
             // Chunked prefill wins over the sequential loop whenever this

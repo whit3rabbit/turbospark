@@ -37,7 +37,9 @@ use forge_guardrails::{
 use tokenizer::{JsonValue, ParsedToolCall, ReasoningEffort};
 
 use crate::cancel::Cancel;
-use crate::handler::{plan, run_full, tool_names, AppState, GenError, Generated};
+use crate::handler::{
+    cancelled_before_start, plan, run_full, tool_names, AppState, GenError, Generated,
+};
 
 mod extra_formats;
 
@@ -339,12 +341,39 @@ fn with_retry_turn(
 /// Falls back to [`run_full`]'s single generation whenever no guardrail
 /// applies, so a request with no tools -- or a server started with
 /// `--guardrails off` -- reaches exactly the code it always did.
+///
+/// **This is the FIFO gate's acquisition point for every non-streaming and
+/// guardrail-buffered request path** (`queue.rs`'s closed set): acquired
+/// ONCE here, around the whole retry loop, so a guardrail retry keeps its
+/// queue position rather than going back to the tail -- Gotcha 18's "the
+/// retry budget is one because the queue is serial" economics must not
+/// change shape because the queue became a real one. A request cancelled
+/// while queued returns the same silent-discard shape a mid-generation
+/// cancel does: a zero-token `Generated` with `StopReason::Cancelled`,
+/// which every caller already folds into its cancelled arm.
 pub(crate) async fn run_guarded(
     model: AppState,
     request: &ChatCompletionRequest,
     effort: ReasoningEffort,
     cancel: Cancel,
 ) -> Result<Generated, GenError> {
+    let _gate = match model.generation_queue() {
+        Some(queue) => match queue.acquire(&cancel).await {
+            Some(permit) => Some(permit),
+            // Cancelled while queued: the client is gone, nothing was
+            // generated, and the shape below is the one every caller's
+            // cancelled arm already discards silently.
+            None => {
+                return Ok(Generated {
+                    text: String::new(),
+                    reasoning: String::new(),
+                    calls: Vec::new(),
+                    decode: cancelled_before_start(),
+                })
+            }
+        },
+        None => None,
+    };
     let config = model.guardrails();
     let offered = tool_names(request);
     let requires_call = requires_tool_call(request);

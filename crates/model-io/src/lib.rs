@@ -40,16 +40,19 @@ pub use arch_config::{
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 pub use context_policy::{
-    committed_breakdown, committed_bytes, gdn_state_bytes, kv_bytes_for_context,
-    kv_bytes_for_context_with, largest_context_within, largest_context_within_with,
-    resolve_max_context, resolve_max_context_with, session_pool_bytes, session_pool_bytes_with,
-    CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap, ContextPlan, ContextRefused,
-    ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
-    CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_breakdown, committed_breakdown_with_residency, committed_bytes, gdn_state_bytes,
+    kv_bytes_for_context, kv_bytes_for_context_with, largest_context_within,
+    largest_context_within_with, resolve_max_context, resolve_max_context_with, session_pool_bytes,
+    session_pool_bytes_with, CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap,
+    ContextPlan, ContextRefused, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION,
+    CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 pub use encoder_config::{EncoderConfig, EncoderQuantization};
 pub use error::ModelError;
-pub use expert_cache_policy::{ExpertCacheSlots, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES};
+pub use expert_cache_policy::{
+    ExpertCacheSlots, ExpertResidency, ResolvedExpertResidency, HEADROOM_FRACTION,
+    HEADROOM_RESERVE_BYTES,
+};
 pub use install_receipt::{
     load as load_install_receipt, validate as validate_install_receipt,
     validate_manifest_binding as validate_install_receipt_manifest_binding,

@@ -428,6 +428,11 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         reasoning,
         kv_bits,
         quiet,
+        // PLACEHOLDER so the tree compiles while the --expert-residency parse
+        // arm is in flight in another session: flipped to the shorthand once
+        // the local binding exists. `Auto` is the request's documented
+        // default, identical to the pre-flag behaviour.
+        expert_residency: Default::default(),
     })
 }
 

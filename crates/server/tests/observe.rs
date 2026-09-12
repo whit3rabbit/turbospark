@@ -210,3 +210,25 @@ async fn a_streamed_turn_reports_its_counters_too() {
     let generated = recorder.find("generated").expect("a generated event");
     assert_eq!(generated["newTokens"], 3);
 }
+
+/// An error response records its status and the error message in `RequestFinished`.
+#[tokio::test]
+async fn an_error_response_records_its_error_message() {
+    let (base, recorder) = serve(None).await;
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .header("content-type", "application/json")
+        .body("{not valid json}")
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().as_u16() >= 400);
+
+    let finished = recorder.find("requestFinished").expect("a finished event");
+    assert_eq!(finished["status"], response.status().as_u16());
+    assert!(
+        finished["error"].as_str().is_some(),
+        "finished event should contain error message: {:?}",
+        finished
+    );
+}

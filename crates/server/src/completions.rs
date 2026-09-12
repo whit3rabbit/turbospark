@@ -134,12 +134,23 @@ fn completion_warnings(request: &CompletionRequest) -> Option<String> {
 /// work, matching `handler::exec::run_full`'s reason for one), collecting
 /// every text delta with no decoder in front of it: this endpoint has no
 /// tool or reasoning markup to separate out.
+///
+/// The FIFO gate's acquisition point for this endpoint's NON-streaming
+/// path (`queue.rs`'s closed set): acquired here rather than at the
+/// handler so the whole call, plan to result, holds one permit.
 async fn run_full(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     cancel: crate::cancel::Cancel,
 ) -> Result<(String, RawDecodeResult), crate::handler::GenError> {
+    let _gate = match model.generation_queue() {
+        Some(queue) => match queue.acquire(&cancel).await {
+            Some(permit) => Some(permit),
+            None => return Ok((String::new(), crate::handler::cancelled_before_start())),
+        },
+        None => None,
+    };
     let joined =
         tokio::task::spawn_blocking(move || {
             let mut text = String::new();
@@ -194,56 +205,63 @@ fn stream_response(
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
-    tokio::task::spawn_blocking(move || {
-        let send = |text: String, finish: Option<&'static str>| {
-            let chunk = text_completion_chunk(&id, created, &model_name, text, finish);
-            // Fast-path disconnect detection: `CancelOnDrop` below catches
-            // the same event even with no chunk in flight (a long prefill
-            // sends none), so this is a speed-up rather than the only
-            // detector.
-            if tx.send(Event::default().data(chunk.to_string())).is_err() {
-                cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        };
-        let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
-        let result = model.run_completion(&prompt_ids, &config, None, &flag, &mut |progress| {
-            let text = match progress {
-                RawDecodeProgress::Token { delta, .. } => delta,
-                RawDecodeProgress::Tail(tail) => tail,
-                RawDecodeProgress::Prefill { .. } => return,
+    // The FIFO gate's acquisition point for this endpoint's streaming path.
+    // See `handler::stream_response`'s longer note.
+    let gate = model.generation_queue();
+    let cancel_for_gate = cancel.clone();
+    tokio::spawn(async move {
+        let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
+            let send = |text: String, finish: Option<&'static str>| {
+                let chunk = text_completion_chunk(&id, created, &model_name, text, finish);
+                // Fast-path disconnect detection: `CancelOnDrop` below catches
+                // the same event even with no chunk in flight (a long prefill
+                // sends none), so this is a speed-up rather than the only
+                // detector.
+                if tx.send(Event::default().data(chunk.to_string())).is_err() {
+                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             };
-            if !text.is_empty() {
-                send(text, None);
-            }
-        });
-        match result {
-            // Discarded silently: the client that would read the finish
-            // chunk is the one already gone.
-            Ok(r) if r.reason == runtime::StopReason::Cancelled => return,
-            // OpenAI's legacy shape reports the finish reason with no final
-            // text delta rather than an empty one; the chunk above already
-            // sent the last piece of content.
-            Ok(r) => {
-                let reason = match finish_reason(r.reason) {
-                    anyllm_translate::openai::FinishReason::Length => "length",
-                    anyllm_translate::openai::FinishReason::ToolCalls => "tool_calls",
-                    _ => "stop",
+            let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
+            let result = model.run_completion(&prompt_ids, &config, None, &flag, &mut |progress| {
+                let text = match progress {
+                    RawDecodeProgress::Token { delta, .. } => delta,
+                    RawDecodeProgress::Tail(tail) => tail,
+                    RawDecodeProgress::Prefill { .. } => return,
                 };
-                send(String::new(), Some(reason));
+                if !text.is_empty() {
+                    send(text, None);
+                }
+            });
+            match result {
+                // Discarded silently: the client that would read the finish
+                // chunk is the one already gone.
+                Ok(r) if r.reason == runtime::StopReason::Cancelled => return,
+                // OpenAI's legacy shape reports the finish reason with no final
+                // text delta rather than an empty one; the chunk above already
+                // sent the last piece of content.
+                Ok(r) => {
+                    let reason = match finish_reason(r.reason) {
+                        anyllm_translate::openai::FinishReason::Length => "length",
+                        anyllm_translate::openai::FinishReason::ToolCalls => "tool_calls",
+                        _ => "stop",
+                    };
+                    send(String::new(), Some(reason));
+                }
+                // A failed run is not a completed one: report it as a FRAMED
+                // `error` event, matching the chat endpoints' contract -- never
+                // a bare `data:` line followed by the "finished normally"
+                // `[DONE]` sentinel.
+                Err(e) => {
+                    let body = serde_json::json!({
+                        "error": {"message": e.to_string(), "type": "server_error"}
+                    });
+                    let _ = tx.send(Event::default().event("error").data(body.to_string()));
+                    return;
+                }
             }
-            // A failed run is not a completed one: report it as a FRAMED
-            // `error` event, matching the chat endpoints' contract -- never
-            // a bare `data:` line followed by the "finished normally"
-            // `[DONE]` sentinel.
-            Err(e) => {
-                let body = serde_json::json!({
-                    "error": {"message": e.to_string(), "type": "server_error"}
-                });
-                let _ = tx.send(Event::default().event("error").data(body.to_string()));
-                return;
-            }
-        }
-        let _ = tx.send(Event::default().data("[DONE]"));
+            let _ = tx.send(Event::default().data("[DONE]"));
+        })
+        .await;
     });
 
     let stream: std::pin::Pin<

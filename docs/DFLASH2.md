@@ -776,8 +776,12 @@ Items 1-5 of this list are DONE (section 6). What remains:
    than in a CLI-private module the server could not reach. ONE thing differs
    and it is inherent: "is this run deterministic" is fixed per PROCESS on
    the CLI and per REQUEST on a server, so the install half is resolved at
-   open and a sampled request falls back to the sequential loop silently.
-   Most clients send a non-zero temperature, so a server started with
+   open and a sampled request falls back to the sequential loop silently --
+   still true for THIS drafter after rejection sampling landed for the MTP
+   step drafter (2026-09-11): the block drafter's selection is a greedy
+   structured search, not a distribution, so there is no q(x) to ratio
+   against and exact rejection sampling is undefined for it. Most clients
+   send a non-zero temperature, so a dflash server started with
    `--speculative` speculates on a minority of its traffic.
 5. ~~**One review finding left unfixed**: the unconditional batched-prefill
    scratch in `RealGemmaState`.~~ DONE 2026-08-21: it is a

@@ -215,6 +215,44 @@ pub enum ExpertCacheSlots {
     Auto,
 }
 
+/// Routed expert residency mode: whether routed experts are streamed through
+/// a per-layer slot cache or mapped directly in host memory.
+///
+/// Mirrors `model_io::ExpertResidency`, kept here so `turbospark-invocation`
+/// stays pure and depends only on `foundation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExpertResidency {
+    /// Automatic selection, defaulting to streamed today until eviction
+    /// characteristics under pressure are calibrated.
+    #[default]
+    Auto,
+    /// Traditional streamed mode using pinned slot cache buffers.
+    Streamed,
+    /// Mapped mode reading experts directly out of mapped memory.
+    Mapped,
+}
+
+impl ExpertResidency {
+    /// Parse an expert residency mode from its documented spelling.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "streamed" => Some(Self::Streamed),
+            "mapped" => Some(Self::Mapped),
+            _ => None,
+        }
+    }
+
+    /// The inverse of [`Self::parse`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Streamed => "streamed",
+            Self::Mapped => "mapped",
+        }
+    }
+}
+
 /// Speculative decoding: whether to draft ahead with the checkpoint's own
 /// multi-token-prediction head, and what to do when it cannot be served.
 ///
@@ -452,6 +490,8 @@ pub struct InvocationRequest {
     pub rdadvise: ReadAheadMode,
     /// The routed-cache slot count, or `Auto` to size it at open.
     pub expert_cache_slots: ExpertCacheSlots,
+    /// The routed-expert residency mode; see [`ExpertResidency`].
+    pub expert_residency: ExpertResidency,
     /// Speculative decoding policy; see [`Speculation`].
     pub speculation: Speculation,
     /// Which drafter that policy drives; see [`SpeculativeDrafter`].

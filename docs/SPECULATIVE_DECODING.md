@@ -396,3 +396,50 @@ In order of leverage:
 - Drafter checkpoints: [z-lab on Hugging Face](https://huggingface.co/z-lab)
 - Rust reference (Apache-2.0, `mlx-rs`): [lablup/mlxcel](https://github.com/lablup/mlxcel/tree/45dea248926c5d0a8f09bdfb2ce1d21aed8d504a/src/lib/mlxcel-core/src/drafter/dflash)
 - Apple Silicon reference (MIT, Python/MLX): [Aryagm/dflash-mlx](https://github.com/Aryagm/dflash-mlx)
+
+## Sampled runs: exact rejection sampling (2026-09-11, ROADMAP P1 item 4)
+
+The temperature-0 limitation is gone for the MTP step drafter. A sampled
+speculative round now runs Leviathan/Chen rejection sampling
+(arXiv 2211.17192 / 2302.01318) over the two SHAPED distributions:
+
+- the drafter's proposal is DRAWN from its own shaped distribution q
+  (`selection::shaped_distribution` over the draft logits, same shaping,
+  same history state), and q is kept per proposal;
+- the target row's shaped distribution p is evaluated in commit order, so
+  penalties and step counters see exactly the history a sequential decode
+  would have;
+- a proposal x is accepted when `r * q(x) <= p(x)` for a fresh uniform r;
+  on rejection the corrected token comes from the normalized residual
+  `max(p - q, 0)`, and the round ends with it;
+- the bonus on full acceptance is a fresh draw from p at the last row.
+
+`select` and `shaped_distribution` share one pipeline body in
+`crates/selection/src/choose.rs`, so the distribution rejection sampling
+ratios against IS the distribution `select` samples from -- a second
+implementation that agreed with the first until it did not is how the
+exactness claim would rot. The contract is DISTRIBUTIONAL, not
+byte-identity: a seeded speculative sampled run is reproducible, but it
+does not reproduce a particular sequential run's stream, because the two
+consume randomness differently by construction. The synthetic proof is
+`crates/runtime/tests/speculative.rs::
+a_sampled_step_drafter_matches_the_sequential_distribution` (three drafter
+qualities, 1500 seeds each, total-variation bar against the sequential arm
+and the analytic shaped distribution), mutation-checked on both halves of
+the algorithm (accept-all and correction-from-p-instead-of-residual both
+redden it -- after an earlier draft of the test compared the WRONG TOKEN,
+the budget-stopped final one that `kv_backed_token_ids` never records, and
+passed against everything; the fixed test reads the progress events).
+
+**DFlash2 keeps the refusal, now naming the reason**: its selector is a
+greedy structured search (`unary + bilinear dot`), not a distribution, so
+there is no q(x) to ratio against and exact rejection sampling is
+undefined for it. A sampled run naming the block drafter is refused at
+admission by the loop and by `resolve_speculation`; the server silently
+falls back to the sequential loop for sampled requests on a dflash server,
+as before.
+
+The server change to know: a server started with `--speculative` on an
+MTP install now speculates on SAMPLED traffic too (previously the silent
+sequential fallback); the startup line says "any temperature" for the step
+drafter and "temperature-0 requests only" for the block drafter.

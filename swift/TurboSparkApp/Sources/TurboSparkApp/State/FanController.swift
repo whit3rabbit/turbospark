@@ -90,7 +90,11 @@ struct FanStatus: Codable, Equatable {
 /// retried once after a short delay.
 @MainActor
 final class FanController: ObservableObject {
-    static let shared = FanController()
+    // AppModel loads this singleton even without a fan view. Tests must not
+    // discover or control the host hardware; explicit fixture instances still work.
+    static let shared = FanController(
+        executablePath: AppStorageRoot.isRunningTests ? "" : nil,
+        pollInterval: AppStorageRoot.isRunningTests ? nil : defaultPollInterval)
 
     @Published private(set) var isAvailable: Bool
     @Published private(set) var status: FanStatus?

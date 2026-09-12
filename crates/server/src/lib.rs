@@ -26,6 +26,7 @@ mod messages;
 mod model;
 pub mod observe;
 mod ollama;
+mod queue;
 #[cfg(target_os = "macos")]
 mod real_model;
 #[cfg(target_os = "macos")]
@@ -66,6 +67,7 @@ pub use guardrails::GuardrailConfig;
 pub use handler::AppState;
 /// Trait and canned test backend for chat generation.
 pub use model::{ChatModel, ScriptedChatModel};
+pub use queue::{GenerationPermit, GenerationQueue};
 #[cfg(target_os = "macos")]
 /// GPU-backed chat model running real forward passes against `.gturbo` installs.
 pub use real_model::RealChatModel;
@@ -261,13 +263,62 @@ async fn observe_layer(
     });
 
     let started = std::time::Instant::now();
-    let response = next.run(request).await;
+    let mut response = next.run(request).await;
+    let status = response.status().as_u16();
+    let duration_ms = started.elapsed().as_millis() as u32;
+
+    let error = if status >= 400 {
+        let (parts, body) = response.into_parts();
+        match axum::body::to_bytes(body, 64 * 1024).await {
+            Ok(bytes) => {
+                let err = extract_error_message(&bytes);
+                response =
+                    axum::response::Response::from_parts(parts, axum::body::Body::from(bytes));
+                err
+            }
+            Err(_) => {
+                response = axum::response::Response::from_parts(parts, axum::body::Body::empty());
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     observe::record(&state.observer, || observe::ServerEvent::RequestFinished {
         id,
-        status: response.status().as_u16(),
-        duration_ms: started.elapsed().as_millis() as u32,
+        status,
+        duration_ms,
+        error,
     });
     response
+}
+
+fn extract_error_message(bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        if let Some(err_obj) = val.get("error") {
+            if let Some(msg) = err_obj.get("message").and_then(|m| m.as_str()) {
+                return Some(msg.to_string());
+            }
+            if let Some(msg) = err_obj.as_str() {
+                return Some(msg.to_string());
+            }
+        }
+        if let Some(msg) = val.get("message").and_then(|m| m.as_str()) {
+            return Some(msg.to_string());
+        }
+    }
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            let capped: String = trimmed.chars().take(1024).collect();
+            return Some(capped);
+        }
+    }
+    None
 }
 
 // Token id width consumed from the core primitives, keeping the dependency

@@ -101,6 +101,7 @@ struct ScriptedTarget {
     /// caller sized for.
     high_water: Cell<usize>,
     is_block_drafter: bool,
+    graded: bool,
     supports_retaining: bool,
     supports_headless: bool,
     retaining_rollback_calls: Cell<usize>,
@@ -120,6 +121,7 @@ impl ScriptedTarget {
             verify_rows: Cell::new(0),
             high_water: Cell::new(0),
             is_block_drafter: false,
+            graded: false,
             supports_retaining: false,
             supports_headless: false,
             retaining_rollback_calls: Cell::new(0),
@@ -131,6 +133,48 @@ impl ScriptedTarget {
     fn with_block_drafter(mut self) -> Self {
         self.is_block_drafter = true;
         self
+    }
+
+    /// GRADED logits instead of one-hot: every position's target
+    /// distribution becomes a three-way contest (truth at 4.0, truth+1 at
+    /// 3.0, truth+2 at 2.0) and the drafter's distribution becomes either
+    /// the same triple (Perfect), the REVERSED triple (Useless), or
+    /// position-alternating (Alternating). One-hots make every shaped
+    /// distribution a point mass, under which rejection sampling degenerates
+    /// to argmax equality -- so the sampled-loop tests that measure
+    /// DISTRIBUTIONS need this mode to have any distribution to measure.
+    fn with_graded_logits(mut self) -> Self {
+        self.graded = true;
+        self
+    }
+
+    /// The target's graded triple at a position: (truth, decoy_a, decoy_b)
+    /// with logits (4.0, 3.0, 2.0). The decoys sit at truth+1/+2, chosen
+    /// over modular wraps so they stay real, non-stop tokens.
+    fn graded_triple(&self, position: usize) -> (i32, i32, i32) {
+        let truth = self.truth_at(position);
+        let decoy_a = nonstop_neighbour(truth, 1, self.vocab);
+        let decoy_b = nonstop_neighbour(truth, 2, self.vocab);
+        (truth, decoy_a, decoy_b)
+    }
+
+    fn write_graded(&self, ids: (i32, i32, i32), out: &mut [LogitValue]) {
+        // -20 rather than 0: at this vocab a 0.0 background's COMBINED
+        // tail outweighs the decoys, and the analytic hand-computation the
+        // exactness test checks against assumes a three-way contest.
+        out.fill(LogitValue::from_f32(-20.0));
+        out[ids.0 as usize] = LogitValue::from_f32(4.0);
+        out[ids.1 as usize] = LogitValue::from_f32(3.0);
+        out[ids.2 as usize] = LogitValue::from_f32(2.0);
+    }
+
+    /// The REVERSED triple a Useless graded drafter puts out: the lowest
+    /// target grade first, so q's mode is p's tail.
+    fn write_graded_reversed(&self, ids: (i32, i32, i32), out: &mut [LogitValue]) {
+        out.fill(LogitValue::from_f32(-20.0));
+        out[ids.0 as usize] = LogitValue::from_f32(2.0);
+        out[ids.1 as usize] = LogitValue::from_f32(3.0);
+        out[ids.2 as usize] = LogitValue::from_f32(4.0);
     }
 
     fn with_retaining_rollback(mut self) -> Self {
@@ -171,8 +215,12 @@ impl LogitProducer for ScriptedTarget {
             "target fed out of order: the engine has absorbed {} positions",
             self.cursor
         );
-        let id = self.truth_at(position);
-        self.write_one_hot(id, logits);
+        if self.graded {
+            self.write_graded(self.graded_triple(position), logits);
+        } else {
+            let id = self.truth_at(position);
+            self.write_one_hot(id, logits);
+        }
         self.cursor += 1;
         self.high_water.set(self.high_water.get().max(self.cursor));
         Ok(())
@@ -237,7 +285,25 @@ impl SpeculativeProducer for ScriptedTarget {
                 }
             }
         };
-        self.write_one_hot(id, logits);
+        if self.graded {
+            // The proposal distribution the drafter samples from, per
+            // quality: Perfect puts out the same triple as the target,
+            // Useless the reversed one, Alternating switches by position.
+            let triple = self.graded_triple(position + 1);
+            match self.drafter {
+                Drafter::Perfect => self.write_graded(triple, logits),
+                Drafter::Useless => self.write_graded_reversed(triple, logits),
+                Drafter::Alternating => {
+                    if position % 2 == 0 {
+                        self.write_graded(triple, logits);
+                    } else {
+                        self.write_graded_reversed(triple, logits);
+                    }
+                }
+            }
+        } else {
+            self.write_one_hot(id, logits);
+        }
         self.drafter_cursor += 1;
         Ok(())
     }
@@ -283,8 +349,15 @@ impl SpeculativeProducer for ScriptedTarget {
         self.verify_calls.set(self.verify_calls.get() + 1);
         self.verify_rows.set(self.verify_rows.get() + feed.len());
         for (i, _) in feed.iter().enumerate() {
-            let id = self.truth_at(base + i);
-            self.write_one_hot(id, &mut logits[i * self.vocab..(i + 1) * self.vocab]);
+            if self.graded {
+                self.write_graded(
+                    self.graded_triple(base + i),
+                    &mut logits[i * self.vocab..(i + 1) * self.vocab],
+                );
+            } else {
+                let id = self.truth_at(base + i);
+                self.write_one_hot(id, &mut logits[i * self.vocab..(i + 1) * self.vocab]);
+            }
         }
         self.cursor += feed.len();
         self.high_water.set(self.high_water.get().max(self.cursor));
@@ -374,6 +447,19 @@ impl SpeculativeProducer for ScriptedTarget {
 }
 
 /// A continuation with no stop token in it, so a run ends on the budget.
+/// `truth + offset`, skipping id 0 (and the vocab edge) so a decoy stays a
+/// real, non-stop token -- the same discipline the Useless one-hot drafter
+/// follows, or the test would measure the stop ladder instead of
+/// acceptance.
+fn nonstop_neighbour(truth: i32, offset: i32, vocab: usize) -> i32 {
+    let candidate = (truth + offset) % (vocab as i32 - 1);
+    if candidate == 0 || candidate == truth {
+        truth + offset + 1
+    } else {
+        candidate
+    }
+}
+
 fn plain_truth(tokenizer: &MfTokenizer) -> Vec<i32> {
     ["h", "e", "l", "o", "w", "r", "d"]
         .iter()
@@ -626,16 +712,18 @@ fn a_round_never_feeds_past_the_context_window_it_was_admitted_under() {
         );
     }
 }
-
+/// The ONE refusal the sampling gate keeps: a BLOCK drafter has no
+/// distribution to ratio against, so a sampled run naming one is refused
+/// with the reason spelled out, at admission, before any state moved.
 #[test]
-fn a_sampled_configuration_is_refused_rather_than_approximated() {
+fn a_sampled_block_drafter_is_refused_by_name() {
     let tokenizer = load_tokenizer();
     let vocab = tokenizer.vocab_size;
     let truth = plain_truth(&tokenizer);
     let prompt = tokenizer.encode("hi", false);
     let config = sampled_config(10);
 
-    let mut producer = ScriptedTarget::new(vocab, truth, Drafter::Perfect);
+    let mut producer = ScriptedTarget::new(vocab, truth, Drafter::Perfect).with_block_drafter();
     let err = run_raw_completion_speculative(
         &mut producer,
         &tokenizer,
@@ -646,13 +734,17 @@ fn a_sampled_configuration_is_refused_rather_than_approximated() {
         2,
         |_| {},
     )
-    .expect_err("a sampled run must not be served by argmax acceptance");
+    .expect_err("a sampled run must not be served by a drafter with no distribution");
 
     match err {
         RuntimeError::SpeculationUnavailable(detail) => {
             assert!(
-                detail.contains("rejection sampling"),
-                "the refusal must name what is missing, got: {detail}"
+                detail.contains("block drafter"),
+                "the refusal must name the drafter kind, got: {detail}"
+            );
+            assert!(
+                detail.contains("not a distribution"),
+                "the refusal must say WHY there is no rejection sampling for it, got: {detail}"
             );
         }
         other => panic!("expected SpeculationUnavailable, got {other:?}"),
@@ -660,6 +752,151 @@ fn a_sampled_configuration_is_refused_rather_than_approximated() {
     // Nothing was generated and nothing was absorbed: the refusal is at
     // admission, before any state moved.
     assert_eq!(producer.cursor, 0);
+}
+
+/// THE EXACTNESS PROOF for the step drafter at a positive temperature:
+/// across many seeds, the DISTRIBUTION of the speculative run's second
+/// token matches the sequential run's, and both match the analytic shaped
+/// two-way distribution the graded fixture defines.
+///
+/// This is the property rejection sampling buys (Leviathan/Chen): the
+/// committed stream matches a sequential sampled decode IN LAW, at every
+/// drafter quality -- a perfect drafter accepts nearly everything, a
+/// reversed one rejects nearly everything and corrects from the residual,
+/// and both land on the same distribution. Byte-identity is NOT the
+/// contract at T>0 and is NOT asserted: the two arms consume randomness
+/// differently by construction.
+#[test]
+fn a_sampled_step_drafter_matches_the_sequential_distribution() {
+    let tokenizer = load_tokenizer();
+    // NOT `tokenizer.vocab_size`: the ChatML dialect pads that to ~248k
+    // (AGENTS.md Gotcha 37), and a sampled run RANKS the whole domain per
+    // distribution -- 9000 runs x ~8 sorts of 248k elements is hours.
+    // The loop only needs a width that covers every id this fixture can
+    // emit (base-vocab truths and their +1/+2 decoys, all < 260), and the
+    // renumbered special ids start at 258, so 1024 keeps the decoys clear
+    // of the stop ladder too.
+    let vocab = 1024usize;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    const SEEDS: u64 = 1500;
+    const BAR: f64 = 0.05;
+    let temperature = 0.7f64;
+
+    // The analytic shape, replicated from the pipeline's own order of
+    // operations: top-p walks the FULL-distribution softmax probabilities
+    // (pushing each candidate before re-checking the threshold), so at
+    // 0.665 / 0.245 / 0.090 the walk needs all three candidates to reach
+    // 0.95 and NOTHING is cut; the temperature reweight then applies over
+    // the three survivors. (A first draft asserted a two-way support after
+    // "top-p cuts the tail" -- that was this comment's own mistake, caught
+    // by the support assertion below reddening with three real ids.)
+    let graded_logits = [4.0f64, 3.0, 2.0];
+    let exps: Vec<f64> = graded_logits.iter().map(|l| l.exp()).collect();
+    let z: f64 = exps.iter().sum();
+    let base: Vec<f64> = exps.iter().map(|e| e / z).collect();
+    let w: Vec<f64> = base.iter().map(|p| p.powf(1.0 / temperature)).collect();
+    let wz: f64 = w.iter().sum();
+    let analytic_truth_mass = w[0] / wz;
+
+    for drafter in [Drafter::Perfect, Drafter::Useless, Drafter::Alternating] {
+        let mut seq: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+        let mut spec: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+        for seed in 0..SEEDS {
+            let config = GenerationConfig {
+                shaping: ShapingConfig::new(temperature, 64, Some(0.95), 1.0, Some(seed)).unwrap(),
+                max_new_tokens: 2,
+                stop_strings: Vec::new(),
+                extra_stop_tokens: Vec::new(),
+                rate: Default::default(),
+            };
+            // Both arms' second token comes from the PROGRESS EVENTS, not
+            // `kv_backed_token_ids`: the budget-stopped final token is
+            // counted and reported but never pushed to history
+            // (`TokenSink::commit` returns before the push on every stop
+            // path), so the history's last id is the FIRST generated token
+            // -- identical in both arms by construction, which is exactly
+            // how an earlier draft of this test compared the wrong token
+            // and passed against mutations that broke acceptance outright.
+            let mut generated_ids: Vec<i32> = Vec::new();
+            let mut seq_producer =
+                ScriptedTarget::new(vocab, truth.clone(), drafter).with_graded_logits();
+            let seq_result = run_raw_completion(
+                &mut seq_producer,
+                &tokenizer,
+                &prompt,
+                &config,
+                4096,
+                vocab,
+                |e| {
+                    if let RawDecodeProgress::Token { id, .. } = e {
+                        generated_ids.push(id);
+                    }
+                },
+            )
+            .expect("sequential run completes");
+            assert_eq!(seq_result.new_tokens, 2, "the budget stops at two tokens");
+            assert_eq!(generated_ids.len(), 2, "two tokens were reported");
+            *seq.entry(generated_ids[1]).or_insert(0) += 1;
+
+            // Speculative arm, block 2, fresh producer.
+            let mut generated_ids: Vec<i32> = Vec::new();
+            let mut spec_producer =
+                ScriptedTarget::new(vocab, truth.clone(), drafter).with_graded_logits();
+            let spec_result = run_raw_completion_speculative(
+                &mut spec_producer,
+                &tokenizer,
+                &prompt,
+                &config,
+                4096,
+                vocab,
+                2,
+                |e| {
+                    if let RawDecodeProgress::Token { id, .. } = e {
+                        generated_ids.push(id);
+                    }
+                },
+            )
+            .expect("speculative run completes");
+            assert_eq!(spec_result.new_tokens, 2, "the budget stops at two tokens");
+            assert_eq!(generated_ids.len(), 2, "two tokens were reported");
+            *spec.entry(generated_ids[1]).or_insert(0) += 1;
+        }
+
+        // Exactly the three-way support in both arms.
+        for (label, arm) in [("sequential", &seq), ("speculative", &spec)] {
+            assert_eq!(
+                arm.len(),
+                3,
+                "{label} arm under {drafter:?}: expected the three-way support, got {:?}",
+                arm.keys().collect::<Vec<_>>()
+            );
+        }
+        // TV distance between the arms.
+        let mut tv = 0.0f64;
+        for id in seq
+            .keys()
+            .chain(spec.keys())
+            .copied()
+            .collect::<std::collections::HashSet<_>>()
+        {
+            let p = *seq.get(&id).unwrap_or(&0) as f64 / SEEDS as f64;
+            let q = *spec.get(&id).unwrap_or(&0) as f64 / SEEDS as f64;
+            tv += (p - q).abs();
+        }
+        tv *= 0.5;
+        assert!(
+            tv < BAR,
+            "{drafter:?}: speculative and sequential second-token distributions differ by              TV {tv:.4} (bar {BAR})"
+        );
+        // And the heavier arm entry carries the analytic truth mass.
+        let (_top, top_count) = spec.iter().max_by_key(|(_, c)| **c).unwrap();
+        let top_mass = *top_count as f64 / SEEDS as f64;
+        assert!(
+            (top_mass - analytic_truth_mass).abs() < BAR,
+            "{drafter:?}: heavier speculative entry has mass {top_mass:.4}, analytic truth              mass is {analytic_truth_mass:.4}"
+        );
+    }
 }
 
 #[test]

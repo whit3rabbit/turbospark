@@ -37,7 +37,7 @@ turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
 # core (serde/thiserror/tracing/uuid). The `middleware` feature is deliberately
 # NOT enabled -- it forwards over reqwest to a `backend_url` (this server's
 # backend is in-process) and pulls axum 0.8 against our 0.7.
-anyllm_translate = "0.16"
+anyllm_translate = "0.16.1"
 # Tool-call guardrails: rescue parsing, argument validation, retry nudges.
 # `default-features = false` is LOAD BEARING and not tidiness. The default
 # feature set is that crate's proxy: it pulls axum 0.7 (fine), reqwest, tokio,

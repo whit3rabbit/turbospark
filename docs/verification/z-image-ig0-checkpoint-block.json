@@ -1,0 +1,39 @@
+{
+  "source_capture_sha256": "4bd81b86ef4eb899578da10fcd6303e15307b7d5585cbf039ff5ef081f871034",
+  "references": {
+    "diffusers": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux": "051ba9ff25c9a8a8703356053a012a0dfad3fe39"
+  },
+  "script_sha256": "a7bbf4ec37320d60fcc26da268fbcbe816c0b81568afc719d2d118865d411d00",
+  "geometry": {
+    "width": 3840,
+    "heads": 30,
+    "tokens": 64
+  },
+  "cross_reference_fp32": {
+    "max_abs": 1.71661376953125e-05,
+    "rmse": 1.8540564288762476e-07,
+    "relative_l2": 2.2893189849793126e-07
+  },
+  "tolerances": {
+    "max_abs": 3e-05,
+    "relative_l2": 1e-06
+  },
+  "quantized_block": {
+    "max_abs": 0.5165863037109375,
+    "rmse": 0.026365758410721613,
+    "relative_l2": 0.03255544456089029
+  },
+  "quantized_linears": [
+    "attention.to_q",
+    "attention.to_k",
+    "attention.to_v",
+    "attention.to_out.0",
+    "feed_forward.w1",
+    "feed_forward.w2",
+    "feed_forward.w3"
+  ],
+  "performance_measurement": false,
+  "scope": "block 0, first 64 captured tokens with attention restricted to those tokens",
+  "fixture_sha256": "c377f6dd9dc22e977cdbf93e49cd67f78de320c0be5c6ce08fcb833f93c5d349"
+}

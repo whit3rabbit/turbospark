@@ -35,6 +35,25 @@ pub(crate) struct Generated {
     pub decode: RawDecodeResult,
 }
 
+/// The zero-token result a request cancelled BEFORE its generation started
+/// reports (the FIFO gate's queued-disconnect case): the same
+/// `StopReason::Cancelled` every cancelled arm already folds into
+/// silently, with counts that say plainly that nothing ran.
+pub(crate) fn cancelled_before_start() -> RawDecodeResult {
+    RawDecodeResult {
+        reused_prefix_tokens: 0,
+        session_slot_evicted: false,
+        prompt_tokens: 0,
+        new_tokens: 0,
+        prefill_seconds: 0.0,
+        decode_seconds: 0.0,
+        reason: runtime::StopReason::Cancelled,
+        kv_position: 0,
+        kv_backed_token_ids: Vec::new(),
+        peak_memory_pressure: runtime::MemoryPressure::Normal,
+    }
+}
+
 /// Runs a generation to completion.
 pub(crate) async fn run_full(
     model: AppState,

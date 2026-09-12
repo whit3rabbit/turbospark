@@ -1,0 +1,418 @@
+{
+  "arrays": {
+    "decoded_pixels": {
+      "bytes": 12582912,
+      "dtype": "float32",
+      "file": "decoded_pixels.npy",
+      "sha256": "3582c73787523984be60cd61f0adc3a10ec0a0b842ded0d6de54b1a9777d4a8f",
+      "shape": [
+        1,
+        3,
+        1024,
+        1024
+      ],
+      "source_dtype": "torch.float32"
+    }
+  },
+  "benchmark_eligible": false,
+  "complete": true,
+  "inputs": {
+    "denoise.json": "4bd81b86ef4eb899578da10fcd6303e15307b7d5585cbf039ff5ef081f871034"
+  },
+  "model_revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+  "packages": {
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "PyYAML": "6.0.3",
+    "Pygments": "2.21.0",
+    "accelerate": "1.15.0",
+    "annotated-doc": "0.0.5",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.1",
+    "click": "8.5.0",
+    "diffusers": "0.41.0.dev0",
+    "filelock": "3.32.6",
+    "fsspec": "2026.7.0",
+    "h11": "0.16.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface_hub": "1.31.0",
+    "idna": "3.19",
+    "importlib_metadata": "9.0.1",
+    "markdown-it-py": "4.2.0",
+    "mdurl": "0.1.2",
+    "mlx": "0.32.2",
+    "mlx-metal": "0.32.2",
+    "mpmath": "1.3.0",
+    "networkx": "3.6.1",
+    "numpy": "2.5.3",
+    "packaging": "26.3",
+    "pillow": "12.3.0",
+    "psutil": "7.2.2",
+    "regex": "2026.9.10",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "sentencepiece": "0.2.2",
+    "setuptools": "84.0.0",
+    "shellingham": "1.5.4",
+    "sympy": "1.14.0",
+    "tokenizers": "0.23.2",
+    "torch": "2.14.0",
+    "tqdm": "4.70.0",
+    "transformers": "5.17.0",
+    "typer": "0.27.2",
+    "typing_extensions": "4.16.0",
+    "urllib3": "2.7.0",
+    "zipp": "4.1.0"
+  },
+  "png_sha256": "57cab9d332e9a8aea4f1cef8cde02fbb83f9f1d0b6a161b54642bdc92cbfc9e2",
+  "preflight": [
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 25.023430675611834,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 24.575377091754998,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 7.178510201523192,
+          "name": "Brave Browser",
+          "pid": 31795
+        },
+        {
+          "cpu_percent": 6.673343862843377,
+          "name": "Brave Browser Helper",
+          "pid": 31855
+        },
+        {
+          "cpu_percent": 6.456776670377767,
+          "name": "Brave Browser Helper (Renderer)",
+          "pid": 95651
+        },
+        {
+          "cpu_percent": 5.35975050121161,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 3.3752833713131745,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 1.4583862612443748,
+          "name": "ChatGPT",
+          "pid": 46991
+        }
+      ],
+      "total_cpu_percent": 87.82307601454382
+    },
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 21.95864255746729,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 20.801266701054413,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 4.837879539463972,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 4.606888963798929,
+          "name": "Brave Browser",
+          "pid": 31795
+        },
+        {
+          "cpu_percent": 3.647460635147902,
+          "name": "Brave Browser Helper (Renderer)",
+          "pid": 95651
+        },
+        {
+          "cpu_percent": 3.2257914658831046,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 2.700812884778296,
+          "name": "Brave Browser Helper",
+          "pid": 31855
+        },
+        {
+          "cpu_percent": 2.1742189850193694,
+          "name": "loginwindow",
+          "pid": 24653
+        }
+      ],
+      "total_cpu_percent": 73.73978057857077
+    },
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 25.822048762474154,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 24.161691992819893,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 6.104607900004468,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 4.936461786445513,
+          "name": "Brave Browser Helper (Renderer)",
+          "pid": 95631
+        },
+        {
+          "cpu_percent": 3.967793928404855,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 3.541235960432453,
+          "name": "Brave Browser",
+          "pid": 31795
+        },
+        {
+          "cpu_percent": 3.5228522803298334,
+          "name": "Brave Browser Helper (Renderer)",
+          "pid": 95651
+        },
+        {
+          "cpu_percent": 3.219305418631819,
+          "name": "Brave Browser Helper",
+          "pid": 31855
+        }
+      ],
+      "total_cpu_percent": 85.48170698431917
+    }
+  ],
+  "references": {
+    "diffusers": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux": "051ba9ff25c9a8a8703356053a012a0dfad3fe39"
+  },
+  "resources": {
+    "cache_state": "uncontrolled; no cache eviction performed",
+    "elapsed_s": 2.3738090419210494,
+    "measurement_kind": "instrumented reference capture",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t96%; charging; 0:24 remaining present: true",
+    "quiet_ac_throughout": false,
+    "samples": [
+      {
+        "disk_read_bytes": 302510080,
+        "elapsed_s": 0.014805041952058673,
+        "load": [
+          2.8994140625,
+          2.943359375,
+          3.2822265625
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 330351576,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t96%; charging; 0:24 remaining present: true",
+        "rss_bytes": 391315456,
+        "swap": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  46.4 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "95920  35.5 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "10634  34.2 /usr/libexec/PerfPowerServices",
+          "  179  30.4 /usr/libexec/runningboardd",
+          "47025  23.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031  22.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "95631  12.9 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "31855   7.4 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 32.70770638530328,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 21.78518339560096,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95699
+            },
+            {
+              "cpu_percent": 21.45694569208755,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95701
+            },
+            {
+              "cpu_percent": 16.197976604761443,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 12.483929691549427,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 11.829379512583458,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 9.731861400423519,
+              "name": "Brave Browser Helper",
+              "pid": 31855
+            },
+            {
+              "cpu_percent": 4.19036642514264,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            }
+          ],
+          "total_cpu_percent": 151.75293634116431
+        },
+        "disk_read_bytes": 309293056,
+        "elapsed_s": 2.084970957832411,
+        "load": [
+          2.8994140625,
+          2.943359375,
+          3.2822265625
+        ],
+        "mps_driver_bytes": 10597662720,
+        "mps_live_bytes": 351007744,
+        "phys_footprint_bytes": 11508958864,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t96%; charging; 0:24 remaining present: true",
+        "rss_bytes": 938278912,
+        "swap": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  50.4 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "95699  24.1 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "48031  14.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025  13.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "95920  13.1 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "31795  12.2 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+          "95701  11.5 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "95651   7.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 10.667072331673253,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 9.370290989481333,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 8.33495749842074,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 7.974159463703036,
+              "name": "Google Drive",
+              "pid": 32057
+            },
+            {
+              "cpu_percent": 5.166209541112577,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 5.019798744624166,
+              "name": "Brave Browser Helper",
+              "pid": 31855
+            },
+            {
+              "cpu_percent": 4.967509174107635,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 4.497025595505982,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 69.75053606543275
+        },
+        "disk_read_bytes": 309862400,
+        "elapsed_s": 2.2656121249310672,
+        "load": [
+          2.8994140625,
+          2.943359375,
+          3.2822265625
+        ],
+        "mps_driver_bytes": 10597662720,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 10459465384,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t96%; charging; 0:24 remaining present: true",
+        "rss_bytes": 962920448,
+        "swap": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  46.3 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "95920  29.3 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "95699  14.7 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "48031  12.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "31795  12.4 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+          "47025  12.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "95651   7.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "95701   6.7 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)"
+        ]
+      }
+    ]
+  },
+  "schema": 1,
+  "settings": {
+    "case": "lighting",
+    "device": "mps",
+    "guidance": 0.0,
+    "height": 1024,
+    "noise_generator": "torch CPU float32",
+    "prompt": "A lighthouse in winter at dusk, warm windows reflected on wet snow, cold blue shadows.",
+    "quantized_linears": false,
+    "seed": 42,
+    "steps": 9,
+    "width": 1024
+  },
+  "stage": "decode",
+  "tool_sha256": {
+    "z_image_capture.py": "f1dfcb9f4d43c51637182d9d43bc593c79c117fc2af92cf5b47400f02d38cff7",
+    "z_image_evidence.py": "5d31d0afc32ac76542a737915c86d6842fc71b38a3a8f4a7e2f8d0e0877cad78",
+    "z_image_probe.py": "0e8be72e818ac3286e7560cbd2914e5465deefa5bb8e8f12c6a5035ddeeb92dc"
+  },
+  "verified_weights": {
+    "vae/diffusion_pytorch_model.safetensors": "f5b59a26851551b67ae1fe58d32e76486e1e812def4696a4bea97f16604d40a3"
+  }
+}

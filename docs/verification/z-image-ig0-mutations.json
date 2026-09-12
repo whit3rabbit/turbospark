@@ -1,0 +1,79 @@
+[
+  {
+    "file": "z_image_evidence.py",
+    "mutation": " or sha256(file) != row[\"sha256\"]",
+    "expected_failed_case": "test_corrupted_fixture",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_evidence.py",
+    "mutation": "if list(a.shape) != row[\"shape\"] or str(a.dtype) != row[\"dtype\"] or a.nbytes != row[\"bytes\"]:",
+    "expected_failed_case": "test_altered_shape",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_evidence.py",
+    "mutation": "if not np.isfinite(a).all():\n            raise ValueError(\"non-finite fixture\")",
+    "expected_failed_case": "test_nonfinite",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_evidence.py",
+    "mutation": "if not required[x[\"stage\"]].issubset(x[\"arrays\"]):",
+    "expected_failed_case": "test_missing_fixture",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_evidence.py",
+    "mutation": " or x[\"model_revision\"] != REVISION",
+    "expected_failed_case": "test_revision",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_evidence.py",
+    "mutation": "if count != x[\"settings\"][\"steps\"] or count != x[\"scheduler_updates\"]:",
+    "expected_failed_case": "test_scheduler_count",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_probe.py",
+    "mutation": "if offsets != [end, end + size]:",
+    "expected_failed_case": "test_header_byte_shape",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_probe.py",
+    "mutation": "raise ValueError(f\"missing component: {component}\")",
+    "expected_failed_case": "test_missing_component",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_evidence.py",
+    "mutation": "if require_quiet and not all(row[\"quiet\"] for row in samples):",
+    "expected_failed_case": "test_busy_correctness_capture",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_evidence.py",
+    "mutation": "if require_quiet and not all(row[\"quiet\"] for row in samples):",
+    "expected_failed_case": "test_busy_benchmark_refused",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "z_image_evidence.py",
+    "mutation": "if \"AC Power\" not in power:",
+    "expected_failed_case": "test_battery_correctness_refused",
+    "applied_unique": true,
+    "isolated_failure": true
+  }
+]

@@ -77,4 +77,43 @@ final class StorageIsolationTests: XCTestCase {
         XCTAssertTrue(AppStorageRoot.subdirectory("Hooks").path.hasPrefix(root))
         XCTAssertTrue(AppStorageRoot.subdirectory("tools").path.hasPrefix(root))
     }
+
+    /// The test root must be fresh per LAUNCH, not merely per process id.
+    ///
+    /// Process ids are reused by the OS, and a run whose id matches an
+    /// earlier run's inherits that run's stores: a cross-run channel for
+    /// every file under the root. It was the first suspect in the cron flake
+    /// and turned out not to be the cause there, but the channel is real
+    /// either way. The launch token cannot be observed changing from inside
+    /// one process, so what this pins is the shape that makes per-launch
+    /// roots what they are: a token no reused pid can reproduce, beside a
+    /// pid that a leaked directory can still be traced by.
+    func testTheTestRootCarriesAPerLaunchTokenBeyondThePid() {
+        let name = AppStorageRoot.machineRoot.lastPathComponent
+        XCTAssertTrue(
+            name.hasPrefix("TurboSparkTests-"),
+            "the test root left the TurboSparkTests- prefix; update this test with intent")
+
+        let remainder = name.dropFirst("TurboSparkTests-".count)
+        guard let separator = remainder.firstIndex(of: "-") else {
+            XCTFail("test root \(name) carries no launch token beyond the pid")
+            return
+        }
+        let pid = String(remainder[..<separator])
+        let token = String(remainder[remainder.index(after: separator)...])
+        XCTAssertNotNil(
+            Int(pid),
+            "test root \(name) lost its pid component, which traces a leaked directory")
+        XCTAssertNotNil(
+            UUID(uuidString: token),
+            "test root \(name) carries no per-launch token, so a reused pid inherits an old run's files")
+
+        // The root stays under the temp directory, where per-launch
+        // accumulation is purgeable and nothing can be mistaken for data.
+        let temporary = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .standardizedFileURL.path
+        XCTAssertTrue(
+            AppStorageRoot.machineRoot.standardizedFileURL.path.hasPrefix(temporary),
+            "test root \(AppStorageRoot.machineRoot.path) left the temp directory")
+    }
 }

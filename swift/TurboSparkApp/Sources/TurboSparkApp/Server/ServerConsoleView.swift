@@ -17,6 +17,8 @@ struct ServerConsoleView: View {
     @State private var paused = false
     @State private var expanded: Set<UInt64> = []
     @State private var modelFilter: String?
+    @State private var copiedAll = false
+    @State private var copiedRecordID: UInt64?
 
     private var rows: [ServerRequestRecord] {
         var records = model.serverMetrics.records.reversed().map { $0 }
@@ -32,6 +34,7 @@ struct ServerConsoleView: View {
                 $0.path.lowercased().contains(query)
                     || ($0.servedModel ?? "").lowercased().contains(query)
                     || ($0.requestedModel ?? "").lowercased().contains(query)
+                    || ($0.errorMessage ?? "").lowercased().contains(query)
                     || "\($0.status ?? 0)".contains(query)
             }
         }
@@ -71,10 +74,6 @@ struct ServerConsoleView: View {
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .frame(width: 160)
-                // macOS draws a TextField's title as a VISIBLE LABEL rather
-                // than a placeholder, and an unhidden one gets clipped in a
-                // toolbar this narrow (`swift/CLAUDE.md` Gotcha 23's smaller
-                // sibling).
                 .labelsHidden()
 
             Toggle("Errors only", isOn: $showErrorsOnly)
@@ -117,10 +116,11 @@ struct ServerConsoleView: View {
             Button {
                 copyAll()
             } label: {
-                Image(systemName: "doc.on.doc")
+                Image(systemName: copiedAll ? "checkmark" : "doc.on.doc")
+                    .foregroundStyle(copiedAll ? .green : .secondary)
             }
             .buttonStyle(.borderless)
-            .help("Copy the visible rows as JSON")
+            .help(copiedAll ? "Copied visible rows as JSON" : "Copy the visible rows as JSON")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -142,6 +142,13 @@ struct ServerConsoleView: View {
                 Text(record.path)
                     .font(theme.code(.small))
                     .lineLimit(1)
+
+                if record.isError, let err = record.errorMessage, !err.isEmpty {
+                    Text(err)
+                        .font(theme.code(.micro))
+                        .foregroundStyle(.red.opacity(0.85))
+                        .lineLimit(1)
+                }
 
                 Spacer(minLength: 8)
 
@@ -170,6 +177,16 @@ struct ServerConsoleView: View {
                         .foregroundStyle(.appSecondary)
                         .frame(width: 62, alignment: .trailing)
                 }
+
+                Button {
+                    copyRowAction(record)
+                } label: {
+                    Image(systemName: copiedRecordID == record.id ? "checkmark" : "doc.on.doc")
+                        .themedFont(.micro)
+                        .foregroundStyle(copiedRecordID == record.id ? Color.green : Color.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(record.isError ? "Copy error or request summary" : "Copy request summary")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
@@ -181,18 +198,40 @@ struct ServerConsoleView: View {
                     expanded.insert(record.id)
                 }
             }
+            .contextMenu {
+                if let err = record.errorMessage, !err.isEmpty {
+                    Button("Copy Error Message") {
+                        copyText(err)
+                        model.showToast("Copied error message", style: .info)
+                    }
+                }
+                Button("Copy Request Log Line") {
+                    copyRecordSummary(record)
+                    model.showToast("Copied request summary", style: .info)
+                }
+                Button("Copy Request as JSON") {
+                    copyRecordAsJSON(record)
+                    model.showToast("Copied request as JSON", style: .info)
+                }
+                Button("Copy Path") {
+                    copyText(record.path)
+                    model.showToast("Copied path", style: .info)
+                }
+            }
 
             if expanded.contains(record.id) {
                 detail(record)
             }
         }
+        .textSelection(.enabled)
     }
 
     private func detail(_ record: ServerRequestRecord) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // The pair that matters on a multi-model server: what the client
-            // asked for against what answered. They differ on every
-            // single-model fallback, which is the common case.
+        VStack(alignment: .leading, spacing: 6) {
+            if record.isError {
+                errorBox(record)
+            }
+
             if let requested = record.requestedModel, requested != record.servedModel {
                 detailLine("asked for", requested)
             }
@@ -219,10 +258,90 @@ struct ServerConsoleView: View {
                     "generations", "\(record.generations)",
                     help: "The tool-call guardrails re-asked. Both turns really ran.")
             }
+
+            let matchingEvents = model.serverEventLog.filter { $0.requestID == record.id }
+            if !matchingEvents.isEmpty {
+                rawEventsBox(matchingEvents)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
         .padding(.leading, 34)
+    }
+
+    private func errorBox(_ record: ServerRequestRecord) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .imageScale(.small)
+                Text("Error Details (HTTP \(statusText(record)))", bundle: .module)
+                    .themedFont(.tiny, weight: .semibold)
+                    .foregroundStyle(.red)
+
+                Spacer()
+
+                if let err = record.errorMessage, !err.isEmpty {
+                    Button {
+                        copyText(err)
+                        model.showToast("Copied error message", style: .info)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .themedFont(.micro)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy error message")
+                }
+            }
+
+            if let err = record.errorMessage, !err.isEmpty {
+                Text(err)
+                    .font(theme.code(.tiny))
+                    .foregroundStyle(.red.opacity(0.95))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(6)
+                    .background(Color.red.opacity(0.08))
+                    .cornerRadius(4)
+            } else {
+                Text("Request failed with HTTP status \(statusText(record)).", bundle: .module)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
+            }
+        }
+        .padding(6)
+        .background(Color.red.opacity(0.04))
+        .cornerRadius(6)
+    }
+
+    private func rawEventsBox(_ events: [ServerEvent]) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("Raw Events (\(events.count))", bundle: .module)
+                    .themedFont(.tiny, weight: .semibold)
+                    .foregroundStyle(.appSecondary)
+                Spacer()
+                Button {
+                    copyEvents(events)
+                    model.showToast("Copied \(events.count) events", style: .info)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .themedFont(.micro)
+                }
+                .buttonStyle(.borderless)
+                .help("Copy raw events")
+            }
+            ForEach(Array(events.enumerated()), id: \.offset) { _, ev in
+                Text(eventDescription(ev))
+                    .font(theme.code(.micro))
+                    .foregroundStyle(.appSecondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.appSurface.opacity(0.4))
+        .cornerRadius(4)
     }
 
     private func detailLine(_ label: String, _ value: String, help: String? = nil) -> some View {
@@ -254,27 +373,113 @@ struct ServerConsoleView: View {
         return .green
     }
 
+    private func recordToDictionary(_ record: ServerRequestRecord) -> [String: Any] {
+        var object: [String: Any] = [
+            "id": record.id,
+            "method": record.method,
+            "path": record.path,
+        ]
+        object["status"] = record.status.map { Int($0) }
+        object["durationMs"] = record.durationMs.map { Int($0) }
+        object["requestedModel"] = record.requestedModel
+        object["servedModel"] = record.servedModel
+        object["error"] = record.errorMessage
+        object["promptTokens"] = record.promptTokens.map { Int($0) }
+        object["newTokens"] = record.newTokens.map { Int($0) }
+        object["prefillSeconds"] = record.prefillSeconds
+        object["decodeSeconds"] = record.decodeSeconds
+        object["stopReason"] = record.stopReason
+        return object.compactMapValues { $0 }
+    }
+
     private func copyAll() {
-        let payload = rows.map { record -> [String: Any] in
-            var object: [String: Any] = [
-                "id": record.id, "method": record.method, "path": record.path,
-            ]
-            object["status"] = record.status.map { Int($0) }
-            object["durationMs"] = record.durationMs.map { Int($0) }
-            object["requestedModel"] = record.requestedModel
-            object["servedModel"] = record.servedModel
-            object["promptTokens"] = record.promptTokens.map { Int($0) }
-            object["newTokens"] = record.newTokens.map { Int($0) }
-            object["prefillSeconds"] = record.prefillSeconds
-            object["decodeSeconds"] = record.decodeSeconds
-            object["stopReason"] = record.stopReason
-            return object.compactMapValues { $0 }
-        }
+        let payload = rows.map { recordToDictionary($0) }
         guard
             let data = try? JSONSerialization.data(
                 withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         else { return }
+        copyText(String(decoding: data, as: UTF8.self))
+        withAnimation {
+            copiedAll = true
+        }
+        model.showToast("Copied \(rows.count) requests to clipboard", style: .info)
+        Task {
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            withAnimation {
+                copiedAll = false
+            }
+        }
+    }
+
+    private func copyRowAction(_ record: ServerRequestRecord) {
+        if let err = record.errorMessage, !err.isEmpty {
+            copyText(err)
+            model.showToast("Copied error message", style: .info)
+        } else {
+            copyRecordSummary(record)
+            model.showToast("Copied request summary", style: .info)
+        }
+        withAnimation {
+            copiedRecordID = record.id
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            withAnimation {
+                if copiedRecordID == record.id {
+                    copiedRecordID = nil
+                }
+            }
+        }
+    }
+
+    private func copyRecordAsJSON(_ record: ServerRequestRecord) {
+        let dict = recordToDictionary(record)
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+        else { return }
+        copyText(String(decoding: data, as: UTF8.self))
+    }
+
+    private func copyRecordSummary(_ record: ServerRequestRecord) {
+        var summary = "[\(record.method) \(record.path)] Status: \(statusText(record))"
+        if let duration = record.durationMs {
+            summary += " (\(duration) ms)"
+        }
+        if let err = record.errorMessage, !err.isEmpty {
+            summary += " - Error: \(err)"
+        }
+        copyText(summary)
+    }
+
+    private func copyEvents(_ events: [ServerEvent]) {
+        let text = events.map(eventDescription).joined(separator: "\n")
+        copyText(text)
+    }
+
+    private func eventDescription(_ event: ServerEvent) -> String {
+        switch event {
+        case let .requestStarted(id, atMs, method, path):
+            return "[\(atMs)ms] #\(id) started: \(method) \(path)"
+        case let .requestRouted(id, requested, served, stream):
+            let asked = requested.map { " (asked \($0))" } ?? ""
+            return "#\(id) routed: \(served)\(asked), stream=\(stream)"
+        case let .generated(id, model, promptTokens, newTokens, prefill, decode, stopReason, _, _):
+            return "#\(id) generated (\(model)): \(promptTokens) in, \(newTokens) out (\(String(format: "%.2fs", prefill)) prefill, \(String(format: "%.2fs", decode)) decode, stop: \(stopReason))"
+        case let .requestFinished(id, status, durationMs, error):
+            let err = error.map { " - Error: \($0)" } ?? ""
+            return "#\(id) finished: status \(status), duration \(durationMs)ms\(err)"
+        case let .modelAttached(atMs, model):
+            return "[\(atMs)ms] Model attached: \(model)"
+        case let .modelDetached(atMs, model):
+            return "[\(atMs)ms] Model detached: \(model)"
+        case let .unknown(kind):
+            return "Unknown event: \(kind)"
+        }
+    }
+
+    private func copyText(_ text: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(String(decoding: data, as: UTF8.self), forType: .string)
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }

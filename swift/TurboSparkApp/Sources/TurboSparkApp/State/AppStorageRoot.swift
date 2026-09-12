@@ -53,11 +53,15 @@ public enum AppStorageRoot {
         }
 
         if isRunningTests {
-            // Per process, so parallel suites cannot collide, and under the
-            // temp directory so nothing survives to be mistaken for real data.
+            // Per process, so parallel suites cannot collide, and per LAUNCH:
+            // process ids get reused, and a run handed a previous run's
+            // directory reads that run's leftover stores as its own. The pid
+            // stays in the name so a leaked directory still traces to the
+            // process that made it. Under the temp directory, so nothing
+            // survives to be mistaken for real data.
             let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
                 .appendingPathComponent(
-                    "TurboSparkTests-\(ProcessInfo.processInfo.processIdentifier)",
+                    "TurboSparkTests-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)",
                     isDirectory: true)
             try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
             return (url, false)

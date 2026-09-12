@@ -238,6 +238,7 @@ pub async fn models(State(state): State<crate::ServerState>) -> Response {
         "object": "list",
         "data": state.registry.rows().into_iter().map(|row| serde_json::json!({
             "id": row.id,
+            "display_name": row.id,
             "object": "model",
             "created": created,
             "owned_by": "mference",
@@ -428,97 +429,105 @@ fn stream_response(
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
-    tokio::task::spawn_blocking(move || {
-        let send = |chunk: anyllm_translate::openai::streaming::ChatCompletionChunk| {
-            // The second, faster disconnect signal: a chunk send failing
-            // means the receiver -- and so the `CancelOnDrop`-wrapped
-            // stream around it -- is already gone. `CancelOnDrop` catches
-            // the same event independent of whether a send was ever
-            // attempted (a long prefill sends none), so this is a speed-up
-            // for the common case rather than the only detector.
-            if tx
-                .send(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()))
-                .is_err()
-            {
-                cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        };
-        send(completion_chunk(
-            id.clone(),
-            created,
-            model_name.clone(),
-            role_delta(),
-            None,
-        ));
+    // The FIFO gate's acquisition point for this endpoint's live-stream
+    // path (the non-streaming and buffered arms acquire inside
+    // `run_guarded`). See `queue.rs`.
+    let gate = model.generation_queue();
+    let cancel_for_gate = cancel.clone();
+    tokio::spawn(async move {
+        let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
+            let send = |chunk: anyllm_translate::openai::streaming::ChatCompletionChunk| {
+                // The second, faster disconnect signal: a chunk send failing
+                // means the receiver -- and so the `CancelOnDrop`-wrapped
+                // stream around it -- is already gone. `CancelOnDrop` catches
+                // the same event independent of whether a send was ever
+                // attempted (a long prefill sends none), so this is a speed-up
+                // for the common case rather than the only detector.
+                if tx
+                    .send(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()))
+                    .is_err()
+                {
+                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            };
+            send(completion_chunk(
+                id.clone(),
+                created,
+                model_name.clone(),
+                role_delta(),
+                None,
+            ));
 
-        let mut call_index = 0u32;
-        let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
-        let result = stream_blocking(
-            &model,
-            &prompt_ids,
-            &config,
-            images.as_ref(),
-            &tools,
-            effort,
-            &flag,
-            &mut |piece| {
-                let delta = match piece {
-                    Piece::Text(text) => text_delta(text),
-                    Piece::Reasoning(text) => reasoning_delta(text),
-                    Piece::Tool(call) => {
-                        call_index += 1;
-                        tool_call_delta(call_index - 1, call)
-                    }
-                };
-                send(completion_chunk(
-                    id.clone(),
-                    created,
-                    model_name.clone(),
-                    delta,
-                    None,
-                ));
-            },
-        );
-
-        match result {
-            // A cancelled generation is discarded silently: the client that
-            // would read a finish chunk or an error event is the one
-            // already gone, and sending either into a dropped receiver is
-            // both pointless and (per `send`, above) itself an error.
-            Ok(r) if r.reason == runtime::StopReason::Cancelled => return,
-            Ok(r) => {
-                send(completion_chunk(
-                    id.clone(),
-                    created,
-                    model_name.clone(),
-                    Default::default(),
-                    Some(crate::response::finish_reason_for(r.reason, call_index > 0)),
-                ));
-                if include_usage {
-                    send(crate::response::usage_chunk(
+            let mut call_index = 0u32;
+            let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
+            let result = stream_blocking(
+                &model,
+                &prompt_ids,
+                &config,
+                images.as_ref(),
+                &tools,
+                effort,
+                &flag,
+                &mut |piece| {
+                    let delta = match piece {
+                        Piece::Text(text) => text_delta(text),
+                        Piece::Reasoning(text) => reasoning_delta(text),
+                        Piece::Tool(call) => {
+                            call_index += 1;
+                            tool_call_delta(call_index - 1, call)
+                        }
+                    };
+                    send(completion_chunk(
                         id.clone(),
                         created,
                         model_name.clone(),
-                        r.prompt_tokens as u32,
-                        r.new_tokens as u32,
+                        delta,
+                        None,
                     ));
+                },
+            );
+
+            match result {
+                // A cancelled generation is discarded silently: the client that
+                // would read a finish chunk or an error event is the one
+                // already gone, and sending either into a dropped receiver is
+                // both pointless and (per `send`, above) itself an error.
+                Ok(r) if r.reason == runtime::StopReason::Cancelled => return,
+                Ok(r) => {
+                    send(completion_chunk(
+                        id.clone(),
+                        created,
+                        model_name.clone(),
+                        Default::default(),
+                        Some(crate::response::finish_reason_for(r.reason, call_index > 0)),
+                    ));
+                    if include_usage {
+                        send(crate::response::usage_chunk(
+                            id.clone(),
+                            created,
+                            model_name.clone(),
+                            r.prompt_tokens as u32,
+                            r.new_tokens as u32,
+                        ));
+                    }
+                }
+                // A failed run is not a completed one: report it as a FRAMED
+                // `error` event -- a client dispatches on the `event:` line, and
+                // a bare `data:` line is indistinguishable from a chunk it does
+                // not recognise. `[DONE]` follows it below, which is worse than
+                // silence: it is the sentinel that says the stream finished
+                // NORMALLY, so a client reading past the error would see success.
+                Err(e) => {
+                    let body = serde_json::json!({
+                        "error": {"message": e.to_string(), "type": "server_error"}
+                    });
+                    let _ = tx.send(Event::default().event("error").data(body.to_string()));
+                    return;
                 }
             }
-            // A failed run is not a completed one: report it as a FRAMED
-            // `error` event -- a client dispatches on the `event:` line, and
-            // a bare `data:` line is indistinguishable from a chunk it does
-            // not recognise. `[DONE]` follows it below, which is worse than
-            // silence: it is the sentinel that says the stream finished
-            // NORMALLY, so a client reading past the error would see success.
-            Err(e) => {
-                let body = serde_json::json!({
-                    "error": {"message": e.to_string(), "type": "server_error"}
-                });
-                let _ = tx.send(Event::default().event("error").data(body.to_string()));
-                return;
-            }
-        }
-        let _ = tx.send(Event::default().data("[DONE]"));
+            let _ = tx.send(Event::default().data("[DONE]"));
+        })
+        .await;
     });
 
     let stream: std::pin::Pin<

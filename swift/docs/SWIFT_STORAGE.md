@@ -76,6 +76,20 @@ singletons and static enums whose first touch can precede any test body.
 a save -- disabling the redirect reddens 3 of its 4 cases AND changes that
 hash, which is the original data loss reproduced on demand.
 
+**The process-keyed name also carries a per-launch token** (2026-09-10).
+Process ids are reused by the OS, so a run whose id matches an earlier
+run's inherits that run's leftover stores -- a cross-run channel for every
+file under the root. It was the first suspect in the cron flake and turned
+out NOT to be the cause, but the channel was real and cost one line to
+close: the directory is now `TurboSparkTests-<pid>-<uuid>`, fresh every
+launch and still under the temp directory. The pid stays in the name so a
+leaked directory traces to its process. The shape is pinned by
+`testTheTestRootCarriesAPerLaunchTokenBeyondThePid` (a launch token cannot
+be observed changing from inside one process, so the test pins what makes
+per-launch roots what they are), and the change landed with the full
+1,546-case suite green rather than on reasoning, because it changes what
+every store sees under test.
+
 ## The three-way answer to "which directories may a test write to"
 
 `AppStorageRoot` covers the seven stores above. Two other answers are not
@@ -164,3 +178,13 @@ fan-status fixture failure. Rust build, fmt-check and Clippy passed; the
 unrestricted Rust suite failed the unrelated mapped-residency family-count
 assertion in `real_forward_init.rs` (10 entries versus 11 variants). These
 are not claims of a fully green workspace.
+
+## Singleton follow-up
+
+The 2026-09-10 [singleton audit](SWIFT_SINGLETON_AUDIT.md) found and fixed
+MCP discovery publishing after a cache reset and AppModel initialization
+starting the real fan poller under XCTest. Pending MCP results now require
+request ownership under the cache lock; the test-host fan singleton is
+unavailable. Controlled continuation tests and fixture executables cover
+both without hardware measurements. The full Swift suite passed with
+1,545 tests, one skipped, and zero failures after these changes.

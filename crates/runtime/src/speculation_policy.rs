@@ -280,10 +280,12 @@ pub fn draft_policies(choice: &DrafterChoice, speculation: Speculation) -> Draft
 /// is a warning and the run continues. Silently doing neither is what the
 /// engine did before the head was detected at all.
 ///
-/// The sampled case is a refusal on BOTH paths rather than a quiet downgrade
-/// to greedy: acceptance is `argmax(target) == proposal`, which is exact only
-/// at temperature 0. Approximating it would change what the model writes
-/// while reporting success.
+/// The sampled case is refused only for the BLOCK drafter: the step drafter
+/// serves any temperature through exact rejection sampling
+/// (`crates/runtime/src/speculative.rs`, ROADMAP P1 item 4), while DFlash2's
+/// selection is a greedy structured search with no q(x) to ratio against.
+/// A named block on a sampled run under the block drafter is still a
+/// hard fail rather than a quiet downgrade, for the reason it always was.
 pub fn resolve_speculation(
     requested: Speculation,
     drafter: SpeculativeDrafter,
@@ -292,11 +294,12 @@ pub fn resolve_speculation(
 ) -> Result<SpeculationPlan, String> {
     let unavailable = if let Some(blocker) = engine_blocker {
         Some(blocker)
-    } else if !deterministic {
+    } else if !deterministic && drafter == SpeculativeDrafter::Dflash {
         Some(
-            "acceptance is exact only at temperature 0, and this run samples; \
-             sampled speculation needs rejection sampling with residual correction, \
-             which is not implemented"
+            "sampled speculation cannot be served by the block drafter: DFlash2's \
+             selection is a greedy structured search, not a distribution, so exact \
+             rejection sampling has no q(x) to ratio against; use the mtp drafter or \
+             temperature 0"
                 .to_string(),
         )
     } else {

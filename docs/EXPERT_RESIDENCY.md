@@ -313,15 +313,46 @@ why both paths ship rather than one replacing the other.
   byte-identity one green, which is exactly the silent-fallback failure the
   accessor exists to catch. No real-install run yet; see Not done.
 
+## Landed since: the flag, the mode-first budget, and the eviction probe
+(2026-09-11, ROADMAP P1 item 3)
+
+- **`--expert-residency auto|streamed|mapped`** exists on `turbospark-check`
+  and `turbospark-server` (`model_io::ExpertResidency`, resolved by the ONE
+  resolver `runtime::resolve_expert_residency`, which the open, both front
+  ends' `committed_breakdown_with_residency` sizing and the startup lines all
+  share so the budget arithmetic and the allocation cannot disagree about
+  which mode was chosen). `Auto` defers to the `TURBOSPARK_EXPERT_RESIDENCY`
+  seam when set (every mapped test and probe predates the flag and drives
+  it) and otherwise resolves DOWN to streamed; under mapped residency the
+  committed breakdown budgets ZERO slot bytes, which is the whole
+  3-GiB-per-open difference between the two arms.
+- **The eviction probe ran** (`crates/bench/tests/
+  mapped_residency_eviction.rs`, real gemma4, Apple M4 Max, battery): a
+  DIRTY allocation of the full 30.9 GB budget (physical minus resident
+  minus a 6 GB reserve) never pushed the kernel past Nominal -- macOS
+  absorbed it in compressed memory -- and the decode DURING that pressure
+  read 66.2 tok/s against the 62.9 warm window (105%, within jitter), with
+  +169 faults against the warm window's +0. After release, 62.6 tok/s
+  (99.5% of warm). The honest reading is NARROW: on this machine, the
+  strongest pressure this bounded probe can induce does not evict a HOT
+  expert mapping (a decode touching all 30 layers' experts every token
+  keeps them hot, and eviction targets idle clean pages), so no
+  mid-decode cliff was observable. It is NOT a statement about exhaustion
+  (the kernel never reached Warn) or about a COLD mapping after idle --
+  the cold-prefill numbers above already cover that half. `auto` therefore
+  still resolves down to streamed; flipping it up would want a probe that
+  reaches real pressure (a bigger machine's workload or a lower reserve)
+  and a doc update saying so.
+
 ## Not done
 
-- `auto` resolution against machine memory, which is what would let this be on
-  by default. It needs the eviction behaviour measured under real memory
-  pressure, which nothing here has done.
+- `auto` resolving UP against machine memory. The eviction probe above is
+  the measurement this was waiting on, and its answer on this machine is
+  "no observable eviction at inducible pressure" -- which removes the
+  known-cliff objection without establishing a WIN, so the conservative
+  default stands until someone measures the other direction.
 - `madvise(MADV_WILLNEED)` on the routed offsets, the mmap analogue of the
   `F_RDADVISE` hinting the pread path uses.
-- A `--expert-residency auto|streamed|mapped` CLI flag on `turbospark-check`
-  and `turbospark-server`.
 - Frozen mapped-arm memory-oracle rows for any family (every frozen row in
   `crates/bench` is still a STREAMED row, per the Status section above).
 - Composing with the BATCHED routed pair (`TURBOSPARK_ROUTED_BATCH=1`), which is

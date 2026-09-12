@@ -63,7 +63,10 @@ that ports. Three ideas do, and none of them is code:
 
 1. **MTP-head-as-drafter.** An architecture read off the checkpoint header.
 2. **Exact rejection sampling with residual correction.** Published math
-   (Leviathan et al., arXiv 2211.17192; Chen et al., arXiv 2302.01318).
+   (Leviathan et al., arXiv 2211.17192; Chen et al., arXiv 2302.01318),
+   implemented 2026-09-11 for this drafter (ROADMAP P1 item 4;
+   `docs/SPECULATIVE_DECODING.md`'s sampled section owns the algorithm and
+   the proof).
 3. **Draft-depth auto-tuning.**
 
 **Take no MTPLX source.** Its license is verified stock Apache-2.0, so
@@ -386,7 +389,12 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    recorded 659.4, so the head's 228 MiB of weights are not counted, which
    is AGENTS.md Gotcha 40 holding a fourth time. Both smokes stay coherent.
    With drafting on the head opens and drafts; a headless install is refused
-   at open by name.
+   at open by name. Since 2026-09-10 (ROADMAP P1 item 2) a vision-active
+   runner is refused the same way: `speculation_blocker`'s vision arm
+   (marker `VISION_SPECULATION_BLOCKER_MARKER`) fires FIRST, through the
+   same `resolve_speculation` hard-fail/warn split, for a combined
+   vision trunk and for a sidecar-attached one alike, because the verify
+   pass is vision-blind (`docs/VISION.md`'s "Still not built" paragraph).
 3. **Accept length, sequential verify.** `accept_length_probe.rs`'s shape
    with the MTP head in place of the n-gram drafter. Keep both of its
    disciplines: verify one `produce` at a time (only the ratio matters), and

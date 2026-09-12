@@ -256,7 +256,7 @@ pub fn open_model_runner_for_protocol_speculative_kv_quant(
             model_dir.display()
         )
     })?;
-    let runner = RealForwardRunner::open_with_kv_quant(
+    let runner = RealForwardRunner::open_with_residency(
         model_dir,
         arch,
         params.max_context as usize,
@@ -265,6 +265,7 @@ pub fn open_model_runner_for_protocol_speculative_kv_quant(
         runtime::SteeringPolicy::off(),
         1,
         kv_quant,
+        runtime::ExpertResidency::Streamed,
     )
     .map_err(|e| e.to_string())?;
     Ok((runner, tokenizer, params))

@@ -94,21 +94,74 @@ fn to_sse(event: &StreamEvent) -> Event {
         .data(serde_json::to_string(event).unwrap_or_default())
 }
 
+/// Normalizes an incoming Anthropic Messages API JSON body so that clients
+/// (such as Claude Code) that send `role: "system"` or `role: "developer"`
+/// in `messages`, or that omit `max_tokens`, deserialize cleanly into
+/// `MessageCreateRequest`.
+///
+/// If the first message has role "system" and there is no top-level "system"
+/// field and there are subsequent messages, it is promoted to the
+/// top-level "system" field. Any remaining message whose role is not "user"
+/// or "assistant" is normalized to "user" because the Anthropic wire type
+/// only permits "user" and "assistant", and downstream chat templates
+/// forbid system messages appearing after index 0.
+pub(crate) fn normalize_anthropic_body(body: &mut serde_json::Value, default_max_tokens: u32) {
+    anyllm_translate::normalize_anthropic_request_json(body, Some(default_max_tokens));
+
+    // Downstream chat templates (such as Qwen/ChatML) forbid system messages
+    // appearing after index 0. Normalize any remaining non-assistant/user roles to "user".
+    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            if let Some(role_val) = msg.get_mut("role") {
+                if let Some(role_str) = role_val.as_str() {
+                    if !role_str.eq_ignore_ascii_case("assistant")
+                        && !role_str.eq_ignore_ascii_case("user")
+                    {
+                        *role_val = serde_json::json!("user");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// `POST /v1/messages`. Anthropic-compatible messages endpoint, translating
 /// requests to OpenAI format and translating responses back.
 pub async fn messages(
     State(state): State<crate::ServerState>,
     tag: Option<axum::Extension<crate::observe::RequestTag>>,
-    Json(request): Json<MessageCreateRequest>,
+    Json(mut body): Json<serde_json::Value>,
 ) -> Response {
+    let requested = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let stream_requested = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let model = match crate::handler::resolve_backend(
         &state,
         tag.map(|t| t.0),
-        Some(request.model.as_str()),
-        request.stream.unwrap_or(false),
+        requested.as_deref(),
+        stream_requested,
     ) {
         Ok(m) => m,
         Err(response) => return response,
+    };
+
+    let default_max_tokens = (model.max_context() / 2).clamp(1, 4096);
+    normalize_anthropic_body(&mut body, default_max_tokens);
+
+    let request: MessageCreateRequest = match serde_json::from_value(body) {
+        Ok(r) => r,
+        Err(e) => {
+            return error_body(
+                StatusCode::BAD_REQUEST,
+                ErrorType::InvalidRequestError,
+                e.to_string(),
+            )
+        }
     };
     let degraded = compute_request_warnings(&request).as_header_value();
 
@@ -205,11 +258,7 @@ pub async fn count_tokens(
         Ok(m) => m,
         Err(response) => return response,
     };
-    if let Some(object) = body.as_object_mut() {
-        if !object.contains_key("max_tokens") {
-            object.insert("max_tokens".to_string(), serde_json::json!(1));
-        }
-    }
+    normalize_anthropic_body(&mut body, 1);
     let request: MessageCreateRequest = match serde_json::from_value(body) {
         Ok(r) => r,
         Err(e) => {
@@ -314,98 +363,106 @@ fn stream_response(
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
-    tokio::task::spawn_blocking(move || {
-        // The translator is a state machine over the OpenAI chunk sequence:
-        // it opens the message on the first chunk carrying a role and closes
-        // the content block on `finish()`. So the chunk order here has to
-        // match what the `/v1/chat/completions` stream emits -- role chunk,
-        // content chunks, finish chunk -- or the Anthropic event structure
-        // comes out malformed.
-        let mut translator = new_stream_translator(client_model);
+    // The FIFO gate's acquisition point for this endpoint's live-stream
+    // path (the non-streaming and buffered arms acquire inside
+    // `run_guarded`). See `queue.rs`.
+    let gate = model.generation_queue();
+    let cancel_for_gate = cancel.clone();
+    tokio::spawn(async move {
+        let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
+            // The translator is a state machine over the OpenAI chunk sequence:
+            // it opens the message on the first chunk carrying a role and closes
+            // the content block on `finish()`. So the chunk order here has to
+            // match what the `/v1/chat/completions` stream emits -- role chunk,
+            // content chunks, finish chunk -- or the Anthropic event structure
+            // comes out malformed.
+            let mut translator = new_stream_translator(client_model);
 
-        let send = |chunk: ChatCompletionChunk, translator: &mut StreamingTranslator| {
-            for event in translator.process_chunk(&chunk) {
-                // Same fast-path detection as the OpenAI endpoint's: a
-                // failed send means the receiver -- and the
-                // `CancelOnDrop`-wrapped stream around it -- is already
-                // gone.
-                if tx.send(to_sse(&event)).is_err() {
-                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
-        };
-
-        send(
-            completion_chunk(
-                id.clone(),
-                created,
-                backend_model.clone(),
-                role_delta(),
-                None,
-            ),
-            &mut translator,
-        );
-
-        let mut call_index = 0u32;
-        let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
-        let result = stream_blocking(
-            &model,
-            &prompt_ids,
-            &config,
-            images.as_ref(),
-            &tools,
-            effort,
-            &flag,
-            &mut |piece| {
-                let delta = match piece {
-                    Piece::Text(text) => text_delta(text),
-                    // The translator turns this into a `thinking` content block,
-                    // opened on the first one and closed on the first text delta.
-                    Piece::Reasoning(text) => reasoning_delta(text),
-                    Piece::Tool(call) => {
-                        call_index += 1;
-                        tool_call_delta(call_index - 1, call)
+            let send = |chunk: ChatCompletionChunk, translator: &mut StreamingTranslator| {
+                for event in translator.process_chunk(&chunk) {
+                    // Same fast-path detection as the OpenAI endpoint's: a
+                    // failed send means the receiver -- and the
+                    // `CancelOnDrop`-wrapped stream around it -- is already
+                    // gone.
+                    if tx.send(to_sse(&event)).is_err() {
+                        cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
-                };
-                send(
-                    completion_chunk(id.clone(), created, backend_model.clone(), delta, None),
-                    &mut translator,
-                );
-            },
-        );
+                }
+            };
 
-        match result {
-            // Discarded silently: the client that would read the closing
-            // events is the one already gone.
-            Ok(r) if r.reason == runtime::StopReason::Cancelled => (),
-            Ok(r) => {
-                send(
-                    completion_chunk(
-                        id.clone(),
-                        created,
-                        backend_model.clone(),
-                        Default::default(),
-                        Some(finish_reason_for(r.reason, call_index > 0)),
-                    ),
-                    &mut translator,
-                );
-                for event in translator.finish() {
-                    let _ = tx.send(to_sse(&event));
+            send(
+                completion_chunk(
+                    id.clone(),
+                    created,
+                    backend_model.clone(),
+                    role_delta(),
+                    None,
+                ),
+                &mut translator,
+            );
+
+            let mut call_index = 0u32;
+            let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
+            let result = stream_blocking(
+                &model,
+                &prompt_ids,
+                &config,
+                images.as_ref(),
+                &tools,
+                effort,
+                &flag,
+                &mut |piece| {
+                    let delta = match piece {
+                        Piece::Text(text) => text_delta(text),
+                        // The translator turns this into a `thinking` content block,
+                        // opened on the first one and closed on the first text delta.
+                        Piece::Reasoning(text) => reasoning_delta(text),
+                        Piece::Tool(call) => {
+                            call_index += 1;
+                            tool_call_delta(call_index - 1, call)
+                        }
+                    };
+                    send(
+                        completion_chunk(id.clone(), created, backend_model.clone(), delta, None),
+                        &mut translator,
+                    );
+                },
+            );
+
+            match result {
+                // Discarded silently: the client that would read the closing
+                // events is the one already gone.
+                Ok(r) if r.reason == runtime::StopReason::Cancelled => (),
+                Ok(r) => {
+                    send(
+                        completion_chunk(
+                            id.clone(),
+                            created,
+                            backend_model.clone(),
+                            Default::default(),
+                            Some(finish_reason_for(r.reason, call_index > 0)),
+                        ),
+                        &mut translator,
+                    );
+                    for event in translator.finish() {
+                        let _ = tx.send(to_sse(&event));
+                    }
+                }
+                // A failed run is not a completed one: emit an `error` event
+                // rather than closing the message as if it had stopped normally.
+                Err(e) => {
+                    let _ = tx.send(to_sse(&StreamEvent::Error {
+                        error: StreamError {
+                            error_type: "api_error".to_string(),
+                            message: e.to_string(),
+                        },
+                    }));
                 }
             }
-            // A failed run is not a completed one: emit an `error` event
-            // rather than closing the message as if it had stopped normally.
-            Err(e) => {
-                let _ = tx.send(to_sse(&StreamEvent::Error {
-                    error: StreamError {
-                        error_type: "api_error".to_string(),
-                        message: e.to_string(),
-                    },
-                }));
-            }
-        }
-        // No `[DONE]` sentinel: that is an OpenAI-ism. An Anthropic stream
-        // ends at `message_stop`.
+            // No `[DONE]` sentinel: that is an OpenAI-ism. An Anthropic stream
+            // ends at `message_stop`.
+        })
+        .await;
     });
 
     let stream: std::pin::Pin<

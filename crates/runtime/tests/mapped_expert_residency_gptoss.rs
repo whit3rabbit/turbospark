@@ -22,7 +22,10 @@ use turbospark_repack::{
     build_synthetic_gpt_oss_gguf, parse_gguf_header, write_gguf_install_streamed,
     MemoryRangeSource, SyntheticGptOssShape, GGUF_DEFAULT_MAX_HEADER_BYTES,
 };
-use turbospark_runtime::{ChunkedPrefillRunner, LogitProducer, RealForwardRunner};
+use turbospark_runtime::{
+    ChunkedPrefillRunner, DraftPolicies, ExpertCacheSlots, ExpertResidency, KvQuant, LogitProducer,
+    RealForwardRunner, SteeringPolicy,
+};
 
 fn build_install(dir: &std::path::Path) -> model_io::ArchConfig {
     let shape = SyntheticGptOssShape::default();
@@ -49,11 +52,23 @@ fn mapped_residency_opens_on_gptoss_and_then_refuses_the_batched_routed_pair_by_
     let arch = build_install(&dir);
     let vocab = arch.vocab_size as usize;
 
-    // Set BEFORE the open, because the mode is resolved there.
-    std::env::set_var("TURBOSPARK_EXPERT_RESIDENCY", "mapped");
-
-    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
-        .expect("a gpt-oss install opens under mapped expert residency");
+    // EXPLICIT Mapped rather than the env seam: `open_with_options` pins
+    // `Streamed` for AGENTS.md Gotcha 35's reason (it is the measuring
+    // callers' entry point), so the env fallback no longer reaches this
+    // arm through it. A test whose whole subject is the mapped branch is
+    // exactly the caller that says so.
+    let mut runner = RealForwardRunner::open_with_residency(
+        &dir,
+        arch,
+        4096,
+        ExpertCacheSlots::Fixed(16),
+        DraftPolicies::off(),
+        SteeringPolicy::off(),
+        1,
+        KvQuant::Off,
+        ExpertResidency::Mapped,
+    )
+    .expect("a gpt-oss install opens under mapped expert residency");
 
     // The open is the load-bearing half, same claim as the other three
     // files: nothing else in the fast suite reaches the mapped branch of

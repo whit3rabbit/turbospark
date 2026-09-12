@@ -85,9 +85,9 @@ pub use model_io::{
     kv_bytes_for_context_with, largest_context_within, largest_context_within_with,
     resolve_max_context, resolve_max_context_with, session_pool_bytes, session_pool_bytes_with,
     CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap, ContextPlan, ContextRefused,
-    ContextTooLarge, ExpertCacheSlots, GuardBudget, KvQuant, LoadGuard, LoadPolicy, MaxContext,
-    CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION,
-    HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    ContextTooLarge, ExpertCacheSlots, ExpertResidency, GuardBudget, KvQuant, LoadGuard,
+    LoadPolicy, MaxContext, ResolvedExpertResidency, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 
 pub use error::RuntimeError;
@@ -95,6 +95,7 @@ pub use error::RuntimeError;
 pub use families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
     DFLASH_BLOCK, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
+    VISION_SPECULATION_BLOCKER_MARKER,
 };
 pub use power::{
     low_power_mode_enabled, memory_cap, memory_pressure, physical_memory, rate_control_for,
@@ -110,10 +111,11 @@ pub use raw_completion::{
     run_raw_completion_chunked_cancellable, CancelFlag, RawDecodeProgress, RawDecodeResult,
     StopReason,
 };
-#[cfg(target_os = "macos")]
 pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };
+#[cfg(target_os = "macos")]
+pub use real_forward_init::resolve_expert_residency;
 // The drafter/speculation policy, shared by `turbospark-check` and
 // `turbospark-server`. It lived in the CLI until the server needed the same
 // three decisions in the same order; see `speculation_policy`'s own header

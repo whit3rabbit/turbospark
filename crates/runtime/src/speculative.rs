@@ -23,7 +23,8 @@
 use std::time::Instant;
 
 use foundation::{LogitValue, LogitsView, TokenId};
-use selection::select;
+use selection::derive::{derive_step_value, to_unit_interval};
+use selection::{residual, select, shaped_distribution, ShapedDistribution};
 use tokenizer::MfTokenizer;
 
 use crate::config::GenerationConfig;
@@ -100,29 +101,30 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         ));
     }
 
-    // THE SAMPLING GATE, and it is the honest half of this function.
+    // THE SAMPLING GATE, and it now has exactly one refusal left.
     //
-    // Acceptance below is `target == proposal`, which is exact speculative
-    // decoding at temperature 0 and WRONG at any other temperature: a
-    // sampled run that only ever accepts the target's argmax is biased
-    // toward the mode, so it would silently narrow the distribution the
-    // caller asked for. The correct algorithm for the sampled case is
-    // rejection sampling with residual correction (Leviathan et al., arXiv
-    // 2211.17192; Chen et al., arXiv 2302.01318), which needs the drafter's
-    // and the target's full distributions rather than their argmaxes and is
-    // NOT implemented here.
-    //
-    // So the sampled case is refused, not approximated. A quiet fallback to
-    // greedy would change what the model writes while reporting success, and
-    // a quiet fallback to the sequential loop would report a speculative run
-    // that never speculated.
-    if !config.shaping.is_deterministic() {
-        return Err(RuntimeError::SpeculationUnavailable(format!(
-            "acceptance is exact only at temperature 0 (this run has temperature {}); \
-             sampled speculation needs rejection sampling with residual correction, \
-             which is not implemented",
-            config.shaping.temperature()
-        )));
+    // Acceptance below is `target == proposal` at temperature 0, which is
+    // exact speculative decoding; at any other temperature the exact
+    // algorithm is rejection sampling with residual correction (Leviathan
+    // et al., arXiv 2211.17192; Chen et al., arXiv 2302.01318), which
+    // needs the drafter's and the target's full SHAPED distributions.
+    // The MTP step drafter has both on the host already, so a sampled run
+    // takes the rejection path below and is exact in DISTRIBUTION: the
+    // committed stream matches what the sequential sampler would have
+    // produced in law, not token for token. The DFlash2 BLOCK drafter
+    // cannot take that path at all -- its selector is a greedy structured
+    // search (`unary + bilinear dot`), not a distribution, so there is no
+    // q(x) to ratio against and no residual to sample -- and is refused
+    // here rather than approximated, for the same reason it always was:
+    // a quiet narrowing of the sampled distribution while reporting
+    // success would change what the model writes.
+    if !config.shaping.is_deterministic() && producer.drafts_block_passes() {
+        return Err(RuntimeError::SpeculationUnavailable(
+            "sampled speculation cannot be served by the block drafter: DFlash2's selection is \
+             a greedy structured search, not a distribution, so exact rejection sampling has \
+             no q(x) to ratio against; use the mtp drafter or temperature 0"
+                .to_string(),
+        ));
     }
 
     // THE REUSE CONTRACT, the sequential loop's own: ask how much of this
@@ -207,8 +209,20 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     let decode_start = Instant::now();
     let mut sink = TokenSink::new(tokenizer, config, history);
     let mut proposals: Vec<TokenId> = Vec::with_capacity(block);
+    // The drafter's shaped distribution per proposal, kept for the
+    // rejection step. Only the step-wise drafter fills it; the block
+    // drafter is refused above before any of this runs sampled.
+    let mut draft_qs: Vec<ShapedDistribution> = Vec::with_capacity(block);
     let mut feed: Vec<TokenId> = Vec::with_capacity(block + 1);
     let reason;
+
+    // Every uniform THIS loop draws comes from one monotonic counter, so a
+    // seeded run is reproducible and no two draws share a value. Sharing
+    // one would not be a performance question but a correctness one: the
+    // acceptance uniform must be independent of the uniform that drew the
+    // proposal it judges, or the accepted stream is biased by construction.
+    let sampled = !config.shaping.is_deterministic();
+    let mut draw_step: u64 = 0;
 
     let mut next = select(
         LogitsView::new(&logits),
@@ -274,6 +288,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         //    -- happens inside the call, from the capture the previous
         //    verify filled.
         proposals.clear();
+        draft_qs.clear();
         if producer.drafts_block_passes() {
             producer
                 .draft_block(next, base, round_block, &mut proposals)
@@ -290,14 +305,35 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
                 producer
                     .draft_step(chained, base - 1 + d, &mut draft_logits)
                     .map_err(RuntimeError::Producer)?;
-                chained = select(
-                    LogitsView::new(&draft_logits),
-                    &config.shaping,
-                    &sink.history,
-                    sink.generated as u64,
-                )?;
-                if d < round_block {
-                    proposals.push(chained);
+                if sampled {
+                    // The proposal is DRAWN from the drafter's own shaped
+                    // distribution -- the q of the rejection ratio -- rather
+                    // than argmaxed, and the distribution is kept for the
+                    // acceptance step. Same shaping, same history state, so
+                    // this is the q a sequential decode through the drafter
+                    // would have sampled.
+                    let q = shaped_distribution(
+                        LogitsView::new(&draft_logits),
+                        &config.shaping,
+                        &sink.history,
+                        sink.generated as u64,
+                    )?;
+                    chained = q.draw(config.shaping.seed(), draw_step) as TokenId;
+                    draw_step += 1;
+                    if d < round_block {
+                        proposals.push(chained);
+                        draft_qs.push(q);
+                    }
+                } else {
+                    chained = select(
+                        LogitsView::new(&draft_logits),
+                        &config.shaping,
+                        &sink.history,
+                        sink.generated as u64,
+                    )?;
+                    if d < round_block {
+                        proposals.push(chained);
+                    }
                 }
             }
         }
@@ -315,34 +351,79 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
             .map_err(RuntimeError::Producer)?;
 
         // -- Accept. Each accepted proposal is committed through the sink
-        //    IMMEDIATELY, which is what keeps `select` exact: the next row is
-        //    sampled with the history and step counter a sequential decode
-        //    would have had at that position, so a repetition penalty or a
-        //    step-dependent shaping rule sees the same inputs on both paths.
+        // IMMEDIATELY, which is what keeps the shaped distributions exact:
+        // the next row is evaluated with the history and step counter a
+        // sequential decode would have had at that position, so a
+        // repetition penalty or a step-dependent shaping rule sees the same
+        // inputs on both paths.
+        //
+        // At temperature 0 acceptance is argmax equality, as it always
+        // was. Sampled, it is the Leviathan/Chen rejection step: proposal
+        // x (drawn from q above) is accepted when r * q(x) <= p(x) for a
+        // fresh uniform r, and on rejection the corrected token is drawn
+        // from the normalized residual max(p - q, 0) -- the draw that makes
+        // the composite match the sequential sampler in distribution.
         let mut accepted = 0usize;
         let mut stopped: Option<StopReason> = None;
+        let mut corrected: Option<TokenId> = None;
         stat_rounds += 1;
         for (i, &proposal) in proposals.iter().enumerate() {
-            let row = &batch_logits[i * vocab_size..(i + 1) * vocab_size];
-            let target = select(
-                LogitsView::new(row),
-                &config.shaping,
-                &sink.history,
-                sink.generated as u64,
-            )?;
             if stats {
                 stat_offered[i] += 1;
             }
-            if target != proposal {
-                break;
-            }
-            if stats {
-                stat_matched[i] += 1;
-            }
-            accepted += 1;
-            if let Some(stop) = sink.commit(proposal, cancel, &mut on_progress) {
-                stopped = Some(stop);
-                break;
+            let row = &batch_logits[i * vocab_size..(i + 1) * vocab_size];
+            if sampled {
+                let p = shaped_distribution(
+                    LogitsView::new(row),
+                    &config.shaping,
+                    &sink.history,
+                    sink.generated as u64,
+                )?;
+                let q = &draft_qs[i];
+                let r = to_unit_interval(derive_step_value(config.shaping.seed(), draw_step));
+                draw_step += 1;
+                if r * q.probability(proposal as u32) <= p.probability(proposal as u32) {
+                    if stats {
+                        stat_matched[i] += 1;
+                    }
+                    accepted += 1;
+                    if let Some(stop) = sink.commit(proposal, cancel, &mut on_progress) {
+                        stopped = Some(stop);
+                        break;
+                    }
+                } else {
+                    // The correction comes from the residual over THIS
+                    // row's target distribution and the drafter's q for
+                    // this step. The p == q corner underflows the residual
+                    // and falls back to a p draw: exact in the limit, and
+                    // unreachable while q is the drafter's own distribution
+                    // unless the two really are identical (where every
+                    // proposal is accepted and no correction is drawn).
+                    corrected = Some(match residual(&p, q) {
+                        Some(residual_p) => residual_p.draw(config.shaping.seed(), draw_step),
+                        None => p.draw(config.shaping.seed(), draw_step),
+                    } as TokenId);
+                    draw_step += 1;
+                    break;
+                }
+            } else {
+                let target = select(
+                    LogitsView::new(row),
+                    &config.shaping,
+                    &sink.history,
+                    sink.generated as u64,
+                )?;
+                if target != proposal {
+                    break;
+                }
+                if stats {
+                    stat_matched[i] += 1;
+                }
+                accepted += 1;
+                if let Some(stop) = sink.commit(proposal, cancel, &mut on_progress) {
+                    stopped = Some(stop);
+                    break;
+                }
             }
         }
         stat_accepted += accepted;
@@ -405,15 +486,34 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
             break 'rounds;
         }
 
-        // The bonus: the row after the last accepted proposal. Free, in the
-        // sense that the verify pass computed it whether or not the block was
-        // accepted, and it is why a round commits `accepted + 1` tokens.
-        next = select(
-            LogitsView::new(&batch_logits[accepted * vocab_size..(accepted + 1) * vocab_size]),
-            &config.shaping,
-            &sink.history,
-            sink.generated as u64,
-        )?;
+        // The bonus: the row after the last accepted proposal. Free, in
+        // the sense that the verify pass computed it whether or not the
+        // block was accepted, and it is why a round commits `accepted + 1`
+        // tokens. Sampled, the same row serves two DIFFERENT draws: on
+        // full acceptance it is a fresh draw from the target's shaped
+        // distribution (the token a sequential decode would sample next);
+        // on a rejection it is the row the correction was already drawn
+        // from, and the corrected token IS `next` -- a second draw from it
+        // would double-sample one position.
+        if let Some(token) = corrected {
+            next = token;
+        } else if sampled {
+            let p = shaped_distribution(
+                LogitsView::new(&batch_logits[accepted * vocab_size..(accepted + 1) * vocab_size]),
+                &config.shaping,
+                &sink.history,
+                sink.generated as u64,
+            )?;
+            next = p.draw(config.shaping.seed(), draw_step) as TokenId;
+            draw_step += 1;
+        } else {
+            next = select(
+                LogitsView::new(&batch_logits[accepted * vocab_size..(accepted + 1) * vocab_size]),
+                &config.shaping,
+                &sink.history,
+                sink.generated as u64,
+            )?;
+        }
     }
 
     if stats {
@@ -447,10 +547,11 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         reason,
         kv_position: position,
         kv_backed_token_ids: sink.history,
-        // The speculative loop does not pace: acceptance is exact only at
-        // temperature 0, so a run that reaches here is deterministic and
-        // uncapped by construction. Reporting `Normal` is the absence of a
-        // reading, consistent with every other unpolled path.
+        // The speculative loop does not pace and polls no pressure
+        // watcher, on either side of the temperature gate (sampled runs
+        // reach here since rejection sampling landed). Reporting `Normal`
+        // is the absence of a reading, consistent with every other
+        // unpolled path.
         peak_memory_pressure: crate::power::MemoryPressure::Normal,
     })
 }

@@ -798,23 +798,41 @@ tests could only prove structurally (a sidecar and a combined install write
 byte-identical tower bytes from the same source checkpoint): the two
 install SHAPES really do produce the same model.
 
-**Left open, precisely scoped rather than attempted and abandoned.**
-`crates/runtime/tests/vision_tower_parity.rs` and
-`crates/bench/tests/vision_memory_oracle.rs` both still read only
-`TURBOSPARK_QWEN38_VISION_INSTALL_DIR` (the combined install); neither has a
-sidecar-aware env arm, so the tower's mlx-vlm cosine and the multi-page
-memory ceiling have not been re-measured specifically THROUGH a
-sidecar-attached trunk. Adding one is not a trivial change to either file:
-the parity gate additionally needs a `TURBOSPARK_VISION_DUMP_DIR` reference
-dump and reads the install's arch via `peek_manifest_arch` rather than
-through an opened runner, and the memory oracle's own
-`assert_agrees_with_catalog` is deliberately kept tied to
-`qwen38-27b-vision` (a decision made explicitly when this feature started,
-to keep that install and its frozen rows standing). The CLI comparison
-above is the evidence that a sidecar-attached run reaches the identical
-bytes those two gates already certified; a session that wants the sidecar
-arm measured through those specific instruments should budget it as its
-own pass rather than a follow-on to this one.
+**Measured through those specific instruments, 2026-09-10 (ROADMAP P1
+item 1).** Both gates now carry sidecar-aware arms, and both have run for
+real on the trunk+sidecar pair (`~/models/qwen38-27b-mtp.gturbo` standing
+in for the deleted text-only trunk -- its trunk weights are the plain
+install's and drafting stays off through the gates' openers -- plus the
+freshly re-pulled `~/.turbospark/models/qwen38-vision-tower.gturbo`, the
+catalog row `qwen38-vision-tower`, 879.2 MiB):
+
+- `vision_tower_parity.rs::
+  the_sidecar_attached_tower_agrees_with_mlx_vlm_at_every_stage` reads
+  the vision config POST-ATTACH rather than from the peeked trunk arch,
+  runs the same four-stage comparison against the same mlx-vlm dump, and
+  measured cosines identical to the combined arm's to every printed digit
+  (0.99999995 / 0.99999977 / 0.99999843 / 0.99999801) -- the same tower
+  bytes through a different resident-index read, mmap and dtype backstop.
+  Mutation-checked both ways: pointing the tower open back at the trunk
+  directory reddens it, and so does an attach that forgets to set
+  `arch.vision`.
+- `vision_sidecar_memory_oracle.rs` (a SEPARATE test target, for
+  `oracle_common`'s one-model-per-process rule) runs the same four-round
+  largest-first walk through
+  `open_model_runner_with_context_and_vision_sidecar`, with the round body
+  shared verbatim in `tests/vision_oracle_rounds/` so the two oracles stay
+  one instrument. Measured on battery (86%): peaks 855.6 / 856.5 / 871.3 /
+  872.3 MiB against the combined install's 855.5 / 855.9 / 871.4 / 871.4
+  re-run the same day -- within a MiB per round, which is the memory story
+  the sidecar design claims: the sidecar's own resident mapping adds
+  nothing the peak counter sees. Ceiling stays 950 MiB (highest reading
+  plus ~9%); flat-peak growth +16.7 MiB against the 64 MiB slack. The
+  tok/s floor is inherited from the combined arm's AC row rather than
+  re-frozen from one battery reading.
+
+`assert_agrees_with_catalog` stays tied to `qwen38-27b-vision`
+deliberately: a trunk+sidecar pair is two installs and an attach, not a
+catalog row, so the sidecar oracle keeps its baselines local.
 
 ### Part B, and C, landed
 
@@ -863,17 +881,29 @@ now, the blit and the mRoPE angle, and `crates/runtime/CLAUDE.md` Gotchas
 14 and 27 carry the design. `TURBOSPARK_BATCHED_GEMV` plus an image prompt
 is still refused, about the ANGLE rather than the embedding.
 
-**Still not built, and it is pre-existing rather than new**: the MTP /
-DFlash2 VERIFY pass is vision-blind in both halves -- `produce_batched`
-embeds every row from the table and rotates at the raw position. Past an
-image prompt a decode position is `(p, p, p)` with `p = position +
-rope_delta`, so the target and the verify rotate by different angles, and
-the verify pass is what EMITS the accepted tokens. Unreachable today, and
-by a checkpoint gap rather than a guard: no install carries both a tower
-and an `mtp.*` head, so `speculation_blocker` refuses on the missing head.
-Nothing refuses the COMBINATION, so one repack carrying both would make
-`--image X --speculative 4` silently wrong. The fix is a fourth arm in
-`produce_batched`'s existing by-name refusal set.
+**The MTP / DFlash2 verify pass is still vision-blind, and the combination
+is now REFUSED rather than silently wrong (2026-09-10, ROADMAP P1 item 2).**
+`produce_batched` embeds every row from the table and rotates at the raw
+position. Past an image prompt a decode position is `(p, p, p)` with
+`p = position + rope_delta`, so the target and the verify rotate by
+different angles, and the verify pass is what EMITS the accepted tokens.
+Unreachable today by a checkpoint gap rather than a guard: no install
+carries both a tower and an `mtp.*` head. What changed is the second half:
+`speculation_blocker` and `dflash_speculation_blocker` both carry a
+vision arm FIRST (marker `VISION_SPECULATION_BLOCKER_MARKER`), so the
+combination flows through `resolve_speculation` with the usual split -- a
+named `--speculative N` hard-fails naming vision, `auto` warns and
+continues text-only. Because `attach_vision_sidecar` mutates the runner's
+own `arch.vision`, a SIDECAR-attached trunk trips the same arm at the
+`resolve_speculation` call every front end makes after the attach, which is
+why the arm lives in the blocker rather than at open. `produce_batched`
+itself refuses by name as defense in depth for a caller that drives the
+verify without asking the policy first. A vision-aware verify pass remains
+unbuilt, deliberately: there is no artifact that carries both halves, so
+that path would be untested numeric code whose failure mode is fluent
+wrong output. The synthetic pair in
+`real_forward_qwen35_mtp.rs::attaching_a_vision_sidecar_flips_the_engine_blocker_...`
+is the fixture that holds this contract.
 
 - **NaN-safe parity instruments.** The two remaining ungated files
   (`crates/gpu/tests/vision_block_parity.rs`, `crates/gpu/tests/rope_mrope_parity.rs`)

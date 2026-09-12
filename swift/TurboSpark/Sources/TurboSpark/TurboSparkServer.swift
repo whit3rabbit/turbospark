@@ -144,7 +144,7 @@ public enum ServerEvent: Decodable, Sendable, Equatable {
         id: UInt64, model: String, promptTokens: UInt32, newTokens: UInt32,
         prefillSeconds: Double, decodeSeconds: Double, stopReason: String,
         reusedPrefixTokens: UInt32 = 0, sessionSlotEvicted: Bool = false)
-    case requestFinished(id: UInt64, status: UInt16, durationMs: UInt32)
+    case requestFinished(id: UInt64, status: UInt16, durationMs: UInt32, error: String? = nil)
     case modelAttached(atMs: UInt64, model: String)
     case modelDetached(atMs: UInt64, model: String)
     /// A `kind` this binding does not know, carried rather than thrown.
@@ -162,7 +162,7 @@ public enum ServerEvent: Decodable, Sendable, Equatable {
         case let .requestStarted(id, _, _, _): return id
         case let .requestRouted(id, _, _, _): return id
         case let .generated(id, _, _, _, _, _, _, _, _): return id
-        case let .requestFinished(id, _, _): return id
+        case let .requestFinished(id, _, _, _): return id
         case .modelAttached, .modelDetached, .unknown: return nil
         }
     }
@@ -171,7 +171,7 @@ public enum ServerEvent: Decodable, Sendable, Equatable {
         case kind, id, atMs, method, path, requested, served, stream
         case model, promptTokens, newTokens, prefillSeconds, decodeSeconds, stopReason
         case reusedPrefixTokens, sessionSlotEvicted
-        case status, durationMs
+        case status, durationMs, error
     }
 
     public init(from decoder: Decoder) throws {
@@ -205,7 +205,8 @@ public enum ServerEvent: Decodable, Sendable, Equatable {
             self = .requestFinished(
                 id: try c.decode(UInt64.self, forKey: .id),
                 status: try c.decode(UInt16.self, forKey: .status),
-                durationMs: try c.decode(UInt32.self, forKey: .durationMs))
+                durationMs: try c.decode(UInt32.self, forKey: .durationMs),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
         case "modelAttached":
             self = .modelAttached(
                 atMs: try c.decode(UInt64.self, forKey: .atMs),

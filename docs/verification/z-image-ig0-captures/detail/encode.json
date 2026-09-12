@@ -1,0 +1,368 @@
+{
+  "arrays": {
+    "attention_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "attention_mask.npy",
+      "sha256": "59850dcfc427b0953b531ad1c36dcde60a43676cfefd663f300d7cb00b061073",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "conditioning": {
+      "bytes": 245760,
+      "dtype": "float32",
+      "file": "conditioning.npy",
+      "sha256": "a662d806d76972ab370bddfee4f21096756cbe2f5ca1be41d65c9345543c211e",
+      "shape": [
+        24,
+        2560
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "token_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "token_ids.npy",
+      "sha256": "9b4dd7eaa3eb4760066b8dc44ac63c55da486274630a39bf9f0e73c035e8f126",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    }
+  },
+  "benchmark_eligible": false,
+  "complete": true,
+  "framed_prompt": "<|im_start|>user\nMacro photograph of a honeybee on lavender, fine hairs and translucent wing veins.<|im_end|>\n<|im_start|>assistant\n",
+  "inputs": {},
+  "model_revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+  "packages": {
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "PyYAML": "6.0.3",
+    "Pygments": "2.21.0",
+    "accelerate": "1.15.0",
+    "annotated-doc": "0.0.5",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.1",
+    "click": "8.5.0",
+    "diffusers": "0.41.0.dev0",
+    "filelock": "3.32.6",
+    "fsspec": "2026.7.0",
+    "h11": "0.16.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface_hub": "1.31.0",
+    "idna": "3.19",
+    "importlib_metadata": "9.0.1",
+    "markdown-it-py": "4.2.0",
+    "mdurl": "0.1.2",
+    "mlx": "0.32.2",
+    "mlx-metal": "0.32.2",
+    "mpmath": "1.3.0",
+    "networkx": "3.6.1",
+    "numpy": "2.5.3",
+    "packaging": "26.3",
+    "pillow": "12.3.0",
+    "psutil": "7.2.2",
+    "regex": "2026.9.10",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "sentencepiece": "0.2.2",
+    "setuptools": "84.0.0",
+    "shellingham": "1.5.4",
+    "sympy": "1.14.0",
+    "tokenizers": "0.23.2",
+    "torch": "2.14.0",
+    "tqdm": "4.70.0",
+    "transformers": "5.17.0",
+    "typer": "0.27.2",
+    "typing_extensions": "4.16.0",
+    "urllib3": "2.7.0",
+    "zipp": "4.1.0"
+  },
+  "preflight": [
+    {
+      "quiet": true,
+      "top": [
+        {
+          "cpu_percent": 2.5301493894273124,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 1.308323392342385,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.9816448577396053,
+          "name": "Brave Browser",
+          "pid": 31795
+        },
+        {
+          "cpu_percent": 0.8094546941568243,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.7595678243142604,
+          "name": "python",
+          "pid": 59510
+        },
+        {
+          "cpu_percent": 0.5785267645170866,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 0.47633914406905575,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 0.3502704477268713,
+          "name": "zsh",
+          "pid": 79948
+        }
+      ],
+      "total_cpu_percent": 10.777459743782323
+    },
+    {
+      "quiet": true,
+      "top": [
+        {
+          "cpu_percent": 3.1079156771207592,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 2.5559601442341826,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 2.0293310487803664,
+          "name": "AlDente",
+          "pid": 25003
+        },
+        {
+          "cpu_percent": 1.781694771826172,
+          "name": "ControlCenter",
+          "pid": 24889
+        },
+        {
+          "cpu_percent": 1.501897939424033,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 1.0717505103140508,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.5813020397315011,
+          "name": "trustd",
+          "pid": 576
+        },
+        {
+          "cpu_percent": 0.4341674985556203,
+          "name": "WhatsApp",
+          "pid": 22148
+        }
+      ],
+      "total_cpu_percent": 18.87972187283368
+    },
+    {
+      "quiet": true,
+      "top": [
+        {
+          "cpu_percent": 1.0771616699513493,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 1.023223081081126,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.6049977540826159,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 0.5956971840915346,
+          "name": "mdworker_shared",
+          "pid": 2995
+        },
+        {
+          "cpu_percent": 0.5892992095708988,
+          "name": "boringNotch",
+          "pid": 27863
+        },
+        {
+          "cpu_percent": 0.5603172812243865,
+          "name": "python",
+          "pid": 59510
+        },
+        {
+          "cpu_percent": 0.48303213898191705,
+          "name": "AlDente",
+          "pid": 25003
+        },
+        {
+          "cpu_percent": 0.4274834430160903,
+          "name": "trustd",
+          "pid": 576
+        }
+      ],
+      "total_cpu_percent": 8.314641274714187
+    }
+  ],
+  "references": {
+    "diffusers": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux": "051ba9ff25c9a8a8703356053a012a0dfad3fe39"
+  },
+  "resources": {
+    "cache_state": "uncontrolled; no cache eviction performed",
+    "elapsed_s": 1.8197807499673218,
+    "measurement_kind": "instrumented reference capture",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:05 remaining present: true",
+    "quiet_ac_throughout": true,
+    "samples": [
+      {
+        "disk_read_bytes": 8045121536,
+        "elapsed_s": 0.012113417033106089,
+        "load": [
+          1.916015625,
+          3.32373046875,
+          3.5068359375
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 345031640,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:05 remaining present: true",
+        "rss_bytes": 405995520,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          " 4310  98.2 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "74695  17.5 /System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd",
+          "  179   4.8 /usr/libexec/runningboardd",
+          "  517   4.4 /usr/libexec/secd",
+          "24906   3.1 /usr/libexec/nsurlsessiond",
+          "31795   0.6 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+          "  278   0.4 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN",
+          "59510   0.4 /Users/whit3rabbit/.hermes/hermes-agent/venv/bin/python"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 4.131976755280171,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 2.8505498811612595,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 1.00174850224712,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.750839743680762,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.6716053988724001,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.41503704424456195,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.40371785212814665,
+              "name": "AlDente",
+              "pid": 25003
+            },
+            {
+              "cpu_percent": 0.343230919262393,
+              "name": "assistantd",
+              "pid": 25370
+            }
+          ],
+          "total_cpu_percent": 13.96460674144374
+        },
+        "disk_read_bytes": 8046055424,
+        "elapsed_s": 1.7447420000098646,
+        "load": [
+          1.916015625,
+          3.32373046875,
+          3.5068359375
+        ],
+        "mps_driver_bytes": 8313847808,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 8925496712,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:05 remaining present: true",
+        "rss_bytes": 640778240,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          " 4310  20.7 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          " 8514   2.9 /Library/SystemExtensions/C7E3B212-D4F7-460E-8818-3D16CE632184/at.obdev.littlesnitch.networkextension.systemextension/Contents/MacOS/at.obdev.littlesnitch.networkextension",
+          " 8558   1.6 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          " 8547   1.4 /Library/Application Support/Objective Development/Little Snitch/Components/at.obdev.littlesnitch.daemon.bundle/Contents/MacOS/at.obdev.littlesnitch.daemon",
+          "59510   1.1 /Users/whit3rabbit/.hermes/hermes-agent/venv/bin/python",
+          " 2327   0.4 /usr/libexec/syspolicyd",
+          "24646   0.3 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "  175   0.3 /System/Library/PrivateFrameworks/TCC.framework/Support/tccd"
+        ]
+      }
+    ]
+  },
+  "schema": 1,
+  "settings": {
+    "case": "detail",
+    "device": "mps",
+    "guidance": 0.0,
+    "height": 1024,
+    "noise_generator": "torch CPU float32",
+    "prompt": "Macro photograph of a honeybee on lavender, fine hairs and translucent wing veins.",
+    "quantized_linears": false,
+    "seed": 42,
+    "steps": 9,
+    "width": 1024
+  },
+  "stage": "encode",
+  "tool_sha256": {
+    "z_image_capture.py": "29a8e5e61f97c7263f33288351990d3944a7e20d71d24d5b650bf883bbd5665b",
+    "z_image_compare.py": "d72c04ef1edb4b073486f49d5c475f2521238dbd005d776c49b7f7914d904d95",
+    "z_image_evidence.py": "4868c3256198d68a911c740fc861fdad8053e1bdc1861a4831cf0fea6669e097",
+    "z_image_probe.py": "0e8be72e818ac3286e7560cbd2914e5465deefa5bb8e8f12c6a5035ddeeb92dc",
+    "z_image_quantization.py": "283f55d5d67755cf53040d2137305f8dfc04b3a2bd32206ac738d24dfd1c5eb9"
+  },
+  "verified_weights": {
+    "text_encoder/model-00001-of-00003.safetensors": "328a91d3122359d5547f9d79521205bc0a46e1f79a792dfe650e99fc2d651223",
+    "text_encoder/model-00002-of-00003.safetensors": "6cd087b316306a68c562436b5492edbcf6e16c6dba3a1308279caa5a58e21ca5",
+    "text_encoder/model-00003-of-00003.safetensors": "7ca841ee75b9c61267c0c6148fd8d096d3d21b6d3e161256a9b878154f91fc52"
+  }
+}

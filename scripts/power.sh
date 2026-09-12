@@ -284,6 +284,11 @@ PY
 }
 
 cleanup() {
+  if [ -n "${PROCESS_PID:-}" ]; then
+    kill "$PROCESS_PID" 2>/dev/null
+    wait "$PROCESS_PID" 2>/dev/null
+    PROCESS_PID=""
+  fi
   [ -n "${BATT_PID:-}" ] && kill "$BATT_PID" 2>/dev/null
   [ -n "${KEEPALIVE_PID:-}" ] && kill "$KEEPALIVE_PID" 2>/dev/null
   sudo -n pkill -x powermetrics 2>/dev/null
@@ -339,6 +344,7 @@ KEEPALIVE_PID=$!
   echo "manifest sha $(shasum -a 256 "$MODEL/manifest.json" | cut -d' ' -f1)"
   echo "pairs        $PAIRS"
   echo "interval     ${INTERVAL_MS} ms"
+  echo "process log  processes.jsonl (1 s pause between snapshots; ps decayed CPU and cumulative CPU time)"
 } | tee "$OUT/system.txt"
 echo
 
@@ -350,7 +356,11 @@ sudo powermetrics -s cpu_power,gpu_power,thermal -i "$INTERVAL_MS" 2>/dev/null \
   | grep --line-buffered -E '^\*\*\* Sampled system activity|^CPU Power:|^GPU Power:|^Combined Power|^Current pressure level:|-Cluster HW active residency:' \
   > "$OUT/pm.txt" &
 sample_battery
+python3 "$(dirname "$0")/power_processes.py" "$OUT/processes.jsonl" \
+  2> "$OUT/processes.stderr" &
+PROCESS_PID=$!
 sleep 2
+kill -0 "$PROCESS_PID" 2>/dev/null || { echo "process sampler failed; see $OUT/processes.stderr" >&2; exit 2; }
 
 # One measured run of one case, in a fresh process. `--case` is the
 # protocol's fresh-process leg; the bench does its own discarded warmup
@@ -527,6 +537,7 @@ for case_id in $CASES; do
 done
 
 PM_T_END=$(now_ms)
+kill -0 "$PROCESS_PID" 2>/dev/null || echo "WARNING process sampler stopped early; inspect processes.stderr" >&2
 cleanup
 trap - EXIT INT TERM
 sleep 1

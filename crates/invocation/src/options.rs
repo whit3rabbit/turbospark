@@ -159,6 +159,13 @@ pub const OPTIONS: &[OptionDecl] = &[
         usage_hint: "routed-cache slot count, allowed 8/16/24/32/48/64/96/128, or auto (default auto, which never resolves below 16)",
     },
     OptionDecl {
+        flag: "--expert-residency",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "routed-expert residency mode: auto, streamed, mapped (default auto)",
+    },
+    OptionDecl {
         flag: "--speculative",
         takes_value: true,
         is_required: false,

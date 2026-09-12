@@ -53,3 +53,5 @@ mf.sqlite3
 mf.sqlite3-*
 notes/
 .eatahorse*/
+
+.venv/

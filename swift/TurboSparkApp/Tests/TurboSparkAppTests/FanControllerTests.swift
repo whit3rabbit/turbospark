@@ -218,6 +218,12 @@ final class FanControllerTests: XCTestCase {
         XCTAssertEqual(alsoFound?.path, dirB.appendingPathComponent("thermalforge").path)
     }
 
+    func test_sharedControllerCannotReachHardwareInTests() {
+        XCTAssertTrue(AppStorageRoot.isRunningTests)
+        XCTAssertFalse(FanController.shared.isAvailable)
+        XCTAssertFalse(FanController.shared.isPolling)
+    }
+
     func test_controllerIsUnavailableForAMissingBinary() {
         let controller = FanController(
             executablePath: "/nonexistent-fanforge-dir/thermalforge", pollInterval: nil)

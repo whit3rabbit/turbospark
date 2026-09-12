@@ -344,4 +344,12 @@ final class ServerMetricsStoreTests: XCTestCase {
         XCTAssertTrue(store.records[0].isError)
         XCTAssertEqual(store.totalErrors, 1)
     }
+
+    func testAnErrorStoresItsErrorMessage() {
+        var store = ServerMetricsStore()
+        store.ingest(started(1))
+        store.ingest(.requestFinished(id: 1, status: 422, durationMs: 15, error: "unknown variant system"))
+        XCTAssertTrue(store.records[0].isError)
+        XCTAssertEqual(store.records[0].errorMessage, "unknown variant system")
+    }
 }

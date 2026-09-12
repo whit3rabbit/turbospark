@@ -30,6 +30,7 @@ public struct ServerRequestRecord: Identifiable, Equatable, Sendable {
     /// guardrails re-asked, which is real work worth seeing rather than a
     /// duplicate row.
     public var generations: Int = 0
+    public var errorMessage: String?
 
     public var isFinished: Bool { status != nil }
     public var isError: Bool { (status ?? 0) >= 400 }
@@ -169,10 +170,11 @@ public struct ServerMetricsStore: Equatable {
                 }
             }
 
-        case let .requestFinished(id, status, durationMs):
+        case let .requestFinished(id, status, durationMs, error):
             update(id) {
                 $0.status = status
                 $0.durationMs = durationMs
+                $0.errorMessage = error
             }
             open[id] = nil
 

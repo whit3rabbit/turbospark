@@ -90,14 +90,14 @@
 
 use std::path::PathBuf;
 
-use runtime::{GenerationConfig, RateControl, RawDecodeProgress};
-use selection::ShapingConfig;
 use turbospark_bench::memory::{chip_brand_string, AppMemorySampler};
 use turbospark_bench::protocol::PROTOCOL_EXPERT_CACHE_SLOTS;
 use turbospark_bench::real_model::open_model_runner_with_context;
-use turbospark_vision_io::{decode_image_file, preprocess, PreprocessParams, VisionSpecialIds};
+use turbospark_vision_io::VisionSpecialIds;
 
 mod oracle_common;
+mod vision_oracle_rounds;
+use vision_oracle_rounds::{params_from, run_rounds, RoundResult};
 
 /// Per-chip rows for `qwen38-27b-vision`, most specific substring first
 /// (`memory_oracle.rs` explains the lookup order). Only one chip has ever
@@ -134,82 +134,10 @@ fn shellexpand(raw: &str) -> String {
     }
 }
 
-/// Preprocessing parameters read off the INSTALL's own `ArchConfig`, never
-/// restated (`vision_tower_parity.rs`'s rule; the same body
-/// `vision_logit_dump.rs` carries).
-fn params_from(arch: &model_io::ArchConfig) -> PreprocessParams {
-    let v = &arch.vision;
-    PreprocessParams {
-        patch_size: v.patch_size as usize,
-        temporal_patch_size: v.temporal_patch_size as usize,
-        merge_size: v.spatial_merge_size as usize,
-        in_channels: v.in_channels as usize,
-        min_pixels: 65_536,
-        max_pixels: 16_777_216,
-        image_mean: [0.5; 3],
-        image_std: [0.5; 3],
-        rescale_factor: 1.0 / 255.0,
-    }
-}
-
-/// One oracle page. `marker` is a four-word run unique to THIS page's FIRST
-/// line, computed offline by replaying `scripts/make_vision_test_page.py`'s
-/// own per-page-seeded RNG sequence rather than guessed.
+/// One oracle page's markers, sizes and the transcription question live in
+/// the shared `vision_oracle_rounds` module beside the sidecar target's copy
+/// of this loop, so the two oracles stay one instrument.
 ///
-/// **Both prior designs were measured wrong, not assumed right.** A first
-/// version keyed on each page's opening line's trailing `NNNN.NN` float and
-/// failed on a real transcription that was otherwise correct: round 1
-/// (`medium`) wrote line 1 as "...decode through" (cut off before its own
-/// number) while completing line 3 in full. A second version keyed on the
-/// THIRD line instead -- and failed just as validly on `small`, whose real
-/// transcription stopped at 40 tokens with all three lines cut mid-word
-/// ("...residual expert stre", "...tokenizer embed", "...gradient footpr").
-/// Across every round of both real runs, the one thing that reproduced
-/// EXACTLY every time -- even in that worst truncation -- was the OPENING
-/// of line 1: the model transcribes forward from the start and may stop
-/// before the end, so a marker drawn from as early as possible is the only
-/// one immune to where it happens to stop. Four words from a 20-word shared
-/// vocabulary is long enough that an exact run recurring by chance across
-/// three independently-seeded pages is negligible (checked by eye against
-/// all three pages' first three lines below).
-struct Page {
-    file: &'static str,
-    label: &'static str,
-    marker: &'static str,
-}
-
-/// Largest first: the round that establishes the ceiling has to be the
-/// biggest scratch allocation, or a smaller-page-first ordering would make
-/// "the peak did not grow" trivially true. Sizes vary ~7x (2,304 vs 320
-/// merged tokens at this install's patch_size=16/merge_size=2), which is
-/// enough spread that a leaked constant-size scratch would be visible
-/// against a correctly dropped one.
-const PAGES: &[Page] = &[
-    Page {
-        file: "large.png",
-        label: "large (1536x1536)",
-        marker: "attention quantize kernel embedding",
-    },
-    Page {
-        file: "medium.png",
-        label: "medium (1024x1280)",
-        marker: "expert throughput footprint quantize",
-    },
-    Page {
-        file: "small.png",
-        label: "small (512x640)",
-        marker: "checkpoint router streaming residual",
-    },
-];
-
-const QUESTION: &str =
-    "Transcribe the first three lines of text in this image, exactly as written, \
-     including all numbers and punctuation.";
-
-/// Generous enough to reach the third dense line (each carries 9-14 words
-/// plus a trailing number) without relying on the model to stop on its own.
-const GENERATE_TOKENS: u32 = 300;
-
 /// Covers the largest page's ~2,304 merged tokens plus rendering overhead
 /// and the generation budget above, with headroom -- see the module header
 /// for why this ceiling is mostly a statement about the WINDOW rather than
@@ -240,12 +168,8 @@ const CEILING_MIB: u64 = 950;
 /// -69.6 MiB (round 3 lower), comfortably inside this either way.
 const STEADY_STATE_SLACK_MIB: u64 = 64;
 
-struct RoundResult {
-    label: &'static str,
-    peak_mib: f64,
-    decode_tok_s: f64,
-}
-
+/// The combined-install oracle body: open, run the shared four rounds, then
+/// assert THIS target's ceiling, tok/s floor and flat-peak constants.
 #[test]
 #[ignore = "needs a real vision install via TURBOSPARK_QWEN38_VISION_INSTALL_DIR"]
 fn peak_footprint_is_flat_across_pages_of_different_sizes() {
@@ -272,13 +196,12 @@ fn peak_footprint_is_flat_across_pages_of_different_sizes() {
     );
 
     let arch = repack::peek_manifest_arch(&install).expect("peeks");
-    let params = params_from(&arch);
+    let params = params_from(&arch.vision);
     let vision = runner.vision_config();
     let special = VisionSpecialIds {
         vision_start: vision.vision_start_token_id as i32,
         image_pad: vision.image_token_id as i32,
     };
-    let vocab = runner.vocab_size();
 
     eprintln!(
         "vision_memory_oracle: context={VISION_ORACLE_MAX_CONTEXT}, \
@@ -287,139 +210,16 @@ fn peak_footprint_is_flat_across_pages_of_different_sizes() {
     );
 
     let mut sampler = AppMemorySampler::new();
-    let mut rounds: Vec<RoundResult> = Vec::new();
-
-    // Largest first, then a final repeat of the largest page -- the real
-    // steady-state proof that `VisionScratch` is dropped and reallocated
-    // per page rather than accumulating.
-    let order: Vec<&Page> = PAGES.iter().chain(std::iter::once(&PAGES[0])).collect();
-
-    for (round, page) in order.iter().enumerate() {
-        let path = pages_dir.join(page.file);
-        let decoded = decode_image_file(&path).unwrap_or_else(|e| {
-            panic!(
-                "{}: {e}\n  run the setup commands in this file's \
-                 module header first",
-                path.display()
-            )
-        });
-        let image =
-            preprocess(&decoded, &params).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-
-        let messages = [tokenizer::Message::with_parts(
-            tokenizer::Role::User,
-            vec![
-                tokenizer::ContentPart::Image,
-                tokenizer::ContentPart::Text(QUESTION.to_string()),
-            ],
-        )];
-        let rendered = tokenizer
-            .apply_chat_template(&messages)
-            .expect("the checkpoint's template renders an image part");
-        let encoded = tokenizer.encode(&rendered, false);
-        let spliced = turbospark_vision_io::splice_and_walk(
-            &encoded,
-            &[image.grid],
-            special,
-            params.merge_size,
-        )
-        .unwrap_or_else(|e| panic!("{}: cannot splice: {e}", page.label));
-
-        // CONSUME the previous round's map before building this one,
-        // matching the CLI's `--image-batch` loop
-        // (`crates/cli/src/generate/mod.rs`) -- `reset()` deliberately does
-        // NOT do this (AGENTS.md Gotcha 29 / crate Gotcha 13).
-        runner.clear_prompt_vision();
-        let embedding = runner
-            .encode_image(&image, &params)
-            .unwrap_or_else(|e| panic!("{}: the tower should run: {e}", page.label));
-        runner
-            .set_prompt_vision(
-                std::slice::from_ref(&embedding),
-                &spliced.positions,
-                spliced.ids.len(),
-            )
-            .unwrap_or_else(|e| panic!("{}: the injection map should validate: {e}", page.label));
-
-        let shaping = ShapingConfig::new(0.0, 1, None, 1.0, Some(round as u64))
-            .expect("a fixed greedy shaping config is always valid");
-        let config = GenerationConfig {
-            shaping,
-            max_new_tokens: GENERATE_TOKENS,
-            stop_strings: Vec::new(),
-            extra_stop_tokens: Vec::new(),
-            rate: RateControl::default(),
-        };
-
-        let mut generated_text = String::new();
-        let result = runtime::run_raw_completion(
-            &mut runner,
-            &tokenizer,
-            &spliced.ids,
-            &config,
-            VISION_ORACLE_MAX_CONTEXT,
-            vocab,
-            |event| match event {
-                RawDecodeProgress::Token { delta, .. } => generated_text.push_str(&delta),
-                RawDecodeProgress::Tail(tail) => generated_text.push_str(&tail),
-                RawDecodeProgress::Prefill { .. } => {}
-            },
-        )
-        .unwrap_or_else(|e| panic!("{}: generation failed: {e}", page.label));
-
-        let peak_bytes = sampler.sample().expect("footprint sampling worked");
-        let peak_mib = peak_bytes as f64 / 1_048_576.0;
-        let decode_tok_s = if result.decode_seconds > 0.0 {
-            result.new_tokens as f64 / result.decode_seconds
-        } else {
-            0.0
-        };
-        eprintln!(
-            "vision_memory_oracle: round {round} ({}) -> {:?}, {} new tokens, peak {peak_mib:.1} \
-             MiB, {decode_tok_s:.3} tok/s ({:.3}s prefill, {:.3}s decode)",
-            page.label,
-            result.reason,
-            result.new_tokens,
-            result.prefill_seconds,
-            result.decode_seconds
-        );
-        eprintln!("vision_memory_oracle: round {round} transcription: {generated_text}");
-
-        // THE CONTENT ASSERTION: proves this round's OWN page was read, not
-        // a stale embedding from a previous round or no image at all. This
-        // is exactly what a memory-shape-only oracle cannot see
-        // (`docs/VISION.md`'s M-V5 bug, ROADMAP's "M-V9 is the third").
-        assert!(
-            generated_text.contains(page.marker),
-            "{}: transcription does not contain this page's own marker \
-             {:?} -- the model may be answering from a stale or absent \
-             embedding rather than this page.\n  full output: {generated_text}",
-            page.label,
-            page.marker
-        );
-        // And the NEGATIVE half: no OTHER page's marker leaked in, which is
-        // what a genuinely stale (rather than merely absent) embedding
-        // would produce.
-        for other in PAGES {
-            if other.marker == page.marker {
-                continue;
-            }
-            assert!(
-                !generated_text.contains(other.marker),
-                "{}: transcription contains {:?}, which belongs to {} -- a stale \
-                 embedding leaked across rounds",
-                page.label,
-                other.marker,
-                other.label
-            );
-        }
-
-        rounds.push(RoundResult {
-            label: page.label,
-            peak_mib,
-            decode_tok_s,
-        });
-    }
+    let rounds: Vec<RoundResult> = run_rounds(
+        &mut runner,
+        &tokenizer,
+        &params,
+        special,
+        &pages_dir,
+        VISION_ORACLE_MAX_CONTEXT,
+        "vision_memory_oracle",
+        &mut sampler,
+    );
 
     for r in &rounds {
         assert!(

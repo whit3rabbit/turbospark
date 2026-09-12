@@ -1,0 +1,5 @@
+{
+  "complete": false,
+  "stage": "encode",
+  "error": "reference measurements require AC power: Now drawing from 'Battery Power'\n -InternalBattery-0 (id=7536739)\t87%; discharging; 2:39 remaining present: true"
+}

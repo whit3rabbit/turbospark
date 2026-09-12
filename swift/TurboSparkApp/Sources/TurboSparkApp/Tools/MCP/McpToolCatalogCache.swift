@@ -28,9 +28,19 @@ public final class McpToolCatalogCache: @unchecked Sendable {
 
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
-    private var inFlight: Set<String> = []
+    private struct Request {
+        let id: UUID
+        let transport: McpTransportSpec
+    }
+    private var inFlight: [String: Request] = [:]
+    public typealias Discovery = @Sendable (McpServerConfig, URL?) async throws -> [McpDiscoveredTool]
+    private let discover: Discovery
 
-    public init() {}
+    public init(discover: @escaping Discovery = { config, directory in
+        try await McpClientEngine.shared.discoverTools(for: config, workingDirectory: directory)
+    }) {
+        self.discover = discover
+    }
 
     /// The cached tools for `serverName`, or nil when never discovered.
     public func tools(forServerName serverName: String) -> [McpDiscoveredTool]? {
@@ -48,14 +58,16 @@ public final class McpToolCatalogCache: @unchecked Sendable {
 
     public func setTools(_ tools: [McpDiscoveredTool], for config: McpServerConfig) {
         lock.lock(); defer { lock.unlock() }
-        entries[McpServerConfig.normalizedName(config.name)] = Entry(tools: tools, transport: config.transport)
+        let key = McpServerConfig.normalizedName(config.name)
+        inFlight.removeValue(forKey: key)
+        entries[key] = Entry(tools: tools, transport: config.transport)
     }
 
     public func removeServer(named serverName: String) {
         lock.lock(); defer { lock.unlock() }
         let key = McpServerConfig.normalizedName(serverName)
         entries.removeValue(forKey: key)
-        inFlight.remove(key)
+        inFlight.removeValue(forKey: key)
     }
 
     public func removeAll() {
@@ -68,41 +80,44 @@ public final class McpToolCatalogCache: @unchecked Sendable {
     /// whose cache entry is missing or stale, and prunes entries for names
     /// no longer present. Returns the server names queued.
     ///
-    /// Safe to call repeatedly: an in-flight server is skipped, a fresh
-    /// entry is skipped, and each name runs at most one discovery at a
-    /// time. Failures leave any previous entry in place and simply clear
-    /// the in-flight mark, so the next event retries.
+    /// Repeated calls share the current request. Reconfiguration invalidates
+    /// its identity so a late completion cannot publish or clear newer work.
     @discardableResult
     public func refreshEnabled(servers: [McpServerConfig], workingDirectory: URL?) -> [String] {
-        let enabled = servers.filter { $0.isEnabled }
-        var queued: [String] = []
+        refreshTasks(servers: servers, workingDirectory: workingDirectory).map(\.name)
+    }
 
+    // Returning handles lets tests await publication, not just the discovery
+    // callback. Production callers retain the fire-and-forget interface.
+    func refreshTasks(servers: [McpServerConfig], workingDirectory: URL?)
+        -> [(name: String, task: Task<Void, Never>)] {
+        let enabled = servers.filter { $0.isEnabled }
+        var queued: [(config: McpServerConfig, id: UUID)] = []
         lock.lock()
+        let liveKeys = Set(enabled.map { McpServerConfig.normalizedName($0.name) })
+        entries = entries.filter { liveKeys.contains($0.key) }
+        inFlight = inFlight.filter { liveKeys.contains($0.key) }
         for config in enabled {
             let key = McpServerConfig.normalizedName(config.name)
-            guard !inFlight.contains(key), isStaleLocked(for: config) else { continue }
-            inFlight.insert(key)
-            queued.append(config.name)
-        }
-        // Drop cache rows for servers that no longer exist or were disabled,
-        // so a disabled server's tools stop being advertised immediately.
-        let liveKeys = Set(enabled.map { McpServerConfig.normalizedName($0.name) })
-        for key in entries.keys where !liveKeys.contains(key) {
-            entries.removeValue(forKey: key)
+            if let request = inFlight[key] {
+                if request.transport == config.transport { continue }
+                inFlight.removeValue(forKey: key)
+            }
+            guard isStaleLocked(for: config) else { continue }
+            let id = UUID()
+            inFlight[key] = Request(id: id, transport: config.transport)
+            queued.append((config, id))
         }
         lock.unlock()
 
-        for config in queued.compactMap({ name in enabled.first(where: { $0.name == name }) }) {
-            let snapshot = config
-            Task { [weak self] in
-                defer { self?.clearInFlight(named: snapshot.name) }
-                guard let tools = try? await McpClientEngine.shared.discoverTools(
-                    for: snapshot, workingDirectory: workingDirectory)
-                else { return }
-                self?.setTools(tools, for: snapshot)
+        return queued.map { config, id in
+            let discover = self.discover
+            let task = Task { [weak self] in
+                let tools = try? await discover(config, workingDirectory)
+                self?.complete(config: config, id: id, tools: tools)
             }
+            return (config.name, task)
         }
-        return queued
     }
 
     /// `isStale` for a caller already holding `lock`.
@@ -111,8 +126,12 @@ public final class McpToolCatalogCache: @unchecked Sendable {
         return entry.transport != config.transport
     }
 
-    private func clearInFlight(named serverName: String) {
+    private func complete(config: McpServerConfig, id: UUID, tools: [McpDiscoveredTool]?) {
         lock.lock(); defer { lock.unlock() }
-        inFlight.remove(McpServerConfig.normalizedName(serverName))
+        let key = McpServerConfig.normalizedName(config.name)
+        // Reset, removal, or replacement revokes both publication and cleanup.
+        guard inFlight[key]?.id == id else { return }
+        inFlight.removeValue(forKey: key)
+        if let tools { entries[key] = Entry(tools: tools, transport: config.transport) }
     }
 }

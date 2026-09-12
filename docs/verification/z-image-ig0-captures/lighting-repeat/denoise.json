@@ -1,0 +1,3054 @@
+{
+  "actual_forwards": 9,
+  "arrays": {
+    "block_00_freqs": {
+      "bytes": 2113536,
+      "dtype": "complex64",
+      "file": "block_00_freqs.npy",
+      "sha256": "a8f62ce9e65a6ebd85a456280d6d78e7d74be02eab14f449798fc2600e951eec",
+      "shape": [
+        1,
+        4128,
+        64
+      ],
+      "source_dtype": "torch.complex64"
+    },
+    "block_00_input": {
+      "bytes": 63406080,
+      "dtype": "float32",
+      "file": "block_00_input.npy",
+      "sha256": "df98e001f0d8950ccd529bfbffe401d4ca30e2399885954fd35171e270e5c90a",
+      "shape": [
+        1,
+        4128,
+        3840
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "block_00_mask": {
+      "bytes": 4128,
+      "dtype": "bool",
+      "file": "block_00_mask.npy",
+      "sha256": "a31314f305d3d284e135857379cb23130bbdadfc6adeda518bf952bb430fcf2a",
+      "shape": [
+        1,
+        4128
+      ],
+      "source_dtype": "torch.bool"
+    },
+    "block_00_modulation": {
+      "bytes": 1024,
+      "dtype": "float32",
+      "file": "block_00_modulation.npy",
+      "sha256": "22d97e6e90957c802264dd6c997d97148c05d3a2b87b8514b9ed9da2d5aace4a",
+      "shape": [
+        1,
+        256
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "block_00_output": {
+      "bytes": 63406080,
+      "dtype": "float32",
+      "file": "block_00_output.npy",
+      "sha256": "42938363078032df961441642dcf0faeb70faf6b76b4f51f2caa596d4797106a",
+      "shape": [
+        1,
+        4128,
+        3840
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "block_15_freqs": {
+      "bytes": 2113536,
+      "dtype": "complex64",
+      "file": "block_15_freqs.npy",
+      "sha256": "a8f62ce9e65a6ebd85a456280d6d78e7d74be02eab14f449798fc2600e951eec",
+      "shape": [
+        1,
+        4128,
+        64
+      ],
+      "source_dtype": "torch.complex64"
+    },
+    "block_15_input": {
+      "bytes": 63406080,
+      "dtype": "float32",
+      "file": "block_15_input.npy",
+      "sha256": "68f4dcfd0539272298a35a7b851cde04242d7f0973b2e73b71beb77b9e809e2e",
+      "shape": [
+        1,
+        4128,
+        3840
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "block_15_mask": {
+      "bytes": 4128,
+      "dtype": "bool",
+      "file": "block_15_mask.npy",
+      "sha256": "a31314f305d3d284e135857379cb23130bbdadfc6adeda518bf952bb430fcf2a",
+      "shape": [
+        1,
+        4128
+      ],
+      "source_dtype": "torch.bool"
+    },
+    "block_15_modulation": {
+      "bytes": 1024,
+      "dtype": "float32",
+      "file": "block_15_modulation.npy",
+      "sha256": "22d97e6e90957c802264dd6c997d97148c05d3a2b87b8514b9ed9da2d5aace4a",
+      "shape": [
+        1,
+        256
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "block_15_output": {
+      "bytes": 63406080,
+      "dtype": "float32",
+      "file": "block_15_output.npy",
+      "sha256": "d494b2eaf0085e0217a63194cd01e2c6dedfe3eb77705309cfabe5009507eb30",
+      "shape": [
+        1,
+        4128,
+        3840
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "block_29_freqs": {
+      "bytes": 2113536,
+      "dtype": "complex64",
+      "file": "block_29_freqs.npy",
+      "sha256": "a8f62ce9e65a6ebd85a456280d6d78e7d74be02eab14f449798fc2600e951eec",
+      "shape": [
+        1,
+        4128,
+        64
+      ],
+      "source_dtype": "torch.complex64"
+    },
+    "block_29_input": {
+      "bytes": 63406080,
+      "dtype": "float32",
+      "file": "block_29_input.npy",
+      "sha256": "cb4ba3bb2a9fecf2ae9cf4aa9e410769d5ed7d2b7043fe212652155fa86fd68e",
+      "shape": [
+        1,
+        4128,
+        3840
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "block_29_mask": {
+      "bytes": 4128,
+      "dtype": "bool",
+      "file": "block_29_mask.npy",
+      "sha256": "a31314f305d3d284e135857379cb23130bbdadfc6adeda518bf952bb430fcf2a",
+      "shape": [
+        1,
+        4128
+      ],
+      "source_dtype": "torch.bool"
+    },
+    "block_29_modulation": {
+      "bytes": 1024,
+      "dtype": "float32",
+      "file": "block_29_modulation.npy",
+      "sha256": "22d97e6e90957c802264dd6c997d97148c05d3a2b87b8514b9ed9da2d5aace4a",
+      "shape": [
+        1,
+        256
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "block_29_output": {
+      "bytes": 63406080,
+      "dtype": "float32",
+      "file": "block_29_output.npy",
+      "sha256": "1db3c73f4c1d4c754042f5098ef9a991425cd143ec18789a2903e821aa411bbe",
+      "shape": [
+        1,
+        4128,
+        3840
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "final_latents": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "final_latents.npy",
+      "sha256": "6312126798a476ca2556bf3c2eec99fdeb153a9aad50e47eefccf91e618b4a3d",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "initial_noise": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "initial_noise.npy",
+      "sha256": "becdf44dedd493eab52c1e3a7316024c503799f56c1e1ce5b27179bb632caf1c",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_00": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_00.npy",
+      "sha256": "a2ba5eab22393882b54026deaf130b392b16949f0052328acbd516fca095f261",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_01": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_01.npy",
+      "sha256": "768c661c3700b4e16abe963956206a17a659e69cb65f8fd1f7598152ffefc6f1",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_02": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_02.npy",
+      "sha256": "4867781dd7523bfb56aae05d5fab9fa030019bc84afb724c99b84bfbf5dae110",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_03": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_03.npy",
+      "sha256": "8c816ccef49b0056ad463df4495fa2c6e19b952b265ad1ff041f085bc41bd24e",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_04": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_04.npy",
+      "sha256": "f95878ac92096ece50200f37d6450ce47789be5ad345d49453643065bef7de44",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_05": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_05.npy",
+      "sha256": "784e6d5f35b6becae5338a49293aba48da01725e455574a4603da9fa7c2222cf",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_06": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_06.npy",
+      "sha256": "cecd1e03a8d9f20625c49b971b8e311d07468d5f9bf57c366331e94a1f0c078d",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_07": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_07.npy",
+      "sha256": "fbef91f52bd344042c67339ac2e282659f795e050c8c2fb18ed4a05f38d4b08f",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "latent_08": {
+      "bytes": 1048576,
+      "dtype": "float32",
+      "file": "latent_08.npy",
+      "sha256": "6312126798a476ca2556bf3c2eec99fdeb153a9aad50e47eefccf91e618b4a3d",
+      "shape": [
+        1,
+        16,
+        128,
+        128
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "sigmas": {
+      "bytes": 40,
+      "dtype": "float32",
+      "file": "sigmas.npy",
+      "sha256": "d3ec98f3c44fe249c3e0fa10d51e7df6c76ad8a25c9715e5b75d8d8aed35d72b",
+      "shape": [
+        10
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "timesteps": {
+      "bytes": 36,
+      "dtype": "float32",
+      "file": "timesteps.npy",
+      "sha256": "c4d5d69b46ed1983dbb87edc13cd5f035840f392bf0b71ce15f417af926ccc8f",
+      "shape": [
+        9
+      ],
+      "source_dtype": "torch.float32"
+    }
+  },
+  "benchmark_eligible": false,
+  "block_00_mask_was_none": true,
+  "block_15_mask_was_none": true,
+  "block_29_mask_was_none": true,
+  "complete": true,
+  "inputs": {
+    "encode.json": "6f4715cff7871826efd1408273a48a6b2f4fbfdf24ecf774c154426d2242b7e5"
+  },
+  "model_revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+  "packages": {
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "PyYAML": "6.0.3",
+    "Pygments": "2.21.0",
+    "accelerate": "1.15.0",
+    "annotated-doc": "0.0.5",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.1",
+    "click": "8.5.0",
+    "diffusers": "0.41.0.dev0",
+    "filelock": "3.32.6",
+    "fsspec": "2026.7.0",
+    "h11": "0.16.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface_hub": "1.31.0",
+    "idna": "3.19",
+    "importlib_metadata": "9.0.1",
+    "markdown-it-py": "4.2.0",
+    "mdurl": "0.1.2",
+    "mlx": "0.32.2",
+    "mlx-metal": "0.32.2",
+    "mpmath": "1.3.0",
+    "networkx": "3.6.1",
+    "numpy": "2.5.3",
+    "packaging": "26.3",
+    "pillow": "12.3.0",
+    "psutil": "7.2.2",
+    "regex": "2026.9.10",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "sentencepiece": "0.2.2",
+    "setuptools": "84.0.0",
+    "shellingham": "1.5.4",
+    "sympy": "1.14.0",
+    "tokenizers": "0.23.2",
+    "torch": "2.14.0",
+    "tqdm": "4.70.0",
+    "transformers": "5.17.0",
+    "typer": "0.27.2",
+    "typing_extensions": "4.16.0",
+    "urllib3": "2.7.0",
+    "zipp": "4.1.0"
+  },
+  "preflight": [
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 162.19381060700314,
+          "name": "mediaanalysisd",
+          "pid": 75523
+        },
+        {
+          "cpu_percent": 10.501133159993218,
+          "name": "loginwindow",
+          "pid": 24653
+        },
+        {
+          "cpu_percent": 4.688866849440775,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 2.3568888550849003,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 1.8964397197464031,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 1.0430418458660975,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.9417912506515487,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.7200042325797952,
+          "name": "python",
+          "pid": 59510
+        }
+      ],
+      "total_cpu_percent": 189.1703747752631
+    },
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 206.30997165265364,
+          "name": "mediaanalysisd",
+          "pid": 75523
+        },
+        {
+          "cpu_percent": 12.913231103703204,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 2.805409889287456,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 1.6562831840652124,
+          "name": "loginwindow",
+          "pid": 24653
+        },
+        {
+          "cpu_percent": 1.1559476388795422,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 0.9814119835788485,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.7912283040183035,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.78641352730626,
+          "name": "AlDente",
+          "pid": 25003
+        }
+      ],
+      "total_cpu_percent": 231.28047055414484
+    },
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 169.49267914952836,
+          "name": "mediaanalysisd",
+          "pid": 75523
+        },
+        {
+          "cpu_percent": 5.07044458240498,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 2.158386593289604,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 1.1938475621759035,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 1.035496391235784,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 0.9124234558561061,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 0.841866984735222,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.561244656490148,
+          "name": "python",
+          "pid": 59510
+        }
+      ],
+      "total_cpu_percent": 184.5509300498088
+    }
+  ],
+  "references": {
+    "diffusers": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux": "051ba9ff25c9a8a8703356053a012a0dfad3fe39"
+  },
+  "resources": {
+    "cache_state": "uncontrolled; no cache eviction performed",
+    "elapsed_s": 69.74503658292815,
+    "measurement_kind": "instrumented reference capture",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+    "quiet_ac_throughout": false,
+    "samples": [
+      {
+        "disk_read_bytes": 24636239872,
+        "elapsed_s": 0.011621041921898723,
+        "load": [
+          2.57763671875,
+          2.38671875,
+          2.91943359375
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 349275144,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 410206208,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5323.75M  free = 820.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 167.4 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 7785  92.3 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "  101   1.9 /usr/libexec/logd",
+          "48030   1.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  167   1.3 /usr/sbin/notifyd",
+          "25003   1.2 /Applications/AlDente.app/Contents/MacOS/AlDente",
+          "47025   0.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "    1   0.7 /sbin/launchd"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 63.86048904652122,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 1.1450346652375365,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.8536572057313029,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.8221569398322389,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 0.6874933031416087,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.40477841673521375,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.36894686427803386,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 0.34335289825826815,
+              "name": "AlDente",
+              "pid": 25003
+            }
+          ],
+          "total_cpu_percent": 70.8183432978424
+        },
+        "disk_read_bytes": 26861744128,
+        "elapsed_s": 2.071773999836296,
+        "load": [
+          2.57763671875,
+          2.38671875,
+          2.91943359375
+        ],
+        "mps_driver_bytes": 8863744,
+        "mps_live_bytes": 138240,
+        "phys_footprint_bytes": 5036436784,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 11930058752,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5323.75M  free = 820.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          " 7785  72.7 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "75523  48.7 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          "  179   7.6 /usr/libexec/runningboardd",
+          "25003   1.6 /Applications/AlDente.app/Contents/MacOS/AlDente",
+          "  167   1.0 /usr/sbin/notifyd",
+          "  101   0.9 /usr/libexec/logd",
+          "48030   0.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 8514   0.8 /Library/SystemExtensions/C7E3B212-D4F7-460E-8818-3D16CE632184/at.obdev.littlesnitch.networkextension.systemextension/Contents/MacOS/at.obdev.littlesnitch.networkextension"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 42.792708046829574,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 1.3394261743954319,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 1.2563974173966386,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.9650134776918879,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.7644911966082542,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.6234989677325343,
+              "name": "AlDente",
+              "pid": 25003
+            },
+            {
+              "cpu_percent": 0.5279375681565025,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.4472586816297316,
+              "name": "codex",
+              "pid": 95217
+            }
+          ],
+          "total_cpu_percent": 52.989517587589724
+        },
+        "disk_read_bytes": 29256974336,
+        "elapsed_s": 4.169446124928072,
+        "load": [
+          2.53125,
+          2.3798828125,
+          2.91357421875
+        ],
+        "mps_driver_bytes": 8863744,
+        "mps_live_bytes": 138240,
+        "phys_footprint_bytes": 6235743016,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 2187526144,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5323.75M  free = 820.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          " 7785  67.4 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "75523  35.2 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 8558   2.5 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "25003   1.8 /Applications/AlDente.app/Contents/MacOS/AlDente",
+          "59510   1.6 /Users/whit3rabbit/.hermes/hermes-agent/venv/bin/python",
+          "25008   1.3 /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder",
+          "48030   1.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  167   0.7 /usr/sbin/notifyd"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 29.460350065334424,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 1.522314447720665,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 1.1037554855045346,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.7534061319718235,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.6635506151694521,
+              "name": "mdworker_shared",
+              "pid": 7154
+            },
+            {
+              "cpu_percent": 0.5162227200436128,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.5053711913889435,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.4139083070642005,
+              "name": "codex",
+              "pid": 95217
+            }
+          ],
+          "total_cpu_percent": 39.02298037603788
+        },
+        "disk_read_bytes": 31850758144,
+        "elapsed_s": 6.258748874999583,
+        "load": [
+          2.53125,
+          2.3798828125,
+          2.91357421875
+        ],
+        "mps_driver_bytes": 8863744,
+        "mps_live_bytes": 138240,
+        "phys_footprint_bytes": 7991455360,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 4951949312,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5315.75M  free = 828.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          " 7785  90.1 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "75523  20.7 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          "  109   3.3 /usr/sbin/systemstats",
+          "26724   1.0 /System/Library/PrivateFrameworks/HomeKitDaemon.framework/Support/homed",
+          "  397   0.9 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores",
+          "48030   0.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 8558   0.7 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "  278   0.5 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 156.10264923588,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 1.8546257071028436,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 1.787320741939618,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.3191773174981207,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.6341623385529926,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.5459180508854312,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.5017959070490559,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 0.3858818003369662,
+              "name": "python",
+              "pid": 59510
+            }
+          ],
+          "total_cpu_percent": 167.92758279292093
+        },
+        "disk_read_bytes": 31851290624,
+        "elapsed_s": 8.454401666997,
+        "load": [
+          2.80859375,
+          2.43994140625,
+          2.931640625
+        ],
+        "mps_driver_bytes": 6484869120,
+        "mps_live_bytes": 6151849728,
+        "phys_footprint_bytes": 16163397624,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 145195008,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5315.75M  free = 828.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 216.7 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 7785  93.4 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "  109  26.8 /usr/sbin/systemstats",
+          " 7980  11.9 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared",
+          "48030   1.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  101   1.7 /usr/libexec/logd",
+          "47025   0.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "    1   0.8 /sbin/launchd"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 138.37427157350635,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 1.7128232772235519,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.8599231214160339,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.7428736947229452,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.7335097405926961,
+              "name": "AlDente",
+              "pid": 25003
+            },
+            {
+              "cpu_percent": 0.7015162306368492,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.6070963597639436,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.48692561503285314,
+              "name": "Brave Browser",
+              "pid": 31795
+            }
+          ],
+          "total_cpu_percent": 147.9972739598416
+        },
+        "disk_read_bytes": 31855050752,
+        "elapsed_s": 10.576772667001933,
+        "load": [
+          2.80859375,
+          2.43994140625,
+          2.931640625
+        ],
+        "mps_driver_bytes": 14049837056,
+        "mps_live_bytes": 12572616448,
+        "phys_footprint_bytes": 17361227208,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 249708544,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5315.75M  free = 828.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523  67.8 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 7785  44.3 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "48030   1.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.5 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "  149   1.2 /usr/libexec/locationd",
+          " 7998   1.1 sleep",
+          "  179   1.0 /usr/libexec/runningboardd",
+          "25003   1.0 /Applications/AlDente.app/Contents/MacOS/AlDente"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 179.58313808610157,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 1.259539681761922,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.7434509676857701,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 0.6923141286437997,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.6639921870108124,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.37683916774489845,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.3697586823421107,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.31783512269983055,
+              "name": "AlDente",
+              "pid": 25003
+            }
+          ],
+          "total_cpu_percent": 186.8465818410533
+        },
+        "disk_read_bytes": 31855681536,
+        "elapsed_s": 12.658057749969885,
+        "load": [
+          2.80859375,
+          2.43994140625,
+          2.931640625
+        ],
+        "mps_driver_bytes": 14049837056,
+        "mps_live_bytes": 12572616448,
+        "phys_footprint_bytes": 17095445768,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 388055040,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5307.75M  free = 836.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 166.0 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          "    1  13.5 /sbin/launchd",
+          " 7785   2.7 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "  101   1.6 /usr/libexec/logd",
+          "59510   0.7 /Users/whit3rabbit/.hermes/hermes-agent/venv/bin/python",
+          "48030   0.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 8014   0.5 sleep",
+          "  278   0.5 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 178.92296016202417,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 1.7414962003345211,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 1.4749084667672734,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.0064081302598342,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.8391992559530671,
+              "name": "Brave Browser Helper",
+              "pid": 31855
+            },
+            {
+              "cpu_percent": 0.7540173765900682,
+              "name": "AlDente",
+              "pid": 25003
+            },
+            {
+              "cpu_percent": 0.7082715524893386,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.5833578474511361,
+              "name": "Codex (Renderer)",
+              "pid": 48547
+            }
+          ],
+          "total_cpu_percent": 190.557531433623
+        },
+        "disk_read_bytes": 31856246784,
+        "elapsed_s": 14.734401624882594,
+        "load": [
+          2.90380859375,
+          2.4658203125,
+          2.9375
+        ],
+        "mps_driver_bytes": 14049837056,
+        "mps_live_bytes": 12572616448,
+        "phys_footprint_bytes": 17014754520,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 404209664,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5299.75M  free = 844.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 176.8 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 7785  21.5 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "  101   1.8 /usr/libexec/logd",
+          "48030   1.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025   1.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "46991   1.0 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+          "  278   0.9 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN",
+          "48547   0.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 173.8857698539975,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 0.9592653075086197,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.7573147164507164,
+              "name": "AlDente",
+              "pid": 25003
+            },
+            {
+              "cpu_percent": 0.6910496787738686,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.6563394209327124,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.485943609732396,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.4291450059843602,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.4259895280117387,
+              "name": "WhatsApp",
+              "pid": 22148
+            }
+          ],
+          "total_cpu_percent": 180.66683137677074
+        },
+        "disk_read_bytes": 31856717824,
+        "elapsed_s": 16.810487124836072,
+        "load": [
+          2.90380859375,
+          2.4658203125,
+          2.9375
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768617496,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 424361984,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5291.75M  free = 852.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 180.7 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 7785  35.4 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "  109  12.1 /usr/sbin/systemstats",
+          " 8514   2.6 /Library/SystemExtensions/C7E3B212-D4F7-460E-8818-3D16CE632184/at.obdev.littlesnitch.networkextension.systemextension/Contents/MacOS/at.obdev.littlesnitch.networkextension",
+          "  101   1.8 /usr/libexec/logd",
+          "48030   1.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48547   1.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "79948   0.9 -/bin/zsh"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 168.44856233872045,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 0.8795238870574854,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.6639852683999072,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.6537215246496125,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.4042335997882579,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.3540991591934244,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 0.3142284623379288,
+              "name": "boringNotch",
+              "pid": 27863
+            },
+            {
+              "cpu_percent": 0.2937009748702097,
+              "name": "AlDente",
+              "pid": 25003
+            }
+          ],
+          "total_cpu_percent": 174.5058100356217
+        },
+        "disk_read_bytes": 31856717824,
+        "elapsed_s": 18.892360749887303,
+        "load": [
+          2.9111328125,
+          2.474609375,
+          2.9375
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768617496,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 424378368,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5291.75M  free = 852.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 163.5 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 7785   5.1 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "  101   1.7 /usr/libexec/logd",
+          "79948   0.7 -/bin/zsh",
+          "48030   0.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  278   0.5 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN",
+          " 8064   0.5 sleep",
+          "47025   0.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 136.9538352849927,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 40.351935902016386,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 24.330098031157803,
+              "name": "VTDecoderXPCService",
+              "pid": 22232
+            },
+            {
+              "cpu_percent": 19.080148605424903,
+              "name": "WallpaperAerialsExtension",
+              "pid": 25033
+            },
+            {
+              "cpu_percent": 8.505570530287434,
+              "name": "loginwindow",
+              "pid": 24653
+            },
+            {
+              "cpu_percent": 8.11409417867545,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 7.370274371372881,
+              "name": "VTDecoderXPCService",
+              "pid": 8338
+            },
+            {
+              "cpu_percent": 7.3087377084271665,
+              "name": "BiomeAgent",
+              "pid": 87728
+            }
+          ],
+          "total_cpu_percent": 344.88544422086704
+        },
+        "disk_read_bytes": 31856717824,
+        "elapsed_s": 20.967319916933775,
+        "load": [
+          2.9111328125,
+          2.474609375,
+          2.9375
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768617496,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 424378368,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5155.50M  free = 988.50M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 149.3 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          "22148  49.2 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "22232  30.4 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService",
+          "24646  30.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "87728  21.9 /System/Library/PrivateFrameworks/BiomeStreams.framework/Support/BiomeAgent",
+          "  142  12.0 /usr/libexec/opendirectoryd",
+          "25079   9.1 /System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight",
+          " 8514   7.8 /Library/SystemExtensions/C7E3B212-D4F7-460E-8818-3D16CE632184/at.obdev.littlesnitch.networkextension.systemextension/Contents/MacOS/at.obdev.littlesnitch.networkextension"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 129.4087126093191,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 52.25303235353969,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 34.777075460711465,
+              "name": "VTDecoderXPCService",
+              "pid": 22232
+            },
+            {
+              "cpu_percent": 24.057989778436028,
+              "name": "WallpaperAerialsExtension",
+              "pid": 25033
+            },
+            {
+              "cpu_percent": 13.449162499291075,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 12.474950751806503,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 6.752281212289146,
+              "name": "VTDecoderXPCService",
+              "pid": 8338
+            },
+            {
+              "cpu_percent": 4.6277026904915965,
+              "name": "Brave Browser",
+              "pid": 31795
+            }
+          ],
+          "total_cpu_percent": 301.55559481041047
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 23.05254516680725,
+        "load": [
+          2.9111328125,
+          2.474609375,
+          2.9375
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768863256,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 425263104,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5099.44M  free = 1044.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 111.3 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          "24646  35.7 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "22148  17.2 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "25033  17.2 /System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension",
+          "22232  10.2 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService",
+          "47025  10.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031  10.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 8338   6.0 /System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 110.63395749176486,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 20.650737488166694,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 11.907980276177367,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 6.5694720551365355,
+              "name": "WallpaperAerialsExtension",
+              "pid": 25033
+            },
+            {
+              "cpu_percent": 6.476933187246413,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 4.010280130031687,
+              "name": "loginwindow",
+              "pid": 24653
+            },
+            {
+              "cpu_percent": 3.427482153596837,
+              "name": "corespotlightd",
+              "pid": 24974
+            },
+            {
+              "cpu_percent": 2.8021556760942135,
+              "name": "WhatsApp",
+              "pid": 22148
+            }
+          ],
+          "total_cpu_percent": 184.7115126465304
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 25.128949499921873,
+        "load": [
+          2.7578125,
+          2.44970703125,
+          2.92578125
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768863256,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 425263104,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5091.44M  free = 1052.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523  89.9 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          "24646  41.2 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031  37.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025  16.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "24974   9.5 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd",
+          "46991   9.3 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+          " 7785   6.8 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "31932   6.0 /usr/libexec/spotlightknowledged.updater"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 66.07943977246254,
+              "name": "duetexpertd",
+              "pid": 81426
+            },
+            {
+              "cpu_percent": 18.091365732627825,
+              "name": "contactsd",
+              "pid": 18381
+            },
+            {
+              "cpu_percent": 16.663370143965366,
+              "name": "WallpaperAerialsExtension",
+              "pid": 25033
+            },
+            {
+              "cpu_percent": 15.792044110200745,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 10.883876800730716,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 10.698715083548596,
+              "name": "sharingd",
+              "pid": 24927
+            },
+            {
+              "cpu_percent": 6.1983773132505045,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 3.7869321776234206,
+              "name": "loginwindow",
+              "pid": 24653
+            }
+          ],
+          "total_cpu_percent": 169.6603691048944
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 27.208232417004183,
+        "load": [
+          2.7578125,
+          2.44970703125,
+          2.92578125
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768863256,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 425279488,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5091.44M  free = 1052.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "81426  95.3 /usr/libexec/duetexpertd",
+          "24646  32.3 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031   9.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025   8.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "  214   6.3 /usr/libexec/eligibilityd",
+          "46991   3.5 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+          "22148   2.9 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "31795   2.8 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 97.28828912914817,
+              "name": "duetexpertd",
+              "pid": 81426
+            },
+            {
+              "cpu_percent": 42.61803136217532,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 9.646813697028115,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 3.3718240245249977,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 3.0934598210018454,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 2.2221955907963045,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 2.0539189253947088,
+              "name": "loginwindow",
+              "pid": 24653
+            },
+            {
+              "cpu_percent": 1.871488147935506,
+              "name": "Brave Browser",
+              "pid": 31795
+            }
+          ],
+          "total_cpu_percent": 168.34532805086582
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 29.289647874888033,
+        "load": [
+          2.69677734375,
+          2.44189453125,
+          2.919921875
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768863256,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 425295872,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5091.44M  free = 1052.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "81426  95.8 /usr/libexec/duetexpertd",
+          "24646  32.9 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031  22.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025  10.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "46991   4.3 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+          "24653   3.2 /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow",
+          " 7785   3.2 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "22148   2.9 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 100.45651386929477,
+              "name": "duetexpertd",
+              "pid": 81426
+            },
+            {
+              "cpu_percent": 16.826274695039594,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 10.991808730948435,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 6.895134468864176,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 5.0066078826149605,
+              "name": "loginwindow",
+              "pid": 24653
+            },
+            {
+              "cpu_percent": 3.2356702898241503,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 3.1078218539941997,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 3.0407408845731267,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            }
+          ],
+          "total_cpu_percent": 162.45804604717333
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 31.365946207894012,
+        "load": [
+          2.69677734375,
+          2.44189453125,
+          2.919921875
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768879640,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 425312256,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5075.44M  free = 1068.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "81426 123.5 /usr/libexec/duetexpertd",
+          "24646  29.9 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031  15.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "96127  14.2 /System/Library/PrivateFrameworks/AppPredictionFoundation.framework/Versions/A/XPCServices/AppPredictionIntentsHelperService.xpc/Contents/MacOS/AppPredictionIntentsHelperService",
+          "47025  11.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "46991   7.5 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+          "24653   3.2 /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow",
+          "22148   2.9 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 46.49810644364242,
+              "name": "duetexpertd",
+              "pid": 81426
+            },
+            {
+              "cpu_percent": 14.273676188078591,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 10.3871544722529,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 10.147002704967539,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 7.9553225599217585,
+              "name": "accountsd",
+              "pid": 24908
+            },
+            {
+              "cpu_percent": 5.826633042344094,
+              "name": "corespotlightd",
+              "pid": 24974
+            },
+            {
+              "cpu_percent": 4.50146771663457,
+              "name": "contactsd",
+              "pid": 18381
+            },
+            {
+              "cpu_percent": 3.9715590629182986,
+              "name": "WhatsApp",
+              "pid": 22148
+            }
+          ],
+          "total_cpu_percent": 143.14518443575307
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 33.445547124836594,
+        "load": [
+          2.720703125,
+          2.45068359375,
+          2.919921875
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768879640,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 425312256,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5067.44M  free = 1076.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24908  31.2 /System/Library/Frameworks/Accounts.framework/Versions/A/Support/accountsd",
+          "24646  28.8 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "18381  11.9 /System/Library/Frameworks/Contacts.framework/Support/contactsd",
+          "96598  11.3 /System/Library/PrivateFrameworks/TCC.framework/Support/tccd",
+          "48031  10.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025   9.0 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "24974   4.3 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd",
+          "81426   3.2 /usr/libexec/duetexpertd"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 15.462214252957496,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 9.576393578667435,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 4.86947303674765,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 3.091259215924893,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 2.701843409145205,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 2.3767384194894725,
+              "name": "loginwindow",
+              "pid": 24653
+            },
+            {
+              "cpu_percent": 2.259953131951425,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 2.209451385979851,
+              "name": "Brave Browser",
+              "pid": 31795
+            }
+          ],
+          "total_cpu_percent": 50.56099502966724
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 35.52473983285017,
+        "load": [
+          2.720703125,
+          2.45068359375,
+          2.919921875
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768896024,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 425902080,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5067.44M  free = 1076.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  29.2 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031  11.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 7785  10.1 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "47025   9.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48030   2.0 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "46991   1.9 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+          "22148   1.6 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          " 8558   1.0 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 9.190638304340197,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 9.000248433620058,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 4.637802842317346,
+              "name": "duetexpertd",
+              "pid": 81426
+            },
+            {
+              "cpu_percent": 2.7661602703341153,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.9990936424631862,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.2060647595034857,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 1.079400424031514,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 0.9018564607905092,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 37.86817020241995
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 37.60406095790677,
+        "load": [
+          2.720703125,
+          2.45068359375,
+          2.919921875
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768896024,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426475520,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5067.44M  free = 1076.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  27.9 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   7.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 8341   5.7 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "31795   2.0 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+          " 8514   1.7 /Library/SystemExtensions/C7E3B212-D4F7-460E-8818-3D16CE632184/at.obdev.littlesnitch.networkextension.systemextension/Contents/MacOS/at.obdev.littlesnitch.networkextension",
+          "22148   1.7 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "48030   1.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 8.242312316607023,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 7.511571735354497,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.377468816646161,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.7365927729056805,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.7851199580332594,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.7283757250037942,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.621168908328897,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.5990969166631099,
+              "name": "ChatGPT",
+              "pid": 46991
+            }
+          ],
+          "total_cpu_percent": 25.372870260140907
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 39.6842692499049,
+        "load": [
+          2.58251953125,
+          2.42626953125,
+          2.908203125
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768896024,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426475520,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5067.44M  free = 1076.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  26.7 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   8.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   8.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   1.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  149   1.7 /usr/libexec/locationd",
+          "22148   1.6 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "    1   0.9 /sbin/launchd",
+          "  101   0.6 /usr/libexec/logd"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 9.02234195967412,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 8.323954899871195,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 1.8613156813566016,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.7873039749073623,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.6535076207762444,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.6424846006615523,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.6424353907607894,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.3001927608186575,
+              "name": "zsh",
+              "pid": 79948
+            }
+          ],
+          "total_cpu_percent": 25.611201499891145
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 41.76481162500568,
+        "load": [
+          2.58251953125,
+          2.42626953125,
+          2.908203125
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426524672,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5067.44M  free = 1076.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  26.8 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031  15.0 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025   8.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          " 7785   7.8 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "  149   4.0 /usr/libexec/locationd",
+          "48030   1.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.5 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "46991   0.8 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 8.872651058926978,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 8.822184504739345,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 1.9918518107743532,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.8822447633854367,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.5266132643017194,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.8232849490063124,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.774346190896503,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.7672493317114734,
+              "name": "ChatGPT",
+              "pid": 46991
+            }
+          ],
+          "total_cpu_percent": 28.662726103305374
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 43.843095666961744,
+        "load": [
+          2.53564453125,
+          2.4189453125,
+          2.90283203125
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426524672,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5059.44M  free = 1084.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  27.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   7.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   1.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.7 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "31795   1.3 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+          "95651   0.8 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "46991   0.8 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 7.648693063813067,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 6.879409837290591,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.299967679332527,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 2.0272504699274925,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 1.7096058589746226,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.9056418312304612,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.8662318298809628,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.7076681525333556,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 26.718524598864736
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 45.920868082903326,
+        "load": [
+          2.53564453125,
+          2.4189453125,
+          2.90283203125
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426524672,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5059.44M  free = 1084.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  26.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   6.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   6.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "59510   2.8 /Users/whit3rabbit/.hermes/hermes-agent/venv/bin/python",
+          "22148   1.8 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          " 7785   1.5 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "48030   1.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "25003   1.0 /Applications/AlDente.app/Contents/MacOS/AlDente"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 15.345089395788863,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 11.037363930399408,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 3.030544782026265,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 3.0092584373091067,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.909463959953233,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.4884673643309496,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.8948148614988154,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.7723444684235369,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 41.38399254749439
+        },
+        "disk_read_bytes": 31856721920,
+        "elapsed_s": 48.00089354184456,
+        "load": [
+          2.53564453125,
+          2.4189453125,
+          2.90283203125
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426524672,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  31.4 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031  19.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025  12.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48030   4.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "95217   4.1 /Applications/ChatGPT.app/Contents/Resources/codex",
+          "46991   2.3 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+          "22148   1.7 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "  142   1.7 /usr/libexec/opendirectoryd"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 8.86031884954262,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 8.765724698130011,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 2.180395190200667,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 2.003031156285616,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.2131699919400074,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.8174511251724628,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.7598447649957826,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.5506167897188197,
+              "name": "codex",
+              "pid": 95217
+            }
+          ],
+          "total_cpu_percent": 28.23232713418756
+        },
+        "disk_read_bytes": 31856730112,
+        "elapsed_s": 50.07800045795739,
+        "load": [
+          2.41259765625,
+          2.39501953125,
+          2.8916015625
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426557440,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  28.0 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   6.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   1.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.8 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "25003   1.0 /Applications/AlDente.app/Contents/MacOS/AlDente",
+          "  167   0.9 /usr/sbin/notifyd",
+          "46991   0.8 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 10.159311349381733,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 9.032601538108983,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 3.8066864722418083,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 2.182458192874083,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.9049201567741905,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.0636329848951165,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.790838030475596,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.5866144853858679,
+              "name": "python",
+              "pid": 59510
+            }
+          ],
+          "total_cpu_percent": 32.65554646314686
+        },
+        "disk_read_bytes": 31856730112,
+        "elapsed_s": 52.15725045790896,
+        "load": [
+          2.41259765625,
+          2.39501953125,
+          2.8916015625
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426557440,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  29.4 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   8.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   7.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 7785   6.6 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          " 8558   2.2 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "22148   1.7 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "  149   1.6 /usr/libexec/locationd",
+          "48030   1.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 27.90855153865307,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 12.396088403501656,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 2.9609898108204837,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.924564501434109,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 1.8015185742868245,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.9906774646768568,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.898393019315025,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.7221800118791679,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 52.649776271515
+        },
+        "disk_read_bytes": 31856730112,
+        "elapsed_s": 54.23207958298735,
+        "load": [
+          2.29931640625,
+          2.37158203125,
+          2.88037109375
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 426557440,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "48031  52.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "24646  30.9 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025  18.0 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48030   4.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "46991   2.9 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+          " 8558   2.1 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "22148   1.7 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "25003   1.2 /Applications/AlDente.app/Contents/MacOS/AlDente"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 15.870329070696855,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 10.297680327930625,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 3.3699490343586693,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 3.085042336137122,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 2.5759985124374065,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.3037835608374009,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 1.1996071504021888,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.8657691078944424,
+              "name": "trustd",
+              "pid": 576
+            }
+          ],
+          "total_cpu_percent": 43.10878628902843
+        },
+        "disk_read_bytes": 31856738304,
+        "elapsed_s": 56.307432582834736,
+        "load": [
+          2.29931640625,
+          2.37158203125,
+          2.88037109375
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 427409408,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  26.8 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "  109  16.8 /usr/sbin/systemstats",
+          "48031   9.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025   9.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          " 7785   4.3 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "22148   3.3 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          " 8558   1.9 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          " 8520   1.9 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 8.26501612239844,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 7.939336162605779,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 2.531313973181095,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.7001597900873828,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.2388455613326372,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.9518055967707243,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.8611198937076262,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.6700392029858843,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 26.744916026873053
+        },
+        "disk_read_bytes": 31856738304,
+        "elapsed_s": 58.3857644170057,
+        "load": [
+          2.27490234375,
+          2.365234375,
+          2.875
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 427409408,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  25.4 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031   9.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025   7.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          " 8126   2.0 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared",
+          "22148   1.6 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "48030   1.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 8558   1.2 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "  397   1.0 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 35.390304744458014,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 9.133592716869515,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 1.9504354868785867,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.8241937077825658,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.7376267701429751,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.6706594513962851,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.6154286730369855,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.45131436021325294,
+              "name": "python",
+              "pid": 59510
+            }
+          ],
+          "total_cpu_percent": 52.96143038612538
+        },
+        "disk_read_bytes": 31856738304,
+        "elapsed_s": 60.46608170797117,
+        "load": [
+          2.27490234375,
+          2.365234375,
+          2.875
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768928792,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 427425792,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "48031  36.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "24646  28.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48030   1.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.6 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "95651   0.9 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          " 8558   0.7 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "24930   0.4 /System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 7.8740899854892366,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 6.996565351275283,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.1063742118141895,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.698333134130274,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.6497862154307786,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.6183634092280398,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.5695245157534542,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.3497494951670121,
+              "name": "python",
+              "pid": 59510
+            }
+          ],
+          "total_cpu_percent": 23.344359128914448
+        },
+        "disk_read_bytes": 31856738304,
+        "elapsed_s": 62.543933667009696,
+        "load": [
+          2.27490234375,
+          2.365234375,
+          2.875
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768928792,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 427425792,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  26.9 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   6.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          " 7785   4.7 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "22148   1.8 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "48030   1.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  149   1.3 /usr/libexec/locationd",
+          "95651   0.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 8.809651051310384,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 8.680375570624374,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 1.8949893635806923,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.8098567299432564,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.1169716839338806,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.9175406069690974,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.672390152714945,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.6655913660046806,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 27.7126559985167
+        },
+        "disk_read_bytes": 31856746496,
+        "elapsed_s": 64.62206924986094,
+        "load": [
+          2.41259765625,
+          2.39208984375,
+          2.88134765625
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768928792,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 427491328,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  25.2 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   6.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  149   4.0 /usr/libexec/locationd",
+          "48030   1.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.5 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "95651   0.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "95217   0.5 /Applications/ChatGPT.app/Contents/Resources/codex"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 8.939524906712146,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 8.014964088630887,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 7.481684981942917,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 1.8364996455003086,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.8653952367385799,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.6982894478724025,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.6949983624101408,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 0.5948113113058128,
+              "name": "ChatGPT",
+              "pid": 46991
+            }
+          ],
+          "total_cpu_percent": 31.417262865768464
+        },
+        "disk_read_bytes": 31856746496,
+        "elapsed_s": 66.69982062489726,
+        "load": [
+          2.41259765625,
+          2.39208984375,
+          2.88134765625
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768928792,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 427491328,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  26.4 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   7.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   4.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  109   3.6 /usr/sbin/systemstats",
+          "22148   1.6 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          " 7785   1.0 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "95651   0.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 8.530844073322339,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 7.94575008421482,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.3261631469910014,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.805816400936056,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.0983343304347093,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 1.0454310952471166,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 0.8875109902419097,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.8737546685784408,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 28.4450329371072
+        },
+        "disk_read_bytes": 31856746496,
+        "elapsed_s": 68.77528016688302,
+        "load": [
+          2.37939453125,
+          2.38525390625,
+          2.8759765625
+        ],
+        "mps_driver_bytes": 14019182592,
+        "mps_live_bytes": 12475238400,
+        "phys_footprint_bytes": 16768928792,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 427507712,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  25.7 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   6.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   1.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.6 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "95651   0.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "95217   0.5 /Applications/ChatGPT.app/Contents/Resources/codex",
+          " 8558   0.5 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 8.320032206309596,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 7.26135665406127,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 1.981048961178128,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.7962008488546837,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.3126083126330477,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.8067558159006866,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.6310975955480895,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.5601457948576937,
+              "name": "codex",
+              "pid": 95217
+            }
+          ],
+          "total_cpu_percent": 25.100226972329946
+        },
+        "disk_read_bytes": 31856746496,
+        "elapsed_s": 69.6566069999244,
+        "load": [
+          2.37939453125,
+          2.38525390625,
+          2.8759765625
+        ],
+        "mps_driver_bytes": 14018134016,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 16768912408,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 428834816,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5051.44M  free = 1092.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  31.8 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   7.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   6.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.7 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "  153   1.6 /usr/libexec/dasd",
+          "48030   1.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  105   1.3 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/Support/fseventsd",
+          "79948   0.9 -/bin/zsh"
+        ]
+      }
+    ]
+  },
+  "scheduler_updates": 9,
+  "schema": 1,
+  "settings": {
+    "case": "lighting",
+    "device": "mps",
+    "guidance": 0.0,
+    "height": 1024,
+    "noise_generator": "torch CPU float32",
+    "prompt": "A lighthouse in winter at dusk, warm windows reflected on wet snow, cold blue shadows.",
+    "quantized_linears": false,
+    "seed": 42,
+    "steps": 9,
+    "width": 1024
+  },
+  "stage": "denoise",
+  "tool_sha256": {
+    "z_image_capture.py": "29a8e5e61f97c7263f33288351990d3944a7e20d71d24d5b650bf883bbd5665b",
+    "z_image_compare.py": "d72c04ef1edb4b073486f49d5c475f2521238dbd005d776c49b7f7914d904d95",
+    "z_image_evidence.py": "4868c3256198d68a911c740fc861fdad8053e1bdc1861a4831cf0fea6669e097",
+    "z_image_probe.py": "0e8be72e818ac3286e7560cbd2914e5465deefa5bb8e8f12c6a5035ddeeb92dc",
+    "z_image_quantization.py": "283f55d5d67755cf53040d2137305f8dfc04b3a2bd32206ac738d24dfd1c5eb9"
+  },
+  "verified_weights": {
+    "transformer/diffusion_pytorch_model-00001-of-00003.safetensors": "95facd593e2549e8252acb571c653d57f7ddb7f1060d4e81712f152555a88804",
+    "transformer/diffusion_pytorch_model-00002-of-00003.safetensors": "a4bbe43ee184a1fb5af4b412d27555f532893bdc3165b1149e304ed82b5d7015",
+    "transformer/diffusion_pytorch_model-00003-of-00003.safetensors": "aba4e37a590e63210878160a718d916d80398f4e1f78ab6c9b2b2a00d92769fa"
+  }
+}

@@ -104,6 +104,14 @@ impl RealForwardRunner {
         self.expert_cache_slots
     }
 
+    /// Which residency mode this runner actually opened with (ROADMAP P1 item 3).
+    /// Worth printing next to any throughput or footprint number the same
+    /// way [`Self::expert_cache_slots`] is, because a mapped row and a
+    /// streamed row differ by the entire slot cache.
+    pub fn resolved_expert_residency(&self) -> model_io::ResolvedExpertResidency {
+        self.resolved_residency
+    }
+
     /// How many distinct sessions this runner may hold reusable KV/
     /// recurrent state for at once: the one LIVE session plus however many
     /// this opened with in its parked pool (`--session-slots`,
@@ -190,7 +198,12 @@ impl RealForwardRunner {
         expecting: ArchConfig,
         max_context: usize,
     ) -> Result<Self, RealForwardError> {
-        Self::open_with_options(dir, expecting, max_context, EXPERT_CACHE_SLOTS)
+        Self::open_with_slot_policy(
+            dir,
+            expecting,
+            max_context,
+            ExpertCacheSlots::Fixed(EXPERT_CACHE_SLOTS),
+        )
     }
 
     /// [`RealForwardRunner::open_with_max_context`] with the per-layer
@@ -232,6 +245,7 @@ impl RealForwardRunner {
             // digest through this entry point must not acquire it by
             // detection. `open_with_kv_quant` is the explicit way in.
             KvQuant::Off,
+            model_io::ExpertResidency::Streamed,
         )
     }
 
@@ -259,6 +273,7 @@ impl RealForwardRunner {
             crate::steering::SteeringPolicy::off(),
             1,
             KvQuant::Off,
+            model_io::ExpertResidency::Streamed,
         )
     }
 
@@ -289,6 +304,7 @@ impl RealForwardRunner {
             crate::steering::SteeringPolicy::off(),
             1,
             KvQuant::Off,
+            model_io::ExpertResidency::Auto,
         )
     }
 
@@ -315,6 +331,7 @@ impl RealForwardRunner {
             crate::steering::SteeringPolicy::off(),
             1,
             KvQuant::Off,
+            model_io::ExpertResidency::Auto,
         )
     }
 
@@ -409,6 +426,34 @@ impl RealForwardRunner {
         session_slots: usize,
         kv_quant: KvQuant,
     ) -> Result<Self, RealForwardError> {
+        Self::open_with_residency(
+            dir,
+            expecting,
+            max_context,
+            slots,
+            speculation,
+            steering,
+            session_slots,
+            kv_quant,
+            model_io::ExpertResidency::Auto,
+        )
+    }
+
+    /// [`RealForwardRunner::open_with_kv_quant`] carrying an explicit
+    /// [`model_io::ExpertResidency`] policy. The widest entry point, used by
+    /// `turbospark-check` and `turbospark-server` to thread `--expert-residency`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_with_residency(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        slots: ExpertCacheSlots,
+        speculation: crate::families::qwen::DraftPolicies,
+        steering: crate::steering::SteeringPolicy,
+        session_slots: usize,
+        kv_quant: KvQuant,
+        residency: model_io::ExpertResidency,
+    ) -> Result<Self, RealForwardError> {
         Self::open_inner(
             dir,
             expecting,
@@ -419,6 +464,7 @@ impl RealForwardRunner {
             steering,
             session_slots,
             kv_quant,
+            residency,
         )
     }
 
@@ -480,6 +526,7 @@ impl RealForwardRunner {
             crate::steering::SteeringPolicy::off(),
             1,
             KvQuant::Off,
+            model_io::ExpertResidency::Streamed,
         )
     }
 }

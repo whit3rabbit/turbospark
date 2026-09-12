@@ -96,10 +96,117 @@ spread was 76.7% sequential and 65.5% chunked. Even the all-Nominal short
 case had prefill energy spreads of 14.2% and 24.6%. Do not freeze the
 averages or claim a reproducible energy saving from this run.
 
-A controlled retry should use a quiet machine and `COOLING=max`, which
-previously held Nominal on this hardware, then check pressure and spread
-again. A successful forced-cooling row belongs beside the automatic-cooling
-baselines and does not close the shipping-cooling measurement by itself.
+The forced-cooling retry below resolved thermal pressure, but did not
+resolve energy repeatability. A successful forced-cooling row belongs
+beside the automatic-cooling baselines and does not close the
+shipping-cooling measurement by itself.
+
+### Forced-cooling retry, 2026-09-10: thermally stable, energy unresolved
+
+The user repeated the capture with `COOLING=max` and three pairs per case,
+starting at 11:30:50 UTC. Machine, install hash, reported revision and
+benchmark settings match the preceding capture. Fans were commanded to
+5777 RPM and restored to the automatic curve at completion. All 42 phase
+rows, including warmups, stayed Nominal; all measured arms stopped at
+endOfTurn. Timeline drift was -0.6 s over 1494.9 s, and the CPU floor was
+332 mW. These checks passed, but the energy-spread checks did not.
+
+Evidence: [raw rows](verification/prefill-energy-max-2026-09-10.tsv), using
+the same 18-column layout above, and
+[machine provenance](verification/prefill-energy-max-2026-09-10-system.txt).
+Full logs remain at `/tmp/roadmap-prefill-energy-max-20260910/`.
+
+| Long prefill pair | Sequential s | Chunked s | Sequential J/token | Chunked J/token | Sequential CPU W |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 73.75 | 46.04 | 0.8261 | 0.4115 | 21.297 |
+| 2 | 60.95 | 46.97 | 0.4622 | 0.4479 | 8.432 |
+| 3 | 60.70 | 46.33 | 0.4689 | 0.4110 | 8.852 |
+
+The first sequential long prefill remains anomalous despite Nominal
+pressure: its CPU draw is over twice the later runs, while GPU draw is
+lower (12.384 W versus 14.369/14.438 W). The resulting sequential energy
+spread is 62.1%; chunked spread is 8.7%. Dropping the first pair would
+produce a more attractive comparison without establishing why it differed,
+so all three remain in the record and no aggregate energy saving is frozen.
+The last two pairs alone imply 3.1% and 12.3% lower chunked prefill energy,
+which are diagnostic observations, not an accepted baseline.
+
+Short chunked prefill integrated four samples per run and its energy
+spread was 30.2%. Medium prefill spread was 20.0% sequential and 13.8%
+chunked. The short and medium paired energy differences each change sign
+across repeats. Short and medium timing is much steadier: chunked speedups
+range from 1.311x to 1.371x across their six pairs. This supports the
+throughput direction, not a reproducible energy benefit.
+
+Forced cooling removed the observed thermal-pressure problem. The CPU
+variation is consistent with intermittent activity, but these logs have no
+per-process CPU timeline and cannot attribute it to another process rather
+than the benchmark itself. The low idle floor does not settle that question.
+Before another full capture, correlate process CPU activity with the power
+windows and investigate the first long sequential run. Keep short-window
+sampling uncertainty separate from that long-window anomaly. The energy
+baseline remains open; no existing baseline is replaced.
+
+The harness now writes `processes.jsonl` throughout capture, including
+warmups and the idle lead-in. Each snapshot records its start/end Unix
+milliseconds and every visible process's PID, parent PID, command name,
+cumulative CPU time and `ps` CPU percentage. It pauses one second between
+snapshots. Join these timestamps to the stderr `power-window` markers;
+the prefill boundary is the start marker plus the footer's prefill seconds.
+Use cumulative CPU-time differences for interval activity: `ps` CPU
+percentage is a decayed average, not an exact window measurement. Exited
+short-lived processes may be missed, and PID reuse needs care. Process
+activity can identify suspects but does not assign package joules to them.
+The sampler adds overhead; retain it in both arms and report it when
+comparing new captures with older ones. Errors go to `processes.stderr`;
+a failed startup aborts capture and an early exit warns at completion.
+
+### Process-traced long-prefill capture, 2026-09-10
+
+The user ran three long-synthesis pairs at `COOLING=max`, starting at
+21:52:42 UTC, revision `dc48cd5` dirty, with the process sampler enabled.
+All phases stayed Nominal and measured arms stopped at endOfTurn. Drift
+was -0.6 s over 1024.6 s, CPU floor 57 mW, and `processes.stderr` was empty.
+Fans were restored. This capture has a different reported revision from
+the morning attempts; it cannot establish the cause of their anomalies.
+
+Evidence: [raw rows](verification/prefill-energy-cpu-trace-2026-09-10.tsv),
+[provenance](verification/prefill-energy-cpu-trace-2026-09-10-system.txt),
+and [process-window summary](verification/prefill-energy-cpu-trace-2026-09-10-process-summary.json).
+The summary records window timestamps, coverage, the ten largest observed
+CPU-time consumers per window, method limitations, and the original
+process log's SHA-256. Full logs remain at
+`/tmp/roadmap-prefill-energy-cpu-trace/`.
+
+| Pair | Sequential s | Chunked s | Sequential J/token | Chunked J/token | Chunked energy change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 63.36 | 48.02 | 0.3904 | 0.3997 | +2.4% |
+| 2 | 63.04 | 50.28 | 0.3851 | 0.3010 | -21.8% |
+| 3 | 62.69 | 49.65 | 0.3776 | 0.3140 | -16.8% |
+
+The process trace identifies real competing work in pair 1 chunked
+prefill: `mediaanalysisd` (PID 75523) accumulated 69.55 CPU-seconds in
+approximately 46.9 seconds of covered time, about 148% of one core. The
+ChatGPT Sparkle `Autoupdate` process added 5.16 CPU-seconds. By comparison,
+the benchmark accumulated 137.69 CPU-seconds in that window and about
+125.3/125.1 in the later chunked windows. The media process had only
+2.00 CPU-seconds in the following sequential window and was not among
+the ten largest consumers in either later chunked window.
+
+This is affirmative evidence of intermittent contamination, despite the
+clean idle floor and Nominal pressure. It does not assign the additional
+CPU/GPU/ANE watts to a particular process, nor prove all of the benchmark's
+own CPU-time variation is caused by the competitor. All three pairs remain
+in the record. Sequential prefill energy spread was 3.3%, chunked 29.2%;
+the overall energy-saving mean is not accepted as a baseline.
+
+The later pairs support a potential energy benefit and all three support
+faster chunked prefill, but two less-contaminated pairs do not establish
+a clean three-pair baseline. The next capture should wait until the
+observed media-analysis and update activity has subsided, retain process
+logging, and check each measured window rather than only the idle floor.
+Do not disable system services or subtract estimated process energy from
+these readings.
 
 ## Run provenance
 

@@ -1,0 +1,371 @@
+{
+  "arrays": {
+    "composition_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "composition_ids.npy",
+      "sha256": "b7088efaed62ceacab93df621992abe0f9510391b6ea907f32da38ce214eb0f8",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "composition_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "composition_mask.npy",
+      "sha256": "a754127c39af181bd93dc8fa2619a23b196aad28aeaabf1cbd060515438b07cb",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "detail_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "detail_ids.npy",
+      "sha256": "9b4dd7eaa3eb4760066b8dc44ac63c55da486274630a39bf9f0e73c035e8f126",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "detail_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "detail_mask.npy",
+      "sha256": "59850dcfc427b0953b531ad1c36dcde60a43676cfefd663f300d7cb00b061073",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "empty_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "empty_ids.npy",
+      "sha256": "d97914eecc09e41d5101a507941ecdc938f695d982e251b1ffa4e97d017e4c66",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "empty_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "empty_mask.npy",
+      "sha256": "cb7e56c0e58d03d83e7017bfcdb05522b314d363919efec2202917cf2590da9a",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "lighting_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "lighting_ids.npy",
+      "sha256": "5749d8239dd110962e0f4fcb6d79cabd8350dfbdc71de23abbfac01bf0d02696",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "lighting_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "lighting_mask.npy",
+      "sha256": "314f0ae7e8b34aa8fb7ad5b33a084da018514d8fdf09554bb7e0d6079ea87acd",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "overlong_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "overlong_ids.npy",
+      "sha256": "2900144558873abe8b93f9b4fcac057b7c2146897c78a95f23a76b792f5f3003",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "overlong_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "overlong_mask.npy",
+      "sha256": "b6ac6a685e8726963fa2bb91856728280ee6fa47957eea274285b029a6abb946",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "scheduler_updates": {
+      "bytes": 72,
+      "dtype": "float32",
+      "file": "scheduler_updates.npy",
+      "sha256": "58c7ab50b9122869ea0119914823ca7bc98cf8c1b6104dc00807e4c7d904c819",
+      "shape": [
+        9,
+        2
+      ],
+      "source_dtype": "torch.float32"
+    },
+    "typography_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "typography_ids.npy",
+      "sha256": "a9b1aa3bba5ff3efea2368c125c33c60cb251603bd0ab41f8f5aac72dca2829f",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "typography_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "typography_mask.npy",
+      "sha256": "b5909460d28c05c15f2ab3107d727c8f5f01d6051123f4fc69a7179f32d90584",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "unicode_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "unicode_ids.npy",
+      "sha256": "5e7665a3515c434a22e4d907cb95642cba227ecb534c8ff02d111e90f43a4ff0",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "unicode_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "unicode_mask.npy",
+      "sha256": "b6fb84d49f22cc904736b85763baa355ba9dbca6842047f33c37f0d3caf0f28d",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    }
+  },
+  "complete": true,
+  "dimension_probes": [
+    {
+      "accepted": true,
+      "height": 16,
+      "width": 16
+    },
+    {
+      "accepted": true,
+      "height": 32,
+      "width": 48
+    },
+    {
+      "accepted": true,
+      "height": 1024,
+      "width": 1024
+    },
+    {
+      "accepted": false,
+      "error": "Height must be divisible by 16 (got 1023). Please adjust the height to a multiple of 16.",
+      "height": 1023,
+      "width": 1024
+    },
+    {
+      "accepted": true,
+      "height": 0,
+      "width": 16
+    },
+    {
+      "accepted": false,
+      "error": "Trying to create tensor with negative dimension -2: [1, 16, -2, 2]",
+      "height": -16,
+      "width": 16
+    }
+  ],
+  "inputs": {},
+  "model_revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+  "packages": {
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "PyYAML": "6.0.3",
+    "Pygments": "2.21.0",
+    "accelerate": "1.15.0",
+    "annotated-doc": "0.0.5",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.1",
+    "click": "8.5.0",
+    "diffusers": "0.41.0.dev0",
+    "filelock": "3.32.6",
+    "fsspec": "2026.7.0",
+    "h11": "0.16.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface_hub": "1.31.0",
+    "idna": "3.19",
+    "importlib_metadata": "9.0.1",
+    "markdown-it-py": "4.2.0",
+    "mdurl": "0.1.2",
+    "mlx": "0.32.2",
+    "mlx-metal": "0.32.2",
+    "mpmath": "1.3.0",
+    "networkx": "3.6.1",
+    "numpy": "2.5.3",
+    "packaging": "26.3",
+    "pillow": "12.3.0",
+    "psutil": "7.2.2",
+    "regex": "2026.9.10",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "sentencepiece": "0.2.2",
+    "setuptools": "84.0.0",
+    "shellingham": "1.5.4",
+    "sympy": "1.14.0",
+    "tokenizers": "0.23.2",
+    "torch": "2.14.0",
+    "tqdm": "4.70.0",
+    "transformers": "5.17.0",
+    "typer": "0.27.2",
+    "typing_extensions": "4.16.0",
+    "urllib3": "2.7.0",
+    "zipp": "4.1.0"
+  },
+  "references": {
+    "diffusers": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux": "051ba9ff25c9a8a8703356053a012a0dfad3fe39"
+  },
+  "schedules": [
+    {
+      "actual_forwards": 1,
+      "requested_steps": 1,
+      "sigmas": [
+        1.0,
+        0.0
+      ],
+      "timesteps": [
+        1000.0
+      ]
+    },
+    {
+      "actual_forwards": 8,
+      "requested_steps": 8,
+      "sigmas": [
+        1.0,
+        0.9545454382896423,
+        0.8999999761581421,
+        0.8333333134651184,
+        0.75,
+        0.6428571343421936,
+        0.5,
+        0.30000001192092896,
+        0.0
+      ],
+      "timesteps": [
+        1000.0,
+        954.54541015625,
+        900.0,
+        833.3333129882812,
+        750.0,
+        642.8571166992188,
+        500.0,
+        300.0
+      ]
+    },
+    {
+      "actual_forwards": 9,
+      "requested_steps": 9,
+      "sigmas": [
+        1.0,
+        0.9600000381469727,
+        0.9130435585975647,
+        0.8571428060531616,
+        0.7894737124443054,
+        0.7058823704719543,
+        0.5999999642372131,
+        0.46153849363327026,
+        0.27272728085517883,
+        0.0
+      ],
+      "timesteps": [
+        1000.0,
+        960.0000610351562,
+        913.0435791015625,
+        857.142822265625,
+        789.4736938476562,
+        705.8823852539062,
+        599.9999389648438,
+        461.5384826660156,
+        272.727294921875
+      ]
+    }
+  ],
+  "schema": 1,
+  "settings": {
+    "case": "lighting",
+    "device": "cpu",
+    "guidance": 0.0,
+    "height": 1024,
+    "noise_generator": "torch CPU float32",
+    "prompt": "A lighthouse in winter at dusk, warm windows reflected on wet snow, cold blue shadows.",
+    "seed": 42,
+    "steps": 9,
+    "width": 1024
+  },
+  "stage": "contracts",
+  "token_cases": {
+    "composition": {
+      "retained_tokens": 30,
+      "untruncated_tokens": 30
+    },
+    "detail": {
+      "retained_tokens": 24,
+      "untruncated_tokens": 24
+    },
+    "empty": {
+      "retained_tokens": 8,
+      "untruncated_tokens": 8
+    },
+    "lighting": {
+      "retained_tokens": 27,
+      "untruncated_tokens": 27
+    },
+    "overlong": {
+      "retained_tokens": 512,
+      "untruncated_tokens": 2409
+    },
+    "typography": {
+      "retained_tokens": 26,
+      "untruncated_tokens": 26
+    },
+    "unicode": {
+      "retained_tokens": 19,
+      "untruncated_tokens": 19
+    }
+  },
+  "tool_sha256": {
+    "z_image_capture.py": "a24ff5ae3d4f6cb1e7718896e3ea65fceedc02afbad91f46edc6fdabac954fbf",
+    "z_image_evidence.py": "9cdfc517adf167e508fb253589c6703aa5547412407dbeb31e3d6cc88357130c",
+    "z_image_probe.py": "0e8be72e818ac3286e7560cbd2914e5465deefa5bb8e8f12c6a5035ddeeb92dc"
+  }
+}

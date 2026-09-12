@@ -1,9 +1,19 @@
 # Native image generation: Z-Image-Turbo
 
-Status: proposed, 2026-09-10. No image-generation runtime, CLI command,
-catalog alias, or app mode is implemented by this document. The open work
-is tracked in [ROADMAP](../ROADMAP.md). This page owns the design, gates,
-and rationale; the roadmap owns the remaining task checklist.
+Status: IG0 in progress, 2026-09-10. [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md)
+records pinned inputs, real-image captures, and component comparisons.
+
+Current IG1 evidence status:
+
+- Conditioning, scheduler, and capture manifests are now validated by locked tests,
+  including schema, shape, and checksum checks for fixture provenance.
+- Quantization candidate policy evidence and scheduler-step parity remain the
+  remaining IG1 gates before runtime assembly.
+
+No image-generation runtime, CLI command, catalog alias, or app mode is
+implemented by this document. The open work is tracked in
+[ROADMAP](../ROADMAP.md). This page owns the design, gates, and rationale;
+the roadmap owns the remaining task checklist.
 
 ## Direction and first release
 
@@ -83,9 +93,11 @@ table, chosen quantization layout, and target memory/latency envelope. Do not
 freeze a disk format or advertise a memory minimum before this evidence.
 
 The [official Turbo example](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo)
-uses nine scheduler steps for eight transformer forwards, guidance zero,
-and 1024-by-1024 output. These are the starting reference settings. Record
-both steps and forwards; do not inherit a different model's step convention.
+requests nine scheduler steps, guidance zero, and 1024-by-1024 output; its
+comment says eight transformer forwards. The pinned IG0 Diffusers probe
+observes NINE forwards for that invocation. See [the discrepancy and exact
+schedules](IMAGE_GENERATION_PHASE0.md#noise-scheduler-and-the-model-card-discrepancy).
+Record both steps and forwards; do not inherit the comment as a contract.
 
 ### IG1: Validate native components
 
@@ -99,6 +111,28 @@ updates, final latents, and decoded pixels from a pinned reference. Validate
 components before assembling the full pipeline. Higher-precision reference
 work can use bounded fixtures or one component at a time; it need not keep
 the complete unquantized pipeline resident on the development Mac.
+
+For v1, IG1 must produce at least one deterministic CPU reference fixture set
+for each component:
+
+- Conditioning fixture: padded caption rows, attention masks, hidden state slice,
+  and three-axis position IDs from fixed seeds.
+- Transformer fixture: nine-forward latent evolution for a fixed prompt with
+  exact timesteps and scheduler settings.
+- Scheduler fixture: sigma sequence, sigma shifts, transformer scaling, and
+  Euler update outputs.
+- VAE fixture: decoded pixel tensor and final postprocessing outputs for the same
+  final latent.
+
+Each fixture must include mutation checks for boundary, numeric, and
+truncation failure modes, with explicit tolerances scoped to the tested scope.
+
+Current evidence gates for IG1 include:
+
+- token and framing parity fixtures in `scripts/test_z_image_tokenizer_parity.py`
+- capture-manifest contracts and provenance checks in
+  `scripts/test_z_image_capture_contracts.py`
+- component capture and mutation checks in `scripts/test_z_image_evidence.py`
 
 Gate: component agreement within IG0's stated tolerances, with discrepancies
 explained at the first divergent intermediate rather than judged only from
@@ -268,12 +302,12 @@ processes. Freeze a memory-versus-latency curve, not an isolated RAM headline.
 - [MFLUX Z-Image implementation](https://github.com/mflux-community/mflux/tree/main/src/mflux/models/z_image):
   Apple Silicon reference for operator and intermediate comparisons.
 - [Diffusers Z-Image pipeline](https://github.com/huggingface/diffusers/tree/main/src/diffusers/pipelines/z_image):
-  scheduler and pipeline reference to pin during IG0.
+  scheduler and pipeline reference, pinned in the Phase 0 evidence.
 - [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp):
   optional independent GGUF/Metal baseline. Verify current component,
   segmentation, and disk-residency support before selecting benchmark flags.
 
 Upstream links above are discovery entry points, not pinned implementation
-dependencies. IG0 must replace comparison inputs with exact revisions.
-This proposal contains no locally measured image-generation performance or
-quality claims and commits to no minimum RAM figure before measurement.
+dependencies. [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) supplies exact
+comparison revisions, the limited visual review, and resource observations.
+Qualified performance limits and a minimum RAM figure remain open.

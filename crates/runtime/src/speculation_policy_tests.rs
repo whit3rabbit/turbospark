@@ -14,6 +14,7 @@ use super::{
 };
 use crate::families::qwen::{
     install_has_dflash, install_has_mtp_head, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
+    VISION_SPECULATION_BLOCKER_MARKER,
 };
 use crate::speculative::DEFAULT_SPECULATION_BLOCK;
 
@@ -264,6 +265,56 @@ fn moe() -> String {
     )
 }
 
+// The vision one, interpolating its marker for `moe()`'s reason: the marker
+// is the shared prefix the guards match on, and a hand-copied sentence here
+// is how a message and its guards drift apart.
+fn vision() -> String {
+    format!(
+        "{VISION_SPECULATION_BLOCKER_MARKER}: this runner has a vision tower, and the \
+         batched verify embeds every row from the token table and rotates at the raw \
+         position, so a speculative round past an image would attend and rotate by \
+         the wrong values; run text-only or disable speculation (docs/VISION.md)"
+    )
+}
+
+/// A vision-active engine blocker routes exactly like every other blocker:
+/// hard fail under a named block, warn-and-disable under `auto`. The string
+/// is what the real blockers now produce, so this pins the ROUTING of the
+/// vision reason without an install that combines a tower and a drafter --
+/// which is exactly why the blocker arm exists rather than a vision-aware
+/// verify pass no artifact could test.
+#[test]
+fn a_vision_blocker_fails_hard_under_a_named_block_and_warns_under_auto() {
+    let err = resolve_speculation(
+        Speculation::Block(2),
+        SpeculativeDrafter::Mtp,
+        Some(vision()),
+        true,
+    )
+    .expect_err("a named block on a vision-active runner must fail");
+    assert!(
+        err.contains(VISION_SPECULATION_BLOCKER_MARKER),
+        "got: {err}"
+    );
+
+    let plan = resolve_speculation(
+        Speculation::Auto,
+        SpeculativeDrafter::Mtp,
+        Some(vision()),
+        true,
+    )
+    .expect("auto degrades to disabled rather than failing");
+    match plan {
+        SpeculationPlan::Disabled {
+            reason: Some(reason),
+        } => assert!(
+            reason.contains(VISION_SPECULATION_BLOCKER_MARKER),
+            "got: {reason}"
+        ),
+        other => panic!("expected disabled-with-reason, got {other:?}"),
+    }
+}
+
 #[test]
 fn a_named_block_fails_hard_when_it_cannot_be_served() {
     // No head. The caller named a block, so this is an ERROR: they are
@@ -278,29 +329,42 @@ fn a_named_block_fails_hard_when_it_cannot_be_served() {
     .expect_err("a named block on a headless install must fail");
     assert!(err.contains("no multi-token-prediction head"), "got: {err}");
 
-    // Sampled. Refused rather than downgraded to greedy, which would change
-    // what the model writes while reporting success.
-    let err = resolve_speculation(Speculation::Block(2), SpeculativeDrafter::Mtp, None, false)
-        .expect_err("a named block on a sampled run must fail");
-    assert!(err.contains("temperature 0"), "got: {err}");
+    // Sampled under the BLOCK drafter. Still refused rather than downgraded:
+    // DFlash2's selection has no distribution to ratio against, so exact
+    // rejection sampling is undefined for it (the step drafter serves any
+    // temperature now, so the refusal is keyed on the drafter kind).
+    let err = resolve_speculation(
+        Speculation::Block(2),
+        SpeculativeDrafter::Dflash,
+        None,
+        false,
+    )
+    .expect_err("a named block on a sampled block-drafter run must fail");
+    assert!(err.contains("not a distribution"), "got: {err}");
+
+    // Sampled under the STEP drafter is SERVED now (rejection sampling), so
+    // this arm must not refuse -- asserting the flip explicitly, because a
+    // refusal that forgot which drafter it was about would silently send
+    // every sampled request back to the sequential loop.
+    let plan = resolve_speculation(Speculation::Block(2), SpeculativeDrafter::Mtp, None, false)
+        .expect("the step drafter serves sampled runs");
+    assert_eq!(plan, SpeculationPlan::Enabled { block: 2 });
 }
 
 #[test]
 fn auto_warns_and_continues_where_a_named_block_fails() {
     let cases = [
-        (Some(NO_HEAD.to_string()), true),
-        (None, false),
-        (Some(NOT_INT4.to_string()), true),
-        (Some(moe()), false),
+        (Some(NO_HEAD.to_string()), true, SpeculativeDrafter::Mtp),
+        (Some(NOT_INT4.to_string()), true, SpeculativeDrafter::Mtp),
+        (Some(moe()), false, SpeculativeDrafter::Mtp),
+        // Sampled + BLOCK drafter: auto declines with the same reason a
+        // named block fails on. The sampled + MTP case moved OUT of this
+        // table when rejection sampling landed -- it is Enabled now.
+        (None, false, SpeculativeDrafter::Dflash),
     ];
-    for (blocker, deterministic) in cases {
-        let plan = resolve_speculation(
-            Speculation::Auto,
-            SpeculativeDrafter::Mtp,
-            blocker,
-            deterministic,
-        )
-        .expect("auto never fails; it declines");
+    for (blocker, deterministic, drafter) in cases {
+        let plan = resolve_speculation(Speculation::Auto, drafter, blocker, deterministic)
+            .expect("auto never fails; it declines");
         match plan {
             SpeculationPlan::Disabled { reason: Some(_) } => {}
             other => panic!("auto must warn and continue, got {other:?}"),

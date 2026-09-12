@@ -1,0 +1,368 @@
+{
+  "arrays": {
+    "attention_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "attention_mask.npy",
+      "sha256": "b6ac6a685e8726963fa2bb91856728280ee6fa47957eea274285b029a6abb946",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "conditioning": {
+      "bytes": 5242880,
+      "dtype": "float32",
+      "file": "conditioning.npy",
+      "sha256": "325a914f6facfd98ec2087292d0ac74f6ab6918bf9a55ec512f78e8ce60a0df5",
+      "shape": [
+        512,
+        2560
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "token_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "token_ids.npy",
+      "sha256": "2900144558873abe8b93f9b4fcac057b7c2146897c78a95f23a76b792f5f3003",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    }
+  },
+  "benchmark_eligible": false,
+  "complete": true,
+  "framed_prompt": "<|im_start|>user\nsmall red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse <|im_end|>\n<|im_start|>assistant\n",
+  "inputs": {},
+  "model_revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+  "packages": {
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "PyYAML": "6.0.3",
+    "Pygments": "2.21.0",
+    "accelerate": "1.15.0",
+    "annotated-doc": "0.0.5",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.1",
+    "click": "8.5.0",
+    "diffusers": "0.41.0.dev0",
+    "filelock": "3.32.6",
+    "fsspec": "2026.7.0",
+    "h11": "0.16.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface_hub": "1.31.0",
+    "idna": "3.19",
+    "importlib_metadata": "9.0.1",
+    "markdown-it-py": "4.2.0",
+    "mdurl": "0.1.2",
+    "mlx": "0.32.2",
+    "mlx-metal": "0.32.2",
+    "mpmath": "1.3.0",
+    "networkx": "3.6.1",
+    "numpy": "2.5.3",
+    "packaging": "26.3",
+    "pillow": "12.3.0",
+    "psutil": "7.2.2",
+    "regex": "2026.9.10",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "sentencepiece": "0.2.2",
+    "setuptools": "84.0.0",
+    "shellingham": "1.5.4",
+    "sympy": "1.14.0",
+    "tokenizers": "0.23.2",
+    "torch": "2.14.0",
+    "tqdm": "4.70.0",
+    "transformers": "5.17.0",
+    "typer": "0.27.2",
+    "typing_extensions": "4.16.0",
+    "urllib3": "2.7.0",
+    "zipp": "4.1.0"
+  },
+  "preflight": [
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 146.2483835027802,
+          "name": "mediaanalysisd",
+          "pid": 75523
+        },
+        {
+          "cpu_percent": 119.97753036543517,
+          "name": "corespotlightd",
+          "pid": 24974
+        },
+        {
+          "cpu_percent": 4.466785873993411,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 2.1677641198423427,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 1.7385597083007045,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.9703401799481154,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.554623899534184,
+          "name": "spotlightknowledged.updater",
+          "pid": 31932
+        },
+        {
+          "cpu_percent": 0.5443568146676128,
+          "name": "python",
+          "pid": 59510
+        }
+      ],
+      "total_cpu_percent": 281.09875477075934
+    },
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 160.82381166873196,
+          "name": "mediaanalysisd",
+          "pid": 75523
+        },
+        {
+          "cpu_percent": 4.261120421460389,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 2.4060533153480916,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 2.365150408986484,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 0.9961060725519284,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.9167063131427924,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.6131425865273045,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 0.571036653497527,
+          "name": "python",
+          "pid": 59510
+        }
+      ],
+      "total_cpu_percent": 176.83045151856822
+    },
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 160.40603931758812,
+          "name": "mediaanalysisd",
+          "pid": 75523
+        },
+        {
+          "cpu_percent": 4.995746179628832,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 2.059572353396559,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 1.3185112729606074,
+          "name": "python",
+          "pid": 59510
+        },
+        {
+          "cpu_percent": 1.1565044133833369,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 0.9062759966256209,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.8998598833757797,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 0.8493329915301505,
+          "name": "ChatGPT",
+          "pid": 46991
+        }
+      ],
+      "total_cpu_percent": 176.11956296174745
+    }
+  ],
+  "references": {
+    "diffusers": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux": "051ba9ff25c9a8a8703356053a012a0dfad3fe39"
+  },
+  "resources": {
+    "cache_state": "uncontrolled; no cache eviction performed",
+    "elapsed_s": 1.9251804589293897,
+    "measurement_kind": "instrumented reference capture",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+    "quiet_ac_throughout": false,
+    "samples": [
+      {
+        "disk_read_bytes": 32768,
+        "elapsed_s": 0.011115167057141662,
+        "load": [
+          2.1025390625,
+          2.29296875,
+          2.9111328125
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 345555928,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 406519808,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5355.75M  free = 788.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 177.9 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 7483  94.8 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "  101   1.6 /usr/libexec/logd",
+          "48030   0.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  109   0.6 /usr/sbin/systemstats",
+          " 8558   0.5 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "  278   0.3 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN",
+          "79948   0.3 -/bin/zsh"
+        ]
+      },
+      {
+        "background": {
+          "quiet": false,
+          "top": [
+            {
+              "cpu_percent": 162.59721578186912,
+              "name": "mediaanalysisd",
+              "pid": 75523
+            },
+            {
+              "cpu_percent": 1.336844072728176,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 0.8497492909314817,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 0.5537592136415358,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.5199825681800617,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.37865397273190826,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.3515437704549183,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 0.3022120909230412,
+              "name": "AlDente",
+              "pid": 25003
+            }
+          ],
+          "total_cpu_percent": 168.80495928031831
+        },
+        "disk_read_bytes": 45056,
+        "elapsed_s": 1.8494728750083596,
+        "load": [
+          2.09423828125,
+          2.2880859375,
+          2.90576171875
+        ],
+        "mps_driver_bytes": 8313847808,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 8927069528,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:00 remaining present: true",
+        "rss_bytes": 642957312,
+        "swap": "vm.swapusage: total = 6144.00M  used = 5355.75M  free = 788.25M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "75523 115.8 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+          " 7606  16.1 /System/Library/Frameworks/Contacts.framework/Support/contactsd",
+          " 7607  15.4 /System/Library/Frameworks/Contacts.framework/Support/contactsd",
+          " 7608  15.3 /System/Library/Frameworks/Contacts.framework/Support/contactsd",
+          " 7605  14.3 /System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc/Contents/MacOS/MTLCompilerService",
+          " 7609  13.7 /System/Library/Frameworks/Contacts.framework/Support/contactsd",
+          "  153  13.2 /usr/libexec/dasd",
+          " 7483  10.9 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+        ]
+      }
+    ]
+  },
+  "schema": 1,
+  "settings": {
+    "case": "overlong",
+    "device": "mps",
+    "guidance": 0.0,
+    "height": 1024,
+    "noise_generator": "torch CPU float32",
+    "prompt": "small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse small red lighthouse ",
+    "quantized_linears": false,
+    "seed": 42,
+    "steps": 9,
+    "width": 1024
+  },
+  "stage": "encode",
+  "tool_sha256": {
+    "z_image_capture.py": "29a8e5e61f97c7263f33288351990d3944a7e20d71d24d5b650bf883bbd5665b",
+    "z_image_compare.py": "d72c04ef1edb4b073486f49d5c475f2521238dbd005d776c49b7f7914d904d95",
+    "z_image_evidence.py": "4868c3256198d68a911c740fc861fdad8053e1bdc1861a4831cf0fea6669e097",
+    "z_image_probe.py": "0e8be72e818ac3286e7560cbd2914e5465deefa5bb8e8f12c6a5035ddeeb92dc",
+    "z_image_quantization.py": "283f55d5d67755cf53040d2137305f8dfc04b3a2bd32206ac738d24dfd1c5eb9"
+  },
+  "verified_weights": {
+    "text_encoder/model-00001-of-00003.safetensors": "328a91d3122359d5547f9d79521205bc0a46e1f79a792dfe650e99fc2d651223",
+    "text_encoder/model-00002-of-00003.safetensors": "6cd087b316306a68c562436b5492edbcf6e16c6dba3a1308279caa5a58e21ca5",
+    "text_encoder/model-00003-of-00003.safetensors": "7ca841ee75b9c61267c0c6148fd8d096d3d21b6d3e161256a9b878154f91fc52"
+  }
+}

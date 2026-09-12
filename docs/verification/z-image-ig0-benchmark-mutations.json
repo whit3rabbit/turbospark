@@ -1,0 +1,64 @@
+{
+  "mutations": [
+    {
+      "file": "z_image_benchmark_summary.py",
+      "case": "test_timed_windows_require_quiet_continuous_coverage",
+      "mutation": [
+        "s['window_end'] >= start",
+        "s['window_end'] >= end"
+      ],
+      "unique_application": true,
+      "failed_only_intended_case": true,
+      "source_sha256": "53db20d076fd0cfe58d0c2ba1cab1f00423c567d1be30e34a758e58df2509333",
+      "output_sha256": "4bf629ebff56b95eaf4969108c35c4c26372bd759cb210df3d90cbd7b500a3c0"
+    },
+    {
+      "file": "z_image_benchmark_summary.py",
+      "case": "test_admission_rejects_dirty_or_incomplete_runs",
+      "mutation": [
+        "all(s['cpu']['quiet'] and 'AC Power' in s['power'] for s in row['background'])",
+        "all('AC Power' in s['power'] for s in row['background'])"
+      ],
+      "unique_application": true,
+      "failed_only_intended_case": true,
+      "source_sha256": "53db20d076fd0cfe58d0c2ba1cab1f00423c567d1be30e34a758e58df2509333",
+      "output_sha256": "bfa0a62fc3dfaa7d939d3f4018b4d542000228d25bb7016c936f0829fe3c64a1"
+    },
+    {
+      "file": "z_image_benchmark_summary.py",
+      "case": "test_cache_classification_uses_measured_reads",
+      "mutation": [
+        "ratio >= .9",
+        "ratio >= .1"
+      ],
+      "unique_application": true,
+      "failed_only_intended_case": true,
+      "source_sha256": "53db20d076fd0cfe58d0c2ba1cab1f00423c567d1be30e34a758e58df2509333",
+      "output_sha256": "5ce2bd519cc1b2601f3d4321e20bb91c01ef37d87c96e08523de644708379258"
+    },
+    {
+      "file": "z_image_benchmark_suite.py",
+      "case": "test_recycled_pid_is_not_signaled",
+      "mutation": [
+        "if proc.create_time() == row['created']:",
+        "if True:"
+      ],
+      "unique_application": true,
+      "failed_only_intended_case": true,
+      "source_sha256": "cd39f9e5c0a14f32d3f67f20e0d8bbd633e70c686c2d7b768bff8653eace63cd",
+      "output_sha256": "26bf176fd42c5563be65acca0f8c9bc0194863b4625565224a138e2ffa5cd29f"
+    },
+    {
+      "file": "z_image_benchmark_suite.py",
+      "case": "test_matching_pid_is_restored",
+      "mutation": [
+        "proc.send_signal(sig)",
+        "pass"
+      ],
+      "unique_application": true,
+      "failed_only_intended_case": true,
+      "source_sha256": "cd39f9e5c0a14f32d3f67f20e0d8bbd633e70c686c2d7b768bff8653eace63cd",
+      "output_sha256": "d0d89b3c13a3b41f665609fd186cd645bf0142c26be86d31fad666ef95bb3ca4"
+    }
+  ]
+}

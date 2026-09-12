@@ -1,0 +1,43 @@
+{
+  "method": "Assistant visual inspection of all eight original PNGs",
+  "scope": "Four fixed prompts, one seed, 1024 square, identical noise, nine evaluations. No broad quality guarantee.",
+  "quantization_decision": "Retain affine INT4 group64 as the development candidate with listed precision exceptions; native numerical and wider quality gates remain open.",
+  "observations": {
+    "composition": {
+      "reference": "Red-brown ceramic teapot is left of blue cup on wooden table, with window behind.",
+      "int4": "Same requested arrangement; proportions and light differ slightly.",
+      "limited_suite_verdict": "pass",
+      "png_sha256": {
+        "reference": "f732c628695166292fda9d21fff823a440a188e2916d270e65ed53b7d945192f",
+        "-int4": "6977212d6b1f38db94e139fbc4664553eff2bacbe3bfde07a9643ea243f2c401"
+      }
+    },
+    "typography": {
+      "reference": "Exact FRESH BREAD text, clearly legible in black on a cream framed sign.",
+      "int4": "Exact FRESH BREAD text remains clearly legible, with raised letters on a pale wall and no enclosing frame.",
+      "limited_suite_verdict": "pass with sign presentation drift",
+      "png_sha256": {
+        "reference": "54ad16211fad05f1eaf585692a2f4373070eea9cde0fb0861e6f1ef142656717",
+        "-int4": "93c31999050a3f62c360d8c59f10a32fd92834e072582f4fa715ea6f7c4a9949"
+      }
+    },
+    "detail": {
+      "reference": "Honeybee on lavender; fine hairs and translucent wing veins visible.",
+      "int4": "Honeybee on lavender; hairs and wing veins remain visible, with changed pose and flower geometry.",
+      "limited_suite_verdict": "pass",
+      "png_sha256": {
+        "reference": "a320edb34231cfac6c99c995b372ba836a67b643d00046812a14d91100a2fa93",
+        "-int4": "59893b57423cd4e7c7edd9674e0770dac67fc7c919a59b2902320b26e0dfddc2"
+      }
+    },
+    "lighting": {
+      "reference": "Snowy stone lighthouse at dusk, warm windows and reflections, cold blue shadows.",
+      "int4": "Snowy freestanding white lighthouse with warm windows and reflections; coherent but substantially different structure.",
+      "limited_suite_verdict": "pass with composition drift",
+      "png_sha256": {
+        "reference": "57cab9d332e9a8aea4f1cef8cde02fbb83f9f1d0b6a161b54642bdc92cbfc9e2",
+        "-int4": "1855f6ac6d4a55acf96c743da1141aed597721276315853d160f96f2c78fd9f3"
+      }
+    }
+  }
+}

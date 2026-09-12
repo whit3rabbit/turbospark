@@ -13,7 +13,10 @@
 //! expensive setup and the same poisoned environment.
 
 use half::f16;
-use turbospark_runtime::{DraftPolicies, LogitProducer, MtpDraftPolicy, RealForwardRunner};
+use turbospark_runtime::{
+    DraftPolicies, ExpertCacheSlots, ExpertResidency, KvQuant, LogitProducer, MtpDraftPolicy,
+    RealForwardRunner, SteeringPolicy,
+};
 
 #[test]
 fn mapped_residency_opens_on_qwen_and_then_refuses_the_batched_verify_by_name() {
@@ -46,12 +49,19 @@ fn mapped_residency_opens_on_qwen_and_then_refuses_the_batched_verify_by_name() 
     )
     .expect("a MoE qwen3_5 install with an MTP head builds");
 
-    let mut runner = RealForwardRunner::open_with_options_and_speculation(
+    // EXPLICIT Mapped rather than the env seam: the measuring callers'
+    // open entries pin `Streamed` (AGENTS.md Gotcha 35), so a test whose
+    // subject is the mapped branch says so through the widest entry.
+    let mut runner = RealForwardRunner::open_with_residency(
         &dir,
         arch,
         4096,
-        16,
+        ExpertCacheSlots::Fixed(16),
         DraftPolicies::mtp(MtpDraftPolicy::Fixed(3)),
+        SteeringPolicy::off(),
+        1,
+        KvQuant::Off,
+        ExpertResidency::Mapped,
     )
     .expect("a qwen MoE install opens under mapped expert residency");
 

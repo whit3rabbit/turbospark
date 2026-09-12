@@ -1,0 +1,45 @@
+{
+  "workspace_head": "dc48cd5965d5bd317f00bac0e151d422c3e82a28",
+  "shared_tree_dirty": true,
+  "gates": [
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "log_sha256": "c706e2ba990ec104397968e44a4cccc265fdce5926b017e1b293a6eac9ecae3c"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "log_sha256": "b5dc8f3e13559fab82d099b3af754749f52489b7ea376a537a23f88e9d9ad24b"
+    },
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": "cargo clippy --workspace --tests",
+      "exit_code": 0,
+      "log_sha256": "1e9e5523789a66887614d0d7c1071f33a4d24d7da48f6a9e241149b627d72ab5"
+    }
+  ],
+  "validator_tests": 13,
+  "isolated_mutations": 11,
+  "ig0_complete": false,
+  "remaining_gate": "wider numerical coverage, quiet AC cold/warm resource measurements, final allocation and manifest contract",
+  "quantization_policy_mutations": 2,
+  "reference_validation": {
+    "review_captures": 8,
+    "repeat_all_saved_arrays_identical": true,
+    "real_edge_encodes": [
+      "empty",
+      "unicode",
+      "overlong"
+    ],
+    "checkpoint_block_tolerance_passed": true,
+    "vae_tolerance_passed": true,
+    "python_syntax": "passed",
+    "evidence_links": "passed",
+    "diff_check": "passed"
+  }
+}

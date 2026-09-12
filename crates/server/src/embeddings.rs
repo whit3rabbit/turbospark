@@ -117,15 +117,26 @@ async fn encode_blocking(
     model: std::sync::Arc<dyn ChatModel>,
     texts: Vec<String>,
 ) -> (Vec<String>, Result<Vec<Vec<f32>>, String>) {
-    match tokio::task::spawn_blocking(move || {
+    // The FIFO gate's acquisition point for embeddings: the encoder holds
+    // the same runner a generation would (`RealEncoderModel` lends through
+    // `with_producer`), so an embedding burst must queue behind generations
+    // rather than barge past waiters the gate exists to order. There is no
+    // cancellation on this path, so the flag the gate reads is one nobody
+    // can set -- admission waits, and a queued request cannot be skipped
+    // for a disconnect the protocol has no way to observe.
+    let gate = model.generation_queue();
+    let never = crate::cancel::new_cancel();
+    match crate::queue::run_gated(gate, &never, move || {
         let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
         let result = model.encode(&text_refs);
         (texts, result)
     })
     .await
     {
-        Ok(pair) => pair,
-        Err(e) => (Vec::new(), Err(format!("embedding task panicked: {e}"))),
+        Some(Ok(pair)) => pair,
+        Some(Err(e)) => (Vec::new(), Err(format!("embedding task panicked: {e}"))),
+        // Unreachable in practice: nothing can fire `never`.
+        None => (Vec::new(), Err("embedding admission cancelled".to_string())),
     }
 }
 

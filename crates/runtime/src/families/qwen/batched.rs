@@ -67,7 +67,7 @@ use foundation::LogitValue;
 
 use super::batched_layers::encode_dense_ffn_batched;
 pub(crate) use super::BatchedScratch;
-use crate::families::qwen::layer_tensor;
+use crate::families::qwen::{layer_tensor, VISION_SPECULATION_BLOCKER_MARKER};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::encode_embed_any;
 use crate::real_forward_types::RealForwardError;
@@ -107,6 +107,25 @@ impl RealForwardRunner {
             return Err(RealForwardError::Unsupported(
                 "batched forward needs at least one token".to_string(),
             ));
+        }
+        // THE VISION-BLIND REFUSAL, and the defense-in-depth half of the
+        // blockers' vision arm: this pass embeds every row from the token
+        // table and rotates at the raw position, so a vision prompt would be
+        // verified with the embeddings AND the angles wrong, fluently. The
+        // blockers (`speculation_blocker` / `dflash_speculation_blocker`)
+        // refuse the combination through `resolve_speculation` before any
+        // round starts; this arm catches a caller that drives the verify
+        // directly without asking the policy first. `prompt_vision` is
+        // checked beside the arch field because a map can be installed on a
+        // runner whose arch is still text-only -- the sidecar attach mutates
+        // `arch.vision`, but `set_prompt_vision` does not, and either one
+        // alone is enough to make the pass wrong.
+        if arch.vision.is_active() || self.prompt_vision.is_some() {
+            return Err(RealForwardError::Unsupported(format!(
+                "{VISION_SPECULATION_BLOCKER_MARKER}: refusing a batched verify on a \
+                 vision-active runner; the sequential and chunked paths handle image rows, \
+                 this pass does not (docs/VISION.md)"
+            )));
         }
         // A DFlash2 install carries no MTP head but needs the SAME verify
         // pass, so its state owns a BatchedScratch of its own and either

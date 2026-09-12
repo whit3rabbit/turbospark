@@ -1,6 +1,9 @@
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::families::qwen::{prefixed_layer_tensor, MOE_SPECULATION_BLOCKER_MARKER, TRUNK_PREFIX};
+use crate::families::qwen::{
+    prefixed_layer_tensor, MOE_SPECULATION_BLOCKER_MARKER, TRUNK_PREFIX,
+    VISION_SPECULATION_BLOCKER_MARKER,
+};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_utils::entry;
 
@@ -233,6 +236,19 @@ pub fn dflash_speculation_blocker(
     arch: &ArchConfig,
     has_drafter: bool,
 ) -> Option<String> {
+    // The vision arm and its ordering mirror `speculation_blocker`'s exactly:
+    // first, because every check below would wave a tower-carrying install
+    // through into wrong numbers rather than an error. See that function's
+    // comment for the full reasoning; the runner passes its own post-attach
+    // `arch`, so a sidecar-attached trunk trips this arm too.
+    if arch.vision.is_active() {
+        return Some(format!(
+            "{VISION_SPECULATION_BLOCKER_MARKER}: this runner has a vision tower, and the \
+             batched verify embeds every row from the token table and rotates at the raw \
+             position, so a speculative round past an image would attend and rotate by \
+             the wrong values; run text-only or disable speculation (docs/VISION.md)"
+        ));
+    }
     if arch.num_experts != 0 {
         return Some(format!(
             "{MOE_SPECULATION_BLOCKER_MARKER}: this install routes to {} experts, and no \
@@ -301,6 +317,29 @@ mod tests {
         assert!(
             reason.contains("declares none"),
             "expected 'declares none' in refusal, got: {reason}"
+        );
+    }
+
+    /// The vision arm must come FIRST, mirroring `speculation_blocker`'s own
+    /// test one file over: the empty index (whose "missing" arm is what fires
+    /// without vision) is what lets this fixture tell the arms apart.
+    #[test]
+    fn a_vision_active_arch_outranks_every_other_refusal() {
+        let mut arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        arch.vision = turbospark_repack::tiny_vision_config();
+        let index = ResidentIndex {
+            header: model_io::ResidentIndexHeader {
+                index_size: 0,
+                resident_size: 0,
+                entry_count: 0,
+            },
+            entries: std::collections::HashMap::new(),
+        };
+        let reason = dflash_speculation_blocker(&index, &arch, true)
+            .expect("a vision-active arch must be refused");
+        assert!(
+            reason.contains(VISION_SPECULATION_BLOCKER_MARKER),
+            "expected the vision marker first, got: {reason}"
         );
     }
 

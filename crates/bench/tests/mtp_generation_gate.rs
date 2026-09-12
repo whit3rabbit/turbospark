@@ -211,10 +211,17 @@ fn the_wired_speculative_loop_reproduces_the_sequential_stream() {
 
     println!("\nlossless at every block\n");
 }
-
+/// A sampled speculative request through the real MTP install now RUNS
+/// (ROADMAP P1 item 4): exact rejection sampling serves any temperature on
+/// the step drafter, so this gate went from asserting the refusal to
+/// asserting the run -- coherent, budget-bounded output and a stop reason a
+/// sequential sampled decode would also reach. Distributional exactness is
+/// the synthetic gate's claim (`crates/runtime/tests/speculative.rs`); what
+/// only the real install can add is that the rejection path drives real
+/// draft logits and real verify rows without falling over.
 #[test]
 #[ignore = "needs a real MTP install via TURBOSPARK_MTP_INSTALL_DIR"]
-fn a_sampled_request_is_refused_on_the_real_install() {
+fn a_sampled_request_speculates_on_the_real_install() {
     let dir = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
@@ -226,19 +233,19 @@ fn a_sampled_request_is_refused_on_the_real_install() {
     .expect("install opens");
     let vocab = runner.vocab_size();
 
+    // The CLI's own default shape, which is the path a user is most likely
+    // to take.
     let config = GenerationConfig {
         shaping: ShapingConfig::new(0.2, 64, Some(0.95), 1.0, Some(1)).unwrap(),
-        max_new_tokens: 16,
+        max_new_tokens: 48,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
         rate: RateControl::default(),
     };
     let prompt = tokenizer.encode("hello", false);
 
-    // The CLI's own default is sampled, so this is the path a user is most
-    // likely to take. It must refuse rather than quietly decode greedily,
-    // which would change what the model writes while reporting success.
-    let err = run_raw_completion_speculative(
+    let mut text = String::new();
+    let result = run_raw_completion_speculative(
         &mut runner,
         &tokenizer,
         &prompt,
@@ -246,8 +253,28 @@ fn a_sampled_request_is_refused_on_the_real_install() {
         4096,
         vocab,
         2,
-        |_| {},
+        |event| {
+            if let runtime::RawDecodeProgress::Token { delta, .. } = event {
+                text.push_str(&delta);
+            }
+        },
     )
-    .expect_err("a sampled speculative request must be refused");
-    println!("refused as it must be: {err}");
+    .expect("a sampled speculative request runs on the step drafter");
+    assert!(
+        result.new_tokens > 0,
+        "the run must generate, not refuse or fall over"
+    );
+    assert!(
+        matches!(
+            result.reason,
+            runtime::StopReason::EndOfTurn | runtime::StopReason::MaxTokens
+        ),
+        "unexpected stop reason: {:?}",
+        result.reason
+    );
+    let _ = &text;
+    println!(
+        "sampled speculative run: {} new tokens, reason {:?}",
+        result.new_tokens, result.reason
+    );
 }

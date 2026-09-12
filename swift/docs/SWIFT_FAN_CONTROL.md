@@ -37,3 +37,12 @@ installed. `locateExecutable` falls back to the known install locations
 (`/usr/local/bin`, `/opt/homebrew/bin`) for that reason.
 `scripts/power.sh`'s bare `thermalforge` keeps working only because a
 shell session has the full PATH.
+
+## Test-host isolation
+
+`FanController.shared` uses an empty executable path and no poll interval
+under XCTest, detected through `AppStorageRoot.isRunningTests`. AppModel
+settings initialization can therefore touch the singleton without locating
+or polling real hardware. Normal app launches retain PATH discovery and
+polling. Explicit controller instances still accept fixture executables
+and intervals, so action and timer tests exercise the same implementation.

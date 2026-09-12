@@ -21,6 +21,7 @@ impl RealForwardRunner {
         steering: crate::steering::SteeringPolicy,
         session_slots: usize,
         kv_quant: KvQuant,
+        residency: model_io::ExpertResidency,
     ) -> Result<Self, RealForwardError> {
         // A vision sidecar directory (vision memory sidecar, Part A2) is not
         // a model install -- it declares `numLayers: 0` and has no trunk
@@ -130,6 +131,7 @@ impl RealForwardRunner {
                 dir,
                 &expecting,
                 expert_cache_slots,
+                residency,
                 index.header.resident_size,
                 PACKED_LAYOUT_MAX_BYTES,
                 &mut context,
@@ -181,6 +183,7 @@ impl RealForwardRunner {
             scratch,
             slot_buffers,
             expert_cache_slots: resolved_slots,
+            resolved_residency: crate::real_forward_init::resolve_expert_residency(residency),
             streamers,
             mapped,
             moe_offsets,

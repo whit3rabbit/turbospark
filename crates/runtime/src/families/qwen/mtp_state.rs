@@ -1,6 +1,9 @@
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::families::qwen::{prefixed_layer_tensor, MOE_SPECULATION_BLOCKER_MARKER, TRUNK_PREFIX};
+use crate::families::qwen::{
+    prefixed_layer_tensor, MOE_SPECULATION_BLOCKER_MARKER, TRUNK_PREFIX,
+    VISION_SPECULATION_BLOCKER_MARKER,
+};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_utils::entry;
 
@@ -193,7 +196,28 @@ impl MtpState {
         arch: &ArchConfig,
         has_head: bool,
     ) -> Option<String> {
-        // THE ARCHITECTURAL CHECKS COME FIRST, and the order is a choice about
+        // THE VISION ARM COMES FIRST, because it is the one condition every
+        // arm below would wave through: an install with a tower AND a head
+        // passes the MoE, dtype and head checks and then computes WRONG
+        // NUMBERS rather than an error -- `produce_batched` embeds every row
+        // from the token table and rotates at the raw position, while a
+        // decode past an image must blit tower rows and rotate at the mRoPE
+        // triple (`docs/VISION.md`'s "Still not built" paragraph). No install
+        // that exists carries both, so this arm is reached only by a repack
+        // that does not exist yet, which is the cheapest possible time to
+        // refuse it. The runner passes its OWN `arch` here and
+        // `attach_vision_sidecar` mutates that field, so a sidecar-attached
+        // trunk trips this arm at the same `resolve_speculation` call every
+        // front end makes after the attach.
+        if arch.vision.is_active() {
+            return Some(format!(
+                "{VISION_SPECULATION_BLOCKER_MARKER}: this runner has a vision tower, and the \
+                 batched verify embeds every row from the token table and rotates at the raw \
+                 position, so a speculative round past an image would attend and rotate by \
+                 the wrong values; run text-only or disable speculation (docs/VISION.md)"
+            ));
+        }
+        // THE ARCHITECTURAL CHECKS COME NEXT, and the order is a choice about
         // which reason is more useful. Neither a MoE nor a sub-4-bit install
         // can speculate on any head it acquires from the official checkpoint,
         // so naming THIS install's missing head would send a reader after a
@@ -385,5 +409,39 @@ mod tests {
             Some(std::path::PathBuf::from("/tmp/test_dump"))
         );
         assert_eq!(parse_dump_dir(None), None);
+    }
+
+    /// The vision arm must come FIRST: with an EMPTY index (no probe tensor,
+    /// so the "cannot tell" arm is what fires without it) and a head present,
+    /// a vision-active arch still reports the VISION reason. The empty index
+    /// is what makes this discriminating -- an index carrying a valid INT4
+    /// probe would refuse either way, and the test could not tell the arms
+    /// apart.
+    #[test]
+    fn a_vision_active_arch_outranks_every_other_refusal() {
+        let mut arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        arch.vision = turbospark_repack::tiny_vision_config();
+        assert!(
+            arch.vision.is_active(),
+            "fixture setup: the toy vision config must count as active"
+        );
+        let index = ResidentIndex {
+            header: model_io::ResidentIndexHeader {
+                index_size: 0,
+                resident_size: 0,
+                entry_count: 0,
+            },
+            entries: std::collections::HashMap::new(),
+        };
+        let reason = MtpState::speculation_blocker(&index, &arch, true)
+            .expect("a vision-active arch must be refused");
+        assert!(
+            reason.contains(VISION_SPECULATION_BLOCKER_MARKER),
+            "expected the vision marker first, got: {reason}"
+        );
+        assert!(
+            !reason.contains("not in the resident index"),
+            "the empty-index arm fired, so the vision arm is not first: {reason}"
+        );
     }
 }

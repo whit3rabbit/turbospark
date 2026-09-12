@@ -1,0 +1,14 @@
+long-synthesis	ac	seq	warmup	prefill	63.32	3015	1163.5	18.38	0.3859	4202	14181	70.6	72.5	Nominal	290		max
+long-synthesis	ac	seq	warmup	decode	15.23	599	282.2	19.30	0.4711	4230	15072	68.7	68.9	Nominal	67		max
+long-synthesis	ac	seq	p1.seq	prefill	63.36	3015	1177.0	18.60	0.3904	4386	14211	75.4	73.0	Nominal	290		max
+long-synthesis	ac	seq	p1.seq	decode	15.28	599	288.6	19.45	0.4818	4349	15099	67.9	69.3	Nominal	68		max
+long-synthesis	ac	chunked	p1.chunked	prefill	48.02	3015	1205.0	25.06	0.3997	6595	17976	91.8	81.6	Nominal	219		max
+long-synthesis	ac	chunked	p1.chunked	decode	15.26	599	282.5	19.25	0.4716	4144	15103	71.6	64.5	Nominal	67		max
+long-synthesis	ac	seq	p2.seq	prefill	63.04	3015	1161.0	18.45	0.3851	4242	14212	71.5	73.3	Nominal	287		max
+long-synthesis	ac	seq	p2.seq	decode	15.23	599	282.7	18.97	0.4719	4203	14767	69.0	68.8	Nominal	68		max
+long-synthesis	ac	chunked	p2.chunked	prefill	50.28	3015	907.4	18.03	0.3010	4344	13691	54.9	69.8	Nominal	229		max
+long-synthesis	ac	chunked	p2.chunked	decode	15.18	599	273.3	18.63	0.4563	3935	14698	60.3	66.2	Nominal	67		max
+long-synthesis	ac	seq	p3.seq	prefill	62.69	3015	1138.5	18.11	0.3776	3946	14169	64.1	70.7	Nominal	287		max
+long-synthesis	ac	seq	p3.seq	decode	15.15	599	273.7	18.66	0.4569	3959	14703	59.6	66.0	Nominal	67		max
+long-synthesis	ac	chunked	p3.chunked	prefill	49.65	3015	946.8	19.08	0.3140	4832	14245	61.1	72.3	Nominal	226		max
+long-synthesis	ac	chunked	p3.chunked	decode	15.24	599	285.7	19.26	0.4770	4461	14798	72.0	69.9	Nominal	68		max

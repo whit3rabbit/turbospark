@@ -1,0 +1,2968 @@
+{
+  "arrays": {
+    "attention_mask": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "attention_mask.npy",
+      "sha256": "a754127c39af181bd93dc8fa2619a23b196aad28aeaabf1cbd060515438b07cb",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    },
+    "conditioning": {
+      "bytes": 307200,
+      "dtype": "float32",
+      "file": "conditioning.npy",
+      "sha256": "11fcb1c3e7fca5edb5bda833f556e0735e4cd6cd44cf78fb12589c16b3301e0c",
+      "shape": [
+        30,
+        2560
+      ],
+      "source_dtype": "torch.bfloat16"
+    },
+    "token_ids": {
+      "bytes": 4096,
+      "dtype": "int64",
+      "file": "token_ids.npy",
+      "sha256": "b7088efaed62ceacab93df621992abe0f9510391b6ea907f32da38ce214eb0f8",
+      "shape": [
+        1,
+        512
+      ],
+      "source_dtype": "torch.int64"
+    }
+  },
+  "benchmark_eligible": false,
+  "complete": true,
+  "framed_prompt": "<|im_start|>user\nA red ceramic teapot to the left of a blue cup on a wooden table, a window behind them.<|im_end|>\n<|im_start|>assistant\n",
+  "inputs": {},
+  "model_revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+  "packages": {
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "PyYAML": "6.0.3",
+    "Pygments": "2.21.0",
+    "accelerate": "1.15.0",
+    "annotated-doc": "0.0.5",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.1",
+    "click": "8.5.0",
+    "diffusers": "0.41.0.dev0",
+    "filelock": "3.32.6",
+    "fsspec": "2026.7.0",
+    "h11": "0.16.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface_hub": "1.31.0",
+    "idna": "3.19",
+    "importlib_metadata": "9.0.1",
+    "markdown-it-py": "4.2.0",
+    "mdurl": "0.1.2",
+    "mlx": "0.32.2",
+    "mlx-metal": "0.32.2",
+    "mpmath": "1.3.0",
+    "networkx": "3.6.1",
+    "numpy": "2.5.3",
+    "packaging": "26.3",
+    "pillow": "12.3.0",
+    "psutil": "7.2.2",
+    "regex": "2026.9.10",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "sentencepiece": "0.2.2",
+    "setuptools": "84.0.0",
+    "shellingham": "1.5.4",
+    "sympy": "1.14.0",
+    "tokenizers": "0.23.2",
+    "torch": "2.14.0",
+    "tqdm": "4.70.0",
+    "transformers": "5.17.0",
+    "typer": "0.27.2",
+    "typing_extensions": "4.16.0",
+    "urllib3": "2.7.0",
+    "zipp": "4.1.0"
+  },
+  "preflight": [
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 28.72363599045554,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 26.265100427211525,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 14.883234589299189,
+          "name": "Brave Browser Helper (Renderer)",
+          "pid": 95651
+        },
+        {
+          "cpu_percent": 6.0575294345023085,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 3.2807264364724276,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 1.8461118629512778,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 1.2385103965221371,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.8961317924071103,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        }
+      ],
+      "total_cpu_percent": 86.3611550649482
+    },
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 27.01510093687042,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 26.06610025388071,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 5.963881202234262,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 4.193970760337878,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 1.6827290601714027,
+          "name": "Brave Browser Helper (Renderer)",
+          "pid": 95651
+        },
+        {
+          "cpu_percent": 1.2470739026120836,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.8668291467918248,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.5675475222173136,
+          "name": "codex",
+          "pid": 95217
+        }
+      ],
+      "total_cpu_percent": 70.60124395260318
+    },
+    {
+      "quiet": false,
+      "top": [
+        {
+          "cpu_percent": 29.080742422049212,
+          "name": "Codex (Renderer)",
+          "pid": 48031
+        },
+        {
+          "cpu_percent": 26.477754713315942,
+          "name": "Codex (Service)",
+          "pid": 47025
+        },
+        {
+          "cpu_percent": 5.909095131546162,
+          "name": "Codex (Renderer)",
+          "pid": 48030
+        },
+        {
+          "cpu_percent": 3.3566742515849164,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 1.5654459281143778,
+          "name": "Brave Browser Helper (Renderer)",
+          "pid": 95651
+        },
+        {
+          "cpu_percent": 1.4154698810751074,
+          "name": "codex",
+          "pid": 95217
+        },
+        {
+          "cpu_percent": 1.2063800574076589,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 1.069929884595305,
+          "name": "ChatGPT",
+          "pid": 46991
+        }
+      ],
+      "total_cpu_percent": 73.45447452342984
+    }
+  ],
+  "quantization": {
+    "components": "text_encoder",
+    "emulation": "dequantized BF16 reference",
+    "exceptions": "embeddings, norms, biases, time/modulation, input/output projections, VAE",
+    "layout": "affine-int4-group64-bf16-scale-bias",
+    "tensors": [
+      {
+        "relative_l2": 0.09100420131063885,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.0.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09064932877580736,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.0.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09124697316161896,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.0.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09091410195859066,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.0.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09053400951420087,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.0.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09039698557037336,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.0.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09190978693808345,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.0.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09127903343989704,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.1.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09096986543396456,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.1.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09096232556089999,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.1.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.090496294670947,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.1.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09042578448362537,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.1.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09079624896169351,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.1.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09156976517023344,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.1.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09117583876555324,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.2.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09216395946939838,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.2.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09091151417300516,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.2.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09011490235616265,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.2.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09127719114576653,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.2.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09155422883145312,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.2.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.11135373289153232,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.2.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09159971912926415,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.3.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.0916535486125353,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.3.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09107935175920565,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.3.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09009094552287468,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.3.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09055791575469543,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.3.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.0910326731059759,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.3.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09429345822963937,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.3.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09132406703197964,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.4.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09203716954294046,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.4.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09080388668184981,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.4.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.08986171296762069,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.4.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09054429576039216,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.4.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09070352967432237,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.4.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09398398593769715,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.4.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09114903942694498,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.5.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09124736144204469,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.5.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09091515446129433,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.5.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09017524344663587,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.5.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09145313173532993,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.5.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.0906791606089587,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.5.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09251077799348015,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.5.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09136264516483383,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.6.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09097780564407468,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.6.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09187389847315687,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.6.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09015384064719922,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.6.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09062027550702369,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.6.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09054548396702229,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.6.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09199218505410105,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.6.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.091170555456703,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.7.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09164417640216545,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.7.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09075341854904033,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.7.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.0902963702211457,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.7.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09051266097129185,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.7.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09042713985468777,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.7.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09118258700566192,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.7.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09114323016567479,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.8.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09089439038696186,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.8.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09071038355773843,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.8.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.0900941667039478,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.8.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09028951773922331,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.8.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09048156603557689,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.8.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09172124384860865,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.8.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09201070370974883,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.9.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09334116921863933,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.9.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09158112506193924,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.9.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09031598983608548,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.9.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.0902903294296673,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.9.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09062345497581135,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.9.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09200686279795045,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.9.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.0912332480454383,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.10.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.0916477081945045,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.10.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09179568787877689,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.10.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09021269287842673,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.10.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09021363533667373,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.10.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09060068330391183,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.10.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09201117345374925,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.10.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09167560387608593,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.11.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09179797280498668,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.11.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09155933729966648,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.11.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09018599660449339,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.11.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09034455788452751,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.11.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09059994230118097,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.11.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09176068524728088,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.11.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09142415330951613,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.12.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09192796984910964,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.12.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09165124203731974,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.12.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.0904849344423607,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.12.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09061553214001473,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.12.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09092843365972668,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.12.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09210662578807678,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.12.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09176268128807913,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.13.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09268160645339801,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.13.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09098742619746912,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.13.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09044917976650177,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.13.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09094783109368751,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.13.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09116876791535852,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.13.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09315959916308761,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.13.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.0911523508683629,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.14.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09124953149928729,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.14.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09184973594624564,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.14.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09053335416718361,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.14.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09087824146312068,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.14.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09124141525975601,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.14.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09319689310979022,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.14.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09131199693001889,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.15.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09217622287260566,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.15.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09131700094151138,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.15.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09066700759020037,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.15.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09114159277369527,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.15.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09131924416889316,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.15.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.0936714044127555,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.15.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09122837369636555,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.16.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09129850142033802,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.16.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09150316519680785,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.16.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09049567410327847,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.16.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09096312336759364,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.16.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09137397339280409,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.16.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09344352542708297,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.16.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.0913144508534162,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.17.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09193243071428575,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.17.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09161902777152639,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.17.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09073749455958213,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.17.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.0909691406331729,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.17.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09109268699765401,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.17.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09349449040384013,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.17.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09113101879984158,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.18.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09133756397373814,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.18.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.0912612556415413,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.18.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09057814218222861,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.18.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09131649974610208,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.18.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09134151116105864,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.18.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.0938419007813419,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.18.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09169880399260928,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.19.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.0921548385698357,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.19.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09144973428370462,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.19.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.0910360833505713,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.19.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09150830250128893,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.19.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09148213776909173,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.19.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09408002473428628,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.19.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09136453955721789,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.20.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.0922848627425787,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.20.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09199141314138277,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.20.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09058050596490028,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.20.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09110064001969279,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.20.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09100983822122041,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.20.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09348007975215489,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.20.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09148593153093798,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.21.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09197907048669256,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.21.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09217619837363268,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.21.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09092372507035335,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.21.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.0915021211435516,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.21.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09098472116390499,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.21.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09339743696382921,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.21.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.091146222604293,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.22.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09320346620457887,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.22.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09289533626649325,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.22.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09082527928020159,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.22.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09153687114344428,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.22.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09104608490261973,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.22.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09391023953921922,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.22.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09143039609004786,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.23.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09195596845582792,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.23.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.0940433977488495,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.23.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09081841746770627,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.23.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09116956695549902,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.23.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09068456164259482,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.23.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09298065431036384,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.23.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09153020624131844,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.24.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09218739733233122,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.24.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09462498680667818,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.24.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09050324160886548,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.24.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.0909306020194073,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.24.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.0905361858576508,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.24.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09210505036577955,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.24.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09087862377338535,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.25.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09104246716934557,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.25.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09164639747107872,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.25.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09001845903029622,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.25.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09080496102372636,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.25.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09045704556987792,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.25.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.0918318732691106,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.25.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09114378969008327,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.26.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09116129583551376,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.26.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09218365591166577,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.26.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09025848521993533,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.26.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.0905464931523372,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.26.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09025926054611598,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.26.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09107475166785246,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.26.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.0906431210824532,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.27.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09121613732759722,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.27.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09266275061367665,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.27.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09042540200210698,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.27.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09055414917687393,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.27.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09023676028513919,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.27.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.0910593627635005,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.27.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09048885535481585,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.28.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09118397267864162,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.28.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09155233873966072,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.28.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.0900851714389166,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.28.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09055980294196583,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.28.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09019550286159325,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.28.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.0908839872573302,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.28.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.0910541458058035,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.29.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09213053081365567,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.29.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09316243060363233,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.29.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.0902075404542798,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.29.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09019686347447443,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.29.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09005747150781955,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.29.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09024605622641876,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.29.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09104422585308856,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.30.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09155250169394621,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.30.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09260084918477886,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.30.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.0901442018473156,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.30.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09020209281950826,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.30.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.08999821151186907,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.30.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09028269634226374,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.30.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09102639493515781,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.31.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.0920568486606921,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.31.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09262227776270376,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.31.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09033648426670603,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.31.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09019803843806874,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.31.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09007974640767699,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.31.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.0902203730170803,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.31.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09146443773616489,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.32.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09186771708983574,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.32.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09314610514677865,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.32.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09032833523613064,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.32.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09035324564889294,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.32.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09011566308141916,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.32.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09029290068286697,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.32.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09179890430379074,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.33.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09218784346795203,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.33.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09255348397815316,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.33.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09032136452978959,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.33.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09062388181752541,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.33.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09023010766330467,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.33.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09051717283957124,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.33.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.09135782706106284,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.34.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09151122432251912,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.34.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09235848425268392,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.34.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.09043739094525277,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.34.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.0906410931157616,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.34.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09026703923003244,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.34.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09181174856513043,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.34.mlp.down_proj.weight"
+      },
+      {
+        "relative_l2": 0.090273308151719,
+        "shape": [
+          4096,
+          2560
+        ],
+        "tensor": "model.layers.35.self_attn.q_proj.weight"
+      },
+      {
+        "relative_l2": 0.09077424233484771,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.35.self_attn.k_proj.weight"
+      },
+      {
+        "relative_l2": 0.09156255576599422,
+        "shape": [
+          1024,
+          2560
+        ],
+        "tensor": "model.layers.35.self_attn.v_proj.weight"
+      },
+      {
+        "relative_l2": 0.0904318095014733,
+        "shape": [
+          2560,
+          4096
+        ],
+        "tensor": "model.layers.35.self_attn.o_proj.weight"
+      },
+      {
+        "relative_l2": 0.09058528850117219,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.35.mlp.gate_proj.weight"
+      },
+      {
+        "relative_l2": 0.09027488447258453,
+        "shape": [
+          9728,
+          2560
+        ],
+        "tensor": "model.layers.35.mlp.up_proj.weight"
+      },
+      {
+        "relative_l2": 0.09439479742010727,
+        "shape": [
+          2560,
+          9728
+        ],
+        "tensor": "model.layers.35.mlp.down_proj.weight"
+      }
+    ]
+  },
+  "references": {
+    "diffusers": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux": "051ba9ff25c9a8a8703356053a012a0dfad3fe39"
+  },
+  "resources": {
+    "cache_state": "uncontrolled; no cache eviction performed",
+    "elapsed_s": 17.074574165977538,
+    "measurement_kind": "instrumented reference capture",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+    "quiet_ac_throughout": true,
+    "samples": [
+      {
+        "disk_read_bytes": 8045133824,
+        "elapsed_s": 0.013452957849949598,
+        "load": [
+          3.2451171875,
+          3.310546875,
+          3.31884765625
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 347079640,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 408043520,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "99758  98.9 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "24646  42.8 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025  10.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031  10.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   2.9 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "48030   2.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "  513   1.1 /usr/sbin/cfprefsd",
+          "95651   0.6 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 9.80268880756221,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 9.224913401390081,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.657299034057228,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 2.1083734120000583,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.7945386489789099,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.643113831934615,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.6268980115510681,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.5037016361510336,
+              "name": "codex",
+              "pid": 95217
+            }
+          ],
+          "total_cpu_percent": 28.47147563383771
+        },
+        "disk_read_bytes": 8045576192,
+        "elapsed_s": 2.0818656659685075,
+        "load": [
+          3.2451171875,
+          3.310546875,
+          3.31884765625
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 1342576280,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 2240036864,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "99758 149.3 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "24646  40.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   9.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   8.3 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   2.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.6 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "59510   1.6 /Users/whit3rabbit/.hermes/hermes-agent/venv/bin/python",
+          " 8514   0.9 /Library/SystemExtensions/C7E3B212-D4F7-460E-8818-3D16CE632184/at.obdev.littlesnitch.networkextension.systemextension/Contents/MacOS/at.obdev.littlesnitch.networkextension"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 10.416291623754805,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 9.992319578131275,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.6757516330653006,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.6974132616670226,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.6771352095005909,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.5931784025363788,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.561991722305948,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 0.48268759867460476,
+              "name": "ChatGPT",
+              "pid": 46991
+            }
+          ],
+          "total_cpu_percent": 29.501688025336506
+        },
+        "disk_read_bytes": 8045576192,
+        "elapsed_s": 4.194292875006795,
+        "load": [
+          3.70556640625,
+          3.40478515625,
+          3.35205078125
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 2342885952,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 4238262272,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "99758 138.0 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "24646  43.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031  10.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025  10.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48030   2.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.5 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "  167   1.5 /usr/sbin/notifyd",
+          "25003   1.4 /Applications/AlDente.app/Contents/MacOS/AlDente"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 9.539212664480813,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 8.90775893466927,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 3.325385941016886,
+              "name": "donotdisturbd",
+              "pid": 55335
+            },
+            {
+              "cpu_percent": 2.5521577742724793,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.7804670811494685,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.574372980374379,
+              "name": "Brave Browser",
+              "pid": 31795
+            },
+            {
+              "cpu_percent": 1.3131477391434143,
+              "name": "StatusKitAgent",
+              "pid": 24963
+            },
+            {
+              "cpu_percent": 0.73605035992486,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            }
+          ],
+          "total_cpu_percent": 35.36490166654074
+        },
+        "disk_read_bytes": 8045576192,
+        "elapsed_s": 6.35521520790644,
+        "load": [
+          3.70556640625,
+          3.40478515625,
+          3.35205078125
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 3344620936,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 6239911936,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "99758 150.2 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "24646  43.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   9.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   8.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "55335   4.6 /System/Library/PrivateFrameworks/DoNotDisturbServer.framework/Support/donotdisturbd",
+          "99878   2.8 /Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/152.1.94.121/Helpers/Brave Browser Helper (Renderer).app/Contents/MacOS/Brave Browser Helper (Renderer)",
+          "48030   2.7 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "25003   2.0 /Applications/AlDente.app/Contents/MacOS/AlDente"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 10.497894419187926,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 10.318741522414877,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.629902480459543,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 2.1033015414224696,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.9733198504717266,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.7321226604414737,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.7141879819197108,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.5002321143895766,
+              "name": "ChatGPT",
+              "pid": 46991
+            }
+          ],
+          "total_cpu_percent": 31.408462198111874
+        },
+        "disk_read_bytes": 8045576192,
+        "elapsed_s": 8.45866245799698,
+        "load": [
+          3.64892578125,
+          3.39794921875,
+          3.349609375
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 4341635120,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 5048926208,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "99758 147.7 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "24646  44.7 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "  109  17.7 /usr/sbin/systemstats",
+          "48031  10.9 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025  10.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48030   2.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "25003   2.0 /Applications/AlDente.app/Contents/MacOS/AlDente",
+          "22148   1.6 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 9.494429662807567,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 8.746496076075166,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.5242758551762825,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.596312799759617,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.7147092641698845,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 0.7000287495595862,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.6074304377930847,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.5037734489030572,
+              "name": "ChatGPT",
+              "pid": 46991
+            }
+          ],
+          "total_cpu_percent": 27.166681643193172
+        },
+        "disk_read_bytes": 8045576192,
+        "elapsed_s": 10.572651624912396,
+        "load": [
+          3.64892578125,
+          3.39794921875,
+          3.349609375
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 5353872392,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 7074168832,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "99758 147.9 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "24646  43.4 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "47025   9.0 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   8.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   2.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.4 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          " 8558   1.3 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "79948   0.8 -/bin/zsh"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 10.517698227494343,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 10.376985434284169,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 6.772240470695554,
+              "name": "networkserviceproxy",
+              "pid": 44327
+            },
+            {
+              "cpu_percent": 3.5282663943602537,
+              "name": "com.apple.Safari.SafeBrowsing.Service",
+              "pid": 13611
+            },
+            {
+              "cpu_percent": 2.6750979082490343,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 2.2389659912077517,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.7449858086005443,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.7276639471504761,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            }
+          ],
+          "total_cpu_percent": 43.64185066903274
+        },
+        "disk_read_bytes": 8045576192,
+        "elapsed_s": 12.697673541028053,
+        "load": [
+          3.7568359375,
+          3.42431640625,
+          3.35888671875
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 6361522120,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 9082355712,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "99758 147.7 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "24646  42.6 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "44327  12.1 /usr/libexec/networkserviceproxy",
+          "47025   9.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   9.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "13611   5.9 /System/Library/PrivateFrameworks/SafariSafeBrowsing.framework/com.apple.Safari.SafeBrowsing.Service",
+          "  153   3.7 /usr/libexec/dasd",
+          "22148   2.9 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 13.179543499452908,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 11.240986537722462,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 3.484425890672053,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 3.0637442555843,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.729382544272465,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.2682657058005078,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.8522496710887131,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.8304768692730901,
+              "name": "python",
+              "pid": 59510
+            }
+          ],
+          "total_cpu_percent": 38.397615360148734
+        },
+        "disk_read_bytes": 8045576192,
+        "elapsed_s": 14.797951749991626,
+        "load": [
+          3.7568359375,
+          3.42431640625,
+          3.35888671875
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 7365419912,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 11093032960,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "99758 148.6 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "24646  44.2 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "48031  24.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "47025  15.1 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "95217  11.5 /Applications/ChatGPT.app/Contents/Resources/codex",
+          "48030   4.0 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "59510   2.4 /Users/whit3rabbit/.hermes/hermes-agent/venv/bin/python",
+          "46991   2.2 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 10.859025858454734,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 10.626713654478035,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 2.977677371135039,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 2.6912113088075893,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.8349524759367124,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 1.0069478300309702,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.8919689858432719,
+              "name": "codex",
+              "pid": 95217
+            },
+            {
+              "cpu_percent": 0.7263312673583888,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            }
+          ],
+          "total_cpu_percent": 34.346040287646005
+        },
+        "disk_read_bytes": 8046927872,
+        "elapsed_s": 16.909396540839225,
+        "load": [
+          3.7568359375,
+          3.42431640625,
+          3.35888671875
+        ],
+        "mps_driver_bytes": 8313864192,
+        "mps_live_bytes": 8114803200,
+        "phys_footprint_bytes": 8993637816,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 709394432,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  48.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "99758  20.5 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "47025   8.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   7.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   2.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.7 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "79948   0.9 -/bin/zsh",
+          "46991   0.8 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 9.98239405073335,
+              "name": "Codex (Service)",
+              "pid": 47025
+            },
+            {
+              "cpu_percent": 9.938224165577525,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            },
+            {
+              "cpu_percent": 2.5397683976859176,
+              "name": "Codex (Renderer)",
+              "pid": 48030
+            },
+            {
+              "cpu_percent": 1.4576062109084618,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.750888048108766,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.478277037954339,
+              "name": "Brave Browser Helper (Renderer)",
+              "pid": 95651
+            },
+            {
+              "cpu_percent": 0.3754440241310056,
+              "name": "voicebox-server",
+              "pid": 30262
+            },
+            {
+              "cpu_percent": 0.2650193112414422,
+              "name": "boringNotch",
+              "pid": 27863
+            }
+          ],
+          "total_cpu_percent": 26.33698419303343
+        },
+        "disk_read_bytes": 8046927872,
+        "elapsed_s": 16.984556125011295,
+        "load": [
+          3.7568359375,
+          3.42431640625,
+          3.35888671875
+        ],
+        "mps_driver_bytes": 8313847808,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 8953791928,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t98%; charging; 0:17 remaining present: true",
+        "rss_bytes": 669663232,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          "24646  48.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+          "99758  12.0 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "47025   8.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+          "48031   7.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "48030   2.2 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+          "22148   1.7 /Applications/WhatsApp.app/Contents/MacOS/WhatsApp",
+          "79948   0.9 -/bin/zsh",
+          "46991   0.8 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+        ]
+      }
+    ]
+  },
+  "schema": 1,
+  "settings": {
+    "case": "composition",
+    "device": "mps",
+    "guidance": 0.0,
+    "height": 1024,
+    "noise_generator": "torch CPU float32",
+    "prompt": "A red ceramic teapot to the left of a blue cup on a wooden table, a window behind them.",
+    "quantized_linears": true,
+    "seed": 42,
+    "steps": 9,
+    "width": 1024
+  },
+  "stage": "encode",
+  "tool_sha256": {
+    "z_image_capture.py": "f1dfcb9f4d43c51637182d9d43bc593c79c117fc2af92cf5b47400f02d38cff7",
+    "z_image_compare.py": "d72c04ef1edb4b073486f49d5c475f2521238dbd005d776c49b7f7914d904d95",
+    "z_image_evidence.py": "4868c3256198d68a911c740fc861fdad8053e1bdc1861a4831cf0fea6669e097",
+    "z_image_probe.py": "0e8be72e818ac3286e7560cbd2914e5465deefa5bb8e8f12c6a5035ddeeb92dc",
+    "z_image_quantization.py": "283f55d5d67755cf53040d2137305f8dfc04b3a2bd32206ac738d24dfd1c5eb9"
+  },
+  "verified_weights": {
+    "text_encoder/model-00001-of-00003.safetensors": "328a91d3122359d5547f9d79521205bc0a46e1f79a792dfe650e99fc2d651223",
+    "text_encoder/model-00002-of-00003.safetensors": "6cd087b316306a68c562436b5492edbcf6e16c6dba3a1308279caa5a58e21ca5",
+    "text_encoder/model-00003-of-00003.safetensors": "7ca841ee75b9c61267c0c6148fd8d096d3d21b6d3e161256a9b878154f91fc52"
+  }
+}

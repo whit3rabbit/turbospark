@@ -1,0 +1,14 @@
+[
+  {
+    "mutation": "canonical_source",
+    "source_match": "original = tensor[start:start + 64].float().numpy()",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "mutation": "precision_exceptions",
+    "source_match": "eligible = \".attention.to_\" in name or \".feed_forward.w\" in name",
+    "applied_unique": true,
+    "isolated_failure": true
+  }
+]

@@ -291,3 +291,180 @@ async fn chat_completions_accepts_the_wider_openai_request_shapes() {
     assert_eq!(body["choices"][0]["finish_reason"], "length");
     assert_eq!(body["usage"]["completion_tokens"], 3);
 }
+
+#[tokio::test]
+async fn messages_accepts_role_system_inside_messages() {
+    let tok = load_tokenizer();
+    let base = spawn_server(h_steps(&tok, 200)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 2,
+            "temperature": 0.0,
+            "system": "You are terse.",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": "<system-reminder>SessionStart hook</system-reminder>"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "message");
+}
+
+#[tokio::test]
+async fn messages_promotes_first_system_message_when_top_level_absent() {
+    let tok = load_tokenizer();
+    let base = spawn_server(h_steps(&tok, 80)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 2,
+            "temperature": 0.0,
+            "messages": [
+                {"role": "system", "content": "You are terse."},
+                {"role": "user", "content": "hi"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "message");
+}
+
+#[tokio::test]
+async fn count_tokens_accepts_role_system_inside_messages() {
+    let base = spawn_server(Vec::new()).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages/count_tokens"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "system": "You are terse.",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": "<system-reminder>reminder</system-reminder>"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["input_tokens"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn models_lists_display_name() {
+    let base = spawn_server(Vec::new()).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{base}/v1/models"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"][0]["display_name"], "scripted");
+}
+
+#[tokio::test]
+async fn messages_accepts_developer_role_inside_messages() {
+    let tok = load_tokenizer();
+    let base = spawn_server(h_steps(&tok, 150)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 2,
+            "temperature": 0.0,
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "developer", "content": "developer instruction"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "message");
+}
+
+#[tokio::test]
+async fn messages_accepts_adaptive_thinking_and_omitted_max_tokens() {
+    let tok = load_tokenizer();
+    let eos_id = tok.token_to_id("<|im_end|>").unwrap() as usize;
+    let mut steps = h_steps(&tok, 35);
+    steps.push(one_hot(tok.vocab_size, eos_id));
+    let base = spawn_server(steps).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "temperature": 0.0,
+            "thinking": {"type": "adaptive", "display": "omitted"},
+            "messages": [
+                {"role": "user", "content": "hi"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, 200, "response body was: {text}");
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["type"], "message");
+    assert_eq!(body["stop_reason"], "end_turn");
+}
+
+#[tokio::test]
+async fn streaming_messages_accepts_role_system_inside_messages() {
+    let tok = load_tokenizer();
+    let base = spawn_server(h_steps(&tok, 200)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 2,
+            "stream": true,
+            "system": "System instructions",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": "<system-reminder>SessionStart</system-reminder>"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+    let names = event_names(&body);
+    assert_eq!(names.first().map(String::as_str), Some("message_start"));
+    assert_eq!(names.last().map(String::as_str), Some("message_stop"));
+}

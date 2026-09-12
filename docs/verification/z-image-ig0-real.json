@@ -1,0 +1,657 @@
+{
+  "captures": {
+    "composition": {
+      "actual_forwards": 9,
+      "png_sha256": "f732c628695166292fda9d21fff823a440a188e2916d270e65ed53b7d945192f",
+      "settings": {
+        "case": "composition",
+        "device": "mps",
+        "guidance": 0.0,
+        "height": 1024,
+        "noise_generator": "torch CPU float32",
+        "prompt": "A red ceramic teapot to the left of a blue cup on a wooden table, a window behind them.",
+        "quantized_linears": false,
+        "seed": 42,
+        "steps": 9,
+        "width": 1024
+      },
+      "stages": {
+        "decode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "8adf8afe2935e63771892bab3c046c5d9f01e03b812c5386cee3c8b03a5307f0",
+          "final_mps_driver_bytes": 10060791808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 1.9327529170550406,
+          "physical_read_bytes_during_capture": 3915776,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 10060791808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 8848885344,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "denoise": {
+          "benchmark_eligible": false,
+          "capture_sha256": "091fed2688fb8067b3396f6eaf293cb60785b595277e5d2e0872a41d11bf64f5",
+          "final_mps_driver_bytes": 14018134016,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 78.33232141612098,
+          "physical_read_bytes_during_capture": 20708270080,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 14049837056,
+          "sampled_max_mps_live_bytes": 12572630272,
+          "sampled_max_phys_footprint_bytes": 17214213600,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)"
+        },
+        "encode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "12d18ec578e5d739953b8e1dc62e66e061d785bb8b74695db6def0186eae2833",
+          "final_mps_driver_bytes": 8313847808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 2.253472417127341,
+          "physical_read_bytes_during_capture": 811008,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 8313847808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 8930002336,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)"
+        }
+      }
+    },
+    "composition-int4": {
+      "actual_forwards": 9,
+      "png_sha256": "6977212d6b1f38db94e139fbc4664553eff2bacbe3bfde07a9643ea243f2c401",
+      "settings": {
+        "case": "composition",
+        "device": "mps",
+        "guidance": 0.0,
+        "height": 1024,
+        "noise_generator": "torch CPU float32",
+        "prompt": "A red ceramic teapot to the left of a blue cup on a wooden table, a window behind them.",
+        "quantized_linears": true,
+        "seed": 42,
+        "steps": 9,
+        "width": 1024
+      },
+      "stages": {
+        "decode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "3289730c2da02894617539e169985777de69a76bacd56e943233ecd9f511697f",
+          "final_mps_driver_bytes": 10060791808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 1.9530868341680616,
+          "physical_read_bytes_during_capture": 4276224,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 10060791808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 10994615976,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "denoise": {
+          "benchmark_eligible": false,
+          "capture_sha256": "84f40e0bf40d9039612395073891416655d2a62cbf71856f7caa14a717edf33c",
+          "final_mps_driver_bytes": 14018134016,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 137.18188724992797,
+          "physical_read_bytes_during_capture": 44887216128,
+          "quantized_tensor_count": 238,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 14049837056,
+          "sampled_max_mps_live_bytes": 12572630272,
+          "sampled_max_phys_footprint_bytes": 17119857976,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "encode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "08a49f3a7f198655b15d47917fe9e20d5b98cf94f7b4185c20f6210b65c56cea",
+          "final_mps_driver_bytes": 8313847808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 17.074574165977538,
+          "physical_read_bytes_during_capture": 1794048,
+          "quantized_tensor_count": 252,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 8313864192,
+          "sampled_max_mps_live_bytes": 8114803200,
+          "sampled_max_phys_footprint_bytes": 8993637816,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        }
+      }
+    },
+    "detail": {
+      "actual_forwards": 9,
+      "png_sha256": "a320edb34231cfac6c99c995b372ba836a67b643d00046812a14d91100a2fa93",
+      "settings": {
+        "case": "detail",
+        "device": "mps",
+        "guidance": 0.0,
+        "height": 1024,
+        "noise_generator": "torch CPU float32",
+        "prompt": "Macro photograph of a honeybee on lavender, fine hairs and translucent wing veins.",
+        "quantized_linears": false,
+        "seed": 42,
+        "steps": 9,
+        "width": 1024
+      },
+      "stages": {
+        "decode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "b3fc0059521c5941289430cf89ff47637401108db15d8b3555fe7dd1a8c5b621",
+          "final_mps_driver_bytes": 10060791808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 1.6528043749276549,
+          "physical_read_bytes_during_capture": 4042752,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 10060791808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 10994632312,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "denoise": {
+          "benchmark_eligible": false,
+          "capture_sha256": "385fffcf659d5142ad33d2c9189c80e201a32e3779e142c4ebaa22ed0dbb18f7",
+          "final_mps_driver_bytes": 14018134016,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 69.65671187499538,
+          "physical_read_bytes_during_capture": 20125827072,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 14049837056,
+          "sampled_max_mps_live_bytes": 12572602624,
+          "sampled_max_phys_footprint_bytes": 17091562736,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "encode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "4da4f38457c3a393bb23776f39d284f94b05c78e18b6a51e1508aeb527f2b722",
+          "final_mps_driver_bytes": 8313847808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 1.8197807499673218,
+          "physical_read_bytes_during_capture": 933888,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 8313847808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 8925496712,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        }
+      }
+    },
+    "detail-int4": {
+      "actual_forwards": 9,
+      "png_sha256": "59893b57423cd4e7c7edd9674e0770dac67fc7c919a59b2902320b26e0dfddc2",
+      "settings": {
+        "case": "detail",
+        "device": "mps",
+        "guidance": 0.0,
+        "height": 1024,
+        "noise_generator": "torch CPU float32",
+        "prompt": "Macro photograph of a honeybee on lavender, fine hairs and translucent wing veins.",
+        "quantized_linears": true,
+        "seed": 42,
+        "steps": 9,
+        "width": 1024
+      },
+      "stages": {
+        "decode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "3613b8f98100559fba15dcf2865e75fc48e7fbaf1f54355423d6ad973d3b3b9c",
+          "final_mps_driver_bytes": 10060791808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 1.6465559999924153,
+          "physical_read_bytes_during_capture": 3739648,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 10060791808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 10992535136,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "denoise": {
+          "benchmark_eligible": false,
+          "capture_sha256": "4575e665e8c683fef8fb07b28d86c19ef4ec75ce7266b3da9bd894634d0849bd",
+          "final_mps_driver_bytes": 14018134016,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 123.19750887504779,
+          "physical_read_bytes_during_capture": 43770085376,
+          "quantized_tensor_count": 238,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 14049837056,
+          "sampled_max_mps_live_bytes": 12572602624,
+          "sampled_max_phys_footprint_bytes": 17114139984,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "encode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "5a9d2cabf4c49fbdadecf326bc27bd70ecf0ea1bedafaf9071e6742e6cdf3348",
+          "final_mps_driver_bytes": 8313864192,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 15.130067624850199,
+          "physical_read_bytes_during_capture": 1286144,
+          "quantized_tensor_count": 252,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 8313864192,
+          "sampled_max_mps_live_bytes": 8115202048,
+          "sampled_max_phys_footprint_bytes": 8977761720,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        }
+      }
+    },
+    "lighting": {
+      "actual_forwards": 9,
+      "png_sha256": "57cab9d332e9a8aea4f1cef8cde02fbb83f9f1d0b6a161b54642bdc92cbfc9e2",
+      "settings": {
+        "case": "lighting",
+        "device": "mps",
+        "guidance": 0.0,
+        "height": 1024,
+        "noise_generator": "torch CPU float32",
+        "prompt": "A lighthouse in winter at dusk, warm windows reflected on wet snow, cold blue shadows.",
+        "quantized_linears": false,
+        "seed": 42,
+        "steps": 9,
+        "width": 1024
+      },
+      "stages": {
+        "decode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "ad9d5a96d3fc7313ec321541894ce4cc89e1012a1962c32b36d2b284a82ec819",
+          "final_mps_driver_bytes": 10597662720,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 2.3738090419210494,
+          "physical_read_bytes_during_capture": 7352320,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 10597662720,
+          "sampled_max_mps_live_bytes": 351007744,
+          "sampled_max_phys_footprint_bytes": 11508958864,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)"
+        },
+        "denoise": {
+          "benchmark_eligible": false,
+          "capture_sha256": "4bd81b86ef4eb899578da10fcd6303e15307b7d5585cbf039ff5ef081f871034",
+          "final_mps_driver_bytes": 14018134016,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 74.983454459114,
+          "physical_read_bytes_during_capture": 20932980736,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 14049837056,
+          "sampled_max_mps_live_bytes": 12572616448,
+          "sampled_max_phys_footprint_bytes": 17255321008,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 1999.38M  free = 1072.62M  (encrypted)"
+        },
+        "encode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "d8cca22de779f758e2633687fe29165cd8e7be2d019b8faf89c236361ac2a6de",
+          "final_mps_driver_bytes": 8313847808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 3.2529857500921935,
+          "physical_read_bytes_during_capture": 130940928,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 8313847808,
+          "sampled_max_mps_live_bytes": 8115202048,
+          "sampled_max_phys_footprint_bytes": 8948073864,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 1999.38M  free = 1072.62M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 1999.38M  free = 1072.62M  (encrypted)"
+        }
+      }
+    },
+    "lighting-int4": {
+      "actual_forwards": 9,
+      "png_sha256": "1855f6ac6d4a55acf96c743da1141aed597721276315853d160f96f2c78fd9f3",
+      "settings": {
+        "case": "lighting",
+        "device": "mps",
+        "guidance": 0.0,
+        "height": 1024,
+        "noise_generator": "torch CPU float32",
+        "prompt": "A lighthouse in winter at dusk, warm windows reflected on wet snow, cold blue shadows.",
+        "quantized_linears": true,
+        "seed": 42,
+        "steps": 9,
+        "width": 1024
+      },
+      "stages": {
+        "decode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "4b5956193736804ebe59818e1d2e4f5901baaec8bbeece733b8c96c4e402348f",
+          "final_mps_driver_bytes": 10060791808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 1.9426486659795046,
+          "physical_read_bytes_during_capture": 4001792,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 10060791808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 10993485504,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)"
+        },
+        "denoise": {
+          "benchmark_eligible": false,
+          "capture_sha256": "dc306f31ef46d3c3a2eaed296c7d0c5a594f6bee85cbadd5b606f0fed30905ca",
+          "final_mps_driver_bytes": 14018134016,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 137.98174266703427,
+          "physical_read_bytes_during_capture": 45755052032,
+          "quantized_tensor_count": 238,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 14049837056,
+          "sampled_max_mps_live_bytes": 12671244032,
+          "sampled_max_phys_footprint_bytes": 17311206856,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)"
+        },
+        "encode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "435269b29b8f423b39fe73f407be67fbe36e38c47515e99ee4a9a5239baf0364",
+          "final_mps_driver_bytes": 8313847808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 16.738239250145853,
+          "physical_read_bytes_during_capture": 2404352,
+          "quantized_tensor_count": 252,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 8313847808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 8962360736,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 1991.38M  free = 1080.62M  (encrypted)"
+        }
+      }
+    },
+    "typography": {
+      "actual_forwards": 9,
+      "png_sha256": "54ad16211fad05f1eaf585692a2f4373070eea9cde0fb0861e6f1ef142656717",
+      "settings": {
+        "case": "typography",
+        "device": "mps",
+        "guidance": 0.0,
+        "height": 1024,
+        "noise_generator": "torch CPU float32",
+        "prompt": "A shop sign with the exact words \"FRESH BREAD\" in clear black letters.",
+        "quantized_linears": false,
+        "seed": 42,
+        "steps": 9,
+        "width": 1024
+      },
+      "stages": {
+        "decode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "9ddbc5f1a4f7edd9c667f6dff889362b2dff8f149beb2357c64d751460ca7d9e",
+          "final_mps_driver_bytes": 10060791808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 1.6345904578920454,
+          "physical_read_bytes_during_capture": 4018176,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 10060791808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 10993272464,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "denoise": {
+          "benchmark_eligible": false,
+          "capture_sha256": "32ead7a0ab66312d1ec696edcd763096541579cc4e636e8ef576953071259477",
+          "final_mps_driver_bytes": 14018134016,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 70.11898641614243,
+          "physical_read_bytes_during_capture": 21979987968,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 14049837056,
+          "sampled_max_mps_live_bytes": 12572611840,
+          "sampled_max_phys_footprint_bytes": 17392340496,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "encode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "af93e35f871d2895fbd70540f3a3fa65508781350c05e8bda4c1a895b91a8174",
+          "final_mps_driver_bytes": 8313847808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 2.2528818328864872,
+          "physical_read_bytes_during_capture": 917504,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 8313864192,
+          "sampled_max_mps_live_bytes": 8114803200,
+          "sampled_max_phys_footprint_bytes": 8965801304,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        }
+      }
+    },
+    "typography-int4": {
+      "actual_forwards": 9,
+      "png_sha256": "93c31999050a3f62c360d8c59f10a32fd92834e072582f4fa715ea6f7c4a9949",
+      "settings": {
+        "case": "typography",
+        "device": "mps",
+        "guidance": 0.0,
+        "height": 1024,
+        "noise_generator": "torch CPU float32",
+        "prompt": "A shop sign with the exact words \"FRESH BREAD\" in clear black letters.",
+        "quantized_linears": true,
+        "seed": 42,
+        "steps": 9,
+        "width": 1024
+      },
+      "stages": {
+        "decode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "7b7be89922cf5e7d1994a1d515fc683e9f434766995305e24af648dbc3e41577",
+          "final_mps_driver_bytes": 10060791808,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 1.6529682502150536,
+          "physical_read_bytes_during_capture": 4313088,
+          "quiet_ac_throughout": true,
+          "sampled_max_mps_driver_bytes": 10060791808,
+          "sampled_max_mps_live_bytes": 0,
+          "sampled_max_phys_footprint_bytes": 10994157200,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "denoise": {
+          "benchmark_eligible": false,
+          "capture_sha256": "d75e1c8c09fcf9115535219f1b8a82d3b52b08de054bc4b27fa7e4ab9114e262",
+          "final_mps_driver_bytes": 14018134016,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 123.1873151671607,
+          "physical_read_bytes_during_capture": 44557099008,
+          "quantized_tensor_count": 238,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 14049837056,
+          "sampled_max_mps_live_bytes": 12572611840,
+          "sampled_max_phys_footprint_bytes": 17114172704,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        },
+        "encode": {
+          "benchmark_eligible": false,
+          "capture_sha256": "b06592796a0a28e625be9c1f8d6b1eec7bbfebbf396dd621d2c8115080073fde",
+          "final_mps_driver_bytes": 8313864192,
+          "final_mps_live_bytes": 0,
+          "instrumented_elapsed_s": 15.071828750194982,
+          "physical_read_bytes_during_capture": 1339392,
+          "quantized_tensor_count": 252,
+          "quiet_ac_throughout": false,
+          "sampled_max_mps_driver_bytes": 8313880576,
+          "sampled_max_mps_live_bytes": 8114803200,
+          "sampled_max_phys_footprint_bytes": 8987215264,
+          "swap_end": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+          "swap_start": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)"
+        }
+      }
+    }
+  },
+  "comparisons": {
+    "composition": {
+      "conditioning": {
+        "max_abs": 256.0,
+        "relative_l2": 0.08274856334418848,
+        "rmse": 4.4030183862890935
+      },
+      "decoded_pixels": {
+        "max_abs": 1.8355088233947754,
+        "relative_l2": 0.5272690519270844,
+        "rmse": 0.29246925352776393
+      },
+      "final_latents": {
+        "max_abs": 5.967097043991089,
+        "relative_l2": 0.44210064033686464,
+        "rmse": 0.5695829942871035
+      }
+    },
+    "detail": {
+      "conditioning": {
+        "max_abs": 256.0,
+        "relative_l2": 0.08083799927917204,
+        "rmse": 4.784299446167617
+      },
+      "decoded_pixels": {
+        "max_abs": 1.8118240237236023,
+        "relative_l2": 0.835547701088856,
+        "rmse": 0.2605325382773777
+      },
+      "final_latents": {
+        "max_abs": 4.671139597892761,
+        "relative_l2": 0.6137955386114105,
+        "rmse": 0.5871071735524774
+      }
+    },
+    "lighting": {
+      "conditioning": {
+        "max_abs": 256.0,
+        "relative_l2": 0.08114506753898341,
+        "rmse": 4.5446692560523445
+      },
+      "decoded_pixels": {
+        "max_abs": 2.04876047372818,
+        "relative_l2": 0.5196854652978785,
+        "rmse": 0.2689062096831536
+      },
+      "final_latents": {
+        "max_abs": 6.614666700363159,
+        "relative_l2": 0.4574689200818213,
+        "rmse": 0.5206743938769446
+      }
+    },
+    "typography": {
+      "conditioning": {
+        "max_abs": 256.0,
+        "relative_l2": 0.08293501208673439,
+        "rmse": 4.728656931460576
+      },
+      "decoded_pixels": {
+        "max_abs": 1.8691980838775635,
+        "relative_l2": 1.0046726119553986,
+        "rmse": 0.6857030876341792
+      },
+      "final_latents": {
+        "max_abs": 7.066559791564941,
+        "relative_l2": 0.9213783314212473,
+        "rmse": 1.1901621413745038
+      }
+    }
+  },
+  "edge_encodes": {
+    "empty": {
+      "capture_sha256": "c6275af070884335579d2997b800d8be866a76c87fcceec0419d13f5ad56ef72",
+      "conditioning": {
+        "bytes": 81920,
+        "dtype": "float32",
+        "file": "conditioning.npy",
+        "sha256": "bb449a07bd5f18c6cfa05eddfd92b1265a852a55b23e713d7b40295769c1c10d",
+        "shape": [
+          8,
+          2560
+        ],
+        "source_dtype": "torch.bfloat16"
+      }
+    },
+    "overlong": {
+      "capture_sha256": "7ebadeeda749b6fbce7b86d228380a039ab5f3323bbadef55329758aa0816b42",
+      "conditioning": {
+        "bytes": 5242880,
+        "dtype": "float32",
+        "file": "conditioning.npy",
+        "sha256": "325a914f6facfd98ec2087292d0ac74f6ab6918bf9a55ec512f78e8ce60a0df5",
+        "shape": [
+          512,
+          2560
+        ],
+        "source_dtype": "torch.bfloat16"
+      }
+    },
+    "unicode": {
+      "capture_sha256": "13014ef25428dfc90f0d0bb828501f427b1c8eee32e62086d2c6231198484773",
+      "conditioning": {
+        "bytes": 194560,
+        "dtype": "float32",
+        "file": "conditioning.npy",
+        "sha256": "3231b07500e09f0c4dad07abe360b237fa47aa587ab0b8016e097ad6508806ee",
+        "shape": [
+          19,
+          2560
+        ],
+        "source_dtype": "torch.bfloat16"
+      }
+    }
+  },
+  "performance_baseline": false,
+  "repeat": {
+    "decode": {
+      "capture_sha256": "847b7c6d013ea858058fac3dab97b70301ea5de96103429d0911e7bf6877c0fc",
+      "identical_arrays": {
+        "decoded_pixels": true
+      }
+    },
+    "denoise": {
+      "capture_sha256": "85cfa3ff5ed1edaeff9965922518b136171cddbfd24b4ace25a664fe73b1164e",
+      "identical_arrays": {
+        "block_00_freqs": true,
+        "block_00_input": true,
+        "block_00_mask": true,
+        "block_00_modulation": true,
+        "block_00_output": true,
+        "block_15_freqs": true,
+        "block_15_input": true,
+        "block_15_mask": true,
+        "block_15_modulation": true,
+        "block_15_output": true,
+        "block_29_freqs": true,
+        "block_29_input": true,
+        "block_29_mask": true,
+        "block_29_modulation": true,
+        "block_29_output": true,
+        "final_latents": true,
+        "initial_noise": true,
+        "latent_00": true,
+        "latent_01": true,
+        "latent_02": true,
+        "latent_03": true,
+        "latent_04": true,
+        "latent_05": true,
+        "latent_06": true,
+        "latent_07": true,
+        "latent_08": true,
+        "sigmas": true,
+        "timesteps": true
+      }
+    },
+    "encode": {
+      "capture_sha256": "6f4715cff7871826efd1408273a48a6b2f4fbfdf24ecf774c154426d2242b7e5",
+      "identical_arrays": {
+        "attention_mask": true,
+        "conditioning": true,
+        "token_ids": true
+      }
+    }
+  },
+  "scope": "four prompts, one explicit noise seed, BF16 reference and INT4 emulation"
+}

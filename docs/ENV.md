@@ -71,7 +71,7 @@ These variables configure runtime diagnostics, kernel execution seams, and profi
 | `TURBOSPARK_ROUTED_PIPELINE` | MoE dispatch (`runtime`) | Set to `0` to disable one-layer-pipelined routed command buffer execution. | `1` (enabled) |
 | `TURBOSPARK_ROUTED_BATCH` | MoE prefill (`runtime`) | Set to `1` to enable experimental routed batch prefill dispatch. | `0` (off) |
 | `TURBOSPARK_BATCHED_GEMV` | MoE prefill (`runtime`) | Set to `1` to enable experimental batched resident GEMVs as M-row GEMMs. | `0` (off) |
-| `TURBOSPARK_EXPERT_RESIDENCY` | MoE runtime (`runtime`) | Set to `mapped` to read routed experts in place from mmap rather than pinned slot cache. | unset |
+| `TURBOSPARK_EXPERT_RESIDENCY` | MoE runtime (`runtime`) | Set to `mapped` to read routed experts in place from mmap rather than pinned slot cache. Since the `--expert-residency` flag this is the `auto` arm's fallback: honored when the request left the mode at `auto`, ignored under an explicit `streamed`/`mapped` (`runtime::resolve_expert_residency` is the one resolver). | unset |
 | `TURBOSPARK_VISION_RESIDENCY` | Vision tower (`runtime`) | Set to `mapped` to read vision tower blocks out of mapped memory rather than pinned slots. | unset |
 | `TURBOSPARK_SPEC_STATS` | Speculative decoding (`runtime`) | Set to `1` to log speculative acceptance rate per block position and rollback counts to stderr. | unset |
 | `TURBOSPARK_MTP_DRAFT` | MTP drafter (`runtime`) | Draft block depth (positive integer) or policy (`0` to disable, unset for `auto`). | unset (`auto`) |

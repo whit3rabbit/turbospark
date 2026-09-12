@@ -152,91 +152,99 @@ fn stream_response(
     let model_name = request_model;
     let cancel_for_task = cancel.clone();
 
-    tokio::task::spawn_blocking(move || {
-        let send = |ev: Event| {
-            // Fast-path disconnect detection: `CancelOnDrop` below catches
-            // the same event even with no chunk in flight (a long prefill
-            // sends none), so this is a speed-up rather than the only
-            // detector (Gotcha 25).
-            if tx.send(ev).is_err() {
-                cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        };
-        send(created_event(&id, &model_name));
-
-        let mut message_open = false;
-        let mut message_item_id = String::new();
-        let mut text_acc = String::new();
-        // ONE cursor for every item this turn emits, message and function
-        // calls alike -- not a message fixed at index 0 with calls starting
-        // at 1, which put a call-only turn's first call at index 1 with
-        // nothing at 0.
-        let mut output_index: u32 = 0;
-        let mut items: Vec<serde_json::Value> = Vec::new();
-
-        let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
-        let result = stream_blocking(
-            &model,
-            &planned.prompt_ids,
-            &planned.config,
-            planned.images.as_ref(),
-            &tools,
-            effort,
-            &flag,
-            &mut |piece| match piece {
-                // Dropped in v1: OpenAI defines no delta event for a
-                // Responses reasoning summary, and `responses_warnings`
-                // already reported this ahead of the stream when the
-                // checkpoint's dialect meant one would be produced (Gotcha 24).
-                Piece::Reasoning(_) => {}
-                Piece::Text(delta) => {
-                    if delta.is_empty() {
-                        return;
-                    }
-                    if !message_open {
-                        message_item_id = format!("msg_{output_index}");
-                        send(open_message_event(&message_item_id, output_index));
-                        send(content_part_added_event(&message_item_id, output_index));
-                        message_open = true;
-                    }
-                    text_acc.push_str(&delta);
-                    send(text_delta_event(&message_item_id, output_index, &delta));
+    // The FIFO gate's acquisition point for this endpoint's live-stream
+    // path (the non-streaming and buffered arms acquire inside
+    // `run_guarded`). See `handler::stream_response`'s longer note.
+    let gate = model.generation_queue();
+    let cancel_for_gate = cancel.clone();
+    tokio::spawn(async move {
+        let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
+            let send = |ev: Event| {
+                // Fast-path disconnect detection: `CancelOnDrop` below catches
+                // the same event even with no chunk in flight (a long prefill
+                // sends none), so this is a speed-up rather than the only
+                // detector (Gotcha 25).
+                if tx.send(ev).is_err() {
+                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
-                Piece::Tool(call) => {
+            };
+            send(created_event(&id, &model_name));
+
+            let mut message_open = false;
+            let mut message_item_id = String::new();
+            let mut text_acc = String::new();
+            // ONE cursor for every item this turn emits, message and function
+            // calls alike -- not a message fixed at index 0 with calls starting
+            // at 1, which put a call-only turn's first call at index 1 with
+            // nothing at 0.
+            let mut output_index: u32 = 0;
+            let mut items: Vec<serde_json::Value> = Vec::new();
+
+            let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
+            let result = stream_blocking(
+                &model,
+                &planned.prompt_ids,
+                &planned.config,
+                planned.images.as_ref(),
+                &tools,
+                effort,
+                &flag,
+                &mut |piece| match piece {
+                    // Dropped in v1: OpenAI defines no delta event for a
+                    // Responses reasoning summary, and `responses_warnings`
+                    // already reported this ahead of the stream when the
+                    // checkpoint's dialect meant one would be produced (Gotcha 24).
+                    Piece::Reasoning(_) => {}
+                    Piece::Text(delta) => {
+                        if delta.is_empty() {
+                            return;
+                        }
+                        if !message_open {
+                            message_item_id = format!("msg_{output_index}");
+                            send(open_message_event(&message_item_id, output_index));
+                            send(content_part_added_event(&message_item_id, output_index));
+                            message_open = true;
+                        }
+                        text_acc.push_str(&delta);
+                        send(text_delta_event(&message_item_id, output_index, &delta));
+                    }
+                    Piece::Tool(call) => {
+                        if message_open {
+                            close_message_events(&send, &message_item_id, output_index, &text_acc);
+                            items.push(message_item(&text_acc, "completed", &message_item_id));
+                            message_open = false;
+                            text_acc.clear();
+                            output_index += 1;
+                        }
+                        function_call_events(&send, &call, output_index);
+                        items.push(function_call_item(&call, "completed"));
+                        output_index += 1;
+                    }
+                },
+            );
+
+            match result {
+                // Discarded silently: the client that would read
+                // `response.completed` is the one already gone.
+                Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
+                Ok(decode) => {
                     if message_open {
                         close_message_events(&send, &message_item_id, output_index, &text_acc);
                         items.push(message_item(&text_acc, "completed", &message_item_id));
-                        message_open = false;
-                        text_acc.clear();
-                        output_index += 1;
                     }
-                    function_call_events(&send, &call, output_index);
-                    items.push(function_call_item(&call, "completed"));
-                    output_index += 1;
+                    send(completed_event(&id, &model_name, &decode, &items));
                 }
-            },
-        );
-
-        match result {
-            // Discarded silently: the client that would read
-            // `response.completed` is the one already gone.
-            Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
-            Ok(decode) => {
-                if message_open {
-                    close_message_events(&send, &message_item_id, output_index, &text_acc);
-                    items.push(message_item(&text_acc, "completed", &message_item_id));
-                }
-                send(completed_event(&id, &model_name, &decode, &items));
+                // A failed run is not a completed one: report it as a
+                // `response.failed` event rather than a fabricated `completed`
+                // status, matching the other two endpoints' contract.
+                Err(e) => send(failed_event(&e.to_string())),
             }
-            // A failed run is not a completed one: report it as a
-            // `response.failed` event rather than a fabricated `completed`
-            // status, matching the other two endpoints' contract.
-            Err(e) => send(failed_event(&e.to_string())),
-        }
-        // No `[DONE]` sentinel: an OpenAI Responses stream ends at
-        // `response.completed` (or `response.failed`), the same shape
-        // Anthropic's own stream takes and for the same reason -- `[DONE]`
-        // is a Chat-Completions-ism (Gotcha 24).
+            // No `[DONE]` sentinel: an OpenAI Responses stream ends at
+            // `response.completed` (or `response.failed`), the same shape
+            // Anthropic's own stream takes and for the same reason -- `[DONE]`
+            // is a Chat-Completions-ism (Gotcha 24).
+        })
+        .await;
     });
 
     let stream: std::pin::Pin<

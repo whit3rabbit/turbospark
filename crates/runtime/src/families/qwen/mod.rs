@@ -91,6 +91,20 @@ pub(crate) const RMS_EPS: f32 = 1e-6;
 /// DRAFTER this port can ingest. Lifting either arm is a checkpoint question.
 pub const MOE_SPECULATION_BLOCKER_MARKER: &str = "no MoE drafter";
 
+/// The stable prefix every vision speculation refusal opens with, named ONCE
+/// for the same reason [`MOE_SPECULATION_BLOCKER_MARKER`] is: assertion sites
+/// in tests match on it, and a message and its guards must not drift apart.
+///
+/// Both blockers refuse a vision-active arch, and `produce_batched` carries
+/// the same phrase by name as the defense-in-depth arm. The condition this
+/// marker names is UNREACHABLE on every install that exists today (no
+/// published conversion carries both a tower and a drafter), which is exactly
+/// why it is a refusal rather than a vision-aware verify pass: there is no
+/// artifact to test that pass against, and an untested numeric path that
+/// MUTES its own wrongness behind fluent output is the worse failure
+/// (`docs/VISION.md`'s "Still not built" paragraph).
+pub const VISION_SPECULATION_BLOCKER_MARKER: &str = "the verify pass is vision-blind";
+
 use crate::real_forward::RealForwardRunner;
 
 /// The trunk's tensor-name prefix.

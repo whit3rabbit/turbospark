@@ -1261,3 +1261,67 @@ fn a_dense_int4_install_without_a_head_is_told_which_artifact_would_fix_it() {
          prevent: {blocker}"
     );
 }
+
+/// Attaching a vision sidecar to a DRAFTING runner flips the engine blocker
+/// to the vision-blind refusal, and `produce_batched` refuses by name
+/// (ROADMAP P1 item 2).
+///
+/// The BEFORE state is the discriminating half: this fixture is 1-bit, so
+/// the pre-attach blocker is the INT4 arm. If the attach did not reach the
+/// blocker -- if `arch.vision` were read from a snapshot taken at open
+/// rather than from the field `attach_vision_sidecar` mutates -- the reason
+/// would stay INT4 and this test reddens. No install that exists combines a
+/// tower and a drafter, so this synthetic pair is the only fixture that can
+/// hold the combination's contract at all.
+#[test]
+fn attaching_a_vision_sidecar_flips_the_engine_blocker_and_refuses_the_batched_verify() {
+    let dir = temp_dir("sidecar-blocker");
+    build_with_head(&dir);
+    let sidecar_dir = std::env::temp_dir().join(format!(
+        "turbospark-qwen35-mtp-sidecar-blocker-side-{}",
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    let _ = std::fs::remove_dir_all(&sidecar_dir);
+    turbospark_repack::build_synthetic_vision_sidecar(&sidecar_dir, "mtp-sidecar-blocker").expect(
+        "a standalone sidecar builds from the same tower tensors the trunk family pairs with",
+    );
+
+    let mut runner = open(&dir);
+    let before = runner
+        .speculation_blocker()
+        .expect("the 1-bit fixture's blocker is the INT4 one");
+    assert!(
+        before.contains("INT4-only"),
+        "fixture setup: the pre-attach reason must be INT4 or the flip below is \
+         not discriminating: {before}"
+    );
+
+    runner
+        .attach_vision_sidecar(&sidecar_dir)
+        .expect("the sidecar pairs with this trunk's family and hidden size");
+
+    let after = runner
+        .speculation_blocker()
+        .expect("a vision-active runner is refused, not waved through");
+    assert!(
+        after.contains(turbospark_runtime::VISION_SPECULATION_BLOCKER_MARKER),
+        "expected the vision refusal after attach, got: {after}"
+    );
+
+    // Defense in depth: the verify pass itself refuses by name, so a caller
+    // that drives `produce_batched` without asking the policy first still
+    // fails loudly rather than computing fluent wrong numbers.
+    let vocab = runner.vocab_size();
+    let mut logits = vec![f16::from_f32(0.0); 3 * vocab];
+    let err = runner
+        .produce_batched(&[1, 2, 3], 0, &mut logits)
+        .expect_err("the batched verify must refuse a vision-active runner");
+    assert!(
+        err.to_string()
+            .contains(turbospark_runtime::VISION_SPECULATION_BLOCKER_MARKER),
+        "unexpected error: {err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&sidecar_dir);
+}

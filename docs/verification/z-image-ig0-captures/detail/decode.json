@@ -1,0 +1,348 @@
+{
+  "arrays": {
+    "decoded_pixels": {
+      "bytes": 12582912,
+      "dtype": "float32",
+      "file": "decoded_pixels.npy",
+      "sha256": "9b5b65c6a5cf6aaffcf29efe284a8762e3adcfcf4192877c1650a592ca419e73",
+      "shape": [
+        1,
+        3,
+        1024,
+        1024
+      ],
+      "source_dtype": "torch.float32"
+    }
+  },
+  "benchmark_eligible": false,
+  "complete": true,
+  "inputs": {
+    "denoise.json": "385fffcf659d5142ad33d2c9189c80e201a32e3779e142c4ebaa22ed0dbb18f7"
+  },
+  "model_revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+  "packages": {
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "PyYAML": "6.0.3",
+    "Pygments": "2.21.0",
+    "accelerate": "1.15.0",
+    "annotated-doc": "0.0.5",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.1",
+    "click": "8.5.0",
+    "diffusers": "0.41.0.dev0",
+    "filelock": "3.32.6",
+    "fsspec": "2026.7.0",
+    "h11": "0.16.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface_hub": "1.31.0",
+    "idna": "3.19",
+    "importlib_metadata": "9.0.1",
+    "markdown-it-py": "4.2.0",
+    "mdurl": "0.1.2",
+    "mlx": "0.32.2",
+    "mlx-metal": "0.32.2",
+    "mpmath": "1.3.0",
+    "networkx": "3.6.1",
+    "numpy": "2.5.3",
+    "packaging": "26.3",
+    "pillow": "12.3.0",
+    "psutil": "7.2.2",
+    "regex": "2026.9.10",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "sentencepiece": "0.2.2",
+    "setuptools": "84.0.0",
+    "shellingham": "1.5.4",
+    "sympy": "1.14.0",
+    "tokenizers": "0.23.2",
+    "torch": "2.14.0",
+    "tqdm": "4.70.0",
+    "transformers": "5.17.0",
+    "typer": "0.27.2",
+    "typing_extensions": "4.16.0",
+    "urllib3": "2.7.0",
+    "zipp": "4.1.0"
+  },
+  "png_sha256": "a320edb34231cfac6c99c995b372ba836a67b643d00046812a14d91100a2fa93",
+  "preflight": [
+    {
+      "quiet": true,
+      "top": [
+        {
+          "cpu_percent": 1.7123882746421772,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 0.9323537281865241,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.7792328665410906,
+          "name": "AlDente",
+          "pid": 25003
+        },
+        {
+          "cpu_percent": 0.5748044910645763,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.5419356149902909,
+          "name": "python",
+          "pid": 59510
+        },
+        {
+          "cpu_percent": 0.3202711215898854,
+          "name": "SkyComputerUseService",
+          "pid": 48338
+        },
+        {
+          "cpu_percent": 0.32019596410063306,
+          "name": "zsh",
+          "pid": 79948
+        },
+        {
+          "cpu_percent": 0.25493420942640943,
+          "name": "boringNotch",
+          "pid": 27863
+        }
+      ],
+      "total_cpu_percent": 7.052280742238577
+    },
+    {
+      "quiet": true,
+      "top": [
+        {
+          "cpu_percent": 2.659148540715635,
+          "name": "mdworker_shared",
+          "pid": 5181
+        },
+        {
+          "cpu_percent": 1.0122710329272397,
+          "name": "python",
+          "pid": 59510
+        },
+        {
+          "cpu_percent": 0.7351015834368502,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.6073626197697231,
+          "name": "AlDente",
+          "pid": 25003
+        },
+        {
+          "cpu_percent": 0.5559456784028491,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.4515050162749046,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 0.3458467166184809,
+          "name": "zsh",
+          "pid": 79948
+        },
+        {
+          "cpu_percent": 0.29082707453896206,
+          "name": "SkyComputerUseService",
+          "pid": 48338
+        }
+      ],
+      "total_cpu_percent": 8.999139223843617
+    },
+    {
+      "quiet": true,
+      "top": [
+        {
+          "cpu_percent": 0.638025020689074,
+          "name": "Little Snitch Agent",
+          "pid": 8558
+        },
+        {
+          "cpu_percent": 0.5328913380674303,
+          "name": "python",
+          "pid": 59510
+        },
+        {
+          "cpu_percent": 0.5136302053329193,
+          "name": "AlDente",
+          "pid": 25003
+        },
+        {
+          "cpu_percent": 0.4799232231143505,
+          "name": "ChatGPT",
+          "pid": 46991
+        },
+        {
+          "cpu_percent": 0.40929906987327785,
+          "name": "WhatsApp",
+          "pid": 22148
+        },
+        {
+          "cpu_percent": 0.32933903559180616,
+          "name": "zsh",
+          "pid": 79948
+        },
+        {
+          "cpu_percent": 0.2897195376979665,
+          "name": "SkyComputerUseService",
+          "pid": 48338
+        },
+        {
+          "cpu_percent": 0.24718453629920417,
+          "name": "Brave Browser",
+          "pid": 31795
+        }
+      ],
+      "total_cpu_percent": 5.561290862081954
+    }
+  ],
+  "references": {
+    "diffusers": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux": "051ba9ff25c9a8a8703356053a012a0dfad3fe39"
+  },
+  "resources": {
+    "cache_state": "uncontrolled; no cache eviction performed",
+    "elapsed_s": 1.6528043749276549,
+    "measurement_kind": "instrumented reference capture",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:03 remaining present: true",
+    "quiet_ac_throughout": true,
+    "samples": [
+      {
+        "disk_read_bytes": 312434688,
+        "elapsed_s": 0.012093292083591223,
+        "load": [
+          1.11181640625,
+          2.6767578125,
+          3.23388671875
+        ],
+        "mps_driver_bytes": 475136,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 332399600,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:03 remaining present: true",
+        "rss_bytes": 393347072,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          " 5147  22.3 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "25003   2.6 /Applications/AlDente.app/Contents/MacOS/AlDente",
+          "  167   1.7 /usr/sbin/notifyd",
+          "    1   0.9 /sbin/launchd",
+          "  179   0.8 /usr/libexec/runningboardd",
+          "25041   0.7 /Library/PrivilegedHelperTools/com.apphousekitchen.aldente-pro.helper",
+          "  142   0.6 /usr/libexec/opendirectoryd",
+          "  177   0.5 /usr/sbin/cfprefsd"
+        ]
+      },
+      {
+        "background": {
+          "quiet": true,
+          "top": [
+            {
+              "cpu_percent": 0.9971843573272786,
+              "name": "python",
+              "pid": 59510
+            },
+            {
+              "cpu_percent": 0.6802825488464271,
+              "name": "Little Snitch Agent",
+              "pid": 8558
+            },
+            {
+              "cpu_percent": 0.3771048994301508,
+              "name": "zsh",
+              "pid": 79948
+            },
+            {
+              "cpu_percent": 0.34014127443787323,
+              "name": "WhatsApp",
+              "pid": 22148
+            },
+            {
+              "cpu_percent": 0.27887359146226987,
+              "name": "ChatGPT",
+              "pid": 46991
+            },
+            {
+              "cpu_percent": 0.21338055104260065,
+              "name": "boringNotch",
+              "pid": 27863
+            },
+            {
+              "cpu_percent": 0.18169037021210707,
+              "name": "fileproviderd",
+              "pid": 24930
+            },
+            {
+              "cpu_percent": 0.15739456487940937,
+              "name": "Codex (Renderer)",
+              "pid": 48031
+            }
+          ],
+          "total_cpu_percent": 4.503609381059738
+        },
+        "disk_read_bytes": 316477440,
+        "elapsed_s": 1.5512285421136767,
+        "load": [
+          1.11181640625,
+          2.6767578125,
+          3.23388671875
+        ],
+        "mps_driver_bytes": 10060791808,
+        "mps_live_bytes": 0,
+        "phys_footprint_bytes": 10994632312,
+        "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=7536739)\t100%; finishing charge; 0:03 remaining present: true",
+        "rss_bytes": 959692800,
+        "swap": "vm.swapusage: total = 3072.00M  used = 2026.44M  free = 1045.56M  (encrypted)",
+        "top_cpu": [
+          "PID  %CPU COMM",
+          " 5147  30.6 /opt/homebrew/Cellar/python@3.13/3.13.15/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python",
+          "79948   0.8 -/bin/zsh",
+          "31795   0.6 /Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+          "59510   0.6 /Users/whit3rabbit/.hermes/hermes-agent/venv/bin/python",
+          " 8558   0.5 /Applications/Little Snitch.app/Contents/Components/Little Snitch Agent.app/Contents/MacOS/Little Snitch Agent",
+          "  210   0.3 /usr/libexec/airportd",
+          " 5226   0.3 sleep",
+          "  278   0.3 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN"
+        ]
+      }
+    ]
+  },
+  "schema": 1,
+  "settings": {
+    "case": "detail",
+    "device": "mps",
+    "guidance": 0.0,
+    "height": 1024,
+    "noise_generator": "torch CPU float32",
+    "prompt": "Macro photograph of a honeybee on lavender, fine hairs and translucent wing veins.",
+    "quantized_linears": false,
+    "seed": 42,
+    "steps": 9,
+    "width": 1024
+  },
+  "stage": "decode",
+  "tool_sha256": {
+    "z_image_capture.py": "29a8e5e61f97c7263f33288351990d3944a7e20d71d24d5b650bf883bbd5665b",
+    "z_image_compare.py": "d72c04ef1edb4b073486f49d5c475f2521238dbd005d776c49b7f7914d904d95",
+    "z_image_evidence.py": "4868c3256198d68a911c740fc861fdad8053e1bdc1861a4831cf0fea6669e097",
+    "z_image_probe.py": "0e8be72e818ac3286e7560cbd2914e5465deefa5bb8e8f12c6a5035ddeeb92dc",
+    "z_image_quantization.py": "283f55d5d67755cf53040d2137305f8dfc04b3a2bd32206ac738d24dfd1c5eb9"
+  },
+  "verified_weights": {
+    "vae/diffusion_pytorch_model.safetensors": "f5b59a26851551b67ae1fe58d32e76486e1e812def4696a4bea97f16604d40a3"
+  }
+}

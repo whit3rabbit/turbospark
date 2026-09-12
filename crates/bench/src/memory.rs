@@ -38,7 +38,49 @@ struct TaskVmInfo {
 }
 
 const TASK_VM_INFO: u32 = 22;
+const TASK_EVENTS_INFO: u32 = 2;
 const KERN_SUCCESS: i32 = 0;
+
+/// `task_events_info` from `<mach/task_info.h>`, for the eviction probe's
+/// fault counter (`crates/bench/tests/mapped_residency_eviction.rs`): the
+/// delta of `faults` across a decode window is what "the OS reclaimed the
+/// mapping's clean pages and every read now faults" looks like from inside
+/// the process. Only `faults` and `pageins` are read; the struct is the
+/// header's full 8-field shape so the requested word count is exactly
+/// `TASK_EVENTS_INFO_COUNT`.
+#[repr(C)]
+#[derive(Default)]
+struct TaskEventsInfo {
+    faults: i32,
+    pageins: i32,
+    cow_faults: i32,
+    messages_sent: i32,
+    messages_received: i32,
+    syscalls_mach: i32,
+    syscalls_unix: i32,
+    csw: i32,
+}
+
+/// Cumulative page-fault and page-in counts for THIS process, or `None`
+/// when `task_info` refuses the flavor. Monotonic for the process lifetime,
+/// so a caller measures an interval by differencing two reads.
+pub fn task_fault_counters() -> Option<(u64, u64)> {
+    let mut info = TaskEventsInfo::default();
+    let mut count = (std::mem::size_of::<TaskEventsInfo>() / std::mem::size_of::<i32>()) as u32;
+    let kr = unsafe {
+        task_info(
+            mach_task_self_,
+            TASK_EVENTS_INFO,
+            (&mut info as *mut TaskEventsInfo).cast(),
+            &mut count,
+        )
+    };
+    if kr == KERN_SUCCESS {
+        Some((info.faults.max(0) as u64, info.pageins.max(0) as u64))
+    } else {
+        None
+    }
+}
 
 extern "C" {
     static mach_task_self_: u32;
@@ -162,5 +204,31 @@ mod tests {
     fn chip_brand_string_is_nonempty() {
         let brand = chip_brand_string().expect("sysctl should succeed");
         assert!(!brand.is_empty());
+    }
+
+    /// The fault counter is live and monotonic: touching a fresh page of a
+    /// fresh mapping must raise `faults`. This is the eviction probe's
+    /// instrument, and an instrument that silently returned a constant
+    /// would make every "fault cost" number a no-op assertion.
+    #[test]
+    fn fault_counters_rise_when_a_fresh_page_is_touched() {
+        let (faults_before, _) = task_fault_counters().expect("TASK_EVENTS_INFO works");
+        // A few MiB of never-touched anonymous memory: enough pages that a
+        // scheduling blip cannot make the delta zero by accident.
+        let fresh = vec![0u8; 8 << 20];
+        let mut sink = 0u8;
+        for chunk in fresh.chunks(4096) {
+            sink = sink.wrapping_add(chunk[0]);
+        }
+        assert_ne!(
+            sink,
+            u8::MAX,
+            "keep the touch loop from being optimized out"
+        );
+        let (faults_after, _) = task_fault_counters().expect("TASK_EVENTS_INFO works");
+        assert!(
+            faults_after > faults_before,
+            "faults did not rise across an 8 MiB first touch: {faults_before} -> {faults_after}"
+        );
     }
 }

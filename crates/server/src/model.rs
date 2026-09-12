@@ -125,10 +125,27 @@ pub trait ChatModel: Send + Sync {
     /// The decode rate cap and thermal stepping this backend generates
     /// under (ROADMAP Phase P2). Process-level, not per request: there is
     /// one runner per process and a power setting is a property of the
-    /// machine, not of a caller's prompt. The default is uncapped, which
-    /// is what the scripted backend wants.
+    /// machine, not of a caller's prompt. The default is uncapped, which is
+    /// what the scripted backend wants.
     fn rate_control(&self) -> runtime::RateControl {
         runtime::RateControl::default()
+    }
+
+    /// The FIFO admission gate this backend's generations pass through
+    /// (ROADMAP P1 item 5, `crate::queue`). `None` -- the default -- means
+    /// ungated: the scripted backend serializes on nothing today and keeps
+    /// that behavior, so the integration suite's timing is untouched.
+    ///
+    /// A backend that owns a single contended runner (the real one) returns
+    /// ONE gate per runner, and the request paths acquire it in ARRIVAL
+    /// order before touching the runner -- the fairness the runner's own
+    /// mutex cannot provide. Callers acquire at a closed, non-nesting set
+    /// of async sites (`run_guarded`, the live-stream spawn sites, ollama's
+    /// `run`, `completions::run_full`, embeddings); acquiring twice on one
+    /// request would deadlock on the single permit, so the acquisition
+    /// points are load-bearing and documented in `queue.rs`.
+    fn generation_queue(&self) -> Option<std::sync::Arc<crate::queue::GenerationQueue>> {
+        None
     }
 
     /// Which tool-call guardrails this backend generates under.

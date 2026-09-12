@@ -52,6 +52,14 @@
 //! TURBOSPARK_VISION_DUMP_DIR=/tmp/vision-dump \
 //!   cargo test -p turbospark-runtime --test vision_tower_parity --release -- \
 //!   --ignored --nocapture
+//!
+//! # 5. The sidecar-attached arm (ROADMAP P1 item 1), same dump: a TEXT-ONLY
+//!    trunk plus the standalone sidecar must clear the same bar.
+//! TURBOSPARK_QWEN38_TRUNK_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+//! TURBOSPARK_VISION_SIDECAR_DIR=~/.turbospark/models/qwen38-vision-tower.gturbo-vision \
+//! TURBOSPARK_VISION_DUMP_DIR=/tmp/vision-dump \
+//!   cargo test -p turbospark-runtime --test vision_tower_parity --release -- \
+//!   --ignored --nocapture the_sidecar
 //! ```
 //!
 //! **The revision pin in step 1 is load-bearing.** The install was streamed
@@ -196,8 +204,11 @@ impl Dump {
 ///
 /// The tower checks these against its own shape and refuses a mismatch, so
 /// taking them from anywhere else would just move where the refusal happens.
-fn params_from(arch: &model_io::ArchConfig) -> PreprocessParams {
-    let v = &arch.vision;
+/// Takes the VISION CONFIG directly rather than the whole arch so the
+/// sidecar-attached arm can read it off the runner POST-ATTACH -- a
+/// text-only trunk's peeked arch has an inactive vision field until the
+/// attach mutates it.
+fn params_from(v: &model_io::VisionConfig) -> PreprocessParams {
     PreprocessParams {
         patch_size: v.patch_size as usize,
         temporal_patch_size: v.temporal_patch_size as usize,
@@ -278,36 +289,20 @@ fn compare(name: &str, got: &[f32], want: &[f32]) -> Verdict {
     }
 }
 
-/// The whole gate.
+/// The encode-plus-compare body both arms share, so the combined-install
+/// comparison and the sidecar-attached one cannot drift apart into two
+/// instruments that agree with mlx-vlm in different ways.
 ///
-/// One test rather than four, because all four stages come out of ONE tower
-/// run: splitting them would re-run a 27-block forward pass per stage for no
-/// added coverage, and the localization the four points buy is in the
-/// REPORT rather than in which case reddens.
-#[test]
-#[ignore = "needs a real vision install (TURBOSPARK_QWEN38_VISION_INSTALL_DIR) and an \
-            mlx-vlm dump (TURBOSPARK_VISION_DUMP_DIR); see this file's header"]
-fn the_tower_agrees_with_mlx_vlm_at_every_stage() {
-    let Some(install) = env_dir("TURBOSPARK_QWEN38_VISION_INSTALL_DIR") else {
-        eprintln!("SKIP: set TURBOSPARK_QWEN38_VISION_INSTALL_DIR to the vision install");
-        return;
-    };
-    let Some(dump_dir) = env_dir("TURBOSPARK_VISION_DUMP_DIR") else {
-        eprintln!("SKIP: set TURBOSPARK_VISION_DUMP_DIR to `--mode dump`'s output");
-        return;
-    };
-
-    let dump = Dump::load(dump_dir);
-    let arch =
-        turbospark_repack::peek_manifest_arch(Path::new(&install)).expect("install manifest");
-    assert!(
-        arch.vision.is_active(),
-        "this install declares no vision tower; point the var at the one written by \
-         `repacks_the_real_qwen38_27b_checkpoint_with_its_vision_tower`"
-    );
-    let params = params_from(&arch);
-    let depth = arch.vision.depth as usize;
-
+/// One helper rather than four per-stage cases, because all four stages come
+/// out of ONE tower run: splitting them would re-run a 27-block forward pass
+/// per stage for no added coverage, and the localization the four points buy
+/// is in the REPORT rather than in which case reddens.
+fn compare_stages_against_dump(
+    runner: &mut RealForwardRunner,
+    params: &PreprocessParams,
+    depth: usize,
+    dump: &Dump,
+) {
     let patch_rows = dump.stage("patch_rows");
     let seq = dump.grid.patches();
     assert_eq!(
@@ -328,9 +323,8 @@ fn the_tower_agrees_with_mlx_vlm_at_every_stage() {
         image.merged_tokens
     );
 
-    let mut runner = RealForwardRunner::open(Path::new(&install), arch).expect("open install");
     let (embedding, stages) = runner
-        .encode_image_with_stages(&image, &params)
+        .encode_image_with_stages(&image, params)
         .expect("encode");
 
     let last = format!("block_{}", depth - 1);
@@ -375,5 +369,112 @@ fn the_tower_agrees_with_mlx_vlm_at_every_stage() {
         failures.is_empty(),
         "stages disagree with mlx-vlm:\n  {}",
         failures.join("\n  ")
+    );
+}
+
+/// The whole gate, on the COMBINED install.
+#[test]
+#[ignore = "needs a real vision install (TURBOSPARK_QWEN38_VISION_INSTALL_DIR) and an \
+            mlx-vlm dump (TURBOSPARK_VISION_DUMP_DIR); see this file's header"]
+fn the_tower_agrees_with_mlx_vlm_at_every_stage() {
+    let Some(install) = env_dir("TURBOSPARK_QWEN38_VISION_INSTALL_DIR") else {
+        eprintln!("SKIP: set TURBOSPARK_QWEN38_VISION_INSTALL_DIR to the vision install");
+        return;
+    };
+    let Some(dump_dir) = env_dir("TURBOSPARK_VISION_DUMP_DIR") else {
+        eprintln!("SKIP: set TURBOSPARK_VISION_DUMP_DIR to `--mode dump`'s output");
+        return;
+    };
+
+    let dump = Dump::load(dump_dir);
+    let arch =
+        turbospark_repack::peek_manifest_arch(Path::new(&install)).expect("install manifest");
+    assert!(
+        arch.vision.is_active(),
+        "this install declares no vision tower; point the var at the one written by \
+         `repacks_the_real_qwen38_27b_checkpoint_with_its_vision_tower`"
+    );
+    let params = params_from(&arch.vision);
+    let depth = arch.vision.depth as usize;
+
+    let mut runner = RealForwardRunner::open(Path::new(&install), arch).expect("open install");
+    compare_stages_against_dump(&mut runner, &params, depth, &dump);
+}
+
+/// The same four-stage gate THROUGH A SIDECAR-ATTACHED TRUNK (ROADMAP P1
+/// item 1): a TEXT-ONLY trunk plus the standalone sidecar
+/// (`~/.turbospark/models/qwen38-vision-tower.gturbo-vision`) must agree
+/// with mlx-vlm at the same bar, which is the claim the CLI's byte-identity
+/// A/B made indirectly -- same bytes as the combined install -- measured here
+/// against the reference instrument itself.
+///
+/// # What this arm can see that the combined arm cannot
+///
+/// The sidecar's tower weights are read through `VisionTower::
+/// open_with_sidecar` -- a SEPARATE resident-index read, a separate mmap, a
+/// separate FP16 dtype backstop -- so a sidecar that bound the wrong
+/// resident weights or mapped the wrong directory passes the synthetic
+/// byte-identity fixture (same tower bytes by construction) and fails HERE,
+/// against numbers that did not come from this port.
+///
+/// # Setup
+///
+/// The trunk is the text-only `~/models/qwen38-27b.gturbo`; the sidecar is
+/// the standalone install above, streamed from the same pinned tower
+/// revision the dump was (`docs/VISION.md`'s sidecar section). The dump is
+/// the SAME `TURBOSPARK_VISION_DUMP_DIR` the combined arm uses.
+#[test]
+#[ignore = "needs a real text-only trunk (TURBOSPARK_QWEN38_TRUNK_INSTALL_DIR), the standalone \
+            vision sidecar (TURBOSPARK_VISION_SIDECAR_DIR), and an mlx-vlm dump \
+            (TURBOSPARK_VISION_DUMP_DIR); see this file's header"]
+fn the_sidecar_attached_tower_agrees_with_mlx_vlm_at_every_stage() {
+    let Some(trunk) = env_dir("TURBOSPARK_QWEN38_TRUNK_INSTALL_DIR") else {
+        eprintln!("SKIP: set TURBOSPARK_QWEN38_TRUNK_INSTALL_DIR to the text-only trunk");
+        return;
+    };
+    let Some(sidecar) = env_dir("TURBOSPARK_VISION_SIDECAR_DIR") else {
+        eprintln!("SKIP: set TURBOSPARK_VISION_SIDECAR_DIR to the standalone sidecar");
+        return;
+    };
+    let Some(dump_dir) = env_dir("TURBOSPARK_VISION_DUMP_DIR") else {
+        eprintln!("SKIP: set TURBOSPARK_VISION_DUMP_DIR to `--mode dump`'s output");
+        return;
+    };
+
+    let dump = Dump::load(dump_dir);
+    let arch = turbospark_repack::peek_manifest_arch(Path::new(&trunk)).expect("trunk manifest");
+    // ASSERT THE FIXTURE DISCRIMINATES: a trunk that already carries its own
+    // tower would make this arm re-measure the combined install's path and
+    // prove nothing about the sidecar's.
+    assert!(
+        !arch.vision.is_active(),
+        "the trunk must be TEXT-ONLY; point the var at qwen38-27b.gturbo, not the \
+         combined vision install"
+    );
+
+    let mut runner = RealForwardRunner::open(Path::new(&trunk), arch).expect("open trunk");
+    runner
+        .attach_vision_sidecar(Path::new(&sidecar))
+        .expect("the sidecar pairs with this trunk's family and hidden size");
+    assert!(
+        runner.has_vision_tower(),
+        "the attach must activate the vision capability before any comparison runs"
+    );
+    // The vision config now on the runner IS the sidecar's: params and depth
+    // are read POST-ATTACH, which is the whole difference from the combined
+    // arm's peeked arch.
+    let params = params_from(runner.vision_config());
+    let depth = runner.vision_config().depth as usize;
+
+    compare_stages_against_dump(&mut runner, &params, depth, &dump);
+
+    // Engagement, asserted after the comparison so a failure here reads as
+    // "the wrong tower answered" rather than as a preamble: a text-only
+    // trunk has no tower of its own to fall through to, but the flag is
+    // what a future fixture reusing this shape should not have to re-derive.
+    assert_eq!(
+        runner.vision_is_sidecar(),
+        Some(true),
+        "the stages just compared must have come from the SIDECAR's tower"
     );
 }

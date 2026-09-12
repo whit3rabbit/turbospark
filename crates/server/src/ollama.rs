@@ -446,6 +446,33 @@ async fn run(
     let _ = &state;
 
     if !streaming {
+        // The FIFO gate's acquisition point for the non-streaming arm
+        // (`queue.rs`'s closed set); the streaming arm below acquires
+        // through `run_gated`. Acquired per arm rather than once above the
+        // fork so the permit is moved into exactly the arm that runs.
+        let _gate = match model.generation_queue() {
+            Some(queue) => match queue.acquire(&cancel).await {
+                Some(permit) => Some(permit),
+                // Cancelled while queued: the same `done` object a
+                // mid-generation cancel would have produced, into a
+                // connection nobody is reading.
+                None => {
+                    let g = Generated {
+                        text: String::new(),
+                        reasoning: String::new(),
+                        calls: Vec::new(),
+                        decode: crate::handler::cancelled_before_start(),
+                    };
+                    let object = if raw {
+                        generate_object(&model_name, &g.text, Some(&g))
+                    } else {
+                        chat_object(&model_name, &g.text, Some(&g))
+                    };
+                    return one_object(object);
+                }
+            },
+            None => None,
+        };
         let mut guard = crate::cancel::CancelGuard::new(cancel.clone());
         let result = run_full(
             model,
@@ -474,79 +501,86 @@ async fn run(
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let cancel_for_task = cancel.clone();
-    tokio::task::spawn_blocking(move || {
-        let send = |object: serde_json::Value| -> bool {
-            // A failed send is the client having gone. Setting the flag here
-            // is the fast detector; nothing else watches this body, so unlike
-            // the SSE paths there is no `CancelOnDrop` behind it.
-            if tx.send(format!("{object}\n")).is_err() {
-                cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-                return false;
+    // The FIFO gate's acquisition point for the streaming arm. See
+    // `handler::stream_response`'s longer note.
+    let gate = model.generation_queue();
+    let cancel_for_gate = cancel.clone();
+    tokio::spawn(async move {
+        let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
+            let send = |object: serde_json::Value| -> bool {
+                // A failed send is the client having gone. Setting the flag here
+                // is the fast detector; nothing else watches this body, so unlike
+                // the SSE paths there is no `CancelOnDrop` behind it.
+                if tx.send(format!("{object}\n")).is_err() {
+                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
+                    return false;
+                }
+                true
+            };
+            let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
+            let mut emit = |piece: Piece| {
+                if let Piece::Text(delta) = piece {
+                    let object = if raw {
+                        generate_object(&model_name, &delta, None)
+                    } else {
+                        chat_object(&model_name, &delta, None)
+                    };
+                    send(object);
+                }
+                // Reasoning and tool pieces are DROPPED rather than folded into
+                // the text: Ollama's wire shape has nowhere for either, and
+                // emitting a model's scratchpad as its answer is the failure
+                // AGENTS.md Gotcha 56 records. A client that wants them has
+                // three other endpoints on this server that carry them.
+            };
+            let result = crate::handler::stream_blocking(
+                &model,
+                &planned.prompt_ids,
+                &planned.config,
+                planned.images.as_ref(),
+                &HashSet::new(),
+                effort,
+                &flag,
+                &mut emit,
+            );
+            // The final object closes the stream. On an error there is no
+            // envelope to report through -- the body has already started and its
+            // status line is long gone -- so the turn ends with `done: true` and
+            // whatever reason the runtime gave, which is what a client can
+            // actually read.
+            match result {
+                // Discarded silently, the same contract every other endpoint's
+                // streaming path holds (Gotcha 25): the client that would read
+                // this `done: true` object is the one already gone, and building
+                // one to send into a closed channel is both pointless and (per
+                // `send`, above) itself detected as a failed send.
+                Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
+                Ok(decode) => {
+                    let g = Generated {
+                        text: String::new(),
+                        reasoning: String::new(),
+                        calls: Vec::new(),
+                        decode,
+                    };
+                    let object = if raw {
+                        generate_object(&model_name, "", Some(&g))
+                    } else {
+                        chat_object(&model_name, "", Some(&g))
+                    };
+                    send(object);
+                }
+                Err(e) => {
+                    send(serde_json::json!({
+                        "model": model_name,
+                        "created_at": created_at(),
+                        "done": true,
+                        "done_reason": "error",
+                        "error": e.to_string(),
+                    }));
+                }
             }
-            true
-        };
-        let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
-        let mut emit = |piece: Piece| {
-            if let Piece::Text(delta) = piece {
-                let object = if raw {
-                    generate_object(&model_name, &delta, None)
-                } else {
-                    chat_object(&model_name, &delta, None)
-                };
-                send(object);
-            }
-            // Reasoning and tool pieces are DROPPED rather than folded into
-            // the text: Ollama's wire shape has nowhere for either, and
-            // emitting a model's scratchpad as its answer is the failure
-            // AGENTS.md Gotcha 56 records. A client that wants them has
-            // three other endpoints on this server that carry them.
-        };
-        let result = crate::handler::stream_blocking(
-            &model,
-            &planned.prompt_ids,
-            &planned.config,
-            planned.images.as_ref(),
-            &HashSet::new(),
-            effort,
-            &flag,
-            &mut emit,
-        );
-        // The final object closes the stream. On an error there is no
-        // envelope to report through -- the body has already started and its
-        // status line is long gone -- so the turn ends with `done: true` and
-        // whatever reason the runtime gave, which is what a client can
-        // actually read.
-        match result {
-            // Discarded silently, the same contract every other endpoint's
-            // streaming path holds (Gotcha 25): the client that would read
-            // this `done: true` object is the one already gone, and building
-            // one to send into a closed channel is both pointless and (per
-            // `send`, above) itself detected as a failed send.
-            Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
-            Ok(decode) => {
-                let g = Generated {
-                    text: String::new(),
-                    reasoning: String::new(),
-                    calls: Vec::new(),
-                    decode,
-                };
-                let object = if raw {
-                    generate_object(&model_name, "", Some(&g))
-                } else {
-                    chat_object(&model_name, "", Some(&g))
-                };
-                send(object);
-            }
-            Err(e) => {
-                send(serde_json::json!({
-                    "model": model_name,
-                    "created_at": created_at(),
-                    "done": true,
-                    "done_reason": "error",
-                    "error": e.to_string(),
-                }));
-            }
-        }
+        })
+        .await;
     });
 
     ndjson(rx, cancel)

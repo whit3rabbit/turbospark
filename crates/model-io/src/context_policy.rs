@@ -657,22 +657,55 @@ pub fn committed_breakdown(
     physical: u64,
     slots: crate::ExpertCacheSlots,
 ) -> CommittedBytes {
+    committed_breakdown_with_residency(
+        model_dir,
+        physical,
+        slots,
+        crate::ResolvedExpertResidency::Streamed,
+    )
+}
+
+/// [`committed_breakdown`] with the residency MODE already resolved --
+/// ROADMAP P1 item 3's "pick the mode first" ordering, at the budget seam.
+///
+/// Under mapped residency THERE IS NO SLOT CACHE to budget for: the experts
+/// are read in place out of the layer mapping and nothing is pinned
+/// (`docs/EXPERT_RESIDENCY.md`'s 559-against-3,652 MiB pair is exactly this
+/// term), so counting the streamed slot bytes would under-commit the KV
+/// window by gigabytes and let `--max-context auto` claim memory the cache
+/// was never going to take -- the same one-sided subtraction
+/// [`committed_breakdown`] exists to prevent, pointed the other way.
+///
+/// The caller passes the ALREADY-RESOLVED mode (from
+/// `runtime::resolve_expert_residency`, the one resolver) rather than the
+/// request, so the budget arithmetic and the open cannot disagree about
+/// which mode was chosen -- an `Auto` request resolved twice, once here and
+/// once at open, could straddle an environment change and budget for the
+/// mode that did not open.
+pub fn committed_breakdown_with_residency(
+    model_dir: &Path,
+    physical: u64,
+    slots: crate::ExpertCacheSlots,
+    residency: crate::ResolvedExpertResidency,
+) -> CommittedBytes {
     let resident = std::fs::metadata(model_dir.join("model_weights.bin"))
         .map(|m| m.len())
         .unwrap_or(0);
-    let slot_cache = crate::load_packed_experts_layout(
-        model_dir,
-        crate::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
-    )
-    .map(|layout| {
-        let bytes_per_slot: u64 = layout.layers.iter().map(|l| l.expert_stride).sum();
-        let experts_per_layer = layout.experts_per_layer.max(1);
-        let resolved = slots
-            .resolve(physical, resident, bytes_per_slot)
-            .min(experts_per_layer);
-        bytes_per_slot.saturating_mul(resolved as u64)
-    })
-    .unwrap_or(0);
+    let slot_cache = if residency == crate::ResolvedExpertResidency::Mapped {
+        // No slot cache exists under mapped residency; see the doc above.
+        0
+    } else {
+        crate::load_packed_experts_layout(model_dir, crate::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES)
+            .map(|layout| {
+                let bytes_per_slot: u64 = layout.layers.iter().map(|l| l.expert_stride).sum();
+                let experts_per_layer = layout.experts_per_layer.max(1);
+                let resolved = slots
+                    .resolve(physical, resident, bytes_per_slot)
+                    .min(experts_per_layer);
+                bytes_per_slot.saturating_mul(resolved as u64)
+            })
+            .unwrap_or(0)
+    };
     CommittedBytes {
         resident,
         slot_cache,

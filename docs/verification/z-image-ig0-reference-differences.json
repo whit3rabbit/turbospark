@@ -1,0 +1,20 @@
+{
+  "qk_norm_epsilon": {
+    "canonical": 1e-06,
+    "transformers": 1e-06,
+    "mflux_mlx_default": 1e-05,
+    "effect_measured": false
+  },
+  "source_sha256": {
+    "mflux_attention": "ba6e7be96b500d92260a648681c344a4cf9a745453cc58c12f6bc03ce52cd68d",
+    "mlx_normalization": "0873ca425d5de6dd462d336ff45a2563f945abeebef3f5146bfc7c83af54be83",
+    "transformers_qwen3": "cbb7f2dc274c2f5592746c0dc6985ca50353efa07376f92cc922b77680a74f69",
+    "canonical_config": "8ba006f74fecfaaeb392872a60f4a480e7ec9860153d2e1b769ec81f9a147f8a"
+  },
+  "native_contract": "canonical checkpoint epsilon",
+  "scheduler": {
+    "requested_steps": 9,
+    "actual_forwards": 9,
+    "model_card_comment_forwards": 8
+  }
+}

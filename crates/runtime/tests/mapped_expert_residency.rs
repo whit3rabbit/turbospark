@@ -66,8 +66,17 @@ fn mapped_residency_opens_and_then_refuses_the_batched_routed_pair_by_name() {
     // flipped afterwards the way `set_routed_batch_prefill` is.
     std::env::set_var("TURBOSPARK_EXPERT_RESIDENCY", "mapped");
 
-    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
-        .expect("a gemma4 install opens under mapped expert residency");
+    let mut runner = RealForwardRunner::open_with_slot_policy(
+        &dir,
+        arch,
+        4096,
+        turbospark_runtime::ExpertCacheSlots::Fixed(16),
+    )
+    .expect("a gemma4 install opens under mapped expert residency");
+    assert_eq!(
+        runner.resolved_expert_residency(),
+        turbospark_runtime::ResolvedExpertResidency::Mapped
+    );
 
     // The batched routed pair, which is the combination that cannot work.
     runner.set_routed_batch_prefill(true);

@@ -132,6 +132,36 @@ pub(crate) fn mapped_residency_requested() -> bool {
         .unwrap_or(false)
 }
 
+/// Resolves the residency REQUEST (flag or default) to the mode this open
+/// takes. THE ONE RESOLVER FOR EVERY CALLER: the open itself, the CLI's and
+/// server's pre-open `committed_breakdown` sizing and the startup lines all
+/// go through here, so the budget arithmetic and the allocation cannot
+/// disagree about which mode was chosen -- which is ROADMAP P1 item 3's
+/// "pick residency mode FIRST, then slot count only if streamed" as one
+/// function rather than as an ordering convention.
+///
+/// `Auto` defers to the `TURBOSPARK_EXPERT_RESIDENCY=mapped` seam when it is
+/// set -- that seam predates the flag and every mapped test and probe drives
+/// it -- and otherwise to the memory-headroom rule, which TODAY is "always
+/// stream" (see `ExpertResidency::Auto`'s doc for why that is deliberate
+/// and what has to be measured before it flips).
+pub fn resolve_expert_residency(
+    requested: model_io::ExpertResidency,
+) -> model_io::ResolvedExpertResidency {
+    use model_io::{ExpertResidency, ResolvedExpertResidency};
+    match requested {
+        ExpertResidency::Mapped => ResolvedExpertResidency::Mapped,
+        ExpertResidency::Streamed => ResolvedExpertResidency::Streamed,
+        ExpertResidency::Auto => {
+            if mapped_residency_requested() {
+                ResolvedExpertResidency::Mapped
+            } else {
+                ResolvedExpertResidency::Streamed
+            }
+        }
+    }
+}
+
 /// REFUSED BY NAME, NEVER IGNORED, AND NEVER LEFT TO FAIL DOWNSTREAM.
 ///
 /// The mapped arm exists at exactly one dispatch site
@@ -173,6 +203,7 @@ pub(crate) fn open_expert_streamers(
     dir: &Path,
     expecting: &ArchConfig,
     expert_cache_slots: ExpertCacheSlots,
+    residency: model_io::ExpertResidency,
     resident_bytes: u64,
     max_bytes: u64,
     context: &mut gpu::MetalContext,
@@ -180,6 +211,7 @@ pub(crate) fn open_expert_streamers(
     let layout =
         model_io::load_packed_experts_layout(dir, max_bytes).map_err(RealForwardError::Model)?;
     let num_layers = expecting.num_layers as usize;
+    let resolved_residency = resolve_expert_residency(residency);
 
     // THE SLOT CACHE IS SIZED `slots x layers x expert_stride`, AND THAT
     // PRODUCT IS A PROPERTY OF THE MODEL'S EXPERT GRANULARITY, NOT OF ITS
@@ -207,7 +239,7 @@ pub(crate) fn open_expert_streamers(
     // than 0, because it is what a caller printing a startup line has always
     // shown and a 0 there would read as "the cache is broken" rather than
     // "there is no cache".
-    if mapped_residency_requested() && layout.num_layers > 0 {
+    if resolved_residency == model_io::ResolvedExpertResidency::Mapped && layout.num_layers > 0 {
         mapped_residency_refusal(expecting.family)?;
         // The OTHER refusal this mode owes -- mapped residency against the
         // batched routed pair -- lives at that driver's own entry

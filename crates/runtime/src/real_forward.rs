@@ -137,6 +137,14 @@ pub struct RealForwardRunner {
     /// request rather than the resolution would be describing nothing --
     /// and every throughput or footprint figure has to be read beside it.
     pub(crate) expert_cache_slots: usize,
+    /// Which residency MODE this open took (ROADMAP P1 item 3), kept beside
+    /// the resolved slot count for the same reason: under
+    /// `--expert-residency auto` the mode can come from the environment
+    /// seam, so a startup line echoing the request rather than the
+    /// resolution would describe nothing, and every footprint figure has to
+    /// be read beside the mode -- a mapped row and a streamed row differ by
+    /// the entire slot cache.
+    pub(crate) resolved_residency: model_io::ResolvedExpertResidency,
     /// Blob-relative sub-tensor offsets, ONE ENTRY PER LAYER, and the
     /// reusable argument buffer. Empty when the install does not pack
     /// experts.
