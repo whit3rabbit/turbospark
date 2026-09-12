@@ -52,6 +52,10 @@ routes stream SSE with a 15 s keep-alive comment; Ollama routes stream NDJSON.
 `stream` defaults to false everywhere except the Ollama routes, where it
 defaults to true.
 
+Claude Code may send `HEAD /api/hello` to warm a connection before discovery.
+That probe is best-effort and this server intentionally returns 404 for it;
+`GET /health` is the liveness contract.
+
 ## Authentication
 
 Opt-in via `--api-key KEY` (`crates/server/src/auth.rs`). When set, every
@@ -76,12 +80,12 @@ curl -s localhost:8080/v1/models -H 'authorization: Bearer sk-test'
 Each request's `model` field is resolved by the registry
 (`crates/server/src/registry.rs`, reached through `handler::resolve_backend`):
 
-1. An exact id match wins.
+1. An exact canonical id or advertised alias match wins.
 2. Otherwise, if exactly one model is attached, it serves the request whatever
    name was asked for (so `"model": "claude-sonnet-4-6"` works against a
    single-model server).
 3. With two or more attached and no match: 404 `model_not_found`, listing the
-   available ids.
+   available canonical ids and aliases.
 4. An empty registry is 503, not 404.
 
 `GET /v1/models/:model` and `/api/show` deliberately do NOT take the
@@ -304,9 +308,15 @@ is translated to the internal OpenAI shape, generated, and translated back
 (`anyllm_translate`). An Anthropic-native client needs no proxy:
 
 ```sh
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
-  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
+  --model claude-turbospark-<canonical-model-id>
 ```
+
+The unknown-model-window override makes Claude Code defer its built-in 200K
+unknown-model assumption to the gateway for this local discovery alias.
+The `--settings` overlay is intentional: it gives this invocation an explicit
+one-session source for the local port when saved Claude Code `env` settings
+still name a previous server.
 
 ### Request fields read
 
@@ -370,12 +380,18 @@ curl -s localhost:8080/v1/messages/count_tokens -H 'content-type: application/js
 
 ## GET /v1/models
 
-One entry per attached model. Read by OpenAI model pickers and Claude Code's
-gateway discovery.
+One entry per public model identity. Each generative backend contributes its
+canonical id followed by `claude-turbospark-<canonical-id>`, and the alias
+routes to the same backend. Embedding-only backends have no Claude alias.
+Read by OpenAI model pickers and Claude Code's gateway discovery.
 
 ```json
-{"object": "list", "data": [{"id": "gemma4", "object": "model", "created": 1760000000,
-  "owned_by": "mference", "context_window": 4096}]}
+{"object": "list", "data": [
+  {"id": "gemma4", "object": "model", "created": 1760000000,
+   "owned_by": "mference", "context_window": 4096},
+  {"id": "claude-turbospark-gemma4", "object": "model", "created": 1760000000,
+   "owned_by": "mference", "context_window": 4096}
+]}
 ```
 
 `context_window` is additive (not OpenAI's): the window this model was OPENED
@@ -389,10 +405,11 @@ curl -s localhost:8080/v1/models
 
 Model detail for an exact id (no single-model fallback). Same entry shape as
 one `/v1/models` row. Unknown id: 404 with
-`error.code = "model_not_found"`.
+`error.code = "model_not_found"`. Looking up a discovery alias returns that
+alias row.
 
 ```sh
-curl -s localhost:8080/v1/models/gemma4
+curl -s localhost:8080/v1/models/claude-turbospark-gemma4
 ```
 
 ## POST /api/chat

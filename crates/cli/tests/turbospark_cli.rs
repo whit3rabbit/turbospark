@@ -60,6 +60,12 @@ fn turbospark_start_agent_dry_run_and_instructions() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ANTHROPIC_BASE_URL"));
+    assert!(stdout.contains("\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:8080\""));
+    assert!(!stdout.contains("\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:8080/v1\""));
+    assert!(stdout.contains("\"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY\":\"true\""));
+    assert!(stdout.contains("\"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT\":\"1\""));
+    assert!(stdout.contains("claude --settings"));
+    assert!(stdout.contains("--model \"claude-turbospark-<canonical-model-id>\""));
 
     let output_dsh = turbospark().args(["start", "dsh"]).output().unwrap();
     assert!(output_dsh.status.success());

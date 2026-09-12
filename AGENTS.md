@@ -421,8 +421,8 @@ curl -sN localhost:8080/api/chat -H 'content-type: application/json' \
   -d '{"model":"m","messages":[{"role":"user","content":"hi"}]}'
 
 # Point an Anthropic-native client straight at it, no proxy in between.
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
-  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
+  --model claude-turbospark-<canonical-model-id>
 
 # TOOL-CALL GUARDRAILS, on by DEFAULT (`crates/server/CLAUDE.md` Gotcha 18).
 # Rescues a call the decoder could not parse out of the raw text, checks a

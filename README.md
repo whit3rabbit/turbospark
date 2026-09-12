@@ -99,8 +99,8 @@ Then serve it to anything speaking the OpenAI or Anthropic API, Claude Code incl
 
 ```sh
 turbospark-server --model qwen38-27b
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
-  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
+  --model claude-turbospark-qwen38-27b.gturbo
 ```
 
 The long version, including installing without Homebrew and choosing a different model, is under [Getting Started](#getting-started).
@@ -535,13 +535,11 @@ curl -s localhost:8080/v1/models | python3 -m json.tool
 The Anthropic endpoint is native, so there is no proxy in between:
 
 ```sh
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \
-ANTHROPIC_API_KEY=unused \
-CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true \
-  claude
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
+  --model claude-turbospark-qwen38-27b.gturbo
 ```
 
-`ANTHROPIC_API_KEY` is required by the client and ignored by the server, which has **no authentication and no TLS**: it is a loopback service. The model discovery flag makes Claude Code ask `/v1/models` instead of assuming Anthropic's hosted names. The server advertises one id, the install directory's own name (`qwen38-27b.gturbo` here). Anything else speaking either API works the same way, e.g. `OPENAI_BASE_URL=http://127.0.0.1:8080/v1`.
+`ANTHROPIC_API_KEY` is required by the client and ignored by the server, which has **no authentication and no TLS**: it is a loopback service. The `--settings` overlay wins over a stale `env` block in Claude Code's user settings, which matters when the local server has a new port. The model discovery flag makes Claude Code ask `/v1/models` instead of assuming Anthropic's hosted names. Each generative backend advertises its canonical install id (`qwen38-27b.gturbo` here) and `claude-turbospark-qwen38-27b.gturbo`; pass the latter at launch, then use Claude Code's `/model` command to switch. The unknown-model-window override makes Claude Code defer its built-in 200K assumption to the gateway for this local alias. Anything else speaking either API works the same way, e.g. `OPENAI_BASE_URL=http://127.0.0.1:8080/v1`.
 
 To reach it from another machine on your Tailnet, add `--bind tailnet`. That binds this machine's Tailscale IPv4 address, and the Tailnet ACL is then the only access control there is.
 
@@ -674,4 +672,3 @@ list of what is deliberately not supported are in
 ## License
 
 MIT. See [LICENSE](LICENSE).
-

@@ -284,6 +284,14 @@ time (one runner per process). `/health` takes no lock and answers even
 while a generation is in flight. `/v1/responses` is stateless: it refuses
 `previous_response_id` rather than faking continuity across requests.
 
+For Claude Code gateway discovery, each generative backend appears twice in
+`GET /v1/models`: its canonical install id and the deterministic
+`claude-turbospark-<canonical-id>` alias. The alias selects that exact backend
+on a multi-model server, while the canonical id remains the one shown by the
+FFI server-info surface. A `HEAD /api/hello` from Claude Code is only a
+best-effort connection-warming probe; this server intentionally leaves it
+unimplemented and uses `GET /health` for liveness.
+
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |
 | `--model` | path or alias | optional | same resolution as `turbospark-check`'s; auto-resolved from `--model-dir` or store if omitted |

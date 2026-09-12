@@ -23,10 +23,19 @@ pub trait ChatModel: Send + Sync {
     fn vocab_size(&self) -> usize;
     fn max_context(&self) -> u32;
 
-    /// The id `GET /v1/models` advertises. Requests do not have to match it:
-    /// there is one backend per process, so whatever `model` a request names
-    /// is echoed back rather than routed on.
+    /// The canonical id `GET /v1/models` advertises. A registry routes an
+    /// exact request for this id (or an advertised alias) to this backend.
     fn model_id(&self) -> &str;
+
+    /// Extra ids `GET /v1/models` advertises for this chat backend.
+    ///
+    /// Claude Code gateway discovery keeps only ids containing `claude` or
+    /// `anthropic`. Giving every generative backend its own derived alias
+    /// keeps that discovery path useful on a multi-model local server without
+    /// pretending a local checkpoint is an Anthropic product model.
+    fn model_aliases(&self) -> Vec<String> {
+        vec![format!("claude-turbospark-{}", self.model_id())]
+    }
 
     /// Lends a producer to `f` for one generation. Implementations may
     /// serialize concurrent calls; `run_raw_completion` resets the producer

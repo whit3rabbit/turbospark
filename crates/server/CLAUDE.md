@@ -139,8 +139,8 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/v1/models   # 401, no ke
 curl -s localhost:8080/health                                       # 200, /health is exempt
 
 # The point of /v1/messages: an Anthropic-native client, no proxy.
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
-  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
+  --model claude-turbospark-<canonical-model-id>
 
 # Launch against a real .gturbo install (macOS; use --release, a debug
 # build decodes far too slowly to be usable). `--model` takes a directory
@@ -749,8 +749,8 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     `model` field was echoed back rather than routed on; that is still true
     of a server with ONE model and no longer true in general.
 
-    The rule, in order: an exact id match wins; failing that, **if exactly
-    one model is attached it serves the request whatever name was asked
+    The rule, in order: an exact canonical id OR advertised alias match wins;
+    failing that, **if exactly one model is attached it serves the request whatever name was asked
     for**; only with two or more attached and no match is it a 404 naming
     what IS available. The middle clause is not a courtesy. `docs/CLI.md`'s
     own Anthropic walkthrough sends `"model":"claude-sonnet-4-6"` at an
@@ -775,8 +775,16 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     ChatModel>>` impl is what left every existing call site -- this crate's
     whole integration suite -- compiling verbatim.
 
+    Every generative backend advertises a unique
+    `claude-turbospark-<canonical-id>` alias beside its canonical id, and both
+    resolve to the same backend. `/v1/models` expands aliases into separate
+    entries because Claude Code gateway discovery filters the ids it receives.
+    The registry refuses every canonical-to-alias or alias-to-alias collision
+    before it can make a backend unreachable. Embedding-only backends expose no
+    Claude alias, so they never appear as a completion choice.
+
     **`/v1/models/:model` DELIBERATELY DOES NOT TAKE THE FALLBACK.** It
-    matches against `registry.rows()` rather than through `resolve`, because
+    matches against the row's canonical id and aliases rather than through `resolve`, because
     a lookup asks whether this exact id exists where the fallback answers a
     different question. Routing it through `resolve` reddens
     `a_model_lookup_does_not_take_the_single_model_fallback` alone.
