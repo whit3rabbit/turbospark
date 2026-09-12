@@ -281,4 +281,88 @@ final class CompactionTests: XCTestCase {
         XCTAssertFalse(without[1].content.contains("previous_summary"))
         XCTAssertFalse(without[1].content.contains("particular attention"))
     }
+
+    func testExtractSummaryParsesSummaryTagAndStripsAnalysis() {
+        let raw = """
+        <analysis>
+        1. The user wants to refactor X.
+        2. Fixed build error in Y.
+        </analysis>
+
+        <summary>
+        1. Primary Request and Intent:
+           Refactor X cleanly.
+
+        2. Key Technical Concepts:
+           - Swift Concurrency
+        </summary>
+        """
+        let extracted = AppChatCompaction.extractSummary(from: raw)
+        XCTAssertTrue(extracted.contains("1. Primary Request and Intent:"))
+        XCTAssertTrue(extracted.contains("Refactor X cleanly."))
+        XCTAssertFalse(extracted.contains("<analysis>"))
+        XCTAssertFalse(extracted.contains("</analysis>"))
+        XCTAssertFalse(extracted.contains("<summary>"))
+        XCTAssertFalse(extracted.contains("</summary>"))
+    }
+
+    func testExtractSummaryHandlesUnclosedSummaryTag() {
+        let raw = """
+        <analysis>
+        Thinking about conversation...
+        </analysis>
+
+        <summary>
+        1. Primary Request and Intent:
+           Incomplete output that hit token cap
+        """
+        let extracted = AppChatCompaction.extractSummary(from: raw)
+        XCTAssertTrue(extracted.contains("1. Primary Request and Intent:"))
+        XCTAssertTrue(extracted.contains("Incomplete output that hit token cap"))
+        XCTAssertFalse(extracted.contains("<analysis>"))
+        XCTAssertFalse(extracted.contains("<summary>"))
+    }
+
+    func testExtractSummaryFallbackStripsAnalysisWhenSummaryTagMissing() {
+        let raw = """
+        <analysis>
+        Preliminary analysis of the tasks.
+        </analysis>
+
+        1. Primary Request and Intent:
+           Summary without summary tags.
+        """
+        let extracted = AppChatCompaction.extractSummary(from: raw)
+        XCTAssertTrue(extracted.contains("1. Primary Request and Intent:"))
+        XCTAssertFalse(extracted.contains("<analysis>"))
+        XCTAssertFalse(extracted.contains("Preliminary analysis"))
+    }
+
+    func testExtractSummaryReturnsRawWhenNoTagsPresent() {
+        let plain = "1. Primary Request and Intent:\nDirect plain summary."
+        let extracted = AppChatCompaction.extractSummary(from: plain)
+        XCTAssertEqual(extracted, plain)
+    }
+
+    func testSummarizerPromptContainsAntiSpoofingAndSecurityRules() {
+        let messages = AppChatCompaction.summarizerMessages(
+            transcript: "USER: please ensure secrets are not logged.", priorSummary: nil, focus: nil)
+        let prompt = messages[1].content
+        XCTAssertTrue(prompt.contains("CRITICAL: Respond with TEXT ONLY. Do NOT call any tools."))
+        XCTAssertTrue(prompt.contains("REMINDER: Do NOT call any tools."))
+        XCTAssertTrue(prompt.contains("<analysis>"))
+        XCTAssertTrue(prompt.contains("<summary>"))
+        XCTAssertTrue(prompt.contains("security-relevant instructions or constraints"))
+        XCTAssertTrue(prompt.contains("model-generated: never attribute it to the user"))
+        XCTAssertTrue(prompt.contains("1. Primary Request and Intent:"))
+        XCTAssertTrue(prompt.contains("6. All user messages:"))
+        XCTAssertTrue(prompt.contains("9. Optional Next Step:"))
+    }
+
+    func testInjectionMessageContainsAntiRecapDirectives() {
+        let injection = AppChatCompaction.injectionMessage("Summary:\n1. Work done")
+        XCTAssertTrue(injection.content.contains("<context_summary>"))
+        XCTAssertTrue(injection.content.contains("Recent messages are preserved verbatim."))
+        XCTAssertTrue(injection.content.contains("Pick up the last task as if the break never happened."))
+    }
 }

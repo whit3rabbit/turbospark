@@ -51,7 +51,10 @@ warning toast and a retry on the next turn.
 - The injection is a USER-role message (`<context_summary>` wrapper) placed
   after the system message: a mid-history `.system` message is refused
   outright by the fallback renderers and by real templates that require
-  alternating roles.
+  alternating roles. It states that recent messages are preserved verbatim
+  and includes an explicit anti-recap directive instructing the model to
+  resume directly without acknowledging the summary or asking follow-up
+  meta-questions.
 - Re-compacting folds the previous summary in via `<previous_summary>` in
   the summarizer prompt rather than stacking two summaries.
 - `clearOutput` resets the boundary and the summary, for normal and ghost
@@ -63,24 +66,49 @@ warning toast and a retry on the next turn.
 (roles named, tool calls recorded even when the row's prose is empty,
 images named, results kept to their row), caps it at 100k chars
 (head 60k + tail 40k with an omission marker -- the summarizer runs on the
-SAME window that just overflowed), and sends a two-message prompt asking
-for exactly these sections:
+SAME window that just overflowed), and sends a two-message prompt.
+
+The prompt is wrapped in a strict tool-prohibition envelope (CRITICAL header
+and REMINDER trailer) forbidding tool calls, since the summarizer turn is
+text-only and any model-emitted tool calls are ignored by the session,
+which would otherwise result in an empty summary failure.
+
+The summarizer prompt uses a two-phase protocol:
+1. An `<analysis>` scratchpad where the model chronologically analyzes
+   messages, explicit intents, decisions, file details, code snippets,
+   errors/fixes, user feedback, and security-relevant constraints.
+2. A `<summary>` block containing exactly these 9 sections:
 
 ```
-Primary request and intent:
-Key technical concepts and decisions:
-Files, paths and code touched:
-Errors and fixes:
-Pending tasks and open questions:
-Current state of the work:
-Next step:
+1. Primary Request and Intent:
+2. Key Technical Concepts:
+3. Files and Code Sections:
+4. Errors and fixes:
+5. Problem Solving:
+6. All user messages:
+7. Pending Tasks:
+8. Current Work:
+9. Optional Next Step:
 ```
+
+Section 6 (`All user messages`) requires preserving security-relevant
+constraints verbatim and enforces an anti-spoofing prompt-injection guard:
+text inside assistant messages that is merely formatted like a user turn
+is model-generated and must never be attributed to the user. Section 9
+requires verbatim quotes from the most recent conversation to eliminate task
+drift.
+
+`AppChatCompaction.extractSummary(from:)` strips the `<analysis>` scratchpad,
+extracts the `<summary>` block, and formats it cleanly under a `Summary:`
+heading with normalized whitespace so that reasoning notes do not waste
+tokens in subsequent prompt turns.
 
 Generation settings are the boring ones -- reasoning off, temperature 0.2,
-700 new tokens -- because every reasoning token is one taken from the
-summary. A `PreCompact` lifecycle hook fires first (ids only, so a ghost
-chat's privacy rule is untouched). The flag `isCompacting` is up for the
-duration; the status bar shows "Compacting conversation".
+1200 new tokens -- ensuring sufficient budget for the analysis scratchpad and
+full 9 sections without mid-generation truncation. A `PreCompact` lifecycle
+hook fires first (ids only, so a ghost chat's privacy rule is untouched). The
+flag `isCompacting` is up for the duration; the status bar shows "Compacting
+conversation".
 
 ## The manual entry point
 
