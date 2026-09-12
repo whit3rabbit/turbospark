@@ -43,7 +43,8 @@ group:
 cargo check --target x86_64-unknown-linux-gnu \
   -p turbospark-core -p turbospark-compute -p turbospark-model-io \
   -p turbospark-streaming -p turbospark-selection -p turbospark-invocation \
-  -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io
+  -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io \
+  -p turbospark-image
 ```
 
 Run that after touching a `cfg`, a dependency table, or anything `unsafe`.

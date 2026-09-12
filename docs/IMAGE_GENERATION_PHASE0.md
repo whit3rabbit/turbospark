@@ -1,7 +1,8 @@
 # Z-Image-Turbo Phase 0 evidence
 
-Status: IG0 in progress, 2026-09-10. Native implementation has not begun.
-This page records measured facts and unresolved gates for
+Status: IG0 resource evidence and native IG1 parity are in progress. The
+full-width native checkpoint block passes; the full nine-step DiT and VAE
+checkpoint gates remain open. This page records measured facts and unresolved gates for
 [the image-generation design](IMAGE_GENERATION.md). It does not establish
 a supported RAM minimum, general image-quality guarantee, or production disk schema.
 
@@ -59,6 +60,33 @@ are bypassed; the block implementations themselves are unchanged.
   tokens; Unicode contains 19; the overlong case truncates 2,409 tokens to
   512. The four image-review cases cover composition, typography, detail,
   and lighting. Token IDs and masks are exact fixtures, not handpicked IDs.
+- Native Rust FP32 CPU forward pass (in `crates/image`) confirms exact framing
+  string parity across all seven prompt cases, and exact token IDs and
+  attention mask agreement against captured arrays.
+- Native text encoder forward parity against captured BF16 MPS conditioning:
+  - lighting (27 tokens): max absolute error 1.2142e2, relative L2 8.6892e-3
+  - empty (8 tokens): max absolute error 1.2142e2, relative L2 8.8581e-3
+  - unicode (19 tokens): max absolute error 1.2142e2, relative L2 8.7833e-3
+  Achieved relative L2 error is consistently 8.69e-3 to 8.86e-3 (~0.88%),
+  reflecting FP32 CPU accumulation versus BF16 MPS capture across 35 layers.
+  Freeze text encoder tolerance: relative L2 <= 0.015 for Rust FP32 CPU vs
+  captured BF16 MPS. This tolerance is measured, not inherited from bounded
+  FP32 cross-engine comparisons.
+- Native scheduler parity (`crates/image::scheduler`): exact schedule bit-parity
+  for (1,1), (8,8), (9,9) against contracts JSON, exact timesteps/sigmas capture
+  match, and Euler step parity across latent_00..08 + final_latents within 1e-6
+  float roundoff. All six native tests are mutation-checked in
+  `docs/verification/z-image-ig1-mutations.json`.
+- The native crate now contains the staged FP32 DiT reference, including exact
+  image/caption sequence construction, learned padding tokens that remain
+  attendable, two noise-refiner blocks, two context-refiner blocks, thirty main
+  blocks, final unpatchification, and the pinned negative output convention.
+  The canonical 1024-by-1024 gate uses `[1,16,128,128]` initial and final
+  latents, not 64-by-64 latents. This code is not evidence of full parity until
+  the opt-in nine-step checkpoint gate completes.
+- Native VAE output conversion maps finite decoded `[3,H,W]` floats from
+  `[-1,1]` to interleaved RGB8 and validates a decodable PNG. Full VAE parity
+  remains an opt-in checkpoint gate.
 
 ### Diffusion transformer
 
@@ -161,6 +189,14 @@ affine-64 output error is 0.0326 relative L2. These are bounded-attention
 component results, not full-image pixel parity. The full-width FP32 gate is absolute error <=3e-5 and relative L2 <=1e-6.
 [Checkpoint-block evidence](verification/z-image-ig0-checkpoint-block.json)
 retains the restricted-attention scope.
+
+The native Rust checkpoint-block gate now passes that frozen threshold. Its
+FP32 tree reduction for RMSNorm avoids the low-bit loss of a serial 3840-value
+sum, and biased projections perform the matrix product before the bias add.
+On the reproduced 64-token fixture, maximum absolute error is 5.72e-6 versus
+Diffusers and 1.53e-5 versus MFLUX; relative L2 is 8.57e-8 and 2.52e-7,
+respectively. This closes the bounded native block gate only. The full
+nine-step transformer and VAE gates remain open.
 
 The independent full 1024 FP32 VAE comparison uses all 138 canonical decoder
 tensors, transposes convolution weights from OIHW to OHWI, and explicitly
@@ -369,7 +405,18 @@ target/ig0/venv/bin/python scripts/z_image_checkpoint_block.py \
   --run target/ig0/runs/lighting --out target/ig0/runs/checkpoint-block-verified
 target/ig0/venv/bin/python scripts/z_image_vae_compare.py \
   --run target/ig0/runs/lighting --out target/ig0/runs/vae-compare
+
+cargo test --release -p turbospark-image --test transformer_math_parity -- \
+  --ignored --nocapture test_transformer_checkpoint_block_parity
+cargo test --release -p turbospark-image --test pipeline_parity -- \
+  --ignored --nocapture test_z_image_full_nine_step_checkpoint_parity
+cargo test --release -p turbospark-image --test vae_parity -- \
+  --ignored --nocapture test_vae_real_decode_parity
 ```
+
+The first Rust command is closed. The nine-step DiT command is the active IG1
+gate and checks each captured scheduler update. The VAE command follows once
+the transformer gate produces acceptable final latents.
 
 The local gallery is `target/ig0/review.html`; it links original PNGs.
 Empty, Unicode, and overlong conditioning can be regenerated with `encode`

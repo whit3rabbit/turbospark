@@ -201,7 +201,21 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   - [ ] **IG0**: Pin model/reference revisions and component contracts; capture intermediate fixtures; select compatible quantization and define the target memory/latency envelope.
     - **Started (2026-09-10)**: [Phase 0 evidence](docs/IMAGE_GENERATION_PHASE0.md) pins all inputs and 1,163 tensors, records tokenizer/scheduler probes, bounded Diffusers/MFLUX block agreement, and Rust-verified group-64 packing. Nine requested steps produce nine forwards in the pinned Diffusers revision. Eight real captures now cover the four-prompt BF16/INT4 suite with identical noise and a documented visual review. Independent full-width block and FP32 VAE comparisons pass measured tolerances. Wider numerical coverage, quiet-AC cold/warm measurements, and the final resource contract remain open; busy-AC capture timings are not benchmarks.
   - [ ] **IG1**: Validate native conditioning, transformer blocks, scheduler updates, and VAE against the pinned reference.
-    - **Next owner (2026-09-10)**: Lock fixture provenance and mutation checks for encoding, denoise, and decode manifests, then finish native CPU/Metal parity gates before runtime wiring.
+    - **Progress (2026-09-12)**: New portable crate `crates/image` (`turbospark-image`) delivers native FlowMatchEuler scheduler step parity (exact sequence, timesteps/sigmas, and 9-step Euler integration vs captured latents) and conditioning path (exact Qwen chat template framing and tokenization across all 7 prompt cases; native FP32 text-encoder CPU forward with ~8.7e-3 to ~8.9e-3 rel-L2 tolerance vs captured BF16 MPS reference). All 6 new native tests mutation-checked with 0 survivors (`docs/verification/z-image-ig1-mutations.json`).
+    - **Progress (2026-09-12, continued)**: `turbospark-image` now includes
+      a streamed FP32 checkpoint DiT reference (2 noise-refiner + 2
+      context-refiner + 30 main blocks), checked component contracts, and RGB
+      PNG conversion. The reference preserves the pinned `[1,16,128,128]` to
+      1024-by-1024 VAE geometry. These are implementation milestones, not
+      passed end-to-end gates.
+    - **Progress (2026-09-12, checkpoint parity)**: The opt-in full-width
+      64-token block now passes the frozen FP32 thresholds against Diffusers
+      and MFLUX after matching tree-shaped RMSNorm reduction and affine bias
+      ordering. The reduction and bias assertions are mutation-checked.
+    - **In progress (2026-09-12)**: Restore the pinned ignored artifacts and
+      run the opt-in nine-step DiT gate, checking every captured scheduler
+      update before moving to the full VAE gate. Mutation-check each new
+      checkpoint assertion after it passes.
   - [ ] **IG2**: Deliver a complete quantized install and staged CLI pipeline with PNG output, metadata, progress, and cancellation.
     - **Next owner (2026-09-10)**: Start staging CLI command and session ownership after IG1 fixture gates are complete.
   - [ ] **IG3**: Prove bounded lifetimes and measured memory; add sequential block streaming only where the target budget requires it. Required before advertising that budget.

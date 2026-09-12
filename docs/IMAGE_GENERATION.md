@@ -1,14 +1,48 @@
 # Native image generation: Z-Image-Turbo
 
-Status: IG0 in progress, 2026-09-10. [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md)
-records pinned inputs, real-image captures, and component comparisons.
+Status: IG0 resource evidence remains open. IG1 native component parity is in
+progress: the full-width checkpoint block passes, while the full nine-step DiT
+and VAE checkpoint gates remain open.
+[Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
+real-image captures, and component comparisons.
 
 Current IG1 evidence status:
 
-- Conditioning, scheduler, and capture manifests are now validated by locked tests,
+- Conditioning, scheduler, and capture manifests are validated by locked tests,
   including schema, shape, and checksum checks for fixture provenance.
-- Quantization candidate policy evidence and scheduler-step parity remain the
-  remaining IG1 gates before runtime assembly.
+- Quantization candidate policy evidence is closed: 18 locked Python tests pass
+  under the reference venv.
+- Native scheduler-step parity is implemented and verified in crates/image:
+  exact schedule bit-parity for (1,1), (8,8), (9,9) against contracts JSON,
+  exact timesteps/sigmas capture agreement, and Euler step parity across
+  all nine latent steps to within 1e-6 float roundoff.
+- Native conditioning is implemented and verified in crates/image: exact prompt
+  framing string parity across all seven test prompts, exact tokenization IDs
+  and attention mask parity against captured arrays, and verified untruncated/retained
+  token bounds.
+- Native text encoder forward pass is implemented in FP32 on CPU: extracting
+  layer 34 output (block 35 of 36 pre-final-norm, hidden_states[-2]) achieves
+  8.69e-3 to 8.86e-3 relative L2 agreement against captured BF16 MPS conditioning
+  across lighting, empty, and unicode captures.
+- The portable crate now has a checkpoint-backed FP32 DiT reference that streams
+  one decoded transformer block at a time through two noise-refiner, two
+  context-refiner, and thirty main blocks. It preserves learned-pad-token
+  attention, exact 3-axis RoPE positions, timestep modulation, the final
+  projection, and the output sign. Its full nine-step gate is opt-in because
+  scalar 1024-by-1024 CPU execution is intentionally slow.
+- The full-width 64-token checkpoint block now passes the frozen `3e-5`
+  absolute and `1e-6` relative-L2 gates against both pinned references. The
+  fix uses a tree-shaped FP32 RMSNorm reduction and applies linear bias after
+  the dot product, matching the reference operation boundaries.
+- The VAE reference now validates convolution and normalization inputs and can
+  convert decoded `[3,H,W]` floats into verified interleaved RGB PNG bytes.
+- Twelve native assertions are mutation-checked in
+  `z-image-ig1-mutations.json`, including RoPE pairing, patch layout, AdaLN
+  gating, FP32 reduction order, affine bias order, and RGB conversion. The VAE
+  checkpoint-scale mutation remains pending the long full-weight CPU run.
+- Remaining IG1 gates before runtime assembly: execute the opt-in full
+  nine-step DiT and 1024-by-1024 VAE gates against the pinned reference, then
+  mutation-check their assertions.
 
 No image-generation runtime, CLI command, catalog alias, or app mode is
 implemented by this document. The open work is tracked in
@@ -133,6 +167,23 @@ Current evidence gates for IG1 include:
 - capture-manifest contracts and provenance checks in
   `scripts/test_z_image_capture_contracts.py`
 - component capture and mutation checks in `scripts/test_z_image_evidence.py`
+- the opt-in full-width Rust checkpoint block in
+  `crates/image/tests/transformer_math_parity.rs`
+- the opt-in nine-step Rust DiT evolution gate in
+  `crates/image/tests/pipeline_parity.rs`
+- the opt-in full Rust VAE decode gate in `crates/image/tests/vae_parity.rs`
+
+The next active gate is the nine-step Rust DiT evolution. Restore the pinned
+ignored artifacts under `target/ig0`, then run:
+
+```sh
+cargo test --release -p turbospark-image --test pipeline_parity -- \
+  --ignored --nocapture test_z_image_full_nine_step_checkpoint_parity
+```
+
+This gate compares every scheduler update with the captured BF16 MPS latent,
+not only the final latent. The provisional relative-L2 ceiling remains 0.02
+until the first complete native run measures all nine steps.
 
 Gate: component agreement within IG0's stated tolerances, with discrepancies
 explained at the first divergent intermediate rather than judged only from
