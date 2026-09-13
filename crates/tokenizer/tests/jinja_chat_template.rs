@@ -76,6 +76,38 @@ fn tools_branch_renders_the_tools_system_preamble() {
     assert!(rendered.contains("get_weather"));
 }
 
+#[test]
+fn template_execution_is_stopped_when_it_exhausts_fuel() {
+    let template = "{% for a in range(1000) %}{% for b in range(1000) %}{% set x = a + b %}{% endfor %}{% endfor %}";
+    let tok = tokenizer_with_template("fuel", template);
+    let err = render_generic_chat_template(
+        &tok,
+        &[Message::new(Role::User, "hi")],
+        &[],
+        true,
+        ReasoningEffort::Off,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("fuel"), "{err}");
+}
+
+#[test]
+fn template_output_is_bounded_before_tokenization() {
+    let tok = tokenizer_with_template("output-limit", "{{ messages[0].content }}");
+    let oversized = "x".repeat(8 * 1024 * 1024 + 1);
+    let err = render_generic_chat_template(
+        &tok,
+        &[Message::new(Role::User, oversized)],
+        &[],
+        true,
+        ReasoningEffort::Off,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("rendered output exceeds"), "{err}");
+}
+
 // --- minijinja compatibility shim (conditional keyword arguments) ---
 //
 // These drive the shim through the REAL load path (a temp fixture directory

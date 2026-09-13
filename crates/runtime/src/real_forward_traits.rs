@@ -260,15 +260,17 @@ impl SpeculativeProducer for RealForwardRunner {
     // both. If both somehow are, the BLOCK drafter wins here, which keeps
     // `drafts_block_passes` and the priming/rewind pair in one branch.
     fn prime_drafter(&mut self, next: i32, position: usize) -> Result<(), String> {
-        if self.real_dflash.is_some() {
-            // The DFlash2 context write needs only the captured states for
-            // `position`; `next` is an MTP-head input it has no use for.
-            self.dflash_prime_from_capture(position)
-                .map_err(|e| e.to_string())
-        } else {
-            self.mtp_prime_step(next, position)
-                .map_err(|e| e.to_string())
-        }
+        gpu::autorelease_pool(|| {
+            if self.real_dflash.is_some() {
+                // The DFlash2 context write needs only the captured states for
+                // `position`; `next` is an MTP-head input it has no use for.
+                self.dflash_prime_from_capture(position)
+                    .map_err(|e| e.to_string())
+            } else {
+                self.mtp_prime_step(next, position)
+                    .map_err(|e| e.to_string())
+            }
+        })
     }
 
     fn draft_step(

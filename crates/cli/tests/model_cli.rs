@@ -448,3 +448,24 @@ fn auth_rejects_unused_flags() {
         "{stderr}"
     );
 }
+
+#[test]
+fn auth_rejects_tokens_in_process_arguments() {
+    for args in [
+        &["auth", "hf_secret"] as &[&str],
+        &["auth", "--set", "hf_secret"],
+        &["pull", "tinyllama", "--hf-token", "hf_secret"],
+    ] {
+        let (code, _, stderr) = run(args);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(stderr.contains("USAGE"), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
+fn help_does_not_advertise_token_arguments() {
+    let (_, stdout, _) = run(&["--help"]);
+    assert!(!stdout.contains("--hf-token"), "{stdout}");
+    assert!(!stdout.contains("--set <TOKEN>"), "{stdout}");
+    assert!(!stdout.contains("auth [TOKEN]"), "{stdout}");
+}

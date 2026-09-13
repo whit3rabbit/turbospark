@@ -549,8 +549,9 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
     // are single tokens; the model sees `merged_tokens` copies of each.
     let images = match (&vision_info, encoded.is_empty()) {
         (Some(info), false) => {
-            let preprocessed = crate::vision::preprocess_all(&encoded, info)?;
-            let grids: Vec<_> = preprocessed.iter().map(|p| p.grid).collect();
+            // Header-only preflight computes the exact grid and expanded
+            // allocation budget before decoding any attacker-controlled image.
+            let grids = crate::vision::preflight_all(&encoded, info)?;
             let spliced = turbospark_vision_io::splice_and_walk(
                 &prompt_ids,
                 &grids,
@@ -559,6 +560,16 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
             )
             .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
             prompt_ids = spliced.ids;
+            let required = prompt_ids.len() as u64 + config.max_new_tokens as u64;
+            if required > model.max_context() as u64 {
+                return Err(format!(
+                    "prompt needs {} tokens plus {} new tokens, exceeding the {}-token context",
+                    prompt_ids.len(),
+                    config.max_new_tokens,
+                    model.max_context()
+                ));
+            }
+            let preprocessed = crate::vision::preprocess_all(&encoded, info)?;
             Some(crate::vision::RequestImages {
                 images: preprocessed,
                 positions: spliced.positions,

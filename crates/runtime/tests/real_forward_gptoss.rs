@@ -327,6 +327,23 @@ fn refusal(dir: &std::path::Path, arch: model_io::ArchConfig, what: &str) -> Str
 /// 29's twins-and-not-copies).
 #[test]
 fn a_gpt_oss_install_is_refused_when_its_declared_shape_is_impossible() {
+    // MISMATCHED KV DIMENSIONS. The gpt-oss attention flow uses the full pair
+    // on every layer, while the cache sizes sliding layers from the sliding
+    // pair. Accepting different pairs would make a crafted install panic at
+    // the first sliding-layer attention dispatch.
+    let (dir, arch, _) = gpt_oss_install();
+    let mut mismatched_kv = arch.clone();
+    mismatched_kv.num_kv_heads = 1;
+    mismatched_kv.head_dim = 1;
+    patch_manifest(&dir, "numKVHeads", serde_json::json!(1));
+    patch_manifest(&dir, "headDim", serde_json::json!(1));
+    let err = refusal(&dir, mismatched_kv, "gpt-oss with mismatched KV dimensions");
+    assert!(
+        err.contains("identical sliding and full KV dimensions"),
+        "the refusal must name the dimensional invariant, got: {err}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+
     // A TIED HEAD. gpt-oss ships `output.weight`; an install claiming
     // otherwise would silently read the embedding table as a head.
     let (dir, arch, _) = gpt_oss_install();

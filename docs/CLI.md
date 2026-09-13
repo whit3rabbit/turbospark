@@ -37,7 +37,7 @@ Inspired by oMLX and Unsloth workflows, `turbospark` provides a single unified t
 | | `turbospark rm <alias>` | Remove installed model |
 | | `turbospark probe <repo>` | Inspect remote Hugging Face headers without downloading |
 | | `turbospark recommend` | Rank catalog models by fit for current hardware |
-| | `turbospark auth [token]` | Inspect, set, or clear Hugging Face credentials |
+| | `turbospark auth` | Inspect, set, or clear Hugging Face credentials |
 | | `turbospark path <alias>` | Print install directory |
 | **Bench** | `turbospark bench [options]` | Run benchmark harness |
 
@@ -257,12 +257,12 @@ turbospark-model <command> [flags...]
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
 | `recommend` | none | `--context N`, `--budget BYTES`, `--load-guard TIER`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--load-guard` MUST match what the session will open with, since the ranking and the loader's refusal share one memory budget; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
-| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force`, `--hf-token TOKEN` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
+| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
 | `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
 | `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
-| `auth` | `[TOKEN]` | `--clear`, `--status`, `--hf-token TOKEN`, `--set TOKEN` | inspects, saves, or clears Hugging Face credentials in `~/.turbospark/hf_token` |
+| `auth` | none | `--clear`, `--status`, `--set` | inspects, saves, or clears Hugging Face credentials in `~/.turbospark/hf_token`; `--set` reads from a non-echoing prompt when interactive, or from stdin when piped |
 
-Global options: `--help` / `-h` / `help`, `--version` / `-V` / `version`. `--hf-token <TOKEN>` can also be passed to `probe` and `pull` as an explicit override.
+Global options: `--help` / `-h` / `help`, `--version` / `-V` / `version`. For gated repositories, set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`; credentials are never accepted in command-line arguments.
 
 Flags not accepted by the given command are rejected rather than silently ignored.
 

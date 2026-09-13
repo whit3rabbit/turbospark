@@ -277,4 +277,18 @@ final class EnhancedToolsAndHttpTests: XCTestCase {
             XCTAssertTrue(result.output.contains("refused") || result.output.contains("private") || result.output.contains("SSRF"))
         }
     }
+
+    func testHttpRequestRejectsHostnameResolvingToLoopback() throws {
+        let url = try XCTUnwrap(URL(string: "http://localhost.localdomain/resource"))
+        XCTAssertThrowsError(try HttpRequestDestinationValidator.validate(url)) { error in
+            // `localhost.localdomain` is a loopback alias on some hosts but is
+            // absent from others. Both outcomes are safe refusals; the test
+            // must not make DNS configuration a prerequisite for the guard.
+            XCTAssertTrue(
+                error.localizedDescription.contains("private")
+                    || error.localizedDescription.contains("resolve"),
+                "unexpected refusal: \(error.localizedDescription)"
+            )
+        }
+    }
 }

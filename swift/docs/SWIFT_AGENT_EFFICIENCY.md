@@ -16,9 +16,11 @@ validate_timeout_ms: integer
 
 The agent loop derives a `run_command` validation leg before a mutation. Both
 legs pass through PreToolUse hooks, risk classification, and permission
-evaluation before either can run. One approval card combines the mutation and
-terminal risks. A preflight denial blocks both legs. After a successful
-mutation, the declared file targets are fingerprinted before the command runs.
+evaluation independently before either can run. A mutation hook's allow never
+authorizes an unresolved validation hook. One approval card combines the
+mutation and terminal risks. A preflight denial blocks both legs. After a
+successful mutation, the declared file targets are fingerprinted before the
+command runs.
 Validation failure is recorded but does not undo a successful mutation.
 
 `apply_patch` fingerprints every declared add, update, and delete target. The

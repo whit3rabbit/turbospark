@@ -124,34 +124,57 @@ pub fn classify<'a>(
     Ok(plan)
 }
 
-/// One routed source's dims with the trailing EXPERT dimension removed.
+/// Validate one routed source against the dimensions the kernels will use and
+/// return its dims with the trailing expert dimension removed.
 ///
-/// Rank 3 (`[in, out, experts]`) is a matrix per expert and was the only shape
-/// any routed tensor had before ROADMAP M5. `gpt-oss` adds RANK 2
-/// (`[out, experts]`), its per-expert biases, so the walk can no longer assume
-/// a routed tensor has an input dimension at all. Both are handled the same
-/// way once the expert axis is off: whatever is left is that expert's payload,
-/// stored fastest-varying first.
+/// Rank 2 is accepted only for the three gpt-oss bias roles. Weight roles are
+/// matrices and must exactly match the architecture; otherwise the runtime's
+/// architecture-sized Metal dispatch could read beyond the packed slot.
 fn routed_body_dims<'a>(
     info: &'a crate::gguf_header::GgufTensorInfo,
-    name: &str,
-    num_experts: u64,
+    source: &RoutedSource<'_>,
+    arch: &ArchConfig,
 ) -> Result<&'a [u64], GgufRepackError> {
-    if !matches!(info.dims.len(), 2 | 3) {
+    let shape_mismatch = |detail: String| GgufRepackError::ShapeMismatch {
+        tensor: source.name.to_string(),
+        detail,
+    };
+    let hidden = u64::try_from(arch.hidden_size)
+        .map_err(|_| shape_mismatch("architecture hidden size is negative".into()))?;
+    let intermediate = u64::try_from(arch.moe_intermediate_size)
+        .map_err(|_| shape_mismatch("architecture expert width is negative".into()))?;
+    let experts = u64::try_from(arch.num_experts)
+        .map_err(|_| shape_mismatch("architecture expert count is negative".into()))?;
+
+    let expected = match source.roles.as_slice() {
+        ["gate"] | ["up"] => vec![hidden, intermediate, experts],
+        ["down"] => vec![intermediate, hidden, experts],
+        ["gate", "up"] | ["up", "gate"] => vec![
+            hidden,
+            intermediate
+                .checked_mul(2)
+                .ok_or_else(|| shape_mismatch("fused expert width overflow".into()))?,
+            experts,
+        ],
+        ["gate_biases"] | ["up_biases"] => vec![intermediate, experts],
+        ["down_biases"] => vec![hidden, experts],
+        roles => {
+            return Err(shape_mismatch(format!(
+                "unsupported routed role set {roles:?}"
+            )))
+        }
+    };
+    if info.dims != expected {
         return Err(GgufRepackError::ShapeMismatch {
-            tensor: name.to_string(),
-            detail: format!(
-                "expected a rank-2 or rank-3 routed tensor, got {:?}",
-                info.dims
-            ),
+            tensor: source.name.to_string(),
+            detail: format!("expected routed shape {expected:?}, got {:?}", info.dims),
         });
     }
-    let last = info.dims[info.dims.len() - 1];
-    if last != num_experts {
-        return Err(GgufRepackError::ShapeMismatch {
-            tensor: name.to_string(),
-            detail: format!("trailing dim {last} is not the expert count {num_experts}"),
-        });
+    if info.dims.len() == 2 && info.ggml_type != 0 {
+        return Err(shape_mismatch(format!(
+            "routed bias must be F32, got {}",
+            ggml_scheme_name(info.ggml_type)
+        )));
     }
     Ok(&info.dims[..info.dims.len() - 1])
 }
@@ -161,17 +184,19 @@ fn routed_body_dims<'a>(
 /// (last, as stored), so each expert's bytes are one contiguous range.
 pub fn per_expert_bytes(
     header: &GgufHeader,
-    name: &str,
-    num_experts: u64,
+    source: &RoutedSource<'_>,
+    arch: &ArchConfig,
 ) -> Result<u64, GgufRepackError> {
+    let name = source.name;
     let info = header
         .tensors
         .get(name)
         .ok_or_else(|| GgufRepackError::MissingTensor {
             name: name.to_string(),
         })?;
-    routed_body_dims(info, name, num_experts)?;
+    routed_body_dims(info, source, arch)?;
     let total = info.byte_size(name)?;
+    let num_experts = arch.num_experts as u64;
     if total % num_experts != 0 {
         return Err(GgufRepackError::ShapeMismatch {
             tensor: name.to_string(),
@@ -191,12 +216,11 @@ pub fn expert_stride(
     if plan.routed.is_empty() {
         return Ok(0);
     }
-    let experts = arch.num_experts as u64;
     let mut max_blob = 0u64;
     for sources in plan.routed.values() {
         let mut blob = 0u64;
         for s in sources {
-            blob += per_expert_bytes(header, s.name, experts)?;
+            blob += per_expert_bytes(header, s, arch)?;
         }
         max_blob = max_blob.max(blob);
     }
@@ -256,7 +280,7 @@ pub fn layer_file_bytes(
         })?;
     let mut used = 0u64;
     for s in sources {
-        used += per_expert_bytes(header, s.name, experts)?;
+        used += per_expert_bytes(header, s, arch)?;
     }
     let stride =
         (used.div_ceil(crate::GTURBO_PAGE_BYTES) * crate::GTURBO_PAGE_BYTES).min(max_stride);
@@ -288,7 +312,7 @@ fn plan_one_layer_inner(
 
     for s in sources {
         let info = &header.tensors[s.name];
-        let per = per_expert_bytes(header, s.name, experts as u64)? as usize;
+        let per = per_expert_bytes(header, s, arch)? as usize;
         let bytes = match source {
             Some(source) => read_tensor(header, source, s.name)?,
             None => vec![0u8; per * experts],
@@ -313,7 +337,7 @@ fn plan_one_layer_inner(
         // bias. Indexing `dims[1]` unconditionally read the EXPERT COUNT on a
         // bias, which is a plausible number and would have produced a
         // correctly-sized blob with a nonsense recorded shape.
-        let body = routed_body_dims(info, s.name, experts as u64)?;
+        let body = routed_body_dims(info, s, arch)?;
         let out_total = body[body.len() - 1];
         if out_total % parts as u64 != 0 {
             return Err(GgufRepackError::ShapeMismatch {
