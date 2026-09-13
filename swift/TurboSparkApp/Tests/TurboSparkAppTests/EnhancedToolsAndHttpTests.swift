@@ -277,4 +277,11 @@ final class EnhancedToolsAndHttpTests: XCTestCase {
             XCTAssertTrue(result.output.contains("refused") || result.output.contains("private") || result.output.contains("SSRF"))
         }
     }
+
+    func testHttpRequestRejectsHostnameResolvingToLoopback() throws {
+        let url = try XCTUnwrap(URL(string: "http://localhost.localdomain/resource"))
+        XCTAssertThrowsError(try HttpRequestDestinationValidator.validate(url)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("private"))
+        }
+    }
 }
