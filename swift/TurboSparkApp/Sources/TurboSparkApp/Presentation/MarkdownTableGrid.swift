@@ -266,15 +266,25 @@ struct MarkdownTableGrid: Equatable {
         _ separator: String, escapeTabNewline: Bool, rows rowsToWrite: [[String]]
     ) -> String {
         func cell(_ value: String) -> String {
+            // CSV quoting is structural only: spreadsheets remove it before
+            // deciding whether a cell is a formula. Treat assistant-generated
+            // headers and values as text before applying CSV/TSV escaping.
+            let firstNonWhitespace = value.first { !$0.isWhitespace }
+            let safeValue: String
+            if let firstNonWhitespace, "=+-@".contains(firstNonWhitespace) {
+                safeValue = "'" + value
+            } else {
+                safeValue = value
+            }
             if escapeTabNewline {
-                return value
+                return safeValue
                     .replacingOccurrences(of: "\t", with: "\\t")
                     .replacingOccurrences(of: "\n", with: "\\n")
             }
-            let needsQuotes = value.contains(separator) || value.contains("\"")
-                || value.contains("\n")
-            guard needsQuotes else { return value }
-            return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+            let needsQuotes = safeValue.contains(separator) || safeValue.contains("\"")
+                || safeValue.contains("\n")
+            guard needsQuotes else { return safeValue }
+            return "\"" + safeValue.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
         var lines = [header.map(cell).joined(separator: separator)]
         for row in rowsToWrite {
