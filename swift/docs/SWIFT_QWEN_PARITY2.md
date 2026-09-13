@@ -19,6 +19,9 @@ handling.
 - `/log`: Displays recent commits with author, hash, relative date, and subject.
 - `/prs`: Lists pull requests for the active project via GitHub CLI or API if configured.
 - Implemented in `AppModel+GitParity.swift` and `ChatGitSheets.swift`.
+- Git subprocess output uses the shared byte-capped executor, and diff bodies
+  are additionally capped by line count before SwiftUI creates per-line rows.
+  Both limits append a visible truncation marker.
 
 ### 2. Bang Command Execution (!cmd)
 - Typing `!<command>` in the composer runs the command directly via the active shell
