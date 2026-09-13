@@ -541,7 +541,7 @@ claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROP
 
 `ANTHROPIC_API_KEY` is required by the client and ignored by the server, which has **no authentication and no TLS**: it is a loopback service. The `--settings` overlay wins over a stale `env` block in Claude Code's user settings, which matters when the local server has a new port. The model discovery flag makes Claude Code ask `/v1/models` instead of assuming Anthropic's hosted names. Each generative backend advertises its canonical install id (`qwen38-27b.gturbo` here) and `claude-turbospark-qwen38-27b.gturbo`; pass the latter at launch, then use Claude Code's `/model` command to switch. The unknown-model-window override makes Claude Code defer its built-in 200K assumption to the gateway for this local alias. Anything else speaking either API works the same way, e.g. `OPENAI_BASE_URL=http://127.0.0.1:8080/v1`.
 
-To reach it from another machine on your Tailnet, add `--bind tailnet`. That binds this machine's Tailscale IPv4 address, and the Tailnet ACL is then the only access control there is.
+To reach it from another machine on your Tailnet, add `--bind tailnet`. That binds this machine's Tailscale IPv4 address and requires an application credential via `--api-key KEY` or `TURBOSPARK_API_KEY` (no TLS).
 
 ### Installing something not in the catalog
 

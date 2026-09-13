@@ -20,8 +20,8 @@ cargo run --release -p turbospark-server --bin turbospark-server -- \
 
 - Base URL: `http://127.0.0.1:8080` by default (`--port`, default 8080;
   `--bind loopback` is the default).
-- `--bind tailnet` binds the machine's Tailscale IPv4 instead. That is not
-  authentication: no auth, no TLS. The Tailnet ACL is the only access control.
+- `--bind tailnet` binds the machine's Tailscale IPv4 instead and requires
+  `--api-key KEY` or `$TURBOSPARK_API_KEY`; there is no TLS.
 - One runner per process. The real backend owns a single `RealForwardRunner`
   behind a mutex (`crates/server/CLAUDE.md` Gotcha 1), so concurrent requests
   queue and are served one at a time.

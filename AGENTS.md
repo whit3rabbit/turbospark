@@ -394,7 +394,7 @@ cargo test -p turbospark-catalog --test catalog_network --release -- --ignored -
 # requests are served one at a time). It serves OpenAI
 # `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`. Add
 # `--bind tailnet` to bind this machine's Tailscale IPv4 address instead of
-# loopback (no auth, no TLS: the Tailnet ACL is the only access control).
+# loopback. It requires --api-key or TURBOSPARK_API_KEY and provides no TLS.
 # `--model` takes a catalog ALIAS as well as a directory, through the same
 # `catalog::resolve_model_arg` `turbospark-check` uses; the startup line
 # prints what an alias resolved to.

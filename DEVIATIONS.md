@@ -1528,8 +1528,8 @@ live network).
   missing Tailscale does not first cost a multi-gigabyte map and a pipeline
   compile. Deviation from Swift: the flag is absent from the portable
   `<tokenizer-dir>` scripted mode (which Swift does not have), which always
-  binds loopback. Like Swift's, it is not authentication: the server has no
-  auth and no TLS, so access is governed entirely by the Tailnet ACL.
+  binds loopback. Unlike Swift's, Tailnet mode requires `--api-key` or a
+  non-empty `$TURBOSPARK_API_KEY`; the server still provides no TLS.
 - The server's sampling knob surface is narrower than the CLI's, but less so
   than it once was: `top_k` and `repetition_penalty` ARE request-settable
   (`handler::plan::build_config` reads both out of the request's `extra`
@@ -1698,11 +1698,12 @@ live network).
   function against the ONE key this process holds for its lifetime, not the
   table-of-many-secrets problem `subtle`'s API is built for. With no flag
   and no env var the server has no auth at all, the same posture it had
-  before this existed; under `--bind tailnet` it composes with the Tailnet
-  ACL rather than replacing it. Swift's server has no such flag.
-- **Every OTHER route above adds no authentication of its own.** Loopback
-  by default, and under `--bind tailnet` the Tailnet ACL remains the only
-  access control unless `--api-key` is also given.
+  before this existed, in loopback mode. Tailnet mode requires the key and
+  composes it with the Tailnet ACL rather than replacing it. Swift's server
+  has no such flag.
+- **Every OTHER route above adds no authentication of its own.** Loopback is
+  unauthenticated by default; Tailnet mode refuses to start without the
+  process-wide API key.
 
 ## Not ported at all
 

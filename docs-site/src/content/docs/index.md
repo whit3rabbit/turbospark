@@ -44,7 +44,7 @@ Change the engine itself. The workspace is 17 Rust crates spanning Metal kernels
 - **Parity with the Swift original.** Decode throughput lands within 1% of the Swift engine on the same install. Every family carries a memory oracle asserting a peak-footprint ceiling, every family but the dense `llama` one carries a frozen quality gate (teacher-forced perplexity plus output digests), and numerics are cross-checked against `mlx-lm`, `llama.cpp`, and MLX on identical bytes.
 - **One machine.** Every published number was measured on one Apple M4 Max with 36 GB of unified memory on mains power. Throughput and footprint figures do not transfer to other chips.
 - **Dense models get no streaming benefit.** Dense checkpoints (Mistral, TinyLlama, Qwen3.8-27B) run correctly but a dense token touches every weight once, so the RAM requirement is roughly the install's full size on disk.
-- **The server has no authentication and no TLS.** It is a loopback service. With `--bind tailnet`, the Tailnet ACL is the only access control.
+- **The server has no authentication and no TLS by default.** It is a loopback service. Tailnet mode (`--bind tailnet`) requires API key authentication; neither mode provides TLS.
 - **Platform floor.** Metal GPU acceleration requires macOS on Apple Silicon; the MSRV is Rust 1.82.
 
 ## Where to go next
