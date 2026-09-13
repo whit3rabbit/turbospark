@@ -48,20 +48,21 @@ options:
                        buffered rather than streamed while this is on, because a
                        verdict needs the whole turn; requests without tools are
                        unaffected
-  --prefix-reuse       on or off (default on). A request continues from the
-                       previous request's KV cache wherever the prompts agree,
-                       instead of re-prefilling the whole transcript. Helps
-                       only when consecutive requests are the same
-                       conversation -- unrelated interleaved requests each
-                       discard the other's reusable prefix -- and raises the
+  --prefix-reuse       on or off (default off). When explicitly enabled, a request
+                       continues from the previous request's KV cache wherever
+                       the prompts agree, instead of re-prefilling the whole
+                       transcript. Enable only when every request belongs to one
+                       trusted client: the shared cache is not partitioned by API
+                       key or client, so reuse can expose prefix matches through
+                       response timing. It also raises the
                        idle-memory floor between requests, not the peak, since
                        pages that would normally be released stay resident.
                        See crates/runtime/CLAUDE.md Gotcha 30
   --session-slots      how many DISTINCT conversations this runner may keep
                        reusable KV/recurrent state for at once (default 1, i.e.
                        no pool). Real committed memory per extra slot, unlike
-                       --prefix-reuse's floor-only cost; needs --prefix-reuse on
-                       (the default), since a parked session is never reused
+                       --prefix-reuse's floor-only cost; needs --prefix-reuse on,
+                       since a parked session is never reused
                        without it. See crates/server/CLAUDE.md's --session-slots
                        Gotcha
   --reasoning          default reasoning effort for requests that do not specify
@@ -111,7 +112,7 @@ Default values exactly as the options text states them.
 | `--speculative` | auto |
 | `--speculative-drafter` | auto |
 | `--guardrails` | on |
-| `--prefix-reuse` | on |
+| `--prefix-reuse` | off |
 | `--session-slots` | 1 (no pool) |
 | `--reasoning` | off |
 | `--system` | none (repeatable; repeats join with a newline) |

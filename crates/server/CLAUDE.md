@@ -891,17 +891,17 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     56's failure.
 
 31. **`--prefix-reuse` IS PROCESS-LEVEL LIKE THE RATE CAP, SPECULATION AND
-    GUARDRAILS, AND IT IS THE ONE FLAG HERE THAT DEFAULTS TO ON RATHER THAN
-    TO A SAFE NO-OP.** Added 2026-09-01 (ROADMAP.md section 4). `RealChatModel::open`
+    GUARDRAILS, AND DEFAULTS OFF.** Added 2026-09-01 (ROADMAP.md section 4).
+    `RealChatModel::open`
     calls `RealForwardRunner::set_prefix_reuse` once, right after the runner
     opens -- the mechanism itself (`crates/runtime/CLAUDE.md` Gotcha 30) is
     unmodified and was already wired into `run_raw_completion_chunked`, which
     is the loop this server actually takes for any chunked-prefill-capable
     family (Gotcha 19).
 
-    **THE DEFAULT IS SAFE TO FLIP BECAUSE THE MECHANISM IS PROVABLY LOSSLESS,
-    NOT BECAUSE THE TRADE-OFF DISAPPEARS.** A prompt that does not extend the
-    previous request's KV always falls back to a full reset before prefill
+    **LOSSLESS OUTPUT DOES NOT MAKE PROCESS-WIDE REUSE CONFIDENTIAL.** A
+    prompt that does not extend the previous request's KV always falls back to
+    a full reset before prefill
     (`raw_completion.rs`'s `if reused == 0 { producer.reset(); }`, mirrored in
     the chunked driver) -- there is no path where a mismatched request reads
     stale KV from an unrelated conversation. What is real is a traffic-mix
@@ -913,7 +913,12 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     real price: `KvCacheManager::reset`'s `advise_dontneed` calls are skipped
     between turns when reuse is on, so pages that would normally be released
     stay resident, raising the IDLE FLOOR (never the peak) for the life of the
-    process.
+    process. More importantly, matching prefixes skip measurable prefill work.
+    Because neither an API key nor a request identifies a trustworthy cache
+    principal, an unrelated client can probe the preceding request's prompt
+    prefix through time to first token. Keep the default off for a multi-client
+    server; explicit opt-in is for deployments where every request belongs to
+    one trusted client.
 
     **THERE IS NO SERVER-SIDE STDERR LINE THE WAY THE CLI'S `--chat` HAS ONE,
     SO `ServerEvent::Generated` CARRIES `reusedPrefixTokens` INSTEAD.** The
