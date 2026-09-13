@@ -146,6 +146,48 @@ final class AgentEfficiencyTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("waiting.txt").path))
     }
 
+    func testMutationHookAllowCannotAuthorizeValidationHookAsk() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let validationHook = AppHookCommand(
+            name: "ask for validation", event: .permissionRequest, type: .command,
+            command: "echo '{\"permissionDecision\":\"ask\"}'",
+            matcher: "run_command", sourceType: .custom)
+        let mutationHook = AppHookCommand(
+            name: "allow writes", event: .permissionRequest, type: .command,
+            command: "echo '{\"permissionDecision\":\"allow\"}'",
+            matcher: "write_file", sourceType: .custom)
+        AppHookStore.shared.addCustomHook(validationHook)
+        AppHookStore.shared.addCustomHook(mutationHook)
+        defer {
+            AppHookStore.shared.deleteCustomHook(id: validationHook.id)
+            AppHookStore.shared.deleteCustomHook(id: mutationHook.id)
+        }
+
+        let model = AppModel()
+        let chat = AppChat(title: "independent permissions")
+        model.chats = [chat]
+        model.selectedChatID = chat.id
+        let permissions = AppProjectPermissions(mode: .auto, fileWrite: .allow, terminal: .ask)
+        let project = AppProject(
+            name: "independent permissions", rootDirectoryPath: root.path,
+            permissions: permissions)
+        let call = AppToolCall(
+            name: "write_file",
+            arguments: [
+                "path": "waiting.txt", "content": "not yet", "validate_command": "true",
+            ], category: .fileWrite)
+
+        await model.handleExtractedToolCall(
+            call, fullContent: "write", reasoning: "", result: try generationResult(),
+            currentStep: 0, chatID: chat.id, project: project)
+
+        XCTAssertNotNil(model.pendingToolCall)
+        XCTAssertNotNil(model.pendingValidationCall)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("waiting.txt").path))
+    }
+
     func testObservationStoreReplaysExactBytePagesAndCleansUp() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
