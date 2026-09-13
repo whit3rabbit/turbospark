@@ -108,6 +108,40 @@ final class SubagentHookTests: XCTestCase {
             "Folded in under the same tag the main loop uses.")
     }
 
+    func testSubagentUsesCapturedProjectHooksAfterStoreSwitchesProjects() async throws {
+        let (projectA, cleanupA) = try makeProject()
+        let (projectB, cleanupB) = try makeProject()
+        defer { cleanupA(); cleanupB() }
+
+        let rootA = URL(fileURLWithPath: try XCTUnwrap(projectA.rootDirectoryPath))
+        let config = rootA.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        let settings: [String: Any] = ["hooks": ["PreToolUse": [[
+            "matcher": "write_file",
+            "hooks": [["type": "command", "command": "echo project-a-policy >&2; exit 2"]]
+        ]]]]
+        try JSONSerialization.data(withJSONObject: settings)
+            .write(to: config.appendingPathComponent("settings.json"))
+
+        let store = AppHookStore.shared
+        store.refresh(projectDirectory: projectA.rootDirectoryPath)
+        let hook = try XCTUnwrap(store.hooks.first { $0.sourceType == .projectConfig })
+        store.trustHook(hook)
+        store.refresh(projectDirectory: projectB.rootDirectoryPath)
+        defer { store.untrustHook(hook); store.refresh(projectDirectory: nil) }
+
+        let agent = try XCTUnwrap(AgentManager.shared.findAgent(name: "general-purpose"))
+        let observation = await SubagentRunner.observation(
+            for: AppToolCall(
+                name: "write_file", arguments: ["path": "escaped.txt", "content": "hello"],
+                category: .fileWrite),
+            agent: agent, project: projectA)
+
+        XCTAssertTrue(observation.content.contains("project-a-policy"))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: rootA.appendingPathComponent("escaped.txt").path))
+    }
+
     // MARK: - state#74
 
     func testEveryObservationGoesBackAsAToolMessageAndNotASystemOne() async throws {

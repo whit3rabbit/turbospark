@@ -159,7 +159,7 @@ extension AppModel {
         if let updated = hookDecision.updatedInput {
             for (key, value) in updated { call.arguments[key] = value }
         }
-        let cmd = call.arguments["command"] ?? call.arguments["cmd"]
+        let cmd = call.shellCommand
 
         // `continue: false` from a PreToolUse hook's JSON: the call does not
         // run AND the turn ends here with the reason shown to the user --
@@ -357,6 +357,7 @@ extension AppModel {
             // The synthetic terminal leg gets the same PermissionRequest
             // hook opportunity as the visible mutation. A deny here is still
             // pre-mutation, so no partial compound action can occur.
+            var validationPermissionUnresolved = false
             if let validationCall = fusedValidationCall {
                 let validationVerdict = await evaluatePermissionRequest(
                     toolName: validationCall.name, toolArguments: validationCall.arguments,
@@ -379,6 +380,7 @@ extension AppModel {
                         currentStep: currentStep, project: decisionProject)
                     return
                 }
+                validationPermissionUnresolved = validationVerdict.permissionDecision != .allow
             }
             // `PermissionRequest` fires exactly where this app would
             // otherwise show the approval card, so a hook can resolve
@@ -401,11 +403,33 @@ extension AppModel {
                 return
             }
 
-            if permVerdict.permissionDecision == .allow {
+            if permVerdict.permissionDecision == .allow && !validationPermissionUnresolved {
                 await self.runApprovedCall(call, extra: extra, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
             } else if permVerdict.permissionDecision == .deny {
                 let reason = permVerdict.permissionReason ?? "Denied by PermissionRequest hook"
                 await self.recordDeniedCall(call, extra: extra, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
+            } else if validationPermissionUnresolved {
+                // An allow for the mutation cannot authorize its independent
+                // terminal leg. Only that leg's hook or the compound card can.
+                var pending = call
+                pending.status = .pendingApproval
+                pending.riskAssessment = assessment
+                self.pendingToolCall = pending
+                self.pendingToolCallChatID = chatID
+                self.pendingToolCallStep = currentStep
+                self.pendingToolCallProject = decisionProject
+                self.pendingValidationCall = fusedValidationCall
+                self.pendingToolCallClassifierNotice = nil
+                mutateTurnMessages(for: chatID) {
+                    $0.append(AppChatMessage(
+                        role: .assistant,
+                        content: fullContent,
+                        reasoning: reasoning,
+                        stopReason: "tool_use",
+                        toolCalls: [pending] + extra.calls,
+                        toolResults: extra.results
+                    ))
+                }
             } else {
                 // **AGENT MODE ROUTES HERE, BEFORE THE CARD** (see
                 // `swift/docs/SWIFT_AGENT_MODE.md`). The hook above already
@@ -474,7 +498,8 @@ extension AppModel {
             ? ToolActionFusion.fingerprints(for: call, rootURL: root) : []
         let previousTodos = todos(for: chatID)
         let executed = await executeApprovedTool(
-            call, project: project, chatID: chatID, preMutationFingerprints: fingerprints)
+            call, project: project, chatID: chatID, preMutationFingerprints: fingerprints,
+            webToolsEnabled: webSearchEnabled)
         let runningCall = executed.call
         var toolResult = executed.result
 
@@ -626,7 +651,7 @@ extension AppModel {
             }
             let sessionApproved = await SessionApprovalStore.shared.isApproved(
                 sessionID: chatID.uuidString, toolName: updated.name,
-                command: updated.arguments["command"] ?? updated.arguments["cmd"])
+                command: updated.shellCommand)
             let decision = AppToolPermissionEngine.evaluate(
                 call: updated, project: project, sessionApproved: sessionApproved,
                 fallbackMode: activePermissionMode, globalServers: globalMcpServers)
@@ -773,13 +798,15 @@ extension AppModel {
         updatesParkedMessage: Bool = false
     ) async {
         var outcomesByID: [UUID: (call: AppToolCall, result: AppToolResult)] = [:]
+        let webToolsEnabled = webSearchEnabled
         await withTaskGroup(of: (AppToolCall, AppToolResult).self) { group in
             for call in calls {
                 var running = call
                 running.status = .running
                 group.addTask {
                     let result = await AppToolRegistry.execute(
-                        call: running, in: project, chatID: chatID)
+                        call: running, in: project, chatID: chatID,
+                        webToolsEnabled: webToolsEnabled)
                     return (running, result)
                 }
             }

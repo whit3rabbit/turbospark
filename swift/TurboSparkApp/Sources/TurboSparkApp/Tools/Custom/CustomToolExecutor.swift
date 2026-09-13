@@ -13,15 +13,10 @@ public enum CustomToolExecutor {
             guard var cmd = tool.execution.command else {
                 throw NSError(domain: "TurboSparkTool", code: 30, userInfo: [NSLocalizedDescriptionKey: "Command string is not configured for '\(tool.name)'."])
             }
-            // **AN ARGUMENT VALUE IS MODEL-CONTROLLED TEXT GOING INTO A
-            // `/bin/zsh -c` STRING** (state#70). It was spliced in raw, so a
-            // `{{path}}` of `x; rm -rf ~` ran two commands where the tool's
-            // author wrote one -- the hazard state#60 fixed for hook option
-            // values, in a second place nobody swept. Two changes, and the
-            // first is the one that matters: every value reaches the template
-            // as a single-quoted literal, which zsh does not expand,
-            // word-split or re-parse. The environment copy is for a tool
-            // author who wants the raw bytes with no quoting question at all.
+            // Argument values are model-controlled. Keep their bytes out of
+            // the shell program and expand only environment variables at the
+            // placeholder sites. The renderer preserves the template's quote
+            // context without ever putting a value into `zsh -c` source.
             cmd = substituteArguments(into: cmd, arguments: arguments)
             var environment = tool.execution.environment ?? [:]
             for (key, val) in arguments {
@@ -97,8 +92,8 @@ public enum CustomToolExecutor {
         }
     }
 
-    /// Substitutes `{{key}}`, `${key}` and `$KEY` in a SHELL command template
-    /// with single-quoted literals (state#70).
+    /// Rewrites `{{key}}`, `${key}` and `$KEY` in a shell command template to
+    /// references to the corresponding `TOOL_ARG_<KEY>` environment variable.
     ///
     /// **ONE PASS, NOT ONE PASS PER ARGUMENT.** Repeated
     /// `replacingOccurrences` re-scans text a previous argument's value
@@ -115,33 +110,55 @@ public enum CustomToolExecutor {
             in: template, range: NSRange(location: 0, length: ns.length))
         var result = ""
         var cursor = 0
+        var quote: Character?
         for match in matches {
-            result += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            let prefix = ns.substring(with: NSRange(
+                location: cursor, length: match.range.location - cursor))
+            result += prefix
+            updateQuoteState(with: prefix, quote: &quote)
             cursor = match.range.location + match.range.length
-            var replacement: String?
+            var argumentName: String?
             if match.range(at: 1).location != NSNotFound {
-                replacement = arguments[ns.substring(with: match.range(at: 1))]
+                argumentName = ns.substring(with: match.range(at: 1))
             } else if match.range(at: 2).location != NSNotFound {
-                replacement = arguments[ns.substring(with: match.range(at: 2))]
+                argumentName = ns.substring(with: match.range(at: 2))
             } else if match.range(at: 3).location != NSNotFound {
                 // `$KEY` matches an argument whose name uppercases to it,
                 // which is the rule the per-argument loop this replaced used.
                 let upper = ns.substring(with: match.range(at: 3))
-                replacement = arguments.first { $0.key.uppercased() == upper }?.value
+                argumentName = arguments.keys.first { $0.uppercased() == upper }
             }
-            result += replacement.map(shellQuoted) ?? ns.substring(with: match.range)
+            if let name = argumentName, arguments[name] != nil {
+                let reference = "${TOOL_ARG_\(environmentKey(for: name))}"
+                switch quote {
+                case "'":
+                    result += "'\"\(reference)\"'"
+                case "\"":
+                    result += reference
+                default:
+                    result += "\"\(reference)\""
+                }
+            } else {
+                result += ns.substring(with: match.range)
+            }
         }
         result += ns.substring(from: cursor)
         return result
     }
 
-    /// A value as one single-quoted shell word.
-    ///
-    /// Single quotes are the only zsh quoting in which NOTHING is special;
-    /// the closing/escaping dance around an embedded `'` is the standard
-    /// `'\''` idiom.
-    static func shellQuoted(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    private static func updateQuoteState(with text: String, quote: inout Character?) {
+        var escaped = false
+        for character in text {
+            if escaped {
+                escaped = false
+            } else if character == "\\" && quote != "'" {
+                escaped = true
+            } else if character == "'" && quote != "\"" {
+                quote = quote == "'" ? nil : "'"
+            } else if character == "\"" && quote != "'" {
+                quote = quote == "\"" ? nil : "\""
+            }
+        }
     }
 
     /// An argument name as an environment-variable suffix: uppercased, with

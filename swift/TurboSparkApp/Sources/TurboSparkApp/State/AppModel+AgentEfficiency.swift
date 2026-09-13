@@ -7,10 +7,13 @@ extension AppModel {
     /// permissions before this method may mutate anything.
     func executeApprovedTool(
         _ call: AppToolCall, project: AppProject?, chatID: UUID,
-        preMutationFingerprints: [ToolActionFusion.Fingerprint] = []
+        preMutationFingerprints: [ToolActionFusion.Fingerprint] = [],
+        webToolsEnabled: Bool = true
     ) async -> (call: AppToolCall, result: AppToolResult, stopReason: String?) {
         var mutation = call
-        var result = await AppToolRegistry.execute(call: mutation, in: project, chatID: chatID)
+        var result = await AppToolRegistry.execute(
+            call: mutation, in: project, chatID: chatID,
+            webToolsEnabled: webToolsEnabled)
         mutation.status = result.isError ? .failed : .completed
         let mutationPost = await applyPostToolUse(
             to: result, call: mutation, chatID: chatID, project: project)
@@ -48,7 +51,8 @@ extension AppModel {
 
         var validationCall = ToolActionFusion.validationCall(for: validation)
         var validationResult = await AppToolRegistry.execute(
-            call: validationCall, in: project, chatID: chatID)
+            call: validationCall, in: project, chatID: chatID,
+            webToolsEnabled: webToolsEnabled)
         validationCall.status = validationResult.isError ? .failed : .completed
         let validationPost = await applyPostToolUse(
             to: validationResult, call: validationCall, chatID: chatID, project: project)

@@ -49,7 +49,9 @@ pub mod rope;
 pub mod rounding;
 pub mod smart_resize;
 
-pub use decode::{decode_image_bytes, decode_image_file, Rgb8Image, MAX_IMAGE_DIM};
+pub use decode::{
+    decode_image_bytes, decode_image_file, image_dimensions, Rgb8Image, MAX_IMAGE_DIM,
+};
 pub use error::VisionIoError;
 pub use mrope::{
     mrope_position_triples, splice_and_walk, splice_image_placeholders, ImageSpan, MropePositions,
