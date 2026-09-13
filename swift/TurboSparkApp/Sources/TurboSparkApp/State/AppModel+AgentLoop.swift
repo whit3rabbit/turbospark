@@ -159,7 +159,7 @@ extension AppModel {
         if let updated = hookDecision.updatedInput {
             for (key, value) in updated { call.arguments[key] = value }
         }
-        let cmd = call.arguments["command"] ?? call.arguments["cmd"]
+        let cmd = call.shellCommand
 
         // `continue: false` from a PreToolUse hook's JSON: the call does not
         // run AND the turn ends here with the reason shown to the user --
@@ -498,7 +498,8 @@ extension AppModel {
             ? ToolActionFusion.fingerprints(for: call, rootURL: root) : []
         let previousTodos = todos(for: chatID)
         let executed = await executeApprovedTool(
-            call, project: project, chatID: chatID, preMutationFingerprints: fingerprints)
+            call, project: project, chatID: chatID, preMutationFingerprints: fingerprints,
+            webToolsEnabled: webSearchEnabled)
         let runningCall = executed.call
         var toolResult = executed.result
 
@@ -650,7 +651,7 @@ extension AppModel {
             }
             let sessionApproved = await SessionApprovalStore.shared.isApproved(
                 sessionID: chatID.uuidString, toolName: updated.name,
-                command: updated.arguments["command"] ?? updated.arguments["cmd"])
+                command: updated.shellCommand)
             let decision = AppToolPermissionEngine.evaluate(
                 call: updated, project: project, sessionApproved: sessionApproved,
                 fallbackMode: activePermissionMode, globalServers: globalMcpServers)
@@ -797,13 +798,15 @@ extension AppModel {
         updatesParkedMessage: Bool = false
     ) async {
         var outcomesByID: [UUID: (call: AppToolCall, result: AppToolResult)] = [:]
+        let webToolsEnabled = webSearchEnabled
         await withTaskGroup(of: (AppToolCall, AppToolResult).self) { group in
             for call in calls {
                 var running = call
                 running.status = .running
                 group.addTask {
                     let result = await AppToolRegistry.execute(
-                        call: running, in: project, chatID: chatID)
+                        call: running, in: project, chatID: chatID,
+                        webToolsEnabled: webToolsEnabled)
                     return (running, result)
                 }
             }
