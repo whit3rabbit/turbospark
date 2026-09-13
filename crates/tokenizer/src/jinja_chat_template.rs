@@ -15,6 +15,8 @@
 //! for chat templates to call on malformed input) is registered manually,
 //! since `minijinja` has no built-in equivalent.
 
+use std::io::{self, Write};
+
 use minijinja::{Environment, ErrorKind};
 use serde_json::{json, Value as JsonValue};
 
@@ -25,6 +27,41 @@ use crate::jinja_compat::parenthesize_conditional_kwargs;
 use crate::jinja_date::strftime_now;
 pub use crate::jinja_date::CHAT_DATE_ENV;
 use crate::reasoning::ReasoningEffort;
+
+// Templates come from model artifacts and are not trusted. Keep both limits
+// comfortably above real checkpoint templates and prompts while preventing a
+// small template from consuming unbounded CPU or memory before tokenization.
+const TEMPLATE_FUEL: u64 = 1_000_000;
+const MAX_RENDERED_BYTES: usize = 8 * 1024 * 1024;
+
+struct BoundedOutput {
+    bytes: Vec<u8>,
+    exceeded: bool,
+}
+
+impl BoundedOutput {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            exceeded: false,
+        }
+    }
+}
+
+impl Write for BoundedOutput {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.bytes.len().saturating_add(buf.len()) > MAX_RENDERED_BYTES {
+            self.exceeded = true;
+            return Err(io::Error::other("chat template output limit exceeded"));
+        }
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 fn raise_exception(message: String) -> Result<String, minijinja::Error> {
     Err(minijinja::Error::new(ErrorKind::InvalidOperation, message))
@@ -135,6 +172,7 @@ pub fn render_generic_chat_template(
     let source = source.as_ref();
 
     let mut env = Environment::new();
+    env.set_fuel(Some(TEMPLATE_FUEL));
     env.add_function("raise_exception", raise_exception);
     // transformers' own chat-template global. gpt-oss's Harmony template is
     // the first here to call it (`Current date: ` in its system preamble);
@@ -185,9 +223,15 @@ pub fn render_generic_chat_template(
     let template = env
         .get_template("chat")
         .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
-    template
-        .render(JsonValue::Object(context))
-        .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))
+    let mut output = BoundedOutput::new();
+    let result = template.render_captured_to(JsonValue::Object(context), &mut output);
+    if output.exceeded {
+        return Err(TokenizerError::InvalidChatTemplate(format!(
+            "rendered output exceeds {MAX_RENDERED_BYTES} bytes"
+        )));
+    }
+    result.map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
+    String::from_utf8(output.bytes).map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))
 }
 
 impl MfTokenizer {
