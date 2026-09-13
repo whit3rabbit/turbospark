@@ -2019,3 +2019,28 @@ upstream code rather than a fork or a fresh conversion.
 - **No cross-engine KL yet.** Upstream llama.cpp runs this architecture
   since PR 27868, so the `scripts/kld_llamacpp.py` shape applies once the
   stock binary is built; the keyed `CHECKPOINTS` table needs one row.
+
+
+## `qwen2` / `qwen2.5` (the thirteenth family), landed with a format boundary
+
+The dense Qwen2 path is implemented through the shared Llama flow. It carries
+Q/K/V projection biases, Qwen2's 1e-6 RMS epsilon, and no per-head Q/K norm.
+The pinned `mlx-community/Qwen2.5-7B-Instruct-4bit` checkpoint streamed into a
+real install on 2026-09-13 and passed greedy and sampled CLI smokes. The
+catalog records that artifact as `qwen25-7b-4bit` with status `runs`.
+
+- **HF/MLX intake is the exercised path.** The source is MLX safetensors, not
+  GGUF. Its `model.*` names are normalized to the canonical
+  `language_model.*` install namespace, and its F16 4-bit companion planes
+  are narrowed to the BF16 resident format. The official ChatML sidecars load
+  without inventing missing `<think>` or `<tool_response>` token ids.
+- **GGUF intake is recognized but not equally proven.** The `qwen2` GGUF
+  architecture and tensor names are parsed, and the shared flow has the
+  supported resident block paths. The pinned official Qwen2.5 Q3_K_M GGUF
+  passes the header contract but cannot execute because Q3_K has no resident
+  kernel in this port. A real Q4_K or Q8_0 Qwen2 GGUF still needs a streamed
+  install and end-to-end smoke.
+- **Evidence is not a baseline.** There is no Qwen2 memory oracle, quality
+  gate, cross-engine KLD row, or frozen performance measurement yet. Qwen2-MoE,
+  Qwen2-VL, split GGUF, and native unquantized BF16/FP16 safetensors
+  conversion remain outside this bring-up.

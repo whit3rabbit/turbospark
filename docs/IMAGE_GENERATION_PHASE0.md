@@ -309,10 +309,10 @@ The initial weight-backed preflight refused battery power
 ([recorded refusal](verification/z-image-ig0-preflight.json)). On resume, host
 AC was confirmed, but Codex background processes exceeded the quiet-load
 threshold; the [final preflight](verification/z-image-ig0-resumed-preflight.json)
-also fails the quiet-load requirement. Correctness captures now run with `--capture-only`: AC remains
-mandatory, load is recorded, and `benchmark_eligible` is false. These
-instrumented timings do not establish a cold/warm performance baseline or
-a supported minimum RAM figure.
+also failed the quiet-load requirement. Those are historical preflight and
+busy-capture observations. The later quiet-AC benchmark suite qualified the
+stage and phase windows recorded below; it did not turn the earlier
+`--capture-only` timings into benchmark evidence.
 
 The four busy-AC BF16 references recorded the following **instrumented
 observations**, not a qualified latency or memory limit:
@@ -340,8 +340,26 @@ and no external process >20% of one core. `--capture-only` permits busy
 AC execution for correctness and explicitly disqualifies benchmark timings.
 Captures record whether quiet AC
 conditions persist. Instrumented capture timings include fixture copies
-and are not production throughput. A separate cold/warm reference series
-and explicit activation/scratch accounting are still required.
+and are not production throughput. The qualified quiet-AC reference series
+is now recorded in [quiet-05](verification/z-image-ig0-benchmarks-quiet-05.json),
+[quiet-06](verification/z-image-ig0-benchmarks-quiet-06.json), and
+[quiet-07](verification/z-image-ig0-benchmarks-quiet-07.json). Exact MPS
+operator scratch remains unavailable; the resource contract must therefore
+bound live tensors, driver-retained capacity, and whole-process footprint
+without labeling driver allocation minus live allocation as scratch.
+
+The qualified stage observations are:
+
+| Stage | Qualified scope | Peak process footprint | Retained driver | After `empty_cache` |
+| --- | --- | ---: | ---: | ---: |
+| Text encoder | Cold and reuse arms | 8,969,979,152 | 8,322,236,416 | 737,280 |
+| Denoiser | Cold load, first execution, and resident phases; reuse resident phases are phase-qualified with mixed load | 17,512,599,008 | 14,018,134,016 | 737,280 |
+| VAE decoder | Cold and reuse arms | 11,025,630,840 | 10,060,791,808 | 2,150,318,080 |
+
+Values are decimal bytes from fresh reference processes and must not be
+summed as a simultaneous allocation. Swap remained unchanged across the
+qualified stage windows. The denoiser reuse load was mixed rather than a
+fully cached load, so the final contract must state that limitation.
 
 ### Quiet-AC component benchmark protocol
 
@@ -374,10 +392,11 @@ restores the exact PID identities in `finally`, and has an independent
 No app data is deleted or service permanently disabled.
 
 ```sh
+# Use a new suite directory for each measurement request.
 target/ig0/venv/bin/python scripts/z_image_benchmark_suite.py \
-  --out target/ig0/benchmarks/quiet-02 --pause-display-and-photo-work
+  --out target/ig0/benchmarks/quiet-08 --pause-display-and-photo-work
 target/ig0/venv/bin/python scripts/z_image_benchmark_summary.py \
-  target/ig0/benchmarks/quiet-01 target/ig0/benchmarks/quiet-02
+  target/ig0/benchmarks/quiet-08
 ```
 
 - [x] Pin model/reference inputs and inventory complete component headers.
@@ -386,12 +405,18 @@ target/ig0/venv/bin/python scripts/z_image_benchmark_summary.py \
 - [x] Identify operator gaps and a kernel-compatible quantization candidate.
 - [x] Capture real conditioning, representative checkpoint blocks, identical
   noise, each scheduler update, final latents, and decoded pixels.
-- [ ] Compare full-width/higher-precision and quantized components; approve
-  precision exceptions and freeze their numerical tolerances.
+- [x] Compare full-width/higher-precision and quantized components; approve
+  precision exceptions and freeze the candidate quantization policy and its
+  numerical tolerances. This remains quantization emulation evidence, not a
+  packed Metal runtime measurement.
 - [x] Review composition/typography/detail/lighting images; resolve the
   eight-versus-nine evaluation schedule from pinned-reference evidence.
-- [ ] Measure repeated stages, cold/warm storage, retained memory, swap,
-  and a useful target memory/latency envelope on quiet AC hardware.
+- [x] Measure repeated stages, cold/warm storage, retained memory, swap, and
+  physical reads on quiet AC hardware. The denoiser reuse load is recorded as
+  mixed and its resident phases are qualified separately.
+- [ ] Freeze the supported memory and latency envelope with explicit staged
+  ownership, allocator headroom, and the limitation that it is not a hard
+  whole-process or whole-machine RAM cap.
 - [ ] Finalize the image manifest contract from those measurements.
 
 ## Reproduction and handoff

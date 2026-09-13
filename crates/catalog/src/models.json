@@ -126,6 +126,36 @@
       "notes": "128 experts of 2.5 MiB, so it streams. Peak footprint 2.7 GiB rather than the README band: 48 layers deep, and the slot cache is slots x layers x expert_stride."
     },
     {
+      "alias": "qwen25-7b-4bit",
+      "name": "Qwen2.5 7B Instruct (MLX INT4, group 64)",
+      "family": "qwen2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+        "revision": "c8e9187488f846965507bfc2b3957d59fd0d5a27",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "vocab.json",
+          "merges.txt"
+        ]
+      },
+      "download_bytes": 4284346255,
+      "install_bytes": 4300000000,
+      "status": "runs",
+      "gates": [
+        "qwen2_checkpoint_network",
+        "real CLI greedy + sampled smokes"
+      ],
+      "measured": [],
+      "notes": "The pinned Qwen2.5 7B 4-bit MLX checkpoint streamed and passed real greedy and sampled CLI smokes on 2026-09-13. This is MLX safetensors intake, not GGUF. The qwen2 GGUF path is recognized, but the pinned Q3_K_M GGUF is header-only until a Q3_K resident kernel exists. No Qwen2 memory oracle, quality gate, or frozen performance baseline yet. Official ChatML sidecars may omit special-token ids for <think> and <tool_response>; the resolver treats those pairs as optional."
+    },
+    {
       "alias": "gptoss-20b",
       "name": "gpt-oss 20B (GGUF MXFP4)",
       "family": "gptOss",

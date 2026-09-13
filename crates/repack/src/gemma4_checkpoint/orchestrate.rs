@@ -24,8 +24,9 @@ pub struct Gemma4RepackOutput {
     pub layers: Vec<LayerBlobs>,
     pub expert_stride: u64,
     pub excluded_multimodal: Vec<String>,
-    /// One `(tensor, values that lost bits)` row per unquantized tensor this
-    /// walk had to narrow to BF16. See `narrow_raw_to_bf16`.
+    /// One `(tensor, values that lost bits)` row per source tensor this walk
+    /// had to narrow to BF16, including Qwen2's F16 companion planes. See
+    /// `narrow_raw_to_bf16`.
     pub lossy_narrowing: Vec<(String, usize)>,
     /// The vision tower's packed blocks, when this walk ingested one
     /// (ROADMAP M-V3). `None` on every text-only walk, which is every caller
@@ -309,7 +310,7 @@ pub struct ResidentRead {
     pub entries: Vec<ResidentEntrySpec>,
     /// One `(tensor, values that lost bits)` row per lossily-narrowed tensor,
     /// mirroring `GgufRepackOutput::lossy_narrowing`. Empty for every
-    /// BF16-source checkpoint, which is every one but Bonsai-27B.
+    /// resident tensor already in the written BF16 format.
     pub lossy_narrowing: Vec<(String, usize)>,
 }
 

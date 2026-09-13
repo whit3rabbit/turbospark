@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbospark_repack::{
     classify_gemma4, is_supported_affine_shape, manifest_quant, orchestrate_gemma4_checkpoint,
-    parse_gemma4_config, parse_gemma4_quantization, pass_through_packed, write_gemma4_install,
-    Gemma4Bucket, Gemma4Error, Gemma4Shards, MemoryRangeSource, ResidentEntrySpec,
-    AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
+    parse_gemma4_config, parse_gemma4_quantization, pass_through_packed, pass_through_packed_qwen2,
+    write_gemma4_install, Gemma4Bucket, Gemma4Error, Gemma4Shards, MemoryRangeSource,
+    ResidentEntrySpec, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -356,6 +356,57 @@ fn pass_one(bits: u32, group: u32, companions: &str) -> Result<ResidentEntrySpec
     let quant = parse_gemma4_quantization(&quant_config_json(bits, group))
         .expect("the fixture's own spec parses");
     pass_through_packed(&shards, name, &quant)
+}
+
+fn f16_plane(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|&value| compute::f32_to_f16(value).to_le_bytes())
+        .collect()
+}
+
+/// Qwen2's real MLX 4-bit file stores wide-quant companions as F16, while
+/// the resident INT4 reader decodes them as BF16. The conversion must happen
+/// during intake: copying the same 16-bit words would make an install that
+/// validates and has the wrong scales.
+#[test]
+fn qwen2_f16_wide_companions_are_narrowed_to_bf16() {
+    const ROWS: usize = 4;
+    const COLS: usize = 128;
+    let name = "language_model.model.layers.0.self_attn.q_proj.weight";
+    let scales = [0.0271, -3.5, 1.0, 0.125, 17.0, -0.75, 2.25, 0.0003];
+    let biases = [-0.5, 4.25, 0.0625, -11.0, 0.03125, 2.0, -1.75, 0.0007];
+    let mut tensors = packed_tensor(name, ROWS, COLS, 4, "fp16");
+    tensors[1].bytes = f16_plane(&scales);
+    tensors[2].bytes = f16_plane(&biases);
+    let blob = assemble(&tensors);
+    let header = turbospark_repack::parse_header(&blob, 1 << 20).expect("fixture header parses");
+    let source = MemoryRangeSource::new(&blob);
+    let shards = Gemma4Shards::single(&header, &source);
+    let quant = parse_gemma4_quantization(&quant_config_json(4, 64)).expect("spec parses");
+
+    let ResidentEntrySpec::Int4(tensor) =
+        pass_through_packed_qwen2(&shards, name, &quant).expect("Qwen2 F16 companions convert")
+    else {
+        panic!("expected an INT4 resident entry");
+    };
+    let expected_scales: Vec<u16> = scales
+        .iter()
+        .map(|&value| compute::f32_to_bf16(compute::f16_to_f32(compute::f32_to_f16(value))))
+        .collect();
+    let expected_biases: Vec<u16> = biases
+        .iter()
+        .map(|&value| compute::f32_to_bf16(compute::f16_to_f32(compute::f32_to_f16(value))))
+        .collect();
+    assert_eq!(tensor.scales, expected_scales);
+    assert_eq!(tensor.biases, expected_biases);
+    assert_ne!(
+        tensor.scales,
+        scales
+            .iter()
+            .map(|&v| compute::f32_to_f16(v))
+            .collect::<Vec<_>>()
+    );
 }
 
 /// The published 1-bit checkpoint's spec: `{group_size: 128, bits: 1}`, no

@@ -67,7 +67,10 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     [regression record](MINIMAX_M2_PHASE0.md#shared-flow-regression-checks))
   - `"qwen2"` -> `ModelFamily::Qwen2Dense` (standard full-attention GQA
     with Q/K/V projection biases; the dense flow carries the Qwen2 RMS
-    epsilon and refuses Qwen2 sliding-window configs)
+    epsilon and refuses Qwen2 sliding-window configs). GGUF architecture
+    recognition is format-independent, but the resident block type still
+    decides whether a file runs: the pinned Q3_K_M witness is parse-only
+    because this port has no Q3_K resident kernel.
   - `"gpt-oss"` -> `ModelFamily::GptOss` (MXFP4 experts, attention sinks)
   - `"spark2_5"` -> `ModelFamily::Spark25` (fused QKV, per-class RoPE,
     headwise output gate; GGUF intake, HF safetensors intake deferred)
@@ -103,8 +106,10 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
   - `"qwen4_exp"` / `"qwen4_exp_text"` -> `ModelFamily::Qwen4Exp`
   - `"qwen2"` -> `ModelFamily::Qwen2Dense` (Qwen2/Qwen2.5 dense models;
     the MLX source namespace is normalized from `model.*` to the canonical
-    `language_model.*` install namespace)
-  - The last two families are HF-ONLY in the registry: published GGUF
+    `language_model.*` install namespace). The pinned Qwen2.5 7B 4-bit MLX
+    checkpoint is the real artifact currently exercised; unquantized BF16/FP16
+    safetensors conversion is not part of this contract.
+  - Muse Glimmer and `qwen4_exp` are HF-ONLY in the registry: published GGUF
     conversions of both now exist (`muse-glimmer` and `qwen4exp`,
     witnessed off unsloth's conversions, 2026-09-06 -- note the third
     naming drift, HF underscores where GGUF hyphenates or drops the
@@ -173,7 +178,7 @@ specific "recognized, needs X" refusal.
 | **Llama 2, Mistral 7B, TinyLlama** (`llama`, dense) | Standard Dense Transformer, GQA | **Full Support** (ROADMAP M4) | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Qwen3 dense** (`qwen3`) | Plain GQA, per-head Q/K norm, dense SwiGLU, tied or untied head | GGUF implemented; 0.6B Q8_0 gates passed | Not assessed | [Implemented](https://github.com/ggml-org/llama.cpp/blob/e5a8d439cef31f27fad6938233da10dae1ba5631/src/models/qwen3.cpp) | [Implemented](https://github.com/ml-explore/mlx-lm/blob/745352405f0909540760fd9b9ff16d933fd9c82b/mlx_lm/models/qwen3.py) | [0.6B measurement only](MINIMAX_M2_PHASE0.md#shared-flow-regression-checks); dense |
-| **Qwen2 / Qwen2.5 dense** (`qwen2`) | Standard full-attention GQA, Q/K/V projection biases, no Q/K norm, dense SwiGLU, Qwen2 RMS epsilon 1e-6 | GGUF + HF intake and shared-flow execution implemented; synthetic GGUF/HF gates passed. Q4_K/Q8_0 paths are runnable; the pinned Q3_K_M artifact still needs a Q3_K resident kernel | Not assessed | Full Support | Full Support | *real artifact gate pending; dense* |
+| **Qwen2 / Qwen2.5 dense** (`qwen2`) | Standard full-attention GQA, Q/K/V projection biases, no Q/K norm, dense SwiGLU, Qwen2 RMS epsilon 1e-6 | HF/MLX 4-bit intake and shared-flow execution are real-artifact tested; greedy and sampled CLI smokes pass. GGUF `qwen2` intake parses supported shapes, but the pinned Q3_K_M witness is header-only until a Q3_K resident kernel exists | Not assessed | Full Support | Full Support | *No frozen baseline; dense* |
 | **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
 | **Qwen3.8-Flash-Next / REAP-288** (`qwen4_exp`, HF only) | Fine-grained MoE (288-512 experts, top-10), GDN + sigmoid-gated norm, QSA block-sparse attention, PLE n-gram head, hyper-connections | **Full Support** | *Planned* | Full Support (`qwen4exp`) | Not supported (absent from mlx-lm, checked 2026-09-08) | **~2.5 GiB RAM** (oracle peak at the 2,048 bench window; the 68G install streams) |
 | **Llama 3.1 / 3.2 / 3.3** (`llama`, dense) | The above plus LEARNED RoPE frequency scaling, which ships as a TENSOR (`rope_freqs.weight`) and has no kernel input here | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
@@ -250,13 +255,19 @@ experts top-2 at ffn 32768: the Mixtral-unstreamable shape at 4x the
 size). `diffusion-gemma` is likewise witnessed upstream and out of class
 here: a block-diffusion generation LOOP, not a decode flow.
 
+The census above is dated 2026-09-08 and predates the Qwen2 landing. As of
+2026-09-13, `qwen2` belongs in the running-in-both-engines class for the
+MLX/HF text path, with the GGUF Q3_K limitation recorded in the matrix above.
+
 Two structural readings fall out of the census:
 
 - **Dense families remain a substantial gap.** Dense `qwen3` now has a
   GGUF execution path and a verified 0.6B Q8_0 regression checkpoint, and
   dense Qwen2/Qwen2.5 now has both GGUF and MLX/HF intake through the shared
-  Llama flow. Real Qwen2.5 artifact smokes, memory, quality, and catalog
-  promotion remain open; dense Gemma (`gemma3`/`gemma2`/`gemma3n`) remains
+  Llama flow. The pinned Qwen2.5 MLX artifact streams and passes real greedy
+  and sampled CLI smokes, and is listed as a `runs` catalog row. Its memory
+  and quality gates remain open; the pinned Q3_K_M GGUF is parse-only until a
+  Q3_K resident kernel exists. Dense Gemma (`gemma3`/`gemma2`/`gemma3n`) remains
   unported here, and `deepseek2` remains the multi-model MLA candidate.
   MiniMax-M2's top-8-of-256 structure motivated its streaming bring-up;
   that structure alone makes no measured footprint or throughput claim.

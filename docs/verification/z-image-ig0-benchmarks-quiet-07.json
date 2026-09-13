@@ -1,0 +1,132 @@
+{
+  "protocol": "IG0 component load, first execution, then three resident repetitions; lighting seed 42",
+  "scope": "BF16 text/transformer, FP32 VAE; reference execution, not native or packed INT4",
+  "rows": [
+    {
+      "suite": "quiet-07",
+      "stage": "denoise",
+      "requested_cache_arm": "cold-copy",
+      "observed_cache": "disk-read",
+      "eligible": false,
+      "record_sha256": "0c3c2663e3a79d434fa3b40aacfb07a29cc62373b1259d77d9791307c968c5f8",
+      "log_sha256": "f67936146d1c11436b5e883ccc085ae4dddd41dc8d8a60be890576ebd86da95c",
+      "qualified_phases": {
+        "load": true,
+        "first_execution": true,
+        "resident_1": true,
+        "resident_2": true,
+        "resident_3": false
+      },
+      "load_s": 19.431767042027786,
+      "load_physical_read_bytes": 24624058368,
+      "stored_weight_bytes": 24619690888,
+      "first_execution_s": 51.98267520801164,
+      "resident_execution_s": [
+        51.54669562494382,
+        51.13399533415213,
+        53.24975470802747
+      ],
+      "kernel_peak_process_footprint_bytes": 17515908600,
+      "resident_parameter_bytes": 12309817472,
+      "retained_driver_bytes": 14018134016,
+      "after_empty_cache_driver_bytes": 737280,
+      "swap_start": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)",
+      "swap_end": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)"
+    },
+    {
+      "suite": "quiet-07",
+      "stage": "denoise",
+      "requested_cache_arm": "reuse",
+      "observed_cache": "mixed",
+      "eligible": false,
+      "record_sha256": "1ea228b7f4d4870f98d1f068950863bb83254469253e459cf48d9d442c68bdf1",
+      "log_sha256": "cc0e06f7544625188954f25ba802863cacc30afbf9797646200b77c8dc795b36",
+      "qualified_phases": {
+        "load": false,
+        "first_execution": false,
+        "resident_1": true,
+        "resident_2": true,
+        "resident_3": true
+      },
+      "load_s": 9.135419208090752,
+      "load_physical_read_bytes": 7244832768,
+      "stored_weight_bytes": 24619690888,
+      "first_execution_s": 53.70049525005743,
+      "resident_execution_s": [
+        52.964688249863684,
+        54.79441633308306,
+        56.53717295802198
+      ],
+      "kernel_peak_process_footprint_bytes": 17492741624,
+      "resident_parameter_bytes": 12309817472,
+      "retained_driver_bytes": 14018134016,
+      "after_empty_cache_driver_bytes": 737280,
+      "swap_start": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)",
+      "swap_end": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)"
+    }
+  ],
+  "failed_attempts": [],
+  "qualified_aggregate": {},
+  "qualified_timed_windows": {
+    "denoise/load": [
+      {
+        "suite": "quiet-07",
+        "arm": "cold-copy",
+        "elapsed_s": 19.431767042027786,
+        "sampled_peak_phys_footprint_bytes": 16914289968,
+        "physical_read_bytes": 24624058368
+      }
+    ],
+    "denoise/first_execution": [
+      {
+        "suite": "quiet-07",
+        "arm": "cold-copy",
+        "elapsed_s": 51.98267520801164,
+        "sampled_peak_phys_footprint_bytes": 17484893688,
+        "physical_read_bytes": 2908160
+      }
+    ],
+    "denoise/resident": [
+      {
+        "suite": "quiet-07",
+        "arm": "cold-copy",
+        "elapsed_s": 51.54669562494382,
+        "sampled_peak_phys_footprint_bytes": 17490873848,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-07",
+        "arm": "cold-copy",
+        "elapsed_s": 51.13399533415213,
+        "sampled_peak_phys_footprint_bytes": 17477258744,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-07",
+        "arm": "reuse",
+        "elapsed_s": 52.964688249863684,
+        "sampled_peak_phys_footprint_bytes": 17476111864,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-07",
+        "arm": "reuse",
+        "elapsed_s": 54.79441633308306,
+        "sampled_peak_phys_footprint_bytes": 15536080912,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-07",
+        "arm": "reuse",
+        "elapsed_s": 56.53717295802198,
+        "sampled_peak_phys_footprint_bytes": 15537211408,
+        "physical_read_bytes": 0
+      }
+    ]
+  },
+  "window_policy": "Same CPU/AC thresholds on every overlapping complete interval; rejects coverage gaps. Whole-process rejection remains recorded.",
+  "peak_scope": "kernel process lifetime peak includes preparation and verification; phase samples are in raw records",
+  "cold_scope": "F_NOCACHE new-inode copy, observed physical reads; no global cache purge",
+  "minimum_ram_claim": false,
+  "scratch_bytes_known": false
+}

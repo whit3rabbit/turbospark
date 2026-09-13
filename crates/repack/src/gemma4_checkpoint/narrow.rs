@@ -389,7 +389,7 @@ fn pass_through_packed_impl(
         }
         let c = shards.info(companion)?;
         let accepted = if qwen2_wide_f16 {
-            matches!(c.dtype, "F16" | "BF16")
+            matches!(c.dtype.as_str(), "F16" | "BF16")
         } else {
             c.dtype == companion_dtype
         };
@@ -429,16 +429,8 @@ fn pass_through_packed_impl(
             ),
         });
     }
-    let (scales, scales_lossy) = read_companion_plane(
-        shards,
-        &scales_name,
-        qwen2_wide_f16,
-    )?;
-    let (biases, biases_lossy) = read_companion_plane(
-        shards,
-        &biases_name,
-        qwen2_wide_f16,
-    )?;
+    let (scales, scales_lossy) = read_companion_plane(shards, &scales_name, qwen2_wide_f16)?;
+    let (biases, biases_lossy) = read_companion_plane(shards, &biases_name, qwen2_wide_f16)?;
     let group = group_size as u64;
     let expected_groups = (rows * cols / group) as usize;
     if cols % group != 0 || scales.len() != expected_groups || biases.len() != expected_groups {
@@ -476,13 +468,10 @@ fn pass_through_packed_impl(
     let losses = if scales_lossy == 0 && biases_lossy == 0 {
         Vec::new()
     } else {
-        vec![
-            (scales_name, scales_lossy),
-            (biases_name, biases_lossy),
-        ]
-        .into_iter()
-        .filter(|(_, count)| *count > 0)
-        .collect()
+        vec![(scales_name, scales_lossy), (biases_name, biases_lossy)]
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .collect()
     };
     Ok((spec, losses))
 }

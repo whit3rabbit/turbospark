@@ -167,13 +167,13 @@ pub fn write_gemma4_install_streamed(
     }
 
     // Reported rather than merely counted, on the streamed path especially:
-    // this is the only place a 25-minute walk says out loud that it narrowed
-    // an F16 checkpoint's norms (`narrow_raw_to_bf16`), and a silent lossy
+    // this is the only place a long walk says out loud that it narrowed an
+    // F16 checkpoint's norms or Qwen2 companion planes, and a silent lossy
     // step is how a quality question turns into a mystery three phases later.
     let lossy: usize = resident.lossy_narrowing.iter().map(|(_, n)| n).sum();
     if lossy > 0 {
         progress(&format!(
-            "narrowed {} unquantized tensors to BF16, {lossy} values lost bits (worst offenders: {})",
+            "narrowed {} tensors to BF16, {lossy} values lost bits (worst offenders: {})",
             resident.lossy_narrowing.len(),
             resident
                 .lossy_narrowing

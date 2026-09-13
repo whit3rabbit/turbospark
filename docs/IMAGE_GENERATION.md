@@ -8,6 +8,16 @@ the VAE test's conditional pixel comparisons were not exercised.
 [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
 real-image captures, and component comparisons.
 
+Quiet-AC resource evidence now exists for all three reference stages. The
+encoder cold and reuse arms, both VAE arms, and the denoiser cold load and
+resident phases qualify. The denoiser reuse load and first-execution windows
+were physically mixed and not whole-process eligible, but all three resident
+reuse phases passed exact nine-forward and quiet-window checks. These are
+reference-stage observations, not a packed INT4 runtime measurement. The
+resource records are [quiet-05](verification/z-image-ig0-benchmarks-quiet-05.json),
+[quiet-06](verification/z-image-ig0-benchmarks-quiet-06.json), and
+[quiet-07](verification/z-image-ig0-benchmarks-quiet-07.json).
+
 Current IG1 evidence status:
 
 - Conditioning, scheduler, and capture manifests are validated by locked tests,
@@ -68,10 +78,13 @@ implemented by this document. The open work is tracked in
 [ROADMAP](../ROADMAP.md). This page owns the design, gates, and rationale;
 the roadmap owns the remaining task checklist.
 
-The next work is IG0 resource closure: quiet-AC cold/warm measurements,
-retained memory, swap, physical reads, activation/scratch accounting, the
-supported memory envelope, and final image manifest. IG2 may begin only after
-that evidence; app work remains IG4 after IG3 establishes bounded lifetimes.
+The next work is IG0 resource-contract closure: interpret retained allocator
+capacity and the unobservable exact MPS scratch budget conservatively, freeze a
+supported memory envelope, and finalize the image manifest. Repeated
+full-pipeline stability, resident-versus-streamed ownership, and cancellation
+lifetime proof remain IG3 work. IG2 may begin after the IG0 envelope and
+manifest are written; app work remains IG4 after IG3 establishes bounded
+lifetimes.
 
 ## Direction and first release
 

@@ -2,13 +2,13 @@ use tokenizers::Tokenizer;
 
 use super::config::TokenizerConfig;
 use super::resolve::{
-    required_id, Resolved, DEEPSEEK_ASSISTANT_MARK, DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK,
-    DEEPSEEK_USER_MARK, HARMONY_BOS_MARK, HARMONY_CALL_MARK, HARMONY_CHANNEL_MARK,
-    HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_PAD_MARK, HARMONY_RETURN_MARK, IM_END_MARK,
-    IM_START_MARK, LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK, LLAMA3_EOS_MARK, LLAMA3_EOT_MARK,
-    LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK, MUSE_BOS_MARK, MUSE_EOM_MARK,
-    MUSE_EOS_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK, MUSE_START_MARK,
-    SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
+    required_id, special_token_id, Resolved, DEEPSEEK_ASSISTANT_MARK, DEEPSEEK_BOS_MARK,
+    DEEPSEEK_EOS_MARK, DEEPSEEK_USER_MARK, HARMONY_BOS_MARK, HARMONY_CALL_MARK,
+    HARMONY_CHANNEL_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_PAD_MARK,
+    HARMONY_RETURN_MARK, IM_END_MARK, IM_START_MARK, LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK,
+    LLAMA3_EOS_MARK, LLAMA3_EOT_MARK, LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK,
+    MUSE_BOS_MARK, MUSE_EOM_MARK, MUSE_EOS_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK,
+    MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use super::NO_SUCH_TOKEN_ID;
 use crate::error::TokenizerError;
@@ -314,10 +314,37 @@ pub(crate) fn resolve_chatml(tokenizer: &Tokenizer) -> Result<Resolved, Tokenize
     let end_of_text = required_id(tokenizer, "<|endoftext|>")?;
     let tool_call_start = required_id(tokenizer, "<tool_call>")?;
     let tool_call_end = required_id(tokenizer, "</tool_call>")?;
-    let tool_response = required_id(tokenizer, "<tool_response>")?;
-    let tool_response_end = required_id(tokenizer, "</tool_response>")?;
-    let think_start = required_id(tokenizer, "<think>")?;
-    let think_end = required_id(tokenizer, "</think>")?;
+    // Qwen2.5's official ChatML tokenizer registers the tool-call pair but
+    // leaves tool responses and thinking as ordinary text. Those two pairs
+    // are optional for this dialect: a tokenizer that registers only one
+    // side is malformed, while a tokenizer with neither still has a valid
+    // no-thinking, no-tool-result ChatML contract.
+    let tool_response = special_token_id(tokenizer, "<tool_response>");
+    let tool_response_end = special_token_id(tokenizer, "</tool_response>");
+    if tool_response.is_some() != tool_response_end.is_some() {
+        return Err(TokenizerError::MissingSpecialToken(
+            if tool_response.is_some() {
+                "</tool_response>"
+            } else {
+                "<tool_response>"
+            }
+            .to_string(),
+        ));
+    }
+    let tool_response = tool_response.unwrap_or(NO_SUCH_TOKEN_ID);
+    let tool_response_end = tool_response_end.unwrap_or(NO_SUCH_TOKEN_ID);
+    let think_start = special_token_id(tokenizer, "<think>");
+    let think_end = special_token_id(tokenizer, "</think>");
+    if think_start.is_some() != think_end.is_some() {
+        return Err(TokenizerError::MissingSpecialToken(
+            if think_start.is_some() {
+                "</think>"
+            } else {
+                "<think>"
+            }
+            .to_string(),
+        ));
+    }
     Ok(Resolved {
         bos_id: end_of_text,
         bos_prefix_id: None,
@@ -331,13 +358,13 @@ pub(crate) fn resolve_chatml(tokenizer: &Tokenizer) -> Result<Resolved, Tokenize
         // ChatML closes a tool call with `</tool_call>` and then ends the
         // turn with `<|im_end|>`, so no stop token of its own means "tool".
         tool_call_stop_id: NO_SUCH_TOKEN_ID,
-        channel_start_id: think_start,
-        channel_end_id: think_end,
+        channel_start_id: think_start.unwrap_or(NO_SUCH_TOKEN_ID),
+        channel_end_id: think_end.unwrap_or(NO_SUCH_TOKEN_ID),
         // The thought channel above already brackets; there is no header.
         message_start_id: NO_SUCH_TOKEN_ID,
         message_end_id: NO_SUCH_TOKEN_ID,
-        think_start_id: Some(think_start),
-        think_end_id: Some(think_end),
+        think_start_id: think_start,
+        think_end_id: think_end,
         stop_token_ids: [im_end, end_of_text].into_iter().collect(),
         // The model's padded embedding/lm_head row count, not the
         // tokenizer's actual vocab; logits buffers use this.

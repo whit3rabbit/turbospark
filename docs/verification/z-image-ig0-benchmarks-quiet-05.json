@@ -1,0 +1,313 @@
+{
+  "protocol": "IG0 component load, first execution, then three resident repetitions; lighting seed 42",
+  "scope": "BF16 text/transformer, FP32 VAE; reference execution, not native or packed INT4",
+  "rows": [
+    {
+      "suite": "quiet-05",
+      "stage": "encode",
+      "requested_cache_arm": "cold-copy",
+      "observed_cache": "disk-read",
+      "eligible": true,
+      "record_sha256": "bc0e210dd4ff8c5e7af5590de01cb6b97270af14ebb8ab198648beddc9baef40",
+      "log_sha256": "6dd760358fb398334b4822769bc2541b5ffab875a11c1eae36d8007165c3ea76",
+      "qualified_phases": {
+        "load": true,
+        "first_execution": true,
+        "resident_1": true,
+        "resident_2": true,
+        "resident_3": true
+      },
+      "load_s": 4.85458091692999,
+      "load_physical_read_bytes": 8056537088,
+      "stored_weight_bytes": 8044982000,
+      "first_execution_s": 0.4985727919265628,
+      "resident_execution_s": [
+        0.39543050015345216,
+        0.4004368749447167,
+        0.39673158386722207
+      ],
+      "kernel_peak_process_footprint_bytes": 8969979152,
+      "resident_parameter_bytes": 8044936192,
+      "retained_driver_bytes": 8322236416,
+      "after_empty_cache_driver_bytes": 737280,
+      "swap_start": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)",
+      "swap_end": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)"
+    },
+    {
+      "suite": "quiet-05",
+      "stage": "encode",
+      "requested_cache_arm": "reuse",
+      "observed_cache": "cached",
+      "eligible": true,
+      "record_sha256": "a4f76839f007b3c89c8a6e17130c91f459bb31df8dc74a8e6c241d1cf53eff4d",
+      "log_sha256": "72bf1aa12f978379fab3c70c210be285ea749eed6b61ad1df5845f0504e6087c",
+      "qualified_phases": {
+        "load": true,
+        "first_execution": true,
+        "resident_1": true,
+        "resident_2": true,
+        "resident_3": true
+      },
+      "load_s": 1.1291773330885917,
+      "load_physical_read_bytes": 0,
+      "stored_weight_bytes": 8044982000,
+      "first_execution_s": 0.48309437511488795,
+      "resident_execution_s": [
+        0.3974974579177797,
+        0.39532458293251693,
+        0.3971305419690907
+      ],
+      "kernel_peak_process_footprint_bytes": 8957658384,
+      "resident_parameter_bytes": 8044936192,
+      "retained_driver_bytes": 8322236416,
+      "after_empty_cache_driver_bytes": 737280,
+      "swap_start": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)",
+      "swap_end": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)"
+    },
+    {
+      "suite": "quiet-05",
+      "stage": "denoise",
+      "requested_cache_arm": "cold-copy",
+      "observed_cache": "disk-read",
+      "eligible": true,
+      "record_sha256": "7c4ddebb67af8dc2a64e8e203994d638a014198a96fb298a4d6d99788f3ac2fb",
+      "log_sha256": "9b043c0714580a578ef6ddeeb237ffd582b7f68282d57f601947ddf438228a8b",
+      "qualified_phases": {
+        "load": true,
+        "first_execution": true,
+        "resident_1": true,
+        "resident_2": true,
+        "resident_3": true
+      },
+      "load_s": 20.34607187495567,
+      "load_physical_read_bytes": 24625070080,
+      "stored_weight_bytes": 24619690888,
+      "first_execution_s": 52.03245008410886,
+      "resident_execution_s": [
+        51.77254529087804,
+        52.044627292081714,
+        56.22274808306247
+      ],
+      "kernel_peak_process_footprint_bytes": 17512599008,
+      "resident_parameter_bytes": 12309817472,
+      "retained_driver_bytes": 14018134016,
+      "after_empty_cache_driver_bytes": 737280,
+      "swap_start": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)",
+      "swap_end": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)"
+    },
+    {
+      "suite": "quiet-05",
+      "stage": "denoise",
+      "requested_cache_arm": "reuse",
+      "observed_cache": "mixed",
+      "eligible": false,
+      "record_sha256": "a0bc331611af416307ef5080cd83dcbaf696cb53715635056dcc4ea68027d9cd",
+      "log_sha256": "309e3a61ef939a3cda24bb05c0d0a34cb0c06f8441f89f20c2d2826e9086ef16",
+      "qualified_phases": {
+        "load": true,
+        "first_execution": false,
+        "resident_1": true,
+        "resident_2": false,
+        "resident_3": true
+      },
+      "load_s": 9.440160083118826,
+      "load_physical_read_bytes": 7533252608,
+      "stored_weight_bytes": 24619690888,
+      "first_execution_s": 55.54482225002721,
+      "resident_execution_s": [
+        53.940067040966824,
+        55.284312332980335,
+        56.8124550411012
+      ],
+      "kernel_peak_process_footprint_bytes": 17495395808,
+      "resident_parameter_bytes": 12309817472,
+      "retained_driver_bytes": 14018134016,
+      "after_empty_cache_driver_bytes": 737280,
+      "swap_start": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)",
+      "swap_end": "vm.swapusage: total = 3072.00M  used = 2095.19M  free = 976.81M  (encrypted)"
+    }
+  ],
+  "failed_attempts": [
+    {
+      "suite": "quiet-05",
+      "argv": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/whit3rabbit/Documents/GitHub/mrefrust/target/ig0/venv/bin/python",
+        "scripts/z_image_benchmark.py",
+        "decode",
+        "--cache",
+        "cold-copy",
+        "--copy",
+        "target/ig0/benchmarks/quiet-05/decode-model.noindex",
+        "--out",
+        "target/ig0/benchmarks/quiet-05/decode-cold-copy.json"
+      ],
+      "exit_code": 1,
+      "log_sha256": "8154b06f681f2f70caf4f3d7c76dc87ed9407428969825c8f1c43deaa0cb3e88"
+    }
+  ],
+  "qualified_aggregate": {
+    "encode": {
+      "qualified_processes": 2,
+      "resident_samples": 6,
+      "resident_s_min": 0.39532458293251693,
+      "resident_s_median": 0.3969310629181564,
+      "resident_s_max": 0.4004368749447167,
+      "max_kernel_process_footprint_bytes": 8969979152
+    },
+    "denoise": {
+      "qualified_processes": 1,
+      "resident_samples": 3,
+      "resident_s_min": 51.77254529087804,
+      "resident_s_median": 52.044627292081714,
+      "resident_s_max": 56.22274808306247,
+      "max_kernel_process_footprint_bytes": 17512599008
+    }
+  },
+  "qualified_timed_windows": {
+    "encode/load": [
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 4.85458091692999,
+        "sampled_peak_phys_footprint_bytes": 8935523432,
+        "physical_read_bytes": 8056537088
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "reuse",
+        "elapsed_s": 1.1291773330885917,
+        "sampled_peak_phys_footprint_bytes": 8922514584,
+        "physical_read_bytes": 0
+      }
+    ],
+    "encode/first_execution": [
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 0.4985727919265628,
+        "sampled_peak_phys_footprint_bytes": 8961459472,
+        "physical_read_bytes": 1302528
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "reuse",
+        "elapsed_s": 0.48309437511488795,
+        "sampled_peak_phys_footprint_bytes": 8949155088,
+        "physical_read_bytes": 4096
+      }
+    ],
+    "encode/resident": [
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 0.39543050015345216,
+        "sampled_peak_phys_footprint_bytes": 8969962768,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 0.4004368749447167,
+        "sampled_peak_phys_footprint_bytes": 8969962768,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 0.39673158386722207,
+        "sampled_peak_phys_footprint_bytes": 8969962768,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "reuse",
+        "elapsed_s": 0.3974974579177797,
+        "sampled_peak_phys_footprint_bytes": 8957642000,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "reuse",
+        "elapsed_s": 0.39532458293251693,
+        "sampled_peak_phys_footprint_bytes": 8957642000,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "reuse",
+        "elapsed_s": 0.3971305419690907,
+        "sampled_peak_phys_footprint_bytes": 8957642000,
+        "physical_read_bytes": 0
+      }
+    ],
+    "denoise/load": [
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 20.34607187495567,
+        "sampled_peak_phys_footprint_bytes": 16915540000,
+        "physical_read_bytes": 24625070080
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "reuse",
+        "elapsed_s": 9.440160083118826,
+        "sampled_peak_phys_footprint_bytes": 16901870080,
+        "physical_read_bytes": 7533252608
+      }
+    ],
+    "denoise/first_execution": [
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 52.03245008410886,
+        "sampled_peak_phys_footprint_bytes": 17468771808,
+        "physical_read_bytes": 2785280
+      }
+    ],
+    "denoise/resident": [
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 51.77254529087804,
+        "sampled_peak_phys_footprint_bytes": 17476013536,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 52.044627292081714,
+        "sampled_peak_phys_footprint_bytes": 17476210144,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "cold-copy",
+        "elapsed_s": 56.22274808306247,
+        "sampled_peak_phys_footprint_bytes": 17501048288,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "reuse",
+        "elapsed_s": 53.940067040966824,
+        "sampled_peak_phys_footprint_bytes": 17478766048,
+        "physical_read_bytes": 0
+      },
+      {
+        "suite": "quiet-05",
+        "arm": "reuse",
+        "elapsed_s": 56.8124550411012,
+        "sampled_peak_phys_footprint_bytes": 15536719936,
+        "physical_read_bytes": 0
+      }
+    ]
+  },
+  "window_policy": "Same CPU/AC thresholds on every overlapping complete interval; rejects coverage gaps. Whole-process rejection remains recorded.",
+  "peak_scope": "kernel process lifetime peak includes preparation and verification; phase samples are in raw records",
+  "cold_scope": "F_NOCACHE new-inode copy, observed physical reads; no global cache purge",
+  "minimum_ram_claim": false,
+  "scratch_bytes_known": false
+}

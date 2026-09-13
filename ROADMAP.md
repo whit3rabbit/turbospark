@@ -1,6 +1,6 @@
 # Roadmap
 
-The forward-looking roadmap and prioritized task tracker for this engine, last reconciled for MiniMax-M2 and dense Qwen3 on 2026-09-10. All core port phases (Q, P1, G, S, P2, M1-M5) are complete and green. This document functions as an active TODO list for forward engineering, measurements, and architectural bring-ups.
+The forward-looking roadmap and prioritized task tracker for this engine, last reconciled for dense Qwen2/Qwen2.5 on 2026-09-13. All core port phases (Q, P1, G, S, P2, M1-M5) are complete and green. This document functions as an active TODO list for forward engineering, measurements, and architectural bring-ups.
 
 All completed work, historical milestones, and landed features have been removed to focus strictly on remaining tasks.
 
@@ -9,7 +9,7 @@ All completed work, historical milestones, and landed features have been removed
 ## Current Status
 
 - **Test Suite**: Counts and gating conventions live in [docs/TESTING.md](docs/TESTING.md). Workspace build, tests with Metal, formatting, and Clippy passed after the MiniMax-M2 changes on 2026-09-10.
-- **Architectures**: 12 declared `ModelFamily` variants. Dense `qwen3` GGUF execution is verified on 0.6B Q8_0. MiniMax-M2 GGUF execution is implemented, but repetitive low-temperature smokes block release and catalog promotion. `deepseekV4Flash` remains scaffolded. The full support matrix lives in [docs/MODEL_FAMILY.md](docs/MODEL_FAMILY.md).
+- **Architectures**: 13 declared `ModelFamily` variants. Dense `qwen3` GGUF execution is verified on 0.6B Q8_0. Dense Qwen2/Qwen2.5 now has a real MLX/HF 4-bit install and greedy plus sampled CLI smokes. MiniMax-M2 GGUF execution is implemented, but repetitive low-temperature smokes block release and catalog promotion. `deepseekV4Flash` remains scaffolded. The full support matrix lives in [docs/MODEL_FAMILY.md](docs/MODEL_FAMILY.md).
 
 ---
 
@@ -114,17 +114,17 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   - `crates/runtime/src/families/qwen4/attn.rs`
   - `docs/QWEN4_EXP.md`
 
-#### 2. Dense `qwen3` / `qwen2.5` Architecture Bring-up (Usage-Weighted Priority)
-- **Objective**: Bring up dense Qwen family (0.6B to 32B, Coder, QwQ, R1 distills) which forms the primary backbone of user-downloaded GGUF repositories.
+#### 2. Dense `qwen2` / `qwen2.5` Validation and Format Expansion
+- **Objective**: Finish real-artifact evidence and broaden format coverage around the landed dense Qwen2/Qwen2.5 path, which forms a large part of user-downloaded Qwen repositories.
 - **Landed (2026-09-10)**: Dense `qwen3` GGUF registration and execution use the shared Llama flow. Per-head Q/K normalization is fixed and verified on Qwen3-0.6B Q8_0 with greedy/sample smokes, memory, and a mutation-checked frozen quality gate. See [the regression record](docs/MINIMAX_M2_PHASE0.md#shared-flow-regression-checks).
-- **Landed (2026-09-13)**: Dense Qwen2/Qwen2.5 is registered as `ModelFamily::Qwen2Dense`. GGUF `qwen2` and HF `qwen2` intake parse the dense shape, MLX/HF source names are normalized, the shared Llama flow applies Q/K/V biases before RoPE, and synthetic GGUF plus MLX-shaped installs pass manifest, finite-logit, bias-effect, and chunked-prefill gates. Qwen2-MoE, Qwen2-VL, split GGUF, and native BF16/FP16 safetensors conversion remain out of scope.
-- **Why Open**: The MLX artifact can proceed to the real gates, but the pinned official single-file Q3_K_M GGUF is currently blocked by the port's documented lack of a Q3_K resident kernel. Until that quantized path is implemented or the artifact scope moves to a supported Q4_K_M file, neither artifact should promote a catalog row or benchmark baseline. Larger Qwen2 checkpoints and derivatives still need their own validation.
+- **Landed (2026-09-13)**: Dense Qwen2/Qwen2.5 is registered as `ModelFamily::Qwen2Dense`. GGUF `qwen2` and HF `qwen2` intake parse the dense shape, MLX/HF source names are normalized, the shared Llama flow applies Q/K/V biases before RoPE, and synthetic GGUF plus MLX-shaped installs pass manifest, finite-logit, bias-effect, and chunked-prefill gates. Qwen2-MoE, Qwen2-VL, split GGUF, and native unquantized BF16/FP16 safetensors conversion remain out of scope.
+- **Real artifact status (2026-09-13)**: The pinned `mlx-community/Qwen2.5-7B-Instruct-4bit` checkpoint streamed into a `.gturbo` install and passed greedy and sampled CLI smokes with the official tokenizer sidecars. It is recorded in the catalog as `qwen25-7b-4bit` with status `runs`, not `verified`.
+- **Why Open**: The MLX path still needs a Qwen2-specific memory oracle, quality gate, and cross-engine evidence before a benchmark baseline can be frozen. The pinned official single-file Q3_K_M GGUF parses and exposes the correct architecture, but remains non-executable because this port has no Q3_K resident kernel. A Q4_K or Q8_0 Qwen2 GGUF must still be streamed and run as a real artifact. Larger Qwen2 checkpoints and derivatives need their own validation.
 - **Files to Touch / Create**:
-  - `crates/model-io/src/arch_config/family.rs`
-  - `crates/model-io/src/manifest.rs`
-  - `crates/repack/src/`
-  - `crates/runtime/src/families/llama/` (reuse the existing dense full-attention flow where the checkpoint contract agrees)
-  - `docs/NEW_MODEL.md`, `docs/MODEL_FAMILY.md`
+  - `crates/bench/tests/` (Qwen2 memory and quality gates)
+  - `crates/catalog/src/models.json` (additional validated checkpoints)
+  - `crates/gpu/src/shaders/` (Q3_K resident kernels, if that scope is chosen)
+  - `docs/NEW_MODEL.md`, `docs/MODEL_FAMILY.md`, `docs/TESTING.md`
 
 #### 3. `deepseek2` Architecture Support (High-Leverage Multi-Model Unlock)
 - **Objective**: Implement Multi-head Latent Attention (MLA) bring-up to unlock Kimi K2.5, Kimi K2.6, GLM-4.7-Flash, and Mistral-Large-3-675B under one `deepseek2` architecture string.
@@ -201,6 +201,11 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 - **Sequence**:
   - [ ] **IG0**: Close resource evidence with quiet-AC cold/warm measurements, retained memory, swap, physical reads, activation/scratch accounting, a supported memory envelope, and the final image manifest.
     - **Started (2026-09-10)**: [Phase 0 evidence](docs/IMAGE_GENERATION_PHASE0.md) pins all inputs and 1,163 tensors, records tokenizer/scheduler probes, bounded Diffusers/MFLUX block agreement, and Rust-verified group-64 packing. Nine requested steps produce nine forwards in the pinned Diffusers revision. Eight real captures cover the four-prompt BF16/INT4 suite with identical noise and a documented visual review. The component numerical coverage is now closed by IG1. Quiet-AC cold/warm measurements and the final resource contract remain open; busy-AC capture timings are not benchmarks.
+    - **Measurement attempt (2026-09-13)**: `quiet-03` produced exact lighting-reference outputs for encode and denoise, and recorded process footprint, MPS live/driver bytes, physical reads, retained allocations, and swap. Only warm text encoding qualified. Cold encode and cold denoise were rejected by the interval quietness gate; denoise warm execution refused after the host `ChatGPT` and `synrepo` processes became active, and VAE coverage did not run. The summary is [z-image-ig0-benchmarks-quiet-03.json](docs/verification/z-image-ig0-benchmarks-quiet-03.json). These observations do not freeze a memory envelope, exact scratch usage, or a minimum RAM claim. Repeat from a host that remains quiet for the full suite, then finalize the manifest and supported envelope.
+    - **Follow-up attempt (2026-09-13)**: `quiet-04` qualified the cold text-encoder arm, including exact output, three resident repetitions, and measured disk reads. Its warm arm was rejected before execution because the active host `ChatGPT` process held about one core, so denoise and VAE did not run. The summary is [z-image-ig0-benchmarks-quiet-04.json](docs/verification/z-image-ig0-benchmarks-quiet-04.json); IG0 remains open.
+    - **Quiet run (2026-09-13)**: `quiet-05` qualified both encoder cache arms and the cold denoiser arm. The largest qualified process footprints were 8,969,979,152 bytes for text encoding and 17,512,599,008 bytes for denoising; retained MPS driver allocations were 8,322,236,416 and 14,018,134,016 bytes, respectively, and `empty_cache` reduced both to 737,280 bytes. Swap was unchanged during the qualified arms. The denoiser reuse arm ran but was classified as mixed and failed two quiet timed windows, so it remains excluded from the aggregate. VAE measurement did not start because the reference `target/ig0/runs/lighting/decode.json` fixture was missing, not because of a VAE resource failure. See [z-image-ig0-benchmarks-quiet-05.json](docs/verification/z-image-ig0-benchmarks-quiet-05.json). The supported envelope, exact scratch accounting, and final manifest remain open.
+    - **VAE resource run (2026-09-13)**: `quiet-06` qualified both cold and warm decode arms with exact reference outputs and unchanged swap. The largest qualified process footprint was 11,025,630,840 bytes; the VAE's resident parameters were 335,278,732 bytes, retained MPS driver allocation was 10,060,791,808 bytes, and `empty_cache` reduced it to 2,150,318,080 bytes. The six resident decode samples ranged from 0.9327 to 0.9381 seconds. See [z-image-ig0-benchmarks-quiet-06.json](docs/verification/z-image-ig0-benchmarks-quiet-06.json). This closes the VAE cold/warm observation set, but activation/scratch accounting, whole-process denoiser warm-load eligibility, supported-envelope selection, and the final manifest remain open. Repeated full-pipeline stability is deferred to IG3.
+    - **Denoiser phase follow-up (2026-09-13)**: `quiet-07` produced exact nine-forward outputs in both arms. The cold load, first execution, and first two resident phases qualified; its final resident phase was rejected by one background interval. The reuse arm was physically mixed and its load/first windows were rejected, but all three warm resident phases qualified with zero physical reads. See [z-image-ig0-benchmarks-quiet-07.json](docs/verification/z-image-ig0-benchmarks-quiet-07.json). This supplies the resident warm execution evidence without claiming a fully cached whole-process load.
   - [x] **IG1**: Validate native conditioning, transformer blocks, scheduler updates, and VAE against the pinned reference.
     - **Progress (2026-09-12)**: New portable crate `crates/image` (`turbospark-image`) delivers native FlowMatchEuler scheduler step parity (exact sequence, timesteps/sigmas, and 9-step Euler integration vs captured latents) and conditioning path (exact Qwen chat template framing and tokenization across all 7 prompt cases; native FP32 text-encoder CPU forward with ~8.7e-3 to ~8.9e-3 rel-L2 tolerance vs captured BF16 MPS reference). The IG1 mutation report now records 16 native assertions with no isolated survivors (`docs/verification/z-image-ig1-mutations.json`).
     - **Progress (2026-09-12, continued)**: `turbospark-image` now includes

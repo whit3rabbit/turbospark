@@ -16,10 +16,66 @@ fn load() -> MfTokenizer {
     MfTokenizer::load_from_dir(&fixture_dir()).expect("fixture tokenizer should load")
 }
 
+fn load_qwen2_like() -> MfTokenizer {
+    let dir =
+        std::env::temp_dir().join(format!("turbospark-tokenizer-qwen2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create Qwen2 tokenizer directory");
+    let mut tokenizer: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture_dir().join("tokenizer.json"))
+            .expect("read ChatML tokenizer fixture"),
+    )
+    .expect("parse ChatML tokenizer fixture");
+    let added_tokens = tokenizer["added_tokens"]
+        .as_array()
+        .expect("fixture added_tokens array")
+        .iter()
+        .filter(|token| {
+            !matches!(
+                token.get("content").and_then(serde_json::Value::as_str),
+                Some("<tool_response>")
+                    | Some("</tool_response>")
+                    | Some("<think>")
+                    | Some("</think>")
+            )
+        })
+        .cloned()
+        .collect();
+    tokenizer["added_tokens"] = serde_json::Value::Array(added_tokens);
+    std::fs::write(
+        dir.join("tokenizer.json"),
+        serde_json::to_vec(&tokenizer).expect("serialize Qwen2-like tokenizer"),
+    )
+    .expect("write Qwen2-like tokenizer");
+    std::fs::copy(
+        fixture_dir().join("tokenizer_config.json"),
+        dir.join("tokenizer_config.json"),
+    )
+    .expect("copy ChatML tokenizer config");
+    MfTokenizer::load_from_dir(&dir).expect("Qwen2-like tokenizer should load")
+}
+
 #[test]
 fn resolves_chatml_dialect() {
     let tok = load();
     assert_eq!(tok.dialect, ChatDialect::ChatMl);
+}
+
+#[test]
+fn chatml_allows_qwen2_without_think_or_tool_response_special_tokens() {
+    let tok = load_qwen2_like();
+    assert_eq!(tok.dialect, ChatDialect::ChatMl);
+    assert_ne!(
+        tok.tool_call_start_id,
+        turbospark_tokenizer::NO_SUCH_TOKEN_ID
+    );
+    assert_ne!(tok.tool_call_end_id, turbospark_tokenizer::NO_SUCH_TOKEN_ID);
+    assert_eq!(tok.tool_response_id, turbospark_tokenizer::NO_SUCH_TOKEN_ID);
+    assert_eq!(
+        tok.tool_response_end_id,
+        turbospark_tokenizer::NO_SUCH_TOKEN_ID
+    );
+    assert_eq!(tok.think_start_id, None);
+    assert_eq!(tok.think_end_id, None);
 }
 
 #[test]

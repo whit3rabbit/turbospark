@@ -43,6 +43,7 @@ so drift shows up as one side failing a test the other passes.
 |---|---|---|---|---|---|
 | Gemma 4 | `<\|tool_call>call:NAME{k:v,...}<tool_call\|>` | yes | `extra_formats` | engine Pattern 1d | real installed `gemma4.gturbo` |
 | Qwen 3.5 / 3.6 / 3.8 | `<tool_call>` special tokens wrapping `<function=NAME><parameter=K>` XML | yes | `extra_formats` | engine Pattern 1 (+ parameter extraction) | real installed `qwen38-27b.gturbo` |
+| Qwen2 / Qwen2.5 | Same ChatML `<tool_call>` / `<function=NAME>` XML; `<think>` and `<tool_response>` may remain ordinary text | yes | `extra_formats` | engine Pattern 1 (+ parameter extraction) | real Qwen2.5 MLX text smoke; tool-call gate pending |
 | gpt-oss (Harmony) | `<\|channel\|>commentary to=functions.NAME ... <\|message\|>{json}<\|call\|>` | yes | n/a | n/a | real installed checkpoint |
 | DeepSeek-V4 | `<dsml:tool_calls>` text markers | yes | n/a | n/a | bundled fixture |
 | Muse Glimmer | `<atem:function_calls>` DSL | no parser (body routes to reasoning) | bare JSON only | bare JSON only | real installed checkpoint |
@@ -71,6 +72,12 @@ Qwen 3.5 and 3.6 use; the checkpoint is architecture `qwen35` under the
 hood. One dialect (`ChatDialect::ChatMl`), one parser
 (`crates/tokenizer/src/tool_call/qwen.rs`), nothing to change. This
 paragraph exists so nobody re-asks the next time a point release lands.
+
+**Qwen2.5 uses the same ChatML tool-call grammar but a smaller special-token
+contract.** The official Qwen2.5 tokenizer registers `<tool_call>` and
+`</tool_call>`, while some published sidecars do not register `<think>` or
+`<tool_response>` as special tokens. The ChatML resolver therefore treats
+those two pairs as optional and leaves them as ordinary text when absent.
 
 **Gemma's real format is the colon/brace DSL, not `<start_function_call>`.**
 The installed `gemma4.gturbo` template (lines 244-258) renders
