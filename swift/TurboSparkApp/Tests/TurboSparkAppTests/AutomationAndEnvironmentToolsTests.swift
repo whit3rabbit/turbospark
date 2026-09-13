@@ -141,4 +141,43 @@ final class AutomationAndEnvironmentToolsTests: XCTestCase {
             XCTAssertTrue(result.isError, "Exit worktree in non-git directory should report error cleanly")
         }
     }
+
+    func testWorktreeArgumentsCannotInjectShellCommands() async throws {
+        let (project, dir) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let marker = "WORKTREE_INJECTION_PROOF"
+        let call = AppToolCall(
+            name: "enter_worktree",
+            arguments: ["branch": "feature-test", "path": "worktree\"; touch \(marker); #"],
+            category: .terminal
+        )
+        let result = await AppToolRegistry.execute(call: call, in: project)
+
+        XCTAssertTrue(result.isError, "The non-git fixture should reject worktree creation")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent(marker).path))
+    }
+
+    func testWorktreeEnterRejectsInvalidBranchAndEscapingPath() async throws {
+        let (project, dir) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let invalidBranch = AppToolCall(
+            name: "enter_worktree",
+            arguments: ["branch": "bad..branch"],
+            category: .terminal
+        )
+        let invalidResult = await AppToolRegistry.execute(call: invalidBranch, in: project)
+        XCTAssertTrue(invalidResult.isError)
+        XCTAssertTrue(invalidResult.output.contains("Invalid git branch name"))
+
+        let escapingPath = AppToolCall(
+            name: "enter_worktree",
+            arguments: ["branch": "feature-test", "path": "../outside"],
+            category: .terminal
+        )
+        let escapingResult = await AppToolRegistry.execute(call: escapingPath, in: project)
+        XCTAssertTrue(escapingResult.isError)
+        XCTAssertTrue(escapingResult.output.contains("Path escapes the project root"))
+    }
 }

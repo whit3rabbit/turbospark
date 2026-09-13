@@ -10,14 +10,42 @@
 //! pixels generated identically on both sides, and decode is exercised by its
 //! own tests against its own invariants.
 
+use std::io::Cursor;
+
 use crate::error::VisionIoError;
 
 /// Cap on either side of a decoded image.
 ///
 /// Not a format limit. It bounds the allocation a hostile or corrupt file can
-/// ask for before any of the pixel work starts: a decoded 16,384-square RGB8
-/// image is already 768 MiB.
-pub const MAX_IMAGE_DIM: u32 = 16_384;
+/// ask for before any of the pixel work starts. This still admits the
+/// checkpoint's 4,064-pixel extreme while bounding an RGB8 decode to 48 MiB.
+pub const MAX_IMAGE_DIM: u32 = 4_096;
+
+fn reader(bytes: &[u8]) -> Result<image::ImageReader<Cursor<&[u8]>>, VisionIoError> {
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| VisionIoError::Decode {
+            detail: e.to_string(),
+        })?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIM);
+    limits.max_image_height = Some(MAX_IMAGE_DIM);
+    limits.max_alloc = Some(u64::from(MAX_IMAGE_DIM) * u64::from(MAX_IMAGE_DIM) * 4);
+    reader.limits(limits);
+    Ok(reader)
+}
+
+/// Read an image's dimensions without allocating its pixel buffer.
+///
+/// The same strict decoder limits used by [`decode_image_bytes`] are installed
+/// first, so callers can budget a whole request before decoding any image.
+pub fn image_dimensions(bytes: &[u8]) -> Result<(u32, u32), VisionIoError> {
+    reader(bytes)?
+        .into_dimensions()
+        .map_err(|e| VisionIoError::Decode {
+            detail: e.to_string(),
+        })
+}
 
 /// Decoded pixels, 8 bits per sample, three interleaved channels, row-major.
 ///
@@ -67,17 +95,12 @@ impl Rgb8Image {
 /// Grayscale is broadcast to three channels and an alpha channel is dropped,
 /// both by `to_rgb8`, matching the reference processor's `convert("RGB")`.
 pub fn decode_image_bytes(bytes: &[u8]) -> Result<Rgb8Image, VisionIoError> {
-    let decoded = image::load_from_memory(bytes).map_err(|e| VisionIoError::Decode {
+    // Probe first so a dimension bomb is rejected from its header before the
+    // decoder can allocate its output buffer.
+    let (width, height) = image_dimensions(bytes)?;
+    let decoded = reader(bytes)?.decode().map_err(|e| VisionIoError::Decode {
         detail: e.to_string(),
     })?;
-    let (width, height) = (decoded.width(), decoded.height());
-    if width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM {
-        return Err(VisionIoError::ImageTooLarge {
-            width,
-            height,
-            max_side: MAX_IMAGE_DIM,
-        });
-    }
     let rgb = decoded.to_rgb8();
     Rgb8Image::new(width as usize, height as usize, rgb.into_raw())
 }

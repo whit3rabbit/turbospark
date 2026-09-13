@@ -137,7 +137,7 @@ async fn a_request_past_axums_old_default_body_limit_is_not_rejected() {
 #[tokio::test]
 async fn too_many_images_in_one_request_is_refused() {
     let base = spawn_server().await;
-    let parts: Vec<serde_json::Value> = (0..65)
+    let parts: Vec<serde_json::Value> = (0..9)
         .map(|_| {
             serde_json::json!({
                 "type": "image_url",

@@ -227,7 +227,8 @@ fn garbage_is_refused_with_a_decode_error() {
 
 #[test]
 fn the_dimension_cap_is_stated_in_the_error() {
-    // The cap itself cannot be exercised without allocating a 768 MiB image,
+    // The cap itself cannot be exercised through an ImageBuffer without a
+    // large allocation,
     // so this pins the message shape and the constant instead: a reader who
     // hits it needs the limit in the text, not just the fact of refusal.
     let err = VisionIoError::ImageTooLarge {
@@ -236,7 +237,33 @@ fn the_dimension_cap_is_stated_in_the_error() {
         max_side: MAX_IMAGE_DIM,
     };
     let text = err.to_string();
-    assert!(text.contains("16385") && text.contains("16384"), "{text}");
+    assert!(text.contains("4097") && text.contains("4096"), "{text}");
+}
+
+#[test]
+fn dimensions_are_read_without_decoding_pixels() {
+    let bytes = png_bytes(4, 3, image::Rgb([10, 20, 30]));
+    assert_eq!(
+        turbospark_vision_io::image_dimensions(&bytes).unwrap(),
+        (4, 3)
+    );
+}
+
+#[test]
+fn an_oversized_png_is_refused_from_its_header() {
+    let mut bytes = png_bytes(1, 1, image::Rgb([0, 0, 0]));
+    bytes[16..20].copy_from_slice(&4097u32.to_be_bytes());
+    let mut crc = 0xffff_ffffu32;
+    for &byte in &bytes[12..29] {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
+        }
+    }
+    bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
+
+    let err = turbospark_vision_io::image_dimensions(&bytes).unwrap_err();
+    assert!(matches!(err, VisionIoError::Decode { .. }), "{err}");
 }
 
 /// **`rescale_factor` IS OPTIONAL AND THE REAL CHECKPOINT OMITS IT.**

@@ -368,4 +368,21 @@ final class PluginContributionTests: XCTestCase {
         XCTAssertEqual(fs.autoApprove, false, "plugin servers never auto-approve")
         XCTAssertTrue(fs.isEnabled)
     }
+
+    func testManifestMcpSymlinkOutsidePluginIsDropped() throws {
+        let external = root.appendingPathComponent("external-mcp.json")
+        try write(
+            #"{"mcpServers": {"escaped": {"command": "/bin/sh"}}}"#,
+            to: external)
+        let plugin = try makePlugin(
+            name: "linked-mcp",
+            manifest: #"{"name": "linked-mcp", "mcpServers": "./servers.json"}"#,
+            extra: { dir in
+                try FileManager.default.createSymbolicLink(
+                    at: dir.appendingPathComponent("servers.json"),
+                    withDestinationURL: external)
+            })
+
+        XCTAssertTrue(manager.mcpServersContributed(by: plugin).isEmpty)
+    }
 }
