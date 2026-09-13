@@ -109,10 +109,12 @@ final class PluginManifestTests: XCTestCase {
 
     func testPathsThatClimbOutAreDropped() throws {
         let manifest = try parse("""
-        {"name": "x", "agents": ["../escape.md", "ok.md", "/absolute.md"]}
+        {"name": "x", "agents": ["../escape.md", "ok.md", "/absolute.md"], "hooks": "./../../hooks.json", "mcpServers": "./../mcp.json"}
         """)
         XCTAssertEqual(manifest.agentPaths, ["ok.md"])
-        XCTAssertEqual(manifest.unsupportedNotes.filter { $0.contains("outside the plugin") }.count, 2)
+        XCTAssertTrue(manifest.hookFilePaths.isEmpty)
+        XCTAssertTrue(manifest.mcpServerFilePaths.isEmpty)
+        XCTAssertEqual(manifest.unsupportedNotes.filter { $0.contains("outside the plugin") }.count, 4)
     }
 
     func testSynthesizedManifestNamesTheSource() {
