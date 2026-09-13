@@ -15,6 +15,8 @@
 //! for chat templates to call on malformed input) is registered manually,
 //! since `minijinja` has no built-in equivalent.
 
+use std::io::{self, Write};
+
 use minijinja::{Environment, ErrorKind};
 use serde_json::{json, Value as JsonValue};
 
@@ -25,6 +27,27 @@ use crate::jinja_compat::parenthesize_conditional_kwargs;
 use crate::jinja_date::strftime_now;
 pub use crate::jinja_date::CHAT_DATE_ENV;
 use crate::reasoning::ReasoningEffort;
+
+const TEMPLATE_FUEL: u64 = 1_000_000;
+const MAX_RENDERED_BYTES: usize = 1 << 20;
+
+struct BoundedString {
+    value: Vec<u8>,
+}
+
+impl Write for BoundedString {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.value.len().saturating_add(bytes.len()) > MAX_RENDERED_BYTES {
+            return Err(io::Error::other("chat template output exceeds 1 MiB"));
+        }
+        self.value.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 fn raise_exception(message: String) -> Result<String, minijinja::Error> {
     Err(minijinja::Error::new(ErrorKind::InvalidOperation, message))
@@ -135,6 +158,9 @@ pub fn render_generic_chat_template(
     let source = source.as_ref();
 
     let mut env = Environment::new();
+    // Model repositories control this source. Bound both VM work and output
+    // so loading a tokenizer cannot turn a small sidecar into unbounded work.
+    env.set_fuel(Some(TEMPLATE_FUEL));
     env.add_function("raise_exception", raise_exception);
     // transformers' own chat-template global. gpt-oss's Harmony template is
     // the first here to call it (`Current date: ` in its system preamble);
@@ -185,9 +211,11 @@ pub fn render_generic_chat_template(
     let template = env
         .get_template("chat")
         .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
+    let mut output = BoundedString { value: Vec::new() };
     template
-        .render(JsonValue::Object(context))
-        .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))
+        .render_captured_to(JsonValue::Object(context), &mut output)
+        .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
+    String::from_utf8(output.value).map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))
 }
 
 impl MfTokenizer {
