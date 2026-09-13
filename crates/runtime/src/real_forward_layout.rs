@@ -19,7 +19,7 @@ use crate::real_forward_types::RealForwardError;
 /// cannot see. Add to both lists when the writer gains a tag. It is spelled
 /// out of the NAMED constants below rather than as bare literals for the same
 /// reason: a literal list is what let one go missing.
-pub(crate) const GGUF_BLOCK_DTYPES: [u8; 9] = [
+pub(crate) const GGUF_BLOCK_DTYPES: [u8; 16] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -29,6 +29,13 @@ pub(crate) const GGUF_BLOCK_DTYPES: [u8; 9] = [
     DTYPE_GGUF_IQ4_XS,
     DTYPE_GGUF_Q5_K,
     DTYPE_GGUF_MXFP4,
+    DTYPE_GGUF_Q2_K,
+    DTYPE_GGUF_IQ2_XXS,
+    DTYPE_GGUF_IQ2_XS,
+    DTYPE_GGUF_IQ1_S,
+    DTYPE_GGUF_IQ3_S,
+    DTYPE_GGUF_IQ2_S,
+    DTYPE_GGUF_IQ1_M,
 ];
 /// GGUF Q8_0: a resident GEMV, an embedding lookup, and a routed-expert
 /// decode pair.
@@ -62,6 +69,13 @@ pub(crate) const DTYPE_GGUF_Q5_K: u8 = 13;
 /// fails at `encode_gemv_any` by name. The tag exists so this list and the
 /// writer's stay structurally parallel.
 pub(crate) const DTYPE_GGUF_MXFP4: u8 = 14;
+pub(crate) const DTYPE_GGUF_Q2_K: u8 = 17;
+pub(crate) const DTYPE_GGUF_IQ2_XXS: u8 = 18;
+pub(crate) const DTYPE_GGUF_IQ2_XS: u8 = 19;
+pub(crate) const DTYPE_GGUF_IQ1_S: u8 = 20;
+pub(crate) const DTYPE_GGUF_IQ3_S: u8 = 21;
+pub(crate) const DTYPE_GGUF_IQ2_S: u8 = 22;
+pub(crate) const DTYPE_GGUF_IQ1_M: u8 = 23;
 /// The RAW (companion-less, unquantized) tag this port can read, and the only
 /// one: every consumer of an unquantized resident tensor -- `norm_view`,
 /// `read_bf16_host`, every kernel binding a `device const bfloat*` --
@@ -163,7 +177,7 @@ pub(crate) const DTYPE_INT2_AFFINE: u8 = 16;
 /// join this list, and a hypothetical install with MXFP4 attention passes the
 /// manifest gate and is stopped here -- which is the layering working, not a
 /// leak.
-pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 7] = [
+pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 14] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -171,6 +185,13 @@ pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 7] = [
     DTYPE_GGUF_IQ4_NL,
     DTYPE_GGUF_IQ4_XS,
     DTYPE_GGUF_Q5_K,
+    DTYPE_GGUF_Q2_K,
+    DTYPE_GGUF_IQ2_XXS,
+    DTYPE_GGUF_IQ2_XS,
+    DTYPE_GGUF_IQ1_S,
+    DTYPE_GGUF_IQ3_S,
+    DTYPE_GGUF_IQ2_S,
+    DTYPE_GGUF_IQ1_M,
 ];
 
 /// Which layout one routed sub-tensor uses.

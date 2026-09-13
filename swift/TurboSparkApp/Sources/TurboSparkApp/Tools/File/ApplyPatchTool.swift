@@ -6,13 +6,21 @@ import Foundation
 public struct ApplyPatchInput: Codable, Sendable, Equatable {
     /// Raw patch text containing diff headers and chunk operations.
     public var patchText: String
+    public var validateCommand: String?
+    public var validateTimeoutMs: Int?
 
     enum CodingKeys: String, CodingKey {
         case patchText = "patch_text"
+        case validateCommand = "validate_command"
+        case validateTimeoutMs = "validate_timeout_ms"
     }
 
-    public init(patchText: String) {
+    public init(
+        patchText: String, validateCommand: String? = nil, validateTimeoutMs: Int? = nil
+    ) {
         self.patchText = patchText
+        self.validateCommand = validateCommand
+        self.validateTimeoutMs = validateTimeoutMs
     }
 
     /// Custom decoder supporting `patch_text`, `patchText`, or wrapped dictionary structures.
@@ -29,6 +37,8 @@ public struct ApplyPatchInput: Codable, Sendable, Equatable {
                 self.patchText = ""
             }
         }
+        self.validateCommand = try container.decodeIfPresent(String.self, forKey: .validateCommand)
+        self.validateTimeoutMs = try container.decodeIfPresent(Int.self, forKey: .validateTimeoutMs)
     }
 }
 
@@ -79,6 +89,12 @@ public enum ApplyPatchToolDefinitions {
             properties: [
                 "patch_text": .string(
                     description: "The full patch or unified diff text describing file additions, modifications, and deletions."
+                ),
+                "validate_command": .string(
+                    description: "Optional terminal command to run after all patch targets pass fingerprint verification."
+                ),
+                "validate_timeout_ms": .integer(
+                    description: "Optional validation timeout in milliseconds."
                 )
             ],
             required: ["patch_text"]

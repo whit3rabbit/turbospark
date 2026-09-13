@@ -27,6 +27,10 @@ struct ProjectSettingsSheet: View {
     @State private var showingSkills = false
     @State private var showingPlugins = false
     @State private var showingAdvancedSettings = false
+    @State private var syntextIndexEnabled: Bool = false
+    @State private var isIndexing: Bool = false
+    @State private var hasSyntextIndex: Bool = false
+    @State private var indexStatsMessage: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +42,7 @@ struct ProjectSettingsSheet: View {
                     DisclosureGroup(isExpanded: $showingAdvancedSettings) {
                         VStack(alignment: .leading, spacing: 20) {
                             agentSection
+                            syntextIndexingSection
                             ProjectPermissionsSectionView(
                                 permissionMode: $permissionMode,
                                 fileReadPermission: $fileReadPermission,
@@ -268,6 +273,87 @@ struct ProjectSettingsSheet: View {
         }
     }
 
+    private var syntextIndexingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Code Search Index (Syntext)", bundle: .module)
+                    .themedFont(.small, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Fast ripgrep-style indexed code search for this project.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+            }
+
+            let trimmedPath = rootDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            Toggle(isOn: $syntextIndexEnabled) {
+                Text("Enable Syntext project indexing", bundle: .module)
+            }
+            .disabled(!model.syntextIndexingEnabled || trimmedPath.isEmpty)
+
+            if !model.syntextIndexingEnabled {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.appSecondary)
+                    Text("Code indexing is disabled globally (Settings > General).", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+            } else if trimmedPath.isEmpty {
+                Text("Set a codebase root directory above to enable indexing.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+                    .padding(8)
+            } else if syntextIndexEnabled || hasSyntextIndex {
+                let rootURL = URL(fileURLWithPath: trimmedPath)
+                HStack(spacing: 12) {
+                    if isIndexing {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Indexing project codebase...", bundle: .module)
+                            .themedFont(.small)
+                            .foregroundStyle(.appSecondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let msg = indexStatsMessage {
+                                Text(msg)
+                                    .themedFont(.small)
+                                    .foregroundStyle(.appSecondary)
+                            } else {
+                                Text("Index ready for fast code search.", bundle: .module)
+                                    .themedFont(.small)
+                                    .foregroundStyle(.appSecondary)
+                            }
+                        }
+                        Spacer()
+                        if syntextIndexEnabled {
+                            Button(hasSyntextIndex ? "Reindex" : "Index Now") {
+                                reindexProject(rootURL: rootURL)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityLabel("Reindex project codebase")
+                        }
+
+                        if hasSyntextIndex {
+                            Button("Remove Index", role: .destructive) {
+                                deleteProjectIndex(rootURL: rootURL)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityLabel("Remove project codebase index")
+                        }
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+
     private var footer: some View {
         HStack {
             if let editing = editingProject {
@@ -310,6 +396,8 @@ struct ProjectSettingsSheet: View {
             maxAutonomousSteps = Double(editing.maxAutonomousSteps)
             skillStateEnabled = editing.skillStateEnabled
             guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
+            syntextIndexEnabled = editing.syntextIndexEnabled
+            refreshIndexStats()
         } else {
             name = ""
             agentType = .coder
@@ -331,6 +419,7 @@ struct ProjectSettingsSheet: View {
             webPermission = defaultPerms.web
             mcpPermission = defaultPerms.mcp
             automationPermission = defaultPerms.automation
+            syntextIndexEnabled = false
         }
     }
 
@@ -347,16 +436,84 @@ struct ProjectSettingsSheet: View {
                 name = url.lastPathComponent
             }
             autoDetectRules()
+            refreshIndexStats()
+        }
+    }
+
+    private func refreshIndexStats() {
+        let trimmedPath = rootDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            indexStatsMessage = nil
+            hasSyntextIndex = false
+            return
+        }
+        let rootURL = URL(fileURLWithPath: trimmedPath)
+        Task {
+            if await SyntextIndexManager.shared.isIndexed(for: rootURL) {
+                if let stats = try? await SyntextIndexManager.shared.stats(for: rootURL) {
+                    let mb = Double(stats.indexSizeBytes) / 1_048_576.0
+                    await MainActor.run {
+                        hasSyntextIndex = true
+                        indexStatsMessage = String(format: "Indexed: %d documents (%.1f MB)", stats.totalDocuments, mb)
+                    }
+                    return
+                }
+            }
+            await MainActor.run {
+                hasSyntextIndex = false
+                indexStatsMessage = "Not indexed yet."
+            }
+        }
+    }
+
+    private func reindexProject(rootURL: URL) {
+        guard !isIndexing else { return }
+        isIndexing = true
+        Task {
+            do {
+                let stats = try await SyntextIndexManager.shared.buildIndex(for: rootURL)
+                let mb = Double(stats.indexSizeBytes) / 1_048_576.0
+                await MainActor.run {
+                    isIndexing = false
+                    hasSyntextIndex = true
+                    indexStatsMessage = String(format: "Indexed: %d documents (%.1f MB)", stats.totalDocuments, mb)
+                }
+            } catch {
+                await MainActor.run {
+                    isIndexing = false
+                    indexStatsMessage = "Indexing failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func deleteProjectIndex(rootURL: URL) {
+        guard !isIndexing else { return }
+        isIndexing = true
+        Task {
+            do {
+                try await SyntextIndexManager.shared.deleteIndex(for: rootURL)
+                await MainActor.run {
+                    isIndexing = false
+                    hasSyntextIndex = false
+                    indexStatsMessage = "Not indexed yet."
+                }
+            } catch {
+                await MainActor.run {
+                    isIndexing = false
+                    indexStatsMessage = "Failed to remove index: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
     private func autoDetectRules() {
         guard !rootDirectoryPath.isEmpty else { return }
-        if let result = model.detectProjectRulesDetails(directoryPath: rootDirectoryPath, preference: rulePreference) {
-            customInstructions = result.content
-            rulesAutoDetectedMessage = result.statusDescription
+        if let result = model.detectLiveProjectInstructions(directoryPath: rootDirectoryPath, preference: rulePreference) {
+            let files = result.detectedFiles.joined(separator: ", ")
+            rulesAutoDetectedMessage = "Detected \(files). These files are applied live to every project turn."
         } else {
-            rulesAutoDetectedMessage = "No AGENTS.md / CLAUDE.md found in folder."
+            rulesAutoDetectedMessage = "No AGENTS.md, CLAUDE.md, or CONTEXT.md found in folder."
         }
     }
 
@@ -387,6 +544,7 @@ struct ProjectSettingsSheet: View {
             updated.maxAutonomousSteps = Int(maxAutonomousSteps)
             updated.skillStateEnabled = skillStateEnabled
             updated.forgeGuardrailsEnabled = guardrailsPref
+            updated.syntextIndexEnabled = syntextIndexEnabled
             // `editing` is the snapshot from sheet-open. The nested MCP
             // sheet edited the LIVE project (servers, allow/deny rules),
             // so carrying the snapshot's stale copies over `updateProject`
@@ -409,7 +567,8 @@ struct ProjectSettingsSheet: View {
                 permissions: perms,
                 maxAutonomousSteps: Int(maxAutonomousSteps),
                 skillStateEnabled: skillStateEnabled,
-                forgeGuardrailsEnabled: guardrailsPref
+                forgeGuardrailsEnabled: guardrailsPref,
+                syntextIndexEnabled: syntextIndexEnabled
             )
         }
         onDismiss()

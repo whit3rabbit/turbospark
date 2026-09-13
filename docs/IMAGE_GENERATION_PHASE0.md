@@ -1,9 +1,16 @@
 # Z-Image-Turbo Phase 0 evidence
 
-Status: IG0 in progress, 2026-09-10. Native implementation has not begun.
-This page records measured facts and unresolved gates for
+Status: IG0 resource evidence remains open. Native IG1 parity is closed for the
+available fixtures: the full-width native checkpoint block, complete nine-step
+DiT gate, and real 1024-by-1024 VAE decode gate pass their frozen contracts.
+The optional raw-pixel arrays are absent from this checkout, so the VAE test's
+conditional pixel comparisons were not exercised. This page records measured
+facts and unresolved gates for
 [the image-generation design](IMAGE_GENERATION.md). It does not establish
 a supported RAM minimum, general image-quality guarantee, or production disk schema.
+The next work is the remaining IG0 resource closure. IG2 production runtime
+work follows that evidence, and app work remains IG4 after IG3 proves bounded
+lifetimes; neither a CLI nor app launch belongs to the current evidence gate.
 
 ## Inputs and reproducibility
 
@@ -59,6 +66,57 @@ are bypassed; the block implementations themselves are unchanged.
   tokens; Unicode contains 19; the overlong case truncates 2,409 tokens to
   512. The four image-review cases cover composition, typography, detail,
   and lighting. Token IDs and masks are exact fixtures, not handpicked IDs.
+- Native Rust FP32 CPU forward pass (in `crates/image`) confirms exact framing
+  string parity across all seven prompt cases, and exact token IDs and
+  attention mask agreement against captured arrays.
+- Native text encoder forward parity against captured BF16 MPS conditioning:
+  - lighting (27 tokens): max absolute error 1.2142e2, relative L2 8.6892e-3
+  - empty (8 tokens): max absolute error 1.2142e2, relative L2 8.8581e-3
+  - unicode (19 tokens): max absolute error 1.2142e2, relative L2 8.7833e-3
+  Achieved relative L2 error is consistently 8.69e-3 to 8.86e-3 (~0.88%),
+  reflecting FP32 CPU accumulation versus BF16 MPS capture across 35 layers.
+  Freeze text encoder tolerance: relative L2 <= 0.015 for Rust FP32 CPU vs
+  captured BF16 MPS. This tolerance is measured, not inherited from bounded
+  FP32 cross-engine comparisons.
+- Native scheduler parity (`crates/image::scheduler`): exact schedule bit-parity
+  for (1,1), (8,8), (9,9) against contracts JSON, exact timesteps/sigmas capture
+  match, and Euler step parity across latent_00..08 + final_latents within 1e-6
+  float roundoff. All six native tests are mutation-checked in
+  `docs/verification/z-image-ig1-mutations.json`.
+- The native crate now contains the staged FP32 DiT reference, including exact
+  image/caption sequence construction, learned padding tokens that remain
+  attendable, two noise-refiner blocks, two context-refiner blocks, thirty main
+  blocks, final unpatchification, and the pinned negative output convention.
+  The canonical 1024-by-1024 gate uses `[1,16,128,128]` initial and final
+  latents, not 64-by-64 latents. This code is not evidence of full parity until
+  the opt-in nine-step checkpoint gate completes.
+- All nine captured-input updates pass the unchanged local scheduler relative-L2
+  ceiling of `0.02`. Their transformer-output and scheduler-output relative-L2
+  values, followed by the accumulated rollout values, are:
+
+  | Update | Input | Expected | Transformer | Captured-input scheduler | Accumulated rollout |
+  | ---: | --- | --- | ---: | ---: | ---: |
+  | 1 | `initial_noise.npy` | `latent_00.npy` | `3.08770984e-2` | `2.02384288e-3` | `2.02384288e-3` |
+  | 2 | `latent_00.npy` | `latent_01.npy` | `2.65911520e-2` | `1.93704967e-3` | `1.12695470e-2` |
+  | 3 | `latent_01.npy` | `latent_02.npy` | `2.09559463e-2` | `1.79356441e-3` | `2.42157504e-2` |
+  | 4 | `latent_02.npy` | `latent_03.npy` | `1.61662959e-2` | `1.73750182e-3` | `3.88680734e-2` |
+  | 5 | `latent_03.npy` | `latent_04.npy` | `1.57005340e-2` | `2.15785531e-3` | `5.96708842e-2` |
+  | 6 | `latent_04.npy` | `latent_05.npy` | `1.11899236e-2` | `1.98123301e-3` | `8.85860100e-2` |
+  | 7 | `latent_05.npy` | `latent_06.npy` | `1.08153522e-2` | `2.44240882e-3` | `1.24803871e-1` |
+  | 8 | `latent_06.npy` | `latent_07.npy` | `8.89623817e-3` | `2.47731130e-3` | `1.63017213e-1` |
+  | 9 | `latent_07.npy` | `latent_08.npy` | `9.89344344e-3` | `3.13403807e-3` | `1.95015728e-1` |
+
+  The maximum accumulated error is `1.95015728e-1`. Rounding that maximum
+  upward to the next `0.001` freezes the cumulative BF16 envelope at `0.196`.
+  The local scheduler maximum is only `3.13403807e-3`, so the curve identifies
+  accumulated FP32 CPU versus BF16 MPS state drift rather than a bad local
+  timestep. `latent_08.npy` and `final_latents.npy` are byte-identical capture
+  aliases, not a tenth scheduler transition.
+- Native VAE output conversion maps finite decoded `[3,H,W]` floats from
+  `[-1,1]` to interleaved RGB8 and validates a decodable PNG. The real
+  1024-by-1024 Rust decode gate passes and produces `[3,1024,1024]`; its
+  optional raw-pixel comparison files are absent from this checkout, so only
+  the real decode and geometry assertions ran.
 
 ### Diffusion transformer
 
@@ -161,6 +219,15 @@ affine-64 output error is 0.0326 relative L2. These are bounded-attention
 component results, not full-image pixel parity. The full-width FP32 gate is absolute error <=3e-5 and relative L2 <=1e-6.
 [Checkpoint-block evidence](verification/z-image-ig0-checkpoint-block.json)
 retains the restricted-attention scope.
+
+The native Rust checkpoint-block gate now passes that frozen threshold. Its
+FP32 tree reduction for RMSNorm avoids the low-bit loss of a serial 3840-value
+sum, and biased projections perform the matrix product before the bias add.
+On the reproduced 64-token fixture, maximum absolute error is 5.72e-6 versus
+Diffusers and 1.53e-5 versus MFLUX; relative L2 is 8.57e-8 and 2.52e-7,
+respectively. This closes the bounded native block gate. The complete
+nine-step transformer and real Rust VAE decode gates also pass; the VAE test's
+optional raw-pixel assertions remain conditional on ignored binary fixtures.
 
 The independent full 1024 FP32 VAE comparison uses all 138 canonical decoder
 tensors, transposes convolution weights from OIHW to OHWI, and explicitly
@@ -369,7 +436,23 @@ target/ig0/venv/bin/python scripts/z_image_checkpoint_block.py \
   --run target/ig0/runs/lighting --out target/ig0/runs/checkpoint-block-verified
 target/ig0/venv/bin/python scripts/z_image_vae_compare.py \
   --run target/ig0/runs/lighting --out target/ig0/runs/vae-compare
+
+cargo test --release -p turbospark-image --test transformer_math_parity -- \
+  --ignored --nocapture test_transformer_checkpoint_block_parity
+cargo test --release -p turbospark-image --test pipeline_parity -- \
+  --ignored --nocapture test_z_image_all_steps_from_captured_input_parity
+cargo test --release -p turbospark-image --test pipeline_parity -- \
+  --ignored --nocapture test_z_image_full_nine_step_checkpoint_parity
+cargo test --release -p turbospark-image --test vae_parity -- \
+  --ignored --nocapture test_vae_real_decode_parity
 ```
+
+The checkpoint-block Rust command, complete nine-step DiT command, and real
+1024-by-1024 VAE decode command are closed for the available fixtures. The
+captured-input command records all nine local rows, and the full rollout
+command passes the frozen `0.196` cumulative BF16 envelope. The VAE mutation
+record is in `z-image-ig1-mutations.json`; its latent geometry assertion was
+tightened from 128 to 127 and failed in isolation before the expensive decode.
 
 The local gallery is `target/ig0/review.html`; it links original PNGs.
 Empty, Unicode, and overlong conditioning can be regenerated with `encode`

@@ -230,24 +230,28 @@ pub async fn health(State(state): State<crate::ServerState>) -> Response {
     .into_response()
 }
 
-/// `GET /v1/models`. One entry per attached model. This is what an OpenAI
-/// client's model picker (and Claude Code's gateway model discovery) reads.
+/// `GET /v1/models`. One entry per public model identity. This is what an
+/// OpenAI client's model picker (and Claude Code's gateway model discovery)
+/// reads.
 pub async fn models(State(state): State<crate::ServerState>) -> Response {
     let created = now_unix();
     Json(serde_json::json!({
         "object": "list",
-        "data": state.registry.rows().into_iter().map(|row| serde_json::json!({
-            "id": row.id,
-            "display_name": row.id,
-            "object": "model",
-            "created": created,
-            "owned_by": "mference",
-            // Not OpenAI's, and deliberately additive: a picker that can
-            // show the window a model was OPENED at saves a user guessing,
-            // and the number is per-session rather than per-checkpoint
-            // (AGENTS.md Gotcha 55) so nothing else can state it.
-            "context_window": row.max_context,
-        })).collect::<Vec<_>>(),
+        "data": state.registry.rows().into_iter().flat_map(|row| {
+            let max_context = row.max_context;
+            row.ids().map(|id| serde_json::json!({
+                "id": id,
+                "display_name": id,
+                "object": "model",
+                "created": created,
+                "owned_by": "mference",
+                // Not OpenAI's, and deliberately additive: a picker that can
+                // show the window a model was OPENED at saves a user guessing,
+                // and the number is per-session rather than per-checkpoint
+                // (AGENTS.md Gotcha 55) so nothing else can state it.
+                "context_window": max_context,
+            })).collect::<Vec<_>>()
+        }).collect::<Vec<_>>(),
     }))
     .into_response()
 }
@@ -263,13 +267,18 @@ pub async fn model_detail(
     // single-model fallback (`registry.rs`) -- correct for serving a
     // generation and wrong for a lookup, where the whole question is whether
     // this exact id exists.
-    if let Some(row) = state.registry.rows().into_iter().find(|r| r.id == model_id) {
+    if let Some((id, max_context)) = state.registry.rows().into_iter().find_map(|row| {
+        let max_context = row.max_context;
+        row.ids()
+            .find(|id| *id == model_id)
+            .map(|id| (id.to_string(), max_context))
+    }) {
         Json(serde_json::json!({
-            "id": row.id,
+            "id": id,
             "object": "model",
             "created": now_unix(),
             "owned_by": "mference",
-            "context_window": row.max_context,
+            "context_window": max_context,
         }))
         .into_response()
     } else {

@@ -182,6 +182,16 @@ The tower opens LAZILY, on the first image. A text-only session on a vision
 install pays none of the above, which is why `arch.vision.is_active()` and not
 `runner.vision.is_none()` is the question "does this install have a tower".
 
+The HTTP path applies a separate hostile-input budget before this work: at
+most eight images, 16,777,216 aggregate source pixels, and 128 MiB of retained
+f32 patch rows. It reads dimensions through decoder limits before allocating
+pixels, computes every resized grid from those headers, and rejects a prompt
+that cannot fit the model context before either full preprocessing or GPU
+encoding. The 4,096-pixel side cap still admits the checkpoint's measured
+4,064-pixel extreme. The count and aggregate budgets are server admission
+limits rather than checkpoint facts; the decoder side cap is shared by every
+front end.
+
 **Row-tiling the MLP (Part B1, landed 2026-09-06) bounds this.** The largest
 single allocation in that 1.9 GB was `VisionScratch::h1`, the
 `[patches, 4304]` FP16 intermediate -- 555 MB at 64,516 patches.

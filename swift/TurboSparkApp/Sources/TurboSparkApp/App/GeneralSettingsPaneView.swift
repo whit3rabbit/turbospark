@@ -53,10 +53,34 @@ struct GeneralSettingsPaneView: View {
 
             compactionSection
 
+            agentEfficiencySection
+
+            codeSearchSection
+
             hfAuthSection
         }
         .formStyle(.grouped)
         .padding(16)
+    }
+
+    private var codeSearchSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { model.syntextIndexingEnabled },
+                set: { model.setSyntextIndexingEnabled($0) }
+            )) {
+                Text("Enable Syntext project indexing", bundle: .module)
+            }
+            .settingsControl("Enable Syntext project indexing", pane: .general, timing: .immediate)
+            Text(
+                "Allows opted-in projects to use fast indexed code search. Only the active project's index stays loaded in memory.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+        } header: {
+            Text("Code Search & Project Indexing", bundle: .module)
+        }
     }
 
     private var menuBarSection: some View {
@@ -149,5 +173,27 @@ struct GeneralSettingsPaneView: View {
             .pickerStyle(.menu)
         }
             .settingsControl("Context Compaction", pane: .general, timing: .immediate)
+    }
+
+    private var agentEfficiencySection: some View {
+        Section(header: Text("Agent Efficiency", bundle: .module)) {
+            Toggle("Fuse edits with validation", isOn: efficiencyBinding(\.actionFusionEnabled))
+            Toggle("Archive and recall large tool output", isOn: efficiencyBinding(\.observationPackEnabled))
+            Toggle("Verify local diagnostic reductions", isOn: efficiencyBinding(\.evidenceReducerEnabled))
+            Toggle("Compact at completed todo boundaries", isOn: efficiencyBinding(\.todoBoundaryCompactionEnabled))
+            Text("Validation remains permission-gated. Archived normal-chat output stays local until its chat is deleted. Ghost output stays encrypted in memory.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+        }
+        .settingsControl("Agent Efficiency", pane: .general, timing: .nextTurn)
+    }
+
+    private func efficiencyBinding(_ keyPath: ReferenceWritableKeyPath<AppModel, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { model[keyPath: keyPath] },
+            set: { value in
+                model[keyPath: keyPath] = value
+                model.persistSettingsDebounced()
+            })
     }
 }

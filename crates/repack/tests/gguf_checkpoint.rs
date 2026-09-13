@@ -913,6 +913,38 @@ fn a_dense_llama_gguf_installs_and_its_manifest_loads() {
     }
 }
 
+/// Qwen2 keeps the ordinary dense Llama layer layout but adds Q/K/V biases.
+/// This fixture proves the GGUF name table, F32-to-BF16 resident transcode,
+/// and dense manifest path together before a real Q3_K_M stream is attempted.
+#[test]
+fn a_qwen2_gguf_installs_with_qkv_biases() {
+    let (bytes, _) = turbospark_repack::build_synthetic_qwen2_gguf();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let dir = tempdir();
+    let arch =
+        write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "qwen2", |_| {})
+            .expect("Qwen2 GGUF install writes");
+
+    assert_eq!(arch.family, model_io::ModelFamily::Qwen2Dense);
+    assert_eq!(arch.head_dim, 64);
+    assert!(!arch.tie_word_embeddings);
+    assert_eq!(arch.full_attention_layer_mask, vec![1, 1]);
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("Qwen2 GGUF manifest validates");
+
+    let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+        .expect("Qwen2 resident index loads");
+    for layer in 0..2 {
+        for projection in ["q", "k", "v"] {
+            let name =
+                format!("language_model.model.layers.{layer}.self_attn.{projection}_proj.bias");
+            assert_eq!(index.entries[&name].dtype, 1, "{name} is BF16");
+        }
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// ROADMAP M5's structural fixture: does the walk survive a `gpt-oss`-shaped
 /// model at all?
 ///

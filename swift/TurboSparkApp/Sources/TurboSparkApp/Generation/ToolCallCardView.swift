@@ -52,7 +52,7 @@ struct ToolCallCardView: View {
     }
 
     private var terminalCommand: String? {
-        call.arguments["command"] ?? call.arguments["cmd"]
+        call.shellCommand
     }
 
     private var isTodoCall: Bool {
@@ -182,6 +182,9 @@ struct ToolCallCardView: View {
                     }
 
                     if let result {
+                        if let outcome = result.efficiency, outcome.hasAnyOutcome {
+                            efficiencyOutcome(outcome)
+                        }
                         ToolResultOutputView(
                             output: result.output,
                             isError: result.isError,
@@ -243,6 +246,12 @@ struct ToolCallCardView: View {
                     riskBadge(risk)
                 }
 
+                if result?.efficiency?.validation != nil {
+                    Text("validated", bundle: .module)
+                        .font(theme.code(.tiny, weight: .semibold))
+                        .foregroundStyle(.appSecondary)
+                }
+
                 Spacer()
 
                 statusBadge
@@ -258,6 +267,21 @@ struct ToolCallCardView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(summary.action) \(summary.target)")
         .accessibilityValue(statusLabel)
+    }
+
+    @ViewBuilder
+    private func efficiencyOutcome(_ outcome: ToolEfficiencyOutcome) -> some View {
+        let labels = [
+            outcome.validation.map { "Validation: \($0)" },
+            outcome.archivedOutput ? "Archived output available through recall_tool_output" : nil,
+            outcome.verifiedReduction ? "Verified local reduction" : nil,
+            outcome.boundaryCompaction ? "Completed-todo boundary compacted" : nil,
+        ].compactMap { $0 }
+        if !labels.isEmpty {
+            Text(labels.joined(separator: " | "))
+                .font(theme.ui(.tiny))
+                .foregroundStyle(.appSecondary)
+        }
     }
 
     private var statusLeadingIcon: some View {

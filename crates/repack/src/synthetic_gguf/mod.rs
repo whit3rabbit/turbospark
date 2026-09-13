@@ -25,3 +25,6 @@ pub use gptoss::{build_synthetic_gpt_oss_gguf, SyntheticGptOssShape};
 
 mod minimax;
 pub use minimax::build_synthetic_minimax_gguf;
+
+mod qwen2;
+pub use qwen2::build_synthetic_qwen2_gguf;

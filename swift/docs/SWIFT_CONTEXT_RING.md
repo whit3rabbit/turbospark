@@ -92,20 +92,22 @@ emits one marker per image), so they are the one thing still approximated.
 Images are priced at that approximation everywhere here; the page-token
 expansion happens in the engine's splice and no client-side count sees it.
 
-## The system prompt has three sources and two assemblers
+## The system prompt has four sources and two assemblers
 
 Added 2026-09-05. What a turn sends is the user's own prompt (this chat's
-`AppChat.systemPrompt`, else `MacAppSettings.defaultSystemPrompt`) followed
-by the project-derived sections, and
-`AppModel.resolvedUserSystemPrompt(chatIndex:)` is the only place that
-precedence is decided.
+`AppChat.systemPrompt`, else the selected `AppSystemPrompt`), the optional
+app-wide personality, then the project-derived sections.
+`AppModel.resolvedUserSystemPrompt(chatIndex:)` owns only the selected-default
+versus per-chat choice; `resolvedPersonalityPrompt` resolves the independent
+style selection. `SYSTEM_PROMPT.md` owns the library, full section order, and
+precedence.
 
 **`AppModel.buildSystemPrompt`'s nil-project guard is a TOOL boundary, not
-a prompt one.** The user's prompt is the one section above it; agent role,
-workspace root, project rules, tool vocabulary and skills are all below.
-That is what lets a projectless Chat-mode turn carry a persona while still
-being offered no tools -- moving the user prompt below that guard, or a
-project section above it, breaks a different thing in each direction.
+a prompt one.** The user's prompt and optional personality are above it;
+agent role, workspace root, TurboSpark environment, project rules, tool
+vocabulary and skills are all below. That is what lets a projectless Chat-mode turn carry a persona while
+still being offered no tools. Moving either prompt section below that guard,
+or a project section above it, breaks a different thing in each direction.
 `extractToolCalls` keeps its own independent gate, so this is the second
 of two locks (`state#82`).
 
@@ -115,9 +117,10 @@ ask, so the prompt is threaded in: `AppModel+Agents` passes it directly
 and the `agent` TOOL reaches it through
 `AppToolRegistry.userSystemPromptProvider`, a provider for the same
 reason `activeSessionProvider` is one. Miss either call site and the
-user's prompt applies to some subagent runs and not others. A subagent
-inherits the app-wide DEFAULT only, never a per-chat override: it runs in
-a fresh isolated context with zero parent history.
+app-wide prompt applies to some subagent runs and not others. A subagent
+inherits the app-wide default plus the selected personality, never a
+per-chat override: it runs in a fresh isolated context with zero parent
+history.
 
 **Exactly one system message, at index 0.** Both history builders already
 guarantee this and it is a correctness requirement rather than a style:

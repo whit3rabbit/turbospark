@@ -139,8 +139,8 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/v1/models   # 401, no ke
 curl -s localhost:8080/health                                       # 200, /health is exempt
 
 # The point of /v1/messages: an Anthropic-native client, no proxy.
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
-  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
+  --model claude-turbospark-<canonical-model-id>
 
 # Launch against a real .gturbo install (macOS; use --release, a debug
 # build decodes far too slowly to be usable). `--model` takes a directory
@@ -215,7 +215,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    `tests/real_backend.rs` pins BOTH sized knobs rather than letting either
    sense the machine, for AGENTS.md Gotcha 35's reason.
 
-11. **`--bind tailnet` fails rather than widening, and is not authentication.** It binds only the single address `tailscale ip -4` reports, and only when that address is a dotted-quad inside 100.64.0.0/10; zero, several, IPv6, out-of-range, or malformed output is an error, never a fall back to loopback or a wildcard. Every device the Tailnet ACL admits gets unauthenticated access to the full API (no auth, no TLS). The flag exists only in `--model` mode; the scripted `<tokenizer-dir>` mode always binds loopback.
+11. **`--bind tailnet` fails rather than widening and requires authentication.** It binds only the single address `tailscale ip -4` reports, and only when that address is a dotted-quad inside 100.64.0.0/10; zero, several, IPv6, out-of-range, or malformed output is an error, never a fall back to loopback or a wildcard. Tailnet mode also refuses to start without `--api-key` or a non-empty `$TURBOSPARK_API_KEY`; it provides no TLS. The flag exists only in `--model` mode; the scripted `<tokenizer-dir>` mode always binds loopback.
 
 12. **The decoder is built for THREE independent reasons, and keeping them independent is the point.** `stream_blocking` used to construct `StructuredAssistantDecoder` exactly when a request carried tools, which is the same condition `plan` uses to pick the tool template (Gotcha 7). The decision also fires for `ChatDialect::Harmony`, because `gpt-oss` writes its reasoning into an `analysis` channel BEFORE its answer and an undecoded stream sends the reasoning and the frame markup to the client as the reply. The THIRD condition is `reasoning_effort` on a ChatML or Gemma request: those dialects have a thought channel that is unreachable until a level is asked for, and reachable the moment one is. It is keyed on the REQUEST rather than the dialect, which is what keeps every existing call on the pass-through path it has always had. **The prompt path stays keyed on `tools` alone.** Coupling them again would render the tool template for every gpt-oss request, which changes the prompt rather than the presentation. The split reaches the wire as one field: `assistant_message` fills OpenAI `reasoning_content` and `reasoning_delta` fills the streaming equivalent, and `anyllm_translate`'s existing mappings turn both into an Anthropic `thinking` block. `thinking_blocks` stays `None` deliberately: that field carries Anthropic's SIGNED blocks, and a local model has nothing to sign with. One inherited ordering constraint, recorded in `reasoning_delta`: the streaming translator opens a thinking block on the first reasoning delta and closes it on the first content delta without reopening, so a backend that interleaved the two would need upstream work rather than a reordering here. Harmony emits analysis before final, so this server's sequence is well formed. **SINCE 2026-09-05 THE DECISION IS NOT THIS CRATE'S.** `needs_decoder` was one of three drifting copies (the CLI's `ChannelSplit` and the FFI's port of it were the others) and is now `runtime::turn_stream::TurnSplitter::new`, which `stream_blocking` wraps its loop with -- so the three reasons above are still the reasons, stated one file over. `docs/STREAMING.md` is the home. `tests/harmony_channels.rs` proves the whole chain with the scripted backend and no model; mutation-checked by reverting the splitter's condition to the tools-only one, which reddens all three cases.
 
@@ -749,8 +749,8 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     `model` field was echoed back rather than routed on; that is still true
     of a server with ONE model and no longer true in general.
 
-    The rule, in order: an exact id match wins; failing that, **if exactly
-    one model is attached it serves the request whatever name was asked
+    The rule, in order: an exact canonical id OR advertised alias match wins;
+    failing that, **if exactly one model is attached it serves the request whatever name was asked
     for**; only with two or more attached and no match is it a 404 naming
     what IS available. The middle clause is not a courtesy. `docs/CLI.md`'s
     own Anthropic walkthrough sends `"model":"claude-sonnet-4-6"` at an
@@ -775,8 +775,16 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     ChatModel>>` impl is what left every existing call site -- this crate's
     whole integration suite -- compiling verbatim.
 
+    Every generative backend advertises a unique
+    `claude-turbospark-<canonical-id>` alias beside its canonical id, and both
+    resolve to the same backend. `/v1/models` expands aliases into separate
+    entries because Claude Code gateway discovery filters the ids it receives.
+    The registry refuses every canonical-to-alias or alias-to-alias collision
+    before it can make a backend unreachable. Embedding-only backends expose no
+    Claude alias, so they never appear as a completion choice.
+
     **`/v1/models/:model` DELIBERATELY DOES NOT TAKE THE FALLBACK.** It
-    matches against `registry.rows()` rather than through `resolve`, because
+    matches against the row's canonical id and aliases rather than through `resolve`, because
     a lookup asks whether this exact id exists where the fallback answers a
     different question. Routing it through `resolve` reddens
     `a_model_lookup_does_not_take_the_single_model_fallback` alone.
