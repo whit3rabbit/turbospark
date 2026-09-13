@@ -39,8 +39,8 @@ COMMANDS:
                                 quantization block for it to check)
     path <ALIAS>                print an install directory, for scripts
     rm <ALIAS>                  delete an install
-    auth [TOKEN]                manage Hugging Face credentials: print status,
-                                set a token, or clear with --clear
+    auth                        inspect Hugging Face credentials, save one
+                                from stdin with --set, or clear with --clear
 
 OPTIONS:
     --out <DIR>                 install here instead of the default store
@@ -70,10 +70,9 @@ OPTIONS:
     --probe                     read every curated row's header too, which is
                                 what turns `recommend`'s unknowns into
                                 arithmetic. Slower: one header per row
-    --hf-token <TOKEN>          Hugging Face API token override
     --clear                     clear saved Hugging Face token (for `auth`)
     --status                    verify and show authentication status (for `auth`)
-    --set <TOKEN>               save Hugging Face token (for `auth`)
+    --set                       read and save a Hugging Face token (for `auth`)
     --force                     install past a probe refusal
     --yes                       do not prompt before deleting
     --help                      print this text
@@ -144,7 +143,7 @@ pub struct Options {
     pub filter: Option<String>,
     pub force: bool,
     pub yes: bool,
-    pub hf_token: Option<String>,
+    pub set: bool,
     pub clear: bool,
     pub status: bool,
     /// Which options actually appeared, so [`Options::reject_unused`] can
@@ -173,7 +172,7 @@ fn run(args: &[String]) -> Result<(), Error> {
     let (positionals, options) = parse(&args[1..])?;
     let store = Store::default_store().map_err(Error::Failed)?;
     let catalog = Catalog::load(store.root()).map_err(Error::Failed)?;
-    let client = Client::with_token(options.hf_token.clone());
+    let client = Client::new();
 
     match command.as_str() {
         "list" => {
@@ -187,21 +186,14 @@ fn run(args: &[String]) -> Result<(), Error> {
             model_cmd::info(&catalog, &store, alias)
         }
         "probe" => {
-            options.reject_unused(&["file", "sidecar-repo", "hf-token"])?;
+            options.reject_unused(&["file", "sidecar-repo"])?;
             let target = one_positional(&positionals, "probe", "<REPO>[@REV]")?;
             let repo = RepoRef::parse(target).map_err(Error::Usage)?;
             let sidecars = parse_sidecar_repo(&options)?;
             model_cmd::probe(&client, &repo, options.file.as_deref(), sidecars.as_ref())
         }
         "recommend" => {
-            options.reject_unused(&[
-                "context",
-                "budget",
-                "load-guard",
-                "discover",
-                "probe",
-                "hf-token",
-            ])?;
+            options.reject_unused(&["context", "budget", "load-guard", "discover", "probe"])?;
             if !positionals.is_empty() {
                 return Err(Error::Usage(
                     "recommend takes no arguments; it describes this machine".to_string(),
@@ -217,12 +209,11 @@ fn run(args: &[String]) -> Result<(), Error> {
                 "sidecar-repo",
                 "reuse-trunk-from",
                 "force",
-                "hf-token",
             ])?;
             model_cmd::pull(&catalog, &store, &client, &positionals, &options)
         }
         "pull-vision" => {
-            options.reject_unused(&["out", "alias", "file", "force", "hf-token"])?;
+            options.reject_unused(&["out", "alias", "file", "force"])?;
             model_cmd::pull_vision(&catalog, &store, &client, &positionals, &options)
         }
         "path" => {
@@ -236,7 +227,7 @@ fn run(args: &[String]) -> Result<(), Error> {
             model_cmd::remove(&store, alias, options.yes)
         }
         "auth" => {
-            options.reject_unused(&["hf-token", "set", "clear", "status"])?;
+            options.reject_unused(&["set", "clear", "status"])?;
             model_cmd::auth(&store, &positionals, &options)
         }
         other => Err(Error::Usage(format!("unknown command {other:?}"))),
@@ -401,12 +392,8 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
                 options.yes = true;
                 seen.push("yes");
             }
-            "--hf-token" => {
-                options.hf_token = Some(value_for(&mut index, "--hf-token")?);
-                seen.push("hf-token");
-            }
             "--set" => {
-                options.hf_token = Some(value_for(&mut index, "--set")?);
+                options.set = true;
                 seen.push("set");
             }
             "--clear" => {

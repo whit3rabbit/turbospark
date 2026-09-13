@@ -155,6 +155,30 @@ fn parsing_a_vector_with_an_absurd_layer_index_fails_cleanly() {
     ));
 }
 
+/// The path loader is used directly by the public control-vector inspector,
+/// so it must bound bytes before allocating from a caller-selected file.
+#[test]
+fn an_oversized_control_vector_file_is_refused_before_parsing() {
+    let path = std::env::temp_dir().join(format!(
+        "turbospark-control-vector-limit-{}",
+        std::process::id()
+    ));
+    let file = std::fs::File::create(&path).expect("create sparse fixture");
+    file.set_len(MAX_CONTROL_VECTOR_BYTES + 1)
+        .expect("size sparse fixture");
+
+    let result = load_control_vector(&path);
+    std::fs::remove_file(&path).expect("remove sparse fixture");
+
+    assert!(matches!(
+        result,
+        Err(ControlVectorError::FileTooLarge {
+            max_bytes: MAX_CONTROL_VECTOR_BYTES,
+            ..
+        })
+    ));
+}
+
 #[test]
 fn a_foreign_tensor_name_is_refused() {
     assert!(matches!(
