@@ -73,7 +73,7 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
 ) -> Result<Gemma4RepackOutput, Gemma4Error> {
     let plan = classify_all(shards, arch)?;
     let mut resident =
-        read_resident_entries_from_shards(shards, &plan.resident_bases, quant, arch.family)?;
+        read_resident_entries_from_shards(shards, &plan.resident_bases, quant, arch)?;
     // The head is APPENDED, after `lm_head` and after the trunk's own
     // ordering has been settled. Absent from the checkpoint means absent from
     // the install, with no flag and no manifest field to disagree with the
@@ -333,7 +333,7 @@ pub fn read_resident_entries_from_shards(
     shards: &Gemma4Shards<'_>,
     resident_bases: &[&str],
     quant: &Gemma4Quant,
-    family: ModelFamily,
+    arch: &ArchConfig,
 ) -> Result<ResidentRead, Gemma4Error> {
     let mut entries = Vec::with_capacity(resident_bases.len());
     let mut lossy_narrowing = Vec::new();
@@ -341,7 +341,7 @@ pub fn read_resident_entries_from_shards(
         let t = shards.info(name)?;
         if t.dtype == "U32" && name.ends_with(".weight") {
             entries.push(super::narrow::pass_through_packed(shards, name, quant)?);
-        } else if int8_force_targets(family)
+        } else if int8_force_targets(arch.family)
             .iter()
             .any(|suffix| name.ends_with(suffix))
         {
@@ -351,8 +351,24 @@ pub fn read_resident_entries_from_shards(
             // INT8-affine layout `crates/runtime`'s GEMV kernels require --
             // mirroring the GGUF walk's `transcode_f32` router target
             // (`crates/repack` CLAUDE.md Gotcha 6).
+            let rows = if name.ends_with(".mlp.shared_expert_gate.weight") {
+                1
+            } else {
+                usize::try_from(arch.num_experts).map_err(|_| Gemma4Error::ShapeMismatch {
+                    tensor: name.to_string(),
+                    detail: format!("invalid architecture expert count {}", arch.num_experts),
+                })?
+            };
+            let cols =
+                usize::try_from(arch.hidden_size).map_err(|_| Gemma4Error::ShapeMismatch {
+                    tensor: name.to_string(),
+                    detail: format!("invalid architecture hidden size {}", arch.hidden_size),
+                })?;
             entries.push(super::narrow::quantize_gating_matrix_int8(
-                shards, name, &t.dtype,
+                shards,
+                name,
+                &t.dtype,
+                (rows, cols),
             )?);
         } else {
             // NARROWED, not tagged. The deleted `raw_dtype_tag` recorded F16

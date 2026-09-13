@@ -72,12 +72,8 @@ pub fn write_gemma4_install_streamed(
         plan.routed.len(),
     ));
 
-    let mut resident = orchestrate::read_resident_entries_from_shards(
-        shards,
-        &plan.resident_bases,
-        quant,
-        arch.family,
-    )?;
+    let mut resident =
+        orchestrate::read_resident_entries_from_shards(shards, &plan.resident_bases, quant, arch)?;
     // THE MTP HEAD, and this arm has to exist HERE as well as in
     // `orchestrate_gemma4_checkpoint_sharded` -- which is the whole reason it
     // is worth a comment. Every REAL install goes through this streamed
