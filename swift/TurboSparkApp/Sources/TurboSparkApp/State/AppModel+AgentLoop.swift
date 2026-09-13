@@ -357,6 +357,7 @@ extension AppModel {
             // The synthetic terminal leg gets the same PermissionRequest
             // hook opportunity as the visible mutation. A deny here is still
             // pre-mutation, so no partial compound action can occur.
+            var validationPermissionUnresolved = false
             if let validationCall = fusedValidationCall {
                 let validationVerdict = await evaluatePermissionRequest(
                     toolName: validationCall.name, toolArguments: validationCall.arguments,
@@ -379,6 +380,7 @@ extension AppModel {
                         currentStep: currentStep, project: decisionProject)
                     return
                 }
+                validationPermissionUnresolved = validationVerdict.permissionDecision != .allow
             }
             // `PermissionRequest` fires exactly where this app would
             // otherwise show the approval card, so a hook can resolve
@@ -401,11 +403,33 @@ extension AppModel {
                 return
             }
 
-            if permVerdict.permissionDecision == .allow {
+            if permVerdict.permissionDecision == .allow && !validationPermissionUnresolved {
                 await self.runApprovedCall(call, extra: extra, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
             } else if permVerdict.permissionDecision == .deny {
                 let reason = permVerdict.permissionReason ?? "Denied by PermissionRequest hook"
                 await self.recordDeniedCall(call, extra: extra, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
+            } else if validationPermissionUnresolved {
+                // An allow for the mutation cannot authorize its independent
+                // terminal leg. Only that leg's hook or the compound card can.
+                var pending = call
+                pending.status = .pendingApproval
+                pending.riskAssessment = assessment
+                self.pendingToolCall = pending
+                self.pendingToolCallChatID = chatID
+                self.pendingToolCallStep = currentStep
+                self.pendingToolCallProject = decisionProject
+                self.pendingValidationCall = fusedValidationCall
+                self.pendingToolCallClassifierNotice = nil
+                mutateTurnMessages(for: chatID) {
+                    $0.append(AppChatMessage(
+                        role: .assistant,
+                        content: fullContent,
+                        reasoning: reasoning,
+                        stopReason: "tool_use",
+                        toolCalls: [pending] + extra.calls,
+                        toolResults: extra.results
+                    ))
+                }
             } else {
                 // **AGENT MODE ROUTES HERE, BEFORE THE CARD** (see
                 // `swift/docs/SWIFT_AGENT_MODE.md`). The hook above already
