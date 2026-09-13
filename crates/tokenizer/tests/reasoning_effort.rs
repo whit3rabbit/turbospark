@@ -5,6 +5,7 @@
 //! `Qwen3.8-27B` template (see its own header), so these cases pin the
 //! behaviour the flag was built against rather than a shape invented here.
 
+use std::fs;
 use std::path::PathBuf;
 
 use turbospark_tokenizer::{Message, MfTokenizer, ReasoningEffort, ReasoningSupport, Role};
@@ -18,6 +19,45 @@ fn fixture(name: &str) -> MfTokenizer {
 
 fn user() -> Vec<Message> {
     vec![Message::new(Role::User, "hi")]
+}
+
+fn fixture_with_template(template: &str) -> (MfTokenizer, PathBuf) {
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ReasoningEffortTokenizer");
+    let target = std::env::temp_dir().join(format!(
+        "turbospark-reasoning-template-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = fs::remove_dir_all(&target);
+    fs::create_dir(&target).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            fs::copy(entry.path(), target.join(entry.file_name())).unwrap();
+        }
+    }
+    fs::write(target.join("chat_template.jinja"), template).unwrap();
+    let tokenizer = MfTokenizer::load_from_dir(&target).unwrap();
+    (tokenizer, target)
+}
+
+#[test]
+fn untrusted_template_probe_has_work_and_output_limits() {
+    for template in [
+        "{{ 'x' * 1048577 }}",
+        "{% for outer in range(1000) %}{% for inner in range(1000) %}x{% endfor %}{% endfor %}",
+    ] {
+        let (tok, dir) = fixture_with_template(template);
+        let error = tok
+            .apply_chat_template_with_reasoning(&user(), ReasoningEffort::Low)
+            .expect_err("an attacker-controlled template must hit a resource limit");
+        assert!(
+            error.to_string().contains("rendering") || error.to_string().contains("fuel"),
+            "unexpected resource-limit error: {error}"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 /// THE FIXTURE MUST DISCRIMINATE BEFORE ANYTHING BELOW MEANS ANYTHING.
