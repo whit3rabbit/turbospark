@@ -15,9 +15,38 @@ public enum WebSearchExecutor {
     public static let maxUrlChars: Int = 2048
     public static let maxTitleChars: Int = 200
     public static let maxSnippetChars: Int = 800
+    public static let maxResponseBytes: Int = 8 * 1024 * 1024
     public static let defaultTimeoutSeconds: Int = 25
 
     public static let userAgent: String = "turbospark-web/1.0"
+
+    static func validateResponseSize(_ byteCount: Int) throws {
+        guard byteCount <= maxResponseBytes else {
+            throw NSError(
+                domain: "TurboSparkWebSearch",
+                code: 50,
+                userInfo: [NSLocalizedDescriptionKey: "Web search response exceeded the 8 MiB limit."]
+            )
+        }
+    }
+
+    private static func fetchLimited(
+        request: URLRequest,
+        session: URLSession
+    ) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        if response.expectedContentLength >= 0 {
+            try validateResponseSize(Int(response.expectedContentLength))
+        }
+
+        var data = Data()
+        data.reserveCapacity(min(max(0, Int(response.expectedContentLength)), maxResponseBytes))
+        for try await byte in bytes {
+            try validateResponseSize(data.count + 1)
+            data.append(byte)
+        }
+        return (data, response)
+    }
 
     // MARK: - Primary Search Entrypoint
 
@@ -216,7 +245,7 @@ public enum WebSearchExecutor {
         request.timeoutInterval = TimeInterval(defaultTimeoutSeconds)
 
         let session = customSession ?? URLSession.shared
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await fetchLimited(request: request, session: session)
 
         guard let http = response as? HTTPURLResponse else {
             throw NSError(domain: "TurboSparkWebSearch", code: 3, userInfo: [NSLocalizedDescriptionKey: "Non-HTTP response from Exa."])
@@ -381,7 +410,7 @@ public enum WebSearchExecutor {
         request.timeoutInterval = TimeInterval(defaultTimeoutSeconds)
 
         let session = customSession ?? URLSession.shared
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await fetchLimited(request: request, session: session)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -475,7 +504,7 @@ public enum WebSearchExecutor {
         request.timeoutInterval = TimeInterval(defaultTimeoutSeconds)
 
         let session = customSession ?? URLSession.shared
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await fetchLimited(request: request, session: session)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -534,7 +563,7 @@ public enum WebSearchExecutor {
         request.timeoutInterval = TimeInterval(defaultTimeoutSeconds)
 
         let session = customSession ?? URLSession.shared
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await fetchLimited(request: request, session: session)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -658,7 +687,7 @@ public enum WebSearchExecutor {
         sessionConfig.timeoutIntervalForRequest = TimeInterval(defaultTimeoutSeconds)
         let session = customSession ?? URLSession(configuration: sessionConfig)
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await fetchLimited(request: req, session: session)
         guard let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             throw NSError(domain: "TurboSparkWebSearch", code: 32, userInfo: [NSLocalizedDescriptionKey: "Tavily search failed with HTTP \(status)."])
@@ -724,7 +753,7 @@ public enum WebSearchExecutor {
         sessionConfig.timeoutIntervalForRequest = TimeInterval(defaultTimeoutSeconds)
         let session = customSession ?? URLSession(configuration: sessionConfig)
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await fetchLimited(request: req, session: session)
         guard let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             throw NSError(domain: "TurboSparkWebSearch", code: 35, userInfo: [NSLocalizedDescriptionKey: "Tavily extract failed with HTTP \(status)."])

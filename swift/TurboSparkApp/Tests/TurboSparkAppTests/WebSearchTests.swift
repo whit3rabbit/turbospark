@@ -193,4 +193,14 @@ final class WebSearchTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("Tavily API key is missing"))
         }
     }
+
+    func testResponseSizeLimitAcceptsBoundaryAndRejectsOversize() throws {
+        XCTAssertNoThrow(try WebSearchExecutor.validateResponseSize(WebSearchExecutor.maxResponseBytes))
+        XCTAssertThrowsError(
+            try WebSearchExecutor.validateResponseSize(WebSearchExecutor.maxResponseBytes + 1)
+        ) { error in
+            XCTAssertEqual((error as NSError).domain, "TurboSparkWebSearch")
+            XCTAssertEqual((error as NSError).code, 50)
+        }
+    }
 }
