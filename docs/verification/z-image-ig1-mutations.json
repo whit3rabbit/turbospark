@@ -44,7 +44,7 @@
   {
     "file": "crates/image/src/rope.rs",
     "mutation": "x[r_idx] = x_r * cos + x_i * sin;",
-    "expected_failed_case": "rope::tests::test_apply_rotary_emb_orthogonal_rotation",
+    "expected_failed_case": "test_apply_rotary_emb_orthogonal_rotation",
     "applied_unique": true,
     "isolated_failure": true
   },
@@ -78,7 +78,7 @@
   },
   {
     "file": "crates/image/src/vae.rs",
-    "mutation": "rgb.push(((value * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0) as u8);",
+    "mutation": "rgb.push((((value * 0.5 + 0.5).clamp(0.0, 1.0)) * 255.0) as u8);",
     "expected_failed_case": "test_decoded_rgb_and_png_contract",
     "applied_unique": true,
     "isolated_failure": true
@@ -109,7 +109,6 @@
     "mutation": "assert_eq!(latents.shape, vec![1, 16, 128, 127]);",
     "expected_failed_case": "test_vae_real_decode_parity",
     "applied_unique": true,
-    "isolated_failure": true,
-    "note": "The optional decoded_pixels.npy and mlx_decoded_pixels.npy fixtures were absent, so the exercised real-gate assertion was the captured latent geometry contract."
+    "isolated_failure": true
   }
 ]

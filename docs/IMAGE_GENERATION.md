@@ -54,7 +54,7 @@ Current IG1 evidence status:
   rule freezes the cumulative BF16 envelope at `0.196`. The widening is
   evidence-derived and applies only to accumulated FP32 CPU versus BF16 MPS
   state drift, not to local timestep math.
-- The real 1024-by-1024 VAE gate passes in 4725.23 seconds and produces the
+- The real 1024-by-1024 VAE gate passes in 4695.11 seconds and produces the
   required `[3,1024,1024]` decoded tensor. The optional `decoded_pixels.npy`
   and `mlx_decoded_pixels.npy` files are absent, so this run exercises the
   real decode and geometry contract but not the conditional pixel assertions.
@@ -67,6 +67,11 @@ No image-generation runtime, CLI command, catalog alias, or app mode is
 implemented by this document. The open work is tracked in
 [ROADMAP](../ROADMAP.md). This page owns the design, gates, and rationale;
 the roadmap owns the remaining task checklist.
+
+The next work is IG0 resource closure: quiet-AC cold/warm measurements,
+retained memory, swap, physical reads, activation/scratch accounting, the
+supported memory envelope, and final image manifest. IG2 may begin only after
+that evidence; app work remains IG4 after IG3 establishes bounded lifetimes.
 
 ## Direction and first release
 

@@ -2,8 +2,8 @@
 //! helpers.
 
 use turbospark_model_io::{
-    deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture, qwen_gdn_dense_27b,
-    qwen_gdn_moe_35b_a3b, ModelFamily,
+    deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture, qwen2_5_7b,
+    qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b, ModelFamily,
 };
 
 #[test]
@@ -55,6 +55,23 @@ fn known_architecture_matches_the_named_baseline() {
         known_architecture(ModelFamily::QwenGdnDense),
         qwen_gdn_dense_27b()
     );
+    assert_eq!(known_architecture(ModelFamily::Qwen2Dense), qwen2_5_7b());
+}
+
+#[test]
+fn qwen2_baseline_carries_the_dense_qwen2_contract() {
+    let arch = qwen2_5_7b();
+    assert_eq!(arch.family, ModelFamily::Qwen2Dense);
+    assert_eq!(arch.hidden_size, 3584);
+    assert_eq!(arch.intermediate_size, 18944);
+    assert_eq!(arch.num_heads, 28);
+    assert_eq!(arch.num_kv_heads, 4);
+    assert_eq!(arch.num_layers, 28);
+    assert_eq!(arch.vocab_size, 152_064);
+    assert_eq!(arch.full_attention_layer_mask, vec![1; 28]);
+    assert!(!arch.rope_neox_subdim);
+    assert!(!arch.attn_output_gate);
+    assert_eq!(arch.attention_scale, 0.088_388_347_648_318_45);
 }
 
 /// The `qwen3_5` layer graph: 64 layers, full attention on every 4th, and so

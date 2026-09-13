@@ -171,7 +171,9 @@ extension AppModel {
         func joined(_ kinds: [AppModel.SystemPromptSection]) -> String {
             sections.filter { kinds.contains($0.section) }.map(\.content).joined(separator: "\n\n")
         }
-        let systemPiece = joined([.userPrompt, .agentPrompt, .workspace, .projectRules])
+        let systemPiece = joined([
+            .userPrompt, .personality, .agentPrompt, .workspace, .environment, .projectRules
+        ])
         if !systemPiece.isEmpty {
             pieces.append(ContextUsagePiece(kind: .system, label: "System prompt", content: systemPiece))
         }

@@ -49,6 +49,12 @@ extension AppModel {
         self.stopSequences = settings.stopSequences
         self.samplingPresets = settings.samplingPresets
         self.defaultSystemPrompt = settings.defaultSystemPrompt
+        self.systemPrompts = settings.systemPrompts
+        self.selectedSystemPromptID = UUID(uuidString: settings.activeSystemPromptID)
+            .flatMap { id in settings.systemPrompts.contains(where: { $0.id == id }) ? id : nil }
+        self.personalities = settings.personalities
+        self.selectedPersonalityID = UUID(uuidString: settings.activePersonalityID)
+            .flatMap { id in settings.personalities.contains(where: { $0.id == id }) ? id : nil }
         self.pluginEnableState = settings.enabledPlugins
         self.runtimeOptions.powerProfile = AppPowerProfileOption(rawValue: settings.powerProfile) ?? .auto
         self.runtimeOptions.loadGuard = AppLoadGuardOption(rawValue: settings.loadGuard) ?? .relaxed
@@ -186,6 +192,10 @@ extension AppModel {
             compactionKeepRecentTurns: compactionKeepRecentTurns,
             serverPinnedPort: serverPinnedPort,
             defaultSystemPrompt: defaultSystemPrompt,
+            systemPrompts: systemPrompts,
+            activeSystemPromptID: selectedSystemPromptID?.uuidString ?? "",
+            personalities: personalities,
+            activePersonalityID: selectedPersonalityID?.uuidString ?? "",
             enabledPlugins: pluginEnableState,
             showMenuBarItem: showMenuBarItem,
             keepFansPinnedOnQuit: keepFansPinnedOnQuit,

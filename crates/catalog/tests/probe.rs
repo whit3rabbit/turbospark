@@ -200,6 +200,26 @@ fn qwen35_config(bits: u32, group: u32) -> String {
     )
 }
 
+fn qwen2_config(bits: u32, group: u32) -> String {
+    serde_json::json!({
+        "model_type": "qwen2",
+        "quantization": {"bits": bits, "group_size": group},
+        "hidden_size": 3584,
+        "intermediate_size": 18944,
+        "num_hidden_layers": 28,
+        "num_attention_heads": 28,
+        "num_key_value_heads": 4,
+        "vocab_size": 152064,
+        "max_position_embeddings": 32768,
+        "rms_norm_eps": 1e-6,
+        "rope_theta": 1e6,
+        "hidden_act": "silu",
+        "tie_word_embeddings": false,
+        "use_sliding_window": false
+    })
+    .to_string()
+}
+
 #[test]
 fn a_two_bit_group_128_config_is_runnable_and_reports_its_width() {
     let report =
@@ -212,6 +232,17 @@ fn a_two_bit_group_128_config_is_runnable_and_reports_its_width() {
         report.expert_stride, None,
         "this family is dense, so nothing streams"
     );
+}
+
+#[test]
+fn qwen2_mlx_config_is_runnable_and_reports_the_dense_family() {
+    let report = evaluate_config(&qwen2_config(4, 64), &repo(), Some(123)).unwrap();
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.family, Some(model_io::ModelFamily::Qwen2Dense));
+    assert_eq!(report.affine, Some((4, 64)));
+    assert_eq!(report.expert_stride, None);
+    assert_eq!(report.download_bytes, Some(123));
+    assert_eq!(report.arch.unwrap(), model_io::qwen2_5_7b());
 }
 
 /// **The affine shape is a CONJUNCTION, not two independent lists.** 2-bit

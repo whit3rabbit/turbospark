@@ -509,11 +509,11 @@ struct ProjectSettingsSheet: View {
 
     private func autoDetectRules() {
         guard !rootDirectoryPath.isEmpty else { return }
-        if let result = model.detectProjectRulesDetails(directoryPath: rootDirectoryPath, preference: rulePreference) {
-            customInstructions = result.content
-            rulesAutoDetectedMessage = result.statusDescription
+        if let result = model.detectLiveProjectInstructions(directoryPath: rootDirectoryPath, preference: rulePreference) {
+            let files = result.detectedFiles.joined(separator: ", ")
+            rulesAutoDetectedMessage = "Detected \(files). These files are applied live to every project turn."
         } else {
-            rulesAutoDetectedMessage = "No AGENTS.md / CLAUDE.md found in folder."
+            rulesAutoDetectedMessage = "No AGENTS.md, CLAUDE.md, or CONTEXT.md found in folder."
         }
     }
 

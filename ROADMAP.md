@@ -117,7 +117,8 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 #### 2. Dense `qwen3` / `qwen2.5` Architecture Bring-up (Usage-Weighted Priority)
 - **Objective**: Bring up dense Qwen family (0.6B to 32B, Coder, QwQ, R1 distills) which forms the primary backbone of user-downloaded GGUF repositories.
 - **Landed (2026-09-10)**: Dense `qwen3` GGUF registration and execution use the shared Llama flow. Per-head Q/K normalization is fixed and verified on Qwen3-0.6B Q8_0 with greedy/sample smokes, memory, and a mutation-checked frozen quality gate. See [the regression record](docs/MINIMAX_M2_PHASE0.md#shared-flow-regression-checks).
-- **Why Open**: Dense `qwen2` / Qwen2.5 intake and execution remain unported; larger Qwen3 checkpoints and derivatives still need their own validation.
+- **Landed (2026-09-13)**: Dense Qwen2/Qwen2.5 is registered as `ModelFamily::Qwen2Dense`. GGUF `qwen2` and HF `qwen2` intake parse the dense shape, MLX/HF source names are normalized, the shared Llama flow applies Q/K/V biases before RoPE, and synthetic GGUF plus MLX-shaped installs pass manifest, finite-logit, bias-effect, and chunked-prefill gates. Qwen2-MoE, Qwen2-VL, split GGUF, and native BF16/FP16 safetensors conversion remain out of scope.
+- **Why Open**: The MLX artifact can proceed to the real gates, but the pinned official single-file Q3_K_M GGUF is currently blocked by the port's documented lack of a Q3_K resident kernel. Until that quantized path is implemented or the artifact scope moves to a supported Q4_K_M file, neither artifact should promote a catalog row or benchmark baseline. Larger Qwen2 checkpoints and derivatives still need their own validation.
 - **Files to Touch / Create**:
   - `crates/model-io/src/arch_config/family.rs`
   - `crates/model-io/src/manifest.rs`
@@ -195,11 +196,11 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 #### 11. Native Z-Image-Turbo Image Generation (CLI, then App)
 
 - **Objective**: Add local, quantized text-to-image generation through native Rust/Metal, first in the unified CLI and then through the existing C ABI/Swift package in an explicit image mode in chat.
-- **Why Open**: Expert streaming, sequential vision-block loading, load guards, and app bindings exist; diffusion conditioning, transformer/scheduler execution, VAE decoding, image installation, and generated-artifact handling still require bring-up.
-- **Design and Gates**: [Native image generation](docs/IMAGE_GENERATION.md) owns the architecture, proposed interfaces, evidence requirements, and release boundaries. Proposed on 2026-09-10; implementation and measurements remain open.
+- **Why Open**: The CPU reference components now pass their frozen IG1 contracts, but no production quantized Metal runtime, image installation path, measured resource envelope, or generated-artifact integration exists.
+- **Design and Gates**: [Native image generation](docs/IMAGE_GENERATION.md) owns the architecture, proposed interfaces, evidence requirements, and release boundaries. The CPU reference is complete for IG1; production implementation and resource measurements remain open.
 - **Sequence**:
-  - [ ] **IG0**: Pin model/reference revisions and component contracts; capture intermediate fixtures; select compatible quantization and define the target memory/latency envelope.
-    - **Started (2026-09-10)**: [Phase 0 evidence](docs/IMAGE_GENERATION_PHASE0.md) pins all inputs and 1,163 tensors, records tokenizer/scheduler probes, bounded Diffusers/MFLUX block agreement, and Rust-verified group-64 packing. Nine requested steps produce nine forwards in the pinned Diffusers revision. Eight real captures now cover the four-prompt BF16/INT4 suite with identical noise and a documented visual review. Independent full-width block and FP32 VAE comparisons pass measured tolerances. Wider numerical coverage, quiet-AC cold/warm measurements, and the final resource contract remain open; busy-AC capture timings are not benchmarks.
+  - [ ] **IG0**: Close resource evidence with quiet-AC cold/warm measurements, retained memory, swap, physical reads, activation/scratch accounting, a supported memory envelope, and the final image manifest.
+    - **Started (2026-09-10)**: [Phase 0 evidence](docs/IMAGE_GENERATION_PHASE0.md) pins all inputs and 1,163 tensors, records tokenizer/scheduler probes, bounded Diffusers/MFLUX block agreement, and Rust-verified group-64 packing. Nine requested steps produce nine forwards in the pinned Diffusers revision. Eight real captures cover the four-prompt BF16/INT4 suite with identical noise and a documented visual review. The component numerical coverage is now closed by IG1. Quiet-AC cold/warm measurements and the final resource contract remain open; busy-AC capture timings are not benchmarks.
   - [x] **IG1**: Validate native conditioning, transformer blocks, scheduler updates, and VAE against the pinned reference.
     - **Progress (2026-09-12)**: New portable crate `crates/image` (`turbospark-image`) delivers native FlowMatchEuler scheduler step parity (exact sequence, timesteps/sigmas, and 9-step Euler integration vs captured latents) and conditioning path (exact Qwen chat template framing and tokenization across all 7 prompt cases; native FP32 text-encoder CPU forward with ~8.7e-3 to ~8.9e-3 rel-L2 tolerance vs captured BF16 MPS reference). The IG1 mutation report now records 16 native assertions with no isolated survivors (`docs/verification/z-image-ig1-mutations.json`).
     - **Progress (2026-09-12, continued)**: `turbospark-image` now includes
@@ -220,14 +221,14 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
       The curve is accumulated FP32 CPU versus BF16 MPS state sensitivity, not
       a local timestep failure. `latent_08.npy` is byte-identical to
       `final_latents.npy`, so the capture has nine transitions, not ten. The
-      real 1024-by-1024 VAE decode gate passes in 4725.23 seconds and produces
+      real 1024-by-1024 VAE decode gate passes in 4695.11 seconds and produces
       `[3,1024,1024]`. Its tightened latent-geometry assertion fails in
       isolation and is restored; the optional raw-pixel comparison files were
       absent, so the conditional pixel assertions did not run. The independent
       pinned VAE evidence remains below its frozen `6e-5` and `3e-6` limits.
   - [ ] **IG2**: Deliver a complete quantized install and staged CLI pipeline with PNG output, metadata, progress, and cancellation.
-    - **Next owner (2026-09-10)**: Start staging CLI command and session ownership after IG1 fixture gates are complete.
-  - [ ] **IG3**: Prove bounded lifetimes and measured memory; add sequential block streaming only where the target budget requires it. Required before advertising that budget.
+    - **Next owner**: Begin only after IG0 closes the resource envelope and final image manifest. No CLI or app work is in scope before that gate.
+  - [ ] **IG3**: Prove bounded lifetimes and measured memory; add sequential block streaming only where the target budget requires it. Required before advertising that budget or starting app integration.
   - [ ] **IG4**: Expose the same runtime through Swift; add chat image mode, job serialization, preview/save/regeneration, and profile-scoped artifact persistence.
   - [ ] **IG5**: Tune measured bottlenecks without weakening quality or memory gates; approximation work needs a separate proposal.
 - **First Release Boundary**: One image per prompt, native Metal, exact dense execution with validated quantization. Image editing, LoRA, batching, agent tools, HTTP image endpoints, PISA, and approximate timestep reuse are deferred. Existing text consumers must retain their behavior.

@@ -310,6 +310,38 @@ pub fn pass_through_packed(
     name: &str,
     quant: &Gemma4Quant,
 ) -> Result<ResidentEntrySpec, Gemma4Error> {
+    pass_through_packed_impl(shards, name, quant, false).map(|(spec, _)| spec)
+}
+
+/// Reads a Qwen2/Qwen2.5 packed tensor whose 4/8-bit companions are F16 in
+/// the MLX source checkpoint. The resident affine kernels consume BF16
+/// companions, so the planes are narrowed while they are ingested rather
+/// than copied as F16 bits under a BF16 manifest tag.
+pub fn pass_through_packed_qwen2(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: &Gemma4Quant,
+) -> Result<ResidentEntrySpec, Gemma4Error> {
+    pass_through_packed_impl(shards, name, quant, true).map(|(spec, _)| spec)
+}
+
+/// Qwen2's streamed writer needs the narrowing count for its conversion
+/// report. The public wrapper above keeps the existing pass-through API
+/// focused on the entry itself.
+pub(crate) fn pass_through_packed_qwen2_with_loss(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: &Gemma4Quant,
+) -> Result<(ResidentEntrySpec, Vec<(String, usize)>), Gemma4Error> {
+    pass_through_packed_impl(shards, name, quant, true)
+}
+
+fn pass_through_packed_impl(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: &Gemma4Quant,
+    qwen2_f16_companions: bool,
+) -> Result<(ResidentEntrySpec, Vec<(String, usize)>), Gemma4Error> {
     let w = shards.info(name)?;
     if w.shape.len() != 2 {
         return Err(Gemma4Error::ShapeMismatch {
@@ -329,23 +361,26 @@ pub fn pass_through_packed(
     // Elements per packed u32 word. The formula covers one and two bits as
     // well as four and eight; what does NOT generalize is everything below it.
     let factor = 32 / bits as u64;
-    // **The companion dtype is a function of the bit width, and this is the
-    // one axis in the whole walk that fails silently if it is wrong.** MLX
+    // **The source companion dtype is a function of the bit width, and this is
+    // the one axis in the whole walk that fails silently if it is wrong.** MLX
     // writes companions in the checkpoint's own dtype: BF16 for the INT4/INT8
-    // installs this port already reads, FP16 for the 1-bit and 2-bit ones. The
-    // two are the same width and share no exponent field, so accepting either
-    // here would produce an install of exactly the right SIZE whose scales are
-    // wrong by orders of magnitude -- 0.0271 read as 1.7e-16. Hence a
-    // required dtype per width rather than a set of allowed ones.
+    // installs this port already reads, FP16 for the 1-bit and 2-bit ones, and
+    // FP16 for Qwen2's 4/8-bit source planes. The two are the same width and
+    // share no exponent field, so accepting either without conversion would
+    // produce an install of exactly the right SIZE whose scales are wrong by
+    // orders of magnitude -- 0.0271 read as 1.7e-16. Hence a required dtype
+    // per width rather than a set of allowed ones, except for Qwen2's explicit
+    // F16-to-BF16 conversion below.
     //
-    // Both sub-4-bit checkpoints happen to be F16 and both 4/8-bit ones BF16,
-    // so this reads as a threshold and is not one: it is a table of what each
-    // published file carries, and a future 2-bit checkpoint in BF16 would be a
-    // third row rather than a moved boundary.
+    // Both sub-4-bit checkpoints happen to be F16 and both non-Qwen2 4/8-bit
+    // ones BF16, so this reads as a threshold and is not one: it is a table of
+    // what each published file carries, and a future 2-bit checkpoint in BF16
+    // would be a third row rather than a moved boundary.
     let companion_dtype = match bits {
         1 | 2 => "F16",
         _ => "BF16",
     };
+    let qwen2_wide_f16 = qwen2_f16_companions && matches!(bits, 4 | 8);
     let scales_name = format!("{base}.scales");
     let biases_name = format!("{base}.biases");
     for companion in [&scales_name, &biases_name] {
@@ -353,13 +388,25 @@ pub fn pass_through_packed(
             return Err(Gemma4Error::MissingCompanion(name.to_string()));
         }
         let c = shards.info(companion)?;
-        if c.dtype != companion_dtype {
+        let accepted = if qwen2_wide_f16 {
+            matches!(c.dtype, "F16" | "BF16")
+        } else {
+            c.dtype == companion_dtype
+        };
+        if !accepted {
             return Err(Gemma4Error::UnsupportedDtype {
                 tensor: companion.to_string(),
-                dtype: format!(
-                    "{} companions on a {bits}-bit tensor (expected {companion_dtype})",
-                    c.dtype
-                ),
+                dtype: if qwen2_wide_f16 {
+                    format!(
+                        "{} companions on a {bits}-bit Qwen2 tensor (expected F16 or BF16)",
+                        c.dtype
+                    )
+                } else {
+                    format!(
+                        "{} companions on a {bits}-bit tensor (expected {companion_dtype})",
+                        c.dtype
+                    )
+                },
             });
         }
     }
@@ -382,8 +429,16 @@ pub fn pass_through_packed(
             ),
         });
     }
-    let scales = le_u16(&shards.read(&scales_name)?);
-    let biases = le_u16(&shards.read(&biases_name)?);
+    let (scales, scales_lossy) = read_companion_plane(
+        shards,
+        &scales_name,
+        qwen2_wide_f16,
+    )?;
+    let (biases, biases_lossy) = read_companion_plane(
+        shards,
+        &biases_name,
+        qwen2_wide_f16,
+    )?;
     let group = group_size as u64;
     let expected_groups = (rows * cols / group) as usize;
     if cols % group != 0 || scales.len() != expected_groups || biases.len() != expected_groups {
@@ -412,10 +467,48 @@ pub fn pass_through_packed(
         rows: rows as u32,
         cols: cols as u32,
     };
-    Ok(match bits {
+    let spec = match bits {
         1 => ResidentEntrySpec::Int1(spec),
         2 => ResidentEntrySpec::Int2(spec),
         4 => ResidentEntrySpec::Int4(spec),
         _ => ResidentEntrySpec::Int8(spec),
-    })
+    };
+    let losses = if scales_lossy == 0 && biases_lossy == 0 {
+        Vec::new()
+    } else {
+        vec![
+            (scales_name, scales_lossy),
+            (biases_name, biases_lossy),
+        ]
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .collect()
+    };
+    Ok((spec, losses))
+}
+
+fn read_companion_plane(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    narrow_f16: bool,
+) -> Result<(Vec<u16>, usize), Gemma4Error> {
+    let dtype = shards.info(name)?.dtype.as_str();
+    let bytes = shards.read(name)?;
+    if narrow_f16 && dtype == "F16" {
+        let values = decode_raw_to_f32(name, "F16", &bytes)?;
+        let mut lossy = 0usize;
+        let bits = values
+            .into_iter()
+            .map(|value| {
+                let narrowed = compute::f32_to_bf16(value);
+                if compute::bf16_to_f32(narrowed) != value {
+                    lossy += 1;
+                }
+                narrowed
+            })
+            .collect();
+        Ok((bits, lossy))
+    } else {
+        Ok((le_u16(&bytes), 0))
+    }
 }

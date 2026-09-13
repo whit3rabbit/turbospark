@@ -80,19 +80,12 @@ extension AppModel {
         guard !generating, !submitting, pendingToolCall == nil else {
             return AppProject(name: name)
         }
-        var instructions = customInstructions
-        if instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           let path = rootDirectoryPath,
-           let autoRules = detectProjectRules(directoryPath: path, preference: rulePreference) {
-            instructions = autoRules
-        }
-
         let project = AppProject(
             name: name,
             rootDirectoryPath: rootDirectoryPath,
             agentType: agentType,
             rulePreference: rulePreference,
-            customInstructions: instructions,
+            customInstructions: customInstructions,
             permissions: permissions,
             maxAutonomousSteps: maxAutonomousSteps,
             forgeGuardrailsEnabled: forgeGuardrailsEnabled,
@@ -310,5 +303,14 @@ extension AppModel {
         preference: AppRulePreference = .agentsFirst
     ) -> ProjectRulesDetectionResult? {
         ProjectRuleDetector.detectRules(in: directoryPath, preference: preference)
+    }
+
+    /// Resolves repository instruction files for display and for the next
+    /// prompt assembly without copying their text into the saved project.
+    public func detectLiveProjectInstructions(
+        directoryPath: String,
+        preference: AppRulePreference = .agentsFirst
+    ) -> ProjectLiveInstructions? {
+        ProjectRuleDetector.liveInstructions(in: directoryPath, preference: preference)
     }
 }

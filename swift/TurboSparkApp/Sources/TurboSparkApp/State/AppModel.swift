@@ -587,10 +587,23 @@ public final class AppModel: ObservableObject {
     /// Sampling section, applied into whichever scope is being edited. See
     /// `AppSamplingSettings`.
     @Published public var samplingPresets: [AppSamplingPreset] = []
-    /// User-authored system prompt applied to every turn that has no per-chat
-    /// prompt of its own. Empty means none, which is what this app did before
-    /// the field existed.
-    @Published public var defaultSystemPrompt: String = ""
+    /// Compatibility mirror of the selected reusable system prompt. New UI
+    /// writes go through `systemPrompts`; this remains the direct source used
+    /// by legacy callers and per-chat fallback tests.
+    @Published public var defaultSystemPrompt: String = AppSystemPrompt.builtIns[0].instructions
+
+    /// Reusable app-wide prompts. The first built-in is selected by default,
+    /// while an empty selection explicitly sends no app-wide default.
+    @Published public var systemPrompts: [AppSystemPrompt] = AppSystemPrompt.builtIns
+
+    /// `nil` means no app-wide system prompt is selected.
+    @Published public var selectedSystemPromptID: UUID? = AppSystemPrompt.builtIns[0].id
+
+    /// App-wide response styles, including the compact starter library.
+    @Published public var personalities: [AppPersonality] = AppPersonality.builtIns
+
+    /// `nil` means no personality is added to a turn's system prompt.
+    @Published public var selectedPersonalityID: UUID? = nil
     /// Path to activation steering vectors file.
     @Published public var steeringPath: String? = nil
     /// Named steering directions the operator registered. Empty until one is
@@ -723,7 +736,7 @@ public final class AppModel: ObservableObject {
             self?.session
         }
         AppToolRegistry.userSystemPromptProvider = { [weak self] in
-            self?.defaultSystemPrompt ?? ""
+            self?.appWideSystemPrompt ?? ""
         }
         AppToolRegistry.subagentSamplingOptionsProvider = { [weak self] in
             self?.samplingOptions() ?? GenerateOptions()

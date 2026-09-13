@@ -8,6 +8,9 @@ conditional pixel comparisons were not exercised. This page records measured
 facts and unresolved gates for
 [the image-generation design](IMAGE_GENERATION.md). It does not establish
 a supported RAM minimum, general image-quality guarantee, or production disk schema.
+The next work is the remaining IG0 resource closure. IG2 production runtime
+work follows that evidence, and app work remains IG4 after IG3 proves bounded
+lifetimes; neither a CLI nor app launch belongs to the current evidence gate.
 
 ## Inputs and reproducibility
 
@@ -437,9 +440,9 @@ target/ig0/venv/bin/python scripts/z_image_vae_compare.py \
 cargo test --release -p turbospark-image --test transformer_math_parity -- \
   --ignored --nocapture test_transformer_checkpoint_block_parity
 cargo test --release -p turbospark-image --test pipeline_parity -- \
-  --ignored --nocapture test_z_image_full_nine_step_checkpoint_parity
-cargo test --release -p turbospark-image --test pipeline_parity -- \
   --ignored --nocapture test_z_image_all_steps_from_captured_input_parity
+cargo test --release -p turbospark-image --test pipeline_parity -- \
+  --ignored --nocapture test_z_image_full_nine_step_checkpoint_parity
 cargo test --release -p turbospark-image --test vae_parity -- \
   --ignored --nocapture test_vae_real_decode_parity
 ```
