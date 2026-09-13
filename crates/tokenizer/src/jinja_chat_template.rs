@@ -28,20 +28,34 @@ use crate::jinja_date::strftime_now;
 pub use crate::jinja_date::CHAT_DATE_ENV;
 use crate::reasoning::ReasoningEffort;
 
+// Templates come from model artifacts and are not trusted. Keep both limits
+// comfortably above real checkpoint templates and prompts while preventing a
+// small template from consuming unbounded CPU or memory before tokenization.
 const TEMPLATE_FUEL: u64 = 1_000_000;
 const MAX_RENDERED_BYTES: usize = 1 << 20;
 
-struct BoundedString {
-    value: Vec<u8>,
+struct BoundedOutput {
+    bytes: Vec<u8>,
+    exceeded: bool,
 }
 
-impl Write for BoundedString {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.value.len().saturating_add(bytes.len()) > MAX_RENDERED_BYTES {
-            return Err(io::Error::other("chat template output exceeds 1 MiB"));
+impl BoundedOutput {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            exceeded: false,
         }
-        self.value.extend_from_slice(bytes);
-        Ok(bytes.len())
+    }
+}
+
+impl Write for BoundedOutput {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.bytes.len().saturating_add(buf.len()) > MAX_RENDERED_BYTES {
+            self.exceeded = true;
+            return Err(io::Error::other("chat template output limit exceeded"));
+        }
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -211,11 +225,15 @@ pub fn render_generic_chat_template(
     let template = env
         .get_template("chat")
         .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
-    let mut output = BoundedString { value: Vec::new() };
-    template
-        .render_captured_to(JsonValue::Object(context), &mut output)
-        .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
-    String::from_utf8(output.value).map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))
+    let mut output = BoundedOutput::new();
+    let result = template.render_captured_to(JsonValue::Object(context), &mut output);
+    if output.exceeded {
+        return Err(TokenizerError::InvalidChatTemplate(format!(
+            "rendered output exceeds {MAX_RENDERED_BYTES} bytes"
+        )));
+    }
+    result.map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
+    String::from_utf8(output.bytes).map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))
 }
 
 impl MfTokenizer {
