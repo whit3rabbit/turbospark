@@ -129,6 +129,13 @@ public final class AppHookStore: ObservableObject {
     // MARK: - Custom Hook Creation & Deletion
 
     public func addCustomHook(_ hook: AppHookCommand) {
+        // A project-bound dispatch refreshes the store before taking its
+        // snapshot. Discover first so a hook added during app startup is
+        // persisted and survives that refresh; otherwise the pre-refresh
+        // save is intentionally skipped and the in-memory hook disappears.
+        if !didRefreshAtLeastOnce {
+            refresh(projectDirectory: lastProjectDirectory)
+        }
         var newHook = hook
         newHook.sourceType = .custom
         trustedHashes.insert(newHook.contentHash)
