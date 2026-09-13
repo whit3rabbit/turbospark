@@ -211,6 +211,12 @@ pub(crate) fn open_expert_streamers(
     let layout =
         model_io::load_packed_experts_layout(dir, max_bytes).map_err(RealForwardError::Model)?;
     let num_layers = expecting.num_layers as usize;
+    if layout.num_layers > 0 && layout.experts_per_layer != expecting.num_experts as usize {
+        return Err(RealForwardError::Unsupported(format!(
+            "packed_experts layout declares {} experts per layer, but the architecture declares {}",
+            layout.experts_per_layer, expecting.num_experts
+        )));
+    }
     let resolved_residency = resolve_expert_residency(residency);
 
     // THE SLOT CACHE IS SIZED `slots x layers x expert_stride`, AND THAT

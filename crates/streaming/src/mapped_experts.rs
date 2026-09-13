@@ -106,11 +106,28 @@ impl MappedExpertLayer {
 
     /// Byte offset of `expert`'s blob inside [`Self::page_aligned_bytes`].
     ///
-    /// Layer 0 semantics, matching how a per-layer streamer is opened: the
-    /// layout's explicit per-expert table is consulted first and the uniform
-    /// `expert * stride` formula is the fallback.
-    pub fn expert_offset(&self, expert: usize) -> u64 {
-        self.shift + self.layout.expert_offset(0, expert)
+    /// Refuses indices absent from the layout and ranges that do not fit in
+    /// the mapped buffer. This is the GPU-facing boundary, so it must not use
+    /// [`StreamLayout::expert_offset`]'s uniform fallback for a missing entry.
+    pub fn expert_offset(&self, expert: usize) -> Result<u64, StreamerError> {
+        let offset = if expert < self.layout.experts_per_layer {
+            self.layout.expert_offset(0, expert)
+        } else {
+            return Err(StreamerError::OffsetOutOfRange {
+                offset: expert as u64,
+            });
+        };
+        let start = self
+            .shift
+            .checked_add(offset)
+            .ok_or(StreamerError::OffsetOutOfRange { offset })?;
+        let end = start
+            .checked_add(self.layout.expert_stride)
+            .ok_or(StreamerError::OffsetOutOfRange { offset: start })?;
+        if end > self.mapping.mapped_bytes().len() as u64 {
+            return Err(StreamerError::OffsetOutOfRange { offset: start });
+        }
+        Ok(start)
     }
 
     /// Bytes per expert blob in this layer. Per LAYER and never the
@@ -134,7 +151,7 @@ impl MappedExpertLayer {
     /// this -- it addresses the mapping by offset -- but a test proving the
     /// mapped bytes equal what the streamer would have copied does.
     pub fn expert_bytes(&self, expert: usize) -> Option<&[u8]> {
-        let start = self.expert_offset(expert) as usize;
+        let start = self.expert_offset(expert).ok()? as usize;
         let end = start.checked_add(self.expert_stride() as usize)?;
         self.mapping.mapped_bytes().get(start..end)
     }
