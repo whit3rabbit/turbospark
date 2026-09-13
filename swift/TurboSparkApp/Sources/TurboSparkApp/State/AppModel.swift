@@ -170,12 +170,24 @@ public final class AppModel: ObservableObject {
     /// Whether older turns are summarized automatically as the prompt
     /// approaches the context window (context compaction).
     @Published public var autoCompactEnabled: Bool = true
+    /// Native action fusion, observation packing, verified reduction, and
+    /// completed-todo compaction are independent reversible defaults.
+    @Published public var actionFusionEnabled: Bool = true
+    @Published public var observationPackEnabled: Bool = true
+    @Published public var evidenceReducerEnabled: Bool = true
+    @Published public var todoBoundaryCompactionEnabled: Bool = true
     /// Whether the model sees the auto-memory section and the `memory` tool
     /// (swift/docs/SWIFT_MEMORY.md). The `didSet` mirrors the value into
     /// `MemoryStore.shared`, the static surface `AppToolCatalog` and
     /// `SubagentRunner` read -- neither holds an `AppModel`.
     @Published public var memoryEnabled: Bool = true {
         didSet { MemoryStore.shared.isModelEnabled = memoryEnabled }
+    }
+    /// Whether Syntext code search and project indexing is enabled globally.
+    /// Mirrored to `AppToolRegistry.syntextIndexingEnabled` so tool execution and background
+    /// indexers can check it without holding an `AppModel`.
+    @Published public var syntextIndexingEnabled: Bool = true {
+        didSet { AppToolRegistry.syntextIndexingEnabled = syntextIndexingEnabled }
     }
     /// Trailing message rows that stay verbatim after a compaction.
     @Published public var compactionKeepRecentTurns: Int = 2
@@ -254,6 +266,8 @@ public final class AppModel: ObservableObject {
     /// refuses all. `pendingToolCall` remains the call whose verdict the
     /// card renders.
     var pendingBatchCalls: [AppToolCall]? = nil
+    /// Synthetic terminal leg already checked alongside the pending mutation.
+    var pendingValidationCall: AppToolCall? = nil
     /// Why Agent mode (`swift/docs/SWIFT_AGENT_MODE.md`) punted this call to
     /// the card: classifier unavailable, or the skip thresholds tripped. Nil
     /// for an ordinary ask, so the card renders exactly as before.
@@ -439,7 +453,13 @@ public final class AppModel: ObservableObject {
 
     // Live Generation State
     /// Whether token generation is currently running.
-    @Published public var generating: Bool = false
+    @Published public var generating: Bool = false {
+        didSet {
+            if !generating && oldValue {
+                onGenerationFinished()
+            }
+        }
+    }
     /// Whether `run()` has accepted a submission and not yet reached
     /// `executeGenerationTurn`.
     ///
@@ -727,6 +747,13 @@ public final class AppModel: ObservableObject {
             }
             return try await self.stopBackgroundAgent(id)
         }
+        AppToolRegistry.observationRecaller = { [weak self] chatID, id, offset, maximum in
+            guard let self else {
+                throw ToolObservationStore.ObservationError.invalidRange
+            }
+            return try await self.recallToolOutput(
+                chatID: chatID, observationID: id, offsetBytes: offset, maxBytes: maximum)
+        }
         TodoWriteExecutor.onTodosUpdated = { [weak self] targetChatID, newTodos in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
@@ -837,6 +864,17 @@ public final class AppModel: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
         if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
             window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// Background synchronization hook invoked when a generation turn completes.
+    private func onGenerationFinished() {
+        if syntextIndexingEnabled,
+           selectedProject?.syntextIndexEnabled == true,
+           let rootURL = selectedProject?.rootDirectoryURL {
+            Task.detached(priority: .utility) {
+                await SyntextIndexManager.shared.syncQuietly(for: rootURL)
+            }
         }
     }
 }

@@ -82,7 +82,13 @@ extension AppModel {
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
         self.autoCompactEnabled = settings.autoCompact
+        self.actionFusionEnabled = settings.actionFusion
+        self.observationPackEnabled = settings.observationPack
+        self.evidenceReducerEnabled = settings.evidenceReducer
+        self.todoBoundaryCompactionEnabled = settings.todoBoundaryCompaction
         self.memoryEnabled = settings.memoryEnabled
+        self.syntextIndexingEnabled = settings.syntextIndexingEnabled
+        AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
         // The pinned port is a plain preference; the server API key is a
@@ -173,6 +179,10 @@ extension AppModel {
             interactionMode: interactionMode.rawValue,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
             autoCompact: autoCompactEnabled,
+            actionFusion: actionFusionEnabled,
+            observationPack: observationPackEnabled,
+            evidenceReducer: evidenceReducerEnabled,
+            todoBoundaryCompaction: todoBoundaryCompactionEnabled,
             compactionKeepRecentTurns: compactionKeepRecentTurns,
             serverPinnedPort: serverPinnedPort,
             defaultSystemPrompt: defaultSystemPrompt,
@@ -184,7 +194,8 @@ extension AppModel {
             serverEmbeddingModel: serverEmbeddingModelInput,
             hfEndpoint: hfEndpointInput,
             memoryEnabled: memoryEnabled,
-            agentModeHints: agentModeHints
+            agentModeHints: agentModeHints,
+            syntextIndexingEnabled: syntextIndexingEnabled
         )
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not

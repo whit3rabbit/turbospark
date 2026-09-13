@@ -3,7 +3,7 @@ import Foundation
 /// Central registry uniting all OpenAI-compatible tool definitions and categories for TurboSpark.
 public enum AppToolCatalog {
     /// File and codebase navigation tools.
-    public static let fileTools: [OpenAITool] = FileReadWriteToolDefinitions.all + FileSearchToolDefinitions.all + ApplyPatchToolDefinitions.all
+    public static let fileTools: [OpenAITool] = FileReadWriteToolDefinitions.all + FileSearchToolDefinitions.all + ApplyPatchToolDefinitions.all + ToolObservationToolDefinitions.all
 
     /// Terminal and execution tools.
     public static let terminalTools: [OpenAITool] = TerminalToolDefinitions.all
@@ -142,7 +142,7 @@ public enum AppToolCatalog {
             return .automation
         case "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource":
             return .mcp
-        case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file":
+        case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file", "recall_tool_output":
             return .fileRead
         default:
             return .automation

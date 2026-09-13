@@ -1,5 +1,8 @@
 # Swift context compaction (auto-compact)
 
+Completed TodoWrite transitions can also create a low-churn compaction
+boundary. The contract and safeguards are in [SWIFT_AGENT_EFFICIENCY.md](SWIFT_AGENT_EFFICIENCY.md).
+
 Context compaction in TurboSparkApp: when a conversation's prompt approaches
 the model's context window, the older turns are summarized by the model
 itself and the summary rides in the prompt in their place. The transcript

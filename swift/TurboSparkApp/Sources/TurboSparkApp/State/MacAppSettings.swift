@@ -152,6 +152,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Whether older turns are summarized automatically as the prompt
     /// approaches the context window (context compaction).
     public var autoCompact: Bool
+    /// Native agent efficiency defaults, each independently reversible.
+    public var actionFusion: Bool
+    public var observationPack: Bool
+    public var evidenceReducer: Bool
+    public var todoBoundaryCompaction: Bool
     /// How many trailing message rows stay verbatim after a compaction.
     public var compactionKeepRecentTurns: Int
     /// Port the in-process server pins to, 0 = first free port. Persisted
@@ -199,6 +204,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Caps are applied at prompt time (`AgentModeHints.normalized`), not
     /// here, so a hand-edited file keeps its text on disk.
     public var agentModeHints: AgentModeHints
+    /// Whether Syntext code search and project indexing is enabled globally.
+    public var syntextIndexingEnabled: Bool
 
     public init(
         contextTokens: Int = 0,
@@ -242,6 +249,10 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         interactionMode: String = "chat",
         alwaysStartInGhostMode: Bool = false,
         autoCompact: Bool = true,
+        actionFusion: Bool = true,
+        observationPack: Bool = true,
+        evidenceReducer: Bool = true,
+        todoBoundaryCompaction: Bool = true,
         compactionKeepRecentTurns: Int = 2,
         serverPinnedPort: UInt16 = 0,
         defaultSystemPrompt: String = "",
@@ -253,7 +264,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         serverEmbeddingModel: String = "",
         hfEndpoint: String = "",
         memoryEnabled: Bool = true,
-        agentModeHints: AgentModeHints = AgentModeHints()
+        agentModeHints: AgentModeHints = AgentModeHints(),
+        syntextIndexingEnabled: Bool = true
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -296,6 +308,10 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.interactionMode = interactionMode
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
         self.autoCompact = autoCompact
+        self.actionFusion = actionFusion
+        self.observationPack = observationPack
+        self.evidenceReducer = evidenceReducer
+        self.todoBoundaryCompaction = todoBoundaryCompaction
         self.compactionKeepRecentTurns = compactionKeepRecentTurns
         self.serverPinnedPort = serverPinnedPort
         self.defaultSystemPrompt = defaultSystemPrompt
@@ -308,6 +324,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.hfEndpoint = hfEndpoint
         self.memoryEnabled = memoryEnabled
         self.agentModeHints = agentModeHints
+        self.syntextIndexingEnabled = syntextIndexingEnabled
     }
 
     /// Tolerant of a wrong TYPE as well as an absent key (state#59).
@@ -371,6 +388,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
         self.autoCompact = c.decodeLenient(Bool.self, forKey: .autoCompact, fallback: true)
+        self.actionFusion = c.decodeLenient(Bool.self, forKey: .actionFusion, fallback: true)
+        self.observationPack = c.decodeLenient(Bool.self, forKey: .observationPack, fallback: true)
+        self.evidenceReducer = c.decodeLenient(Bool.self, forKey: .evidenceReducer, fallback: true)
+        self.todoBoundaryCompaction = c.decodeLenient(
+            Bool.self, forKey: .todoBoundaryCompaction, fallback: true)
         self.compactionKeepRecentTurns = c.decodeLenient(
             Int.self, forKey: .compactionKeepRecentTurns, fallback: 2)
         self.serverPinnedPort = c.decodeLenient(UInt16.self, forKey: .serverPinnedPort, fallback: 0)
@@ -394,6 +416,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .memoryEnabled, fallback: true)
         self.agentModeHints = c.decodeLenient(
             AgentModeHints.self, forKey: .agentModeHints, fallback: AgentModeHints())
+        self.syntextIndexingEnabled = c.decodeLenient(
+            Bool.self, forKey: .syntextIndexingEnabled, fallback: true)
     }
 }
 

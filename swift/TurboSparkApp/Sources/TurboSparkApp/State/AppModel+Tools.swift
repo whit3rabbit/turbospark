@@ -214,6 +214,7 @@ extension AppModel {
         let originStep = pendingToolCallStep
         let project = pendingToolCallProject ?? selectedProject
         let batchCalls = pendingBatchCalls
+        let pendingValidation = pendingValidationCall
         clearPendingToolCall()
 
         let sessionID = chatID.uuidString
@@ -281,31 +282,28 @@ extension AppModel {
                 return
             }
 
-            var result = await AppToolRegistry.execute(call: call, in: project, chatID: chatID)
-            call.status = result.isError ? .failed : .completed
-
-            let postVerdict = await self.dispatchPostToolUseVerdict(
-                toolName: call.name,
-                toolArguments: call.arguments,
-                toolOutput: result.output,
-                toolDurationSeconds: result.durationSeconds,
-                isError: result.isError,
-                chatID: chatID,
-                project: project
-            )
-            // Exit-2 stderr (or `decision: "block"`) from a PostToolUse hook
-            // is feedback, never a block -- the tool already ran. Folded
-            // into the result the same way `runApprovedCall` in
-            // `AppModel+Generation.swift` does, so both approval paths feed
-            // the model the same shape of note.
-            if let note = postVerdict.blockReason ?? postVerdict.feedbackMessage, !note.isEmpty {
-                result.output += "\n\n<hook_feedback>\n\(note)\n</hook_feedback>"
-            }
-            if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
-                result.output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
-            }
-
+            let root = project?.rootDirectoryURL ?? URL(fileURLWithPath: "/dev/null")
+            let fingerprints = self.actionFusionEnabled && pendingValidation != nil
+                ? ToolActionFusion.fingerprints(for: call, rootURL: root) : []
+            let previousTodos = self.todos(for: chatID)
+            let executed = await self.executeApprovedTool(
+                call, project: project, chatID: chatID, preMutationFingerprints: fingerprints)
+            call = executed.call
+            var result = executed.result
             self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
+            if executed.stopReason == nil {
+                let boundaryResult = await self.compactAtTodoBoundaryIfNeeded(
+                    call: call, previousTodos: previousTodos, result: result,
+                    chatID: chatID, project: project)
+                if boundaryResult != result {
+                    result = boundaryResult
+                    self.appendToolExecutionTurn(call: call, result: boundaryResult, chatID: chatID)
+                }
+            }
+            if let reason = executed.stopReason {
+                if !reason.isEmpty { self.showToast("Turn stopped by hook: \(reason)", style: .warning) }
+                return
+            }
             // `continueOrStop` rather than `continueAgentLoop` directly: it is
             // the one place `maxAutonomousSteps` is tested, and approving the
             // call proposed at the last permitted step used to run one turn

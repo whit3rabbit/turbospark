@@ -1,5 +1,8 @@
 # Swift tools: execution, containment, and adding or removing a tool
 
+For native fused validation, durable output observations, bounded recall, and
+locally verified terminal reductions, see [SWIFT_AGENT_EFFICIENCY.md](SWIFT_AGENT_EFFICIENCY.md).
+
 `swift/TurboSparkApp` runs model-proposed tool calls in process: file reads
 and writes, a shell, web search and fetch, skills, subagents, user-defined
 JSON tools, and MCP servers. This page is the map for a developer who has to
@@ -253,6 +256,13 @@ five files adding a tool touches.
 | `Tools/Planning/` | `PlanningInteractiveTools`, `PlanningInteractiveExecutors` (interactive questionnaires, plan mode, findings, skills/goals), `SkillTool` (schemas) |
 | `Tools/Projects/` | `ArtifactWorktreeTools`, `ProjectDocTools`, `WorktreeExecutor` (git worktree isolation) |
 | `Tools/Automation/` | `MonitoringNotificationTools`, `AutomationExecutors` (sleep, push notifications, config inspection, context telemetry) |
+
+`FileSearchTools` advertises both `Grep` and `grep_search`. Both use the
+project's Syntext index when the global and per-project indexing switches are
+on, and both fall back to `searchCode` when indexing is off or unavailable.
+`grep_search` is the preferred model-facing discovery tool and explicitly
+instructs the model not to spend a shell call on `grep` or `ripgrep`. The index
+lifecycle, non-git behavior, and memory bounds are in [SYNTEXT.md](SYNTEXT.md).
 
 Three files outside `Tools/` matter: `State/AppModel+Tools.swift` (approval
 flow and the prompt addendum), `Generation/ToolCallDiffFormatter.swift`, and

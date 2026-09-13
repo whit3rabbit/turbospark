@@ -181,15 +181,27 @@ public struct FileWriteInput: Codable, Sendable, Equatable {
     public var filePath: String
     /// New file content text.
     public var content: String
+    /// Optional command run only after the write completed and its target was
+    /// fingerprinted. Permission and hook checks cover both legs up front.
+    public var validateCommand: String?
+    /// Optional validation timeout in milliseconds.
+    public var validateTimeoutMs: Int?
 
     enum CodingKeys: String, CodingKey {
         case filePath = "file_path"
         case content
+        case validateCommand = "validate_command"
+        case validateTimeoutMs = "validate_timeout_ms"
     }
 
-    public init(filePath: String, content: String) {
+    public init(
+        filePath: String, content: String, validateCommand: String? = nil,
+        validateTimeoutMs: Int? = nil
+    ) {
         self.filePath = filePath
         self.content = content
+        self.validateCommand = validateCommand
+        self.validateTimeoutMs = validateTimeoutMs
     }
 }
 
@@ -288,6 +300,8 @@ public struct FileEditInput: Codable, Sendable, Equatable {
     public var position: String?
     /// Regular expression pattern to replace (for pattern_replace).
     public var regexPattern: String?
+    public var validateCommand: String?
+    public var validateTimeoutMs: Int?
 
     enum CodingKeys: String, CodingKey {
         case filePath = "file_path"
@@ -298,6 +312,8 @@ public struct FileEditInput: Codable, Sendable, Equatable {
         case insertLine = "insert_line"
         case position
         case regexPattern = "regex_pattern"
+        case validateCommand = "validate_command"
+        case validateTimeoutMs = "validate_timeout_ms"
     }
 
     public init(
@@ -308,7 +324,9 @@ public struct FileEditInput: Codable, Sendable, Equatable {
         replaceAll: Bool? = nil,
         insertLine: String? = nil,
         position: String? = nil,
-        regexPattern: String? = nil
+        regexPattern: String? = nil,
+        validateCommand: String? = nil,
+        validateTimeoutMs: Int? = nil
     ) {
         self.filePath = filePath
         self.command = command
@@ -318,6 +336,8 @@ public struct FileEditInput: Codable, Sendable, Equatable {
         self.insertLine = insertLine
         self.position = position
         self.regexPattern = regexPattern
+        self.validateCommand = validateCommand
+        self.validateTimeoutMs = validateTimeoutMs
     }
 }
 
@@ -382,7 +402,9 @@ public enum FileReadWriteToolDefinitions {
         parameters: .object(
             properties: [
                 "file_path": .string(description: "The path of the file to write."),
-                "content": .string(description: "The text content to write into the file.")
+                "content": .string(description: "The text content to write into the file."),
+                "validate_command": .string(description: "Optional terminal command to run after the write and target fingerprint verification."),
+                "validate_timeout_ms": .integer(description: "Optional validation timeout in milliseconds.")
             ],
             required: ["file_path", "content"]
         )
@@ -400,7 +422,9 @@ public enum FileReadWriteToolDefinitions {
                 "replace_all": .boolean(description: "Whether to replace all occurrences (for str_replace)."),
                 "insert_line": .string(description: "Line number (1-indexed) or text target to find and insert relative to (for insert)."),
                 "position": .string(description: "Insertion position: 'before' or 'after' (default: 'after')."),
-                "regex_pattern": .string(description: "Regex pattern to replace (for pattern_replace).")
+                "regex_pattern": .string(description: "Regex pattern to replace (for pattern_replace)."),
+                "validate_command": .string(description: "Optional terminal command to run after the edit and target fingerprint verification."),
+                "validate_timeout_ms": .integer(description: "Optional validation timeout in milliseconds.")
             ],
             required: ["file_path"]
         )

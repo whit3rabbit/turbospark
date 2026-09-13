@@ -70,7 +70,8 @@ extension AppModel {
         permissions: AppProjectPermissions = .newProjectDefault,
         maxAutonomousSteps: Int = 5,
         skillStateEnabled: Bool = false,
-        forgeGuardrailsEnabled: Bool? = nil
+        forgeGuardrailsEnabled: Bool? = nil,
+        syntextIndexEnabled: Bool = false
     ) -> AppProject {
         // **THE SAME GUARD `selectProject` CARRIES** (state#55). Creating a
         // project SELECTS it, rebinds `worktree` and rebinds `AppHookStore`,
@@ -95,11 +96,13 @@ extension AppModel {
             permissions: permissions,
             maxAutonomousSteps: maxAutonomousSteps,
             forgeGuardrailsEnabled: forgeGuardrailsEnabled,
-            skillStateEnabled: skillStateEnabled
+            skillStateEnabled: skillStateEnabled,
+            syntextIndexEnabled: syntextIndexEnabled
         )
 
         projects.insert(project, at: 0)
         selectedProjectID = project.id
+        refreshSyntextActivation(for: project)
         // Stale-write hashes are per workspace; see `selectProject`. Creating
         // a project is a workspace switch like any other, and this was the
         // one such site that did not reset them.
@@ -141,14 +144,20 @@ extension AppModel {
         // documented this clearing since it was written and nothing ever
         // called it.
         Task { await FileSnapshotStore.shared.reset() }
-        if let id, let proj = projects.first(where: { $0.id == id }), let path = proj.rootDirectoryPath, !path.isEmpty {
-            if let existing = worktree {
-                existing.updateRoot(path: path)
+        if let id, let proj = projects.first(where: { $0.id == id }) {
+            refreshSyntextActivation(for: proj)
+            if let path = proj.rootDirectoryPath, !path.isEmpty {
+                if let existing = worktree {
+                    existing.updateRoot(path: path)
+                } else {
+                    worktree = WorktreeModel(rootDirectoryPath: path)
+                }
             } else {
-                worktree = WorktreeModel(rootDirectoryPath: path)
+                worktree = nil
             }
         } else {
             worktree = nil
+            refreshSyntextActivation(for: nil)
         }
         persistProjects()
         reloadSkills()
@@ -217,6 +226,9 @@ extension AppModel {
                 }
             }
         }
+        if selectedProjectID == updated.id {
+            refreshSyntextActivation(for: updated)
+        }
     }
 
     /// Deletes a project and optionally clears project references from its chats.
@@ -236,7 +248,13 @@ extension AppModel {
         // workspace that no longer exists.
         guard !generating, !submitting, pendingToolCall == nil else { return }
         let wasSelected = selectedProjectID == id
+        let projectToDelete = projects.first { $0.id == id }
         projects.removeAll { $0.id == id }
+        if let rootURL = projectToDelete?.rootDirectoryURL {
+            Task.detached(priority: .utility) {
+                try? await SyntextIndexManager.shared.deleteIndex(for: rootURL)
+            }
+        }
         if wasSelected {
             selectedProjectID = nil
         }
@@ -254,6 +272,27 @@ extension AppModel {
         reloadAgents()
         if wasSelected {
             AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
+        }
+    }
+
+    /// Applies the user-level indexing gate and the selected project's opt-in
+    /// as one lifecycle decision. Turning either off unloads mmap-backed index
+    /// state without deleting the reusable disk cache.
+    public func setSyntextIndexingEnabled(_ enabled: Bool) {
+        syntextIndexingEnabled = enabled
+        persistSettingsDebounced()
+        refreshSyntextActivation(for: selectedProject)
+    }
+
+    func refreshSyntextActivation(for project: AppProject?) {
+        let rootURL = project?.rootDirectoryURL
+        let shouldIndex = syntextIndexingEnabled && project?.syntextIndexEnabled == true
+        Task.detached(priority: .utility) {
+            if shouldIndex, let rootURL {
+                await SyntextIndexManager.shared.ensureActiveProjectIndexed(for: rootURL)
+            } else {
+                await SyntextIndexManager.shared.deactivateAll()
+            }
         }
     }
 

@@ -9,6 +9,9 @@ import TurboSpark
 /// parsed call into a result, which is the part with the arguments, the
 /// errors and the refusals in it.
 public enum AppToolRegistry {
+    /// Whether Syntext code search and project indexing is globally enabled.
+    public static var syntextIndexingEnabled: Bool = true
+
     /// Executes a tool call asynchronously within the given project context.
     ///
     /// - Parameter chatID: the conversation the call belongs to, for tools
@@ -77,7 +80,8 @@ public enum AppToolRegistry {
         let rootURL = resolvedRoot ?? URL(fileURLWithPath: "/dev/null")
 
         do {
-            let output: String
+            var output: String = ""
+            var archivalOutput: String?
             // Populated by the producing cases below (write_file, edit_file,
             // apply_patch, notebook_edit, send_user_file) and reported once,
             // after the switch succeeds -- `ArtifactRegistrar.report`'s own
@@ -161,6 +165,7 @@ public enum AppToolRegistry {
                 if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                    Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
                 }
 
             case "edit_file", "fileedit", "edit", "replace_file_content", "editor":
@@ -212,6 +217,7 @@ public enum AppToolRegistry {
                 if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                    Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
                 }
 
             case "apply_patch", "applypatch":
@@ -221,9 +227,13 @@ public enum AppToolRegistry {
                 let result = try await ApplyPatchExecutor.apply(patchText: patchText, rootURL: rootURL)
                 output = result.summary
                 for op in result.applied where op.type != "delete" {
+                    let fileURL = URL(fileURLWithPath: op.target)
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
-                        url: URL(fileURLWithPath: op.target), toolCallID: call.id, toolName: call.name,
+                        url: fileURL, toolCallID: call.id, toolName: call.name,
                         origin: .fileWrite))
+                    if syntextIndexingEnabled {
+                        Task { await SyntextIndexManager.shared.notifyChange(at: fileURL, rootURL: rootURL) }
+                    }
                 }
 
             case "search_code", "grep", "search", "grep_search":
@@ -231,7 +241,7 @@ public enum AppToolRegistry {
                     ?? call.arguments["query"]
                     ?? call.arguments["Query"]
                     ?? call.arguments["search_query"] else {
-                    throw NSError(domain: "TurboSparkTool", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing 'pattern' argument."])
+                    throw NSError(domain: "TurboSparkTool", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing 'pattern' or 'query' argument."])
                 }
                 let relPath = call.arguments["path"]
                     ?? call.arguments["file_path"]
@@ -240,7 +250,52 @@ public enum AppToolRegistry {
                     ?? call.arguments["dir"]
                     ?? call.arguments["directory"]
                     ?? "."
-                output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
+                let pathFilter = call.arguments["path_filter"]
+                    ?? call.arguments["pathFilter"]
+                    ?? call.arguments["glob"]
+                let rawTypes = call.arguments["file_types"]
+                    ?? call.arguments["fileTypes"]
+                    ?? call.arguments["type"]
+                var fileTypes: [String] = []
+                if let rawTypes, !rawTypes.isEmpty {
+                    if rawTypes.hasPrefix("[") && rawTypes.hasSuffix("]") {
+                        if let data = rawTypes.data(using: .utf8),
+                           let parsed = try? JSONDecoder().decode([String].self, from: data) {
+                            fileTypes = parsed
+                        }
+                    } else {
+                        fileTypes = rawTypes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                    }
+                }
+                let literalSearch = ["true", "1", "yes"].contains(
+                    (call.arguments["literal_search"] ?? call.arguments["literalSearch"] ?? call.arguments["fixed_strings"] ?? call.arguments["fixedStrings"])?.lowercased() ?? ""
+                )
+                let caseSensitive = ["true", "1", "yes"].contains(
+                    (call.arguments["case_sensitive"] ?? call.arguments["caseSensitive"])?.lowercased() ?? ""
+                )
+                let contextLines = Int(call.arguments["context_lines"] ?? call.arguments["contextLines"] ?? call.arguments["context"] ?? "") ?? 2
+                let maxResults = Int(call.arguments["max_results"] ?? call.arguments["maxResults"] ?? call.arguments["head_limit"] ?? "") ?? 50
+
+                let syntextEnabled = syntextIndexingEnabled && project?.syntextIndexEnabled == true
+                if syntextEnabled, resolvedRoot != nil {
+                    do {
+                        let searchTool = await SyntextIndexManager.shared.tool(for: rootURL)
+                        output = try await searchTool.grep(
+                            query: pattern,
+                            pathFilter: pathFilter,
+                            fileTypes: fileTypes,
+                            caseSensitive: caseSensitive,
+                            literalSearch: literalSearch,
+                            wordMatch: false,
+                            contextLines: contextLines,
+                            maxResults: maxResults
+                        )
+                    } catch {
+                        output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
+                    }
+                } else {
+                    output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
+                }
 
             case "run_command", "bash", "shell", "exec", "terminal":
                 guard let command = call.arguments["command"]
@@ -261,10 +316,12 @@ public enum AppToolRegistry {
                 let commandDescription = call.arguments["description"]
                     ?? call.arguments["toolSummary"]
                     ?? call.arguments["toolAction"]
-                output = try await ShellCommandRunner.run(
+                let shellOutput = try await ShellCommandRunner.runForTool(
                     command: command, rootURL: rootURL, timeoutMs: timeoutMs,
                     runInBackground: runInBackground, description: commandDescription,
                     chatID: chatID)
+                output = shellOutput.presentation
+                archivalOutput = shellOutput.archivalOutput
 
             case "bashoutput", "bash_output":
                 output = try await ShellCommandRunner.backgroundOutput(
@@ -273,6 +330,22 @@ public enum AppToolRegistry {
             case "killshell", "kill_shell":
                 output = try ShellCommandRunner.killBackground(
                     arguments: call.arguments, chatID: chatID)
+
+            case "recall_tool_output":
+                guard let observationID = call.arguments["observation_id"],
+                      let offset = Int(call.arguments["offset_bytes"] ?? ""),
+                      let maximum = Int(call.arguments["max_bytes"] ?? "")
+                else {
+                    throw NSError(domain: "TurboSparkTool", code: 29, userInfo: [
+                        NSLocalizedDescriptionKey: "recall_tool_output needs observation_id, offset_bytes, and max_bytes.",
+                    ])
+                }
+                guard let recaller = observationRecaller else {
+                    throw NSError(domain: "TurboSparkTool", code: 30, userInfo: [
+                        NSLocalizedDescriptionKey: "Archived tool output is unavailable before chat storage initializes.",
+                    ])
+                }
+                output = try await recaller(chatID, observationID, offset, min(maximum, 64 * 1_024))
 
             case "websearch", "web_search", "search_web":
                 guard let query = call.arguments["query"] ?? call.arguments["q"] ?? call.arguments["search_query"] else {
@@ -665,7 +738,9 @@ public enum AppToolRegistry {
 
             ArtifactRegistrar.report(chatID: chatID, produced: producedFiles)
             let elapsed = Date().timeIntervalSince(startTime)
-            return AppToolResult(callID: call.id, output: output, isError: false, durationSeconds: elapsed)
+            return AppToolResult(
+                callID: call.id, output: output, isError: false, durationSeconds: elapsed,
+                archivalOutput: archivalOutput)
         } catch is CancellationError {
             // **A STOP IS NOT A TOOL FAILURE** (state#64). `CancellationError`
             // localizes to "cancelled", so a command the USER stopped reached
