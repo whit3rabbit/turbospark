@@ -241,6 +241,19 @@ pub(crate) fn open_expert_streamers(
     // "there is no cache".
     if resolved_residency == model_io::ResolvedExpertResidency::Mapped && layout.num_layers > 0 {
         mapped_residency_refusal(expecting.family)?;
+        // Router indices span the architecture's expert count. Every mapped
+        // index must therefore name a complete blob in this layout before it
+        // can be forwarded as a Metal buffer offset.
+        if !crate::expert_layout_validation::mapped_expert_count_matches(
+            expecting.num_experts,
+            layout.experts_per_layer,
+        ) {
+            return Err(RealForwardError::Unsupported(format!(
+                "mapped expert residency needs packed_experts/layout.json expertsPerLayer \
+                 ({}) to match the architecture's num_experts ({})",
+                layout.experts_per_layer, expecting.num_experts
+            )));
+        }
         // The OTHER refusal this mode owes -- mapped residency against the
         // batched routed pair -- lives at that driver's own entry
         // (`families/gemma4/moe_batch.rs`) rather than here, because
