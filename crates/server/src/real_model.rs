@@ -187,6 +187,11 @@ impl RealChatModel {
             kv_bits,
         )
         .map_err(|e| e.to_string())?;
+        // Parked session caches are allocated by the runner at open, so they
+        // are spoken for both by the admission check below and by the vision
+        // scratch budget resolved after the runner opens.
+        let pool_extra =
+            runtime::session_pool_bytes_with(&arch, context.resolved, session_slots, kv_bits);
         // A quality warning and never an error: RoPE extrapolates rather
         // than failing, and an install written before the trained context
         // was recorded declares none, so refusing would apply to some
@@ -213,8 +218,6 @@ impl RealChatModel {
             let budget = load_policy.guard.budget();
             if physical > 0 && budget.refuses {
                 let available = load_policy.guard.available(physical, committed.total());
-                let pool_extra =
-                    runtime::session_pool_bytes(&arch, context.resolved, session_slots);
                 let needs = context.kv_bytes.saturating_add(pool_extra);
                 if needs > available {
                     let gib = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -380,7 +383,7 @@ impl RealChatModel {
                 params.min_pixels,
                 load_policy.guard,
                 runtime::physical_memory(),
-                committed.total(),
+                committed.total().saturating_add(pool_extra),
                 context.kv_bytes,
             ) {
                 Ok(budget) if budget.clamped => {
