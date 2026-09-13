@@ -16,6 +16,8 @@ static inline float dequant_q2_k_row_simd(
     uint lane
 ) {
     float acc = 0.0f;
+    const uint segment = lane / 16;
+    const uint segment_lane = lane % 16;
     for (uint b = 0; b < N / kQ2_KBlockElems; ++b) {
         device const uint8_t* blk = W_row + b * kQ2_KBlockBytes;
         const ushort d_raw = ushort(blk[80]) | (ushort(blk[81]) << 8);
@@ -25,14 +27,12 @@ static inline float dequant_q2_k_row_simd(
         for (uint half_block = 0; half_block < 2; ++half_block) {
             for (uint group = 0; group < 4; ++group) {
                 const uint shift = 2 * group;
-                for (uint segment = 0; segment < 2; ++segment) {
-                    const uint8_t sc = blk[half_block * 8 + group * 2 + segment];
-                    const float dl = d * float(sc & 15);
-                    const float ml = dmin * float(sc >> 4);
-                    const uint8_t q = blk[16 + half_block * 32 + segment * 16 + lane];
-                    const uint at = b * 256 + half_block * 128 + group * 32 + segment * 16 + lane;
-                    acc = fma(dl * float((q >> shift) & 3) - ml, float(x[at]), acc);
-                }
+                const uint8_t sc = blk[half_block * 8 + group * 2 + segment];
+                const float dl = d * float(sc & 15);
+                const float ml = dmin * float(sc >> 4);
+                const uint8_t q = blk[16 + half_block * 32 + segment * 16 + segment_lane];
+                const uint at = b * 256 + half_block * 128 + group * 32 + segment * 16 + segment_lane;
+                acc = fma(dl * float((q >> shift) & 3) - ml, float(x[at]), acc);
             }
         }
     }
