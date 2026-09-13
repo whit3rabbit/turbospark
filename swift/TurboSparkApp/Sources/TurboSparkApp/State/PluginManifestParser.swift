@@ -248,11 +248,13 @@ public enum PluginManifestParser {
 
         for element in elements {
             if let path = element as? String {
-                if path.hasPrefix("./"), path.hasSuffix(".json") {
-                    manifest.hookFilePaths.append(path)
-                } else {
+                guard path.hasPrefix("./"), path.hasSuffix(".json") else {
                     notes.append(
                         "hooks: '\(path)' is not a relative .json path; entry dropped")
+                    continue
+                }
+                if let usable = usableRelativePath(path, field: "hooks", notes: &notes) {
+                    manifest.hookFilePaths.append(usable)
                 }
             } else if let dict = element as? [String: Any] {
                 if let data = try? JSONSerialization.data(withJSONObject: dict) {
@@ -283,11 +285,13 @@ public enum PluginManifestParser {
 
         for element in elements {
             if let path = element as? String {
-                if path.hasPrefix("./"), path.hasSuffix(".json") {
-                    manifest.mcpServerFilePaths.append(path)
-                } else {
+                guard path.hasPrefix("./"), path.hasSuffix(".json") else {
                     notes.append(
                         "mcpServers: '\(path)' is not a relative .json path; entry dropped")
+                    continue
+                }
+                if let usable = usableRelativePath(path, field: "mcpServers", notes: &notes) {
+                    manifest.mcpServerFilePaths.append(usable)
                 }
             } else if let dict = element as? [String: Any] {
                 if let data = try? JSONSerialization.data(withJSONObject: dict) {
