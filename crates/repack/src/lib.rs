@@ -29,6 +29,7 @@ mod hf_checkpoint;
 mod install_verifier;
 mod manifest_peek;
 mod museglimmer_config;
+mod qwen2_config;
 mod qwen36_config;
 mod ranged_download;
 mod repack;
@@ -50,13 +51,14 @@ pub use arch_registry::{
     planned_gguf_architectures, refuse_foreign_config, ArchSupport, PlannedArch,
 };
 pub use gemma4_checkpoint::{
-    canonicalize_vision_header, classify_for_family, classify_gemma4, convert_raw_to_fp16,
-    gemma4_manifest_quant, graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape,
-    manifest_quant, manifest_quant_for, narrow_raw_to_bf16, orchestrate_gemma4_checkpoint,
-    orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config, parse_gemma4_quantization,
-    pass_through_packed, read_vision_entries, vision_arch_for_manifest, vision_should_ingest,
-    write_gemma4_install, write_gemma4_install_streamed, write_muse_glimmer_install,
-    write_muse_glimmer_install_streamed, write_ngram_table, write_qwen4_exp_install_streamed,
+    canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
+    convert_raw_to_fp16, gemma4_manifest_quant, graft_qwen_gdn_dense_mtp_head,
+    is_supported_affine_shape, manifest_quant, manifest_quant_for, narrow_raw_to_bf16,
+    orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config,
+    parse_gemma4_quantization, pass_through_packed, pass_through_packed_qwen2, read_vision_entries,
+    vision_arch_for_manifest, vision_should_ingest, write_gemma4_install,
+    write_gemma4_install_streamed, write_muse_glimmer_install, write_muse_glimmer_install_streamed,
+    write_ngram_table, write_qwen2_dense_install_streamed, write_qwen4_exp_install_streamed,
     write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
     write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed, write_vision_sidecar,
     ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards,
@@ -89,6 +91,7 @@ pub use manifest_peek::peek_manifest_arch;
 pub use museglimmer_config::{
     muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
 };
+pub use qwen2_config::parse_qwen2_config;
 pub use qwen36_config::{
     parse_qwen4_exp_config, parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config,
     parse_vision_config,
@@ -109,12 +112,14 @@ pub use safetensors_header::{
     DEFAULT_MAX_HEADER_BYTES,
 };
 pub use synthetic_gguf::{
-    build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, GgufBuilder, GgufFileAndRanges,
-    QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
+    build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
+    GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
 };
 pub use synthetic_llama::{
     build_synthetic_dense_llama_install, build_synthetic_gqa_moe_install,
-    build_synthetic_llama_real_install, tiny_dense_llama_arch, tiny_gqa_moe_arch, tiny_llama_arch,
+    build_synthetic_llama_real_install, build_synthetic_qwen2_install,
+    build_synthetic_qwen2_install_with_bias, tiny_dense_llama_arch, tiny_gqa_moe_arch,
+    tiny_llama_arch,
 };
 pub use synthetic_model::{
     build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,

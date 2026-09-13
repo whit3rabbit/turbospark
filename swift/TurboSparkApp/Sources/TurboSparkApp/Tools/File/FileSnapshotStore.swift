@@ -6,6 +6,8 @@ public actor FileSnapshotStore {
     public static let shared = FileSnapshotStore()
 
     private var snapshots: [String: String] = [:]
+    /// Rollback backup cache for undo_edit capability.
+    private var backups: [String: String] = [:]
     /// Insertion order, oldest first, so the map can be trimmed without
     /// hashing timestamps into every entry.
     private var insertionOrder: [String] = []
@@ -18,6 +20,16 @@ public actor FileSnapshotStore {
     static let maximumTrackedFiles = 512
 
     public init() {}
+
+    /// Records pre-modification file content for undo_edit rollback.
+    public func recordBackup(url: URL, content: String) {
+        backups[url.standardizedFileURL.path] = content
+    }
+
+    /// Retrieves pre-modification file content for undo_edit rollback.
+    public func restoreBackup(url: URL) -> String? {
+        backups[url.standardizedFileURL.path]
+    }
 
     /// Records the content hash of a file whose contents the caller already
     /// has.

@@ -318,6 +318,58 @@ pub fn qwen3_4b() -> ArchConfig {
     }
 }
 
+/// Canonical dense Qwen2.5 baseline: full-attention GQA with standard RoPE,
+/// a dense SwiGLU FFN, Q/K/V projection biases, no Q/K normalization, no
+/// sliding window, and the Qwen2 RMS epsilon of 1e-6.
+///
+/// Shape fields are Qwen2.5-7B's published configuration. GGUF intake
+/// overrides checkpoint-specific shape fields from metadata, while the
+/// family-specific behavior remains fixed here and in the shared Llama
+/// runtime state.
+pub fn qwen2_5_7b() -> ArchConfig {
+    ArchConfig {
+        hidden_size: 3584,
+        intermediate_size: 18944,
+        moe_intermediate_size: 0,
+        num_heads: 28,
+        num_kv_heads: 4,
+        num_full_kv_heads: 4,
+        head_dim: 128,
+        full_head_dim: 128,
+        vocab_size: 152_064,
+        sliding_window: 0,
+        final_logit_softcap: 0.0,
+        rope_theta: 1_000_000.0,
+        full_rope_theta: 1_000_000.0,
+        partial_rotary_factor: 1.0,
+        num_layers: 28,
+        num_experts: 0,
+        top_k_experts: 0,
+        tie_word_embeddings: false,
+        attention_k_eq_v: false,
+        full_attention_layer_mask: vec![1u8; 28],
+        hidden_activation: "silu".to_string(),
+        family: ModelFamily::Qwen2Dense,
+        attn_output_gate: false,
+        attention_scale: 0.088_388_347_648_318_45,
+        embedding_scaled_by_sqrt_hidden: false,
+        router_scaled: false,
+        ffn_sandwich_norms: false,
+        shared_expert_gated: false,
+        rope_neox_subdim: false,
+        linear_attention: LinearAttentionConfig::NONE,
+        compressed_attention: CompressedAttentionConfig::NONE,
+        hyper_connections: HyperConnectionConfig::NONE,
+        num_hash_routed_layers: 0,
+        router_scoring_func: "softmax".to_string(),
+        routed_scaling_factor: 1.0,
+        swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
+        vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
+    }
+}
+
 /// Canonical `qwen4_exp` (Qwen3.8-Flash-Next) baseline: a 48-layer hybrid of
 /// 36 gated-DeltaNet linear layers and 12 full-attention ones (every 4th),
 /// 512 routed experts at top-10 plus a gated shared expert, a FOUR-STREAM

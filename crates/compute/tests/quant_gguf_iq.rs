@@ -13,9 +13,14 @@
 //! broke rather than just printing 256 mismatched floats.
 
 use turbospark_compute::{
-    dequant_iq4_nl_gemv, dequantize_iq3_xxs, dequantize_iq4_nl, dequantize_iq4_xs, iq3xxs_signs,
-    IQ3XXS_GRID, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS, IQ4NL_VALUES, IQ4_NL_BLOCK_BYTES,
-    IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
+    dequant_iq1_m_gemv, dequant_iq1_s_gemv, dequant_iq2_s_gemv, dequant_iq2_xs_gemv,
+    dequant_iq2_xxs_gemv, dequant_iq3_s_gemv, dequant_iq4_nl_gemv, dequantize_iq1_m,
+    dequantize_iq1_s, dequantize_iq2_s, dequantize_iq2_xs, dequantize_iq2_xxs, dequantize_iq3_s,
+    dequantize_iq3_xxs, dequantize_iq4_nl, dequantize_iq4_xs, iq3xxs_signs, IQ1_M_BLOCK_BYTES,
+    IQ1_S_BLOCK_BYTES, IQ2_S_BLOCK_BYTES, IQ2_XS_BLOCK_BYTES, IQ2_XXS_BLOCK_BYTES, IQ3S_GRID,
+    IQ3XXS_GRID, IQ3_S_BLOCK_BYTES, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS, IQ4NL_VALUES,
+    IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
+    IQ_LOWBIT_BLOCK_ELEMS,
 };
 
 /// FP16 1.0, the `d` every oracle block uses so the decoded value is the
@@ -226,6 +231,98 @@ fn the_iq4_nl_gemv_matches_a_dequantize_then_dot() {
             .sum();
         assert_eq!(got[r], want);
     }
+}
+
+fn dense_iq_bytes(bytes: usize, iq1_m: bool) -> Vec<u8> {
+    let mut lcg = Lcg(0x51_a7_92_31);
+    let mut block = (0..bytes)
+        .map(|_| (lcg.next() >> 24) as u8)
+        .collect::<Vec<_>>();
+    if iq1_m {
+        // IQ1_M reconstructs d from four 16-bit scale words. This spells
+        // finite f16 0x2c00, leaving all index, scale and delta bits live.
+        block[48..56].copy_from_slice(&[0, 0, 0, 0, 0, 0xc0, 0, 0x20]);
+    } else {
+        block[..2].copy_from_slice(&F16_ONE.to_le_bytes());
+    }
+    block
+}
+
+#[test]
+fn dense_gsq_rco_iq_references_refuse_short_blocks_and_match_their_gemvs() {
+    type Decode = fn(&[u8], usize) -> Vec<f32>;
+    type Gemv = fn(&[&[u8]], &[f32], usize) -> Vec<f32>;
+    let cases: [(&str, usize, bool, Decode, Gemv); 6] = [
+        (
+            "IQ2_XXS",
+            IQ2_XXS_BLOCK_BYTES,
+            false,
+            dequantize_iq2_xxs,
+            dequant_iq2_xxs_gemv,
+        ),
+        (
+            "IQ2_XS",
+            IQ2_XS_BLOCK_BYTES,
+            false,
+            dequantize_iq2_xs,
+            dequant_iq2_xs_gemv,
+        ),
+        (
+            "IQ1_S",
+            IQ1_S_BLOCK_BYTES,
+            false,
+            dequantize_iq1_s,
+            dequant_iq1_s_gemv,
+        ),
+        (
+            "IQ3_S",
+            IQ3_S_BLOCK_BYTES,
+            false,
+            dequantize_iq3_s,
+            dequant_iq3_s_gemv,
+        ),
+        (
+            "IQ2_S",
+            IQ2_S_BLOCK_BYTES,
+            false,
+            dequantize_iq2_s,
+            dequant_iq2_s_gemv,
+        ),
+        (
+            "IQ1_M",
+            IQ1_M_BLOCK_BYTES,
+            true,
+            dequantize_iq1_m,
+            dequant_iq1_m_gemv,
+        ),
+    ];
+    let x: Vec<f32> = (0..IQ_LOWBIT_BLOCK_ELEMS)
+        .map(|i| i as f32 / 127.0 - 1.0)
+        .collect();
+    for (name, bytes, iq1_m, decode, gemv) in cases {
+        let a = dense_iq_bytes(bytes, iq1_m);
+        let mut b = dense_iq_bytes(bytes, iq1_m);
+        // Keep IQ1_M's reconstructed f16 scale finite; its final eight bytes
+        // are not spare padding, unlike the other layouts' final field.
+        b[0] ^= 0x5a;
+        assert!(
+            std::panic::catch_unwind(|| decode(&a[..bytes - 1], IQ_LOWBIT_BLOCK_ELEMS)).is_err(),
+            "{name}"
+        );
+        let got = gemv(&[&a, &b], &x, IQ_LOWBIT_BLOCK_ELEMS);
+        for (row, dot) in [&a, &b].into_iter().zip(got) {
+            let want: f32 = decode(row, IQ_LOWBIT_BLOCK_ELEMS)
+                .iter()
+                .zip(&x)
+                .map(|(w, x)| w * x)
+                .sum();
+            assert_eq!(dot, want, "{name}");
+        }
+    }
+    assert!(
+        IQ3S_GRID.iter().any(|&v| v != 0),
+        "generated IQ3_S grid is empty"
+    );
 }
 
 // Under `generated/` rather than beside this file because every top-level

@@ -30,6 +30,10 @@ fn the_two_running_architectures_resolve_to_their_family() {
         gguf_arch_support("llama"),
         Some(ArchSupport::Supported(ModelFamily::Llama))
     );
+    assert_eq!(
+        gguf_arch_support("qwen2"),
+        Some(ArchSupport::Supported(ModelFamily::Qwen2Dense))
+    );
 }
 
 /// Recognition is not support. A planned row must NOT leak into the family
@@ -117,6 +121,10 @@ fn both_model_type_spellings_resolve() {
     assert_eq!(
         hf_family_for_model_type("qwen3_5_moe_text"),
         Some(ModelFamily::QwenGdnMoe)
+    );
+    assert_eq!(
+        hf_family_for_model_type("qwen2"),
+        Some(ModelFamily::Qwen2Dense)
     );
     // Qwen2-MoE is a different model, and an earlier draft of
     // docs/MODEL_FAMILY.md claimed this row existed.

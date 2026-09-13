@@ -9,6 +9,9 @@ import TurboSpark
 /// parsed call into a result, which is the part with the arguments, the
 /// errors and the refusals in it.
 public enum AppToolRegistry {
+    /// Whether Syntext code search and project indexing is globally enabled.
+    public static var syntextIndexingEnabled: Bool = true
+
     /// Executes a tool call asynchronously within the given project context.
     ///
     /// - Parameter chatID: the conversation the call belongs to, for tools
@@ -23,9 +26,22 @@ public enum AppToolRegistry {
     ///   carried a level, so a subagent could call `agent` which could call
     ///   `agent` without bound.
     public static func execute(
-        call: AppToolCall, in project: AppProject?, chatID: UUID? = nil, subagentDepth: Int = 0
+        call: AppToolCall, in project: AppProject?, chatID: UUID? = nil, subagentDepth: Int = 0,
+        webToolsEnabled: Bool = true
     ) async -> AppToolResult {
         let startTime = Date()
+
+        let appAllowsWebTools = await webToolsEnabledProvider?() ?? true
+        if (!webToolsEnabled || !appAllowsWebTools),
+            category(for: call.name, projectURL: project?.rootDirectoryURL) == .web
+        {
+            return AppToolResult(
+                callID: call.id,
+                output: "Error: '\(call.name)' is disabled. Enable Web Search in the chat composer to use web tools.",
+                isError: true,
+                durationSeconds: Date().timeIntervalSince(startTime)
+            )
+        }
 
         // **NO PROJECT MEANS NO ROOT, AND THEREFORE NO FILE OR SHELL TOOL.**
         //
@@ -77,7 +93,8 @@ public enum AppToolRegistry {
         let rootURL = resolvedRoot ?? URL(fileURLWithPath: "/dev/null")
 
         do {
-            let output: String
+            var output: String = ""
+            var archivalOutput: String?
             // Populated by the producing cases below (write_file, edit_file,
             // apply_patch, notebook_edit, send_user_file) and reported once,
             // after the switch succeeds -- `ArtifactRegistrar.report`'s own
@@ -124,9 +141,23 @@ public enum AppToolRegistry {
                 let limit = Int(call.arguments["limit"]
                     ?? call.arguments["max_lines"]
                     ?? call.arguments["maxLines"] ?? "")
+                let mode = call.arguments["mode"]
+                let searchPattern = call.arguments["search_pattern"]
+                    ?? call.arguments["searchPattern"]
+                    ?? call.arguments["pattern"]
+                let contextLines = Int(call.arguments["context_lines"]
+                    ?? call.arguments["contextLines"] ?? "")
+                let comparisonPath = call.arguments["comparison_path"]
+                    ?? call.arguments["comparisonPath"]
+                    ?? call.arguments["compare_with"]
+                let numRevisions = Int(call.arguments["num_revisions"]
+                    ?? call.arguments["numRevisions"]
+                    ?? call.arguments["revisions"] ?? "")
                 output = try await readFile(
                     relPath: relPath, rootURL: rootURL, startLine: startLine, endLine: endLine,
-                    limit: limit)
+                    limit: limit, mode: mode, searchPattern: searchPattern,
+                    contextLines: contextLines, comparisonPath: comparisonPath,
+                    numRevisions: numRevisions)
 
             case "write_file", "save_file", "filewrite", "write", "create_file", "write_to_file":
                 guard let relPath = call.arguments["path"]
@@ -147,9 +178,10 @@ public enum AppToolRegistry {
                 if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                    Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
                 }
 
-            case "edit_file", "fileedit", "edit", "replace_file_content":
+            case "edit_file", "fileedit", "edit", "replace_file_content", "editor":
                 guard let relPath = call.arguments["path"]
                     ?? call.arguments["file_path"]
                     ?? call.arguments["filePath"]
@@ -159,27 +191,46 @@ public enum AppToolRegistry {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'file_path' argument."])
                 }
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
-                guard let oldStr = call.arguments["old_string"]
-                    ?? call.arguments["oldString"]
-                    ?? call.arguments["target"]
-                    ?? call.arguments["oldStr"]
-                    ?? call.arguments["TargetContent"] else {
-                    throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'old_string' argument."])
-                }
+                let command = call.arguments["command"] ?? call.arguments["cmd"] ?? "str_replace"
                 let newStr = call.arguments["new_string"]
                     ?? call.arguments["newString"]
                     ?? call.arguments["replacement"]
                     ?? call.arguments["newStr"]
                     ?? call.arguments["ReplacementContent"]
+                    ?? call.arguments["file_text"]
                     ?? ""
+                let insertLine = call.arguments["insert_line"]
+                    ?? call.arguments["insertLine"]
+                    ?? call.arguments["line"]
+                let position = call.arguments["position"] ?? call.arguments["pos"] ?? "after"
+                let regexPattern = call.arguments["regex_pattern"]
+                    ?? call.arguments["regexPattern"]
+                    ?? call.arguments["pattern"]
                 let replaceAll = ["true", "1", "yes"].contains((call.arguments["replace_all"]
                     ?? call.arguments["replaceAll"]
                     ?? call.arguments["AllowMultiple"]
                     ?? call.arguments["allowMultiple"])?.lowercased() ?? "")
-                output = try await editFile(relPath: relPath, oldString: oldStr, newString: newStr, replaceAll: replaceAll, rootURL: rootURL)
+
+                let oldStr = call.arguments["old_string"]
+                    ?? call.arguments["oldString"]
+                    ?? call.arguments["target"]
+                    ?? call.arguments["oldStr"]
+                    ?? call.arguments["TargetContent"]
+                    ?? ""
+                let normalizedCmd = command.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                if normalizedCmd != "undo_edit" && normalizedCmd != "undo" && normalizedCmd != "insert" && normalizedCmd != "pattern_replace" {
+                    if oldStr.isEmpty {
+                        throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'old_string' argument."])
+                    }
+                }
+                output = try await editFile(
+                    relPath: relPath, oldString: oldStr, newString: newStr,
+                    replaceAll: replaceAll, rootURL: rootURL, command: command,
+                    insertLine: insertLine, position: position, regexPattern: regexPattern)
                 if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                    Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
                 }
 
             case "apply_patch", "applypatch":
@@ -189,9 +240,13 @@ public enum AppToolRegistry {
                 let result = try await ApplyPatchExecutor.apply(patchText: patchText, rootURL: rootURL)
                 output = result.summary
                 for op in result.applied where op.type != "delete" {
+                    let fileURL = URL(fileURLWithPath: op.target)
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
-                        url: URL(fileURLWithPath: op.target), toolCallID: call.id, toolName: call.name,
+                        url: fileURL, toolCallID: call.id, toolName: call.name,
                         origin: .fileWrite))
+                    if syntextIndexingEnabled {
+                        Task { await SyntextIndexManager.shared.notifyChange(at: fileURL, rootURL: rootURL) }
+                    }
                 }
 
             case "search_code", "grep", "search", "grep_search":
@@ -199,7 +254,7 @@ public enum AppToolRegistry {
                     ?? call.arguments["query"]
                     ?? call.arguments["Query"]
                     ?? call.arguments["search_query"] else {
-                    throw NSError(domain: "TurboSparkTool", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing 'pattern' argument."])
+                    throw NSError(domain: "TurboSparkTool", code: 3, userInfo: [NSLocalizedDescriptionKey: "Missing 'pattern' or 'query' argument."])
                 }
                 let relPath = call.arguments["path"]
                     ?? call.arguments["file_path"]
@@ -208,13 +263,55 @@ public enum AppToolRegistry {
                     ?? call.arguments["dir"]
                     ?? call.arguments["directory"]
                     ?? "."
-                output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
+                let pathFilter = call.arguments["path_filter"]
+                    ?? call.arguments["pathFilter"]
+                    ?? call.arguments["glob"]
+                let rawTypes = call.arguments["file_types"]
+                    ?? call.arguments["fileTypes"]
+                    ?? call.arguments["type"]
+                var fileTypes: [String] = []
+                if let rawTypes, !rawTypes.isEmpty {
+                    if rawTypes.hasPrefix("[") && rawTypes.hasSuffix("]") {
+                        if let data = rawTypes.data(using: .utf8),
+                           let parsed = try? JSONDecoder().decode([String].self, from: data) {
+                            fileTypes = parsed
+                        }
+                    } else {
+                        fileTypes = rawTypes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                    }
+                }
+                let literalSearch = ["true", "1", "yes"].contains(
+                    (call.arguments["literal_search"] ?? call.arguments["literalSearch"] ?? call.arguments["fixed_strings"] ?? call.arguments["fixedStrings"])?.lowercased() ?? ""
+                )
+                let caseSensitive = ["true", "1", "yes"].contains(
+                    (call.arguments["case_sensitive"] ?? call.arguments["caseSensitive"])?.lowercased() ?? ""
+                )
+                let contextLines = Int(call.arguments["context_lines"] ?? call.arguments["contextLines"] ?? call.arguments["context"] ?? "") ?? 2
+                let maxResults = Int(call.arguments["max_results"] ?? call.arguments["maxResults"] ?? call.arguments["head_limit"] ?? "") ?? 50
+
+                let syntextEnabled = syntextIndexingEnabled && project?.syntextIndexEnabled == true
+                if syntextEnabled, resolvedRoot != nil {
+                    do {
+                        let searchTool = await SyntextIndexManager.shared.tool(for: rootURL)
+                        output = try await searchTool.grep(
+                            query: pattern,
+                            pathFilter: pathFilter,
+                            fileTypes: fileTypes,
+                            caseSensitive: caseSensitive,
+                            literalSearch: literalSearch,
+                            wordMatch: false,
+                            contextLines: contextLines,
+                            maxResults: maxResults
+                        )
+                    } catch {
+                        output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
+                    }
+                } else {
+                    output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
+                }
 
             case "run_command", "bash", "shell", "exec", "terminal":
-                guard let command = call.arguments["command"]
-                    ?? call.arguments["cmd"]
-                    ?? call.arguments["CommandLine"]
-                    ?? call.arguments["code"] else {
+                guard let command = call.shellCommand else {
                     throw NSError(domain: "TurboSparkTool", code: 4, userInfo: [NSLocalizedDescriptionKey: "Missing 'command' argument."])
                 }
                 let timeoutMs = Int(call.arguments["timeout"]
@@ -229,10 +326,12 @@ public enum AppToolRegistry {
                 let commandDescription = call.arguments["description"]
                     ?? call.arguments["toolSummary"]
                     ?? call.arguments["toolAction"]
-                output = try await ShellCommandRunner.run(
+                let shellOutput = try await ShellCommandRunner.runForTool(
                     command: command, rootURL: rootURL, timeoutMs: timeoutMs,
                     runInBackground: runInBackground, description: commandDescription,
                     chatID: chatID)
+                output = shellOutput.presentation
+                archivalOutput = shellOutput.archivalOutput
 
             case "bashoutput", "bash_output":
                 output = try await ShellCommandRunner.backgroundOutput(
@@ -241,6 +340,22 @@ public enum AppToolRegistry {
             case "killshell", "kill_shell":
                 output = try ShellCommandRunner.killBackground(
                     arguments: call.arguments, chatID: chatID)
+
+            case "recall_tool_output":
+                guard let observationID = call.arguments["observation_id"],
+                      let offset = Int(call.arguments["offset_bytes"] ?? ""),
+                      let maximum = Int(call.arguments["max_bytes"] ?? "")
+                else {
+                    throw NSError(domain: "TurboSparkTool", code: 29, userInfo: [
+                        NSLocalizedDescriptionKey: "recall_tool_output needs observation_id, offset_bytes, and max_bytes.",
+                    ])
+                }
+                guard let recaller = observationRecaller else {
+                    throw NSError(domain: "TurboSparkTool", code: 30, userInfo: [
+                        NSLocalizedDescriptionKey: "Archived tool output is unavailable before chat storage initializes.",
+                    ])
+                }
+                output = try await recaller(chatID, observationID, offset, min(maximum, 64 * 1_024))
 
             case "websearch", "web_search", "search_web":
                 guard let query = call.arguments["query"] ?? call.arguments["q"] ?? call.arguments["search_query"] else {
@@ -276,6 +391,36 @@ public enum AppToolRegistry {
                 let format = call.arguments["format"] ?? "markdown"
                 let timeoutSeconds = Int(call.arguments["timeout"] ?? call.arguments["timeout_seconds"] ?? "")
                 output = try await WebFetchExecutor.fetch(url: urlString, format: format, timeout: timeoutSeconds)
+
+            case "http_request", "httprequest":
+                guard let urlString = call.arguments["url"]
+                    ?? call.arguments["uri"]
+                    ?? call.arguments["Url"]
+                    ?? call.arguments["endpoint"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [NSLocalizedDescriptionKey: "Missing 'url' argument for HttpRequest tool call."])
+                }
+                let method = call.arguments["method"] ?? "GET"
+                let body = call.arguments["body"] ?? call.arguments["data"] ?? call.arguments["payload"]
+                let authType = call.arguments["auth_type"] ?? call.arguments["authType"]
+                let authToken = call.arguments["auth_token"] ?? call.arguments["authToken"] ?? call.arguments["token"]
+                let format = call.arguments["format"]
+                let timeout = Int(call.arguments["timeout"] ?? call.arguments["timeout_seconds"] ?? "")
+                var parsedHeaders: [String: String]?
+                if let rawHeaders = call.arguments["headers"],
+                   let data = rawHeaders.data(using: .utf8),
+                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+                    parsedHeaders = dict
+                }
+                output = try await HttpRequestExecutor.execute(
+                    url: urlString,
+                    method: method,
+                    headers: parsedHeaders,
+                    body: body,
+                    authType: authType,
+                    authToken: authToken,
+                    format: format,
+                    timeout: timeout
+                )
 
             case "skill":
                 guard let skillName = call.arguments["name"] ?? call.arguments["skill_name"] else {
@@ -603,7 +748,9 @@ public enum AppToolRegistry {
 
             ArtifactRegistrar.report(chatID: chatID, produced: producedFiles)
             let elapsed = Date().timeIntervalSince(startTime)
-            return AppToolResult(callID: call.id, output: output, isError: false, durationSeconds: elapsed)
+            return AppToolResult(
+                callID: call.id, output: output, isError: false, durationSeconds: elapsed,
+                archivalOutput: archivalOutput)
         } catch is CancellationError {
             // **A STOP IS NOT A TOOL FAILURE** (state#64). `CancellationError`
             // localizes to "cancelled", so a command the USER stopped reached

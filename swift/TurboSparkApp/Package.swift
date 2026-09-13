@@ -7,14 +7,16 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(path: "../TurboSpark"),
-        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0")
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
+        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0")
     ],
     targets: [
         .executableTarget(
             name: "TurboSparkApp",
             dependencies: [
                 .product(name: "TurboSpark", package: "TurboSpark"),
-                .product(name: "MarkdownUI", package: "swift-markdown-ui")
+                .product(name: "MarkdownUI", package: "swift-markdown-ui"),
+                .product(name: "Syntext", package: "syntext")
             ],
             resources: [
                 .process("Resources")
@@ -35,7 +37,8 @@ let package = Package(
             name: "TurboSparkAppTests",
             dependencies: [
                 "TurboSparkApp",
-                .product(name: "TurboSpark", package: "TurboSpark")
+                .product(name: "TurboSpark", package: "TurboSpark"),
+                .product(name: "Syntext", package: "syntext")
             ],
             linkerSettings: [
                 .unsafeFlags(["-L../TurboSpark/Sources/CTurboSpark"])

@@ -1,6 +1,10 @@
 import Foundation
 
 extension AppModel {
+    private func isGhostChat(_ chatID: UUID) -> Bool {
+        chats.first(where: { $0.id == chatID })?.isGhost == true
+    }
+
     /// Points `AppHookStore` at the directory the hooks about to run belong
     /// to (state#67).
     ///
@@ -47,6 +51,9 @@ extension AppModel {
         agentID: String? = nil,
         agentType: String? = nil
     ) async -> [AppHookExecutionResult] {
+        if isGhostChat(chatID), event.carriesConversationContent {
+            return []
+        }
         let sessionID = chatID.uuidString
         let projectDir = project?.rootDirectoryPath
         rebindHookStore(to: projectDir)
@@ -78,6 +85,17 @@ extension AppModel {
     ) async -> AppHookPreToolUseDecision {
         let projectDir = project?.rootDirectoryPath
         rebindHookStore(to: projectDir)
+
+        if isGhostChat(chatID) {
+            let hasGate = AppHookExecutionEngine.shared.hasMatchingHook(
+                event: .preToolUse, toolName: toolName, toolArguments: toolArguments)
+            return hasGate
+                ? AppHookPreToolUseDecision(
+                    behavior: .deny,
+                    reason: "Tool use is blocked in Ghost Mode because a matching "
+                        + "PreToolUse safety hook cannot receive private tool content.")
+                : AppHookPreToolUseDecision(behavior: .allow)
+        }
 
         return await AppHookExecutionEngine.shared.evaluatePreToolUse(
             sessionID: chatID.uuidString,
@@ -164,6 +182,16 @@ extension AppModel {
     ) async -> AppHookVerdict {
         let projectDir = project?.rootDirectoryPath
         rebindHookStore(to: projectDir)
+        if isGhostChat(chatID) {
+            let hasGate = AppHookExecutionEngine.shared.hasMatchingHook(
+                event: .permissionRequest, toolName: toolName, toolArguments: toolArguments)
+            return hasGate
+                ? AppHookVerdict(
+                    permissionDecision: .deny,
+                    permissionReason: "Tool use is blocked in Ghost Mode because a matching "
+                        + "PermissionRequest safety hook cannot receive private tool content.")
+                : AppHookVerdict()
+        }
         let results = await AppHookExecutionEngine.shared.dispatch(
             event: .permissionRequest,
             sessionID: chatID.uuidString,
@@ -229,5 +257,18 @@ extension AppModel {
         await dispatchLifecycleHook(
             event: event, chatID: chatID, project: project,
             stopHookActive: stopHookActive, agentID: agentID, agentType: agentType)
+    }
+}
+
+private extension AppHookEvent {
+    var carriesConversationContent: Bool {
+        switch self {
+        case .userPromptSubmit, .preToolUse, .postToolUse, .postToolUseFailure,
+             .permissionRequest, .permissionDenied:
+            return true
+        case .sessionStart, .sessionEnd, .stop, .subagentStart, .subagentStop,
+             .notification, .preCompact:
+            return false
+        }
     }
 }

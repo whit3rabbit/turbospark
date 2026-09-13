@@ -178,7 +178,47 @@ pub fn build_synthetic_dense_llama_install(
     num_layers: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    build_gqa_install(dir, vocab_size, num_layers, 0, model_id, ModelFamily::Llama)
+    build_gqa_install(
+        dir,
+        vocab_size,
+        num_layers,
+        0,
+        model_id,
+        ModelFamily::Llama,
+        0.0,
+    )
+}
+
+/// Writes a tiny dense Qwen2-shaped install. It uses the same attention and
+/// dense FFN dimensions as the Llama fixture, but includes the Q/K/V bias
+/// vectors required by Qwen2's layer contract.
+pub fn build_synthetic_qwen2_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen2_install_with_bias(dir, vocab_size, num_layers, model_id, 0.01)
+}
+
+/// Qwen2 fixture variant with an explicit bias value, used to prove that the
+/// Q/K/V bias tensors affect logits rather than merely being present.
+pub fn build_synthetic_qwen2_install_with_bias(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bias: f32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_gqa_install(
+        dir,
+        vocab_size,
+        num_layers,
+        0,
+        model_id,
+        ModelFamily::Qwen2Dense,
+        bias,
+    )
 }
 
 /// The same builder for either family, which is what makes the pair a real
@@ -197,7 +237,15 @@ pub fn build_synthetic_gqa_moe_install(
         "build_synthetic_gqa_moe_install is the MoE half; \
          use build_synthetic_dense_llama_install for num_experts == 0"
     );
-    build_gqa_install(dir, vocab_size, num_layers, num_experts, model_id, family)
+    build_gqa_install(
+        dir,
+        vocab_size,
+        num_layers,
+        num_experts,
+        model_id,
+        family,
+        0.0,
+    )
 }
 
 /// The shared body. `num_experts == 0` writes the dense FFN and omits the
@@ -209,6 +257,7 @@ fn build_gqa_install(
     num_experts: i64,
     model_id: &str,
     family: ModelFamily,
+    qwen2_bias: f32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_gqa_moe_arch(vocab_size, num_layers, num_experts, family);
     let experts = num_experts as usize;
@@ -273,6 +322,22 @@ fn build_gqa_install(
                 HIDDEN,
                 seed + 2 + i as u64,
             ));
+        }
+        if family == ModelFamily::Qwen2Dense {
+            ts.push(bf16_vector(
+                &format!("{p}.self_attn.q_proj.bias"),
+                NUM_HEADS * HEAD_DIM,
+                qwen2_bias,
+                seed + 11,
+            ));
+            for (i, role) in ["k_proj", "v_proj"].iter().enumerate() {
+                ts.push(bf16_vector(
+                    &format!("{p}.self_attn.{role}.bias"),
+                    NUM_KV_HEADS * HEAD_DIM,
+                    0.01,
+                    seed + 12 + i as u64,
+                ));
+            }
         }
         ts.extend(int4_triple(
             &format!("{p}.self_attn.o_proj.weight"),

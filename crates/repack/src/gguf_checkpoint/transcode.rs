@@ -58,6 +58,7 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         | ModelFamily::Qwen4Exp
         | ModelFamily::Spark25
         | ModelFamily::Qwen3Dense
+        | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2 => &[],
     }
 }

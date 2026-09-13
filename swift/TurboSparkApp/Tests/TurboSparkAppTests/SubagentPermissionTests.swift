@@ -51,6 +51,29 @@ final class SubagentPermissionTests: XCTestCase {
         XCTAssertNotNil(refusal, "A destructive command must never run unattended in a subagent.")
     }
 
+    func testCommandLineAliasIsRefusedByAnUnattendedSubagent() async {
+        await assertAlternateCommandIsRefused(key: "CommandLine")
+    }
+
+    func testCodeAliasIsRefusedByAnUnattendedSubagent() async {
+        await assertAlternateCommandIsRefused(key: "code")
+    }
+
+    private func assertAlternateCommandIsRefused(
+        key: String, file: StaticString = #filePath, line: UInt = #line
+    ) async {
+        let call = AppToolCall(
+            name: "run_command",
+            arguments: [key: "rm -rf ~/Documents"],
+            category: .terminal)
+        let refusal = await SubagentRunner.permissionRefusal(
+            for: call, project: project(terminal: .allow, mode: .permissive))
+        XCTAssertNotNil(
+            refusal,
+            "A destructive command in '\(key)' must never run unattended in a subagent.",
+            file: file, line: line)
+    }
+
     // MARK: - the positive allowlist runs on top of the engine
 
     func testPermissiveModeDoesNotLetASubagentRunAnythingItLikes() async {

@@ -127,7 +127,7 @@ final class MentionResolverTests: XCTestCase {
     }
 
     @MainActor
-    func testAbsoluteTokenResolvesOutsideTheProjectRoot() async throws {
+    func testAbsoluteTokenOutsideTheProjectRootResolvesNothing() async throws {
         let root = makeTempDir("absolute")
         defer { try? FileManager.default.removeItem(at: root) }
         let outside = makeTempDir("outside")
@@ -141,7 +141,27 @@ final class MentionResolverTests: XCTestCase {
             projectRoot: root, chatID: chatID, into: model)
 
         XCTAssertEqual(failures, [])
-        XCTAssertEqual(attachments(model: model, chatID: chatID).count, 1)
+        XCTAssertEqual(attachments(model: model, chatID: chatID).count, 0)
+    }
+
+    @MainActor
+    func testProjectSymlinkOutsideTheRootResolvesNothing() async throws {
+        let root = makeTempDir("symlink-root")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = makeTempDir("symlink-outside")
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let secret = outside.appendingPathComponent("secret.txt")
+        writeFile("private", to: secret)
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("leak"), withDestinationURL: secret)
+
+        let model = AppModel()
+        let chatID = UUID()
+        let failures = await MentionResolver.resolveMentions(
+            in: "read @leak", projectRoot: root, chatID: chatID, into: model)
+
+        XCTAssertEqual(failures, [])
+        XCTAssertEqual(attachments(model: model, chatID: chatID).count, 0)
     }
 
     @MainActor
