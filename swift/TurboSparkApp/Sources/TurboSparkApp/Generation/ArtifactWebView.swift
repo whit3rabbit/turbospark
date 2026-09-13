@@ -6,9 +6,11 @@ import WebKit
 /// `.inline` is a chat fence's html: `loadHTMLString(baseURL: nil)` gives the
 /// page an opaque origin with no file access at all, the WKWebView analogue
 /// of a plain `sandbox="allow-scripts"` iframe. `.file` is a tool-written
-/// `.html` artifact: `loadFileURL(allowingReadAccessTo:)` scopes every read
-/// to that one folder, which is what makes sibling css/js/img work without
-/// handing the page the rest of the disk.
+/// `.html` artifact: while offline, `loadFileURL(allowingReadAccessTo:)`
+/// scopes every read to that one folder, which is what makes sibling
+/// css/js/img work without handing the page the rest of the disk. When the
+/// network is enabled, the page is reloaded as inline html with no file
+/// origin so local-file and outbound-network capabilities never coexist.
 public enum ArtifactWebDocument: Equatable {
     case file(page: URL, readAccessFolder: URL)
     case inline(html: String)
@@ -37,6 +39,21 @@ public enum ArtifactWebDocument: Equatable {
         switch self {
         case .file(let page, _): return "file:\(page.path)"
         case .inline(let html): return "inline:\(html)"
+        }
+    }
+
+    /// Removes local-file authority before a document receives network
+    /// authority. The app reads the selected page itself, then gives WebKit
+    /// only its bytes under an opaque origin; sibling workspace files are
+    /// therefore unavailable to scripts in the network-enabled page.
+    func isolatedForNetworkAccess() -> ArtifactWebDocument {
+        switch self {
+        case .file(let page, _):
+            let html = (try? String(contentsOf: page, encoding: .utf8))
+                ?? "<p>The preview could not be loaded.</p>"
+            return .inline(html: html)
+        case .inline:
+            return self
         }
     }
 }
@@ -111,7 +128,7 @@ struct ArtifactWebView: NSViewRepresentable {
             // only ever receives the one static list, so removing all is
             // removing exactly that.
             webView.configuration.userContentController.removeAllContentRuleLists()
-            loadDocument(document, in: webView)
+            loadDocument(document.isolatedForNetworkAccess(), in: webView)
             return
         }
 

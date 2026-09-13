@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Engine for executing arbitrary HTTP REST requests with method, header, auth, and payload support.
 public enum HttpRequestExecutor {
@@ -27,23 +30,7 @@ public enum HttpRequestExecutor {
             )
         }
 
-        guard let host = url.host, !host.isEmpty else {
-            throw NSError(
-                domain: "TurboSparkHttpRequest",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Malformed URL with missing host: '\(urlString)'"]
-            )
-        }
-
-        if AppToolSandbox.isPrivateOrMetadataHost(host) {
-            throw NSError(
-                domain: "TurboSparkHttpRequest",
-                code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Access to private network or metadata host '\(host)' is denied."]
-            )
-        }
-
-        try AppToolSandbox.validateDomain(host)
+        try HttpRequestDestinationValidator.validate(url)
 
         let resolvedMethod = method.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         let validMethods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
@@ -103,10 +90,12 @@ public enum HttpRequestExecutor {
         let sessionConfig = URLSessionConfiguration.ephemeral
         sessionConfig.timeoutIntervalForRequest = TimeInterval(resolvedTimeout)
         sessionConfig.timeoutIntervalForResource = TimeInterval(resolvedTimeout)
-        let session = customSession ?? URLSession(configuration: sessionConfig)
-
         let startTime = Date()
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await performRequest(
+            req,
+            configuration: sessionConfig,
+            customSession: customSession
+        )
         let elapsedMs = Date().timeIntervalSince(startTime) * 1000.0
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -153,5 +142,74 @@ public enum HttpRequestExecutor {
             body: AppToolRegistry.compactOutput(formattedBody, maxLines: 150)
         )
         return output.formatResponse()
+    }
+
+    private static func performRequest(
+        _ request: URLRequest,
+        configuration: URLSessionConfiguration,
+        customSession: URLSession?
+    ) async throws -> (Data, URLResponse) {
+        // Injected sessions are test transports. Production redirects are
+        // stopped and replayed only after validating the new destination.
+        if let customSession {
+            let result = try await customSession.data(for: request)
+            if let finalURL = result.1.url {
+                try HttpRequestDestinationValidator.validate(finalURL)
+            }
+            return result
+        }
+
+        let session = URLSession(configuration: configuration)
+        var nextRequest: URLRequest? = request
+        for _ in 0..<10 {
+            guard let currentRequest = nextRequest, let currentURL = currentRequest.url else {
+                throw requestError(6, "Redirect produced a malformed URL.")
+            }
+            try HttpRequestDestinationValidator.validate(currentURL)
+
+            let redirect = HttpRequestRedirectDelegate()
+            let result = try await session.data(for: currentRequest, delegate: redirect)
+            if let redirectedRequest = redirect.takeRedirect() {
+                nextRequest = redirectedRequest
+                continue
+            }
+            if let finalURL = result.1.url {
+                try HttpRequestDestinationValidator.validate(finalURL)
+            }
+            return result
+        }
+        throw requestError(7, "Too many HTTP redirects (maximum 10).")
+    }
+
+    private static func requestError(_ code: Int, _ message: String) -> NSError {
+        NSError(
+            domain: "TurboSparkHttpRequest",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+}
+
+private final class HttpRequestRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var redirectedRequest: URLRequest?
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        lock.lock()
+        redirectedRequest = request
+        lock.unlock()
+        completionHandler(nil)
+    }
+
+    func takeRedirect() -> URLRequest? {
+        lock.lock()
+        defer { lock.unlock() }
+        return redirectedRequest
     }
 }

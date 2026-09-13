@@ -244,13 +244,18 @@ extension PluginManager {
         // The conventional root .mcp.json, then any manifest-declared files
         // (which win on name collisions within the plugin, last wins).
         let rootMcpJSON = plugin.directoryURL.appendingPathComponent(".mcp.json")
-        if fm.fileExists(atPath: rootMcpJSON.path) {
+        if fm.fileExists(atPath: rootMcpJSON.path),
+            let rootMcpJSON = PathContainment.resolvedIfContained(
+                rootMcpJSON, in: plugin.directoryURL) {
             raw.append(contentsOf: ProjectMcpDetector.parseConfigFile(
                 at: rootMcpJSON, rootURL: plugin.directoryURL))
         }
         for relative in plugin.manifest.mcpServerFilePaths {
             let fileURL = plugin.directoryURL.appendingPathComponent(relative)
-            guard fm.fileExists(atPath: fileURL.path) else { continue }
+            guard fm.fileExists(atPath: fileURL.path),
+                let fileURL = PathContainment.resolvedIfContained(
+                    fileURL, in: plugin.directoryURL)
+            else { continue }
             raw.append(contentsOf: ProjectMcpDetector.parseConfigFile(
                 at: fileURL, rootURL: plugin.directoryURL))
         }

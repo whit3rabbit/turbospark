@@ -6,17 +6,19 @@ public enum WorktreeExecutor {
         let branchName = arguments["name"] ?? arguments["branch"] ?? "turbospark-worktree-\(UUID().uuidString.prefix(6).lowercased())"
         let customPath = arguments["path"]
         let worktreeDirName = customPath ?? ".turbospark/worktrees/\(branchName)"
-        let worktreeURL = rootURL.appendingPathComponent(worktreeDirName)
+        let worktreeURL = try AppToolRegistry.resolveSecurePath(relPath: worktreeDirName, rootURL: rootURL)
+
+        let branchCheck = try await runGit(arguments: ["check-ref-format", "--branch", branchName], rootURL: rootURL)
+        guard branchCheck.exitCode == 0 else {
+            throw toolError(code: 72, message: "Invalid git branch name", output: branchCheck.combinedText)
+        }
 
         try FileManager.default.createDirectory(at: worktreeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-        let cmd = "git worktree add -b \"\(branchName)\" \"\(worktreeURL.path)\" HEAD 2>&1 || git worktree add \"\(worktreeURL.path)\" \"\(branchName)\" 2>&1"
-        let res = try await ProcessExecutor.run(
-            executableURL: URL(fileURLWithPath: "/bin/zsh"),
-            arguments: ["-c", cmd],
-            currentDirectoryURL: rootURL,
-            timeoutSeconds: 15.0
-        )
+        var res = try await runGit(arguments: ["worktree", "add", "-b", branchName, worktreeURL.path, "HEAD"], rootURL: rootURL)
+        if res.exitCode != 0 {
+            res = try await runGit(arguments: ["worktree", "add", worktreeURL.path, branchName], rootURL: rootURL)
+        }
 
         let errOutput = [res.stdout, res.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
         guard res.exitCode == 0 || FileManager.default.fileExists(atPath: worktreeURL.path) else {
@@ -37,14 +39,12 @@ public enum WorktreeExecutor {
         if action == "remove" {
             if let path {
                 let worktreeURL = try AppToolRegistry.resolveSecurePath(relPath: path, rootURL: rootURL)
-                let discardFlag = (arguments["discard_changes"]?.lowercased() == "true") ? "--force" : ""
-                let cmd = "git worktree remove \(discardFlag) \"\(worktreeURL.path)\" 2>&1"
-                let res = try await ProcessExecutor.run(
-                    executableURL: URL(fileURLWithPath: "/bin/zsh"),
-                    arguments: ["-c", cmd],
-                    currentDirectoryURL: rootURL,
-                    timeoutSeconds: 15.0
-                )
+                var gitArguments = ["worktree", "remove"]
+                if arguments["discard_changes"]?.lowercased() == "true" {
+                    gitArguments.append("--force")
+                }
+                gitArguments.append(worktreeURL.path)
+                let res = try await runGit(arguments: gitArguments, rootURL: rootURL)
                 let removeErr = [res.stdout, res.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
                 guard res.exitCode == 0 else {
                     throw NSError(
@@ -60,5 +60,23 @@ public enum WorktreeExecutor {
         }
 
         return "Exited git worktree (preserved at '\(path ?? "active worktree")') and returned to main repository root."
+    }
+
+    private static func runGit(arguments: [String], rootURL: URL) async throws -> ProcessExecutor.Output {
+        try await ProcessExecutor.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/git"),
+            arguments: arguments,
+            currentDirectoryURL: rootURL,
+            timeoutSeconds: 15.0
+        )
+    }
+
+    private static func toolError(code: Int, message: String, output: String) -> NSError {
+        let detail = output.isEmpty ? message : "\(message): \(output)"
+        return NSError(
+            domain: "TurboSparkTool",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: detail]
+        )
     }
 }

@@ -230,7 +230,14 @@ extension AppHookStore {
             }
             var seenPaths = Set<String>()
             for candidate in candidates where fileManager.fileExists(atPath: candidate.path) {
-                guard seenPaths.insert(candidate.standardizedFileURL.path).inserted else { continue }
+                guard let candidate = PathContainment.resolvedIfContained(
+                    candidate, in: plugin.directoryURL)
+                else {
+                    diagnostics.append(
+                        "Plugin \(plugin.name) hook path resolves outside the plugin; entry dropped.")
+                    continue
+                }
+                guard seenPaths.insert(candidate.path).inserted else { continue }
                 results.append(contentsOf: parseHooksFile(
                     at: candidate, sourceType: .plugin, pluginName: plugin.name,
                     diagnostics: &diagnostics))

@@ -97,6 +97,22 @@ final class PluginHookTests: XCTestCase {
         XCTAssertEqual(pluginHooks.first?.command, "echo inline")
     }
 
+    func testManifestHookSymlinkOutsidePluginIsDropped() throws {
+        let external = root.appendingPathComponent("external-hooks.json")
+        try write(
+            #"{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo escaped"}]}]}}"#,
+            to: external)
+        let plugin = try makePlugin(
+            name: "linked", manifest: #"{"name": "linked", "hooks": "./linked.json"}"#)
+        try FileManager.default.createSymbolicLink(
+            at: plugin.appendingPathComponent("linked.json"), withDestinationURL: external)
+
+        store.refresh(projectDirectory: nil)
+
+        XCTAssertTrue(store.hooks.filter { $0.sourceType == .plugin }.isEmpty)
+        XCTAssertTrue(store.discoveryDiagnostics.contains { $0.contains("outside the plugin") })
+    }
+
     func testOptionSpecsComeFromThePluginUserConfigNotAGuess() throws {
         try makePlugin(
             name: "options",
