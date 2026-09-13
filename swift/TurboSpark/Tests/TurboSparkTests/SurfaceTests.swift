@@ -1135,15 +1135,16 @@ final class SurfaceTests: XCTestCase {
         let cmd = TurboSparkAgent.launchCommand(
             for: "claude", host: "127.0.0.1", port: 8080, apiKey: "sk-abc",
             canonicalModelID: "gemma4.gturbo")
-        XCTAssertEqual(
-            cmd,
-            "claude --settings '{\"env\":{\"ANTHROPIC_API_KEY\":\"sk-abc\",\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:8080/v1\",\"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT\":\"1\",\"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY\":\"true\"}}'"
-                + " --model \"claude-turbospark-gemma4.gturbo\"")
+        XCTAssertTrue(cmd.contains("chmod 600 \"$settings_file\""))
+        XCTAssertTrue(cmd.contains("trap 'rm -f \"$settings_file\"' EXIT HUP INT TERM"))
+        XCTAssertTrue(cmd.contains("claude --settings \"$settings_file\""))
+        XCTAssertFalse(cmd.contains("claude --settings '{\"env\""))
+        XCTAssertTrue(cmd.contains("--model \"claude-turbospark-gemma4.gturbo\""))
     }
 
-    /// A Claude settings object is single-quoted as one argument, where a
-    /// dollar or backtick remains literal. Other agent commands retain their
-    /// double-quoted exports and their escaping contract.
+    /// A Claude settings object is single-quoted while it is written to the
+    /// temporary file, where a dollar or backtick remains literal. Other
+    /// agent commands retain their double-quoted exports and escaping contract.
     func testLaunchCommandEscapesShellMetacharactersInTheKey() {
         let raw = "a\\b\"c$d`e"
         let keySegment = "a\\\\b\\\"c\\$d\\`e"
