@@ -26,9 +26,22 @@ public enum AppToolRegistry {
     ///   carried a level, so a subagent could call `agent` which could call
     ///   `agent` without bound.
     public static func execute(
-        call: AppToolCall, in project: AppProject?, chatID: UUID? = nil, subagentDepth: Int = 0
+        call: AppToolCall, in project: AppProject?, chatID: UUID? = nil, subagentDepth: Int = 0,
+        webToolsEnabled: Bool = true
     ) async -> AppToolResult {
         let startTime = Date()
+
+        let appAllowsWebTools = await webToolsEnabledProvider?() ?? true
+        if (!webToolsEnabled || !appAllowsWebTools),
+            category(for: call.name, projectURL: project?.rootDirectoryURL) == .web
+        {
+            return AppToolResult(
+                callID: call.id,
+                output: "Error: '\(call.name)' is disabled. Enable Web Search in the chat composer to use web tools.",
+                isError: true,
+                durationSeconds: Date().timeIntervalSince(startTime)
+            )
+        }
 
         // **NO PROJECT MEANS NO ROOT, AND THEREFORE NO FILE OR SHELL TOOL.**
         //

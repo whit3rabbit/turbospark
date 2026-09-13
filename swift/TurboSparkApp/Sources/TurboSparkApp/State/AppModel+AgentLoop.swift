@@ -474,7 +474,8 @@ extension AppModel {
             ? ToolActionFusion.fingerprints(for: call, rootURL: root) : []
         let previousTodos = todos(for: chatID)
         let executed = await executeApprovedTool(
-            call, project: project, chatID: chatID, preMutationFingerprints: fingerprints)
+            call, project: project, chatID: chatID, preMutationFingerprints: fingerprints,
+            webToolsEnabled: webSearchEnabled)
         let runningCall = executed.call
         var toolResult = executed.result
 
@@ -773,13 +774,15 @@ extension AppModel {
         updatesParkedMessage: Bool = false
     ) async {
         var outcomesByID: [UUID: (call: AppToolCall, result: AppToolResult)] = [:]
+        let webToolsEnabled = webSearchEnabled
         await withTaskGroup(of: (AppToolCall, AppToolResult).self) { group in
             for call in calls {
                 var running = call
                 running.status = .running
                 group.addTask {
                     let result = await AppToolRegistry.execute(
-                        call: running, in: project, chatID: chatID)
+                        call: running, in: project, chatID: chatID,
+                        webToolsEnabled: webToolsEnabled)
                     return (running, result)
                 }
             }

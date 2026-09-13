@@ -286,7 +286,8 @@ extension AppModel {
             mcpServers: activeMcpServers,
             project: project,
             contextTokens: contextBudget,
-            availableAgents: availableAgents)
+            availableAgents: availableAgents,
+            webToolsEnabled: webSearchEnabled)
         sections.append((.tools, toolsPrompt))
 
         if !activeMcpServers.isEmpty {
@@ -453,7 +454,8 @@ extension AppModel {
                 ? ToolActionFusion.fingerprints(for: call, rootURL: root) : []
             let previousTodos = self.todos(for: chatID)
             let executed = await self.executeApprovedTool(
-                call, project: project, chatID: chatID, preMutationFingerprints: fingerprints)
+                call, project: project, chatID: chatID, preMutationFingerprints: fingerprints,
+                webToolsEnabled: webSearchEnabled)
             call = executed.call
             var result = executed.result
             self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
