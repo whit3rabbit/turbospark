@@ -162,6 +162,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::Gemma4 => gemma4::map_gemma4_layer(suffix, layer),
             ModelFamily::QwenGdnMoe => qwen::map_qwen_gdn_moe_layer(suffix, layer),
             ModelFamily::Llama => llama::map_llama_layer(suffix, layer),
+            ModelFamily::Qwen2Dense => llama::map_qwen2_layer(suffix, layer),
             ModelFamily::Qwen3Moe => qwen::map_qwen3moe_layer(suffix, layer),
             ModelFamily::GptOss => gpt_oss::map_gpt_oss_layer(suffix, layer),
             ModelFamily::QwenGdnDense => qwen::map_qwen_gdn_dense_layer(suffix, layer),
@@ -221,6 +222,7 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // `Qwen/Qwen3-4B-GGUF` header, distinct from `qwen3moe` above.
         ModelFamily::Qwen3Dense => Some("qwen3"),
         ModelFamily::MiniMaxM2 => Some("minimax-m2"),
+        ModelFamily::Qwen2Dense => Some("qwen2"),
         // Neither of the first two is published as a GGUF. `None` is the
         // honest answer: inventing a string here would make
         // `family_for_architecture` claim to recognize a file that does not

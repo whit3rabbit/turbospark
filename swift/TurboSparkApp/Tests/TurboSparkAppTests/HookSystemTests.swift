@@ -151,6 +151,36 @@ final class HookSystemTests: XCTestCase {
         await store.deleteCustomHook(id: benignHook.id)
     }
 
+    func testHookThatExitsBeforeReceivingLargePayloadStaysContained() async {
+        // A PostToolUse payload can embed a large diagnostic result. The hook
+        // exits immediately without reading it, which closes stdin while the
+        // shared executor's detached writer is still active.
+        let store = await AppHookStore.shared
+        let hook = AppHookCommand(
+            name: "Immediate Exit",
+            event: .postToolUse,
+            type: .command,
+            command: "exit 0",
+            sourceType: .custom
+        )
+        await store.addCustomHook(hook)
+        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+
+        let results = await AppHookExecutionEngine.shared.dispatch(
+            event: .postToolUse,
+            sessionID: UUID().uuidString,
+            toolName: "read_file",
+            toolArguments: ["path": "large.log"],
+            toolOutput: String(repeating: "x", count: 500_000),
+            toolDurationSeconds: 0.01,
+            isError: false
+        )
+
+        let result = try? XCTUnwrap(results.first(where: { $0.hookID == hook.id }))
+        XCTAssertEqual(result?.exitCode, 0)
+        XCTAssertTrue(result?.isSuccess ?? false)
+    }
+
     func testHookEnvironmentDoesNotInheritParentSecrets() async {
         let store = await AppHookStore.shared
 

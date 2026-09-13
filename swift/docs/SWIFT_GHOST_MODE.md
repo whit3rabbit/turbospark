@@ -36,9 +36,11 @@ reuse branch excludes ghosts for exactly this reason, and the sidebar's
 history filter goes through `chatHasTranscript` rather than checking
 `messages.isEmpty`.
 
-**Ghost turns dispatch no `UserPromptSubmit` hook.** The hook receives the
-prompt text and a hook script may log it, which is a trace a user who asked
-for a chat that leaves no trace has not consented to.
+**Ghost turns dispatch no content-bearing lifecycle hook.** This includes
+`UserPromptSubmit`, the tool-use events, and permission events. A matching
+`PreToolUse` or `PermissionRequest` hook is a safety gate, so the tool call
+fails closed rather than bypassing that hook. Hooks that carry only ids still
+fire.
 
 ## Where ghost state surfaces elsewhere
 

@@ -78,6 +78,10 @@ extension AppToolRegistry {
     /// the one place that reads it.
     public static var subagentSamplingOptionsProvider: (@Sendable @MainActor () -> GenerateOptions)?
 
+    /// The composer web-tools switch. Execution consults this independently
+    /// from prompt construction so stale or forged calls cannot bypass it.
+    public static var webToolsEnabledProvider: (@Sendable @MainActor () -> Bool)?
+
     /// Progress sink for subagent runs, keyed by a host-chosen run key (a
     /// tool-call UUID for a foreground run, a `bga_N` id for a background
     /// one). The app installs one at startup, which routes the events into
@@ -95,6 +99,11 @@ extension AppToolRegistry {
     /// status text. Throws for an id that is not a live background agent.
     public static var backgroundAgentStopper: (@Sendable (String) async throws -> String)?
 
+    /// Installed by `AppModel` so registry execution can recall a normal
+    /// on-disk observation or an encrypted Ghost observation without knowing
+    /// which transcript implementation owns the chat.
+    public static var observationRecaller: (@Sendable (UUID?, String, Int, Int) async throws -> String)?
+
     /// Tool names `execute(call:in:)` actually has a real handler for,
     /// independent of which `OpenAITool` DEFINITIONS `AppToolCatalog`
     /// advertises to the model. A name outside this set (and not a dynamic
@@ -108,13 +117,15 @@ extension AppToolRegistry {
         "list_directory", "list_dir", "ls", "glob",
         "read_file", "view_file", "cat", "fileread", "read",
         "write_file", "save_file", "filewrite", "write",
-        "edit_file", "fileedit", "edit",
+        "edit_file", "fileedit", "edit", "editor",
         "apply_patch", "applypatch",
-        "search_code", "grep", "search",
+        "recall_tool_output",
+        "search_code", "grep", "search", "grep_search",
         "run_command", "bash", "shell", "exec", "terminal",
         "bashoutput", "bash_output", "killshell", "kill_shell",
         "websearch", "web_search", "search_web",
         "webfetch", "web_fetch", "fetch_url", "read_url_content",
+        "http_request", "httprequest",
         "skill",
         "todowrite", "todo_write",
         "agent", "subagent", "task",
@@ -163,9 +174,9 @@ extension AppToolRegistry {
         "list_directory", "list_dir", "ls", "glob",
         "read_file", "view_file", "cat", "fileread", "read",
         "write_file", "save_file", "filewrite", "write",
-        "edit_file", "fileedit", "edit",
+        "edit_file", "fileedit", "edit", "editor",
         "apply_patch", "applypatch",
-        "search_code", "grep", "search",
+        "search_code", "grep", "search", "grep_search",
         "run_command", "bash", "shell", "exec", "terminal",
         "notebookedit", "notebook_edit",
         "snip", "extract_snippet",

@@ -33,6 +33,12 @@ mkdir -p "$dest"
 cp "$lib" "$dest/libturbospark_ffi.a"
 cp "$root/crates/ffi/include/turbospark.h" "$dest/turbospark.h"
 
+# Localize runtime symbols that collide when multiple Rust static libraries
+# (e.g. Syntext and TurboSpark) are linked into the same macOS binary.
+printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
+nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
+rm -f "$dest/.hide_symbols"
+
 # **SwiftPM DOES NOT TREAT THE ARCHIVE AS A BUILD INPUT, so without this the
 # test target links the PREVIOUS staticlib and reports on code that is no
 # longer in the tree.** The `-L` path arrives as an unsafe linker flag, which

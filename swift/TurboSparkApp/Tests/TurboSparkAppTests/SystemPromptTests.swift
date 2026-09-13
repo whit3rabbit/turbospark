@@ -15,8 +15,14 @@ final class SystemPromptTests: XCTestCase {
 
     // MARK: - Persistence
 
-    func testTheDefaultSystemPromptIsEmpty() {
-        XCTAssertEqual(MacAppSettings().defaultSystemPrompt, "")
+    func testTheDefaultSystemPromptLibrarySelectsTurboSparkAgent() {
+        let settings = MacAppSettings()
+        XCTAssertEqual(settings.systemPrompts, AppSystemPrompt.builtIns)
+        XCTAssertEqual(settings.systemPrompts.map(\.name), [
+            "TurboSpark Agent", "Compact Agent", "Code Reviewer"
+        ])
+        XCTAssertEqual(settings.activeSystemPromptID, AppSystemPrompt.builtIns[0].id.uuidString)
+        XCTAssertEqual(settings.defaultSystemPrompt, AppSystemPrompt.builtIns[0].instructions)
     }
 
     func testTheDefaultSystemPromptRoundTrips() throws {
@@ -24,6 +30,8 @@ final class SystemPromptTests: XCTestCase {
         let data = try JSONEncoder().encode(settings)
         let decoded = try JSONDecoder().decode(MacAppSettings.self, from: data)
         XCTAssertEqual(decoded.defaultSystemPrompt, "Answer only in haiku.")
+        XCTAssertEqual(decoded.systemPrompts.map(\.name), ["Imported Default"])
+        XCTAssertEqual(decoded.activeSystemPromptID, decoded.systemPrompts[0].id.uuidString)
     }
 
     /// Gotcha 13's rule: a settings file written before this field existed has
@@ -32,7 +40,19 @@ final class SystemPromptTests: XCTestCase {
     func testSettingsWrittenBeforeTheFieldExistedStillDecode() throws {
         let legacy = #"{"contextTokens":0,"temperature":0.2}"#
         let decoded = try JSONDecoder().decode(MacAppSettings.self, from: Data(legacy.utf8))
-        XCTAssertEqual(decoded.defaultSystemPrompt, "")
+        XCTAssertEqual(decoded.defaultSystemPrompt, AppSystemPrompt.builtIns[0].instructions)
+        XCTAssertEqual(decoded.systemPrompts, AppSystemPrompt.builtIns)
+        XCTAssertEqual(decoded.activeSystemPromptID, AppSystemPrompt.builtIns[0].id.uuidString)
+    }
+
+    func testLegacyCustomDefaultMigratesIntoThePromptLibrary() throws {
+        let legacy = #"{"defaultSystemPrompt":"LEGACY-PROMPT"}"#
+        let decoded = try JSONDecoder().decode(MacAppSettings.self, from: Data(legacy.utf8))
+
+        XCTAssertEqual(decoded.systemPrompts.map(\.name), ["Imported Default"])
+        XCTAssertEqual(decoded.systemPrompts.map(\.instructions), ["LEGACY-PROMPT"])
+        XCTAssertEqual(decoded.activeSystemPromptID, decoded.systemPrompts[0].id.uuidString)
+        XCTAssertEqual(decoded.defaultSystemPrompt, "LEGACY-PROMPT")
     }
 
     /// The same rule on the chat archive, which is the store that actually
@@ -89,6 +109,22 @@ final class SystemPromptTests: XCTestCase {
         XCTAssertEqual(model.resolvedUserSystemPrompt(chatIndex: 0), "")
     }
 
+    @MainActor
+    func testSelectedLibraryPromptResolvesAsTheAppDefault() {
+        let prompt = AppSystemPrompt(
+            id: UUID(uuidString: "F5C6F07A-AEF1-4551-A2B2-4F4D5D8E74B7")!,
+            name: "Custom",
+            instructions: "LIBRARY-PROMPT")
+        let model = AppModel()
+        model.systemPrompts = [prompt]
+        model.selectedSystemPromptID = prompt.id
+        model.defaultSystemPrompt = prompt.instructions
+        model.chats = [AppChat(title: "c")]
+
+        XCTAssertEqual(model.selectedSystemPrompt, prompt)
+        XCTAssertEqual(model.resolvedUserSystemPrompt(chatIndex: 0), "LIBRARY-PROMPT")
+    }
+
     // MARK: - Assembly, and the safety property
 
     /// Chat mode gets the user's prose. This is the behaviour change.
@@ -139,6 +175,27 @@ final class SystemPromptTests: XCTestCase {
         XCTAssertTrue(prompt.hasPrefix("Speak plainly."), "user prompt must come first")
         XCTAssertTrue(prompt.contains("/tmp/demo"), "project sections must survive")
         XCTAssertTrue(prompt.contains("Use tabs"))
+    }
+
+    @MainActor
+    func testProjectPromptIncludesTheMacOSHarnessAndSubagentMatches() {
+        let model = AppModel()
+        let project = AppProject(name: "Demo", rootDirectoryPath: "/tmp/demo")
+        let sections = model.buildSystemPromptSections(for: project, userPrompt: "USER-PROMPT")
+        let environment = sections.first { $0.section == .environment }?.content
+
+        XCTAssertEqual(
+            environment,
+            project.turboSparkEnvironmentPrompt())
+        XCTAssertTrue(environment?.contains("TurboSpark macOS app") ?? false)
+        XCTAssertTrue(environment?.contains("Tool calls perform work; prose does not.") ?? false)
+
+        let agent = AgentManager.shared.findAgent(name: "general-purpose")
+        XCTAssertNotNil(agent)
+        if let agent {
+            let subagentPrompt = SubagentRunner.buildSystemPrompt(for: agent, project: project)
+            XCTAssertTrue(subagentPrompt.contains(project.turboSparkEnvironmentPrompt()))
+        }
     }
 
     // MARK: - The prompt reaches the history as exactly one system turn

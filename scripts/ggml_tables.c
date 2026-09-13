@@ -61,6 +61,19 @@ typedef struct {
   uint8_t qs[QK_K / 2];
 } block_iq4_xs;
 
+// The dense GSQ-RCO release uses these additional layouts. The byte arrays
+// intentionally record only the ABI size here: their field-level decode is
+// held by the generated codebooks and the Rust direct-block tests, while this
+// probe's job is to fail immediately if the locally installed ggml changes a
+// published on-disk block contract.
+typedef struct { uint8_t bytes[84]; } block_q2_k;
+typedef struct { uint8_t bytes[66]; } block_iq2_xxs;
+typedef struct { uint8_t bytes[74]; } block_iq2_xs;
+typedef struct { uint8_t bytes[50]; } block_iq1_s;
+typedef struct { uint8_t bytes[110]; } block_iq3_s;
+typedef struct { uint8_t bytes[82]; } block_iq2_s;
+typedef struct { uint8_t bytes[56]; } block_iq1_m;
+
 /**
  * Dequantizes blocks of ggml quantization type into float output array.
  */
@@ -349,6 +362,13 @@ static void dump_oracles(void) {
  * Main entry point running size checks, table dumpers, and oracle generators.
  */
 int main(void) {
+  check_size(GGML_TYPE_Q2_K, sizeof(block_q2_k), "Q2_K");
+  check_size(GGML_TYPE_IQ2_XXS, sizeof(block_iq2_xxs), "IQ2_XXS");
+  check_size(GGML_TYPE_IQ2_XS, sizeof(block_iq2_xs), "IQ2_XS");
+  check_size(GGML_TYPE_IQ1_S, sizeof(block_iq1_s), "IQ1_S");
+  check_size(GGML_TYPE_IQ3_S, sizeof(block_iq3_s), "IQ3_S");
+  check_size(GGML_TYPE_IQ2_S, sizeof(block_iq2_s), "IQ2_S");
+  check_size(GGML_TYPE_IQ1_M, sizeof(block_iq1_m), "IQ1_M");
   check_size(GGML_TYPE_IQ3_XXS, sizeof(block_iq3_xxs), "IQ3_XXS");
   check_size(GGML_TYPE_IQ4_NL, sizeof(block_iq4_nl), "IQ4_NL");
   check_size(GGML_TYPE_IQ4_XS, sizeof(block_iq4_xs), "IQ4_XS");

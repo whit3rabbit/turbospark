@@ -19,9 +19,8 @@
 //! a fixed placeholder sequence, not a forward pass; it always binds
 //! loopback.
 //!
-//! Default port 8080, default bind loopback. `--bind tailnet` is NOT
-//! authentication: the server has no auth and no TLS, so access is governed
-//! entirely by the Tailnet ACL.
+//! Default port 8080, default bind loopback. `--bind tailnet` requires
+//! `--api-key` or `$TURBOSPARK_API_KEY`; it provides no TLS.
 
 mod args;
 mod bind;
@@ -29,7 +28,7 @@ mod bind;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use args::{parse_model_args, short_circuit, ModelArgs, USAGE};
+use args::{parse_model_args, short_circuit, BindMode, ModelArgs, USAGE};
 use tokenizer::MfTokenizer;
 
 #[cfg(target_os = "macos")]
@@ -264,6 +263,20 @@ fn open_scripted(tokenizer_dir: &str) -> Result<Arc<dyn turbospark_server::ChatM
     )))
 }
 
+fn resolve_api_key(
+    bind: BindMode,
+    flag: Option<String>,
+    environment: Option<String>,
+) -> Result<Option<String>, String> {
+    let key = flag.or(environment).filter(|key| !key.is_empty());
+    if bind == BindMode::Tailnet && key.is_none() {
+        return Err(
+            "--bind tailnet requires --api-key KEY or a non-empty TURBOSPARK_API_KEY".to_string(),
+        );
+    }
+    Ok(key)
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -282,6 +295,17 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
         Ok(Some(parsed)) => {
+            let api_key = match resolve_api_key(
+                parsed.bind,
+                parsed.api_key.clone(),
+                std::env::var("TURBOSPARK_API_KEY").ok(),
+            ) {
+                Ok(key) => key,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return std::process::ExitCode::from(2);
+                }
+            };
             // Resolve the host BEFORE opening the model: a missing Tailscale
             // should not cost a multi-gigabyte map and a pipeline compile
             // first.
@@ -292,7 +316,6 @@ async fn main() -> std::process::ExitCode {
                     return std::process::ExitCode::from(2);
                 }
             };
-            let api_key = parsed.api_key.clone();
             // Applied here, once, rather than inside the parser: `args.rs`
             // reads only `args` (matching `power_profile`'s split), and this
             // is the one call site that can actually act on it, ahead of
@@ -336,16 +359,6 @@ async fn main() -> std::process::ExitCode {
         }
     };
 
-    // `--api-key` first, `$TURBOSPARK_API_KEY` second (keeps the key out of
-    // `ps`), resolved here rather than inside `parse_model_args` so that
-    // pure parser stays testable without the test process's own environment
-    // leaking in (`args.rs`'s `api_key` field doc explains the same split
-    // for `power_profile`). Empty is treated as absent: an operator whose
-    // shell exported the variable empty gets no auth rather than a key
-    // nothing can ever match.
-    let api_key = api_key
-        .or_else(|| std::env::var("TURBOSPARK_API_KEY").ok())
-        .filter(|k| !k.is_empty());
     let router = turbospark_server::build_router_with_options(
         registry,
         turbospark_server::RouterOptions {

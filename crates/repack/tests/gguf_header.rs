@@ -220,24 +220,23 @@ fn rejects_a_duplicate_tensor_name() {
 }
 
 /// A type whose block size this port has not verified must be named, not
-/// guessed at. IQ2_XXS is a real ggml type with a real id; what is missing
+/// guessed at. TQ1_0 is a real ggml type with a real id; what is missing
 /// is only its byte size.
 ///
 /// THE EXEMPLAR HAS TO BE RE-PICKED whenever a type gains a
 /// `ggml_type_block` row, and the failure is this test rather than anything
 /// subtle: it read Q5_K until Phase S's header probes added that row. Pick a
-/// replacement that is real, unhandled, and unlikely to land soon -- IQ2_XXS
-/// qualifies twice over, since it decodes through a codebook and sits below
-/// the quality line Phase S warns about.
+/// replacement that is real, unhandled, and unlikely to land soon. TQ1_0
+/// qualifies: it is a distinct ternary layout and no current candidate uses it.
 #[test]
 fn names_an_unsupported_but_real_ggml_type() {
     let (bytes, _) = GgufBuilder::new()
-        .tensor("blk.0.attn_q.weight", 16, &[256], vec![0u8; 66])
+        .tensor("blk.0.attn_q.weight", 34, &[256], vec![0u8; 1])
         .build();
     let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).expect("header parses");
     match h.absolute_range("blk.0.attn_q.weight").unwrap() {
         Err(GgufHeaderError::UnsupportedType { name, id }) => {
-            assert_eq!((name.as_str(), id), ("IQ2_XXS", 16));
+            assert_eq!((name.as_str(), id), ("TQ1_0", 34));
         }
         other => panic!("expected UnsupportedType, got {other:?}"),
     }
@@ -441,6 +440,13 @@ fn block_table_matches_the_spec_where_it_answers() {
     assert_eq!(ggml_type_block(8), Some((32, 34)), "Q8_0");
     assert_eq!(ggml_type_block(12), Some((256, 144)), "Q4_K");
     assert_eq!(ggml_type_block(14), Some((256, 210)), "Q6_K");
+    assert_eq!(ggml_type_block(10), Some((256, 84)), "Q2_K");
+    assert_eq!(ggml_type_block(16), Some((256, 66)), "IQ2_XXS");
+    assert_eq!(ggml_type_block(17), Some((256, 74)), "IQ2_XS");
+    assert_eq!(ggml_type_block(19), Some((256, 50)), "IQ1_S");
+    assert_eq!(ggml_type_block(21), Some((256, 110)), "IQ3_S");
+    assert_eq!(ggml_type_block(22), Some((256, 82)), "IQ2_S");
+    assert_eq!(ggml_type_block(29), Some((256, 56)), "IQ1_M");
     assert_eq!(ggml_type_block(30), Some((1, 2)), "BF16");
 
     assert_eq!(ggml_type_name(8), Some("Q8_0"));
@@ -488,6 +494,50 @@ fn the_q4_k_block_matches_the_cpu_reference() {
 /// that holds the parser's numbers and the decoder's to each other.
 #[test]
 fn the_iq_blocks_match_the_cpu_reference() {
+    for (id, elems, bytes, name) in [
+        (
+            16,
+            compute::IQ_LOWBIT_BLOCK_ELEMS,
+            compute::IQ2_XXS_BLOCK_BYTES,
+            "IQ2_XXS",
+        ),
+        (
+            17,
+            compute::IQ_LOWBIT_BLOCK_ELEMS,
+            compute::IQ2_XS_BLOCK_BYTES,
+            "IQ2_XS",
+        ),
+        (
+            19,
+            compute::IQ_LOWBIT_BLOCK_ELEMS,
+            compute::IQ1_S_BLOCK_BYTES,
+            "IQ1_S",
+        ),
+        (
+            21,
+            compute::IQ_LOWBIT_BLOCK_ELEMS,
+            compute::IQ3_S_BLOCK_BYTES,
+            "IQ3_S",
+        ),
+        (
+            22,
+            compute::IQ_LOWBIT_BLOCK_ELEMS,
+            compute::IQ2_S_BLOCK_BYTES,
+            "IQ2_S",
+        ),
+        (
+            29,
+            compute::IQ_LOWBIT_BLOCK_ELEMS,
+            compute::IQ1_M_BLOCK_BYTES,
+            "IQ1_M",
+        ),
+    ] {
+        assert_eq!(
+            ggml_type_block(id),
+            Some((elems as u64, bytes as u64)),
+            "{name}"
+        );
+    }
     assert_eq!(
         ggml_type_block(18),
         Some((

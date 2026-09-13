@@ -18,7 +18,8 @@ pub use llama::mixtral_8x7b;
 pub use minimax::minimax_m2;
 pub use muse_glimmer::{muse_glimmer_30b, muse_glimmer_layer_mask};
 pub use qwen::{
-    qwen3_30b_a3b, qwen3_4b, qwen4_exp_125b_a6b, qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b,
+    qwen2_5_7b, qwen3_30b_a3b, qwen3_4b, qwen4_exp_125b_a6b, qwen_gdn_dense_27b,
+    qwen_gdn_moe_35b_a3b,
 };
 pub use spark::{spark_layer_mask, spark_x25_4b};
 
@@ -39,6 +40,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::Spark25 => spark_x25_4b(),
         ModelFamily::Qwen3Dense => qwen3_4b(),
         ModelFamily::MiniMaxM2 => minimax_m2(),
+        ModelFamily::Qwen2Dense => qwen2_5_7b(),
     }
 }
 
@@ -56,5 +58,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         spark_x25_4b(),
         qwen3_4b(),
         minimax_m2(),
+        qwen2_5_7b(),
     ]
 }

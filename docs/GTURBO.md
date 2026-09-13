@@ -167,6 +167,7 @@ four fields are zero and must not be dereferenced.
 | 5 | INT8 affine, group 64 | BF16 scales + biases |
 | 6 / 7 / 8 / 9 | GGUF Q8_0 / Q4_K / Q6_K / Q4_0 | inline |
 | 10 / 11 / 12 | GGUF IQ3_XXS / IQ4_NL / IQ4_XS | inline |
+| 17 / 18 / 19 / 20 / 21 / 22 / 23 | GGUF Q2_K / IQ2_XXS / IQ2_XS / IQ1_S / IQ3_S / IQ2_S / IQ1_M | inline |
 
 A tag is not permission to run. The repack walk writes an install for every
 block type it can parse, and whether that install opens is decided separately

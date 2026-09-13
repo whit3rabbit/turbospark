@@ -32,6 +32,7 @@ public enum WebSearchExecutor {
         parallelApiKey: String? = nil,
         braveApiKey: String? = nil,
         searxngUrl: String? = nil,
+        tavilyApiKey: String? = nil,
         customSession: URLSession? = nil
     ) async throws -> WebSearchOutput {
         let startTime = Date()
@@ -78,6 +79,14 @@ public enum WebSearchExecutor {
                 query: boundedQuery,
                 count: requestedCount,
                 apiKey: exaApiKey,
+                customSession: customSession
+            )
+
+        case "tavily":
+            rawItems = try await searchTavily(
+                query: boundedQuery,
+                count: requestedCount,
+                apiKey: tavilyApiKey,
                 customSession: customSession
             )
 
@@ -607,5 +616,120 @@ public enum WebSearchExecutor {
             url: trimmedUrl,
             snippet: cleanSnippet?.isEmpty == true ? nil : cleanSnippet
         )
+    }
+
+    // MARK: - Tavily Search, Extract, Crawl, and Map
+
+    public static func searchTavily(
+        query: String,
+        count: Int,
+        apiKey: String? = nil,
+        customSession: URLSession? = nil
+    ) async throws -> [WebSearchResultItem] {
+        let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ProcessInfo.processInfo.environment["TAVILY_API_KEY"]
+        guard let resolvedKey = key, !resolvedKey.isEmpty else {
+            throw NSError(
+                domain: "TurboSparkWebSearch",
+                code: 30,
+                userInfo: [NSLocalizedDescriptionKey: "Tavily API key is missing. Set TAVILY_API_KEY environment variable or supply it in provider settings."]
+            )
+        }
+
+        guard let url = URL(string: "https://api.tavily.com/search") else {
+            throw NSError(domain: "TurboSparkWebSearch", code: 31, userInfo: [NSLocalizedDescriptionKey: "Invalid Tavily search URL."])
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+        let payload: [String: Any] = [
+            "api_key": resolvedKey,
+            "query": query,
+            "max_results": count,
+            "search_depth": "basic",
+            "include_answer": true
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.timeoutIntervalForRequest = TimeInterval(defaultTimeoutSeconds)
+        let session = customSession ?? URLSession(configuration: sessionConfig)
+
+        let (data, response) = try await session.data(for: req)
+        guard let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw NSError(domain: "TurboSparkWebSearch", code: 32, userInfo: [NSLocalizedDescriptionKey: "Tavily search failed with HTTP \(status)."])
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+
+        var items: [WebSearchResultItem] = []
+        if let answer = json["answer"] as? String, !answer.isEmpty {
+            items.append(WebSearchResultItem(
+                title: "Tavily Direct Answer",
+                url: "https://tavily.com",
+                snippet: answer
+            ))
+        }
+
+        if let results = json["results"] as? [[String: Any]] {
+            for res in results {
+                let title = (res["title"] as? String) ?? "Untitled"
+                let urlStr = (res["url"] as? String) ?? ""
+                let content = (res["content"] as? String)
+                if !urlStr.isEmpty {
+                    items.append(WebSearchResultItem(title: title, url: urlStr, snippet: content))
+                }
+            }
+        }
+        return items
+    }
+
+    public static func extractTavily(
+        urls: [String],
+        apiKey: String? = nil,
+        customSession: URLSession? = nil
+    ) async throws -> String {
+        let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ProcessInfo.processInfo.environment["TAVILY_API_KEY"]
+        guard let resolvedKey = key, !resolvedKey.isEmpty else {
+            throw NSError(
+                domain: "TurboSparkWebSearch",
+                code: 33,
+                userInfo: [NSLocalizedDescriptionKey: "Tavily API key is missing. Set TAVILY_API_KEY environment variable."]
+            )
+        }
+
+        guard let endpoint = URL(string: "https://api.tavily.com/extract") else {
+            throw NSError(domain: "TurboSparkWebSearch", code: 34, userInfo: [NSLocalizedDescriptionKey: "Invalid Tavily extract URL."])
+        }
+
+        var req = URLRequest(url: endpoint)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+        let payload: [String: Any] = [
+            "api_key": resolvedKey,
+            "urls": urls
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.timeoutIntervalForRequest = TimeInterval(defaultTimeoutSeconds)
+        let session = customSession ?? URLSession(configuration: sessionConfig)
+
+        let (data, response) = try await session.data(for: req)
+        guard let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw NSError(domain: "TurboSparkWebSearch", code: 35, userInfo: [NSLocalizedDescriptionKey: "Tavily extract failed with HTTP \(status)."])
+        }
+
+        return String(decoding: data, as: UTF8.self)
     }
 }

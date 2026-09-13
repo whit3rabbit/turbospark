@@ -115,6 +115,15 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             max_context: PROTOCOL_MAX_CONTEXT,
             max_new: PROTOCOL_MAX_NEW,
         },
+        // Provisional dense Qwen2/Qwen2.5 parameters. The real artifact
+        // gate has not frozen a benchmark row yet, but an exhaustive arm is
+        // required so this family cannot silently inherit a neighbour's
+        // workload when the benchmark harness is pointed at it.
+        ModelFamily::Qwen2Dense => ProtocolParameters {
+            family,
+            max_context: DENSE_LLAMA_MAX_CONTEXT,
+            max_new: PROTOCOL_MAX_NEW,
+        },
         // ONE FAMILY, BOTH HALVES OF THE ARCHITECTURE STRING. The window is
         // the dense half's requirement, measured on Mistral-7B-Instruct-v0.3
         // (ROADMAP M4). Mixtral shares that checkpoint's 32k sentencepiece
@@ -257,6 +266,13 @@ mod tests {
             "the point of the row is that `long-synthesis` does not fit 4,096 \
              under a 32k-vocab tokenizer"
         );
+    }
+
+    #[test]
+    fn qwen2_uses_provisional_dense_protocol_parameters() {
+        let params = protocol_parameters(ModelFamily::Qwen2Dense);
+        assert_eq!(params.max_context, 8192);
+        assert_eq!(params.max_new, PROTOCOL_MAX_NEW);
     }
 
     /// The one family that moves BOTH parameters, which
