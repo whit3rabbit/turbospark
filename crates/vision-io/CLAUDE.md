@@ -206,3 +206,10 @@ globally and nothing enters this workspace.
     BYTE-IDENTICAL to the mlx-vlm processor's own sequence
     (`crates/bench/tests/vision_logit_dump.rs`, and `docs/VISION.md` for the
     numbers).
+
+13. **IMAGE ADMISSION MUST HAPPEN FROM THE HEADER, BEFORE PIXEL ALLOCATION.**
+    Treat encoded image bytes as hostile input: read dimensions first, enforce
+    per-image limits and aggregate request budgets, then decode and preprocess.
+    Keep decoder-side limits as a second boundary because a header-only check
+    cannot protect a later decoder allocation from a malformed or oversized
+    image.

@@ -815,6 +815,87 @@ keeps resolving.
     (`NSFont.systemFontSize`) are the documented exception
     (`swift/docs/SWIFT_SETTINGS_AUDIT.md` section 1), not an invitation.
 
+64. **CAPABILITY CHECKS MUST COVER THEIR COMBINATION, NOT ONLY EACH
+    CAPABILITY ALONE.** A file-backed WebKit preview was safely folder-scoped
+    offline and safely network-enabled as inline HTML, but granting both
+    authorities at once exposed sibling workspace files. Any new preview or
+    tool permission must test the combined grant and remove the weaker origin
+    before enabling the stronger capability. For SwiftPM tests, run
+    `make swift-lib` first so the staged header and static library are current.
+
+65. **NORMALIZE SECURITY-RELEVANT INPUT ONCE AT THE TYPE BOUNDARY.** The
+    terminal tool accepted `command`, `cmd`, `CommandLine`, and `code`, but
+    risk classification and execution did not consult the same key. Keep one
+    canonical accessor on the tool-call type and make every classifier, gate,
+    formatter, and executor consume it. Tests must exercise every accepted
+    alias through both approval and unattended execution paths.
+
+66. **PROJECT-BOUND SNAPSHOTS MUST PRESERVE PRE-REFRESH IN-MEMORY STATE.** A
+    project-bound hook dispatch refreshes the global store before capturing its
+    snapshot. Custom hooks added before the first refresh were intentionally
+    not written yet, so that refresh silently discarded them and existing
+    post-hook behavior disappeared. Initialize discovery before persisting a
+    new custom hook, and test both project-bound dispatch and the in-app custom
+    hook path in a fresh process.
+
+67. **MENTION TOKENS ARE UNTRUSTED PATH SYNTAX.** A project filename can carry
+    quotes, absolute components, traversal, or a symlink target outside the
+    project. Filter filenames that cannot be safely serialized into a mention,
+    then canonicalize and re-check containment at resolution time. Testing only
+    autocomplete or only resolver input misses the handoff between those two
+    parsers.
+
+68. **GHOST PRIVACY MUST COVER EVERY PAYLOAD-BEARING HOOK EVENT.** Guarding
+    only prompt submission left tool arguments and output available to shell or
+    HTTP hooks. Centralize the event/content decision, keep identifier-only
+    lifecycle events available, and fail closed for ghost tool calls when a
+    matching safety hook cannot receive the private payload.
+
+69. **A UI TOGGLE NEEDS AN EXECUTION-BARRIER OWNER.** Removing web tools from
+    the prompt does not stop stale, forged, approved, batched, or subagent
+    calls. Keep the current toggle at the registry boundary, thread it through
+    every foreground and background execution path, and test both vocabulary
+    and direct execution while the toggle is off.
+
+70. **NEVER BUILD GIT COMMANDS THROUGH A SHELL.** Worktree names, paths, and
+    branch names can be model-controlled, so interpolating them into `zsh -c`
+    turns a file-management helper into command execution. Pass argument arrays
+    directly to `/usr/bin/git`, validate branch refs with Git itself, and
+    canonicalize worktree paths before creating or removing them. The regression
+    must prove both shell-injection refusal and project-root containment.
+
+71. **CUSTOM TOOL TEMPLATES HAVE TWO ARGUMENT CHANNELS.** Placeholder expansion
+    must emit a safe environment reference into the shell program while also
+    preserving the raw argument bytes in `TOOL_ARG_*`. Track quote state when
+    emitting the reference so existing quoted templates keep their meaning, and
+    test unquoted, single-quoted, and double-quoted placeholders separately.
+
+72. **COMPOUND TOOL ACTIONS NEED INDEPENDENT AUTHORIZATION FOR EACH LEG.** A
+    mutation approval cannot authorize a validation command that returned
+    `ask`, was denied, or was never resolved. Keep both `PermissionRequest`
+    outcomes explicit before execution, and test the mixed allow/ask case so
+    the mutation cannot run while the validation leg is still pending.
+
+73. **SSRF VALIDATION MUST FOLLOW THE CONNECTION, NOT JUST THE URL TEXT.**
+    Validate every address returned by DNS, stop automatic redirects and check
+    each new destination before replaying, then validate the final response URL
+    even for injected test sessions. DNS aliases are not portable test fixtures,
+    so tests must accept a safe unresolved-host refusal where the platform does
+    not define the alias.
+
+74. **PLUGIN PATH SYNTAX IS NOT FILE CONTAINMENT.** A manifest path that starts
+    with `./` can still traverse through `..`, and a safe-looking path can be a
+    symlink to another plugin or the host filesystem. Validate the manifest
+    syntax, then resolve the candidate and require canonical containment inside
+    the plugin directory at every hook and MCP read boundary. Test both parser
+    rejection and symlink escape refusal.
+
+75. **DISABLED FEATURES NEED AN EXECUTION GATE.** Removing a tool from prompt
+    construction and advertising does not stop a model-issued call that reaches
+    the executor directly. Re-check the persisted enable flag at execution
+    time, before reading or writing state, while keeping explicitly user-authored
+    quick-save behavior on its separate path.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments

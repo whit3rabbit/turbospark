@@ -377,3 +377,16 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
     misread when isolating prefill with `--max-new 8`, since the printed
     `tok/s=` is decode's near-zero-token number and looks unrelated to the
     change under test.
+
+16. **NEVER ACCEPT SECRET TOKENS IN PROCESS ARGUMENTS.** Command-line values
+    are visible through process inspection and shell history. Keep credential
+    entry on stdin or a non-echoing terminal prompt, use the existing
+    environment/file lookup for non-interactive operations, and test both
+    parser rejection and help text so a future flag cannot re-advertise the
+    unsafe path.
+
+17. **DAEMON SECRET HANDLING HAS TWO SURFACES.** Removing `--api-key` from the
+    child argument vector is not enough if the launcher writes the original
+    arguments to metadata or leaves pid, lock, and log directories readable.
+    Extract valid pairs, pass the secret through the environment, persist only
+    sanitized arguments, and create the whole run state with owner-only modes.

@@ -1955,6 +1955,28 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     prefer two cheap independent methods over one expensive one -- their
     agreement is what makes a share believable, and neither alone was.
 
+67. **SECURITY DOCUMENTATION MUST DESCRIBE THE ACTUAL TRUST BOUNDARY.**
+    Loopback limits network exposure, but it does not isolate a listener from
+    other local processes, and Tailnet ACLs do not replace application
+    authentication. When documenting a server or ABI, state the available API
+    key configuration and the limits of each bind mode together.
+
+68. **RUN THE RUST BUILD BEFORE STAGING THE SWIFT BINDING.** The Swift package
+    can hide a Rust baseline failure because its staged header and static
+    library are copied only after a release build. In this tree, a comparison
+    between a `String` field and `&str` in the repack path kept the workspace
+    build red while Swift-only checks looked unrelated. Keep the type and
+    format gates green before interpreting Swift test results.
+
+69. **`make swift-lib` CAN PASS WHILE `make swift-test` STILL CANNOT LINK.** The
+    staging script removes `_rust_eh_personality` from the Rust static library
+    to avoid collisions when the app links multiple Rust archives. The
+    standalone `swift/TurboSpark` package then has no remaining definition for
+    that symbol and its test link fails, even though the Rust build and staging
+    succeeded. Treat this as a baseline Swift packaging failure, not as a
+    regression in an unrelated Swift source change, and record it before
+    merging such a PR.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas. The Swift tree is not a crate and has one too:

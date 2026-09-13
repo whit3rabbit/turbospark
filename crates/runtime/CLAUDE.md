@@ -1384,3 +1384,29 @@ cargo test -p turbospark-runtime
     it by default, so this refusal is reachable without ever passing an
     explicit slot count. Pass `--expert-cache-slots 24` (or lower) explicitly
     when combining `TURBOSPARK_ROUTED_BATCH` with `auto`-sized installs.
+
+36. **MODEL METADATA MUST FAIL BEFORE TRUNCATION.** QSA dimensions cross from
+    manifest values into both `usize` allocation arithmetic and the Metal
+    kernel's `u32` ABI. Validate the conversion and every multiplication before
+    constructing buffers, then keep the GPU-side row-copy bounds checks. A
+    wrapping-dimension test is more useful than a normal-size allocation test
+    because it proves the refusal happens before a small wrapped buffer exists.
+
+37. **PERSISTENT SERVER PRIMING NEEDS ITS OWN AUTORELEASE BOUNDARY.** DFlash
+    context writes and MTP priming create temporary Metal objects even though
+    they are not the request's steady-state decode. Wrap the whole priming
+    decision and pass in `gpu::autorelease_pool`, not only the later draft or
+    verify calls, so repeated HTTP requests cannot accumulate autoreleased
+    objects.
+
+38. **VALIDATE PAIRED KV DIMENSIONS BEFORE ALLOCATING EITHER SIDE.** GPT-OSS
+    attention assumes sliding and full layers share the declared head width and
+    KV-head count. Refuse mismatched manifest pairs during architecture
+    validation, before the KV cache or Metal buffers exist; testing only a
+    normal open cannot catch the undersized-buffer panic this prevents.
+
+39. **REJECT NON-POSITIVE SIGNED DIMENSIONS BEFORE CASTING.** Manifest KV
+    dimensions are signed at the trust boundary but become allocation and GPU
+    widths later. Check every head count and head dimension for positivity
+    before any `usize` or Metal arithmetic, and test negative as well as zero
+    values so signed-to-unsigned wraparound cannot create a small buffer.

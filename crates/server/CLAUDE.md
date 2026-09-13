@@ -1013,3 +1013,15 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     matching the guardrails/prefix-reuse lines' always-print shape for a
     fixed toggle but the reasoning-line's say-nothing-when-off shape for a
     flag whose default genuinely has nothing to report.
+
+33. **PREFLIGHT IMAGE REQUESTS BEFORE EXPENSIVE MODEL WORK.** Count image
+    parts, source pixels, and retained patch bytes from header dimensions before
+    decoding or encoding. Enforce aggregate budgets at the request boundary,
+    then keep decoder limits and the context-window check ahead of
+    preprocessing so a request cannot consume resources before it is refused.
+
+34. **ACCOUNT FOR PARKED SESSION SLOTS IN EVERY MEMORY BUDGET.** A session
+    pool is allocated at model open, before a request arrives. Include the
+    extra slot bytes in both admission and vision-scratch budgeting, compute
+    that amount once, and pass the same committed-memory total through all
+    downstream guards.

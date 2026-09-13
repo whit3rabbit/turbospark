@@ -422,3 +422,24 @@ the failure this head has already had once.
     tower fetched at `main` compares two different models and fails nothing
     loudly -- the same class of silence as Gotcha 12's declared-but-unshipped
     case.
+
+20. **BOUND THE FILE BEFORE TRUSTING GGUF METADATA.** A control-vector loader
+    that reads an entire caller-selected file before parsing lets file size
+    become a memory-allocation input, before `direction.N` or other checked
+    ranges can help. Read only a fixed maximum plus one byte, reject an
+    oversized file before parsing, and keep the metadata range checks as a
+    second layer. The regression must use a sparse file larger than the cap so
+    it proves the refusal happens before parsing or allocation.
+
+21. **CHECK SAFETENSORS SHAPES BEFORE DECODING OR SLICING.** Header-provided
+    dimensions are attacker-controlled inputs, so validate `u64` to `usize`
+    conversions, architecture shape equality, checked element and byte counts,
+    and payload length before allocating or taking row slices. Keep special
+    cases such as shared gates explicit, and test an overflowing shape as well
+    as an ordinary architecture mismatch.
+
+22. **VALIDATE ROUTED GGUF ROLES BEFORE SIZING EXPERT SLOTS.** Packed expert
+    layout assumes architecture-sized rows for each gate, up, down, fused, and
+    bias role. Check rank, dimensions, and bias dtype by role before computing
+    per-expert bytes or page strides; otherwise a malformed but sizeable tensor
+    can produce a blob whose Metal indexing contract is already broken.

@@ -608,3 +608,10 @@ cargo test -p turbospark-gpu
     = 10` as a hard-validated property of the checkpoint family (REAP-288 is
     a pruned-expert-pool variant of the same architecture at the same
     top_k), which is what set the ceiling's headroom rather than guessing.
+
+14. **METAL ABI WIDTHS ARE VALIDATION BOUNDARIES, NOT STORAGE HINTS.** QSA
+    metadata can overflow host arithmetic before a Metal buffer is created.
+    Convert model dimensions to kernel-facing `u32` with `try_from`, use
+    checked multiplication for buffer lengths and strides, and validate every
+    copy view against its actual buffer before dispatch. A regression test must
+    exercise a wrapping dimension, not only ordinary capacity limits.
