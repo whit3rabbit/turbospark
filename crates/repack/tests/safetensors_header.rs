@@ -114,6 +114,36 @@ fn parse_header_rejects_a_non_null_non_object_metadata_value() {
     );
 }
 
+#[test]
+fn parse_header_rejects_unknown_tensor_fields() {
+    let json = r#"{
+        "weight.0": {
+            "dtype": "F32", "shape": [2, 64], "data_offsets": [0, 512],
+            "ignored": [0, 0, 0, 0]
+        }
+    }"#;
+    let file = build_file(json, 512);
+    let err = parse_header(&file, 1 << 20).unwrap_err();
+    let SafetensorsHeaderError::InvalidJson(detail) = err else {
+        panic!("expected InvalidJson, got {err:?}");
+    };
+    assert!(detail.contains("unknown field `ignored`"), "got: {detail}");
+}
+
+#[test]
+fn parse_header_rejects_excessive_tensor_dimensions() {
+    let dimensions = std::iter::repeat_n("1", 33).collect::<Vec<_>>().join(",");
+    let json = format!(
+        r#"{{"weight.0": {{"dtype": "F32", "shape": [{dimensions}], "data_offsets": [0, 4]}}}}"#
+    );
+    let file = build_file(&json, 4);
+    let err = parse_header(&file, 1 << 20).unwrap_err();
+    let SafetensorsHeaderError::InvalidJson(detail) = err else {
+        panic!("expected InvalidJson, got {err:?}");
+    };
+    assert!(detail.contains("exceeds 32 dimensions"), "got: {detail}");
+}
+
 /// `data_offsets` end before start reaches `absolute_range` as a
 /// plausible-looking pair and then every unchecked `end - start` downstream
 /// (ranged_download's chunking, the expert-blob planner) either panics or
