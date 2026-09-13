@@ -218,7 +218,7 @@ extension AppModel {
 
         let sessionID = chatID.uuidString
         let toolName = call.name
-        let cmd = call.arguments["command"] ?? call.arguments["cmd"]
+        let cmd = call.shellCommand
         // Approving a card -- an Agent-mode fallback card in particular --
         // is the recovery the classifier counters wait for (qwen-code's
         // rule): both streaks break on an approval, so a skipped or

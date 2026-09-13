@@ -52,7 +52,7 @@ struct ToolCallCardView: View {
     }
 
     private var terminalCommand: String? {
-        call.arguments["command"] ?? call.arguments["cmd"]
+        call.shellCommand
     }
 
     private var isTodoCall: Bool {
