@@ -17,6 +17,7 @@ extension AppHookExecutionEngine {
         stopHookActive: Bool?,
         agentID: String?,
         agentType: String?,
+        hookSnapshot: AppHookDispatchSnapshot?,
         startTime: Date
     ) async -> AppHookExecutionResult {
         // **A PROJECTLESS HOOK HAS NO WORKING DIRECTORY, AND THERE IS NO
@@ -60,7 +61,12 @@ extension AppHookExecutionEngine {
 
         // Variable substitution (${user_config.KEY}, ${CLAUDE_PROJECT_DIR})
         let store = await AppHookStore.shared
-        let allOptions = await store.optionValues
+        let allOptions: [String: [String: String]]
+        if let hookSnapshot {
+            allOptions = hookSnapshot.optionValues
+        } else {
+            allOptions = await store.optionValues
+        }
         var commandText = hook.command
         let sourceID = hook.pluginName != nil ? "plugin_\(hook.pluginName!)" : (hook.sourceType == .projectConfig ? "project_config" : "user_config")
         let options = allOptions[sourceID] ?? [:]
@@ -71,6 +77,9 @@ extension AppHookExecutionEngine {
         // is the process's ARGV -- visible to every `ps` on the machine for
         // the life of the hook. It reaches the hook by environment alone now.
         let sensitiveKeys: Set<String> = await {
+            if let hookSnapshot {
+                return hookSnapshot.sensitiveOptionKeys[sourceID] ?? []
+            }
             let groups = await store.sourceGroups
             guard let group = groups.first(where: { $0.id == sourceID }) else { return [] }
             return Set(group.optionSpecs.filter(\.isSensitive).map(\.key))
