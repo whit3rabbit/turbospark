@@ -184,4 +184,13 @@ final class WebSearchTests: XCTestCase {
         let md = output.formatMarkdown()
         XCTAssertTrue(md.contains("No web search results found"))
     }
+
+    func testTavilyMissingKeyFails() async {
+        do {
+            _ = try await WebSearchExecutor.searchTavily(query: "rust metal", count: 3, apiKey: "")
+            XCTFail("Should fail when Tavily API key is empty")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Tavily API key is missing"))
+        }
+    }
 }

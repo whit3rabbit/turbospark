@@ -120,6 +120,7 @@ pub fn manifest_quant_for(
         ModelFamily::Llama
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
+        | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2 => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),

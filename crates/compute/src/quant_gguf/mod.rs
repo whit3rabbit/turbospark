@@ -35,6 +35,8 @@
 
 /// Pearson correlation helper for validating dequantized weight similarities.
 pub mod pearson;
+/// Q2_K block quantization (256-element superblocks, 16 sub-blocks, asymmetric 2-bit weights).
+pub mod q2_k;
 /// Q4_K block quantization (256-element superblocks, 8 sub-blocks, asymmetric 4-bit weights).
 pub mod q4_k;
 /// Q5_K block quantization (256-element superblocks, 8 sub-blocks, 5-bit weights with min scale).
@@ -45,6 +47,10 @@ pub mod q6_k;
 pub mod q8_0;
 
 pub use pearson::pearson;
+pub use q2_k::{
+    dequant_q2_k_gemv, dequantize_q2_k, quantize_q2_k, Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
+    Q2_K_SUB_ELEMS,
+};
 pub use q4_k::{
     dequant_q4_k_gemv, dequantize_q4_k, quantize_q4_k, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS,
     Q4_K_SUB_ELEMS,

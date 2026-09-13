@@ -60,6 +60,8 @@ mod dequant_int8_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_iq_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_q2_k_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_q4_k_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q5_k_gemv;
@@ -172,8 +174,17 @@ pub use dequant_int8_gemv::{
 };
 #[cfg(target_os = "macos")]
 pub use dequant_iq_gemv::{
-    dequant_iq_gemv, IqBlockType, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS, IQ4_NL_BLOCK_BYTES,
-    IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
+    dequant_iq_gemv, encode_dequant_iq_gemv_resident, encode_embed_lookup_iq1_m, IqBlockType,
+    IqResidentMatrix, IQ1_M_BLOCK_BYTES, IQ1_M_BLOCK_ELEMS, IQ1_S_BLOCK_BYTES, IQ1_S_BLOCK_ELEMS,
+    IQ2_S_BLOCK_BYTES, IQ2_S_BLOCK_ELEMS, IQ2_XS_BLOCK_BYTES, IQ2_XS_BLOCK_ELEMS,
+    IQ2_XXS_BLOCK_BYTES, IQ2_XXS_BLOCK_ELEMS, IQ3_S_BLOCK_BYTES, IQ3_S_BLOCK_ELEMS,
+    IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS, IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS,
+    IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_q2_k_gemv::{
+    dequant_q2_k_gemv, encode_dequant_q2_k_gemv_resident, q2_k_row_bytes, Q2KResidentMatrix,
+    Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q4_k_gemv::{

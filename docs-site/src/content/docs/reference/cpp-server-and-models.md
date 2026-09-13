@@ -60,23 +60,26 @@ int32_t ts_server_attach_session(const TsServer *server, const TsSession *s,
                                  char **out);
 ```
 
-Adds an open session's model to a RUNNING server, and writes the id clients
-address it by to `*out` (the install directory's own name, the same string
+Adds an open session's model to a RUNNING server, and writes its canonical id
+to `*out` (the install directory's own name, the same string
 `ts_server_info_json` reports in `"models"`). Free it with `ts_string_free`.
 
 Takes effect immediately: no rebind, and no interruption to a request already
 in flight on another model.
 
-REFUSES A DUPLICATE ID rather than renaming it. The id is what a request's
-`"model"` field names and what `ts_server_detach_model` keys on, so a silently
-suffixed second copy would be addressable under a name the caller never
-learned. Two sessions on one install directory is a caller mistake.
+REFUSES a collision across every public id rather than renaming it. Each
+generative session additionally advertises
+`claude-turbospark-<canonical-id>` through `GET /v1/models`, and a canonical
+id may not collide with another session's alias. The canonical id is what
+`ts_server_detach_model` keys on, so a silently suffixed second copy would be
+addressable under a name the caller never learned. Two sessions on one install
+directory is a caller mistake.
 
-WHICH MODEL SERVES A REQUEST: an exact id match wins. Failing that, if
-exactly ONE model is attached it serves the request whatever name was asked
-for, which is what keeps a client sending its own default name (Claude Code
-sends `"claude-sonnet-4-6"`) working. With two or more attached and no match,
-the request is a 404 naming what IS available.
+WHICH MODEL SERVES A REQUEST: an exact canonical id or discovery-alias match
+wins. Failing that, if exactly ONE model is attached it serves the request
+whatever name was asked for, which is what keeps a client sending its own
+default name (Claude Code sends `"claude-sonnet-4-6"`) working. With two or
+more attached and no match, the request is a 404 naming what IS available.
 
 ```c
 int32_t ts_server_detach_model(const TsServer *server, const char *model_id);
@@ -112,10 +115,12 @@ JSON.
   this library binds; restating that literal instead of reading this field is
   correct only for as long as that stays true, and cannot report the day it
   does not.
-- `"models"` is every attached id, in attachment order, the same ids and the
-  same order `GET /v1/models` reports. `"modelId"` is the FIRST of them (`""`
-  when none), kept for a reader written when a server could serve only one; on
-  a two-model server it is half the truth, so show `"models"`.
+- `"models"` is every attached canonical id in attachment order. `GET
+  /v1/models` reports each canonical id followed by its Claude discovery
+  alias; aliases are intentionally absent here so the host can retain stable
+  attach/detach identities. `"modelId"` is the FIRST canonical id (`""` when
+  none), kept for a reader written when a server could serve only one; on a
+  two-model server it is half the truth, so show `"models"`.
 - `"uptimeSeconds"` is from a monotonic clock and is unaffected by the wall
   clock moving under a long-running host.
 

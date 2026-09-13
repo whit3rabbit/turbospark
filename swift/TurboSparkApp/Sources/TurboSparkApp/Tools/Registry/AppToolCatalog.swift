@@ -3,7 +3,7 @@ import Foundation
 /// Central registry uniting all OpenAI-compatible tool definitions and categories for TurboSpark.
 public enum AppToolCatalog {
     /// File and codebase navigation tools.
-    public static let fileTools: [OpenAITool] = FileReadWriteToolDefinitions.all + FileSearchToolDefinitions.all + ApplyPatchToolDefinitions.all
+    public static let fileTools: [OpenAITool] = FileReadWriteToolDefinitions.all + FileSearchToolDefinitions.all + ApplyPatchToolDefinitions.all + ToolObservationToolDefinitions.all
 
     /// Terminal and execution tools.
     public static let terminalTools: [OpenAITool] = TerminalToolDefinitions.all
@@ -136,17 +136,17 @@ public enum AppToolCatalog {
             return .mcp
         }
         switch name {
-        case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "apply_patch", "applypatch", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills", "memory", "remember":
+        case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "editor", "apply_patch", "applypatch", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills", "memory", "remember":
             return .fileWrite
         case "bash", "run_command", "repl", "shell", "exec", "terminal", "bashoutput", "bash_output", "killshell", "kill_shell", "enterworktree", "enter_worktree", "exitworktree", "exit_worktree":
             return .terminal
-        case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content":
+        case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content", "http_request", "httprequest":
             return .web
         case "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
         case "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource":
             return .mcp
-        case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file":
+        case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file", "recall_tool_output":
             return .fileRead
         default:
             return .automation

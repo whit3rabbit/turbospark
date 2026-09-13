@@ -182,6 +182,53 @@ final class ProjectRulesDetectionTests: XCTestCase {
         XCTAssertEqual(result?.detectedFiles, ["AGENTS.md"])
     }
 
+    func testLiveInstructionsAddContextAfterTheResolvedRuleFile() throws {
+        let agentsURL = tempDirectoryURL.appendingPathComponent("AGENTS.md")
+        let contextURL = tempDirectoryURL.appendingPathComponent("CONTEXT.md")
+        try "Repository rules".write(to: agentsURL, atomically: true, encoding: .utf8)
+        try "Architecture background".write(to: contextURL, atomically: true, encoding: .utf8)
+
+        let result = ProjectRuleDetector.liveInstructions(
+            in: tempDirectoryURL.path, preference: .agentsFirst)
+
+        XCTAssertEqual(result?.detectedFiles, ["AGENTS.md", "CONTEXT.md"])
+        XCTAssertEqual(result?.content, "Repository rules\n\n# CONTEXT.md\nArchitecture background")
+    }
+
+    func testLiveInstructionsBoundTheCombinedRulesAndContext() throws {
+        let agentsURL = tempDirectoryURL.appendingPathComponent("AGENTS.md")
+        let contextURL = tempDirectoryURL.appendingPathComponent("CONTEXT.md")
+        try "Rule".write(to: agentsURL, atomically: true, encoding: .utf8)
+        try "Context background".write(to: contextURL, atomically: true, encoding: .utf8)
+
+        let result = ProjectRuleDetector.liveInstructions(
+            in: tempDirectoryURL.path, preference: .agentsFirst, maxCharacters: 25)
+
+        XCTAssertEqual(result?.content, "Rule\n\n# CONTEXT.md\nContex")
+        XCTAssertEqual(result?.content.count, 25)
+    }
+
+    @MainActor
+    func testSystemPromptRefreshesRepositoryRulesWithoutDiscardingManualGuidance() throws {
+        let agentsURL = tempDirectoryURL.appendingPathComponent("AGENTS.md")
+        try "Use tabs.".write(to: agentsURL, atomically: true, encoding: .utf8)
+        let model = AppModel()
+        let project = AppProject(
+            name: "Live Rules",
+            rootDirectoryPath: tempDirectoryURL.path,
+            customInstructions: "Keep API names stable.")
+
+        let firstPrompt = model.buildSystemPrompt(for: project)
+        XCTAssertTrue(firstPrompt.contains("Use tabs."))
+        XCTAssertTrue(firstPrompt.contains("Keep API names stable."))
+
+        try "Use spaces.".write(to: agentsURL, atomically: true, encoding: .utf8)
+        let refreshedPrompt = model.buildSystemPrompt(for: project)
+        XCTAssertTrue(refreshedPrompt.contains("Use spaces."))
+        XCTAssertFalse(refreshedPrompt.contains("Use tabs."))
+        XCTAssertTrue(refreshedPrompt.contains("Keep API names stable."))
+    }
+
     @MainActor
     func testSystemPromptWrapsProjectInstructionsInUntrustedBlock() {
         let model = AppModel()

@@ -31,6 +31,9 @@ pub(crate) struct RealLlamaState {
     /// the tensors happen to be present: a name probe cannot tell a model
     /// that has no q-norm from an install that lost one.
     pub(super) qk_norm: QkNorm,
+    /// Qwen2 adds learned biases to q, k, and v before RoPE. The flag is
+    /// family-selected rather than inferred from optional tensor presence.
+    pub(super) qkv_bias: bool,
     pub(super) correction_bias: Vec<Vec<f32>>,
     /// RMS epsilon. `llama` publishes 1e-5 and `qwen3moe` 1e-6, and this is
     /// not an `ArchConfig` field, so the family carries it. Small enough to
@@ -175,7 +178,14 @@ impl RealLlamaState {
             ModelFamily::Qwen3Moe | ModelFamily::Qwen3Dense => QkNorm::PerHead,
             _ => QkNorm::None,
         };
-        let rms_eps = if qk_norm != QkNorm::None { 1e-6 } else { 1e-5 };
+        let rms_eps = match arch.family {
+            ModelFamily::MiniMaxM2
+            | ModelFamily::Qwen2Dense
+            | ModelFamily::Qwen3Moe
+            | ModelFamily::Qwen3Dense => 1e-6,
+            _ => 1e-5,
+        };
+        let qkv_bias = arch.family == ModelFamily::Qwen2Dense;
         let mut correction_bias = Vec::new();
 
         // Fail at open, not at token 1.
@@ -207,6 +217,15 @@ impl RealLlamaState {
             };
             for suffix in ffn {
                 entry(index, &layer_tensor(layer, suffix))?;
+            }
+            if qkv_bias {
+                for suffix in [
+                    "self_attn.q_proj.bias",
+                    "self_attn.k_proj.bias",
+                    "self_attn.v_proj.bias",
+                ] {
+                    entry(index, &layer_tensor(layer, suffix))?;
+                }
             }
             if qk_norm != QkNorm::None {
                 for (suffix, heads) in [
@@ -269,6 +288,7 @@ impl RealLlamaState {
         Ok(Self {
             rotated_pairs: rotated_pairs as u32,
             qk_norm,
+            qkv_bias,
             rms_eps,
             router_ones,
             correction_bias,

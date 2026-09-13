@@ -159,7 +159,7 @@ extension AppModel {
         if let updated = hookDecision.updatedInput {
             for (key, value) in updated { call.arguments[key] = value }
         }
-        let cmd = call.arguments["command"] ?? call.arguments["cmd"]
+        let cmd = call.shellCommand
 
         // `continue: false` from a PreToolUse hook's JSON: the call does not
         // run AND the turn ends here with the reason shown to the user --
@@ -201,6 +201,75 @@ extension AppModel {
             return
         }
 
+        // A fused validation leg is a real terminal action. Its PreToolUse
+        // hook and permission decision run before the mutation, so a denial
+        // cannot leave a changed file followed by an unauthorized command.
+        var fusedValidationCall: AppToolCall?
+        var validationNeedsApproval = false
+        if actionFusionEnabled, let validation = ToolActionFusion.validation(for: call) {
+            var validationCall = ToolActionFusion.validationCall(for: validation)
+            let validationHook = await evaluatePreToolUseHooks(
+                toolName: validationCall.name, toolArguments: validationCall.arguments,
+                chatID: chatID, project: project)
+            if let updated = validationHook.updatedInput {
+                for (key, value) in updated { validationCall.arguments[key] = value }
+                if let command = updated["command"] ?? updated["cmd"] {
+                    call.arguments["validate_command"] = command
+                }
+                if let timeout = updated["timeout_ms"] ?? updated["timeout"] {
+                    call.arguments["validate_timeout_ms"] = timeout
+                }
+            }
+            if validationHook.preventContinuation || validationHook.behavior == .deny {
+                let reason = validationHook.continuationStopReason ?? validationHook.reason
+                    ?? "The validation command was blocked by a PreToolUse hook."
+                await recordDeniedCall(
+                    call, extra: extra, reason: "Validation preflight denied: \(reason)",
+                    fullContent: fullContent, reasoning: reasoning, chatID: chatID,
+                    currentStep: currentStep, project: project,
+                    continuesLoop: !validationHook.preventContinuation)
+                return
+            }
+            let approved = await SessionApprovalStore.shared.isApproved(
+                sessionID: sessionID, toolName: validationCall.name,
+                command: validationCall.arguments["command"])
+            let validationDecision = AppToolPermissionEngine.evaluate(
+                call: validationCall, project: project, sessionApproved: approved,
+                fallbackMode: activePermissionMode, globalServers: globalMcpServers)
+            if case .deny(let reason) = validationDecision {
+                await dispatchPermissionDenied(
+                    toolName: validationCall.name, toolArguments: validationCall.arguments,
+                    reason: reason, chatID: chatID, project: project)
+                await recordDeniedCall(
+                    call, extra: extra, reason: "Validation preflight denied: \(reason)",
+                    fullContent: fullContent, reasoning: reasoning, chatID: chatID,
+                    currentStep: currentStep, project: project)
+                return
+            }
+            let policyAsks: Bool
+            if case .ask = validationDecision {
+                policyAsks = true
+            } else {
+                policyAsks = false
+            }
+            if validationHook.behavior == .ask || policyAsks {
+                validationNeedsApproval = true
+                let mutationRisk = call.riskAssessment
+                    ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+                let validationRisk = validationCall.riskAssessment
+                    ?? ToolRiskClassifier.assessRisk(
+                        name: validationCall.name, arguments: validationCall.arguments)
+                let level: ToolRiskLevel = mutationRisk.level == .high || validationRisk.level == .high
+                    ? .high : (mutationRisk.level == .low || validationRisk.level == .low ? .low : .safe)
+                call.riskAssessment = ToolRiskAssessment(
+                    level: level, category: .terminal,
+                    reasons: mutationRisk.reasons + ["Fused validation: \(validation.command)"]
+                        + validationRisk.reasons,
+                    hardGated: mutationRisk.isHardGated || validationRisk.isHardGated)
+            }
+            fusedValidationCall = validationCall
+        }
+
         let sessionApproved = await SessionApprovalStore.shared.isApproved(sessionID: sessionID, toolName: call.name, command: cmd)
         // The TURN's project, threaded in from `executeGenerationTurn`
         // (state#30). Every branch below -- run, deny, or park for approval --
@@ -208,10 +277,24 @@ extension AppModel {
         // policy the call executes under even if the selection moves while
         // the card is up.
         let decisionProject = project
-        let decision = AppToolPermissionEngine.evaluate(
+        let baseDecision = AppToolPermissionEngine.evaluate(
             call: call, project: decisionProject, sessionApproved: sessionApproved,
             fallbackMode: self.activePermissionMode,
             globalServers: self.globalMcpServers)
+        let decision: ToolPermissionDecision
+        if case .deny = baseDecision {
+            // A mutation policy refusal remains absolute. Validation cannot
+            // turn a denied file action into an approval card.
+            decision = baseDecision
+        } else if validationNeedsApproval {
+            let assessment = call.riskAssessment
+                ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+            decision = .ask(
+                assessment: assessment,
+                reason: "The mutation and its validation command require one compound approval.")
+        } else {
+            decision = baseDecision
+        }
 
         // The engine's refusal wins over a hook that merely asked (state#78).
         if case .deny(let reason) = decision {
@@ -252,6 +335,7 @@ extension AppModel {
             self.pendingToolCallChatID = chatID
             self.pendingToolCallStep = currentStep
             self.pendingToolCallProject = project
+            self.pendingValidationCall = fusedValidationCall
             // A hook ask is not a classifier fallback; never render a stale
             // one beside it.
             self.pendingToolCallClassifierNotice = nil
@@ -270,6 +354,32 @@ extension AppModel {
 
         switch decision {
         case .ask(let assessment, _):
+            // The synthetic terminal leg gets the same PermissionRequest
+            // hook opportunity as the visible mutation. A deny here is still
+            // pre-mutation, so no partial compound action can occur.
+            if let validationCall = fusedValidationCall {
+                let validationVerdict = await evaluatePermissionRequest(
+                    toolName: validationCall.name, toolArguments: validationCall.arguments,
+                    chatID: chatID, project: decisionProject)
+                if validationVerdict.preventContinuation {
+                    let reason = validationVerdict.continuationStopReason
+                        ?? "A PermissionRequest hook stopped validation preflight."
+                    await recordDeniedCall(
+                        call, extra: extra, reason: "Validation preflight denied: \(reason)",
+                        fullContent: fullContent, reasoning: reasoning, chatID: chatID,
+                        currentStep: currentStep, project: decisionProject, continuesLoop: false)
+                    return
+                }
+                if validationVerdict.permissionDecision == .deny {
+                    let reason = validationVerdict.permissionReason
+                        ?? "Denied by PermissionRequest hook"
+                    await recordDeniedCall(
+                        call, extra: extra, reason: "Validation preflight denied: \(reason)",
+                        fullContent: fullContent, reasoning: reasoning, chatID: chatID,
+                        currentStep: currentStep, project: decisionProject)
+                    return
+                }
+            }
             // `PermissionRequest` fires exactly where this app would
             // otherwise show the approval card, so a hook can resolve
             // `allow`/`deny` without ever surfacing the UI.
@@ -328,6 +438,7 @@ extension AppModel {
                     self.pendingToolCallChatID = chatID
                     self.pendingToolCallStep = currentStep
                     self.pendingToolCallProject = decisionProject
+                    self.pendingValidationCall = fusedValidationCall
                     self.pendingToolCallClassifierNotice = notice
                     mutateTurnMessages(for: chatID) {
                         $0.append(AppChatMessage(
@@ -358,33 +469,15 @@ extension AppModel {
     /// ordinary `.allow` path and a `PermissionRequest` hook resolving
     /// `allow` in place of the approval card.
     private func runApprovedCall(_ call: AppToolCall, extra: (calls: [AppToolCall], results: [AppToolResult]) = ([], []), fullContent: String, reasoning: String, chatID: UUID, currentStep: Int, project: AppProject?) async {
-        var runningCall = call
-        runningCall.status = .running
-        var toolResult = await AppToolRegistry.execute(
-            call: runningCall, in: project, chatID: chatID,
+        let root = project?.rootDirectoryURL ?? URL(fileURLWithPath: "/dev/null")
+        let fingerprints = actionFusionEnabled && ToolActionFusion.validation(for: call) != nil
+            ? ToolActionFusion.fingerprints(for: call, rootURL: root) : []
+        let previousTodos = todos(for: chatID)
+        let executed = await executeApprovedTool(
+            call, project: project, chatID: chatID, preMutationFingerprints: fingerprints,
             webToolsEnabled: webSearchEnabled)
-        runningCall.status = toolResult.isError ? .failed : .completed
-
-        let postVerdict = await self.dispatchPostToolUseVerdict(
-            toolName: runningCall.name,
-            toolArguments: runningCall.arguments,
-            toolOutput: toolResult.output,
-            toolDurationSeconds: toolResult.durationSeconds,
-            isError: toolResult.isError,
-            chatID: chatID,
-            project: project
-        )
-        // Exit-2 stderr (or `decision: "block"`) from a PostToolUse hook is
-        // feedback, never a block -- the tool already ran. `additionalContext`
-        // is folded in the same way. Both flow to the model on the NEXT turn
-        // through the `<tool_response>`/`<tool_error>` tags built from
-        // `toolResults` in `executeGenerationTurn`.
-        if let note = postVerdict.blockReason ?? postVerdict.feedbackMessage, !note.isEmpty {
-            toolResult.output += "\n\n<hook_feedback>\n\(note)\n</hook_feedback>"
-        }
-        if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
-            toolResult.output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
-        }
+        let runningCall = executed.call
+        var toolResult = executed.result
 
         mutateTurnMessages(for: chatID) {
             $0.append(AppChatMessage(
@@ -400,11 +493,21 @@ extension AppModel {
         // `continue: false` from a PostToolUse hook: the result above is
         // recorded, but the loop does not go on to the next model step --
         // the turn ends here with the reason shown to the user.
-        if postVerdict.preventContinuation {
-            if let reason = postVerdict.continuationStopReason, !reason.isEmpty {
+        if let reason = executed.stopReason {
+            if !reason.isEmpty {
                 showToast("Turn stopped by hook: \(reason)", style: .warning)
             }
             return
+        }
+
+        let boundaryResult = await compactAtTodoBoundaryIfNeeded(
+            call: runningCall, previousTodos: previousTodos, result: toolResult,
+            chatID: chatID, project: project)
+        if boundaryResult != toolResult {
+            // The message was already appended above, so update its result in
+            // place with the boundary outcome before rebuilding history.
+            toolResult = boundaryResult
+            appendToolExecutionTurn(call: runningCall, result: boundaryResult, chatID: chatID)
         }
 
         await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
@@ -524,7 +627,7 @@ extension AppModel {
             }
             let sessionApproved = await SessionApprovalStore.shared.isApproved(
                 sessionID: chatID.uuidString, toolName: updated.name,
-                command: updated.arguments["command"] ?? updated.arguments["cmd"])
+                command: updated.shellCommand)
             let decision = AppToolPermissionEngine.evaluate(
                 call: updated, project: project, sessionApproved: sessionApproved,
                 fallbackMode: activePermissionMode, globalServers: globalMcpServers)

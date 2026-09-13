@@ -120,10 +120,24 @@ pub const DTYPE_GGUF_IQ4_XS: u8 = 12;
 /// Tag 13 rather than the next free number on purpose: it matches ggml's own
 /// type id for Q5_K, which the three K-quant tags above predate and do not.
 pub const DTYPE_GGUF_Q5_K: u8 = 13;
+/// GGUF Q2_K block dtype tag.
+pub const DTYPE_GGUF_Q2_K: u8 = 17;
+/// GGUF IQ2_XXS block dtype tag.
+pub const DTYPE_GGUF_IQ2_XXS: u8 = 18;
+/// GGUF IQ2_XS block dtype tag.
+pub const DTYPE_GGUF_IQ2_XS: u8 = 19;
+/// GGUF IQ1_S block dtype tag.
+pub const DTYPE_GGUF_IQ1_S: u8 = 20;
+/// GGUF IQ3_S block dtype tag.
+pub const DTYPE_GGUF_IQ3_S: u8 = 21;
+/// GGUF IQ2_S block dtype tag.
+pub const DTYPE_GGUF_IQ2_S: u8 = 22;
+/// GGUF IQ1_M block dtype tag.
+pub const DTYPE_GGUF_IQ1_M: u8 = 23;
 
 /// Every GGUF block dtype tag, for consumers that need to reject the whole
 /// family in one check rather than enumerate it and drift.
-pub const GGUF_BLOCK_DTYPES: [u8; 8] = [
+pub const GGUF_BLOCK_DTYPES: [u8; 15] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -132,6 +146,13 @@ pub const GGUF_BLOCK_DTYPES: [u8; 8] = [
     DTYPE_GGUF_IQ4_NL,
     DTYPE_GGUF_IQ4_XS,
     DTYPE_GGUF_Q5_K,
+    DTYPE_GGUF_Q2_K,
+    DTYPE_GGUF_IQ2_XXS,
+    DTYPE_GGUF_IQ2_XS,
+    DTYPE_GGUF_IQ1_S,
+    DTYPE_GGUF_IQ3_S,
+    DTYPE_GGUF_IQ2_S,
+    DTYPE_GGUF_IQ1_M,
 ];
 
 /// One named raw tensor (a norm vector, a scalar like `router.scale`):

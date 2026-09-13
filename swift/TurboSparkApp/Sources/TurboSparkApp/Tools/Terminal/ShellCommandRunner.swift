@@ -11,6 +11,10 @@ import Foundation
 /// suffix below can follow it as plain lines without re-quoting the user's
 /// text at all.
 enum ShellCommandRunner {
+    struct ToolOutput: Sendable {
+        var presentation: String
+        var archivalOutput: String?
+    }
     /// Hard ceiling on one foreground command, whatever the model asked
     /// for. The default is `ProcessExecutor`'s 120 s; the ceiling is what
     /// stops a misread unit (`timeout: 3600000`, meaning milliseconds, read
@@ -49,13 +53,29 @@ enum ShellCommandRunner {
         description: String? = nil,
         chatID: UUID? = nil
     ) async throws -> String {
+        try await runForTool(
+            command: command, rootURL: rootURL, timeoutMs: timeoutMs,
+            runInBackground: runInBackground, description: description, chatID: chatID).presentation
+    }
+
+    /// Runs a command once while retaining the un-compacted terminal text for
+    /// the observation archive. Callers still display `presentation`.
+    static func runForTool(
+        command: String,
+        rootURL: URL,
+        timeoutMs: Int? = nil,
+        runInBackground: Bool = false,
+        description: String? = nil,
+        chatID: UUID? = nil
+    ) async throws -> ToolOutput {
         let startDirectory = ShellCwdTracker.shared.startDirectory(for: rootURL)
         let environment = ShellOutputFormatting.shellEnvironment()
 
         if runInBackground {
-            return try launchBackground(
+            let presentation = try launchBackground(
                 command: command, startDirectory: startDirectory,
                 environment: environment, description: description, chatID: chatID)
+            return ToolOutput(presentation: presentation, archivalOutput: nil)
         }
         return try await runForeground(
             command: command, startDirectory: startDirectory, rootURL: rootURL,
@@ -70,7 +90,7 @@ enum ShellCommandRunner {
         rootURL: URL,
         environment: [String: String],
         timeoutMs: Int?
-    ) async throws -> String {
+    ) async throws -> ToolOutput {
         let timeoutSeconds = clampedTimeoutSeconds(timeoutMs: timeoutMs)
         let captureFile = NSTemporaryDirectory() + "turbospark-cwd-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: captureFile) }
@@ -127,10 +147,16 @@ enum ShellCommandRunner {
                 ? "(Command finished: success)"
                 : "(Command finished: exit code \(result.exitCode))")
             : ShellOutputFormatting.compactWithSpill(combined, label: command)
+        var archival = combined.isEmpty
+            ? (result.exitCode == 0
+                ? "(Command finished: success)"
+                : "(Command finished: exit code \(result.exitCode))")
+            : combined
         if !notes.isEmpty {
             output += "\n(" + notes.joined(separator: "; ") + ")"
+            archival += "\n(" + notes.joined(separator: "; ") + ")"
         }
-        return output
+        return ToolOutput(presentation: output, archivalOutput: archival)
     }
 
     // MARK: - Background

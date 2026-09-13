@@ -47,8 +47,12 @@ pub enum ModelFamily {
     ///
     /// `qwen2` / `qwen2.5` (QwQ-32B, the older R1-distill-Qwen line) is a
     /// SEPARATE architecture string with a different config schema (no
-    /// per-head QK-norm) and is deliberately out of scope here.
+    /// per-head QK-norm) and is represented by [`ModelFamily::Qwen2Dense`].
     Qwen3Dense,
+    /// Dense Qwen2/Qwen2.5 full-attention models. This shares the Llama flow
+    /// with Qwen3 dense, but carries Q/K/V projection biases and uses the
+    /// Qwen2 RMS epsilon of 1e-6 without Q/K normalization.
+    Qwen2Dense,
     /// The `gpt-oss` GGUF architecture (ROADMAP M5), the third fine-grained
     /// MoE and the FIFTH real family. Chosen by the M5 Phase 0 survey on
     /// AGENTS.md Gotcha 36's axis: 12.6 MiB per expert against Llama 4
@@ -227,8 +231,8 @@ pub enum ModelFamily {
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 12 model families.
-    pub const ALL: [ModelFamily; 12] = [
+    /// Exhaustive list of all 13 model families.
+    pub const ALL: [ModelFamily; 13] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -241,6 +245,7 @@ impl ModelFamily {
         ModelFamily::Spark25,
         ModelFamily::Qwen3Dense,
         ModelFamily::MiniMaxM2,
+        ModelFamily::Qwen2Dense,
     ];
 
     /// Returns static string identifier for the model family.
@@ -280,6 +285,7 @@ impl ModelFamily {
             // AND the HF `model_type`, which agree ("qwen3").
             ModelFamily::Qwen3Dense => "qwen3",
             ModelFamily::MiniMaxM2 => "minimax_m2",
+            ModelFamily::Qwen2Dense => "qwen2",
         }
     }
 
@@ -298,6 +304,7 @@ impl ModelFamily {
             "spark2_5" => Some(ModelFamily::Spark25),
             "qwen3" => Some(ModelFamily::Qwen3Dense),
             "minimax_m2" => Some(ModelFamily::MiniMaxM2),
+            "qwen2" => Some(ModelFamily::Qwen2Dense),
             _ => None,
         }
     }
@@ -323,9 +330,10 @@ mod tests {
                 ModelFamily::Spark25 => 9,
                 ModelFamily::Qwen3Dense => 10,
                 ModelFamily::MiniMaxM2 => 11,
+                ModelFamily::Qwen2Dense => 12,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 12);
+        assert_eq!(ModelFamily::ALL.len(), 13);
     }
 }

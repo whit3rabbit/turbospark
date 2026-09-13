@@ -69,22 +69,32 @@ public struct TurboSparkAgent: Sendable {
 
     /// Returns the terminal export/launch command string for connecting an agent.
     ///
-    /// Both interpolated values land inside double quotes in a command the
+    /// Every interpolated value lands inside double quotes in a command the
     /// user pastes into a terminal, so each is escaped for that context: an
     /// unescaped `"`, `$` or backtick in a hand-typed key terminates the
     /// export or runs part of the key as a substitution. The engine-bound
     /// host never carries metacharacters today, but the helper does not
     /// have to be re-derived the day a bind address could.
+    ///
+    /// Pass the canonical id returned by an in-process server's `attach` as
+    /// `canonicalModelID` to launch Claude Code with that backend's
+    /// discovery alias. Omit it when the caller has no attached model to
+    /// select yet; discovery is still enabled for `/model`.
     public static func launchCommand(
         for agent: String,
         host: String = "127.0.0.1",
         port: UInt16 = 8080,
-        apiKey: String = "local"
+        apiKey: String = "local",
+        canonicalModelID: String? = nil
     ) -> String {
-        let base = shellDoubleQuoted("http://\(host):\(port)/v1")
+        let baseURL = "http://\(host):\(port)/v1"
+        let base = shellDoubleQuoted(baseURL)
         switch agent.lowercased() {
         case "claude":
-            return "export ANTHROPIC_BASE_URL=\(base) && export ANTHROPIC_API_KEY=\(shellDoubleQuoted(apiKey)) && claude"
+            let modelArgument = canonicalModelID.map {
+                " --model \(shellDoubleQuoted("claude-turbospark-\($0)"))"
+            } ?? ""
+            return "claude --settings \(shellSingleQuoted(claudeSettingsJSON(baseURL: baseURL, apiKey: apiKey)))\(modelArgument)"
         case "codex":
             return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey)) && codex"
         case "opencode":
@@ -107,5 +117,27 @@ public struct TurboSparkAgent: Sendable {
             .replacingOccurrences(of: "$", with: "\\$")
             .replacingOccurrences(of: "`", with: "\\`")
         return "\"\(escaped)\""
+    }
+
+    /// This command-line overlay gives the ephemeral local server port an
+    /// explicit one-session source, even when a prior server left a different
+    /// port in a saved Claude Code `env` block.
+    private static func claudeSettingsJSON(baseURL: String, apiKey: String) -> String {
+        let settings: [String: [String: String]] = [
+            "env": [
+                "ANTHROPIC_BASE_URL": baseURL,
+                "ANTHROPIC_API_KEY": apiKey,
+                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "true",
+                "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
+            ]
+        ]
+        let data = try! JSONSerialization.data(
+            withJSONObject: settings,
+            options: [.sortedKeys, .withoutEscapingSlashes])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func shellSingleQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
