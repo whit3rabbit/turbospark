@@ -74,7 +74,7 @@ public enum SubagentRunner {
                 sections.append("## Workspace Environment\nRoot codebase directory: `\(root)`")
             }
             sections.append(project.turboSparkEnvironmentPrompt())
-            let projectInstructions = project.resolvedProjectInstructions()
+            let projectInstructions = project.escapedProjectInstructionsForPrompt()
             if !projectInstructions.isEmpty {
                 // An agent may opt out of the project's own instructions
                 // (`omitsProjectInstructions`): Claude Code's Explore sets
