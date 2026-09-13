@@ -78,6 +78,10 @@ extension AppToolRegistry {
     /// the one place that reads it.
     public static var subagentSamplingOptionsProvider: (@Sendable @MainActor () -> GenerateOptions)?
 
+    /// The composer web-tools switch. Execution consults this independently
+    /// from prompt construction so stale or forged calls cannot bypass it.
+    public static var webToolsEnabledProvider: (@Sendable @MainActor () -> Bool)?
+
     /// Progress sink for subagent runs, keyed by a host-chosen run key (a
     /// tool-call UUID for a foreground run, a `bga_N` id for a background
     /// one). The app installs one at startup, which routes the events into

@@ -120,7 +120,8 @@ extension AppModel {
             mcpServers: activeMcpServers,
             project: project,
             contextTokens: contextBudget,
-            availableAgents: availableAgents)
+            availableAgents: availableAgents,
+            webToolsEnabled: webSearchEnabled)
         sections.append((.tools, toolsPrompt))
 
         if !activeMcpServers.isEmpty {
@@ -281,7 +282,9 @@ extension AppModel {
                 return
             }
 
-            var result = await AppToolRegistry.execute(call: call, in: project, chatID: chatID)
+            var result = await AppToolRegistry.execute(
+                call: call, in: project, chatID: chatID,
+                webToolsEnabled: webSearchEnabled)
             call.status = result.isError ? .failed : .completed
 
             let postVerdict = await self.dispatchPostToolUseVerdict(

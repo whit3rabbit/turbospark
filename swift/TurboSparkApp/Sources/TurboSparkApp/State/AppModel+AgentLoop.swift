@@ -360,7 +360,9 @@ extension AppModel {
     private func runApprovedCall(_ call: AppToolCall, extra: (calls: [AppToolCall], results: [AppToolResult]) = ([], []), fullContent: String, reasoning: String, chatID: UUID, currentStep: Int, project: AppProject?) async {
         var runningCall = call
         runningCall.status = .running
-        var toolResult = await AppToolRegistry.execute(call: runningCall, in: project, chatID: chatID)
+        var toolResult = await AppToolRegistry.execute(
+            call: runningCall, in: project, chatID: chatID,
+            webToolsEnabled: webSearchEnabled)
         runningCall.status = toolResult.isError ? .failed : .completed
 
         let postVerdict = await self.dispatchPostToolUseVerdict(
@@ -669,13 +671,15 @@ extension AppModel {
         updatesParkedMessage: Bool = false
     ) async {
         var outcomesByID: [UUID: (call: AppToolCall, result: AppToolResult)] = [:]
+        let webToolsEnabled = webSearchEnabled
         await withTaskGroup(of: (AppToolCall, AppToolResult).self) { group in
             for call in calls {
                 var running = call
                 running.status = .running
                 group.addTask {
                     let result = await AppToolRegistry.execute(
-                        call: running, in: project, chatID: chatID)
+                        call: running, in: project, chatID: chatID,
+                        webToolsEnabled: webToolsEnabled)
                     return (running, result)
                 }
             }

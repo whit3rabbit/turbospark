@@ -66,7 +66,8 @@ public enum AppToolCatalog {
     /// `contextTokens` feeds the skill tool's 1%-of-context listing budget;
     /// nil keeps the 8,000-character default.
     public static func tools(
-        for agentType: AppAgentType, projectURL: URL? = nil, contextTokens: Int? = nil
+        for agentType: AppAgentType, projectURL: URL? = nil, contextTokens: Int? = nil,
+        webToolsEnabled: Bool = true
     ) -> [OpenAITool] {
         var list: [OpenAITool]
         switch agentType {
@@ -108,6 +109,9 @@ public enum AppToolCatalog {
 
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).map { $0.openAITool }
         list.append(contentsOf: custom)
+        if !webToolsEnabled {
+            list.removeAll { category(for: $0.function.name, projectURL: projectURL) == .web }
+        }
         if let idx = list.firstIndex(where: { $0.function.name == "skill" }) {
             list[idx] = SkillToolDefinitions.skillTool(projectURL: projectURL, contextTokens: contextTokens)
         }
@@ -173,9 +177,12 @@ public enum AppToolCatalog {
         for agentType: AppAgentType,
         projectURL: URL? = nil,
         contextTokens: Int? = nil,
-        availableAgents: [(name: String, whenToUse: String)] = []
+        availableAgents: [(name: String, whenToUse: String)] = [],
+        webToolsEnabled: Bool = true
     ) -> String {
-        let active = tools(for: agentType, projectURL: projectURL, contextTokens: contextTokens)
+        let active = tools(
+            for: agentType, projectURL: projectURL, contextTokens: contextTokens,
+            webToolsEnabled: webToolsEnabled)
         var lines: [String] = []
         lines.append("## Available Tools")
         lines.append("You have access to the following developer tools formatted in OpenAI function calling style:")
@@ -228,13 +235,15 @@ public enum AppToolCatalog {
         mcpServers: [McpServerConfig],
         project: AppProject?,
         contextTokens: Int? = nil,
-        availableAgents: [(name: String, whenToUse: String)] = []
+        availableAgents: [(name: String, whenToUse: String)] = [],
+        webToolsEnabled: Bool = true
     ) -> String {
         let base = systemPromptAddendum(
             for: agentType,
             projectURL: project?.rootDirectoryURL,
             contextTokens: contextTokens,
-            availableAgents: availableAgents)
+            availableAgents: availableAgents,
+            webToolsEnabled: webToolsEnabled)
         let definitions = AppToolCatalogMcp.toolDefinitions(servers: mcpServers, permissions: project?.permissions)
         guard !definitions.isEmpty else { return base }
         var lines: [String] = [
