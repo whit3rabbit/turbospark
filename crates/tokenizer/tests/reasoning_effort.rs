@@ -53,7 +53,9 @@ fn untrusted_template_probe_has_work_and_output_limits() {
             .apply_chat_template_with_reasoning(&user(), ReasoningEffort::Low)
             .expect_err("an attacker-controlled template must hit a resource limit");
         assert!(
-            error.to_string().contains("rendering") || error.to_string().contains("fuel"),
+            error.to_string().contains("rendering")
+                || error.to_string().contains("fuel")
+                || error.to_string().contains("rendered output exceeds"),
             "unexpected resource-limit error: {error}"
         );
         fs::remove_dir_all(dir).unwrap();
