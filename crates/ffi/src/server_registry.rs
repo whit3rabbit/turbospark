@@ -16,11 +16,11 @@
 //! without doing either has leaked a multi-gigabyte mapping with nothing in
 //! its own UI still showing the model as loaded.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use turbospark_server::observe::{ServerEvent, ServerObserver};
-use turbospark_server::registry::{resolve_among, ModelRegistry, ModelRow, Resolution};
+use turbospark_server::registry::{model_row, resolve_among, ModelRegistry, ModelRow, Resolution};
 use turbospark_server::ChatModel;
 
 /// The models attached to one running server.
@@ -34,7 +34,7 @@ pub(crate) struct LiveRegistry {
 }
 
 impl LiveRegistry {
-    /// Adds a model, or refuses if its id is already attached.
+    /// Adds a model, or refuses if any public identity is already attached.
     ///
     /// **A DUPLICATE ID IS REFUSED BY NAME RATHER THAN SUFFIXED.** The id is
     /// what a client puts in a request's `model` field and what
@@ -44,13 +44,20 @@ impl LiveRegistry {
     /// on one install directory is a caller mistake, and this is where it is
     /// cheapest to say so.
     pub(crate) fn attach(&self, model: Arc<dyn ChatModel>) -> Result<String, String> {
-        let id = model.model_id().to_string();
+        let row = model_row(&*model);
+        let id = row.id.clone();
         let mut models = self.models.lock().unwrap_or_else(|p| p.into_inner());
-        if models.iter().any(|m| m.model_id() == id) {
-            return Err(format!(
-                "a model with id '{id}' is already attached to this server; \
-                 detach it first, or open the second install under a different directory name"
-            ));
+        let mut identities = HashSet::new();
+        for existing in models.iter() {
+            identities.extend(model_row(&**existing).ids().map(str::to_string));
+        }
+        for identity in row.ids() {
+            if !identities.insert(identity.to_string()) {
+                return Err(format!(
+                    "a model with id or alias '{identity}' is already attached to this server; \
+                     detach it first, or open the second install under a different directory name"
+                ));
+            }
         }
         models.push(model);
         Ok(id)
@@ -89,10 +96,7 @@ impl ModelRegistry for LiveRegistry {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .iter()
-            .map(|m| ModelRow {
-                id: m.model_id().to_string(),
-                max_context: m.max_context(),
-            })
+            .map(|m| model_row(&**m))
             .collect()
     }
 }

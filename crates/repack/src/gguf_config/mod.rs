@@ -140,6 +140,16 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
             });
         }
     }
+    if family == ModelFamily::Qwen2Dense
+        && m.opt_f64("attention.layer_norm_rms_epsilon")
+            .map(|v| v as f32)
+            != Some(1e-6f32)
+    {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("attention.layer_norm_rms_epsilon"),
+            detail: "Qwen2 requires RMS epsilon 1e-6".into(),
+        });
+    }
 
     // `block_count` COUNTS THE MULTI-TOKEN-PREDICTION BLOCK, and this port's
     // `num_layers` is the trunk alone. llama.cpp writes the head as one more
@@ -215,6 +225,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         ModelFamily::Llama
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
+        | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2 => {
             vec![1u8; num_layers as usize]
         }

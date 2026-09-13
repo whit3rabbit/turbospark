@@ -144,6 +144,64 @@ pub fn canonicalize_vision_header(
     Ok(())
 }
 
+/// Renames the text-only MLX Qwen2 namespace onto the canonical install
+/// namespace. MLX exports the trunk as `model.*`, while this repack pipeline
+/// intentionally uses `language_model.*` for every installed language model.
+/// Refuse a header that mixes the two spellings or creates a collision after
+/// renaming.
+pub fn canonicalize_qwen2_header(
+    header: &mut SafetensorsHeader,
+) -> Result<(), super::config::Gemma4Error> {
+    const SOURCE_PREFIXES: [&str; 4] = [
+        "model.embed_tokens.",
+        "model.layers.",
+        "model.norm.",
+        "lm_head.",
+    ];
+    const CANONICAL_PREFIXES: [&str; 4] = [
+        "language_model.model.embed_tokens.",
+        "language_model.model.layers.",
+        "language_model.model.norm.",
+        "language_model.lm_head.",
+    ];
+
+    let has_source = header
+        .tensors
+        .keys()
+        .any(|name| SOURCE_PREFIXES.iter().any(|p| name.starts_with(p)));
+    let has_canonical = header
+        .tensors
+        .keys()
+        .any(|name| CANONICAL_PREFIXES.iter().any(|p| name.starts_with(p)));
+    if has_source && has_canonical {
+        return Err(super::config::Gemma4Error::Config(
+            "Qwen2 checkpoint mixes model.* and language_model.* tensor namespaces".into(),
+        ));
+    }
+    if !has_source {
+        return Ok(());
+    }
+
+    let mut renamed = std::collections::BTreeMap::new();
+    for (name, info) in std::mem::take(&mut header.tensors) {
+        let canonical = SOURCE_PREFIXES
+            .iter()
+            .zip(CANONICAL_PREFIXES)
+            .find_map(|(source, target)| {
+                name.strip_prefix(source)
+                    .map(|tail| format!("{target}{tail}"))
+            })
+            .unwrap_or(name);
+        if renamed.insert(canonical.clone(), info).is_some() {
+            return Err(super::config::Gemma4Error::Config(format!(
+                "Qwen2 tensor namespace normalization creates duplicate tensor {canonical}"
+            )));
+        }
+    }
+    header.tensors = renamed;
+    Ok(())
+}
+
 /// The prefix a DFlash2 drafter's tensors carry once they reach a walk.
 ///
 /// **The published repository spells its tensors BARE** (`layers.0.*`,
@@ -198,6 +256,7 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // either, so it rides along too.
         | ModelFamily::Spark25
         | ModelFamily::Qwen3Dense
+        | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2 => ".experts.switch_glu.",
     }
 }

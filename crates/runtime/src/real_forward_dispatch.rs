@@ -4,8 +4,9 @@
 use model_io::ResidentIndex;
 
 use crate::real_forward_layout::{
-    DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT1_AFFINE,
-    DTYPE_INT2_AFFINE,
+    DTYPE_GGUF_IQ1_M, DTYPE_GGUF_IQ1_S, DTYPE_GGUF_IQ2_S, DTYPE_GGUF_IQ2_XS, DTYPE_GGUF_IQ2_XXS,
+    DTYPE_GGUF_IQ3_S, DTYPE_GGUF_Q2_K, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K,
+    DTYPE_GGUF_Q8_0, DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE,
 };
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{affine_group_size, entry, resident_matrix};
@@ -51,6 +52,10 @@ pub(crate) fn encode_embed_any(
         // head to it, which is what made this kernel worth writing.
         DTYPE_GGUF_Q6_K => {
             gpu::encode_embed_lookup_q6_k(context, pass, table, out, token, hidden, embed_scale)
+                .map_err(RealForwardError::Gpu)
+        }
+        DTYPE_GGUF_IQ1_M => {
+            gpu::encode_embed_lookup_iq1_m(context, pass, table, out, token, hidden, embed_scale)
                 .map_err(RealForwardError::Gpu)
         }
         // The 1-bit table (ROADMAP's 1-bit entry). It exists because the real
@@ -229,6 +234,23 @@ pub(crate) fn encode_gemv_any(
             gpu::encode_dequant_q8_0_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
+        DTYPE_GGUF_Q2_K => {
+            let expected = gpu::q2_k_row_bytes(cols) * rows;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: Q2_K packed size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::Q2KResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+            };
+            gpu::encode_dequant_q2_k_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
         // The other two GGUF block types a real file uses for a matrix.
         // Same shape as the Q8_0 arm; only the row-bytes function and the
         // kernel differ, and the size check is what catches a tensor whose
@@ -282,6 +304,34 @@ pub(crate) fn encode_gemv_any(
                 cols,
             };
             gpu::encode_dequant_q6_k_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
+        dtype @ (DTYPE_GGUF_IQ2_XXS | DTYPE_GGUF_IQ2_XS | DTYPE_GGUF_IQ1_S | DTYPE_GGUF_IQ3_S
+        | DTYPE_GGUF_IQ2_S | DTYPE_GGUF_IQ1_M) => {
+            let kind = match dtype {
+                DTYPE_GGUF_IQ2_XXS => gpu::IqBlockType::Iq2Xxs,
+                DTYPE_GGUF_IQ2_XS => gpu::IqBlockType::Iq2Xs,
+                DTYPE_GGUF_IQ1_S => gpu::IqBlockType::Iq1S,
+                DTYPE_GGUF_IQ3_S => gpu::IqBlockType::Iq3S,
+                DTYPE_GGUF_IQ2_S => gpu::IqBlockType::Iq2S,
+                DTYPE_GGUF_IQ1_M => gpu::IqBlockType::Iq1M,
+                _ => unreachable!(),
+            };
+            let expected = kind.row_bytes(cols) * rows;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: {kind:?} packed size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::IqResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+                kind,
+            };
+            gpu::encode_dequant_iq_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
         // Named rather than defaulted. This arm used to be `_ => int4`,

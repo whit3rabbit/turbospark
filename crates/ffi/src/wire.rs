@@ -653,8 +653,12 @@ pub struct ServerInfo {
     /// A host showing this alone on a two-model server is showing half the
     /// truth, which is why the Swift binding surfaces both.
     pub model_id: String,
-    /// Every attached model, in attachment order -- the same order and the
-    /// same ids `GET /v1/models` reports, because both read the registry.
+    /// Every attached canonical model id, in attachment order.
+    ///
+    /// `GET /v1/models` expands each generative backend with its
+    /// `claude-turbospark-<canonical-id>` discovery alias. Those aliases are
+    /// intentionally absent here, so a host can keep using the id returned
+    /// by attach to identify and detach its session.
     pub models: Vec<String>,
     pub auth_enabled: bool,
     /// Seconds since `ts_server_start` returned. From a monotonic clock, so

@@ -197,7 +197,7 @@ public enum ToolRiskClassifier {
 
         // 2. Terminal Command Risk
         if category == .terminal {
-            let cmd = arguments["command"] ?? arguments["cmd"] ?? ""
+            let cmd = AppToolCall.shellCommand(in: arguments) ?? ""
             return assessTerminalCommand(cmd)
         }
 

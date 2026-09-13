@@ -32,7 +32,7 @@ use crate::reasoning::ReasoningEffort;
 // comfortably above real checkpoint templates and prompts while preventing a
 // small template from consuming unbounded CPU or memory before tokenization.
 const TEMPLATE_FUEL: u64 = 1_000_000;
-const MAX_RENDERED_BYTES: usize = 8 * 1024 * 1024;
+const MAX_RENDERED_BYTES: usize = 1 << 20;
 
 struct BoundedOutput {
     bytes: Vec<u8>,
@@ -172,6 +172,8 @@ pub fn render_generic_chat_template(
     let source = source.as_ref();
 
     let mut env = Environment::new();
+    // Model repositories control this source. Bound both VM work and output
+    // so loading a tokenizer cannot turn a small sidecar into unbounded work.
     env.set_fuel(Some(TEMPLATE_FUEL));
     env.add_function("raise_exception", raise_exception);
     // transformers' own chat-template global. gpt-oss's Harmony template is

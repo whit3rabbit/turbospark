@@ -237,6 +237,9 @@ impl crate::ChatModel for ReportingModel {
     fn model_id(&self) -> &str {
         self.inner.model_id()
     }
+    fn model_aliases(&self) -> Vec<String> {
+        self.inner.model_aliases()
+    }
     fn vision(&self) -> Option<crate::vision::VisionInfo> {
         self.inner.vision()
     }

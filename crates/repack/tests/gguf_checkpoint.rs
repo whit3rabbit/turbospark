@@ -59,6 +59,34 @@ impl Fixture {
     }
 }
 
+/// Routed weights are consumed with architecture dimensions rather than
+/// dimensions carried through layout.json. Accepting a smaller rank-2 body
+/// would therefore let the Metal kernels read beyond the packed expert slot.
+#[test]
+fn rank_two_routed_weights_are_rejected_before_install() {
+    for name in [
+        "blk.0.ffn_gate_up_exps.weight",
+        "blk.0.ffn_down_exps.weight",
+    ] {
+        let f = Fixture::new();
+        let mut header = f.header.clone();
+        header.tensors.get_mut(name).expect("routed tensor").dims = vec![32, f.shape.num_experts];
+
+        let err = match orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&f.bytes)) {
+            Ok(_) => panic!("a rank-2 routed weight must not reach the packed layout"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, GgufRepackError::ShapeMismatch { .. }),
+            "expected a shape error for {name}, got {err}"
+        );
+        assert!(
+            err.to_string().contains("expected routed shape"),
+            "{name}: {err}"
+        );
+    }
+}
+
 #[test]
 fn resident_tensors_keep_their_bytes_names_and_logical_shapes() {
     let f = Fixture::new();
@@ -883,6 +911,38 @@ fn a_dense_llama_gguf_installs_and_its_manifest_loads() {
             "slot {slot} must name an executable block type, not `absent`"
         );
     }
+}
+
+/// Qwen2 keeps the ordinary dense Llama layer layout but adds Q/K/V biases.
+/// This fixture proves the GGUF name table, F32-to-BF16 resident transcode,
+/// and dense manifest path together before a real Q3_K_M stream is attempted.
+#[test]
+fn a_qwen2_gguf_installs_with_qkv_biases() {
+    let (bytes, _) = turbospark_repack::build_synthetic_qwen2_gguf();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let dir = tempdir();
+    let arch =
+        write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "qwen2", |_| {})
+            .expect("Qwen2 GGUF install writes");
+
+    assert_eq!(arch.family, model_io::ModelFamily::Qwen2Dense);
+    assert_eq!(arch.head_dim, 64);
+    assert!(!arch.tie_word_embeddings);
+    assert_eq!(arch.full_attention_layer_mask, vec![1, 1]);
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("Qwen2 GGUF manifest validates");
+
+    let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+        .expect("Qwen2 resident index loads");
+    for layer in 0..2 {
+        for projection in ["q", "k", "v"] {
+            let name =
+                format!("language_model.model.layers.{layer}.self_attn.{projection}_proj.bias");
+            assert_eq!(index.entries[&name].dtype, 1, "{name} is BF16");
+        }
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// ROADMAP M5's structural fixture: does the walk survive a `gpt-oss`-shaped

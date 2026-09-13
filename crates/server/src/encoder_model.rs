@@ -59,6 +59,13 @@ impl ChatModel for RealEncoderModel {
         &self.model_id
     }
 
+    // An encoder has no generative completion path, so advertising a
+    // Claude-discoverable alias for it would put an unusable choice in the
+    // Claude Code model picker.
+    fn model_aliases(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     fn supports_embeddings(&self) -> bool {
         true
     }
