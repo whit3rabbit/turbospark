@@ -1,10 +1,12 @@
 //! Background server daemon management: start, stop, restart, and status.
 
 use std::fs::{self, OpenOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
+
+const API_KEY_ENV: &str = "TURBOSPARK_API_KEY";
 
 /// Locate the `turbospark-server` binary: adjacent to the current executable first,
 /// then falling back to PATH.
@@ -54,10 +56,7 @@ fn daemon_lock_path() -> PathBuf {
 #[cfg(unix)]
 fn acquire_daemon_lock() -> Result<fs::File, String> {
     let path = daemon_lock_path();
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
+    let file = private_open_options()
         .open(&path)
         .map_err(|e| format!("opening daemon lock {}: {e}", path.display()))?;
     let rc = unsafe {
@@ -130,10 +129,65 @@ fn extract_port(args: &[String]) -> u16 {
     8080
 }
 
+fn server_args_and_api_key(args: &[String]) -> (Vec<String>, Option<String>) {
+    let mut server_args = Vec::with_capacity(args.len());
+    let mut api_key = None;
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == "--api-key" && args.get(index + 1).is_some_and(|value| !value.is_empty())
+        {
+            api_key = Some(args[index + 1].clone());
+            index += 2;
+        } else {
+            server_args.push(args[index].clone());
+            index += 1;
+        }
+    }
+    (server_args, api_key)
+}
+
+#[cfg(unix)]
+fn private_open_options() -> OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true).mode(0o600);
+    options
+}
+
+#[cfg(not(unix))]
+fn private_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    options
+}
+
+fn write_private_file(path: PathBuf, contents: &[u8]) -> Result<(), std::io::Error> {
+    use std::io::Write;
+
+    let mut file = private_open_options().open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(contents)
+}
+
+fn create_private_run_dir(path: &Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 /// Start the server as a background daemon.
 pub fn start(args: &[String]) -> Result<(), String> {
     let run = run_dir();
-    fs::create_dir_all(&run)
+    create_private_run_dir(&run)
         .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
     // Held across the whole check-then-spawn-then-write sequence below; see
     // `acquire_daemon_lock`'s own doc for the race this closes.
@@ -157,9 +211,13 @@ pub fn start(args: &[String]) -> Result<(), String> {
 
     let server_bin = find_server_binary();
     let port = extract_port(args);
+    let (server_args, api_key) = server_args_and_api_key(args);
 
     let mut cmd = Command::new(&server_bin);
-    cmd.args(args);
+    cmd.args(&server_args);
+    if let Some(api_key) = api_key {
+        cmd.env(API_KEY_ENV, api_key);
+    }
     cmd.stdout(log_handle.try_clone().map_err(|e| e.to_string())?);
     cmd.stderr(log_handle);
 
@@ -174,14 +232,15 @@ pub fn start(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("failed to launch {}: {e}", server_bin.display()))?;
 
     let pid = child.id() as i32;
-    fs::write(pid_file(), format!("{pid}\n")).map_err(|e| format!("writing pid file: {e}"))?;
+    write_private_file(pid_file(), format!("{pid}\n").as_bytes())
+        .map_err(|e| format!("writing pid file: {e}"))?;
 
     let meta = serde_json::json!({
         "pid": pid,
         "port": port,
-        "args": args,
+        "args": server_args,
     });
-    let _ = fs::write(meta_file(), meta.to_string());
+    let _ = write_private_file(meta_file(), meta.to_string().as_bytes());
 
     // Give process a moment to verify it didn't abort on startup.
     thread::sleep(Duration::from_millis(400));
@@ -212,7 +271,7 @@ pub fn start(args: &[String]) -> Result<(), String> {
 /// Stop the background daemon if running.
 pub fn stop() -> Result<(), String> {
     let run = run_dir();
-    fs::create_dir_all(&run)
+    create_private_run_dir(&run)
         .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
     // Same lock `start` holds, so a stop cannot land between a concurrent
     // start's own check and its pid-file write.
@@ -284,4 +343,73 @@ pub fn status() -> Result<(), String> {
     println!("Endpoint: http://127.0.0.1:{port}/v1");
     println!("Log file: {}", log_file().display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_keys_leave_server_arguments_and_last_value_moves_to_environment() {
+        let args = [
+            "--model",
+            "gemma4",
+            "--api-key",
+            "first-secret",
+            "--port",
+            "9000",
+            "--api-key",
+            "final-secret",
+        ]
+        .map(String::from);
+
+        let (server_args, api_key) = server_args_and_api_key(&args);
+
+        assert_eq!(
+            server_args,
+            ["--model", "gemma4", "--port", "9000"].map(String::from)
+        );
+        assert_eq!(api_key.as_deref(), Some("final-secret"));
+    }
+
+    #[test]
+    fn invalid_api_key_arguments_remain_for_server_validation() {
+        for args in [
+            vec![
+                "--model".to_string(),
+                "gemma4".to_string(),
+                "--api-key".to_string(),
+            ],
+            vec![
+                "--model".to_string(),
+                "gemma4".to_string(),
+                "--api-key".to_string(),
+                String::new(),
+            ],
+        ] {
+            let (server_args, api_key) = server_args_and_api_key(&args);
+            assert_eq!(server_args, args);
+            assert_eq!(api_key, None);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_state_files_ignore_a_permissive_umask() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "turbospark-private-state-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        write_private_file(path.clone(), b"secret").unwrap();
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_file(path).unwrap();
+    }
 }
