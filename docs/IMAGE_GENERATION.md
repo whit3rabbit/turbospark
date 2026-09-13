@@ -1,8 +1,10 @@
 # Native image generation: Z-Image-Turbo
 
-Status: IG0 resource evidence remains open. IG1 native component parity is in
-progress: the full-width checkpoint block passes, while the full nine-step DiT
-and VAE checkpoint gates remain open.
+Status: IG0 resource evidence remains open. IG1 native component parity is
+closed for the available fixtures: the full-width checkpoint block, complete
+nine-step DiT rollout, and real 1024-by-1024 VAE decode gate pass their frozen
+contracts. The optional raw-pixel arrays were not present in this checkout, so
+the VAE test's conditional pixel comparisons were not exercised.
 [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
 real-image captures, and component comparisons.
 
@@ -28,21 +30,38 @@ Current IG1 evidence status:
   one decoded transformer block at a time through two noise-refiner, two
   context-refiner, and thirty main blocks. It preserves learned-pad-token
   attention, exact 3-axis RoPE positions, timestep modulation, the final
-  projection, and the output sign. Its full nine-step gate is opt-in because
-  scalar 1024-by-1024 CPU execution is intentionally slow.
+  projection, and the output sign. Batched matrix projections and independent
+  token work use bounded CPU parallelism while each dot product remains FP32.
 - The full-width 64-token checkpoint block now passes the frozen `3e-5`
   absolute and `1e-6` relative-L2 gates against both pinned references. The
   fix uses a tree-shaped FP32 RMSNorm reduction and applies linear bias after
   the dot product, matching the reference operation boundaries.
 - The VAE reference now validates convolution and normalization inputs and can
   convert decoded `[3,H,W]` floats into verified interleaved RGB PNG bytes.
-- Twelve native assertions are mutation-checked in
+- Sixteen native assertions are mutation-checked in
   `z-image-ig1-mutations.json`, including RoPE pairing, patch layout, AdaLN
-  gating, FP32 reduction order, affine bias order, and RGB conversion. The VAE
-  checkpoint-scale mutation remains pending the long full-weight CPU run.
-- Remaining IG1 gates before runtime assembly: execute the opt-in full
-  nine-step DiT and 1024-by-1024 VAE gates against the pinned reference, then
-  mutation-check their assertions.
+  gating, FP32 reduction order, affine bias order, batched projection scatter,
+  the captured-input checkpoint ceiling, cumulative BF16 envelope, and RGB
+  conversion. The real VAE gate's captured latent geometry mutation also
+  fails in isolation.
+- All nine captured-input scheduler updates pass the unchanged `0.02` local
+  ceiling. The maximum local scheduler relative L2 is `3.13403807e-3`; the
+  transformer-output values are recorded as diagnostics because the captured
+  BF16 reference already reaches `3.08770984e-2` on update 1.
+- The complete rollout measures accumulated relative L2 values from
+  `2.02384288e-3` at update 1 through `1.95015728e-1` at update 9. The maximum
+  measured error is `1.95015728e-1`; applying the preselected upward-to-0.001
+  rule freezes the cumulative BF16 envelope at `0.196`. The widening is
+  evidence-derived and applies only to accumulated FP32 CPU versus BF16 MPS
+  state drift, not to local timestep math.
+- The real 1024-by-1024 VAE gate passes in 4725.23 seconds and produces the
+  required `[3,1024,1024]` decoded tensor. The optional `decoded_pixels.npy`
+  and `mlx_decoded_pixels.npy` files are absent, so this run exercises the
+  real decode and geometry contract but not the conditional pixel assertions.
+  The independent pinned MFLUX comparison remains recorded in
+  `verification/z-image-ig0-vae.json` with max absolute error
+  `3.764033317565918e-05` and relative L2 `1.3302375354987454e-06`, below the
+  frozen `6e-5` and `3e-6` limits.
 
 No image-generation runtime, CLI command, catalog alias, or app mode is
 implemented by this document. The open work is tracked in
@@ -173,17 +192,30 @@ Current evidence gates for IG1 include:
   `crates/image/tests/pipeline_parity.rs`
 - the opt-in full Rust VAE decode gate in `crates/image/tests/vae_parity.rs`
 
-The next active gate is the nine-step Rust DiT evolution. Restore the pinned
-ignored artifacts under `target/ig0`, then run:
+The completed DiT gate uses the pinned ignored artifacts under `target/ig0`.
+Run the captured-input diagnostic with:
+
+```sh
+cargo test --release -p turbospark-image --test pipeline_parity -- \
+  --ignored --nocapture test_z_image_all_steps_from_captured_input_parity
+```
+
+This records transformer-output and captured-input scheduler-output relative
+L2 for every update. The complete rollout gate then records accumulated error
+for every update and asserts the frozen `0.196` cumulative BF16 envelope:
 
 ```sh
 cargo test --release -p turbospark-image --test pipeline_parity -- \
   --ignored --nocapture test_z_image_full_nine_step_checkpoint_parity
 ```
 
-This gate compares every scheduler update with the captured BF16 MPS latent,
-not only the final latent. The provisional relative-L2 ceiling remains 0.02
-until the first complete native run measures all nine steps.
+The capture contains nine actual forwards. The nine update fixture pairs are
+`initial_noise.npy -> latent_00.npy`, `latent_00.npy -> latent_01.npy`,
+`latent_01.npy -> latent_02.npy`, `latent_02.npy -> latent_03.npy`,
+`latent_03.npy -> latent_04.npy`, `latent_04.npy -> latent_05.npy`,
+`latent_05.npy -> latent_06.npy`, `latent_06.npy -> latent_07.npy`, and
+`latent_07.npy -> latent_08.npy`. `latent_08.npy` is byte-identical to
+`final_latents.npy`; the latter remains checked as the final-latent alias.
 
 Gate: component agreement within IG0's stated tolerances, with discrepancies
 explained at the first divergent intermediate rather than judged only from

@@ -580,15 +580,17 @@ mod tests {
     #[test]
     fn batched_linear_matches_independent_rows() {
         let x = [1.0, 2.0, 3.0, -2.0, 0.5, 4.0];
-        let weight = [2.0, -1.0, 0.5, 1.0, 3.0, -2.0];
-        let bias = [0.25, -0.5];
+        let weight: Vec<f32> = (0..130 * 3)
+            .map(|index| (index % 17 - 8) as f32 * 0.125)
+            .collect();
+        let bias: Vec<f32> = (0..130).map(|index| index as f32 * 0.25).collect();
         let expected: Vec<f32> = x
             .chunks(3)
-            .flat_map(|row| linear_forward(row, &weight, Some(&bias), 2, 3))
+            .flat_map(|row| linear_forward(row, &weight, Some(&bias), 130, 3))
             .collect();
 
         assert_eq!(
-            linear_forward_batch(&x, &weight, Some(&bias), 2, 2, 3),
+            linear_forward_batch(&x, &weight, Some(&bias), 2, 130, 3),
             expected
         );
     }

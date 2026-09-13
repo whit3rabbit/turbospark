@@ -82,5 +82,34 @@
     "expected_failed_case": "test_decoded_rgb_and_png_contract",
     "applied_unique": true,
     "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/transformer.rs",
+    "mutation": "let start = 0;",
+    "expected_failed_case": "transformer::tests::batched_linear_matches_independent_rows",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/tests/pipeline_parity.rs",
+    "mutation": "scheduler_error <= 0.001,",
+    "expected_failed_case": "test_z_image_all_steps_from_captured_input_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/tests/pipeline_parity.rs",
+    "mutation": "const CUMULATIVE_BF16_REL_L2_LIMIT: f32 = 0.194;",
+    "expected_failed_case": "test_z_image_full_nine_step_checkpoint_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/tests/vae_parity.rs",
+    "mutation": "assert_eq!(latents.shape, vec![1, 16, 128, 127]);",
+    "expected_failed_case": "test_vae_real_decode_parity",
+    "applied_unique": true,
+    "isolated_failure": true,
+    "note": "The optional decoded_pixels.npy and mlx_decoded_pixels.npy fixtures were absent, so the exercised real-gate assertion was the captured latent geometry contract."
   }
 ]
