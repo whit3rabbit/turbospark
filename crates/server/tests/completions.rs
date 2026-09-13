@@ -4,10 +4,14 @@
 //! loopback port, real tokenizer, scripted "model".
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use runtime::{
+    CancelFlag, GenerationConfig, LogitProducer, MemoryPressure, RateControl, RawDecodeProgress,
+    RawDecodeResult, RuntimeError, ThermalLevel,
+};
 use tokenizer::MfTokenizer;
-use turbospark_server::{build_router, ScriptedChatModel};
+use turbospark_server::{build_router, ChatModel, ScriptedChatModel};
 
 fn load_tokenizer() -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
@@ -31,6 +35,75 @@ async fn spawn_server(steps: Vec<Vec<foundation::LogitValue>>) -> String {
         axum::serve(listener, router).await.unwrap();
     });
     format!("http://{addr}")
+}
+
+struct RateRecordingModel {
+    inner: ScriptedChatModel,
+    seen: Arc<Mutex<Vec<RateControl>>>,
+}
+
+impl ChatModel for RateRecordingModel {
+    fn tokenizer(&self) -> &MfTokenizer {
+        self.inner.tokenizer()
+    }
+
+    fn vocab_size(&self) -> usize {
+        self.inner.vocab_size()
+    }
+
+    fn max_context(&self) -> u32 {
+        self.inner.max_context()
+    }
+
+    fn model_id(&self) -> &str {
+        self.inner.model_id()
+    }
+
+    fn with_producer(
+        &self,
+        f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
+    ) -> Result<RawDecodeResult, RuntimeError> {
+        self.inner.with_producer(f)
+    }
+
+    fn run_completion(
+        &self,
+        prompt_ids: &[foundation::TokenId],
+        config: &GenerationConfig,
+        images: Option<&turbospark_server::vision::RequestImages>,
+        cancel: CancelFlag<'_>,
+        on_progress: &mut dyn FnMut(RawDecodeProgress),
+    ) -> Result<RawDecodeResult, RuntimeError> {
+        self.seen.lock().unwrap().push(config.rate);
+        self.inner
+            .run_completion(prompt_ids, config, images, cancel, on_progress)
+    }
+
+    fn rate_control(&self) -> RateControl {
+        RateControl {
+            max_tokens_per_sec: Some(1_000_000.0),
+            thermal_probe: Some(|| ThermalLevel::Nominal),
+            memory_probe: Some(|| MemoryPressure::Normal),
+        }
+    }
+}
+
+async fn spawn_rate_recording_server(
+    steps: Vec<Vec<foundation::LogitValue>>,
+) -> (String, Arc<Mutex<Vec<RateControl>>>) {
+    let tok = load_tokenizer();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model: Arc<dyn ChatModel> = Arc::new(RateRecordingModel {
+        inner: ScriptedChatModel::new(tok, 4096, steps),
+        seen: Arc::clone(&seen),
+    });
+    let router = build_router(model);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (format!("http://{addr}"), seen)
 }
 
 fn h_steps(tok: &MfTokenizer, count: usize) -> Vec<Vec<foundation::LogitValue>> {
@@ -59,6 +132,35 @@ async fn non_streaming_completion_returns_generated_text() {
     assert_eq!(body["usage"]["completion_tokens"], 3);
     let text = body["choices"][0]["text"].as_str().unwrap();
     assert!(!text.is_empty());
+}
+
+#[tokio::test]
+async fn process_rate_control_reaches_streaming_and_non_streaming_generation() {
+    let tok = load_tokenizer();
+    let (base, seen) = spawn_rate_recording_server(h_steps(&tok, 50)).await;
+    let client = reqwest::Client::new();
+
+    for stream in [false, true] {
+        let response = client
+            .post(format!("{base}/v1/completions"))
+            .json(&serde_json::json!({
+                "model": "m", "prompt": "hi", "max_tokens": 1,
+                "temperature": 0.0, "stream": stream
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let _ = response.bytes().await.unwrap();
+    }
+
+    let rates = seen.lock().unwrap();
+    assert_eq!(rates.len(), 2);
+    for rate in rates.iter() {
+        assert_eq!(rate.max_tokens_per_sec, Some(1_000_000.0));
+        assert!(rate.thermal_probe.is_some());
+        assert!(rate.memory_probe.is_some());
+    }
 }
 
 #[tokio::test]
