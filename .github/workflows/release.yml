@@ -15,7 +15,9 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.VER }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Check tag == workspace version, changelog has an entry, and every path dep pinned to it
         id: ver
@@ -83,13 +85,15 @@ jobs:
     # GitHub image rollout.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # stable
         with:
           targets: aarch64-apple-darwin
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.1
 
       # ONE job builds both artifacts, deliberately. The CLI binaries ship
       # twice -- loose in the zip, and inside TurboSpark.app for the cask to
@@ -132,7 +136,7 @@ jobs:
       # dist/ also holds the unzipped TurboSpark.app that the DMG was built
       # from. Only the two shippable files are uploaded; the loose bundle
       # would be a third, redundant, several-hundred-megabyte upload.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos-arm64
           path: |
@@ -147,7 +151,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Extract this version's CHANGELOG.md section
         id: notes
@@ -168,7 +174,7 @@ jobs:
           echo "--- release body from CHANGELOG.md ---"
           cat /tmp/changelog-section.md
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts/
           merge-multiple: true
@@ -179,7 +185,7 @@ jobs:
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
           files: artifacts/*
           body_path: /tmp/changelog-section.md
@@ -192,9 +198,11 @@ jobs:
     needs: [check-version, build-macos]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # stable
 
       - name: cargo publish, one crate at a time in dependency order
         env:
@@ -281,7 +289,7 @@ jobs:
           echo "zip=$(sha256sum cli.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "dmg=$(sha256sum app.dmg | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         if: steps.tap.outputs.available == 'true'
         with:
           repository: whit3rabbit/homebrew-tap
