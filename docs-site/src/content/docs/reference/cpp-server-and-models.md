@@ -37,8 +37,9 @@ immediately.
 
 - `port`: number (default 0, meaning let the OS choose; read the port ACTUALLY
   bound back from `ts_server_info_json`)
-- `apiKey`: string \| null (default null, meaning no auth, appropriate for a
-  server bound to loopback and reachable only by the process embedding it)
+- `apiKey`: string \| null (default null, meaning no auth). Set an API key
+  unless every local process is trusted: loopback limits network exposure but
+  does not isolate the server from other processes on the same machine.
 
 THE SERVER OUTLIVES EVERY SESSION ATTACHED TO IT. It holds its own reference
 to each underlying engine, so calling `ts_session_close(s)` after this call
