@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use super::args::{parse_model_args, short_circuit, BindMode, ModelArgs};
 use super::bind::tailnet_host;
+use super::resolve_api_key;
 
 fn parse(argv: &[&str]) -> Result<Option<ModelArgs>, String> {
     let owned: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
@@ -32,6 +33,38 @@ fn api_key_defaults_to_absent_and_reads_the_flag_value() {
 fn an_empty_api_key_is_refused() {
     let err = parse(&["--model", "/tmp/m", "--api-key", ""]).unwrap_err();
     assert!(err.contains("--api-key"), "{err}");
+}
+
+#[test]
+fn tailnet_requires_an_api_key_before_opening_the_model() {
+    let err = resolve_api_key(BindMode::Tailnet, None, None).unwrap_err();
+    assert!(err.contains("--bind tailnet requires --api-key"), "{err}");
+    assert_eq!(
+        resolve_api_key(BindMode::Tailnet, Some("flag-key".into()), None).unwrap(),
+        Some("flag-key".into())
+    );
+    assert_eq!(
+        resolve_api_key(BindMode::Tailnet, None, Some("env-key".into())).unwrap(),
+        Some("env-key".into())
+    );
+    assert!(resolve_api_key(BindMode::Tailnet, None, Some(String::new())).is_err());
+}
+
+#[test]
+fn loopback_keeps_optional_auth_and_flag_precedence() {
+    assert_eq!(
+        resolve_api_key(BindMode::Loopback, None, None).unwrap(),
+        None
+    );
+    assert_eq!(
+        resolve_api_key(
+            BindMode::Loopback,
+            Some("flag-key".into()),
+            Some("env-key".into())
+        )
+        .unwrap(),
+        Some("flag-key".into())
+    );
 }
 
 // --- vision sidecar (vision memory sidecar, Part A4) -----------------------

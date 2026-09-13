@@ -301,7 +301,7 @@ while a generation is in flight. `/v1/responses` is stateless: it refuses
 | `--paged-ssd-cache-dir` | path | none | tiered KV SSD cache directory hint (omlx compatibility) |
 | `--hot-cache-max-size` | string | none | in-memory hot cache size hint, e.g. `20%` (omlx compatibility) |
 | `--mcp-config` | path | none | MCP tools configuration file path (omlx compatibility) |
-| `--bind` | `loopback\|tailnet` | `loopback` | `tailnet` binds this machine's Tailscale IPv4 address; there is no authentication and no TLS either way -- the Tailnet ACL is the only access control under `tailnet`, unless `--api-key` is also given |
+| `--bind` | `loopback\|tailnet` | `loopback` | `tailnet` binds this machine's Tailscale IPv4 address and requires `--api-key` or `$TURBOSPARK_API_KEY`; there is no TLS |
 | `--api-key` | string | unset, `$TURBOSPARK_API_KEY` | require this key, as `x-api-key: <key>` or `Authorization: Bearer <key>`, on every route except `GET /health`; see [Bearer/x-api-key auth](#bearerx-api-key-auth) |
 | `--power-profile` | `performance\|balanced\|efficiency` | unset | same as `turbospark-check`'s |
 | `--max-tokens-per-sec` | float `> 0` | uncapped | same as `turbospark-check`'s |
@@ -348,12 +348,10 @@ including Claude Code, send) or `Authorization: Bearer KEY`. A missing or
 wrong key gets a 401 with an OpenAI-shaped error body. `--model` mode only;
 the legacy scripted mode has no `--api-key`.
 
-`--bind tailnet` on its own is NOT authentication -- the Tailnet ACL is the
-only access control, and anyone the ACL admits can reach the server
-unauthenticated. `--bind tailnet --api-key KEY` together add a real
-credential on top of that: an operator whose Tailnet grants broader access
-than they want this one server to have (a shared tailnet, a guest node) gets
-a second gate rather than relying on the ACL alone.
+`--bind tailnet` refuses to start unless `--api-key KEY` or a non-empty
+`$TURBOSPARK_API_KEY` supplies an application credential. The credential is
+required in addition to Tailnet ACL reachability. Loopback mode keeps
+authentication optional for compatibility with local-only deployments.
 
 ```sh
 TURBOSPARK_API_KEY=sk-... turbospark-server --model gemma4 --bind tailnet
