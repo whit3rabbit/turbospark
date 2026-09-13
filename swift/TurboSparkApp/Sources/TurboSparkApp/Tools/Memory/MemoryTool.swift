@@ -19,6 +19,12 @@ public enum MemoryToolExecutor {
     public static func execute(
         arguments: [String: String], project: AppProject?, store: MemoryStore = .shared
     ) throws -> String {
+        guard store.isModelEnabled else {
+            throw NSError(domain: "TurboSparkMemory", code: 7, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "The memory tool is disabled in settings."
+            ])
+        }
         guard let root = project?.rootDirectoryURL else {
             throw NSError(domain: "TurboSparkMemory", code: 3, userInfo: [
                 NSLocalizedDescriptionKey:
