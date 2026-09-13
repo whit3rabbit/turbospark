@@ -398,6 +398,7 @@ mod tests {
         ModelFamily::Spark25,
         ModelFamily::Qwen3Dense,
         ModelFamily::MiniMaxM2,
+        ModelFamily::Qwen2Dense,
     ];
 
     #[test]

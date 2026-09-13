@@ -265,7 +265,7 @@ public enum FileSearchToolDefinitions {
 
     public static let grep = OpenAITool.function(
         name: "Grep",
-        description: "Search for regular expression patterns across files in the codebase.",
+        description: "Search for regular expression patterns across files in the codebase. Uses the project's Syntext index when enabled and falls back to unindexed scanning.",
         parameters: .object(
             properties: [
                 "pattern": .string(description: "Regular expression or literal string pattern to search."),
@@ -278,6 +278,23 @@ public enum FileSearchToolDefinitions {
                 "head_limit": .integer(description: "Maximum number of lines or files to return.")
             ],
             required: ["pattern"]
+        )
+    )
+
+    public static let grepSearch = OpenAITool.function(
+        name: "grep_search",
+        description: "Preferred code-discovery tool: fast indexed regex and literal search when the project enables Syntext, with an automatic unindexed fallback. Use it instead of shelling out to grep or ripgrep. Returns paths, line numbers, and context in ripgrep format.",
+        parameters: .object(
+            properties: [
+                "query": .string(description: "The search pattern (regular expression or literal string)."),
+                "literal_search": .boolean(description: "Set to true if searching for exact literal characters like `func()`, `array[0]`, `$var`, or `Map<K,V>`."),
+                "path_filter": .string(description: "Optional glob filter to restrict files (e.g. '*.swift', 'Sources/**')."),
+                "file_types": .array(items: .string(description: "File extension"), description: "Optional list of file extensions (e.g. ['swift', 'rs'])."),
+                "case_sensitive": .boolean(description: "Case-sensitive search flag (defaults to false)."),
+                "context_lines": .integer(description: "Number of lines of code to show before and after each match (default: 2)."),
+                "max_results": .integer(description: "Maximum number of matches to return (default: 50).")
+            ],
+            required: ["query"]
         )
     )
 
@@ -297,6 +314,6 @@ public enum FileSearchToolDefinitions {
     )
 
     public static let all: [OpenAITool] = [
-        glob, grep, notebookEdit
+        glob, grep, grepSearch, notebookEdit
     ]
 }

@@ -9,12 +9,14 @@ use crate::strings;
 use crate::wire;
 use crate::{TsServer, TsSession};
 
-/// The install directory's own file name, which is the id a client puts in
-/// a request's `model` field.
+/// The install directory's own file name, which is the canonical id a client
+/// puts in a request's `model` field.
 ///
 /// Matches `RealChatModel::open`'s convention rather than using the full
 /// `model_path`: a path is not something a `GET /v1/models` row should echo,
 /// and it is not something anyone would type into a client's model field.
+/// The server additionally advertises a derived Claude Code discovery alias
+/// for this id through its model list.
 fn model_id_of(session: &session::Session) -> String {
     std::path::Path::new(&session.info.model_path)
         .file_name()

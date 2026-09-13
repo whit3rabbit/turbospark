@@ -1,19 +1,77 @@
 # Native image generation: Z-Image-Turbo
 
-Status: IG0 in progress, 2026-09-10. [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md)
-records pinned inputs, real-image captures, and component comparisons.
+Status: IG0 resource evidence remains open. IG1 native component parity is
+closed for the available fixtures: the full-width checkpoint block, complete
+nine-step DiT rollout, and real 1024-by-1024 VAE decode gate pass their frozen
+contracts. The optional raw-pixel arrays were not present in this checkout, so
+the VAE test's conditional pixel comparisons were not exercised.
+[Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
+real-image captures, and component comparisons.
 
 Current IG1 evidence status:
 
-- Conditioning, scheduler, and capture manifests are now validated by locked tests,
+- Conditioning, scheduler, and capture manifests are validated by locked tests,
   including schema, shape, and checksum checks for fixture provenance.
-- Quantization candidate policy evidence and scheduler-step parity remain the
-  remaining IG1 gates before runtime assembly.
+- Quantization candidate policy evidence is closed: 18 locked Python tests pass
+  under the reference venv.
+- Native scheduler-step parity is implemented and verified in crates/image:
+  exact schedule bit-parity for (1,1), (8,8), (9,9) against contracts JSON,
+  exact timesteps/sigmas capture agreement, and Euler step parity across
+  all nine latent steps to within 1e-6 float roundoff.
+- Native conditioning is implemented and verified in crates/image: exact prompt
+  framing string parity across all seven test prompts, exact tokenization IDs
+  and attention mask parity against captured arrays, and verified untruncated/retained
+  token bounds.
+- Native text encoder forward pass is implemented in FP32 on CPU: extracting
+  layer 34 output (block 35 of 36 pre-final-norm, hidden_states[-2]) achieves
+  8.69e-3 to 8.86e-3 relative L2 agreement against captured BF16 MPS conditioning
+  across lighting, empty, and unicode captures.
+- The portable crate now has a checkpoint-backed FP32 DiT reference that streams
+  one decoded transformer block at a time through two noise-refiner, two
+  context-refiner, and thirty main blocks. It preserves learned-pad-token
+  attention, exact 3-axis RoPE positions, timestep modulation, the final
+  projection, and the output sign. Batched matrix projections and independent
+  token work use bounded CPU parallelism while each dot product remains FP32.
+- The full-width 64-token checkpoint block now passes the frozen `3e-5`
+  absolute and `1e-6` relative-L2 gates against both pinned references. The
+  fix uses a tree-shaped FP32 RMSNorm reduction and applies linear bias after
+  the dot product, matching the reference operation boundaries.
+- The VAE reference now validates convolution and normalization inputs and can
+  convert decoded `[3,H,W]` floats into verified interleaved RGB PNG bytes.
+- Sixteen native assertions are mutation-checked in
+  `z-image-ig1-mutations.json`, including RoPE pairing, patch layout, AdaLN
+  gating, FP32 reduction order, affine bias order, batched projection scatter,
+  the captured-input checkpoint ceiling, cumulative BF16 envelope, and RGB
+  conversion. The real VAE gate's captured latent geometry mutation also
+  fails in isolation.
+- All nine captured-input scheduler updates pass the unchanged `0.02` local
+  ceiling. The maximum local scheduler relative L2 is `3.13403807e-3`; the
+  transformer-output values are recorded as diagnostics because the captured
+  BF16 reference already reaches `3.08770984e-2` on update 1.
+- The complete rollout measures accumulated relative L2 values from
+  `2.02384288e-3` at update 1 through `1.95015728e-1` at update 9. The maximum
+  measured error is `1.95015728e-1`; applying the preselected upward-to-0.001
+  rule freezes the cumulative BF16 envelope at `0.196`. The widening is
+  evidence-derived and applies only to accumulated FP32 CPU versus BF16 MPS
+  state drift, not to local timestep math.
+- The real 1024-by-1024 VAE gate passes in 4695.11 seconds and produces the
+  required `[3,1024,1024]` decoded tensor. The optional `decoded_pixels.npy`
+  and `mlx_decoded_pixels.npy` files are absent, so this run exercises the
+  real decode and geometry contract but not the conditional pixel assertions.
+  The independent pinned MFLUX comparison remains recorded in
+  `verification/z-image-ig0-vae.json` with max absolute error
+  `3.764033317565918e-05` and relative L2 `1.3302375354987454e-06`, below the
+  frozen `6e-5` and `3e-6` limits.
 
 No image-generation runtime, CLI command, catalog alias, or app mode is
 implemented by this document. The open work is tracked in
 [ROADMAP](../ROADMAP.md). This page owns the design, gates, and rationale;
 the roadmap owns the remaining task checklist.
+
+The next work is IG0 resource closure: quiet-AC cold/warm measurements,
+retained memory, swap, physical reads, activation/scratch accounting, the
+supported memory envelope, and final image manifest. IG2 may begin only after
+that evidence; app work remains IG4 after IG3 establishes bounded lifetimes.
 
 ## Direction and first release
 
@@ -133,6 +191,36 @@ Current evidence gates for IG1 include:
 - capture-manifest contracts and provenance checks in
   `scripts/test_z_image_capture_contracts.py`
 - component capture and mutation checks in `scripts/test_z_image_evidence.py`
+- the opt-in full-width Rust checkpoint block in
+  `crates/image/tests/transformer_math_parity.rs`
+- the opt-in nine-step Rust DiT evolution gate in
+  `crates/image/tests/pipeline_parity.rs`
+- the opt-in full Rust VAE decode gate in `crates/image/tests/vae_parity.rs`
+
+The completed DiT gate uses the pinned ignored artifacts under `target/ig0`.
+Run the captured-input diagnostic with:
+
+```sh
+cargo test --release -p turbospark-image --test pipeline_parity -- \
+  --ignored --nocapture test_z_image_all_steps_from_captured_input_parity
+```
+
+This records transformer-output and captured-input scheduler-output relative
+L2 for every update. The complete rollout gate then records accumulated error
+for every update and asserts the frozen `0.196` cumulative BF16 envelope:
+
+```sh
+cargo test --release -p turbospark-image --test pipeline_parity -- \
+  --ignored --nocapture test_z_image_full_nine_step_checkpoint_parity
+```
+
+The capture contains nine actual forwards. The nine update fixture pairs are
+`initial_noise.npy -> latent_00.npy`, `latent_00.npy -> latent_01.npy`,
+`latent_01.npy -> latent_02.npy`, `latent_02.npy -> latent_03.npy`,
+`latent_03.npy -> latent_04.npy`, `latent_04.npy -> latent_05.npy`,
+`latent_05.npy -> latent_06.npy`, `latent_06.npy -> latent_07.npy`, and
+`latent_07.npy -> latent_08.npy`. `latent_08.npy` is byte-identical to
+`final_latents.npy`; the latter remains checked as the final-latent alias.
 
 Gate: component agreement within IG0's stated tolerances, with discrepancies
 explained at the first divergent intermediate rather than judged only from

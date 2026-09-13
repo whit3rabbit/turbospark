@@ -124,6 +124,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::Qwen4Exp => {
             repack::parse_qwen4_exp_config(&config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Qwen2Dense => {
+            repack::parse_qwen2_config(&config_text).map_err(|e| e.to_string())
+        }
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     let quant = repack::parse_gemma4_quantization(&config_text)
@@ -205,6 +208,12 @@ pub(crate) fn stream_mlx(
         .map(|s| repack::fetch_safetensors_header(s).map_err(|e| format!("shard header: {e}")))
         .collect::<Result<Vec<_>, _>>()?;
 
+    if family == ModelFamily::Qwen2Dense {
+        for header in &mut headers {
+            repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
+        }
+    }
+
     // A separate repository carrying a multi-token-prediction head this
     // artifact's own conversion drops (`docs/MTP_SPECULATIVE.md` step 1).
     // Its shard(s) join the same multi-shard registry the trunk uses, so the
@@ -260,6 +269,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::Qwen4Exp => {
             repack::write_qwen4_exp_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
         }
+        ModelFamily::Qwen2Dense => repack::write_qwen2_dense_install_streamed(
+            dir, &arch, &model_id, &shards, &quant, report,
+        ),
         other => Err(Box::<dyn std::error::Error>::from(format!(
             "{} has no safetensors writer here",
             other.as_str()

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Settings section for managing project rules, AGENTS.md / CLAUDE.md auto-detection, and custom instructions.
+/// Settings section for live repository instructions and saved project guidance.
 struct ProjectRulesSectionView: View {
     let rootDirectoryPath: String
     @Binding var rulePreference: AppRulePreference
@@ -17,12 +17,12 @@ struct ProjectRulesSectionView: View {
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if !rootDirectoryPath.isEmpty {
-                    Button("Detect CLAUDE.md / AGENTS.md") {
+                    Button("Check Project Instructions") {
                         onAutoDetect()
                     }
                     .themedFont(.small)
                     .buttonStyle(.borderless)
-                    .help("Detect project rules from AGENTS.md or CLAUDE.md")
+                    .help("Check the live AGENTS.md, CLAUDE.md, and CONTEXT.md files for this project")
                 }
             }
 
@@ -53,8 +53,8 @@ struct ProjectRulesSectionView: View {
                 .padding(4)
                 .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
-                .accessibilityLabel("Project rules and instructions")
-                .accessibilityHint("Free-form text sent to the model as project-specific guidance")
+                .accessibilityLabel("Additional project instructions")
+                .accessibilityHint("Guidance stored with this project; repository instruction files are read live")
         }
     }
 }

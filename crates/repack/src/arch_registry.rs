@@ -121,6 +121,12 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // `FFN_DOWN` -- exactly `Qwen3Moe`'s attention switch plus `Llama`'s
     // dense-FFN switch, both already carried by `RealLlamaState`.
     ("qwen3", ModelFamily::Qwen3Dense),
+    // Dense Qwen2/Qwen2.5 uses the shared Llama flow with QKV projection
+    // biases and the Qwen2 RMS epsilon. Read off the official single-file
+    // Qwen2.5-7B Q3_K_M artifact (the block type remains parse-only until a
+    // Q3_K resident kernel exists).
+    // `Qwen/Qwen2.5-7B-Instruct-GGUF/qwen2.5-7b-instruct-q3_k_m.gguf`
+    ("qwen2", ModelFamily::Qwen2Dense),
     ("minimax-m2", ModelFamily::MiniMaxM2),
 ];
 
@@ -171,6 +177,10 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // between the strings suggests.
     ("qwen4_exp", ModelFamily::Qwen4Exp),
     ("qwen4_exp_text", ModelFamily::Qwen4Exp),
+    // Read off `mlx-community/Qwen2.5-7B-Instruct-4bit` @
+    // c8e9187488f846965507bfc2b3957d59fd0d5a27. The root config is the
+    // plain `qwen2` form used by this parser.
+    ("qwen2", ModelFamily::Qwen2Dense),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.

@@ -152,6 +152,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Whether older turns are summarized automatically as the prompt
     /// approaches the context window (context compaction).
     public var autoCompact: Bool
+    /// Native agent efficiency defaults, each independently reversible.
+    public var actionFusion: Bool
+    public var observationPack: Bool
+    public var evidenceReducer: Bool
+    public var todoBoundaryCompaction: Bool
     /// How many trailing message rows stay verbatim after a compaction.
     public var compactionKeepRecentTurns: Int
     /// Port the in-process server pins to, 0 = first free port. Persisted
@@ -159,15 +164,23 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// server API key deliberately does NOT live here (see
     /// `ServerKeychain`).
     public var serverPinnedPort: UInt16
-    /// User-authored system prompt applied to every turn that has no per-chat
-    /// prompt of its own.
-    ///
-    /// It is the FIRST section of the assembled system message, ahead of every
-    /// project-derived one, so a project's own rules read as refinements of it
-    /// rather than as a competing set of instructions. Empty means no default,
-    /// which is what every install written before this field existed decodes
-    /// to and therefore leaves their behaviour unchanged.
+    /// Compatibility mirror of the currently selected reusable system prompt.
+    /// The prompt library and its selection are the source of truth.
     public var defaultSystemPrompt: String
+    /// Reusable app-wide system prompts. A fresh settings file starts with a
+    /// compact coding-agent default and two alternatives. An encoded empty
+    /// array is an intentional user choice and remains empty.
+    public var systemPrompts: [AppSystemPrompt]
+    /// UUID string of the selected app-wide system prompt, or empty for none.
+    public var activeSystemPromptID: String
+    /// App-wide response-style prompts. A newly initialized settings file
+    /// starts with the compact built-in library, while an empty array means
+    /// the user deliberately removed every entry.
+    public var personalities: [AppPersonality]
+    /// UUID string of the selected personality, or empty for none. A string
+    /// mirrors `activeSteeringPresetID` and leaves malformed hand edits
+    /// harmless at decode time.
+    public var activePersonalityID: String
     /// User-scope plugin enable state, keyed `<plugin>@<origin>`
     /// (`swift/docs/SWIFT_PLUGINS.md`). Absent means enabled: an installed plugin
     /// that nothing disabled runs. Claude Code's own setting is consulted
@@ -199,6 +212,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Caps are applied at prompt time (`AgentModeHints.normalized`), not
     /// here, so a hand-edited file keeps its text on disk.
     public var agentModeHints: AgentModeHints
+    /// Whether Syntext code search and project indexing is enabled globally.
+    public var syntextIndexingEnabled: Bool
 
     public init(
         contextTokens: Int = 0,
@@ -242,9 +257,17 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         interactionMode: String = "chat",
         alwaysStartInGhostMode: Bool = false,
         autoCompact: Bool = true,
+        actionFusion: Bool = true,
+        observationPack: Bool = true,
+        evidenceReducer: Bool = true,
+        todoBoundaryCompaction: Bool = true,
         compactionKeepRecentTurns: Int = 2,
         serverPinnedPort: UInt16 = 0,
-        defaultSystemPrompt: String = "",
+        defaultSystemPrompt: String = AppSystemPrompt.builtIns[0].instructions,
+        systemPrompts: [AppSystemPrompt] = AppSystemPrompt.builtIns,
+        activeSystemPromptID: String = AppSystemPrompt.builtIns[0].id.uuidString,
+        personalities: [AppPersonality] = AppPersonality.builtIns,
+        activePersonalityID: String = "",
         enabledPlugins: [String: Bool] = [:],
         showMenuBarItem: Bool = true,
         keepFansPinnedOnQuit: Bool = false,
@@ -253,7 +276,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         serverEmbeddingModel: String = "",
         hfEndpoint: String = "",
         memoryEnabled: Bool = true,
-        agentModeHints: AgentModeHints = AgentModeHints()
+        agentModeHints: AgentModeHints = AgentModeHints(),
+        syntextIndexingEnabled: Bool = true
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -296,9 +320,38 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.interactionMode = interactionMode
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
         self.autoCompact = autoCompact
+        self.actionFusion = actionFusion
+        self.observationPack = observationPack
+        self.evidenceReducer = evidenceReducer
+        self.todoBoundaryCompaction = todoBoundaryCompaction
         self.compactionKeepRecentTurns = compactionKeepRecentTurns
         self.serverPinnedPort = serverPinnedPort
-        self.defaultSystemPrompt = defaultSystemPrompt
+        let starterPrompts = AppSystemPrompt.builtIns
+        let usesStarterSelection = systemPrompts == starterPrompts
+            && activeSystemPromptID == starterPrompts[0].id.uuidString
+        let trimmedDefaultPrompt = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if usesStarterSelection && trimmedDefaultPrompt != starterPrompts[0].instructions {
+            // Preserve the historical initializer's `defaultSystemPrompt:`
+            // contract for callers and old tests that construct settings
+            // without knowing about the new library fields.
+            if trimmedDefaultPrompt.isEmpty {
+                self.systemPrompts = starterPrompts
+                self.activeSystemPromptID = ""
+                self.defaultSystemPrompt = ""
+            } else {
+                let imported = AppSystemPrompt(
+                    name: "Imported Default", instructions: trimmedDefaultPrompt)
+                self.systemPrompts = [imported]
+                self.activeSystemPromptID = imported.id.uuidString
+                self.defaultSystemPrompt = imported.instructions
+            }
+        } else {
+            self.defaultSystemPrompt = defaultSystemPrompt
+            self.systemPrompts = systemPrompts
+            self.activeSystemPromptID = activeSystemPromptID
+        }
+        self.personalities = personalities
+        self.activePersonalityID = activePersonalityID
         self.enabledPlugins = enabledPlugins
         self.showMenuBarItem = showMenuBarItem
         self.keepFansPinnedOnQuit = keepFansPinnedOnQuit
@@ -308,6 +361,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.hfEndpoint = hfEndpoint
         self.memoryEnabled = memoryEnabled
         self.agentModeHints = agentModeHints
+        self.syntextIndexingEnabled = syntextIndexingEnabled
     }
 
     /// Tolerant of a wrong TYPE as well as an absent key (state#59).
@@ -371,11 +425,57 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
         self.autoCompact = c.decodeLenient(Bool.self, forKey: .autoCompact, fallback: true)
+        self.actionFusion = c.decodeLenient(Bool.self, forKey: .actionFusion, fallback: true)
+        self.observationPack = c.decodeLenient(Bool.self, forKey: .observationPack, fallback: true)
+        self.evidenceReducer = c.decodeLenient(Bool.self, forKey: .evidenceReducer, fallback: true)
+        self.todoBoundaryCompaction = c.decodeLenient(
+            Bool.self, forKey: .todoBoundaryCompaction, fallback: true)
         self.compactionKeepRecentTurns = c.decodeLenient(
             Int.self, forKey: .compactionKeepRecentTurns, fallback: 2)
         self.serverPinnedPort = c.decodeLenient(UInt16.self, forKey: .serverPinnedPort, fallback: 0)
-        self.defaultSystemPrompt = c.decodeLenient(
+        let legacyDefaultSystemPrompt = c.decodeLenient(
             String.self, forKey: .defaultSystemPrompt, fallback: "")
+        if c.contains(.systemPrompts) {
+            // An encoded empty library is intentional removal. A stale or
+            // malformed selection becomes None rather than another prompt.
+            let decodedPrompts = c.decodeLenientElements(
+                AppSystemPrompt.self, forKey: .systemPrompts)
+            let selectedID = c.decodeLenient(
+                String.self, forKey: .activeSystemPromptID, fallback: "")
+            let activeID = UUID(uuidString: selectedID)
+                .flatMap { id in decodedPrompts.contains(where: { $0.id == id }) ? id : nil }
+            self.systemPrompts = decodedPrompts
+            self.activeSystemPromptID = activeID?.uuidString
+                ?? ""
+            self.defaultSystemPrompt = activeID
+                .flatMap { id in decodedPrompts.first(where: { $0.id == id })?.instructions }
+                ?? ""
+        } else {
+            // A pre-library settings file can hold a meaningful custom
+            // default. Preserve it as a named row instead of replacing it
+            // with the new starter prompt during migration.
+            let trimmedLegacyPrompt = legacyDefaultSystemPrompt
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let migratedPrompts: [AppSystemPrompt]
+            if trimmedLegacyPrompt.isEmpty {
+                migratedPrompts = AppSystemPrompt.builtIns
+            } else {
+                migratedPrompts = [
+                    AppSystemPrompt(name: "Imported Default", instructions: trimmedLegacyPrompt)
+                ]
+            }
+            self.systemPrompts = migratedPrompts
+            self.activeSystemPromptID = migratedPrompts.first?.id.uuidString ?? ""
+            self.defaultSystemPrompt = migratedPrompts.first?.instructions ?? ""
+        }
+        // Missing means this settings file predates personalities, so seed the
+        // initial library. An encoded empty array is intentional removal and
+        // must remain empty rather than repopulating itself on every launch.
+        self.personalities = c.contains(.personalities)
+            ? c.decodeLenientElements(AppPersonality.self, forKey: .personalities)
+            : AppPersonality.builtIns
+        self.activePersonalityID = c.decodeLenient(
+            String.self, forKey: .activePersonalityID, fallback: "")
         self.enabledPlugins = c.decodeLenient(
             [String: Bool].self, forKey: .enabledPlugins, fallback: [:])
         self.showMenuBarItem = c.decodeLenient(
@@ -394,6 +494,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .memoryEnabled, fallback: true)
         self.agentModeHints = c.decodeLenient(
             AgentModeHints.self, forKey: .agentModeHints, fallback: AgentModeHints())
+        self.syntextIndexingEnabled = c.decodeLenient(
+            Bool.self, forKey: .syntextIndexingEnabled, fallback: true)
     }
 }
 

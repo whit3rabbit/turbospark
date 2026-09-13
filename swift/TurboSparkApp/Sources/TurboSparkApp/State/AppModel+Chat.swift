@@ -291,6 +291,8 @@ extension AppModel {
         // Delete action included) to call `endGhostChat()` instead.
         if chats[index].isGhost {
             ghostVault.wipe(for: id)
+        } else {
+            ToolObservationStore.shared.delete(chatID: id)
         }
         // A deleted chat's queued drafts are discarded WITH it: the user's
         // deletion is the older intent, and a prompt parked for a chat with
@@ -481,4 +483,3 @@ extension AppModel {
         }
     }
 }
-

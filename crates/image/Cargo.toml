@@ -1,0 +1,23 @@
+[package]
+name = "turbospark-image"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Native image generation pipeline: scheduler, conditioning, text encoder."
+
+[lib]
+name = "turbospark_image"
+path = "src/lib.rs"
+
+[dependencies]
+compute = { package = "turbospark-compute", path = "../compute", version = "0.1.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
+ndarray = "0.16"
+png = "0.18"
+rayon = "1"
+serde_json = "1"
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }

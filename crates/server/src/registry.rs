@@ -21,16 +21,38 @@ use std::sync::Arc;
 
 use crate::model::ChatModel;
 
-/// One row of `GET /v1/models`, and what the FFI reports back to a GUI.
+/// One attached backend, its public ids, and what the FFI reports back to a GUI.
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelRow {
     /// The id a client puts in a request's `model` field.
     pub id: String,
+    /// Extra public ids that resolve to this same backend. `GET /v1/models`
+    /// expands these into first-class response entries because Claude Code's
+    /// gateway discovery filters on the entry's id.
+    pub aliases: Vec<String>,
     /// The resolved context window, which is a property of how the model was
     /// OPENED rather than of the checkpoint (AGENTS.md Gotcha 55), so it is
     /// reported per row rather than assumed.
     pub max_context: u32,
+}
+
+impl ModelRow {
+    /// Every id clients may use for this backend, in stable display order.
+    pub fn ids(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.id.as_str()).chain(self.aliases.iter().map(String::as_str))
+    }
+}
+
+/// Builds the registry-facing metadata for one backend. Kept here so the
+/// static registry and the FFI's live registry cannot disagree about which
+/// identities a model exposes.
+pub fn model_row(model: &dyn ChatModel) -> ModelRow {
+    ModelRow {
+        id: model.model_id().to_string(),
+        aliases: model.model_aliases(),
+        max_context: model.max_context(),
+    }
 }
 
 /// What [`ModelRegistry::resolve`] decided.
@@ -83,10 +105,7 @@ impl ModelRegistry for SingleModel {
     }
 
     fn rows(&self) -> Vec<ModelRow> {
-        vec![ModelRow {
-            id: self.0.model_id().to_string(),
-            max_context: self.0.max_context(),
-        }]
+        vec![model_row(&*self.0)]
     }
 }
 
@@ -100,19 +119,19 @@ impl ModelRegistry for SingleModel {
 pub struct StaticRegistry(Vec<Arc<dyn ChatModel>>);
 
 impl StaticRegistry {
-    /// Refuses a duplicate `model_id()` rather than silently shadowing one
-    /// entry with another: `resolve_among`'s exact-id match returns the
-    /// FIRST hit, so two rows sharing an id would make the second
-    /// permanently unreachable by name, with no error anywhere naming which
-    /// one a request actually landed on.
+    /// Refuses a duplicate public identity rather than silently shadowing one
+    /// entry with another: `resolve_among`'s exact-id match returns the FIRST
+    /// hit, so two canonical ids or aliases sharing an id would make the
+    /// second permanently unreachable by name.
     pub fn new(models: Vec<Arc<dyn ChatModel>>) -> Result<Self, String> {
         let mut seen = std::collections::HashSet::new();
         for m in &models {
-            if !seen.insert(m.model_id()) {
-                return Err(format!(
-                    "duplicate model id {:?}: two attached models cannot share one id",
-                    m.model_id()
-                ));
+            for id in model_row(&**m).ids() {
+                if !seen.insert(id.to_string()) {
+                    return Err(format!(
+                        "duplicate model identity {id:?}: two attached models cannot share an id or alias"
+                    ));
+                }
             }
         }
         Ok(Self(models))
@@ -129,13 +148,7 @@ impl ModelRegistry for StaticRegistry {
     }
 
     fn rows(&self) -> Vec<ModelRow> {
-        self.0
-            .iter()
-            .map(|m| ModelRow {
-                id: m.model_id().to_string(),
-                max_context: m.max_context(),
-            })
-            .collect()
+        self.0.iter().map(|m| model_row(&**m)).collect()
     }
 }
 
@@ -191,7 +204,10 @@ fn resolve_capability(
     let wants = |m: &Arc<dyn ChatModel>| m.supports_embeddings() == want_embedding;
     if let Some(name) = requested {
         if !name.is_empty() {
-            if let Some(hit) = models.iter().find(|m| m.model_id() == name && wants(m)) {
+            if let Some(hit) = models
+                .iter()
+                .find(|m| wants(m) && model_row(&***m).ids().any(|id| id == name))
+            {
                 return Resolution::Model(Arc::clone(hit));
             }
         }
@@ -205,7 +221,15 @@ fn resolve_capability(
         [only] => Resolution::Model(Arc::clone(only)),
         several => Resolution::Unknown {
             requested: requested.unwrap_or("").to_string(),
-            available: several.iter().map(|m| m.model_id().to_string()).collect(),
+            available: several
+                .iter()
+                .flat_map(|m| {
+                    model_row(&***m)
+                        .ids()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
         },
     }
 }
@@ -222,6 +246,7 @@ mod tests {
         inner: ScriptedChatModel,
         id: String,
         is_embedding: bool,
+        aliases: Option<Vec<String>>,
     }
 
     impl ChatModel for Named {
@@ -236,6 +261,15 @@ mod tests {
         }
         fn model_id(&self) -> &str {
             &self.id
+        }
+        fn model_aliases(&self) -> Vec<String> {
+            if self.is_embedding {
+                Vec::new()
+            } else {
+                self.aliases
+                    .clone()
+                    .unwrap_or_else(|| vec![format!("claude-turbospark-{}", self.model_id())])
+            }
         }
         fn with_producer(
             &self,
@@ -263,6 +297,19 @@ mod tests {
             inner: ScriptedChatModel::new(tok, 4096, Vec::new()),
             id: id.to_string(),
             is_embedding,
+            aliases: None,
+        })
+    }
+
+    fn model_with_aliases(id: &str, aliases: &[&str]) -> Arc<dyn ChatModel> {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
+        let tok = tokenizer::MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer");
+        Arc::new(Named {
+            inner: ScriptedChatModel::new(tok, 4096, Vec::new()),
+            id: id.to_string(),
+            is_embedding: false,
+            aliases: Some(aliases.iter().map(|alias| (*alias).to_string()).collect()),
         })
     }
 
@@ -273,6 +320,21 @@ mod tests {
             Resolution::Model(m) => assert_eq!(m.model_id(), "b.gturbo"),
             _ => panic!("expected the named model"),
         }
+    }
+
+    #[test]
+    fn an_exact_alias_wins_when_several_chat_models_are_attached() {
+        let models = vec![model("a.gturbo"), model("b.gturbo")];
+        match resolve_among(&models, Some("claude-turbospark-b.gturbo")) {
+            Resolution::Model(m) => assert_eq!(m.model_id(), "b.gturbo"),
+            _ => panic!("expected the alias to select b.gturbo"),
+        }
+    }
+
+    #[test]
+    fn embedding_models_do_not_advertise_claude_aliases() {
+        let embedding = model_with_embedding("bge-small-en-v1.5", true);
+        assert!(model_row(&*embedding).aliases.is_empty());
     }
 
     /// The Claude Code case: one model, a name it has never heard of.
@@ -294,7 +356,15 @@ mod tests {
                 available,
             } => {
                 assert_eq!(requested, "nope");
-                assert_eq!(available, vec!["a.gturbo", "b.gturbo"]);
+                assert_eq!(
+                    available,
+                    vec![
+                        "a.gturbo",
+                        "claude-turbospark-a.gturbo",
+                        "b.gturbo",
+                        "claude-turbospark-b.gturbo",
+                    ]
+                );
             }
             _ => panic!("expected a refusal naming both"),
         }
@@ -438,7 +508,15 @@ mod tests {
         ];
         match resolve_among(&models, Some("nope")) {
             Resolution::Unknown { available, .. } => {
-                assert_eq!(available, vec!["a.gturbo", "b.gturbo"]);
+                assert_eq!(
+                    available,
+                    vec![
+                        "a.gturbo",
+                        "claude-turbospark-a.gturbo",
+                        "b.gturbo",
+                        "claude-turbospark-b.gturbo",
+                    ]
+                );
             }
             Resolution::Model(_) => panic!("expected an ambiguous refusal, got Model"),
             Resolution::Empty => panic!("expected an ambiguous refusal, got Empty"),
@@ -450,6 +528,28 @@ mod tests {
         match StaticRegistry::new(vec![model("a.gturbo"), model("a.gturbo")]) {
             Err(err) => assert!(err.contains("a.gturbo"), "{err}"),
             Ok(_) => panic!("expected a duplicate-id refusal"),
+        }
+    }
+
+    #[test]
+    fn a_canonical_id_cannot_collide_with_an_alias() {
+        match StaticRegistry::new(vec![
+            model_with_aliases("alpha.gturbo", &["shared"]),
+            model("shared"),
+        ]) {
+            Err(err) => assert!(err.contains("shared"), "{err}"),
+            Ok(_) => panic!("expected a canonical-to-alias refusal"),
+        }
+    }
+
+    #[test]
+    fn aliases_cannot_collide_across_models() {
+        match StaticRegistry::new(vec![
+            model_with_aliases("alpha.gturbo", &["shared"]),
+            model_with_aliases("beta.gturbo", &["shared"]),
+        ]) {
+            Err(err) => assert!(err.contains("shared"), "{err}"),
+            Ok(_) => panic!("expected an alias-to-alias refusal"),
         }
     }
 

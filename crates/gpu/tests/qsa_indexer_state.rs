@@ -132,6 +132,19 @@ fn refuses_an_architecture_with_index_kv_heads_zero() {
     let _ = QsaIndexerCacheManager::new(context.device(), &arch, 32);
 }
 
+/// A model manifest can carry dimensions wider than the u32 kernel ABI.
+/// This exact shape used to wrap `max_context * raw_stride` to a small
+/// allocation while retaining a huge position-1 write offset.
+#[test]
+#[should_panic(expected = "QSA raw-key allocation overflows usize")]
+fn refuses_wrapping_raw_key_allocation() {
+    let context = MetalContext::new().unwrap();
+    let mut arch = qwen4_style_arch();
+    arch.compressed_attention.index_n_heads = 3;
+    arch.compressed_attention.index_head_dim = (1i64 << 62) + 128;
+    let _ = QsaIndexerCacheManager::new(context.device(), &arch, 4096);
+}
+
 #[test]
 #[should_panic(expected = "not a QSA layer")]
 fn raw_keys_view_panics_for_a_non_qsa_layer() {

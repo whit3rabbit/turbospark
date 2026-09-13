@@ -262,12 +262,68 @@ impl RealQwen4State {
                 ca.index_kv_heads
             ));
         }
-        if ca.index_top_k * ca.csa_compress_rate != ca.index_budget {
+        if ca.index_top_k.checked_mul(ca.csa_compress_rate) != Some(ca.index_budget) {
             return unsupported(format!(
                 "qwen4_exp's index_top_k ({}) x csa_compress_rate ({}) must equal index_budget \
                  ({}): top_k counts BLOCKS on this architecture",
                 ca.index_top_k, ca.csa_compress_rate, ca.index_budget
             ));
+        }
+
+        // These manifest fields cross two narrower execution boundaries:
+        // Metal kernels consume u32 dimensions, while cache and scratch
+        // extents are host usize byte counts. Refuse values that cannot be
+        // represented losslessly or whose complete allocation arithmetic
+        // does not fit, rather than letting release-mode arithmetic wrap or
+        // `as u32` silently truncate them.
+        let idx_heads = u32::try_from(ca.index_n_heads).map_err(|_| {
+            RealForwardError::Unsupported(format!(
+                "qwen4_exp index_n_heads {} exceeds the u32 kernel limit",
+                ca.index_n_heads
+            ))
+        })?;
+        let idx_head_dim = u32::try_from(ca.index_head_dim).map_err(|_| {
+            RealForwardError::Unsupported(format!(
+                "qwen4_exp index_head_dim {} exceeds the u32 kernel limit",
+                ca.index_head_dim
+            ))
+        })?;
+        let idx_compress = u32::try_from(ca.csa_compress_rate).map_err(|_| {
+            RealForwardError::Unsupported(format!(
+                "qwen4_exp csa_compress_rate {} exceeds the u32 kernel limit",
+                ca.csa_compress_rate
+            ))
+        })?;
+        let idx_block_topk = usize::try_from(ca.index_top_k).map_err(|_| {
+            RealForwardError::Unsupported(format!(
+                "qwen4_exp index_top_k {} exceeds the host index limit",
+                ca.index_top_k
+            ))
+        })?;
+        let idx_projection_len_u32 = idx_heads
+            .checked_add(1)
+            .and_then(|heads| heads.checked_mul(idx_head_dim));
+        let idx_projection_len = idx_projection_len_u32.map(|len| len as usize);
+        let qsa_raw_bytes = max_context
+            .checked_mul(idx_head_dim as usize)
+            .and_then(|len| len.checked_mul(2));
+        let qsa_pooled_bytes = (max_context / idx_compress as usize)
+            .checked_mul(idx_head_dim as usize)
+            .and_then(|len| len.checked_mul(2));
+        let qsa_scores_bytes = (max_context / idx_compress as usize).max(1).checked_mul(4);
+        let qsa_positions_bytes = idx_block_topk
+            .checked_add(1)
+            .and_then(|len| len.checked_mul(idx_compress as usize))
+            .and_then(|len| len.checked_mul(4));
+        if idx_projection_len.is_none()
+            || qsa_raw_bytes.is_none()
+            || qsa_pooled_bytes.is_none()
+            || qsa_scores_bytes.is_none()
+            || qsa_positions_bytes.is_none()
+        {
+            return unsupported(
+                "qwen4_exp QSA indexer dimensions overflow host buffer arithmetic".to_string(),
+            );
         }
 
         if arch.num_experts <= 0 || arch.top_k_experts <= 0 {
@@ -542,15 +598,12 @@ impl RealQwen4State {
         let v_heads = shape.num_v_heads as usize;
 
         let ngram_context_len = (arch.ple.ngram_size - 1).max(0) as usize;
-        let idx_heads = ca.index_n_heads as usize;
-        let idx_head_dim = ca.index_head_dim as usize;
-        let idx_compress = ca.csa_compress_rate as usize;
-        let idx_block_topk = ca.index_top_k as usize;
+        let idx_projection_len = idx_projection_len.expect("QSA projection length checked above");
         let qsa = gpu::QsaIndexerCacheManager::new(context.device(), arch, max_context);
         let qsa_scores =
-            context.new_output_buffer(((max_context / idx_compress).max(1) * 4) as u64);
-        let qsa_positions =
-            context.new_output_buffer(((idx_block_topk + 1) * idx_compress * 4) as u64);
+            context.new_output_buffer(qsa_scores_bytes.expect("QSA score length checked") as u64);
+        let qsa_positions = context
+            .new_output_buffer(qsa_positions_bytes.expect("QSA positions length checked") as u64);
         let qsa_force_dense = std::env::var("TURBOSPARK_QSA_FORCE_DENSE").as_deref() == Ok("1");
         let ple_conv_tail = halfs(PLE_CONV_HISTORY * wide_dim);
         gpu::write_buffer_bytes(
@@ -576,11 +629,11 @@ impl RealQwen4State {
             q_packed: halfs(2 * q_dim),
             attn_gate: halfs(q_dim),
             qsa,
-            idx_heads: idx_heads as u32,
-            idx_head_dim: idx_head_dim as u32,
-            idx_compress: idx_compress as u32,
+            idx_heads,
+            idx_head_dim,
+            idx_compress,
             idx_block_topk,
-            idx_qk: halfs((idx_heads + 1) * idx_head_dim),
+            idx_qk: halfs(idx_projection_len),
             qsa_scores,
             qsa_positions,
             qsa_force_dense,

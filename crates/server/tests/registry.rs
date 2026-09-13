@@ -107,7 +107,15 @@ async fn two_models_are_both_listed_with_their_own_context_windows() {
         .iter()
         .map(|m| m["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, vec!["alpha.gturbo", "beta.gturbo"]);
+    assert_eq!(
+        ids,
+        vec![
+            "alpha.gturbo",
+            "claude-turbospark-alpha.gturbo",
+            "beta.gturbo",
+            "claude-turbospark-beta.gturbo",
+        ]
+    );
     assert_eq!(body["data"][0]["context_window"], 4096);
 }
 
@@ -123,6 +131,14 @@ async fn an_exact_model_id_reaches_that_model() {
         // 404 would break.
         assert_eq!(body["object"], "chat.completion");
     }
+}
+
+#[tokio::test]
+async fn an_exact_claude_alias_reaches_its_model_on_a_multi_model_server() {
+    let base = serve(vec![named("alpha.gturbo"), named("beta.gturbo")]).await;
+    let (status, body) = chat(&base, "claude-turbospark-beta.gturbo").await;
+    assert_eq!(status, 200);
+    assert_eq!(body["object"], "chat.completion");
 }
 
 /// **THE CASE THE FALLBACK EXISTS FOR.** `docs/CLI.md` points Claude Code at
@@ -190,6 +206,13 @@ async fn a_model_lookup_does_not_take_the_single_model_fallback() {
         .await
         .unwrap();
     assert_eq!(found.status().as_u16(), 200);
+
+    let alias = reqwest::get(format!("{base}/v1/models/claude-turbospark-gemma4.gturbo"))
+        .await
+        .unwrap();
+    assert_eq!(alias.status().as_u16(), 200);
+    let detail: serde_json::Value = alias.json().await.unwrap();
+    assert_eq!(detail["id"], "claude-turbospark-gemma4.gturbo");
 
     let missing = reqwest::get(format!("{base}/v1/models/not-a-model"))
         .await

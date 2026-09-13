@@ -4,7 +4,9 @@
 //! (`RepackPlanner.swift`), passes the already-quantized u32 weights and
 //! BF16 scales/biases through byte-for-byte (no re-quantization -- the MLX
 //! affine int4 packing is exactly this port's packed layout when viewed as
-//! little-endian bytes), carries unquantized tensors (norms, `router.scale`,
+//! little-endian bytes). Qwen2's MLX 4-bit source planes are F16 and are
+//! narrowed to the resident format's BF16 planes during that pass-through.
+//! It carries unquantized tensors (norms, `router.scale`,
 //! `layer_scalar`) as raw BF16/FP16/FP32 entries, and slices the per-layer
 //! `.experts.switch_glu.` routed-expert tensors into per-expert blobs with
 //! ONE page-rounded (16 KiB) expert stride for the whole model.
@@ -22,8 +24,9 @@ mod shards;
 mod vision;
 
 pub use classify::{
-    canonicalize_vision_header, classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX,
-    MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
+    canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
+    Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX,
+    VISION_SOURCE_PREFIXES,
 };
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
@@ -32,7 +35,8 @@ pub use config::{
 pub use expert_blobs::{expert_stride_from_headers, plan_one_expert_layer};
 pub use manifest_quant::{gemma4_manifest_quant, manifest_quant, manifest_quant_for};
 pub use narrow::{
-    convert_raw_to_fp16, narrow_raw_to_bf16, pass_through_packed, ConvertedFp16, NarrowedRaw,
+    convert_raw_to_fp16, narrow_raw_to_bf16, pass_through_packed, pass_through_packed_qwen2,
+    ConvertedFp16, NarrowedRaw,
 };
 pub use ngram::{write_ngram_table, NgramPlan, NgramTableSpec, NgramTableWriter};
 pub use orchestrate::{
@@ -72,12 +76,8 @@ pub fn write_gemma4_install_streamed(
         plan.routed.len(),
     ));
 
-    let mut resident = orchestrate::read_resident_entries_from_shards(
-        shards,
-        &plan.resident_bases,
-        quant,
-        arch.family,
-    )?;
+    let mut resident =
+        orchestrate::read_resident_entries_from_shards(shards, &plan.resident_bases, quant, arch)?;
     // THE MTP HEAD, and this arm has to exist HERE as well as in
     // `orchestrate_gemma4_checkpoint_sharded` -- which is the whole reason it
     // is worth a comment. Every REAL install goes through this streamed
@@ -400,6 +400,24 @@ pub fn write_qwen_gdn_dense_install_streamed(
     if arch.family != ModelFamily::QwenGdnDense {
         return Err(Box::new(Gemma4Error::Config(format!(
             "write_qwen_gdn_dense_install_streamed needs arch.family = qwen35, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
+/// Dense Qwen2/Qwen2.5 install write through the shared MLX checkpoint walk.
+pub fn write_qwen2_dense_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Qwen2Dense {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen2_dense_install_streamed needs arch.family = qwen2, got {}",
             arch.family.as_str()
         ))));
     }

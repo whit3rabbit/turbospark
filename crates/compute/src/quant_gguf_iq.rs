@@ -37,6 +37,9 @@
 
 use foundation::LogitValue as F16;
 
+use crate::quant_gguf_iq_lowbit_tables::{
+    IQ1S_GRID, IQ2S_GRID, IQ2XS_GRID, IQ2XXS_GRID, IQ3S_GRID,
+};
 use crate::quant_gguf_iq_tables::{IQ3XXS_GRID, IQ4NL_VALUES};
 
 /// Elements in one IQ4_NL block.
@@ -73,11 +76,39 @@ pub const IQ3_XXS_BLOCK_BYTES: usize = 98;
 /// Byte offset of the sign-and-scale words inside an IQ3_XXS superblock.
 const IQ3_XXS_AUX_OFFSET: usize = 2 + IQ3_XXS_BLOCK_ELEMS / 4;
 
+/// Elements in each newly-supported low-bit IQ superblock.
+pub const IQ_LOWBIT_BLOCK_ELEMS: usize = 256;
+pub const IQ2_XXS_BLOCK_BYTES: usize = 66;
+pub const IQ2_XS_BLOCK_BYTES: usize = 74;
+pub const IQ2_S_BLOCK_BYTES: usize = 82;
+pub const IQ3_S_BLOCK_BYTES: usize = 110;
+pub const IQ1_S_BLOCK_BYTES: usize = 50;
+pub const IQ1_M_BLOCK_BYTES: usize = 56;
+const IQ1_DELTA: f32 = 0.125;
+
 fn f16_at(bytes: &[u8], at: usize) -> f32 {
     f32::from(F16::from_bits(u16::from_le_bytes([
         bytes[at],
         bytes[at + 1],
     ])))
+}
+
+fn le_u16(bytes: &[u8], at: usize) -> u16 {
+    u16::from_le_bytes([bytes[at], bytes[at + 1]])
+}
+
+fn grid_u8(word: u64, lane: usize) -> f32 {
+    ((word >> (8 * lane)) & 0xff) as f32
+}
+
+fn grid_i8(word: u64, lane: usize) -> f32 {
+    (((word >> (8 * lane)) & 0xff) as u8 as i8) as f32
+}
+
+fn sign_byte(index: u32) -> u8 {
+    // ggml's ksigns_iq2xs: seven stored sign bits plus an even-parity eighth.
+    let low = (index & 127) as u8;
+    low | (((low.count_ones() as u8) & 1) << 7)
 }
 
 fn assert_run(n: usize, elems: usize, bytes: usize, blocks: &[u8], name: &str) -> usize {
@@ -232,6 +263,236 @@ pub fn dequantize_iq3_xxs(blocks: &[u8], n: usize) -> Vec<f32> {
     out
 }
 
+/// Dequantize IQ2_XXS. Each 32-element sub-block has four 8-lane codebook
+/// entries and four parity-expanded sign bytes in its second little-endian word.
+pub fn dequantize_iq2_xxs(blocks: &[u8], n: usize) -> Vec<f32> {
+    let nb = assert_run(
+        n,
+        IQ_LOWBIT_BLOCK_ELEMS,
+        IQ2_XXS_BLOCK_BYTES,
+        blocks,
+        "IQ2_XXS",
+    );
+    let mut out = vec![0.0; n];
+    for b in 0..nb {
+        let base = b * IQ2_XXS_BLOCK_BYTES;
+        let d = f16_at(blocks, base);
+        for ib in 0..8 {
+            let at = base + 2 + ib * 8;
+            let a = u32::from_le_bytes(blocks[at..at + 4].try_into().unwrap());
+            let aux = u32::from_le_bytes(blocks[at + 4..at + 8].try_into().unwrap());
+            let scale = d * (0.5 + (aux >> 28) as f32) * 0.25;
+            for l in 0..4 {
+                let grid = IQ2XXS_GRID[((a >> (8 * l)) & 0xff) as usize];
+                let signs = sign_byte((aux >> (7 * l)) & 127);
+                for j in 0..8 {
+                    let sign = if signs & (1 << j) == 0 { 1.0 } else { -1.0 };
+                    out[b * 256 + ib * 32 + l * 8 + j] = scale * grid_u8(grid, j) * sign;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Dequantize IQ2_XS, with two 4-bit scales per 32-element sub-block.
+pub fn dequantize_iq2_xs(blocks: &[u8], n: usize) -> Vec<f32> {
+    let nb = assert_run(
+        n,
+        IQ_LOWBIT_BLOCK_ELEMS,
+        IQ2_XS_BLOCK_BYTES,
+        blocks,
+        "IQ2_XS",
+    );
+    let mut out = vec![0.0; n];
+    for b in 0..nb {
+        let base = b * IQ2_XS_BLOCK_BYTES;
+        let d = f16_at(blocks, base);
+        let qs = &blocks[base + 2..base + 66];
+        let scales = &blocks[base + 66..base + 74];
+        for ib in 0..8 {
+            let s = scales[ib];
+            let db = [
+                d * (0.5 + (s & 15) as f32) * 0.25,
+                d * (0.5 + (s >> 4) as f32) * 0.25,
+            ];
+            for l in 0..4 {
+                let q = le_u16(qs, 2 * (4 * ib + l));
+                let grid = IQ2XS_GRID[(q & 511) as usize];
+                let signs = sign_byte((q >> 9) as u32);
+                for j in 0..8 {
+                    let sign = if signs & (1 << j) == 0 { 1.0 } else { -1.0 };
+                    out[b * 256 + ib * 32 + l * 8 + j] = db[l / 2] * grid_u8(grid, j) * sign;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Dequantize IQ2_S. Its high codebook bits are interleaved in `qh`; signs
+/// follow the first 32 bytes of each block's `qs` region.
+pub fn dequantize_iq2_s(blocks: &[u8], n: usize) -> Vec<f32> {
+    let nb = assert_run(n, IQ_LOWBIT_BLOCK_ELEMS, IQ2_S_BLOCK_BYTES, blocks, "IQ2_S");
+    let mut out = vec![0.0; n];
+    for b in 0..nb {
+        let base = b * IQ2_S_BLOCK_BYTES;
+        let d = f16_at(blocks, base);
+        let qs = &blocks[base + 2..base + 66];
+        let qh = &blocks[base + 66..base + 74];
+        let scales = &blocks[base + 74..base + 82];
+        for ib in 0..8 {
+            let s = scales[ib];
+            let db = [
+                d * (0.5 + (s & 15) as f32) * 0.25,
+                d * (0.5 + (s >> 4) as f32) * 0.25,
+            ];
+            for l in 0..4 {
+                let q = qs[4 * ib + l] as usize | (((qh[ib] as usize) << (8 - 2 * l)) & 0x300);
+                let signs = qs[32 + 4 * ib + l];
+                for j in 0..8 {
+                    let sign = if signs & (1 << j) == 0 { 1.0 } else { -1.0 };
+                    out[b * 256 + ib * 32 + l * 8 + j] =
+                        db[l / 2] * grid_u8(IQ2S_GRID[q], j) * sign;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Dequantize IQ3_S. Two 32-element blocks share a packed scale byte.
+pub fn dequantize_iq3_s(blocks: &[u8], n: usize) -> Vec<f32> {
+    let nb = assert_run(n, IQ_LOWBIT_BLOCK_ELEMS, IQ3_S_BLOCK_BYTES, blocks, "IQ3_S");
+    let mut out = vec![0.0; n];
+    for b in 0..nb {
+        let base = b * IQ3_S_BLOCK_BYTES;
+        let d = f16_at(blocks, base);
+        let mut qs = base + 2;
+        let mut qh = base + 66;
+        let mut signs = base + 74;
+        let scales = &blocks[base + 106..base + 110];
+        for (pair, &packed_scale) in scales.iter().enumerate() {
+            for half in 0..2 {
+                let db = d
+                    * (1 + 2 * if half == 0 {
+                        (packed_scale & 15) as i32
+                    } else {
+                        (packed_scale >> 4) as i32
+                    }) as f32;
+                for l in 0..4 {
+                    let q1 = blocks[qs + 2 * l] as usize
+                        | (((blocks[qh + half] as usize) << (8 - 2 * l)) & 256);
+                    let q2 = blocks[qs + 2 * l + 1] as usize
+                        | (((blocks[qh + half] as usize) << (7 - 2 * l)) & 256);
+                    let s = blocks[signs + l];
+                    for j in 0..4 {
+                        let sign1 = if s & (1 << j) == 0 { 1.0 } else { -1.0 };
+                        let sign2 = if s & (1 << (j + 4)) == 0 { 1.0 } else { -1.0 };
+                        let out_at = b * 256 + pair * 64 + half * 32 + l * 8;
+                        out[out_at + j] = db * grid_u8(IQ3S_GRID[q1] as u64, j) * sign1;
+                        out[out_at + 4 + j] = db * grid_u8(IQ3S_GRID[q2] as u64, j) * sign2;
+                    }
+                }
+                qs += 8;
+                signs += 4;
+            }
+            qh += 2;
+        }
+    }
+    out
+}
+
+/// Dequantize IQ1_S, including its signed delta correction.
+pub fn dequantize_iq1_s(blocks: &[u8], n: usize) -> Vec<f32> {
+    let nb = assert_run(n, IQ_LOWBIT_BLOCK_ELEMS, IQ1_S_BLOCK_BYTES, blocks, "IQ1_S");
+    let mut out = vec![0.0; n];
+    for b in 0..nb {
+        let base = b * IQ1_S_BLOCK_BYTES;
+        let d = f16_at(blocks, base);
+        let qs = &blocks[base + 2..base + 34];
+        let qh = &blocks[base + 34..base + 50];
+        for ib in 0..8 {
+            let h = le_u16(qh, 2 * ib);
+            let scale = d * (2.0 * ((h >> 12) & 7) as f32 + 1.0);
+            let delta = if h & 0x8000 == 0 {
+                IQ1_DELTA
+            } else {
+                -IQ1_DELTA
+            };
+            for l in 0..4 {
+                let index = qs[4 * ib + l] as usize | (((h >> (3 * l)) as usize & 7) << 8);
+                for j in 0..8 {
+                    out[b * 256 + ib * 32 + l * 8 + j] =
+                        scale * (grid_i8(IQ1S_GRID[index], j) + delta);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Dequantize IQ1_M. Its packed half-scale and per-grid delta bits differ
+/// from IQ1_S, but use the same 2048-entry signed grid.
+pub fn dequantize_iq1_m(blocks: &[u8], n: usize) -> Vec<f32> {
+    let nb = assert_run(n, IQ_LOWBIT_BLOCK_ELEMS, IQ1_M_BLOCK_BYTES, blocks, "IQ1_M");
+    let mut out = vec![0.0; n];
+    for b in 0..nb {
+        let base = b * IQ1_M_BLOCK_BYTES;
+        let qs = &blocks[base..base + 32];
+        let qh = &blocks[base + 32..base + 48];
+        let scales = &blocks[base + 48..base + 56];
+        let sc: [u16; 4] = core::array::from_fn(|i| le_u16(scales, 2 * i));
+        let d_bits =
+            (sc[0] >> 12) | ((sc[1] >> 8) & 0x00f0) | ((sc[2] >> 4) & 0x0f00) | (sc[3] & 0xf000);
+        let d = f32::from(F16::from_bits(d_bits));
+        for ib in 0..8 {
+            let h0 = qh[2 * ib];
+            let h1 = qh[2 * ib + 1];
+            let word = sc[ib / 2];
+            let scales = [
+                d * (2.0 * ((word >> (6 * (ib % 2))) & 7) as f32 + 1.0),
+                d * (2.0 * ((word >> (6 * (ib % 2) + 3)) & 7) as f32 + 1.0),
+            ];
+            let indices = [
+                qs[4 * ib] as usize | (((h0 as usize) << 8) & 0x700),
+                qs[4 * ib + 1] as usize | (((h0 as usize) << 4) & 0x700),
+                qs[4 * ib + 2] as usize | (((h1 as usize) << 8) & 0x700),
+                qs[4 * ib + 3] as usize | (((h1 as usize) << 4) & 0x700),
+            ];
+            let deltas = [
+                if h0 & 0x08 == 0 {
+                    IQ1_DELTA
+                } else {
+                    -IQ1_DELTA
+                },
+                if h0 & 0x80 == 0 {
+                    IQ1_DELTA
+                } else {
+                    -IQ1_DELTA
+                },
+                if h1 & 0x08 == 0 {
+                    IQ1_DELTA
+                } else {
+                    -IQ1_DELTA
+                },
+                if h1 & 0x80 == 0 {
+                    IQ1_DELTA
+                } else {
+                    -IQ1_DELTA
+                },
+            ];
+            for l in 0..4 {
+                for j in 0..8 {
+                    out[b * 256 + ib * 32 + l * 8 + j] =
+                        scales[l / 2] * (grid_i8(IQ1S_GRID[indices[l]], j) + deltas[l]);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// FP32 reference for the IQ4_NL GEMV `y = W * x`, one byte run per row.
 pub fn dequant_iq4_nl_gemv(weight_rows: &[&[u8]], x: &[f32], n: usize) -> Vec<f32> {
     gemv(weight_rows, x, n, dequantize_iq4_nl)
@@ -246,6 +507,20 @@ pub fn dequant_iq4_xs_gemv(weight_rows: &[&[u8]], x: &[f32], n: usize) -> Vec<f3
 pub fn dequant_iq3_xxs_gemv(weight_rows: &[&[u8]], x: &[f32], n: usize) -> Vec<f32> {
     gemv(weight_rows, x, n, dequantize_iq3_xxs)
 }
+
+macro_rules! iq_gemv {
+    ($name:ident, $dequant:ident) => {
+        pub fn $name(weight_rows: &[&[u8]], x: &[f32], n: usize) -> Vec<f32> {
+            gemv(weight_rows, x, n, $dequant)
+        }
+    };
+}
+iq_gemv!(dequant_iq2_xxs_gemv, dequantize_iq2_xxs);
+iq_gemv!(dequant_iq2_xs_gemv, dequantize_iq2_xs);
+iq_gemv!(dequant_iq2_s_gemv, dequantize_iq2_s);
+iq_gemv!(dequant_iq3_s_gemv, dequantize_iq3_s);
+iq_gemv!(dequant_iq1_s_gemv, dequantize_iq1_s);
+iq_gemv!(dequant_iq1_m_gemv, dequantize_iq1_m);
 
 fn gemv(
     weight_rows: &[&[u8]],

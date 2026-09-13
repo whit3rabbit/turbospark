@@ -23,6 +23,9 @@ public struct GhostChatPayload: Codable, Equatable {
     public var goal: ChatGoalState?
     /// Uncommitted draft prompt text.
     public var draft: String
+    /// Exact oversized observations, encrypted with the rest of this
+    /// in-memory-only payload and never written to a normal archive.
+    public var toolObservations: [UUID: GhostToolObservation]
 
     public init(
         messages: [AppChatMessage] = [],
@@ -31,7 +34,8 @@ public struct GhostChatPayload: Codable, Equatable {
         compactedMessageCount: Int = 0,
         skillState: AppSkillState? = nil,
         goal: ChatGoalState? = nil,
-        draft: String = ""
+        draft: String = "",
+        toolObservations: [UUID: GhostToolObservation] = [:]
     ) {
         self.messages = messages
         self.todos = todos
@@ -40,6 +44,7 @@ public struct GhostChatPayload: Codable, Equatable {
         self.skillState = skillState
         self.goal = goal
         self.draft = draft
+        self.toolObservations = toolObservations
     }
 
     /// Whether the payload carries anything a user could lose.
