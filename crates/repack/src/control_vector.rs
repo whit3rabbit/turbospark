@@ -66,6 +66,7 @@
 //! hands the runner a plain `SteeringSet`.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::Path;
 
 use foundation::SteeringMode;
@@ -101,11 +102,20 @@ const DEFAULT_LAYER_BASE: u64 = 1;
 /// model this port runs (the largest is a few hundred blocks).
 const MAX_LAYER_INDEX: usize = 4096;
 
+/// Maximum number of bytes accepted from a control-vector file.
+///
+/// Published vectors are around 1.3 MiB. Keeping a generous fixed ceiling
+/// makes the standalone inspector safe for caller-selected paths without
+/// changing the format accepted by real vectors.
+const MAX_CONTROL_VECTOR_BYTES: u64 = 16 * 1024 * 1024;
+
 /// What went wrong reading a control vector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlVectorError {
     /// The file could not be opened or read.
     Io { path: String, detail: String },
+    /// The file exceeds the resource ceiling for a control vector.
+    FileTooLarge { path: String, max_bytes: u64 },
     /// The GGUF container itself is malformed.
     Header { detail: String },
     /// A tensor is not named `direction.<positive integer>`.
@@ -139,6 +149,10 @@ impl std::fmt::Display for ControlVectorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io { path, detail } => write!(f, "reading {path}: {detail}"),
+            Self::FileTooLarge { path, max_bytes } => write!(
+                f,
+                "reading {path}: control vector exceeds the {max_bytes}-byte limit"
+            ),
             Self::Header { detail } => write!(f, "not a readable GGUF: {detail}"),
             Self::BadTensorName { name } => write!(
                 f,
@@ -358,10 +372,21 @@ pub fn parse_control_vector(bytes: &[u8]) -> Result<SteeringSet, ControlVectorEr
 
 /// Reads a control vector from a path.
 pub fn load_control_vector(path: &Path) -> Result<SteeringSet, ControlVectorError> {
-    let bytes = std::fs::read(path).map_err(|e| ControlVectorError::Io {
+    let io_error = |e: std::io::Error| ControlVectorError::Io {
         path: path.display().to_string(),
         detail: e.to_string(),
-    })?;
+    };
+    let file = std::fs::File::open(path).map_err(&io_error)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_CONTROL_VECTOR_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io_error)?;
+    if bytes.len() as u64 > MAX_CONTROL_VECTOR_BYTES {
+        return Err(ControlVectorError::FileTooLarge {
+            path: path.display().to_string(),
+            max_bytes: MAX_CONTROL_VECTOR_BYTES,
+        });
+    }
     parse_control_vector(&bytes)
 }
 

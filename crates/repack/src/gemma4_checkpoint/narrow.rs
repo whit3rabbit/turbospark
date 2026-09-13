@@ -149,6 +149,7 @@ pub fn quantize_gating_matrix_int8(
     shards: &Gemma4Shards<'_>,
     name: &str,
     dtype: &str,
+    expected_shape: (usize, usize),
 ) -> Result<ResidentEntrySpec, Gemma4Error> {
     let w = shards.info(name)?;
     if w.shape.len() != 2 {
@@ -157,8 +158,23 @@ pub fn quantize_gating_matrix_int8(
             detail: format!("expected rank-2 gating weight, got {:?}", w.shape),
         });
     }
-    let rows = w.shape[0] as usize;
-    let cols = w.shape[1] as usize;
+    let rows = usize::try_from(w.shape[0]).map_err(|_| Gemma4Error::ShapeMismatch {
+        tensor: name.to_string(),
+        detail: format!("router row count {} does not fit usize", w.shape[0]),
+    })?;
+    let cols = usize::try_from(w.shape[1]).map_err(|_| Gemma4Error::ShapeMismatch {
+        tensor: name.to_string(),
+        detail: format!("router column count {} does not fit usize", w.shape[1]),
+    })?;
+    if (rows, cols) != expected_shape {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!(
+                "expected gating weight {}x{}, got {rows}x{cols}",
+                expected_shape.0, expected_shape.1
+            ),
+        });
+    }
     let group = AFFINE_GROUP_SIZE as usize;
     if cols % group != 0 {
         return Err(Gemma4Error::ShapeMismatch {
@@ -166,13 +182,40 @@ pub fn quantize_gating_matrix_int8(
             detail: format!("row length {cols} is not a multiple of the {group}-element group"),
         });
     }
-    let values = decode_raw_to_f32(name, dtype, &shards.read(name)?)?;
-    if values.len() != rows * cols {
+    let value_count = rows
+        .checked_mul(cols)
+        .ok_or_else(|| Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("gating weight element count overflows usize: {rows}x{cols}"),
+        })?;
+    let bytes = shards.read(name)?;
+    let element_bytes = match dtype {
+        "BF16" | "F16" => 2,
+        "F32" => 4,
+        other => {
+            return Err(Gemma4Error::UnsupportedDtype {
+                tensor: name.to_string(),
+                dtype: other.to_string(),
+            })
+        }
+    };
+    let expected_bytes =
+        value_count
+            .checked_mul(element_bytes)
+            .ok_or_else(|| Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!("gating weight byte count overflows usize: {value_count} values"),
+            })?;
+    if bytes.len() != expected_bytes {
         return Err(Gemma4Error::ShapeMismatch {
             tensor: name.to_string(),
-            detail: format!("{} values do not fill {rows}x{cols}", values.len()),
+            detail: format!(
+                "{} bytes do not fill {rows}x{cols} {dtype} values",
+                bytes.len()
+            ),
         });
     }
+    let values = decode_raw_to_f32(name, dtype, &bytes)?;
     let quantized: Vec<_> = (0..rows)
         .map(|r| compute::quantize_int8_affine(&values[r * cols..(r + 1) * cols]))
         .collect();
@@ -310,6 +353,38 @@ pub fn pass_through_packed(
     name: &str,
     quant: &Gemma4Quant,
 ) -> Result<ResidentEntrySpec, Gemma4Error> {
+    pass_through_packed_impl(shards, name, quant, false).map(|(spec, _)| spec)
+}
+
+/// Reads a Qwen2/Qwen2.5 packed tensor whose 4/8-bit companions are F16 in
+/// the MLX source checkpoint. The resident affine kernels consume BF16
+/// companions, so the planes are narrowed while they are ingested rather
+/// than copied as F16 bits under a BF16 manifest tag.
+pub fn pass_through_packed_qwen2(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: &Gemma4Quant,
+) -> Result<ResidentEntrySpec, Gemma4Error> {
+    pass_through_packed_impl(shards, name, quant, true).map(|(spec, _)| spec)
+}
+
+/// Qwen2's streamed writer needs the narrowing count for its conversion
+/// report. The public wrapper above keeps the existing pass-through API
+/// focused on the entry itself.
+pub(crate) fn pass_through_packed_qwen2_with_loss(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: &Gemma4Quant,
+) -> Result<(ResidentEntrySpec, Vec<(String, usize)>), Gemma4Error> {
+    pass_through_packed_impl(shards, name, quant, true)
+}
+
+fn pass_through_packed_impl(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: &Gemma4Quant,
+    qwen2_f16_companions: bool,
+) -> Result<(ResidentEntrySpec, Vec<(String, usize)>), Gemma4Error> {
     let w = shards.info(name)?;
     if w.shape.len() != 2 {
         return Err(Gemma4Error::ShapeMismatch {
@@ -329,23 +404,26 @@ pub fn pass_through_packed(
     // Elements per packed u32 word. The formula covers one and two bits as
     // well as four and eight; what does NOT generalize is everything below it.
     let factor = 32 / bits as u64;
-    // **The companion dtype is a function of the bit width, and this is the
-    // one axis in the whole walk that fails silently if it is wrong.** MLX
+    // **The source companion dtype is a function of the bit width, and this is
+    // the one axis in the whole walk that fails silently if it is wrong.** MLX
     // writes companions in the checkpoint's own dtype: BF16 for the INT4/INT8
-    // installs this port already reads, FP16 for the 1-bit and 2-bit ones. The
-    // two are the same width and share no exponent field, so accepting either
-    // here would produce an install of exactly the right SIZE whose scales are
-    // wrong by orders of magnitude -- 0.0271 read as 1.7e-16. Hence a
-    // required dtype per width rather than a set of allowed ones.
+    // installs this port already reads, FP16 for the 1-bit and 2-bit ones, and
+    // FP16 for Qwen2's 4/8-bit source planes. The two are the same width and
+    // share no exponent field, so accepting either without conversion would
+    // produce an install of exactly the right SIZE whose scales are wrong by
+    // orders of magnitude -- 0.0271 read as 1.7e-16. Hence a required dtype
+    // per width rather than a set of allowed ones, except for Qwen2's explicit
+    // F16-to-BF16 conversion below.
     //
-    // Both sub-4-bit checkpoints happen to be F16 and both 4/8-bit ones BF16,
-    // so this reads as a threshold and is not one: it is a table of what each
-    // published file carries, and a future 2-bit checkpoint in BF16 would be a
-    // third row rather than a moved boundary.
+    // Both sub-4-bit checkpoints happen to be F16 and both non-Qwen2 4/8-bit
+    // ones BF16, so this reads as a threshold and is not one: it is a table of
+    // what each published file carries, and a future 2-bit checkpoint in BF16
+    // would be a third row rather than a moved boundary.
     let companion_dtype = match bits {
         1 | 2 => "F16",
         _ => "BF16",
     };
+    let qwen2_wide_f16 = qwen2_f16_companions && matches!(bits, 4 | 8);
     let scales_name = format!("{base}.scales");
     let biases_name = format!("{base}.biases");
     for companion in [&scales_name, &biases_name] {
@@ -353,13 +431,25 @@ pub fn pass_through_packed(
             return Err(Gemma4Error::MissingCompanion(name.to_string()));
         }
         let c = shards.info(companion)?;
-        if c.dtype != companion_dtype {
+        let accepted = if qwen2_wide_f16 {
+            matches!(c.dtype.as_str(), "F16" | "BF16")
+        } else {
+            c.dtype.as_str() == companion_dtype
+        };
+        if !accepted {
             return Err(Gemma4Error::UnsupportedDtype {
                 tensor: companion.to_string(),
-                dtype: format!(
-                    "{} companions on a {bits}-bit tensor (expected {companion_dtype})",
-                    c.dtype
-                ),
+                dtype: if qwen2_wide_f16 {
+                    format!(
+                        "{} companions on a {bits}-bit Qwen2 tensor (expected F16 or BF16)",
+                        c.dtype
+                    )
+                } else {
+                    format!(
+                        "{} companions on a {bits}-bit tensor (expected {companion_dtype})",
+                        c.dtype
+                    )
+                },
             });
         }
     }
@@ -382,8 +472,8 @@ pub fn pass_through_packed(
             ),
         });
     }
-    let scales = le_u16(&shards.read(&scales_name)?);
-    let biases = le_u16(&shards.read(&biases_name)?);
+    let (scales, scales_lossy) = read_companion_plane(shards, &scales_name, qwen2_wide_f16)?;
+    let (biases, biases_lossy) = read_companion_plane(shards, &biases_name, qwen2_wide_f16)?;
     let group = group_size as u64;
     let expected_groups = (rows * cols / group) as usize;
     if cols % group != 0 || scales.len() != expected_groups || biases.len() != expected_groups {
@@ -412,10 +502,96 @@ pub fn pass_through_packed(
         rows: rows as u32,
         cols: cols as u32,
     };
-    Ok(match bits {
+    let spec = match bits {
         1 => ResidentEntrySpec::Int1(spec),
         2 => ResidentEntrySpec::Int2(spec),
         4 => ResidentEntrySpec::Int4(spec),
         _ => ResidentEntrySpec::Int8(spec),
-    })
+    };
+    let losses = if scales_lossy == 0 && biases_lossy == 0 {
+        Vec::new()
+    } else {
+        vec![(scales_name, scales_lossy), (biases_name, biases_lossy)]
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .collect()
+    };
+    Ok((spec, losses))
+}
+
+fn read_companion_plane(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    narrow_f16: bool,
+) -> Result<(Vec<u16>, usize), Gemma4Error> {
+    let dtype = shards.info(name)?.dtype.as_str();
+    let bytes = shards.read(name)?;
+    if narrow_f16 && dtype == "F16" {
+        let values = decode_raw_to_f32(name, "F16", &bytes)?;
+        let mut lossy = 0usize;
+        let bits = values
+            .into_iter()
+            .map(|value| {
+                let narrowed = compute::f32_to_bf16(value);
+                if compute::bf16_to_f32(narrowed) != value {
+                    lossy += 1;
+                }
+                narrowed
+            })
+            .collect();
+        Ok((bits, lossy))
+    } else {
+        Ok((le_u16(&bytes), 0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::quantize_gating_matrix_int8;
+    use crate::gemma4_checkpoint::{Gemma4Error, Gemma4Shards};
+    use crate::ranged_download::MemoryRangeSource;
+    use crate::safetensors_header::{SafetensorsHeader, TensorInfo};
+
+    const NAME: &str = "language_model.model.layers.0.mlp.gate.weight";
+
+    fn shards_with_shape(shape: Vec<u64>) -> (SafetensorsHeader, MemoryRangeSource<'static>) {
+        let header = SafetensorsHeader {
+            tensors: BTreeMap::from([(
+                NAME.to_string(),
+                TensorInfo {
+                    dtype: "BF16".to_string(),
+                    shape,
+                    data_offsets: (0, 0),
+                },
+            )]),
+            metadata: None,
+            header_len: 0,
+        };
+        static EMPTY_FILE: [u8; 8] = [0; 8];
+        (header, MemoryRangeSource::new(&EMPTY_FILE))
+    }
+
+    #[test]
+    fn malicious_gating_dimensions_are_refused_without_panicking() {
+        let (header, source) = shards_with_shape(vec![1 << 63, 64]);
+        let shards = Gemma4Shards::single(&header, &source);
+        let hostile_rows = usize::try_from(1_u64 << 63).expect("test requires a 64-bit host");
+        let err = quantize_gating_matrix_int8(&shards, NAME, "BF16", (hostile_rows, 64))
+            .expect_err("overflowing shape must be refused");
+        assert!(matches!(err, Gemma4Error::ShapeMismatch { .. }));
+    }
+
+    #[test]
+    fn gating_dimensions_must_match_the_architecture() {
+        let (header, source) = shards_with_shape(vec![3, 64]);
+        let shards = Gemma4Shards::single(&header, &source);
+        let err = quantize_gating_matrix_int8(&shards, NAME, "BF16", (2, 64))
+            .expect_err("checkpoint shape must match architecture");
+        let Gemma4Error::ShapeMismatch { detail, .. } = err else {
+            panic!("expected shape mismatch");
+        };
+        assert!(detail.contains("expected gating weight 2x64"), "{detail}");
+    }
 }

@@ -160,6 +160,9 @@ struct ModelHubView: View {
     private var masterList: some View {
         ScrollView {
             LazyVStack(spacing: 3) {
+                if filter.tab == .recommended {
+                    recommendedHeaderCard
+                }
                 if filteredEntries.isEmpty {
                     emptyListState
                 } else {
@@ -171,6 +174,41 @@ struct ModelHubView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
         }
+    }
+
+    private var recommendedHeaderCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .themedFont(.tiny, weight: .semibold)
+                    .foregroundStyle(.appAccent)
+                Text("Optimized for Your Mac", bundle: .module)
+                    .themedFont(.tiny, weight: .bold)
+                    .foregroundStyle(.primary)
+                Spacer()
+                if let chip = model.telemetry?.chip {
+                    Text(chip)
+                        .themedFont(.micro, weight: .medium)
+                        .foregroundStyle(.appSecondary)
+                }
+                if let ram = model.telemetry?.physicalMemoryBytes {
+                    Text("(\(MetricFormat.memory(ram)))")
+                        .themedFont(.micro)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            Text("Verified to run within your Apple Silicon unified memory budget, prioritizing native MLX quantization and fast streaming MoE models.", bundle: .module)
+                .themedFont(.micro)
+                .foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .background(.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.appAccent.opacity(0.2), lineWidth: 0.5)
+        }
+        .padding(.bottom, 4)
     }
 
     private func cardView(for entry: CatalogEntry) -> some View {
@@ -197,7 +235,7 @@ struct ModelHubView: View {
 
     private var emptyListState: some View {
         VStack(spacing: 8) {
-            Image(systemName: filter.tab == .onDevice ? "internaldrive" : "tray")
+            Image(systemName: emptyIconName)
                 .themedFont(.hero)
                 .foregroundStyle(.quaternary)
                 .accessibilityHidden(true)
@@ -219,14 +257,26 @@ struct ModelHubView: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var emptyIconName: String {
+        switch filter.tab {
+        case .onDevice: return "internaldrive"
+        case .recommended: return "sparkles"
+        case .discover: return "tray"
+        }
+    }
+
     private var emptyTitle: String {
         if filter.tab == .onDevice && !filter.isNarrowed { return "No models installed" }
+        if filter.tab == .recommended && !filter.isNarrowed { return "No recommended models" }
         return "No matching models"
     }
 
     private var emptyDetail: String {
         if filter.tab == .onDevice && !filter.isNarrowed {
             return "Switch to Discover to browse the catalog and install one."
+        }
+        if filter.tab == .recommended && !filter.isNarrowed {
+            return "No catalog models fit within this machine's memory budget. Switch to Discover to browse all models."
         }
         return "Nothing in this view matches the current filters."
     }

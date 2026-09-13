@@ -44,4 +44,4 @@ curl -s http://127.0.0.1:8080/v1/models
 
 1. **Serialized Real Backend**: `RealChatModel` owns a single `RealForwardRunner` behind a `Mutex`. Requests are processed serially because forward passes require mutable model state and Metal resources.
 2. **Anthropic SSE Framing**: Anthropic SSE streams require explicit `event:` headers and end at `message_stop` without an OpenAI `[DONE]` sentinel.
-3. **Tailnet Binding**: `--bind tailnet` binds exclusively to the Tailscale IPv4 interface (100.64.0.0/10) without TLS or application authentication; Tailnet ACLs provide the sole access control.
+3. **Tailnet Binding**: `--bind tailnet` binds exclusively to the Tailscale IPv4 interface (100.64.0.0/10) with mandatory API-key authentication and no TLS.

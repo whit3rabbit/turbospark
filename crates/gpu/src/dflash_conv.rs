@@ -121,7 +121,26 @@ pub fn encode_dflash_copy_rows(
     hidden: u32,
     dst_stride: u32,
 ) -> Result<(), GpuError> {
-    let count = rows * hidden;
+    let count = rows
+        .checked_mul(hidden)
+        .expect("copy row element count overflows u32");
+    let view_bytes = |buffer: &metal::Buffer, offset: u64, stride: u32| {
+        let elements = if rows == 0 {
+            0
+        } else {
+            u64::from(rows - 1)
+                .checked_mul(u64::from(stride))
+                .and_then(|n| n.checked_add(u64::from(hidden)))
+                .expect("copy row view length overflows u64")
+        };
+        let end = elements
+            .checked_mul(2)
+            .and_then(|bytes| offset.checked_add(bytes))
+            .expect("copy row byte range overflows u64");
+        assert!(end <= buffer.length(), "copy row view exceeds buffer");
+    };
+    view_bytes(src.0, src.1, hidden);
+    view_bytes(dst.0, dst.1, dst_stride);
     let pipeline = context.pipeline(
         SOURCE,
         "copy_strided_rows_fp16",

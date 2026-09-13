@@ -93,7 +93,7 @@ extension AppModel {
             for res in msg.toolResults {
                 let tag = res.isError ? "tool_error" : "tool_response"
                 history.append(
-                    ChatMessage(role: .tool, content: "<\(tag)>\n\(res.output)\n</\(tag)>"))
+                    ChatMessage(role: .tool, content: "<\(tag)>\n\(res.modelOutput)\n</\(tag)>"))
             }
         }
         // **SYSTEM REMINDERS ARE ASSEMBLY-TIME, NEVER STORED** (see
@@ -171,7 +171,9 @@ extension AppModel {
         func joined(_ kinds: [AppModel.SystemPromptSection]) -> String {
             sections.filter { kinds.contains($0.section) }.map(\.content).joined(separator: "\n\n")
         }
-        let systemPiece = joined([.userPrompt, .agentPrompt, .workspace, .projectRules])
+        let systemPiece = joined([
+            .userPrompt, .personality, .agentPrompt, .workspace, .environment, .projectRules
+        ])
         if !systemPiece.isEmpty {
             pieces.append(ContextUsagePiece(kind: .system, label: "System prompt", content: systemPiece))
         }
@@ -202,14 +204,25 @@ extension AppModel {
         var conversationParts: [String] = []
         for (rowIndex, msg) in selectedTurnMessages.enumerated() {
             if rowIndex < compaction.boundary { continue }
-            guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { continue }
-            history.append(
-                ChatMessage(
-                    role: msg.role,
-                    content: msg.content,
-                    images: msg.imagePaths.map(ChatImage.path)))
+            let carriesToolTurn = !msg.toolResults.isEmpty || !msg.toolCalls.isEmpty
+            guard !msg.content.isEmpty || !msg.imagePaths.isEmpty || carriesToolTurn else { continue }
+            if !msg.content.isEmpty || !msg.imagePaths.isEmpty {
+                let content = Self.truncationNote(for: msg).map { "\(msg.content)\n\n\($0)" }
+                    ?? msg.content
+                history.append(
+                    ChatMessage(
+                        role: msg.role,
+                        content: content,
+                        images: msg.imagePaths.map(ChatImage.path)))
+            }
             if !msg.content.isEmpty {
                 conversationParts.append(msg.content)
+            }
+            for result in msg.toolResults {
+                let tag = result.isError ? "tool_error" : "tool_response"
+                let content = "<\(tag)>\n\(result.modelOutput)\n</\(tag)>"
+                history.append(ChatMessage(role: .tool, content: content))
+                conversationParts.append(content)
             }
         }
         let conversationPiece = conversationParts.joined(separator: "\n\n")

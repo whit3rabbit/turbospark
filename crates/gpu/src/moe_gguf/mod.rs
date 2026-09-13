@@ -17,14 +17,14 @@
 //! offsets: there are no scale or bias planes to point at, so the host writes
 //! zeros into the other six and the kernels never read them.
 //!
-//! The shader source is `moe.metal`, then `dequant_q4_k.metal`, then
-//! `moe_gguf.metal`, in that order: the last uses the first's `RoutedBlobs`,
-//! `ExpertOffsets`, `moe_hidden_activation` and `moe_fc_*` declarations, and
-//! the second's `dequant_q4_k_row_simd`. That is the `gdn.rs` arrangement and
-//! it carries the same two caveats: the concatenation must be ONE
-//! `&'static str` constant (the pipeline cache keys on its address, not its
-//! text), and the two borrowed files' own kernels are compiled twice in this
-//! process.
+//! The shader source is `moe.metal`, the GGUF dequantizers and their generated
+//! IQ tables, then `moe_gguf.metal`, in that order: the last uses the first's
+//! `RoutedBlobs`, `ExpertOffsets`, `moe_hidden_activation` and `moe_fc_*`
+//! declarations, plus row helpers from the dequantizers. That is the `gdn.rs`
+//! arrangement and it carries the same two caveats: the concatenation must be
+//! ONE `&'static str` constant (the pipeline cache keys on its address, not
+//! its text), and the two borrowed files' own kernels are compiled twice in
+//! this process.
 //!
 //! Both block types get their own pair rather than one function-constant
 //! kernel, for the reason the file header gives: the layouts share no
@@ -55,6 +55,7 @@ const SOURCE: &str = concat!(
     include_str!("../shaders/moe.metal"),
     include_str!("../shaders/dequant_q4_k.metal"),
     include_str!("../shaders/dequant_q6_k.metal"),
+    include_str!("../shaders/dequant_iq_lowbit_tables.metal"),
     include_str!("../shaders/dequant_iq.metal"),
     include_str!("../shaders/moe_gguf.metal")
 );

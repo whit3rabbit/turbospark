@@ -60,7 +60,7 @@ public enum ToolCallProjection {
         let arguments = call.arguments
         switch call.category {
         case .terminal:
-            let command = arguments["command"] ?? arguments["cmd"] ?? ""
+            let command = call.shellCommand ?? ""
             return "shell command: \(command)"
         case .fileWrite:
             let path = arguments["path"] ?? arguments["file_path"] ?? "(no path)"
