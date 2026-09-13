@@ -339,7 +339,7 @@ public enum ToolCallDiffFormatter {
 
         // 15. Commands: run_command, bash, terminal
         if lowerName.contains("command") || lowerName.contains("bash") || lowerName.contains("exec") || lowerName.contains("terminal") {
-            let cmd = arguments["CommandLine"] ?? arguments["command"] ?? arguments["cmd"] ?? arguments["name"] ?? ""
+            let cmd = AppToolCall.shellCommand(in: arguments) ?? arguments["name"] ?? ""
             let trimmed = cmd.trimmingCharacters(in: .whitespacesAndNewlines)
             let shortCmd = simplifyCommand(trimmed)
 

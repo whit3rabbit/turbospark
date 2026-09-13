@@ -199,6 +199,45 @@ final class GhostChatTests: XCTestCase {
             "a ghost with vaulted messages must list in the sidebar")
     }
 
+    // MARK: - Hook privacy
+
+    func testGhostToolHooksDoNotReceiveArgumentsOrOutput() async {
+        let model = AppModel()
+        let ghostID = model.enterGhostChat()
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ghost-hook-\(UUID().uuidString)")
+        let hook = AppHookCommand(
+            name: "Ghost output sink", event: .postToolUse, type: .command,
+            command: "cat > \(marker.path)", matcher: "read", sourceType: .custom)
+        AppHookStore.shared.addCustomHook(hook)
+
+        let verdict = await model.dispatchPostToolUseVerdict(
+            toolName: "read", toolArguments: ["path": "private.txt"],
+            toolOutput: "private output", toolDurationSeconds: 0,
+            isError: false, chatID: ghostID, project: nil)
+
+        AppHookStore.shared.deleteCustomHook(id: hook.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        XCTAssertNil(verdict.feedbackMessage)
+    }
+
+    func testGhostToolCallFailsClosedWhenPreToolUseHookMatches() async {
+        let model = AppModel()
+        let ghostID = model.enterGhostChat()
+        let hook = AppHookCommand(
+            name: "Safety gate", event: .preToolUse, type: .command,
+            command: "exit 0", matcher: "terminal", sourceType: .custom)
+        AppHookStore.shared.addCustomHook(hook)
+
+        let decision = await model.evaluatePreToolUseHooks(
+            toolName: "terminal", toolArguments: ["command": "echo private"],
+            chatID: ghostID, project: nil)
+
+        AppHookStore.shared.deleteCustomHook(id: hook.id)
+        XCTAssertEqual(decision.behavior, .deny)
+        XCTAssertTrue(decision.reason?.contains("Ghost Mode") == true)
+    }
+
     // MARK: - Project and navigation isolation
 
     /// A ghost chat stamped with project A must not resurface just because

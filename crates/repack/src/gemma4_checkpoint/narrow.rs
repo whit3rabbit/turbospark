@@ -149,6 +149,7 @@ pub fn quantize_gating_matrix_int8(
     shards: &Gemma4Shards<'_>,
     name: &str,
     dtype: &str,
+    expected_shape: (usize, usize),
 ) -> Result<ResidentEntrySpec, Gemma4Error> {
     let w = shards.info(name)?;
     if w.shape.len() != 2 {
@@ -157,8 +158,23 @@ pub fn quantize_gating_matrix_int8(
             detail: format!("expected rank-2 gating weight, got {:?}", w.shape),
         });
     }
-    let rows = w.shape[0] as usize;
-    let cols = w.shape[1] as usize;
+    let rows = usize::try_from(w.shape[0]).map_err(|_| Gemma4Error::ShapeMismatch {
+        tensor: name.to_string(),
+        detail: format!("router row count {} does not fit usize", w.shape[0]),
+    })?;
+    let cols = usize::try_from(w.shape[1]).map_err(|_| Gemma4Error::ShapeMismatch {
+        tensor: name.to_string(),
+        detail: format!("router column count {} does not fit usize", w.shape[1]),
+    })?;
+    if (rows, cols) != expected_shape {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!(
+                "expected gating weight {}x{}, got {rows}x{cols}",
+                expected_shape.0, expected_shape.1
+            ),
+        });
+    }
     let group = AFFINE_GROUP_SIZE as usize;
     if cols % group != 0 {
         return Err(Gemma4Error::ShapeMismatch {
@@ -166,13 +182,40 @@ pub fn quantize_gating_matrix_int8(
             detail: format!("row length {cols} is not a multiple of the {group}-element group"),
         });
     }
-    let values = decode_raw_to_f32(name, dtype, &shards.read(name)?)?;
-    if values.len() != rows * cols {
+    let value_count = rows
+        .checked_mul(cols)
+        .ok_or_else(|| Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("gating weight element count overflows usize: {rows}x{cols}"),
+        })?;
+    let bytes = shards.read(name)?;
+    let element_bytes = match dtype {
+        "BF16" | "F16" => 2,
+        "F32" => 4,
+        other => {
+            return Err(Gemma4Error::UnsupportedDtype {
+                tensor: name.to_string(),
+                dtype: other.to_string(),
+            })
+        }
+    };
+    let expected_bytes =
+        value_count
+            .checked_mul(element_bytes)
+            .ok_or_else(|| Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!("gating weight byte count overflows usize: {value_count} values"),
+            })?;
+    if bytes.len() != expected_bytes {
         return Err(Gemma4Error::ShapeMismatch {
             tensor: name.to_string(),
-            detail: format!("{} values do not fill {rows}x{cols}", values.len()),
+            detail: format!(
+                "{} bytes do not fill {rows}x{cols} {dtype} values",
+                bytes.len()
+            ),
         });
     }
+    let values = decode_raw_to_f32(name, dtype, &bytes)?;
     let quantized: Vec<_> = (0..rows)
         .map(|r| compute::quantize_int8_affine(&values[r * cols..(r + 1) * cols]))
         .collect();
@@ -389,9 +432,9 @@ fn pass_through_packed_impl(
         }
         let c = shards.info(companion)?;
         let accepted = if qwen2_wide_f16 {
-            matches!(c.dtype, "F16" | "BF16")
+            matches!(c.dtype.as_str(), "F16" | "BF16")
         } else {
-            c.dtype == companion_dtype
+            c.dtype.as_str() == companion_dtype
         };
         if !accepted {
             return Err(Gemma4Error::UnsupportedDtype {
@@ -429,16 +472,8 @@ fn pass_through_packed_impl(
             ),
         });
     }
-    let (scales, scales_lossy) = read_companion_plane(
-        shards,
-        &scales_name,
-        qwen2_wide_f16,
-    )?;
-    let (biases, biases_lossy) = read_companion_plane(
-        shards,
-        &biases_name,
-        qwen2_wide_f16,
-    )?;
+    let (scales, scales_lossy) = read_companion_plane(shards, &scales_name, qwen2_wide_f16)?;
+    let (biases, biases_lossy) = read_companion_plane(shards, &biases_name, qwen2_wide_f16)?;
     let group = group_size as u64;
     let expected_groups = (rows * cols / group) as usize;
     if cols % group != 0 || scales.len() != expected_groups || biases.len() != expected_groups {
@@ -476,13 +511,10 @@ fn pass_through_packed_impl(
     let losses = if scales_lossy == 0 && biases_lossy == 0 {
         Vec::new()
     } else {
-        vec![
-            (scales_name, scales_lossy),
-            (biases_name, biases_lossy),
-        ]
-        .into_iter()
-        .filter(|(_, count)| *count > 0)
-        .collect()
+        vec![(scales_name, scales_lossy), (biases_name, biases_lossy)]
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .collect()
     };
     Ok((spec, losses))
 }
@@ -510,5 +542,56 @@ fn read_companion_plane(
         Ok((bits, lossy))
     } else {
         Ok((le_u16(&bytes), 0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::quantize_gating_matrix_int8;
+    use crate::gemma4_checkpoint::{Gemma4Error, Gemma4Shards};
+    use crate::ranged_download::MemoryRangeSource;
+    use crate::safetensors_header::{SafetensorsHeader, TensorInfo};
+
+    const NAME: &str = "language_model.model.layers.0.mlp.gate.weight";
+
+    fn shards_with_shape(shape: Vec<u64>) -> (SafetensorsHeader, MemoryRangeSource<'static>) {
+        let header = SafetensorsHeader {
+            tensors: BTreeMap::from([(
+                NAME.to_string(),
+                TensorInfo {
+                    dtype: "BF16".to_string(),
+                    shape,
+                    data_offsets: (0, 0),
+                },
+            )]),
+            metadata: None,
+            header_len: 0,
+        };
+        static EMPTY_FILE: [u8; 8] = [0; 8];
+        (header, MemoryRangeSource::new(&EMPTY_FILE))
+    }
+
+    #[test]
+    fn malicious_gating_dimensions_are_refused_without_panicking() {
+        let (header, source) = shards_with_shape(vec![1 << 63, 64]);
+        let shards = Gemma4Shards::single(&header, &source);
+        let hostile_rows = usize::try_from(1_u64 << 63).expect("test requires a 64-bit host");
+        let err = quantize_gating_matrix_int8(&shards, NAME, "BF16", (hostile_rows, 64))
+            .expect_err("overflowing shape must be refused");
+        assert!(matches!(err, Gemma4Error::ShapeMismatch { .. }));
+    }
+
+    #[test]
+    fn gating_dimensions_must_match_the_architecture() {
+        let (header, source) = shards_with_shape(vec![3, 64]);
+        let shards = Gemma4Shards::single(&header, &source);
+        let err = quantize_gating_matrix_int8(&shards, NAME, "BF16", (2, 64))
+            .expect_err("checkpoint shape must match architecture");
+        let Gemma4Error::ShapeMismatch { detail, .. } = err else {
+            panic!("expected shape mismatch");
+        };
+        assert!(detail.contains("expected gating weight 2x64"), "{detail}");
     }
 }
