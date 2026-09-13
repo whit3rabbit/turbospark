@@ -20,6 +20,7 @@ use turbospark_repack::{
 use turbospark_runtime::{
     ChunkedPrefillRunner, DraftPolicies, LogitProducer, RealForwardRunner, SteeringPolicy,
 };
+use turbospark_vision_io::MropePositions;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -73,6 +74,62 @@ fn feed(runner: &mut RealForwardRunner, tokens: &[i32]) {
         }
         .expect("produce succeeds");
     }
+}
+
+fn text_positions(len: usize) -> MropePositions {
+    MropePositions {
+        triples: (0..len).map(|i| (i as i32, i as i32, i as i32)).collect(),
+        rope_delta: 0,
+        spans: Vec::new(),
+    }
+}
+
+#[test]
+fn an_active_image_prompt_cannot_select_a_parked_session() {
+    let dir = temp_dir();
+    let arch = build_install(&dir);
+    let mut runner = open(&dir, arch, 2);
+    let victim = [1, 2, 3, 4, 5, 6];
+    let other = [7, 8, 9, 10, 11, 12];
+
+    runner.reset();
+    feed(&mut runner, &victim);
+    runner.reset();
+    feed(&mut runner, &other);
+
+    runner
+        .set_prompt_vision(&[], &text_positions(victim.len()), victim.len())
+        .expect("the image prompt map validates");
+    assert_eq!(
+        runner.try_reuse_prefix(&victim),
+        0,
+        "an image request must not swap in token-matching state parked by another request"
+    );
+}
+
+#[test]
+fn state_produced_with_an_image_map_remains_tainted_when_parked() {
+    let dir = temp_dir();
+    let arch = build_install(&dir);
+    let mut runner = open(&dir, arch, 2);
+    let image_prompt = [1, 2, 3, 4, 5, 6];
+    let other = [7, 8, 9, 10, 11, 12];
+
+    runner
+        .set_prompt_vision(&[], &text_positions(image_prompt.len()), image_prompt.len())
+        .expect("the image prompt map validates");
+    runner.reset();
+    feed(&mut runner, &image_prompt);
+    runner.clear_prompt_vision();
+
+    assert_eq!(runner.try_reuse_prefix(&other), 0);
+    runner.reset();
+    feed(&mut runner, &other);
+    assert_eq!(
+        runner.try_reuse_prefix(&image_prompt),
+        0,
+        "state built while an image map was active must remain tainted after it is parked"
+    );
 }
 
 /// `--session-slots 1` (the default, no pool) must be a complete no-op: a

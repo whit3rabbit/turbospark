@@ -30,6 +30,13 @@ impl LogitProducer for RealForwardRunner {
         // Cleared HERE, beside the cache it describes, so the two can never
         // disagree about what the state holds.
         self.kv_prefix.clear();
+        // `prompt_vision` deliberately survives this generation-start reset.
+        // Keep the fresh prefix tainted while that map is active: the state
+        // about to be produced depends on pixels that placeholder ids do not
+        // identify, and may later be parked in the session pool.
+        if self.prompt_vision.is_some() {
+            self.kv_prefix.taint();
+        }
         self.batched_tape = None;
         self.batched_tape_row0 = None;
         self.kv.reset();
@@ -122,7 +129,10 @@ impl LogitProducer for RealForwardRunner {
     /// Both refuse by returning 0, which costs a full prefill and nothing
     /// else.
     fn try_reuse_prefix(&mut self, prompt_ids: &[TokenId]) -> usize {
-        if !self.prefix_reuse_enabled {
+        // An image prompt's placeholder ids do not identify its pixels. In
+        // particular, do not let `select_session` replace the tainted live
+        // slot with an apparently matching parked slot from another request.
+        if !self.prefix_reuse_enabled || self.prompt_vision.is_some() {
             return 0;
         }
         // Swap in whichever PARKED session best continues this prompt,
