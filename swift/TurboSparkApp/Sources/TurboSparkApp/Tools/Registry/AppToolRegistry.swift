@@ -298,10 +298,7 @@ public enum AppToolRegistry {
                 }
 
             case "run_command", "bash", "shell", "exec", "terminal":
-                guard let command = call.arguments["command"]
-                    ?? call.arguments["cmd"]
-                    ?? call.arguments["CommandLine"]
-                    ?? call.arguments["code"] else {
+                guard let command = call.shellCommand else {
                     throw NSError(domain: "TurboSparkTool", code: 4, userInfo: [NSLocalizedDescriptionKey: "Missing 'command' argument."])
                 }
                 let timeoutMs = Int(call.arguments["timeout"]

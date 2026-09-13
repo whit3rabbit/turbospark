@@ -241,7 +241,7 @@ extension SubagentRunner {
         // is what actually bounds an unattended shell -- a different question
         // from the one `evaluate` answers.
         if call.category == .terminal,
-            let command = call.arguments["command"] ?? call.arguments["cmd"],
+            let command = call.shellCommand,
             !TerminalCommandClassifier.isAutoApprovable(command)
         {
             return "Command '\(command)' is not on the auto-approvable allowlist and a subagent "
