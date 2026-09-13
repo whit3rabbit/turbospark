@@ -51,10 +51,11 @@ pub struct Gemma4RepackOutput {
     pub ngram: Option<super::ngram::NgramPlan>,
 }
 
-/// Walks a Gemma 4 checkpoint's tensors: classifies every name, orders and
-/// reads the resident LM set (pass-through for `U32` `.weight` tensors with
-/// their BF16 companions, raw bytes for everything else), and slices each
-/// layer's routed-expert `gate/up/down` bundles into per-expert blobs.
+/// Walks a Gemma 4-family checkpoint's tensors: classifies every name, orders
+/// and reads the resident LM set (pass-through for `U32` `.weight` tensors,
+/// including Qwen2's F16-to-BF16 companion conversion, raw bytes for
+/// everything else), and slices each layer's routed-expert `gate/up/down`
+/// bundles into per-expert blobs.
 pub fn orchestrate_gemma4_checkpoint(
     header: &SafetensorsHeader,
     source: &dyn RangeSource,
@@ -340,7 +341,16 @@ pub fn read_resident_entries_from_shards(
     for &name in resident_bases {
         let t = shards.info(name)?;
         if t.dtype == "U32" && name.ends_with(".weight") {
-            entries.push(super::narrow::pass_through_packed(shards, name, quant)?);
+            let (entry, companion_loss) = if family == ModelFamily::Qwen2Dense {
+                super::narrow::pass_through_packed_qwen2_with_loss(shards, name, quant)?
+            } else {
+                (
+                    super::narrow::pass_through_packed(shards, name, quant)?,
+                    Vec::new(),
+                )
+            };
+            entries.push(entry);
+            lossy_narrowing.extend(companion_loss);
         } else if int8_force_targets(family)
             .iter()
             .any(|suffix| name.ends_with(suffix))

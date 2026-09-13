@@ -49,6 +49,12 @@ extension AppModel {
         self.stopSequences = settings.stopSequences
         self.samplingPresets = settings.samplingPresets
         self.defaultSystemPrompt = settings.defaultSystemPrompt
+        self.systemPrompts = settings.systemPrompts
+        self.selectedSystemPromptID = UUID(uuidString: settings.activeSystemPromptID)
+            .flatMap { id in settings.systemPrompts.contains(where: { $0.id == id }) ? id : nil }
+        self.personalities = settings.personalities
+        self.selectedPersonalityID = UUID(uuidString: settings.activePersonalityID)
+            .flatMap { id in settings.personalities.contains(where: { $0.id == id }) ? id : nil }
         self.pluginEnableState = settings.enabledPlugins
         self.runtimeOptions.powerProfile = AppPowerProfileOption(rawValue: settings.powerProfile) ?? .auto
         self.runtimeOptions.loadGuard = AppLoadGuardOption(rawValue: settings.loadGuard) ?? .relaxed
@@ -82,7 +88,13 @@ extension AppModel {
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
         self.autoCompactEnabled = settings.autoCompact
+        self.actionFusionEnabled = settings.actionFusion
+        self.observationPackEnabled = settings.observationPack
+        self.evidenceReducerEnabled = settings.evidenceReducer
+        self.todoBoundaryCompactionEnabled = settings.todoBoundaryCompaction
         self.memoryEnabled = settings.memoryEnabled
+        self.syntextIndexingEnabled = settings.syntextIndexingEnabled
+        AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
         // The pinned port is a plain preference; the server API key is a
@@ -173,9 +185,17 @@ extension AppModel {
             interactionMode: interactionMode.rawValue,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
             autoCompact: autoCompactEnabled,
+            actionFusion: actionFusionEnabled,
+            observationPack: observationPackEnabled,
+            evidenceReducer: evidenceReducerEnabled,
+            todoBoundaryCompaction: todoBoundaryCompactionEnabled,
             compactionKeepRecentTurns: compactionKeepRecentTurns,
             serverPinnedPort: serverPinnedPort,
             defaultSystemPrompt: defaultSystemPrompt,
+            systemPrompts: systemPrompts,
+            activeSystemPromptID: selectedSystemPromptID?.uuidString ?? "",
+            personalities: personalities,
+            activePersonalityID: selectedPersonalityID?.uuidString ?? "",
             enabledPlugins: pluginEnableState,
             showMenuBarItem: showMenuBarItem,
             keepFansPinnedOnQuit: keepFansPinnedOnQuit,
@@ -184,7 +204,8 @@ extension AppModel {
             serverEmbeddingModel: serverEmbeddingModelInput,
             hfEndpoint: hfEndpointInput,
             memoryEnabled: memoryEnabled,
-            agentModeHints: agentModeHints
+            agentModeHints: agentModeHints,
+            syntextIndexingEnabled: syntextIndexingEnabled
         )
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not

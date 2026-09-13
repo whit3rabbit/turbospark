@@ -31,7 +31,11 @@ use metal::FunctionConstantValues;
 use crate::bytes::{half_slice_to_le_bytes, read_half_buffer, u32_bytes};
 use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext};
 
-pub(crate) const SOURCE: &str = include_str!("shaders/dequant_iq.metal");
+pub(crate) const SOURCE: &str = concat!(
+    include_str!("shaders/dequant_iq_lowbit_tables.metal"),
+    "\n",
+    include_str!("shaders/dequant_iq.metal"),
+);
 const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
 const ROWS_PER_THREADGROUP: u64 = 8;
 
@@ -47,6 +51,18 @@ pub const IQ4_XS_BLOCK_BYTES: usize = 136;
 pub const IQ3_XXS_BLOCK_ELEMS: usize = 256;
 /// IQ3_XXS bytes per block (98).
 pub const IQ3_XXS_BLOCK_BYTES: usize = 98;
+pub const IQ2_XXS_BLOCK_ELEMS: usize = 256;
+pub const IQ2_XXS_BLOCK_BYTES: usize = 66;
+pub const IQ2_XS_BLOCK_ELEMS: usize = 256;
+pub const IQ2_XS_BLOCK_BYTES: usize = 74;
+pub const IQ2_S_BLOCK_ELEMS: usize = 256;
+pub const IQ2_S_BLOCK_BYTES: usize = 82;
+pub const IQ3_S_BLOCK_ELEMS: usize = 256;
+pub const IQ3_S_BLOCK_BYTES: usize = 110;
+pub const IQ1_S_BLOCK_ELEMS: usize = 256;
+pub const IQ1_S_BLOCK_BYTES: usize = 50;
+pub const IQ1_M_BLOCK_ELEMS: usize = 256;
+pub const IQ1_M_BLOCK_BYTES: usize = 56;
 
 /// Which of the three layouts a byte run is in.
 ///
@@ -55,6 +71,12 @@ pub const IQ3_XXS_BLOCK_BYTES: usize = 98;
 /// three different strides without branching per element.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum IqBlockType {
+    Iq2Xxs,
+    Iq2Xs,
+    Iq2S,
+    Iq3S,
+    Iq1S,
+    Iq1M,
     /// IQ4_NL block layout.
     Iq4Nl,
     /// IQ4_XS block layout.
@@ -66,6 +88,12 @@ pub enum IqBlockType {
 impl IqBlockType {
     pub(crate) fn kernel(self) -> &'static str {
         match self {
+            IqBlockType::Iq2Xxs => "dequant_iq2_xxs_gemv_simd",
+            IqBlockType::Iq2Xs => "dequant_iq2_xs_gemv_simd",
+            IqBlockType::Iq2S => "dequant_iq2_s_gemv_simd",
+            IqBlockType::Iq3S => "dequant_iq3_s_gemv_simd",
+            IqBlockType::Iq1S => "dequant_iq1_s_gemv_simd",
+            IqBlockType::Iq1M => "dequant_iq1_m_gemv_simd",
             IqBlockType::Iq4Nl => "dequant_iq4_nl_gemv_simd",
             IqBlockType::Iq4Xs => "dequant_iq4_xs_gemv_simd",
             IqBlockType::Iq3Xxs => "dequant_iq3_xxs_gemv_simd",
@@ -74,6 +102,12 @@ impl IqBlockType {
 
     pub(crate) fn block(self) -> (usize, usize) {
         match self {
+            IqBlockType::Iq2Xxs => (IQ2_XXS_BLOCK_ELEMS, IQ2_XXS_BLOCK_BYTES),
+            IqBlockType::Iq2Xs => (IQ2_XS_BLOCK_ELEMS, IQ2_XS_BLOCK_BYTES),
+            IqBlockType::Iq2S => (IQ2_S_BLOCK_ELEMS, IQ2_S_BLOCK_BYTES),
+            IqBlockType::Iq3S => (IQ3_S_BLOCK_ELEMS, IQ3_S_BLOCK_BYTES),
+            IqBlockType::Iq1S => (IQ1_S_BLOCK_ELEMS, IQ1_S_BLOCK_BYTES),
+            IqBlockType::Iq1M => (IQ1_M_BLOCK_ELEMS, IQ1_M_BLOCK_BYTES),
             IqBlockType::Iq4Nl => (IQ4_NL_BLOCK_ELEMS, IQ4_NL_BLOCK_BYTES),
             IqBlockType::Iq4Xs => (IQ4_XS_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES),
             IqBlockType::Iq3Xxs => (IQ3_XXS_BLOCK_ELEMS, IQ3_XXS_BLOCK_BYTES),
@@ -90,6 +124,16 @@ impl IqBlockType {
         );
         n / elems * bytes
     }
+}
+
+/// A resident matrix in any IQ layout. The kind is carried with the matrix so
+/// dispatch and packed-row validation cannot drift at a caller.
+pub struct IqResidentMatrix<'a> {
+    pub buffer: &'a metal::Buffer,
+    pub weights_offset: u64,
+    pub rows: usize,
+    pub cols: usize,
+    pub kind: IqBlockType,
 }
 
 /// The kernels declare no function constants, the same deliberate choice the
@@ -138,4 +182,59 @@ pub fn dequant_iq_gemv(
     );
 
     Ok(read_half_buffer(&y_buffer, m))
+}
+
+/// Encodes an offset-bound IQ GEMV against a resident weight buffer.
+pub fn encode_dequant_iq_gemv_resident(
+    context: &mut MetalContext,
+    pass: &crate::context::PassEncoder,
+    w: &IqResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+) -> Result<(), GpuError> {
+    assert!(w.rows > 0);
+    let _ = w.kind.row_bytes(w.cols);
+    let m = w.rows as u32;
+    let n = w.cols as u32;
+    let pipeline = context.pipeline(SOURCE, w.kind.kernel(), &no_function_constants(), b"")?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (w.buffer, 0, w.weights_offset),
+            (x.0, 1, x.1),
+            (y.0, 2, y.1),
+        ],
+        &[(u32_bytes(&m), 3), (u32_bytes(&n), 4)],
+        w.rows.div_ceil(ROWS_PER_THREADGROUP as usize) as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// IQ1_M embedding lookup. IQ1_M is the only new dense GSQ-RCO type used
+/// for an embedding table, so it remains a named path instead of making the
+/// GEMV enum imply that every IQ layout has lookup support.
+pub fn encode_embed_lookup_iq1_m(
+    context: &mut MetalContext,
+    pass: &crate::context::PassEncoder,
+    table: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(d as usize % IQ1_M_BLOCK_ELEMS, 0);
+    let pipeline = context.pipeline(SOURCE, "embed_lookup_iq1_m", &no_function_constants(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(table.0, 0, table.1), (out.0, 1, out.1)],
+        &[
+            (u32_bytes(&token_id), 2),
+            (u32_bytes(&d), 3),
+            (crate::bytes::f32_bytes(&out_scale), 4),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
+    );
+    Ok(())
 }

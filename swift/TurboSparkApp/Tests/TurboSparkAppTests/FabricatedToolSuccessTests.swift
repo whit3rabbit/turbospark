@@ -97,6 +97,29 @@ final class FabricatedToolSuccessTests: XCTestCase {
         }
     }
 
+    func testDisabledWebToolsAreNeitherAdvertisedNorExecuted() async {
+        for agentType in AppAgentType.allCases {
+            let names = Set(AppToolCatalog.tools(
+                for: agentType, webToolsEnabled: false
+            ).map { $0.function.name.lowercased() })
+            XCTAssertFalse(names.contains("webfetch"))
+            XCTAssertFalse(names.contains("websearch"))
+        }
+        let prompt = AppToolCatalog.systemPromptAddendum(
+            for: .coder, webToolsEnabled: false)
+        XCTAssertFalse(prompt.contains("`WebFetch`"))
+        XCTAssertFalse(prompt.contains("`WebSearch`"))
+
+        let call = AppToolCall(
+            name: "WebFetch",
+            arguments: ["url": "https://example.com/private-data"]
+        )
+        let result = await AppToolRegistry.execute(
+            call: call, in: nil, webToolsEnabled: false)
+        XCTAssertTrue(result.isError)
+        XCTAssertTrue(result.output.contains("is disabled"))
+    }
+
     func testIsImplementedRecognizesDynamicMcpToolNames() {
         XCTAssertTrue(AppToolRegistry.isImplemented("mcp__filesystem__read_file"))
         XCTAssertFalse(AppToolRegistry.isImplemented("SomeRandomTool"))

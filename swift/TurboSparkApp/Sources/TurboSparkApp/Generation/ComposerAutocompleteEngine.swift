@@ -158,6 +158,10 @@ enum ComposerAutocompleteEngine {
         let clean = query.lowercased()
         var ranked: [(bucket: Int, entry: ProjectFileEntry)] = []
         for entry in entries {
+            // The mention grammar has no escape sequence for a quote inside a
+            // quoted path. Do not serialize a filename that could terminate
+            // its token and inject another mention.
+            guard !entry.relativePath.contains("\"") else { continue }
             let path = entry.relativePath.lowercased()
             let fileName = (path as NSString).lastPathComponent
             let bucket: Int

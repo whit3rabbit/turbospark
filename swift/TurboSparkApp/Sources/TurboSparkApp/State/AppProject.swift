@@ -402,6 +402,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     public var createdAt: Date
     /// Timestamp when the project was last updated.
     public var updatedAt: Date
+    /// Whether Syntext indexing is enabled for this project.
+    public var syntextIndexEnabled: Bool
 
     public init(
         id: UUID = UUID(),
@@ -420,7 +422,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         rejectedMcpJsonServers: [String] = [],
         approveAllProjectMcpServers: Bool = false,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        syntextIndexEnabled: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -439,6 +442,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.approveAllProjectMcpServers = approveAllProjectMcpServers
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.syntextIndexEnabled = syntextIndexEnabled
     }
 
     enum CodingKeys: String, CodingKey {
@@ -446,6 +450,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         case permissions, maxAutonomousSteps, mcpServers, forgeGuardrailsEnabled
         case skillStateEnabled, enabledPlugins, enabledSkills, enabledMcpServers, marketplaces, localPluginPaths, createdAt, updatedAt
         case approvedMcpJsonServers, rejectedMcpJsonServers, approveAllProjectMcpServers
+        case syntextIndexEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -478,6 +483,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.approveAllProjectMcpServers = try container.decodeIfPresent(Bool.self, forKey: .approveAllProjectMcpServers) ?? false
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        self.syntextIndexEnabled = try container.decodeIfPresent(Bool.self, forKey: .syntextIndexEnabled) ?? false
     }
 
     /// Resolved URL to the root directory if configured.

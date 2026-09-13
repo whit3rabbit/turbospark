@@ -334,3 +334,161 @@ kernel void dequant_iq3_xxs_gemv_simd(
     const float acc = dequant_iq3_xxs_row_simd(W + row * iq3_xxs_row_bytes(N), x, N, lane);
     if (lane == 0) y[row] = half(acc);
 }
+
+// The six dense GSQ-RCO IQ layouts below all use one lane per element in a
+// 32-element sub-block. `iq_sign` reproduces ggml's seven stored sign bits
+// plus parity eighth bit, avoiding a second 128-byte mutable table.
+static inline uint iq_sign(uint index) {
+    const uint low = index & 127u;
+    return low | ((popcount(low) & 1u) << 7);
+}
+static inline float iq_u8(ulong word, uint lane) {
+    return float((word >> (8u * lane)) & 255ul);
+}
+static inline float iq_i8(ulong word, uint lane) {
+    return float(as_type<char>(uchar((word >> (8u * lane)) & 255ul)));
+}
+static inline uint iq_u16(device const uint8_t *p) { return uint(p[0]) | (uint(p[1]) << 8); }
+
+static inline float dequant_iq2_xxs_row_simd(device const uint8_t *w, device const half *x, uint n, uint lane) {
+    float acc = 0.0f;
+    for (uint b = 0; b < n / 256; ++b) {
+        device const uint8_t *blk = w + b * 66;
+        const float d = iq_f16_at(blk);
+        for (uint ib = 0; ib < 8; ++ib) {
+            device const uint8_t *q = blk + 2 + ib * 8;
+            const uint a = uint(q[0]) | (uint(q[1])<<8) | (uint(q[2])<<16) | (uint(q[3])<<24);
+            const uint aux = uint(q[4]) | (uint(q[5])<<8) | (uint(q[6])<<16) | (uint(q[7])<<24);
+            const uint l = lane / 8, j = lane % 8;
+            const float scale = d * (0.5f + float(aux >> 28)) * 0.25f;
+            const ulong grid = kIq2XxsGrid[(a >> (8 * l)) & 255u];
+            const uint signs = iq_sign(aux >> (7 * l));
+            const float sign = signs & (1u << j) ? -1.0f : 1.0f;
+            acc = fma(scale * iq_u8(grid, j) * sign, float(x[b*256 + ib*32 + lane]), acc);
+        }
+    }
+    return simd_sum(acc);
+}
+
+static inline float dequant_iq2_xs_row_simd(device const uint8_t *w, device const half *x, uint n, uint lane) {
+    float acc = 0.0f;
+    for (uint b = 0; b < n / 256; ++b) {
+        device const uint8_t *blk = w + b * 74;
+        const float d = iq_f16_at(blk); device const uint8_t *qs = blk + 2;
+        device const uint8_t *scales = blk + 66;
+        for (uint ib = 0; ib < 8; ++ib) {
+            const uint l = lane / 8, j = lane % 8, q = iq_u16(qs + 2*(ib*4+l));
+            const uint s = scales[ib]; const float scale = d * (0.5f + float(l < 2 ? (s&15) : (s>>4))) * 0.25f;
+            const ulong grid = kIq2XsGrid[q & 511u]; const uint signs = iq_sign(q >> 9);
+            const float sign = signs & (1u << j) ? -1.0f : 1.0f;
+            acc = fma(scale * iq_u8(grid,j) * sign, float(x[b*256+ib*32+lane]), acc);
+        }
+    }
+    return simd_sum(acc);
+}
+
+static inline float dequant_iq2_s_row_simd(device const uint8_t *w, device const half *x, uint n, uint lane) {
+    float acc = 0.0f;
+    for (uint b = 0; b < n / 256; ++b) {
+        device const uint8_t *blk = w + b * 82;
+        const float d = iq_f16_at(blk); device const uint8_t *qs = blk + 2;
+        device const uint8_t *qh = blk + 66; device const uint8_t *scales = blk + 74;
+        for (uint ib = 0; ib < 8; ++ib) {
+            const uint l=lane/8, j=lane%8, s=scales[ib];
+            const uint index=uint(qs[4*ib+l]) | ((uint(qh[ib]) << (8-2*l)) & 0x300u);
+            const uint signs=qs[32+4*ib+l]; const float sign=signs&(1u<<j)?-1.0f:1.0f;
+            const float scale=d*(0.5f+float(l<2?(s&15):(s>>4)))*0.25f;
+            acc=fma(scale*iq_u8(kIq2SGrid[index],j)*sign,float(x[b*256+ib*32+lane]),acc);
+        }
+    }
+    return simd_sum(acc);
+}
+
+static inline float dequant_iq3_s_row_simd(device const uint8_t *w, device const half *x, uint n, uint lane) {
+    float acc=0.0f;
+    for(uint b=0;b<n/256;++b){
+        device const uint8_t *blk=w+b*110; const float d=iq_f16_at(blk);
+        device const uint8_t *qs=blk+2,*qh=blk+66,*signs=blk+74,*scales=blk+106;
+        for(uint pair=0;pair<4;++pair) for(uint half_block=0;half_block<2;++half_block){
+            const uint l=lane/8,j=lane%8, h=qh[2*pair+half_block];
+            const uint q1=uint(qs[2*l])|((h<<(8-2*l))&256u);
+            const uint q2=uint(qs[2*l+1])|((h<<(7-2*l))&256u);
+            const uint s=signs[l]; const uint pick=j/4, slot=j%4;
+            const uint index=pick==0?q1:q2; const float sign=s&(1u<<j)?-1.0f:1.0f;
+            const uint sc=half_block==0?(scales[pair]&15):(scales[pair]>>4);
+            acc=fma(d*(1.0f+2.0f*float(sc))*iq_u8(ulong(kIq3SGrid[index]),slot)*sign,float(x[b*256+pair*64+half_block*32+lane]),acc);
+            qs+=8; signs+=4;
+        }
+    }
+    return simd_sum(acc);
+}
+
+static inline float dequant_iq1_s_row_simd(device const uint8_t *w, device const half *x, uint n, uint lane) {
+    float acc=0.0f;
+    for(uint b=0;b<n/256;++b){ device const uint8_t *blk=w+b*50; const float d=iq_f16_at(blk); device const uint8_t *qs=blk+2,*qh=blk+34;
+        for(uint ib=0;ib<8;++ib){ const uint h=iq_u16(qh+2*ib),l=lane/8,j=lane%8;
+            const uint index=uint(qs[4*ib+l])|(((h>>(3*l))&7u)<<8);
+            const float delta=(h&0x8000u)?-0.125f:0.125f;
+            acc=fma(d*(2.0f*float((h>>12)&7u)+1.0f)*(iq_i8(kIq1SGrid[index],j)+delta),float(x[b*256+ib*32+lane]),acc); }
+    } return simd_sum(acc);
+}
+
+static inline float dequant_iq1_m_row_simd(device const uint8_t *w, device const half *x, uint n, uint lane) {
+    float acc=0.0f;
+    for(uint b=0;b<n/256;++b){ device const uint8_t *blk=w+b*56,*qs=blk,*qh=blk+32,*sbytes=blk+48;
+        const uint sc0=iq_u16(sbytes),sc1=iq_u16(sbytes+2),sc2=iq_u16(sbytes+4),sc3=iq_u16(sbytes+6);
+        const uint bits=(sc0>>12)|((sc1>>8)&0x00f0u)|((sc2>>4)&0x0f00u)|(sc3&0xf000u); const float d=float(as_type<half>(ushort(bits)));
+        const uint sc[4]={sc0,sc1,sc2,sc3};
+        for(uint ib=0;ib<8;++ib){ const uint l=lane/8,j=lane%8,h0=qh[2*ib],h1=qh[2*ib+1],word=sc[ib/2];
+            const uint index[4]={uint(qs[4*ib])|((h0<<8)&0x700u),uint(qs[4*ib+1])|((h0<<4)&0x700u),uint(qs[4*ib+2])|((h1<<8)&0x700u),uint(qs[4*ib+3])|((h1<<4)&0x700u)};
+            const uint bit[4]={h0&8u,h0&128u,h1&8u,h1&128u}; const float delta=bit[l]?-0.125f:0.125f;
+            const uint shift=6*(ib%2)+(l/2)*3; const float scale=d*(2.0f*float((word>>shift)&7u)+1.0f);
+            acc=fma(scale*(iq_i8(kIq1SGrid[index[l]],j)+delta),float(x[b*256+ib*32+lane]),acc); }
+    } return simd_sum(acc);
+}
+
+#define IQ_KERNEL(NAME, ROW, STRIDE) \
+[[kernel, max_total_threads_per_threadgroup(256)]] kernel void NAME( \
+ device const uint8_t* W [[buffer(0)]], device const half* x [[buffer(1)]], device half* y [[buffer(2)]], \
+ constant uint& M [[buffer(3)]], constant uint& N [[buffer(4)]], uint tg [[threadgroup_position_in_grid]], \
+ uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]) { \
+ const uint row=tg*kRowsPerTGIq+sg; if(row>=M) return; const float value=ROW(W+row*(N/256)*STRIDE,x,N,lane); if(lane==0) y[row]=half(value); }
+IQ_KERNEL(dequant_iq2_xxs_gemv_simd, dequant_iq2_xxs_row_simd, 66)
+IQ_KERNEL(dequant_iq2_xs_gemv_simd, dequant_iq2_xs_row_simd, 74)
+IQ_KERNEL(dequant_iq2_s_gemv_simd, dequant_iq2_s_row_simd, 82)
+IQ_KERNEL(dequant_iq3_s_gemv_simd, dequant_iq3_s_row_simd, 110)
+IQ_KERNEL(dequant_iq1_s_gemv_simd, dequant_iq1_s_row_simd, 50)
+IQ_KERNEL(dequant_iq1_m_gemv_simd, dequant_iq1_m_row_simd, 56)
+
+kernel void embed_lookup_iq1_m(
+    device const uint8_t* table [[buffer(0)]],
+    device half* out [[buffer(1)]],
+    constant uint& token_id [[buffer(2)]],
+    constant uint& D [[buffer(3)]],
+    constant float& out_scale [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= D) return;
+    device const uint8_t* blk = table + token_id * (D / 256) * 56 + (gid / 256) * 56;
+    device const uint8_t* qs = blk;
+    device const uint8_t* qh = blk + 32;
+    device const uint8_t* scales = blk + 48;
+    const uint sc0 = iq_u16(scales), sc1 = iq_u16(scales + 2);
+    const uint sc2 = iq_u16(scales + 4), sc3 = iq_u16(scales + 6);
+    const uint bits = (sc0 >> 12) | ((sc1 >> 8) & 0x00f0u) | ((sc2 >> 4) & 0x0f00u) | (sc3 & 0xf000u);
+    const float d = float(as_type<half>(ushort(bits)));
+    const uint e = gid % 256;
+    const uint ib = e / 32, l = (e % 32) / 8, j = e % 8;
+    const uint h0 = qh[2 * ib], h1 = qh[2 * ib + 1];
+    const uint index = l == 0 ? uint(qs[4 * ib]) | ((h0 << 8) & 0x700u)
+        : l == 1 ? uint(qs[4 * ib + 1]) | ((h0 << 4) & 0x700u)
+        : l == 2 ? uint(qs[4 * ib + 2]) | ((h1 << 8) & 0x700u)
+                 : uint(qs[4 * ib + 3]) | ((h1 << 4) & 0x700u);
+    const bool negative_delta = l == 0 ? (h0 & 8u) != 0 : l == 1 ? (h0 & 128u) != 0
+        : l == 2 ? (h1 & 8u) != 0 : (h1 & 128u) != 0;
+    const uint word = ib / 2 == 0 ? sc0 : ib / 2 == 1 ? sc1 : ib / 2 == 2 ? sc2 : sc3;
+    const uint shift = 6 * (ib % 2) + (l / 2) * 3;
+    const float scale = d * (2.0f * float((word >> shift) & 7u) + 1.0f);
+    const float delta = negative_delta ? -0.125f : 0.125f;
+    out[gid] = half(out_scale * scale * (iq_i8(kIq1SGrid[index], j) + delta));
+}

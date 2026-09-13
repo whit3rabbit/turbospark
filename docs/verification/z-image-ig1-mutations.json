@@ -1,0 +1,114 @@
+[
+  {
+    "file": "crates/image/src/scheduler.rs",
+    "mutation": "for &sigma in &raw_sigmas {\n            let shifted = 2.0 * sigma / (1.0 + (self.shift - 1.0) * sigma);",
+    "expected_failed_case": "test_scheduler_schedules_exact_contract",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/tests/scheduler_parity.rs",
+    "mutation": "let captured_sigmas = read_npy_file_f32(&s_path).expect(\"read captured sigmas.npy\");\n\n    let mut sched = FlowMatchEulerScheduler::default();\n    sched.set_timesteps(8);",
+    "expected_failed_case": "test_scheduler_captured_timesteps_sigmas_exact",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/scheduler.rs",
+    "mutation": "prev.push(sample[i] - dt * model_output[i]);",
+    "expected_failed_case": "test_scheduler_euler_step_parity_latents",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/conditioning.rs",
+    "mutation": "render_generic_chat_template(tokenizer, &[msg], &[], true, ReasoningEffort::Off)",
+    "expected_failed_case": "test_conditioning_framing_exact_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/conditioning.rs",
+    "mutation": "pub const PAD_TOKEN_ID: i64 = 151644;",
+    "expected_failed_case": "test_conditioning_tokenization_exact_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/text_encoder.rs",
+    "mutation": "pub const EXTRACT_LAYER_COUNT: usize = 34;",
+    "expected_failed_case": "test_text_encoder_real_conditioning_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/rope.rs",
+    "mutation": "x[r_idx] = x_r * cos + x_i * sin;",
+    "expected_failed_case": "test_apply_rotary_emb_orthogonal_rotation",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/patchify.rs",
+    "mutation": "let sub_idx = ((pf * patch_size + pw) * patch_size + ph) * c + ch;",
+    "expected_failed_case": "test_patchify_unpatchify_contract",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/transformer.rs",
+    "mutation": "let mut sum = bias.map_or(0.0f32, |b| b[o]);\n        let w_row = &weight[o * in_features..(o + 1) * in_features];\n        for (xi, wi) in x.iter().zip(w_row.iter()) {\n            sum += xi * wi;\n        }\n        out[o] = sum;",
+    "expected_failed_case": "transformer::tests::linear_adds_bias_after_dot_product",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/transformer.rs",
+    "mutation": "fn pairwise_sum_squares(values: &[f32]) -> f32 {\n    values.iter().map(|value| value * value).sum()\n}",
+    "expected_failed_case": "transformer::tests::rms_reduction_is_pairwise",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/transformer.rs",
+    "mutation": "let gate_msa = gate_msa_raw.to_vec();",
+    "expected_failed_case": "test_transformer_synthetic_block_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/vae.rs",
+    "mutation": "rgb.push((((value * 0.5 + 0.5).clamp(0.0, 1.0)) * 255.0) as u8);",
+    "expected_failed_case": "test_decoded_rgb_and_png_contract",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/src/transformer.rs",
+    "mutation": "let start = 0;",
+    "expected_failed_case": "transformer::tests::batched_linear_matches_independent_rows",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/tests/pipeline_parity.rs",
+    "mutation": "scheduler_error <= 0.001,",
+    "expected_failed_case": "test_z_image_all_steps_from_captured_input_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/tests/pipeline_parity.rs",
+    "mutation": "const CUMULATIVE_BF16_REL_L2_LIMIT: f32 = 0.194;",
+    "expected_failed_case": "test_z_image_full_nine_step_checkpoint_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  },
+  {
+    "file": "crates/image/tests/vae_parity.rs",
+    "mutation": "assert_eq!(latents.shape, vec![1, 16, 128, 127]);",
+    "expected_failed_case": "test_vae_real_decode_parity",
+    "applied_unique": true,
+    "isolated_failure": true
+  }
+]

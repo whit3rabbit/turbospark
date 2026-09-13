@@ -87,8 +87,12 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// the truth. It is kept rather than removed because removing it would
     /// break that reader silently, which is the failure it is here to avoid.
     public let modelId: String
-    /// Every attached model, in attachment order -- the same ids and the same
-    /// order `GET /v1/models` reports, because both read one registry.
+    /// Every attached canonical model id, in attachment order.
+    ///
+    /// `GET /v1/models` also advertises a
+    /// `claude-turbospark-<canonical-id>` alias for each generative backend.
+    /// Aliases stay out of this field so a host can use an attach result to
+    /// identify and detach exactly one session.
     public let models: [String]
     public let authEnabled: Bool
     /// Seconds since the server started, from a monotonic clock.

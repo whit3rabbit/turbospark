@@ -76,7 +76,7 @@ turbospark list / pull / info / rm / probe / recommend / path / auth
 turbospark bench                         # turbospark-bench
 ```
 
-`start <agent>` connects an external coding agent (`claude`, `codex`, `opencode`, `hermes`, `openclaw`, `dsh`) to the local server through `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`. `start` with anything else launches the background daemon that `stop`, `restart`, and `status` manage.
+`start <agent>` connects an external coding agent (`claude`, `codex`, `opencode`, `hermes`, `openclaw`, `dsh`) to the local server through `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`. The Claude connector passes a `--settings` overlay, rather than only inherited environment variables, so its current local port wins over a stale user setting. It enables gateway discovery and defers unknown-model context enforcement to the gateway; pass `--model claude-turbospark-<canonical-model-id>` to select an attached backend before startup. `start` with anything else launches the background daemon that `stop`, `restart`, and `status` manage.
 
 ## Memory versus speed: `--expert-cache-slots`
 

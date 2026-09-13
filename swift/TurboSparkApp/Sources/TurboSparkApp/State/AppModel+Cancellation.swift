@@ -133,6 +133,7 @@ extension AppModel {
         pendingToolCallStep = 0
         pendingToolCallProject = nil
         pendingBatchCalls = nil
+        pendingValidationCall = nil
         pendingToolCallClassifierNotice = nil
     }
 

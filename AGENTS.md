@@ -47,6 +47,7 @@ read the page before proposing the thing it refutes.
 | `docs/SKILL_STATE.md` | the SKILL.state bounded-state agent runtime, a measured POSITIVE with its scale caveat | proposing agent context compaction, structured output, or constrained decoding |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `swift/docs/SWIFT_TOOLS.md` | Swift native tool implementation: execution, containment, adding new tools | implementing or changing tools in TurboSparkApp |
+| `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, live file buffer, and dual-staticlib symbol localization | touching Syntext integration, grep_search, or project code search |
 | `swift/docs/SWIFT_AGENT_MODE.md` | the `.agentAuto` permission mode: a local-model classifier judges the ask-band, with hard gates, fallback counters, and hints | touching the classifier routing, `hardGated`, `AgentModeGate`, or quoting a permission verdict |
 | `swift/docs/SWIFT_SKILLS.md` | Swift skills: architecture, scopes, file layout, and marketplace integration | changing skills, discovery, or marketplace |
 | `swift/docs/SWIFT_PLUGINS.md` | Swift plugins ported from Claude Code: manifest, contributions, enable cascade, marketplace, the two deviations | touching anything under the plugin system, or quoting a plugin rule |
@@ -319,7 +320,8 @@ cargo clippy --workspace --tests
 cargo check --target x86_64-unknown-linux-gnu \
   -p turbospark-core -p turbospark-compute -p turbospark-model-io \
   -p turbospark-streaming -p turbospark-selection -p turbospark-invocation \
-  -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io
+  -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io \
+  -p turbospark-image
 
 # Run the CLI (validates the invocation; on macOS also attempts real
 # generation against --model in all three modes: --prompt (raw text),
@@ -393,7 +395,7 @@ cargo test -p turbospark-catalog --test catalog_network --release -- --ignored -
 # requests are served one at a time). It serves OpenAI
 # `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`. Add
 # `--bind tailnet` to bind this machine's Tailscale IPv4 address instead of
-# loopback (no auth, no TLS: the Tailnet ACL is the only access control).
+# loopback. It requires --api-key or TURBOSPARK_API_KEY and provides no TLS.
 # `--model` takes a catalog ALIAS as well as a directory, through the same
 # `catalog::resolve_model_arg` `turbospark-check` uses; the startup line
 # prints what an alias resolved to.
@@ -420,8 +422,8 @@ curl -sN localhost:8080/api/chat -H 'content-type: application/json' \
   -d '{"model":"m","messages":[{"role":"user","content":"hi"}]}'
 
 # Point an Anthropic-native client straight at it, no proxy in between.
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
-  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
+  --model claude-turbospark-<canonical-model-id>
 
 # TOOL-CALL GUARDRAILS, on by DEFAULT (`crates/server/CLAUDE.md` Gotcha 18).
 # Rescues a call the decoder could not parse out of the raw text, checks a

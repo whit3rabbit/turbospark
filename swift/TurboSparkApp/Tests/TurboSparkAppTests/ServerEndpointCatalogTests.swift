@@ -106,7 +106,23 @@ final class ServerEndpointCatalogTests: XCTestCase {
         let snippets = ServerConnectRecipes.snippets(
             baseURL: "http://127.0.0.1:1", modelID: "m", apiKey: nil)
         let claude = snippets.first { $0.id == "claude-code" }
-        XCTAssertEqual(claude?.body.contains("ANTHROPIC_API_KEY=\"unused\""), true)
+        XCTAssertEqual(claude?.body.contains("\"ANTHROPIC_API_KEY\":\"unused\""), true)
+    }
+
+    /// Discovery makes the alias selectable, but passing it at launch avoids
+    /// Claude Code choosing an unrelated default before the user opens
+    /// `/model`. The alias is a public `/v1/models` identity, not a made-up
+    /// Anthropic product id.
+    func testClaudeCodeStartsWithTheLoadedModelsDiscoveryAlias() {
+        let snippets = ServerConnectRecipes.snippets(
+            baseURL: "http://127.0.0.1:1", modelID: "gemma4.gturbo", apiKey: nil)
+        let claude = snippets.first { $0.id == "claude-code" }
+        XCTAssertEqual(
+            claude?.body.contains("--model \"claude-turbospark-gemma4.gturbo\""), true)
+        XCTAssertEqual(
+            claude?.body.contains(
+                "\"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT\":\"1\""), true)
+        XCTAssertEqual(claude?.body.contains("claude --settings"), true)
     }
 
     /// With nothing loaded the model field says what to do rather than
@@ -116,6 +132,9 @@ final class ServerEndpointCatalogTests: XCTestCase {
             baseURL: "http://127.0.0.1:1", modelID: "", apiKey: nil)
         let python = snippets.first { $0.id == "openai-python" }
         XCTAssertEqual(python?.body.contains("<load a model first>"), true)
+        let claude = snippets.first { $0.id == "claude-code" }
+        XCTAssertEqual(
+            claude?.body.contains("--model \"<load a model first>\""), true)
     }
 
     // MARK: - Snippet escaping
@@ -133,11 +152,11 @@ final class ServerEndpointCatalogTests: XCTestCase {
             baseURL: "http://127.0.0.1:1", modelID: "m", apiKey: raw)
         let claude = snippets.first { $0.id == "claude-code" }?.body ?? ""
         XCTAssertTrue(
-            claude.contains("ANTHROPIC_API_KEY=\"a\\\\b\\\"c\\$d\\`e;rm\""),
-            "the bash assignment must escape every double-quote metacharacter: \(claude)")
+            claude.contains("\"ANTHROPIC_API_KEY\":\"a\\\\b\\\"c$d`e;rm\""),
+            "the JSON settings argument must preserve the key literally: \(claude)")
         XCTAssertFalse(
-            claude.contains("ANTHROPIC_API_KEY=\"a\\b"),
-            "an unescaped backslash or quote leaked into the assignment")
+            claude.contains("\"ANTHROPIC_API_KEY\":\"a\\b"),
+            "an unescaped backslash leaked into the JSON settings argument")
         let curl = snippets.first { $0.id == "curl" }?.body ?? ""
         XCTAssertTrue(
             curl.contains("'authorization: Bearer a\\b\"c$d`e;rm'"),
@@ -158,6 +177,10 @@ final class ServerEndpointCatalogTests: XCTestCase {
         XCTAssertTrue(
             curl.contains("\"model\":\"mo'\\''del\\\"m\""),
             "the body's shell quoting and its JSON escaping must compose: \(curl)")
+        let claude = snippets.first { $0.id == "claude-code" }?.body ?? ""
+        XCTAssertTrue(
+            claude.contains("--model \"claude-turbospark-mo'del\\\"m\""),
+            "the discovery alias must remain one shell argument: \(claude)")
     }
 
     /// The Python snippet builds a source file, so the key and model go
