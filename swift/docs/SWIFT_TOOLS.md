@@ -296,9 +296,11 @@ execution block of type `command`, `script` or `http`. Read
 `Tools/Custom/CustomToolDefinition.swift` for the fields rather than a copy
 of them here.
 
-A command runs through `/bin/zsh -c` with every argument value
-single-quoted, substituted in one pass so a value cannot be substituted
-into, and offered again as `TOOL_ARG_<KEY>` in the environment (state#70).
+A command runs through `/bin/zsh -c` with argument values available only as
+`TOOL_ARG_<KEY>` environment variables. Placeholder sites are rewritten to
+quoted references to those variables in one pass, including placeholders
+inside existing single or double quotes, so model-controlled bytes never
+become shell program text (state#70).
 A custom tool is always workspace-rooted and is gated on the category it
 declares (state#71).
 
