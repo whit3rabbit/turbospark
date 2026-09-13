@@ -20,7 +20,7 @@ struct ModelHubFilterBarView: View {
             }
             .pickerStyle(.segmented)
             .controlSize(.small)
-            .frame(width: 150)
+            .frame(width: 260)
             .labelsHidden()
             .accessibilityLabel("Catalog view")
 

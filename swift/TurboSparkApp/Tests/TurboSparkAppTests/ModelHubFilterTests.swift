@@ -323,4 +323,55 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(filter.tab, .onDevice)
         XCTAssertEqual(filter.sort, .size)
     }
+
+    // MARK: - Recommended tab
+
+    /// Tests that the Recommended tab filters out models that are refused or cannot run.
+    func testRecommendedTabKeepsOnlyRunnableModels() throws {
+        var filter = ModelHubFilter()
+        filter.tab = .recommended
+        let rows = try catalog()
+        let recommendations = [
+            "gemma4": try recommendation(alias: "gemma4", verdict: "streams"),
+            "gemma4-gguf": try recommendation(alias: "gemma4-gguf", verdict: "refused"),
+            "mistral7b": try recommendation(alias: "mistral7b", verdict: "resident"),
+        ]
+        let result = filter.apply(
+            to: rows,
+            installedAliases: [],
+            recommendations: recommendations)
+        let aliases = result.map(\.alias)
+        XCTAssertTrue(aliases.contains("gemma4"), "streams model should be kept")
+        XCTAssertTrue(aliases.contains("mistral7b"), "resident model should be kept")
+        XCTAssertFalse(aliases.contains("gemma4-gguf"), "refused model must be filtered out")
+    }
+
+    /// Tests that the Recommended tab prioritizes MLX and MoE architectures among runnable models.
+    func testRecommendedTabPrioritizesMlxAndMoE() throws {
+        var filter = ModelHubFilter()
+        filter.tab = .recommended
+        filter.sort = .recommended
+        let rows = try catalog()
+        let recommendations = [
+            "gemma4": try recommendation(alias: "gemma4", verdict: "streams"),
+            "gemma4-gguf": try recommendation(alias: "gemma4-gguf", verdict: "resident"),
+            "mistral7b": try recommendation(alias: "mistral7b", verdict: "resident"),
+        ]
+        let result = filter.apply(
+            to: rows,
+            installedAliases: [],
+            recommendations: recommendations)
+        let aliases = result.map(\.alias)
+        XCTAssertEqual(aliases.first, "gemma4", "MLX/MoE model should be prioritized first")
+        XCTAssertEqual(aliases[1], "gemma4-gguf", "MoE model should be prioritized before dense")
+        XCTAssertEqual(aliases.last, "mistral7b", "dense model ranks after MLX and MoE models")
+    }
+
+    /// Tests identification helper for MLX formats and MoE architectures.
+    func testIsMlxOrMoeIdentification() throws {
+        let gemma = try entry(alias: "gemma4", name: "Gemma 4 26B-A4B (MLX INT4, group 64)", family: "gemma4")
+        let mistral = try entry(alias: "mistral7b", name: "Mistral 7B (GGUF Q4_K_M)", family: "llama")
+        XCTAssertTrue(ModelHubFilter.isMlxOrMoe(entry: gemma))
+        XCTAssertFalse(ModelHubFilter.isMlxOrMoe(entry: mistral))
+    }
 }
