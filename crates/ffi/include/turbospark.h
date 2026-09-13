@@ -619,8 +619,9 @@ int32_t ts_server_attach_embedding_model(const TsServer *server,
 int32_t ts_server_detach_model(const TsServer *server, const char *model_id);
 
 /*
- * Signals the server to stop, blocks until its background thread has
- * actually exited, and frees the handle. NULL is a no-op.
+ * Signals the server to stop, waits through its bounded graceful-shutdown
+ * period until the background thread exits, and frees the handle. NULL is a
+ * no-op.
  *
  * This is also what releases every attached model.
  */
