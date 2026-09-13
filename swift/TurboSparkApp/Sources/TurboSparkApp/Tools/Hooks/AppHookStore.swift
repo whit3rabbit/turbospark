@@ -1,6 +1,13 @@
 import Foundation
 import Combine
 
+struct AppHookDispatchSnapshot: Sendable {
+    let hooks: [AppHookCommand]
+    let trustedHashes: Set<String>
+    let optionValues: [String: [String: String]]
+    let sensitiveOptionKeys: [String: Set<String>]
+}
+
 /// Manages persistence, discovery, trusted command hashes, and options for lifecycle hooks.
 @MainActor
 public final class AppHookStore: ObservableObject {
@@ -45,6 +52,19 @@ public final class AppHookStore: ObservableObject {
     public init() {
         loadTrustedHashes()
         loadOptionValues()
+    }
+
+    /// Captures one project's complete hook policy atomically.
+    func dispatchSnapshot(projectDirectory: String?) -> AppHookDispatchSnapshot {
+        if lastProjectDirectory != projectDirectory || !didRefreshAtLeastOnce {
+            refresh(projectDirectory: projectDirectory)
+        }
+        let sensitive = Dictionary(uniqueKeysWithValues: sourceGroups.map { group in
+            (group.id, Set(group.optionSpecs.filter(\.isSensitive).map(\.key)))
+        })
+        return AppHookDispatchSnapshot(
+            hooks: hooks, trustedHashes: trustedHashes, optionValues: optionValues,
+            sensitiveOptionKeys: sensitive)
     }
 
     // MARK: - Trust & Review Checks

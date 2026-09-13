@@ -34,9 +34,8 @@ extension SubagentRunner {
     /// it fires where the approval card would go up, and a subagent refuses
     /// `.ask` rather than surfacing one (state#18).
     ///
-    /// The hook store is not rebound here: it follows the project, and a
-    /// subagent runs under the project of the turn that reached it, which
-    /// `AppModel`'s own dispatch already pointed it at (state#67).
+    /// Hook discovery is captured from this run's project for each dispatch;
+    /// selection-global hook state is not authoritative for background work.
     static func observation(
         for call: AppToolCall, agent: AppAgentDefinition, project: AppProject?,
         chatID: UUID? = nil, depth: Int = 0, session: TurboSparkSession? = nil
@@ -64,7 +63,8 @@ extension SubagentRunner {
             sessionID: sessionID,
             toolName: call.name,
             toolArguments: call.arguments,
-            workingDirectory: projectDirectory)
+            workingDirectory: projectDirectory,
+            projectBoundHookDirectory: projectDirectory)
 
         // `updatedInput` is applied BEFORE the permission gate, not after:
         // the rewritten command is what would run, so it is what has to be
@@ -101,7 +101,8 @@ extension SubagentRunner {
             toolOutput: toolResult.output,
             toolDurationSeconds: toolResult.durationSeconds,
             isError: toolResult.isError,
-            workingDirectory: projectDirectory)
+            workingDirectory: projectDirectory,
+            projectBoundHookDirectory: projectDirectory)
         if toolResult.isError {
             results += await AppHookExecutionEngine.shared.dispatch(
                 event: .postToolUseFailure,
@@ -111,7 +112,8 @@ extension SubagentRunner {
                 toolOutput: toolResult.output,
                 toolDurationSeconds: toolResult.durationSeconds,
                 isError: true,
-                workingDirectory: projectDirectory)
+                workingDirectory: projectDirectory,
+                projectBoundHookDirectory: projectDirectory)
         }
         let postVerdict = AppHookDecisionAggregator.aggregate(results, event: .postToolUse)
         var output = toolResult.output

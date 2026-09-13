@@ -195,15 +195,14 @@ public enum SubagentRunner {
             agentName: agent.name, displayName: agent.displayName,
             taskDescription: taskDescription, promptHead: head(of: taskPrompt),
             chatID: chatID))
-        // The engine directly, exactly like `observation`: the hook store is
-        // not rebound here (state#67 -- it follows the parent turn's
-        // project, and this type has no AppModel to rebind it with).
+        // Capture hooks from the run's project, not the current selection.
         _ = await AppHookExecutionEngine.shared.dispatch(
             event: .subagentStart,
             sessionID: sessionID,
             workingDirectory: workingDirectory,
             agentID: runID,
-            agentType: agent.name)
+            agentType: agent.name,
+            projectBoundHookDirectory: workingDirectory)
 
         let bodyResult = await runBody(
             agent: agent, taskPrompt: taskPrompt, session: session, project: project,
@@ -219,7 +218,8 @@ public enum SubagentRunner {
             workingDirectory: workingDirectory,
             stopHookActive: false,
             agentID: runID,
-            agentType: agent.name)
+            agentType: agent.name,
+            projectBoundHookDirectory: workingDirectory)
         await progress?(.finished(status: result.status))
         return result
     }
