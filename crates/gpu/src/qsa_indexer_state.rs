@@ -88,11 +88,21 @@ impl QsaIndexerCacheManager {
         assert!(index_head_dim > 0, "index_head_dim must be positive");
         assert!(compress_ratio > 0, "csa_compress_rate must be positive");
 
-        let raw_stride = index_kv_heads * index_head_dim * FP16_SIZE;
-        let raw_len = (max_context * raw_stride) as u64;
+        let raw_stride = index_kv_heads
+            .checked_mul(index_head_dim)
+            .and_then(|len| len.checked_mul(FP16_SIZE))
+            .expect("QSA raw-key stride overflows usize");
+        let raw_len = max_context
+            .checked_mul(raw_stride)
+            .expect("QSA raw-key allocation overflows usize") as u64;
         let max_complete_blocks = max_context / compress_ratio;
-        let pooled_stride = index_head_dim * FP16_SIZE;
-        let pooled_len = (max_complete_blocks * pooled_stride).max(1) as u64;
+        let pooled_stride = index_head_dim
+            .checked_mul(FP16_SIZE)
+            .expect("QSA pooled stride overflows usize");
+        let pooled_len = max_complete_blocks
+            .checked_mul(pooled_stride)
+            .expect("QSA pooled allocation overflows usize")
+            .max(1) as u64;
 
         let num_layers = config.num_layers as usize;
         let mut raw_keys = Vec::with_capacity(num_layers);
@@ -161,10 +171,19 @@ impl QsaIndexerCacheManager {
     /// token's real K/V at, per this struct's own shared-cursor contract.
     pub fn raw_key_slot(&self, layer: usize, position: usize) -> (&metal::Buffer, usize) {
         assert!(position < self.max_context, "position exceeds max_context");
-        (
-            self.raw_keys_buffer(layer),
-            position * self.raw_stride(layer),
-        )
+        let buffer = self.raw_keys_buffer(layer);
+        let stride = self.raw_stride(layer);
+        let offset = position
+            .checked_mul(stride)
+            .expect("QSA raw-key offset overflows usize");
+        let end = offset
+            .checked_add(stride)
+            .expect("QSA raw-key range overflows usize");
+        assert!(
+            end <= buffer.length() as usize,
+            "QSA raw-key range exceeds buffer"
+        );
+        (buffer, offset)
     }
 
     /// Host-writes one token's raw key row (`raw_stride(layer)` bytes).
