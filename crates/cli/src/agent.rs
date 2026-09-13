@@ -42,12 +42,13 @@ fn which(binary_name: &str) -> Option<PathBuf> {
 /// Connect and launch an agent against the local TurboSpark server endpoint.
 pub fn start_agent(agent: &str, extra_args: &[String]) -> Result<(), String> {
     let port = read_server_port();
-    let base_url = format!("http://127.0.0.1:{port}/v1");
+    let gateway_root = format!("http://127.0.0.1:{port}");
+    let openai_base_url = format!("{gateway_root}/v1");
 
     match agent {
-        "claude" => start_claude(&base_url, port, extra_args),
+        "claude" => start_claude(&gateway_root, extra_args),
         "codex" | "opencode" | "hermes" | "openclaw" | "dsh" => {
-            start_openai_agent(agent, &base_url, port, extra_args)
+            start_openai_agent(agent, &openai_base_url, port, extra_args)
         }
         other => Err(format!(
             "unknown agent '{other}'. Supported agents: {}",
@@ -56,7 +57,7 @@ pub fn start_agent(agent: &str, extra_args: &[String]) -> Result<(), String> {
     }
 }
 
-fn start_claude(base_url: &str, port: u16, extra_args: &[String]) -> Result<(), String> {
+fn start_claude(base_url: &str, extra_args: &[String]) -> Result<(), String> {
     let dry_run = extra_args
         .iter()
         .any(|a| a == "--dry-run" || a == "--print");
@@ -67,16 +68,19 @@ fn start_claude(base_url: &str, port: u16, extra_args: &[String]) -> Result<(), 
             println!("    npm install -g @anthropic-ai/claude-code\n");
         }
         println!("To connect Claude Code to TurboSpark:");
-        println!("    export ANTHROPIC_BASE_URL=\"http://127.0.0.1:{port}/v1\"");
-        println!("    export ANTHROPIC_API_KEY=\"local\"");
-        println!("    claude");
+        let settings = claude_settings_json(base_url, "local");
+        println!(
+            "    claude --settings {} --model \"claude-turbospark-<canonical-model-id>\"",
+            shell_single_quoted(&settings)
+        );
         return Ok(());
     }
 
     println!("Connecting Claude Code to TurboSpark at {base_url} ...");
+    let settings = claude_settings_json(base_url, "local");
     let status: ExitStatus = Command::new("claude")
-        .env("ANTHROPIC_BASE_URL", base_url)
-        .env("ANTHROPIC_API_KEY", "local")
+        .arg("--settings")
+        .arg(settings)
         .args(extra_args)
         .status()
         .map_err(|e| format!("failed to launch claude: {e}"))?;
@@ -85,6 +89,25 @@ fn start_claude(base_url: &str, port: u16, extra_args: &[String]) -> Result<(), 
         return Err(format!("claude exited with status {status}"));
     }
     Ok(())
+}
+
+/// A settings overlay gives the current ephemeral port an explicit one-session
+/// source, rather than relying on an inherited environment beside stale saved
+/// Claude Code `env` settings.
+fn claude_settings_json(base_url: &str, api_key: &str) -> String {
+    serde_json::json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": base_url,
+            "ANTHROPIC_API_KEY": api_key,
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "true",
+            "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
+        }
+    })
+    .to_string()
+}
+
+fn shell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn start_openai_agent(

@@ -36,18 +36,33 @@ struct ModelProbeSheet: View {
         }
     }
 
+    nonisolated static func sanitizeRepo(_ input: String) -> String {
+        ModelProbeGating.sanitizeRepo(input)
+    }
+
     /// What the gate says about installing what is currently selected.
     private var decision: ModelInstallDecision {
-        ModelInstallGate.decide(
-            probeRunnable: report?.runnable,
-            refusedBecause: report?.refusedBecause,
-            verdict: report?.fit?.verdict,
-            installBytes: report?.downloadBytes ?? selectedVariant?.bytes,
-            freeDiskBytes: ModelInstallGate.freeSpace(at: AppStorageRoot.directory))
+        ModelProbeGating.installDecision(
+            repo: repo,
+            probeError: probeError,
+            report: report,
+            variants: variants,
+            ggufFile: ggufFile,
+            selectedVariant: selectedVariant,
+            freeDiskBytes: ModelInstallGate.freeSpace(at: AppStorageRoot.directory)
+        )
     }
 
     private var selectedVariant: RepoVariant? {
         variants?.variants.first { $0.file == ggufFile }
+    }
+
+    private var isGgufRepo: Bool {
+        repo.lowercased().contains("gguf")
+            || ggufFile.lowercased().hasSuffix(".gguf")
+            || (report?.file?.lowercased().hasSuffix(".gguf") ?? false)
+            || (variants != nil && !(variants?.variants.isEmpty ?? true))
+            || (report?.sidecarsMissing.contains("tokenizer.json") ?? false)
     }
 
     private var header: some View {
@@ -124,6 +139,10 @@ struct ModelProbeSheet: View {
                 TextField("e.g. mlx-community/Qwen3.6-35B-A3B-4bit", text: $repo)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Hugging Face repository to probe")
+                    .onChange(of: repo) {
+                        let clean = Self.sanitizeRepo(repo)
+                        if clean != repo { repo = clean }
+                    }
                     .onSubmit { listVariants() }
             }
             LabeledContent("Local Alias") {
@@ -133,9 +152,28 @@ struct ModelProbeSheet: View {
             }
             quantizationField
             LabeledContent("Sidecar Repo (optional)") {
-                TextField("e.g. original-org/model-tokenizer", text: $sidecarRepo)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Sidecar repository for tokenizer (optional)")
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("e.g. original-org/model-tokenizer", text: $sidecarRepo)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Sidecar repository for tokenizer (optional)")
+                        .onChange(of: sidecarRepo) {
+                            let clean = Self.sanitizeRepo(sidecarRepo)
+                            if clean != sidecarRepo { sidecarRepo = clean }
+                        }
+                        .onSubmit { reprobeIfProbed() }
+
+                    if isGgufRepo {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "info.circle.fill")
+                                .themedFont(.tiny)
+                                .foregroundStyle(.blue)
+                            Text("GGUF files usually lack tokenizer.json. If the probe reports missing sidecars, enter the upstream Hugging Face repo (e.g. Qwen/Qwen3.8-27B) here.", bundle: .module)
+                                .themedFont(.tiny)
+                                .foregroundStyle(.appSecondary)
+                        }
+                        .padding(.top, 2)
+                    }
+                }
             }
         }
     }
@@ -178,6 +216,12 @@ struct ModelProbeSheet: View {
                     .help("List the .gguf files this repository publishes")
                 }
 
+                if let listed = variants, listed.variants.count > 1 && ggufFile.isEmpty {
+                    Text("This repository publishes \(listed.variants.count) GGUF variants. Select a specific file to probe and install.", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.orange)
+                }
+
                 if let v = selectedVariant, !v.executable {
                     Text("This port has no kernels for the type this filename names. Probe it to see what the header actually contains.", bundle: .module)
                         .themedFont(.small)
@@ -208,7 +252,7 @@ struct ModelProbeSheet: View {
             // The reason sits BESIDE the button rather than only in a
             // tooltip: a disabled control with no visible cause reads as a
             // broken control.
-            if let reason = decision.reason {
+            if let reason = decision.reason, !repo.isEmpty {
                 Label(reason, systemImage: decision.isBlocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                     .themedFont(.small)
                     .foregroundStyle(decision.isBlocked ? Color.red : Color.orange)
@@ -238,11 +282,13 @@ struct ModelProbeSheet: View {
     // MARK: - Actions
 
     private func listVariants() {
-        guard !repo.isEmpty else { return }
+        let clean = Self.sanitizeRepo(repo)
+        if clean != repo { repo = clean }
+        guard !clean.isEmpty else { return }
         isListingVariants = true
         variants = nil
         Task {
-            variants = try? TurboSparkCatalog.variants(repo: repo)
+            variants = try? TurboSparkCatalog.variants(repo: clean)
             isListingVariants = false
         }
     }
@@ -255,15 +301,19 @@ struct ModelProbeSheet: View {
     }
 
     private func runProbe() {
+        let cleanRepo = Self.sanitizeRepo(repo)
+        let cleanSidecar = Self.sanitizeRepo(sidecarRepo)
+        if cleanRepo != repo { repo = cleanRepo }
+        if cleanSidecar != sidecarRepo { sidecarRepo = cleanSidecar }
         isProbing = true
         probeError = nil
         report = nil
         Task {
             do {
                 report = try TurboSparkCatalog.probe(
-                    repo: repo,
+                    repo: cleanRepo,
                     file: ggufFile.isEmpty ? nil : ggufFile,
-                    sidecarRepo: sidecarRepo.isEmpty ? nil : sidecarRepo,
+                    sidecarRepo: cleanSidecar.isEmpty ? nil : cleanSidecar,
                     // The configuration this app will OPEN under, so the
                     // probe's fit and a session's allocation are one answer.
                     context: model.activeFitContext,
@@ -290,11 +340,13 @@ struct ModelProbeSheet: View {
     }
 
     private func performInstall() {
+        let cleanRepo = Self.sanitizeRepo(repo)
+        let cleanSidecar = Self.sanitizeRepo(sidecarRepo)
         model.installRepo(
-            repo: repo,
+            repo: cleanRepo,
             alias: alias,
             file: ggufFile.isEmpty ? nil : ggufFile,
-            sidecarRepo: sidecarRepo.isEmpty ? nil : sidecarRepo)
+            sidecarRepo: cleanSidecar.isEmpty ? nil : cleanSidecar)
         dismiss()
     }
 }

@@ -357,6 +357,33 @@ final class ToolPermissionsTests: XCTestCase {
         }
     }
 
+    func testCommandLineAliasRequiresFreshApprovalForAHighRiskCommand() {
+        assertAlternateCommandRequiresFreshApproval(key: "CommandLine")
+    }
+
+    func testCodeAliasRequiresFreshApprovalForAHighRiskCommand() {
+        assertAlternateCommandRequiresFreshApproval(key: "code")
+    }
+
+    private func assertAlternateCommandRequiresFreshApproval(
+        key: String, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let project = AppProject(name: "TestProject", permissions: .permissive)
+        let call = AppToolCall(
+            name: "run_command",
+            arguments: [key: "rm -rf ~/Documents"],
+            category: .terminal)
+
+        let decision = AppToolPermissionEngine.evaluate(
+            call: call, project: project, sessionApproved: true)
+        guard case .ask(let assessment, _) = decision else {
+            return XCTFail(
+                "A destructive command in '\(key)' must require fresh approval. Got \(decision)",
+                file: file, line: line)
+        }
+        XCTAssertTrue(assessment.isHighRisk, file: file, line: line)
+    }
+
     func testSessionApprovalStillCoversARepeatOfALowRiskCall() {
         let project = AppProject(name: "TestProject", permissions: .alwaysAsk)
         let call = AppToolCall(
@@ -519,5 +546,4 @@ final class ToolPermissionsTests: XCTestCase {
         XCTAssertEqual(decision, .allow)
     }
 }
-
 

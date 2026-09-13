@@ -6,6 +6,25 @@ public final class AppHookExecutionEngine: Sendable {
 
     public init() {}
 
+    /// Whether dispatch would run at least one hook for this event and tool.
+    /// Used when callers must preserve a hook as a safety gate without
+    /// disclosing the tool payload to it.
+    @MainActor
+    func hasMatchingHook(
+        event: AppHookEvent,
+        toolName: String,
+        toolArguments: [String: String]
+    ) -> Bool {
+        let store = AppHookStore.shared
+        return store.hooks.contains { hook in
+            hook.isEnabled && hook.event == event
+                && (hook.sourceType == .custom
+                    || store.trustedHashes.contains(hook.contentHash))
+                && matchesCondition(
+                    hook: hook, toolName: toolName, toolArguments: toolArguments)
+        }
+    }
+
     /// Events where an `async: true` command hook is still awaited
     /// synchronously, because the caller is about to act on its decision:
     /// `PreToolUse`/`PermissionRequest` gate whether a call runs, and
@@ -29,11 +48,25 @@ public final class AppHookExecutionEngine: Sendable {
         reason: String? = nil,
         stopHookActive: Bool? = nil,
         agentID: String? = nil,
-        agentType: String? = nil
+        agentType: String? = nil,
+        projectBoundHookDirectory: String? = nil
     ) async -> [AppHookExecutionResult] {
         let store = await AppHookStore.shared
-        let allHooks = await store.hooks
-        let trustedHashes = await store.trustedHashes
+        let snapshot: AppHookDispatchSnapshot?
+        if let projectBoundHookDirectory {
+            snapshot = await store.dispatchSnapshot(projectDirectory: projectBoundHookDirectory)
+        } else {
+            snapshot = nil
+        }
+        let allHooks: [AppHookCommand]
+        let trustedHashes: Set<String>
+        if let snapshot {
+            allHooks = snapshot.hooks
+            trustedHashes = snapshot.trustedHashes
+        } else {
+            allHooks = await store.hooks
+            trustedHashes = await store.trustedHashes
+        }
 
         let candidateHooks = allHooks.filter { hook in
             hook.isEnabled && hook.event == event && (hook.sourceType == .custom || trustedHashes.contains(hook.contentHash))
@@ -64,7 +97,8 @@ public final class AppHookExecutionEngine: Sendable {
                         reason: reason,
                         stopHookActive: stopHookActive,
                         agentID: agentID,
-                        agentType: agentType
+                        agentType: agentType,
+                        hookSnapshot: snapshot
                     )
                 }
             } else {
@@ -88,7 +122,8 @@ public final class AppHookExecutionEngine: Sendable {
                     reason: reason,
                     stopHookActive: stopHookActive,
                     agentID: agentID,
-                    agentType: agentType
+                    agentType: agentType,
+                    hookSnapshot: snapshot
                 )
                 results.append(result)
             }
@@ -102,14 +137,16 @@ public final class AppHookExecutionEngine: Sendable {
         sessionID: String,
         toolName: String,
         toolArguments: [String: String],
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        projectBoundHookDirectory: String? = nil
     ) async -> AppHookPreToolUseDecision {
         let results = await dispatch(
             event: .preToolUse,
             sessionID: sessionID,
             toolName: toolName,
             toolArguments: toolArguments,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            projectBoundHookDirectory: projectBoundHookDirectory
         )
 
         let verdict = AppHookDecisionAggregator.aggregate(results, event: .preToolUse)
@@ -140,7 +177,8 @@ public final class AppHookExecutionEngine: Sendable {
         reason: String?,
         stopHookActive: Bool?,
         agentID: String? = nil,
-        agentType: String? = nil
+        agentType: String? = nil,
+        hookSnapshot: AppHookDispatchSnapshot? = nil
     ) async -> AppHookExecutionResult {
         let start = Date()
 
@@ -162,6 +200,7 @@ public final class AppHookExecutionEngine: Sendable {
                 stopHookActive: stopHookActive,
                 agentID: agentID,
                 agentType: agentType,
+                hookSnapshot: hookSnapshot,
                 startTime: start
             )
         case .http:

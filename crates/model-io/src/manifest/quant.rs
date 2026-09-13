@@ -59,8 +59,9 @@ const QUANT_2BIT_GROUP_SIZE: i64 = 128;
 /// `RealForwardRunner`'s `EXECUTABLE_GGUF_DTYPES`, which reads RESIDENT
 /// tensors, deliberately omits it, and its doc explains why the two are twins
 /// rather than copies.
-pub const EXECUTABLE_GGUF_TYPES: [&str; 8] = [
-    "q8_0", "q4_k", "q5_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs", "mxfp4",
+pub const EXECUTABLE_GGUF_TYPES: [&str; 15] = [
+    "q8_0", "q4_k", "q5_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs", "mxfp4", "q2_k", "iq2_xxs",
+    "iq2_xs", "iq1_s", "iq3_s", "iq2_s", "iq1_m",
 ];
 
 /// Accepts a quant block iff every slot's shape has kernels behind it.

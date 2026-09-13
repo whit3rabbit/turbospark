@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Thread-safe growable byte buffer with a hard cap.
@@ -150,6 +151,14 @@ enum ProcessExecutor {
         // write did this synchronously before the timeout loop even began).
         if let inputData, !inputData.isEmpty {
             let writeHandle = stdinPipe.fileHandleForWriting
+            // A short-lived command can exit before this detached writer gets
+            // scheduled. macOS sends SIGPIPE to the writer for that ordinary
+            // EPIPE case, which otherwise kills the entire app or XCTest
+            // process instead of letting the best-effort write below fail.
+            // This is per descriptor, not a process-wide ignored signal: the
+            // child sees its normal signal behavior and other pipe users keep
+            // theirs.
+            _ = Darwin.fcntl(writeHandle.fileDescriptor, F_SETNOSIGPIPE, 1)
             DispatchQueue.global(qos: .utility).async {
                 try? writeHandle.write(contentsOf: inputData)
                 try? writeHandle.close()

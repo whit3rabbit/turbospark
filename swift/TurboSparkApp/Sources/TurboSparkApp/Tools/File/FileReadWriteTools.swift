@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - FileRead Tool
 
-/// Input payload for reading files from disk, with optional pagination, limits, and PDF page ranges.
+/// Input payload for reading files from disk, with optional pagination, limits, modes, and search/diff parameters.
 public struct FileReadInput: Codable, Sendable, Equatable {
     /// File path to read (relative to project root or absolute).
     public var filePath: String
@@ -12,19 +12,49 @@ public struct FileReadInput: Codable, Sendable, Equatable {
     public var limit: Int?
     /// Page range for PDF documents (e.g. "1-5").
     public var pages: String?
+    /// Advanced reading mode: 'lines' (default), 'stats', 'diff', 'time_machine', 'search', 'preview'.
+    public var mode: String?
+    /// Search regex pattern when mode is 'search'.
+    public var searchPattern: String?
+    /// Context lines before and after match when mode is 'search'.
+    public var contextLines: Int?
+    /// Secondary file path when mode is 'diff'.
+    public var comparisonPath: String?
+    /// Number of git commit revisions to inspect when mode is 'time_machine'.
+    public var numRevisions: Int?
 
     enum CodingKeys: String, CodingKey {
         case filePath = "file_path"
         case offset
         case limit
         case pages
+        case mode
+        case searchPattern = "search_pattern"
+        case contextLines = "context_lines"
+        case comparisonPath = "comparison_path"
+        case numRevisions = "num_revisions"
     }
 
-    public init(filePath: String, offset: Int? = nil, limit: Int? = nil, pages: String? = nil) {
+    public init(
+        filePath: String,
+        offset: Int? = nil,
+        limit: Int? = nil,
+        pages: String? = nil,
+        mode: String? = nil,
+        searchPattern: String? = nil,
+        contextLines: Int? = nil,
+        comparisonPath: String? = nil,
+        numRevisions: Int? = nil
+    ) {
         self.filePath = filePath
         self.offset = offset
         self.limit = limit
         self.pages = pages
+        self.mode = mode
+        self.searchPattern = searchPattern
+        self.contextLines = contextLines
+        self.comparisonPath = comparisonPath
+        self.numRevisions = numRevisions
     }
 }
 
@@ -151,15 +181,27 @@ public struct FileWriteInput: Codable, Sendable, Equatable {
     public var filePath: String
     /// New file content text.
     public var content: String
+    /// Optional command run only after the write completed and its target was
+    /// fingerprinted. Permission and hook checks cover both legs up front.
+    public var validateCommand: String?
+    /// Optional validation timeout in milliseconds.
+    public var validateTimeoutMs: Int?
 
     enum CodingKeys: String, CodingKey {
         case filePath = "file_path"
         case content
+        case validateCommand = "validate_command"
+        case validateTimeoutMs = "validate_timeout_ms"
     }
 
-    public init(filePath: String, content: String) {
+    public init(
+        filePath: String, content: String, validateCommand: String? = nil,
+        validateTimeoutMs: Int? = nil
+    ) {
         self.filePath = filePath
         self.content = content
+        self.validateCommand = validateCommand
+        self.validateTimeoutMs = validateTimeoutMs
     }
 }
 
@@ -240,29 +282,62 @@ public struct FileWriteOutput: Codable, Sendable, Equatable {
 
 // MARK: - FileEdit Tool
 
-/// Input payload for editing an existing file via target string replacement.
+/// Input payload for editing an existing file via string replacement, line insertion, regex replacement, or rollback.
 public struct FileEditInput: Codable, Sendable, Equatable {
     /// File path to edit.
     public var filePath: String
-    /// Exact text sequence to find and replace.
-    public var oldString: String
-    /// Replacement text sequence.
-    public var newString: String
-    /// Whether to replace all occurrences or just the first.
+    /// Edit command: 'str_replace' (default), 'insert', 'pattern_replace', 'undo_edit'.
+    public var command: String?
+    /// Exact text sequence to find and replace (for str_replace).
+    public var oldString: String?
+    /// Replacement or insertion text sequence.
+    public var newString: String?
+    /// Whether to replace all occurrences or just the first (for str_replace).
     public var replaceAll: Bool?
+    /// Line number (1-indexed) or text target to find and insert relative to (for insert).
+    public var insertLine: String?
+    /// Insertion position: 'before' or 'after' (default: 'after').
+    public var position: String?
+    /// Regular expression pattern to replace (for pattern_replace).
+    public var regexPattern: String?
+    public var validateCommand: String?
+    public var validateTimeoutMs: Int?
 
     enum CodingKeys: String, CodingKey {
         case filePath = "file_path"
+        case command
         case oldString = "old_string"
         case newString = "new_string"
         case replaceAll = "replace_all"
+        case insertLine = "insert_line"
+        case position
+        case regexPattern = "regex_pattern"
+        case validateCommand = "validate_command"
+        case validateTimeoutMs = "validate_timeout_ms"
     }
 
-    public init(filePath: String, oldString: String, newString: String, replaceAll: Bool? = nil) {
+    public init(
+        filePath: String,
+        command: String? = nil,
+        oldString: String? = nil,
+        newString: String? = nil,
+        replaceAll: Bool? = nil,
+        insertLine: String? = nil,
+        position: String? = nil,
+        regexPattern: String? = nil,
+        validateCommand: String? = nil,
+        validateTimeoutMs: Int? = nil
+    ) {
         self.filePath = filePath
+        self.command = command
         self.oldString = oldString
         self.newString = newString
         self.replaceAll = replaceAll
+        self.insertLine = insertLine
+        self.position = position
+        self.regexPattern = regexPattern
+        self.validateCommand = validateCommand
+        self.validateTimeoutMs = validateTimeoutMs
     }
 }
 
@@ -304,13 +379,18 @@ public struct FileEditOutput: Codable, Sendable, Equatable {
 public enum FileReadWriteToolDefinitions {
     public static let fileRead = OpenAITool.function(
         name: "FileRead",
-        description: "Read the contents of a file from the codebase with optional line offset and limit.",
+        description: "Read file contents from the codebase with optional line offset, limit, or advanced modes (stats, diff, time_machine, search, preview).",
         parameters: .object(
             properties: [
                 "file_path": .string(description: "The path to the file to read (relative to workspace or absolute)."),
                 "offset": .integer(description: "Line number to start reading from (1-indexed)."),
                 "limit": .integer(description: "Maximum number of lines to read."),
-                "pages": .string(description: "Page range for PDF files (e.g. '1-5').")
+                "pages": .string(description: "Page range for PDF files (e.g. '1-5')."),
+                "mode": .string(description: "Reading mode: 'lines' (default), 'stats' (metrics), 'diff' (compare with comparison_path), 'time_machine' (git revision history), 'search' (regex search with context), 'preview' (first N lines)."),
+                "search_pattern": .string(description: "Regex pattern to search for in file when mode is 'search'."),
+                "context_lines": .integer(description: "Context lines before/after match when mode is 'search' (default: 3)."),
+                "comparison_path": .string(description: "Path of file to compare against when mode is 'diff'."),
+                "num_revisions": .integer(description: "Number of git revisions to display when mode is 'time_machine' (default: 5).")
             ],
             required: ["file_path"]
         )
@@ -322,7 +402,9 @@ public enum FileReadWriteToolDefinitions {
         parameters: .object(
             properties: [
                 "file_path": .string(description: "The path of the file to write."),
-                "content": .string(description: "The text content to write into the file.")
+                "content": .string(description: "The text content to write into the file."),
+                "validate_command": .string(description: "Optional terminal command to run after the write and target fingerprint verification."),
+                "validate_timeout_ms": .integer(description: "Optional validation timeout in milliseconds.")
             ],
             required: ["file_path", "content"]
         )
@@ -330,15 +412,21 @@ public enum FileReadWriteToolDefinitions {
 
     public static let fileEdit = OpenAITool.function(
         name: "FileEdit",
-        description: "Replace a specific target string within an existing file with new content.",
+        description: "Edit an existing file via string replacement (str_replace), line insertion (insert), regex pattern replacement (pattern_replace), or rollback (undo_edit).",
         parameters: .object(
             properties: [
                 "file_path": .string(description: "The path of the file to edit."),
-                "old_string": .string(description: "The exact existing text to replace."),
-                "new_string": .string(description: "The replacement text."),
-                "replace_all": .boolean(description: "Whether to replace all occurrences.")
+                "command": .string(description: "Edit command: 'str_replace' (default), 'insert', 'pattern_replace', 'undo_edit'."),
+                "old_string": .string(description: "The exact existing text to replace (for str_replace)."),
+                "new_string": .string(description: "The replacement or insertion text (for str_replace, insert, pattern_replace)."),
+                "replace_all": .boolean(description: "Whether to replace all occurrences (for str_replace)."),
+                "insert_line": .string(description: "Line number (1-indexed) or text target to find and insert relative to (for insert)."),
+                "position": .string(description: "Insertion position: 'before' or 'after' (default: 'after')."),
+                "regex_pattern": .string(description: "Regex pattern to replace (for pattern_replace)."),
+                "validate_command": .string(description: "Optional terminal command to run after the edit and target fingerprint verification."),
+                "validate_timeout_ms": .integer(description: "Optional validation timeout in milliseconds.")
             ],
-            required: ["file_path", "old_string", "new_string"]
+            required: ["file_path"]
         )
     )
 

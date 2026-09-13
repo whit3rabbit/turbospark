@@ -95,6 +95,12 @@ extension AppModel {
         // and on a 4,096-context install stops the run outright between step
         // 30 and 35 (docs/SKILL_STATE.md). Opt-in per project, default off, so
         // the append-only path is byte-identical when the toggle is not set.
+        if !usesSkillState {
+            // This advances the two-full-send observation policy only for a
+            // generation that is about to be started, never for a context
+            // meter refresh or an ordinary transcript redraw.
+            prepareToolOutputProjectionsForPrompt(chatID: chatID)
+        }
         let rawHistory: [ChatMessage] =
             usesSkillState
             ? buildSkillStateHistory(chatIndex: chatIndex, project: turnProject)

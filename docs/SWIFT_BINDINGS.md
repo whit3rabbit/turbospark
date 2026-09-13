@@ -678,6 +678,28 @@ for -- which is what lets a client sending its own default (Claude Code sends
 `claude-sonnet-4-6`) work with no configuration. With two or more attached
 and no match, the request is a 404 naming what is available.
 
+**Claude Code model discovery.** Each generative attachment has two public
+`GET /v1/models` rows: its canonical id and
+`claude-turbospark-<canonical-id>`. Pass that discovery alias to Claude Code
+at launch, so it selects the attached backend before `/model` is opened:
+
+```sh
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:53411","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
+  --model "claude-turbospark-gemma4.gturbo"
+```
+
+Use `--settings` for the ephemeral app port. It gives this invocation an
+explicit one-session setting instead of relying on the surrounding shell when
+a saved Claude Code `env` block still names an old port.
+
+`ServerInfo.models` intentionally remains canonical-only, in attachment
+order, so it continues to identify the sessions that `attach` and `detach`
+manage. Use the canonical id returned by `attach` to derive the Claude alias.
+Embedding-only attachments have no discovery alias. `HEAD /api/hello` may
+return 404 because it is only Claude Code's connection-warming probe; use
+`GET /health` for liveness. The unknown-model-window override makes Claude
+Code defer its built-in unknown-model context assumption to this gateway.
+
 **Read the address off `info()`, never spell it.** `ServerOptions.port` of 0
 asks the OS for a port, and `ServerInfo` reports both halves of what was
 actually bound; `baseURL` builds the string. Restating `127.0.0.1` is correct
@@ -1262,4 +1284,3 @@ every message with the 11.6x prefill win sitting unreachable one file away.
   do
 - [`docs/BENCHMARKS.md`](BENCHMARKS.md): the frozen throughput, memory and
   quality numbers
-

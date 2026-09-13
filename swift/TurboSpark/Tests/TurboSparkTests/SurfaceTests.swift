@@ -1128,29 +1128,34 @@ final class SurfaceTests: XCTestCase {
 
     // MARK: - TurboSparkAgent launch commands
 
-    /// The plain shape is unchanged: quoted base URL, quoted key, the agent
-    /// named by the env vars it reads.
-    func testLaunchCommandWrapsBothValuesInDoubleQuotes() {
+    /// The Claude launch command enables gateway discovery. A host that has
+    /// its canonical attachment id can also select its advertised discovery
+    /// alias before Claude Code starts.
+    func testLaunchCommandUsesASettingsOverlayForTheEphemeralServer() {
         let cmd = TurboSparkAgent.launchCommand(
-            for: "claude", host: "127.0.0.1", port: 8080, apiKey: "sk-abc")
+            for: "claude", host: "127.0.0.1", port: 8080, apiKey: "sk-abc",
+            canonicalModelID: "gemma4.gturbo")
         XCTAssertEqual(
             cmd,
-            "export ANTHROPIC_BASE_URL=\"http://127.0.0.1:8080/v1\""
-                + " && export ANTHROPIC_API_KEY=\"sk-abc\" && claude")
+            "claude --settings '{\"env\":{\"ANTHROPIC_API_KEY\":\"sk-abc\",\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:8080/v1\",\"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT\":\"1\",\"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY\":\"true\"}}'"
+                + " --model \"claude-turbospark-gemma4.gturbo\"")
     }
 
-    /// **A HAND-TYPED KEY CANNOT BREAK OUT OF THE QUOTES IT IS PASTED
-    /// INSIDE.** The command goes straight into a terminal; an unescaped
-    /// quote terminates the export and a `$` or backtick runs part of the
-    /// key as a substitution. Every metacharacter a double-quoted shell
-    /// context treats specially survives as its escaped self.
+    /// A Claude settings object is single-quoted as one argument, where a
+    /// dollar or backtick remains literal. Other agent commands retain their
+    /// double-quoted exports and their escaping contract.
     func testLaunchCommandEscapesShellMetacharactersInTheKey() {
         let raw = "a\\b\"c$d`e"
         let keySegment = "a\\\\b\\\"c\\$d\\`e"
-        for agent in ["claude", "codex", "opencode", "hermes"] {
+        let claude = TurboSparkAgent.launchCommand(for: "claude", apiKey: raw)
+        XCTAssertTrue(
+            claude.contains("\"ANTHROPIC_API_KEY\":\"a\\\\b\\\"c$d`e\""),
+            "the settings JSON must preserve the key literally: \(claude)")
+
+        for agent in ["codex", "opencode", "hermes"] {
             let cmd = TurboSparkAgent.launchCommand(for: agent, apiKey: raw)
             XCTAssertTrue(
-                cmd.contains(keySegment),
+            cmd.contains(keySegment),
                 "\(agent) command must escape every metacharacter: \(cmd)")
             // The unescaped dollar must not survive inside the quotes, where
             // the shell would read it as a substitution.
@@ -1158,6 +1163,12 @@ final class SurfaceTests: XCTestCase {
         }
     }
 
+    func testLaunchCommandEscapesTheDiscoveryModelId() {
+        let raw = "m\\\"$`odel"
+        let cmd = TurboSparkAgent.launchCommand(for: "claude", canonicalModelID: raw)
+        XCTAssertTrue(
+            cmd.contains("--model \"claude-turbospark-m\\\\\\\"\\$\\`odel\""),
+            "the derived discovery alias must remain one shell argument: \(cmd)")
+    }
+
 }
-
-
