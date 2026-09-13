@@ -191,6 +191,15 @@ final class ComposerAutocompleteTests: XCTestCase {
         XCTAssertEqual(row?.replacementToken, "@src/App.swift")
     }
 
+    func testFilenameWithQuoteIsNotOfferedAsAMention() {
+        let files = [
+            ProjectFileEntry(
+                relativePath: "instructions.md\" @leak filler.txt", isDirectory: false),
+        ]
+        let rows = ComposerAutocompleteEngine.mentionCandidates(query: "instructions", entries: files)
+        XCTAssertTrue(rows.isEmpty)
+    }
+
     func testMentionCandidatesAreCapped() {
         let many = (0..<50).map {
             ProjectFileEntry(relativePath: String(format: "file%02d.txt", $0), isDirectory: false)

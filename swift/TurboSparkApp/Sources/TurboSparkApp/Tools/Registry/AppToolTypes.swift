@@ -125,13 +125,27 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         if let path = arguments["path"] ?? arguments["file_path"] {
             return path
         }
-        if let cmd = arguments["command"] ?? arguments["cmd"] {
+        if let cmd = shellCommand {
             return cmd
         }
         if let q = arguments["query"] ?? arguments["pattern"] {
             return "\"\(q)\""
         }
         return arguments.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+    }
+
+    /// The command accepted by the terminal executor. Keep every security
+    /// consumer on this accessor so tolerant wire aliases cannot bypass a
+    /// gate while still reaching the shell.
+    var shellCommand: String? {
+        Self.shellCommand(in: arguments)
+    }
+
+    static func shellCommand(in arguments: [String: String]) -> String? {
+        arguments["command"]
+            ?? arguments["cmd"]
+            ?? arguments["CommandLine"]
+            ?? arguments["code"]
     }
 }
 

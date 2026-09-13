@@ -9,6 +9,23 @@ use crate::real_forward_types::RealForwardError;
 use model_io::ExpertCacheSlots;
 
 pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealForwardError> {
+    // The gpt-oss attention flow uses the full-attention dimensions for every
+    // layer. Its sliding and full pairs are equal in canonical installs, and
+    // the KV cache relies on that invariant when sizing a sliding layer.
+    // Refuse a hand-built manifest before any cache buffers are allocated.
+    if expecting.family == model_io::ModelFamily::GptOss
+        && (expecting.num_kv_heads != expecting.num_full_kv_heads
+            || expecting.head_dim != expecting.full_head_dim)
+    {
+        return Err(RealForwardError::Unsupported(format!(
+            "gpt-oss requires identical sliding and full KV dimensions; got sliding {}x{} and \
+             full {}x{}",
+            expecting.num_kv_heads,
+            expecting.head_dim,
+            expecting.num_full_kv_heads,
+            expecting.full_head_dim
+        )));
+    }
     let max_kind = expecting
         .full_attention_layer_mask
         .iter()
