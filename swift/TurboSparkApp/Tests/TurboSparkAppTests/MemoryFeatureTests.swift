@@ -300,6 +300,20 @@ final class MemoryFeatureTests: XCTestCase {
             project: toolProject(root), store: store))
     }
 
+    func testTheToolRefusesExecutionWhileMemoryIsDisabled() throws {
+        let store = MemoryStore(base: makeScratchDirectory("tool-disabled"))
+        let root = makeScratchDirectory("project")
+        store.isModelEnabled = false
+
+        XCTAssertThrowsError(try MemoryToolExecutor.execute(
+            arguments: ["action": "save", "name": "blocked", "content": "must not persist"],
+            project: toolProject(root), store: store))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: store.directory(forProjectRoot: root)
+                    .appendingPathComponent("blocked.md").path))
+    }
+
     func testTheToolIsAdvertisedOnlyWhileMemoryIsEnabled() {
         let previous = MemoryStore.shared.isModelEnabled
         defer { MemoryStore.shared.isModelEnabled = previous }
