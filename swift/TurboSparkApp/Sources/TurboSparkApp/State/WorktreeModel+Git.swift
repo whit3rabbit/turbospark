@@ -283,12 +283,20 @@ extension WorktreeModel {
 
     /// Checks out or switches to another local Git branch.
     static func runGitCheckout(rootPath: String, branch: String) async -> (exitCode: Int32, error: String) {
-        let result = await runGitCommand(args: ["switch", branch], rootPath: rootPath)
+        let arguments = gitCheckoutArguments(branch: branch)
+        let result = await runGitCommand(args: arguments.switchArgs, rootPath: rootPath)
         if result.exitCode == 0 {
             return (0, "")
         }
-        let fallback = await runGitCommand(args: ["checkout", branch], rootPath: rootPath)
+        let fallback = await runGitCommand(args: arguments.checkoutArgs, rootPath: rootPath)
         return (fallback.exitCode, fallback.stderr)
+    }
+
+    /// Builds option-safe commands for a repository-controlled branch name.
+    nonisolated static func gitCheckoutArguments(branch: String) -> (
+        switchArgs: [String], checkoutArgs: [String]
+    ) {
+        (["switch", "--", branch], ["checkout", "--", branch])
     }
 
     /// Queries registered Git worktrees for this repository.
