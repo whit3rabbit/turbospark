@@ -2207,6 +2207,7 @@ dependencies = [
  "axum",
  "forge-guardrails",
  "futures",
+ "image",
  "regex-lite",
  "reqwest",
  "serde",
