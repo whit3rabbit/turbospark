@@ -156,7 +156,7 @@ fn rewrite_expression(body: &str) -> (String, bool) {
     let mut depth = 0usize;
 
     while i < bytes.len() {
-        // **ANY NON-ASCII BYTE STARTS A CHARACTER THAT IS COPIED WHOLE.**
+        // **ANY NON-ASCII SCALAR IS COPIED WHOLE.**
         // Every arm below pushes `c as char`, which turns one byte of a
         // multibyte character into one Latin-1 mojibake character; and the
         // keyword-argument logic itself is ASCII-only (`=`, quotes,
@@ -171,8 +171,14 @@ fn rewrite_expression(body: &str) -> (String, bool) {
         if let Some(q) = quote {
             out.push(c as char);
             if c == b'\\' && i + 1 < bytes.len() {
-                out.push(bytes[i + 1] as char);
-                i += 2;
+                let escaped_start = i + 1;
+                let escaped_len = body[escaped_start..]
+                    .chars()
+                    .next()
+                    .map(char::len_utf8)
+                    .unwrap_or(1);
+                out.push_str(&body[escaped_start..escaped_start + escaped_len]);
+                i = escaped_start + escaped_len;
                 continue;
             }
             if c == q {
