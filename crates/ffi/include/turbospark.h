@@ -580,13 +580,16 @@ int32_t ts_server_start(const TsSession *s, const char *options_json,
  * Takes effect immediately: no rebind, and no interruption to a request
  * already in flight on another model.
  *
- * REFUSES A DUPLICATE ID rather than renaming it. The id is what a request's
- * "model" field names and what ts_server_detach_model keys on, so a silently
- * suffixed second copy would be addressable under a name the caller never
- * learned. Two sessions on one install directory is a caller mistake.
+ * REFUSES A DUPLICATE PUBLIC ID rather than renaming it. Every generative
+ * session also advertises `claude-turbospark-<canonical-id>` through
+ * GET /v1/models so Claude Code gateway discovery can select it. A canonical
+ * id may not collide with another session's alias, and aliases may not
+ * collide either. `ts_server_info_json` still reports canonical ids only,
+ * which keeps the host's attach/detach bookkeeping stable.
  *
- * WHICH MODEL SERVES A REQUEST: an exact id match wins. Failing that, if
- * exactly ONE model is attached it serves the request whatever name was
+ * WHICH MODEL SERVES A REQUEST: an exact canonical id or discovery-alias
+ * match wins. Failing that, if exactly ONE model is attached it serves the
+ * request whatever name was
  * asked for -- which is what keeps a client sending its own default name
  * (Claude Code sends "claude-sonnet-4-6") working. With two or more
  * attached and no match, the request is a 404 naming what IS available.
@@ -637,10 +640,12 @@ void ts_server_stop(TsServer *server);
  * correct only for as long as that stays true, and cannot report the day it
  * does not.
  *
- * "models" is every attached id, in attachment order -- the same ids and the
- * same order GET /v1/models reports. "modelId" is the FIRST of them ("" when
- * none), kept for a reader written when a server could serve only one; on a
- * two-model server it is half the truth, so show "models".
+ * "models" is every attached CANONICAL id, in attachment order. GET
+ * /v1/models reports each canonical id followed by its Claude discovery
+ * alias, but those aliases are intentionally absent here so a host can
+ * continue to detach by the id it attached. "modelId" is the FIRST of them
+ * ("" when none), kept for a reader written when a server could serve only
+ * one; on a two-model server it is half the truth, so show "models".
  *
  * "uptimeSeconds" is from a monotonic clock and is unaffected by the wall
  * clock moving under a long-running host.

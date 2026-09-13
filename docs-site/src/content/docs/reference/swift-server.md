@@ -52,7 +52,7 @@ What `TurboSparkServer.info()` reports.
 | `public let port: UInt16` | The port ACTUALLY bound, never the one requested: `ServerOptions.port == 0` asks the OS to choose one, so this is the only place that number is knowable. |
 | `public let host: String` | The IP ACTUALLY bound, from the same `local_addr` read the port comes from. Build a URL out of this rather than restating `127.0.0.1`: the literal is what this library binds TODAY, and a caller spelling it by hand has no way to notice the day that changes. |
 | `public let modelId: String` | The FIRST attached model, or `""` when none is. **Show `models` instead.** This field exists for a reader written when a server could serve only one, and on a two-model server it is half the truth. It is kept rather than removed because removing it would break that reader silently, which is the failure it is here to avoid. |
-| `public let models: [String]` | Every attached model, in attachment order, the same ids and the same order `GET /v1/models` reports, because both read one registry. |
+| `public let models: [String]` | Every attached canonical model id, in attachment order. `GET /v1/models` also advertises `claude-turbospark-<canonical-id>` for each generative backend; aliases stay out of this field so a host can identify and detach exactly one session. |
 | `public let uptimeSeconds: UInt64` | Seconds since the server started, from a monotonic clock. |
 | `public var baseURL: URL? { get }` | `http://host:port`, the address a client should actually call. The host is bracketed when it contains a `:`, which is how an IPv6 literal has to appear in a URL. The engine binds IPv4 today, so that branch is unreachable and costs one line; the point is that this helper stays correct without one, rather than becoming the next thing that is true only by coincidence. |
 
@@ -164,13 +164,15 @@ exists, and can be shown and copied, before the user has decided what to load.
 public func attach(_ session: TurboSparkSession) throws -> String
 ```
 
-Adds an open session's model, returning the id clients address it by (the
-install directory's own name). Throws if a model with that id is already
-attached. That refusal is deliberate rather than a limitation: the id is what
-a request's `model` field names and what `detach(modelId:)` keys on, so a
-silently renamed second copy would be reachable under a name the caller never
-learned. From here the server holds the engine alive on its own; see the
-type's own note on what that obliges a host to do.
+Adds an open session's model, returning its canonical id (the install
+directory's own name). The server also advertises
+`claude-turbospark-<canonical-id>` through `GET /v1/models` for Claude Code
+discovery. Throws if any public identity would collide with an attached
+session. That refusal is deliberate rather than a limitation: the canonical id
+is what `detach(modelId:)` keys on, so a silently renamed second copy would
+be reachable under a name the caller never learned. From here the server holds
+the engine alive on its own; see the type's own note on what that obliges a
+host to do.
 
 ```swift
 public func detach(modelId: String) throws

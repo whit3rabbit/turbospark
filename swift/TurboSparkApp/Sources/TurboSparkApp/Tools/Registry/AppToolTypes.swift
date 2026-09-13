@@ -125,13 +125,27 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         if let path = arguments["path"] ?? arguments["file_path"] {
             return path
         }
-        if let cmd = arguments["command"] ?? arguments["cmd"] {
+        if let cmd = shellCommand {
             return cmd
         }
         if let q = arguments["query"] ?? arguments["pattern"] {
             return "\"\(q)\""
         }
         return arguments.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+    }
+
+    /// The command accepted by the terminal executor. Keep every security
+    /// consumer on this accessor so tolerant wire aliases cannot bypass a
+    /// gate while still reaching the shell.
+    var shellCommand: String? {
+        Self.shellCommand(in: arguments)
+    }
+
+    static func shellCommand(in arguments: [String: String]) -> String? {
+        arguments["command"]
+            ?? arguments["cmd"]
+            ?? arguments["CommandLine"]
+            ?? arguments["code"]
     }
 }
 
@@ -142,19 +156,42 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
     public var output: String
     public var isError: Bool
     public var durationSeconds: Double
+    /// The compact representation assembled into the next model prompt. The
+    /// ordinary `output` remains the transcript, export, and UI value.
+    public var promptProjection: String?
+    /// Exact oversized source retained outside a normal-chat transcript.
+    public var observation: ToolObservationRef?
+    /// Small, user-visible outcomes from native efficiency features.
+    public var efficiency: ToolEfficiencyOutcome?
+    /// Number of actual prompt sends that included the complete observation.
+    public var fullPromptSendCount: Int
+    /// Full source available only while this result is in memory. It is never
+    /// encoded into the normal chat archive; `ToolObservationStore` receives
+    /// it before persistence.
+    public var archivalOutput: String?
 
     public init(
         id: UUID = UUID(),
         callID: UUID,
         output: String,
         isError: Bool = false,
-        durationSeconds: Double = 0.0
+        durationSeconds: Double = 0.0,
+        promptProjection: String? = nil,
+        observation: ToolObservationRef? = nil,
+        efficiency: ToolEfficiencyOutcome? = nil,
+        fullPromptSendCount: Int = 0,
+        archivalOutput: String? = nil
     ) {
         self.id = id
         self.callID = callID
         self.output = output
         self.isError = isError
         self.durationSeconds = durationSeconds
+        self.promptProjection = promptProjection
+        self.observation = observation
+        self.efficiency = efficiency
+        self.fullPromptSendCount = fullPromptSendCount
+        self.archivalOutput = archivalOutput
     }
 
     /// Spelled out because this type now has BOTH a custom `init(from:)` and
@@ -163,7 +200,7 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
     /// to the property names or every archive written before this change
     /// decodes its fields as absent.
     enum CodingKeys: String, CodingKey {
-        case id, callID, output, isError, durationSeconds
+        case id, callID, output, isError, durationSeconds, promptProjection, observation, efficiency, fullPromptSendCount
     }
 
     /// Largest tool output written to the chat archive.
@@ -185,6 +222,12 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         try container.encode(callID, forKey: .callID)
         try container.encode(isError, forKey: .isError)
         try container.encode(durationSeconds, forKey: .durationSeconds)
+        if let promptProjection, promptProjection.utf8.count <= Self.maximumPersistedOutputBytes {
+            try container.encode(promptProjection, forKey: .promptProjection)
+        }
+        try container.encodeIfPresent(observation, forKey: .observation)
+        try container.encodeIfPresent(efficiency, forKey: .efficiency)
+        try container.encode(fullPromptSendCount, forKey: .fullPromptSendCount)
 
         if output.utf8.count > Self.maximumPersistedOutputBytes {
             // Head-plus-tail with the omission marker in the middle, rather
@@ -221,7 +264,15 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         output = try container.decodeIfPresent(String.self, forKey: .output) ?? ""
         isError = try container.decodeIfPresent(Bool.self, forKey: .isError) ?? false
         durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0.0
+        promptProjection = try container.decodeIfPresent(String.self, forKey: .promptProjection)
+        observation = try container.decodeIfPresent(ToolObservationRef.self, forKey: .observation)
+        efficiency = try container.decodeIfPresent(ToolEfficiencyOutcome.self, forKey: .efficiency)
+        fullPromptSendCount = try container.decodeIfPresent(Int.self, forKey: .fullPromptSendCount) ?? 0
+        archivalOutput = nil
     }
+
+    /// The only result representation model prompt assembly may use.
+    public var modelOutput: String { promptProjection ?? output }
 }
 
 /// Description of an available tool for prompt construction.

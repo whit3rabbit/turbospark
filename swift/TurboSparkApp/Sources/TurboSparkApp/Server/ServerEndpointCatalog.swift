@@ -157,6 +157,19 @@ public enum ServerConnectRecipes {
     {
         let key = apiKey ?? "unused"
         let model = modelID.isEmpty ? "<load a model first>" : modelID
+        // Claude Code filters discovered model ids. The server advertises this
+        // derived alias for every chat backend, so selecting it at launch is
+        // both discoverable and unambiguous when several models are attached.
+        let claudeModel = modelID.isEmpty
+            ? "<load a model first>"
+            : "claude-turbospark-\(modelID)"
+        // `--settings` is deliberately part of the command instead of only
+        // setting shell variables. A saved `env` block can retain a stale
+        // port from a previous local server run; this command-line overlay
+        // gives the ephemeral port an explicit one-session source.
+        let claudeSettings = """
+        {"env":{"ANTHROPIC_BASE_URL":"\(Self.jsonEscaped(baseURL))","ANTHROPIC_API_KEY":"\(Self.jsonEscaped(key))","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}
+        """
         let curlBody = """
         {"model":"\(Self.jsonEscaped(model))","stream":true,
              "messages":[{"role":"user","content":"hello"}]}
@@ -169,13 +182,11 @@ public enum ServerConnectRecipes {
             ServerConnectSnippet(
                 id: "claude-code",
                 title: "Claude Code",
-                note: "Anthropic-native, so nothing sits in between.",
+                note: "Anthropic-native. Overrides stale saved gateway settings; starts with the loaded model.",
                 language: "bash",
                 body: """
-                    ANTHROPIC_BASE_URL=\(Self.shellDoubleQuoted(baseURL)) \\
-                    ANTHROPIC_API_KEY=\(Self.shellDoubleQuoted(key)) \\
-                    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true \\
-                      claude
+                    claude --settings \(Self.shellSingleQuoted(claudeSettings)) \\
+                      --model \(Self.shellDoubleQuoted(claudeModel))
                     """),
             ServerConnectSnippet(
                 id: "openai-python",

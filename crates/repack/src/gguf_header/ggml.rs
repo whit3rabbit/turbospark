@@ -80,13 +80,19 @@ pub fn ggml_type_block(id: u32) -> Option<(u64, u64)> {
         7 => (32, 24),    // Q5_1
         8 => (32, 34),    // Q8_0
         10 => (256, 84),  // Q2_K
+        16 => (256, 66),  // IQ2_XXS
+        17 => (256, 74),  // IQ2_XS
         11 => (256, 110), // Q3_K
         12 => (256, 144), // Q4_K
         13 => (256, 176), // Q5_K
         14 => (256, 210), // Q6_K
         18 => (256, 98),  // IQ3_XXS
+        19 => (256, 50),  // IQ1_S
         20 => (32, 18),   // IQ4_NL
+        21 => (256, 110), // IQ3_S
+        22 => (256, 82),  // IQ2_S
         23 => (256, 136), // IQ4_XS
+        29 => (256, 56),  // IQ1_M
         // ROADMAP M5 Phase 0. Parse-only, like the six above it: gpt-oss
         // ships its routed experts as MXFP4 and nothing else does, so
         // without this row the candidate's expert table sizes to ZERO and

@@ -19,7 +19,8 @@ struct EngineSettingsPaneView: View {
         Form {
             Text("Sampling and prompt changes apply to the next turn. Load settings apply after model reload.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
-            systemPromptSection
+            SystemPromptSettingsSection(model: model)
+            PersonalitySettingsSection(model: model)
             generationDefaultsSection
             advancedGenerationSection
             coolingSection
@@ -33,33 +34,6 @@ struct EngineSettingsPaneView: View {
         .scrollContentBackground(.hidden)
         .background(.appPage)
         .padding(16)
-    }
-
-    /// A SEPARATE computed property, like every sibling section, for the
-    /// type-checker reason spelled out above `body`.
-    private var systemPromptSection: some View {
-        Section("Default System Prompt") {
-            VStack(alignment: .leading, spacing: 6) {
-                TextEditor(text: $model.defaultSystemPrompt)
-                    .themedCode(.base)
-                    .frame(minHeight: 100)
-                    .onChange(of: model.defaultSystemPrompt) { _, _ in
-                        model.persistSettingsDebounced()
-                    }
-                Text(
-                    "Sent as the first system message of every conversation, ahead of any "
-                    + "project rules. A chat with its own system prompt uses that instead. "
-                    + "Leave empty for none."
-                )
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                Text("\(model.defaultSystemPrompt.count) characters", bundle: .module)
-                    .themedFont(.small)
-                    .monospacedDigit()
-                    .foregroundStyle(.appSecondary)
-            }
-        }
-            .settingsControl("Default System Prompt", pane: .engine, timing: .nextTurn)
     }
 
     private var generationDefaultsSection: some View {
@@ -432,6 +406,12 @@ struct EngineSettingsPaneView: View {
 
     private var inProcessServerSection: some View {
         Section("In-Process Server") {
+            LabeledContent("Server Start Prompt") {
+                Text(model.selectedSystemPrompt?.name ?? "None")
+                    .themedCode(.small)
+                    .foregroundStyle(.appSecondary)
+            }
+
             HStack {
                 Toggle("Enable server", isOn: Binding(
                     get: { model.server != nil },

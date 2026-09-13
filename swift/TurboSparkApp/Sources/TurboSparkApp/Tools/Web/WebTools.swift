@@ -187,6 +187,6 @@ public enum WebToolDefinitions {
     )
 
     public static let all: [OpenAITool] = [
-        webSearch, webFetch
+        webSearch, webFetch, HttpRequestToolDefinitions.httpRequest
     ]
 }

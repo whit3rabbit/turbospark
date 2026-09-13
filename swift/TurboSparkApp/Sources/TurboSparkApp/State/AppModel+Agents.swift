@@ -279,9 +279,9 @@ extension AppModel {
                 session: self.session,
                 project: project,
                 chatID: turnChatID,
-                // The app-wide DEFAULT, never a per-chat override: a subagent
-                // runs in a fresh isolated context with zero parent history.
-                userSystemPrompt: self.defaultSystemPrompt,
+                // The app-wide default and selected personality, never a
+                // per-chat override: a subagent runs in a fresh context.
+                userSystemPrompt: self.appWideSystemPrompt,
                 samplingOptions: self.samplingOptions(),
                 progress: { event in await sink?(runKey, event) }
             )

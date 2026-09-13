@@ -74,8 +74,78 @@ public struct ProjectRulesDetectionResult: Equatable, Sendable {
     }
 }
 
+/// Repository instructions resolved afresh for a project turn.
+///
+/// The project model deliberately does not persist this text. Repository
+/// instruction files are configuration, so a later turn must see an edit to
+/// them without requiring the user to reopen and save the project sheet.
+public struct ProjectLiveInstructions: Equatable, Sendable {
+    /// Combined, bounded instruction content ready to be added to a prompt.
+    public let content: String
+    /// Names of instruction files that contributed content.
+    public let detectedFiles: [String]
+    /// Whether any contributing file was a symbolic link.
+    public let isSymlink: Bool
+
+    public init(content: String, detectedFiles: [String], isSymlink: Bool) {
+        self.content = content
+        self.detectedFiles = detectedFiles
+        self.isSymlink = isSymlink
+    }
+}
+
 /// Utility for scanning, detecting, and resolving AGENTS.md and CLAUDE.md files in project directories.
 public enum ProjectRuleDetector {
+    /// Resolves the repository instruction files for one prompt assembly.
+    ///
+    /// `AGENTS.md` and `CLAUDE.md` retain the project's selected conflict
+    /// preference. `CONTEXT.md` is complementary background, so it is
+    /// appended whenever present rather than competing with either rule file.
+    /// Every contributing file remains contained in the project root, even
+    /// when it is a symlink.
+    public static func liveInstructions(
+        in directoryPath: String,
+        preference: AppRulePreference = .agentsFirst,
+        maxCharacters: Int = 8000
+    ) -> ProjectLiveInstructions? {
+        let trimmedPath = directoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty, maxCharacters > 0 else { return nil }
+
+        let rootURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
+        let rules = detectRules(
+            in: trimmedPath,
+            preference: preference,
+            maxCharacters: maxCharacters)
+        var content = rules?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var files = rules?.detectedFiles ?? []
+        var containsSymlink = rules?.isSymlink ?? false
+
+        let remainingCharacters = maxCharacters - content.count
+        let contextURL = rootURL.appendingPathComponent("CONTEXT.md")
+        let fileManager = FileManager.default
+        if remainingCharacters > 0,
+           fileExistsOrSymlink(at: contextURL, fileManager: fileManager),
+           let context = (readText(at: contextURL, containedIn: rootURL))?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !context.isEmpty {
+            let separator = content.isEmpty ? "" : "\n\n"
+            let contextHeader = "# CONTEXT.md\n"
+            let availableForContext = max(
+                0,
+                remainingCharacters - separator.count - contextHeader.count)
+            if availableForContext > 0 {
+                content += separator + contextHeader + String(context.prefix(availableForContext))
+                files.append("CONTEXT.md")
+                containsSymlink = containsSymlink || isSymlink(at: contextURL, fileManager: fileManager)
+            }
+        }
+
+        guard !content.isEmpty else { return nil }
+        return ProjectLiveInstructions(
+            content: content,
+            detectedFiles: files,
+            isSymlink: containsSymlink)
+    }
+
     /// Scans a directory and returns detailed detection result with symlink resolution and preference handling.
     public static func detectRules(
         in directoryPath: String,

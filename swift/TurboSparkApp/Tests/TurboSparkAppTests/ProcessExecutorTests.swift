@@ -51,6 +51,90 @@ final class ProcessExecutorTests: XCTestCase {
         XCTAssertEqual(result.stdout.count, payload.count)
     }
 
+    func testEarlyExitWhileStdinWriterIsScheduledDoesNotRaiseSIGPIPE() async throws {
+        // Command hooks always receive a JSON payload. A hook that exits
+        // immediately can close its stdin before the detached writer starts;
+        // that must become a contained EPIPE, never SIGPIPE for XCTest.
+        let payload = Data(repeating: UInt8(ascii: "x"), count: 300_000)
+        let result = try await ProcessExecutor.run(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "exit 0"],
+            stdin: payload,
+            timeoutSeconds: 5
+        )
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.exitCode, 0)
+    }
+
+    func testPartialStdinConsumerExitDoesNotRaiseSIGPIPE() async throws {
+        // A hook can inspect just its first input byte and exit. The writer
+        // may already have filled the pipe when that close arrives, so this
+        // exercises EPIPE after a real partial read rather than only `exit`.
+        let payload = Data(repeating: UInt8(ascii: "x"), count: 1_000_000)
+        let result = try await ProcessExecutor.run(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "head -c 1 >/dev/null; exit 0"],
+            stdin: payload,
+            timeoutSeconds: 5
+        )
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.exitCode, 0)
+    }
+
+    func testConcurrentEarlyExitsWhileWritingStdinDoNotRaiseSIGPIPE() async throws {
+        // The descriptor-level suppression must apply to every independent
+        // process, not accidentally rely on a process-wide signal setting.
+        let payload = Data(repeating: UInt8(ascii: "x"), count: 300_000)
+        let completions = try await withThrowingTaskGroup(of: Bool.self) { group in
+            for _ in 0..<12 {
+                group.addTask {
+                    let result = try await ProcessExecutor.run(
+                        executableURL: URL(fileURLWithPath: "/bin/sh"),
+                        arguments: ["-c", "exit 0"],
+                        stdin: payload,
+                        timeoutSeconds: 5
+                    )
+                    return !result.timedOut && result.exitCode == 0
+                }
+            }
+
+            var completed: [Bool] = []
+            for try await value in group { completed.append(value) }
+            return completed
+        }
+        XCTAssertEqual(completions.count, 12)
+        XCTAssertTrue(completions.allSatisfy { $0 })
+    }
+
+    func testTimeoutDuringBlockedStdinWriteIsContained() async throws {
+        // This child never drains stdin, so the background writer is blocked
+        // when the timeout closes its pipe. It must not turn that EPIPE into
+        // a signal for the app process.
+        let payload = Data(repeating: UInt8(ascii: "x"), count: 1_000_000)
+        let start = Date()
+        let result = try await ProcessExecutor.run(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "sleep 30"],
+            stdin: payload,
+            timeoutSeconds: 0.5
+        )
+        XCTAssertTrue(result.timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5.0)
+    }
+
+    func testLargeStdoutAndStderrDrainTogether() async throws {
+        // Separate readers must keep both streams moving. Draining only one
+        // would leave the other full and recreate the pre-wait deadlock.
+        let result = try await ProcessExecutor.run(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "yes out | head -c 200000; yes err | head -c 200000 >&2"],
+            timeoutSeconds: 10
+        )
+        XCTAssertFalse(result.timedOut)
+        XCTAssertGreaterThan(result.stdout.count, 190_000)
+        XCTAssertGreaterThan(result.stderr.count, 190_000)
+    }
+
     func testOutputIsCappedRatherThanUnbounded() async throws {
         let result = try await ProcessExecutor.run(
             executableURL: URL(fileURLWithPath: "/bin/sh"),
@@ -116,6 +200,33 @@ final class ProcessExecutorCancellationTests: XCTestCase {
         XCTAssertLessThan(
             elapsed, 10.0,
             "cancellation returned after \(elapsed)s; the 120s deadline was being waited out")
+    }
+
+    func testCancellationDuringBlockedStdinWriteIsContained() async throws {
+        // The cancellation path closes stdin while the detached writer waits
+        // on a full pipe. The task must still complete as cancellation, not
+        // leak SIGPIPE or wait for the original deadline.
+        let payload = Data(repeating: UInt8(ascii: "x"), count: 1_000_000)
+        let started = Date()
+        let task = Task {
+            try await ProcessExecutor.run(
+                executableURL: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", "sleep 60"],
+                stdin: payload,
+                timeoutSeconds: 120
+            )
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("a cancelled run must throw rather than return an ordinary result")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10.0)
     }
 
     /// The child must be dead, not merely abandoned. A `sleep` that survives

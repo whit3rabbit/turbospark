@@ -34,7 +34,7 @@ options:
                        many tokens (default 0, no floor). Says nothing about an
                        explicit --max-context
   --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)
-  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)
+  --bind               loopback or tailnet (default loopback; tailnet requires --api-key or $TURBOSPARK_API_KEY)
   --power-profile      performance, balanced or efficiency
   --max-tokens-per-sec decode rate cap, greater than 0
   --speculative        off, auto, or a block size 1-15 (default auto). Speculation
@@ -107,7 +107,7 @@ Default values exactly as the options text states them.
 | `--load-guard` | relaxed |
 | `--min-auto-context` | 0 (no floor) |
 | `--expert-cache-slots` | auto |
-| `--bind` | loopback (tailnet is NOT auth) |
+| `--bind` | loopback (tailnet requires --api-key or $TURBOSPARK_API_KEY) |
 | `--speculative` | auto |
 | `--speculative-drafter` | auto |
 | `--guardrails` | on |
