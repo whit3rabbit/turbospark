@@ -107,6 +107,7 @@ extension AppModel {
         entry: PluginManifestParser.MarketplaceEntry,
         marketplaceName: String,
         checkoutDirectory: URL?,
+        marketplaceSource: MarketplaceSource,
         scope: PluginInstallScope
     ) async -> PluginMarketplaceManager.InstallOutcome? {
         do {
@@ -114,6 +115,7 @@ extension AppModel {
                 entry: entry,
                 marketplaceName: marketplaceName,
                 checkoutDirectory: checkoutDirectory,
+                marketplaceSource: marketplaceSource,
                 scope: scope.ledgerValue,
                 projectRootURL: scope.projectRootURL)
             // Default ON: an explicit `false` from a previous install would

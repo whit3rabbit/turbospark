@@ -88,7 +88,7 @@ final class PluginMarketplaceTests: XCTestCase {
 
         let outcome = try await marketplaceManager.install(
             entry: entry, marketplaceName: "test-market",
-            checkoutDirectory: nil, scope: "user")
+            checkoutDirectory: nil, marketplaceSource: .directory(path: root.path), scope: "user")
 
         XCTAssertEqual(outcome.pluginID, "greet@test-market")
         XCTAssertEqual(outcome.version, "2.5.0", "the plugin manifest version wins")
@@ -114,7 +114,7 @@ final class PluginMarketplaceTests: XCTestCase {
                 name: "noversion",
                 sourceValue: ["type": "directory", "path": noVersion.path],
                 strict: true, raw: ["name": "noversion"]),
-            marketplaceName: "test-market", checkoutDirectory: nil, scope: "user")
+            marketplaceName: "test-market", checkoutDirectory: nil, marketplaceSource: .directory(path: root.path), scope: "user")
         XCTAssertEqual(outcome.version, "unknown")
 
         let versioned = try makeLocalPlugin(name: "entryv", version: nil)
@@ -123,7 +123,7 @@ final class PluginMarketplaceTests: XCTestCase {
                 name: "entryv",
                 sourceValue: ["type": "directory", "path": versioned.path],
                 strict: true, raw: ["name": "entryv", "version": "7.7.7"]),
-            marketplaceName: "test-market", checkoutDirectory: nil, scope: "user")
+            marketplaceName: "test-market", checkoutDirectory: nil, marketplaceSource: .directory(path: root.path), scope: "user")
         XCTAssertEqual(outcome2.version, "7.7.7", "the entry version is the second source")
     }
 
@@ -144,9 +144,64 @@ final class PluginMarketplaceTests: XCTestCase {
                 name: "greet", sourceValue: "./plugins/greet",
                 strict: true, raw: ["name": "greet"]),
             marketplaceName: "test-market",
-            checkoutDirectory: checkout, scope: "user")
+            checkoutDirectory: checkout, marketplaceSource: .url(url: "https://example.com/market.json", headers: nil), scope: "user")
         XCTAssertEqual(outcome.version, "1.0.0")
         XCTAssertTrue(FileManager.default.fileExists(atPath: outcome.installPath))
+    }
+
+    func testRelativeSourceCannotEscapeCheckoutThroughTraversalOrPluginRoot() async throws {
+        let checkout = try makeCheckout(entriesJSON: "")
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+
+        for (relative, pluginRoot) in [("./../outside", nil), ("./", "../outside")] {
+            if let pluginRoot {
+                try Data("""
+                {"name":"test-market","metadata":{"pluginRoot":"\(pluginRoot)"},"plugins":[]}
+                """.utf8).write(
+                    to: checkout.appendingPathComponent(".claude-plugin/marketplace.json"))
+            }
+            do {
+                _ = try await marketplaceManager.install(
+                    entry: PluginManifestParser.MarketplaceEntry(
+                        name: "escape", sourceValue: relative,
+                        strict: true, raw: ["name": "escape"]),
+                    marketplaceName: "test-market", checkoutDirectory: checkout,
+                    marketplaceSource: .url(url: "https://example.com/market.json", headers: nil),
+                    scope: "user")
+                XCTFail("A marketplace source outside its checkout must be rejected")
+            } catch let error as PluginLoadError {
+                XCTAssertTrue(error.reason.contains("inside the marketplace checkout"))
+            }
+        }
+    }
+
+    func testConfinedSourceRejectsSymlinkEscape() throws {
+        let checkout = try makeCheckout(entriesJSON: "")
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: checkout.appendingPathComponent("linked"), withDestinationURL: outside)
+
+        XCTAssertThrowsError(try PluginMarketplaceManager.confinedSource(
+            checkout.appendingPathComponent("linked"), within: checkout, pluginName: "escape"))
+    }
+
+    func testRemoteMarketplaceCannotInstallLocalDirectorySource() async throws {
+        let pluginDir = try makeLocalPlugin(name: "escape", version: "1")
+        do {
+            _ = try await marketplaceManager.install(
+                entry: PluginManifestParser.MarketplaceEntry(
+                    name: "escape",
+                    sourceValue: ["type": "directory", "path": pluginDir.path],
+                    strict: true, raw: ["name": "escape"]),
+                marketplaceName: "remote", checkoutDirectory: nil,
+                marketplaceSource: .url(url: "https://example.com/market.json", headers: nil),
+                scope: "user")
+            XCTFail("A remote marketplace must not select an arbitrary local directory")
+        } catch let error as PluginLoadError {
+            XCTAssertTrue(error.reason.contains("cannot install a local directory source"))
+        }
     }
 
     func testUninstallRemovesTheCacheDirectoryOnlyAfterTheLastScope() async throws {
@@ -157,13 +212,13 @@ final class PluginMarketplaceTests: XCTestCase {
             strict: true, raw: ["name": "greet"])
 
         _ = try await marketplaceManager.install(
-            entry: entry, marketplaceName: "test-market", checkoutDirectory: nil, scope: "user")
+            entry: entry, marketplaceName: "test-market", checkoutDirectory: nil, marketplaceSource: .directory(path: root.path), scope: "user")
         let installPath = (ledger.load().plugins["greet@test-market"] ?? []).first!.installPath
 
         // The project scope lands as a second record.
         _ = try await marketplaceManager.install(
             entry: entry, marketplaceName: "test-market",
-            checkoutDirectory: nil, scope: "project",
+            checkoutDirectory: nil, marketplaceSource: .directory(path: root.path), scope: "project",
             projectRootURL: URL(fileURLWithPath: "/tmp/proj"))
 
         try marketplaceManager.uninstall(pluginID: "greet@test-market", scope: "user")
@@ -235,7 +290,7 @@ extension PluginMarketplaceTests {
             }
             do {
                 _ = try await marketplaceManager.install(entry: entry, marketplaceName: "test",
-                    checkoutDirectory: nil, scope: "project", projectRootURL: root.appendingPathComponent("project"))
+                    checkoutDirectory: nil, marketplaceSource: .directory(path: root.path), scope: "project", projectRootURL: root.appendingPathComponent("project"))
                 XCTFail("An installation without a persisted scope must fail")
             } catch {
                 XCTAssertEqual((error as NSError).domain, NSCocoaErrorDomain)
