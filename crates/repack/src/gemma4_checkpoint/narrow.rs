@@ -434,7 +434,7 @@ fn pass_through_packed_impl(
         let accepted = if qwen2_wide_f16 {
             matches!(c.dtype.as_str(), "F16" | "BF16")
         } else {
-            c.dtype == companion_dtype
+            c.dtype.as_str() == companion_dtype
         };
         if !accepted {
             return Err(Gemma4Error::UnsupportedDtype {
