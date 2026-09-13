@@ -6,6 +6,25 @@ public final class AppHookExecutionEngine: Sendable {
 
     public init() {}
 
+    /// Whether dispatch would run at least one hook for this event and tool.
+    /// Used when callers must preserve a hook as a safety gate without
+    /// disclosing the tool payload to it.
+    @MainActor
+    func hasMatchingHook(
+        event: AppHookEvent,
+        toolName: String,
+        toolArguments: [String: String]
+    ) -> Bool {
+        let store = AppHookStore.shared
+        return store.hooks.contains { hook in
+            hook.isEnabled && hook.event == event
+                && (hook.sourceType == .custom
+                    || store.trustedHashes.contains(hook.contentHash))
+                && matchesCondition(
+                    hook: hook, toolName: toolName, toolArguments: toolArguments)
+        }
+    }
+
     /// Events where an `async: true` command hook is still awaited
     /// synchronously, because the caller is about to act on its decision:
     /// `PreToolUse`/`PermissionRequest` gate whether a call runs, and
