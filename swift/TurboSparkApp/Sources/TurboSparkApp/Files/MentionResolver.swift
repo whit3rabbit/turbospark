@@ -43,16 +43,16 @@ enum MentionResolver {
         return tokens
     }
 
-    /// The URL a typed token points at: absolute paths as-is, everything
-    /// else against the project root. No containment clamp -- the user typed
-    /// the path on their own machine, and the plus menu offers the same
-    /// reach through a picker.
+    /// The canonical URL a typed token points at when it remains inside the
+    /// project. The attachment picker is the explicit route for files outside
+    /// the project; mentions must not turn repository-controlled text into an
+    /// unapproved read through an absolute path, traversal, or symlink.
     nonisolated static func resolveURL(for token: String, projectRoot: URL?) -> URL? {
-        if token.hasPrefix("/") {
-            return URL(fileURLWithPath: token)
-        }
         guard let projectRoot else { return nil }
-        return projectRoot.appendingPathComponent(token)
+        let candidate = token.hasPrefix("/")
+            ? URL(fileURLWithPath: token)
+            : projectRoot.appendingPathComponent(token)
+        return PathContainment.resolvedIfContained(candidate, in: projectRoot)
     }
 
     /// Resolves every token and appends what exists: a directory expands

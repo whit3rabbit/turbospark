@@ -27,7 +27,9 @@
 //! for why the two cannot be separate calls.
 
 use anyllm_translate::openai::{ChatContentPart, ChatMessage};
-use turbospark_vision_io::{MropePositions, PreprocessParams, PreprocessedImage, VisionSpecialIds};
+use turbospark_vision_io::{
+    GridThw, MropePositions, PreprocessParams, PreprocessedImage, VisionSpecialIds,
+};
 
 /// Above this many image parts in one request, `handler::plan` refuses
 /// before decoding any of them. A body-size limit alone
@@ -35,7 +37,14 @@ use turbospark_vision_io::{MropePositions, PreprocessParams, PreprocessedImage, 
 /// stops a request from splitting its budget across an unreasonable number
 /// of tiny images, each paying its own decode, preprocess, and (once a
 /// vision-capable backend is attached) tower-encode cost.
-pub(crate) const MAX_IMAGES_PER_REQUEST: usize = 64;
+pub(crate) const MAX_IMAGES_PER_REQUEST: usize = 8;
+
+/// Aggregate source pixels accepted in one request. This is deliberately the
+/// checkpoint's single-image maximum, not that maximum multiplied by count.
+const MAX_SOURCE_PIXELS_PER_REQUEST: u64 = 16 * 1024 * 1024;
+
+/// Aggregate retained f32 patch rows accepted in one request.
+const MAX_PATCH_BYTES_PER_REQUEST: u64 = 128 * 1024 * 1024;
 
 /// How many image parts one message carries, for the whole-request cap in
 /// `handler::plan` -- counted separately from [`image_bytes`] so the cap can
@@ -274,9 +283,92 @@ pub(crate) fn preprocess_all(
         .collect()
 }
 
+/// Inspect every image header and budget the expanded preprocessing output
+/// before any pixel buffer is allocated.
+pub(crate) fn preflight_all(
+    encoded: &[Vec<u8>],
+    info: &VisionInfo,
+) -> Result<Vec<GridThw>, String> {
+    let mut source_pixels = 0u64;
+    let mut patch_bytes = 0u64;
+    let mut grids = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        let (resized_h, resized_w) =
+            turbospark_vision_io::resized_dims(height as usize, width as usize, &info.params)
+                .map_err(|e| format!("image {i}: {e}"))?;
+        let grid = GridThw::new(
+            1,
+            resized_h / info.params.patch_size,
+            resized_w / info.params.patch_size,
+        );
+        let bytes = (grid.patches() as u64)
+            .checked_mul(info.params.patch_dim() as u64)
+            .and_then(|n| n.checked_mul(std::mem::size_of::<f32>() as u64))
+            .ok_or_else(|| "image preprocessing size overflows".to_string())?;
+        patch_bytes = patch_bytes
+            .checked_add(bytes)
+            .ok_or_else(|| "image preprocessing size overflows".to_string())?;
+        if patch_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {patch_bytes} bytes of preprocessed patches; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+        grids.push(grid);
+    }
+    Ok(grids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn params(max_pixels: usize) -> PreprocessParams {
+        PreprocessParams {
+            patch_size: 16,
+            temporal_patch_size: 2,
+            merge_size: 2,
+            in_channels: 3,
+            min_pixels: 65_536,
+            max_pixels,
+            image_mean: [0.5; 3],
+            image_std: [0.5; 3],
+            rescale_factor: 1.0 / 255.0,
+        }
+    }
+
+    fn gray_png(width: u32, height: u32) -> Vec<u8> {
+        let image = image::GrayImage::from_pixel(width, height, image::Luma([0]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageLuma8(image)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
+    }
+
+    #[test]
+    fn preflight_refuses_aggregate_patch_memory_before_preprocessing() {
+        let png = gray_png(2048, 2048);
+        let info = VisionInfo {
+            params: params(16_777_216),
+            specials: VisionSpecialIds {
+                vision_start: 1,
+                image_pad: 2,
+            },
+        };
+        let err = preflight_all(&[png.clone(), png], &info).unwrap_err();
+        assert!(err.contains("preprocessed patches"), "{err}");
+        assert!(err.contains("134217728"), "{err}");
+    }
 
     #[test]
     fn a_base64_data_url_decodes() {

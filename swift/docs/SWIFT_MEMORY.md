@@ -91,6 +91,11 @@ index when `name` is omitted), `forget` (removes both). A missing
 description falls back to the body's first line cut at 120 chars, so the
 index stays one informative line when the model skips the field.
 
+The enable gate is enforced again by the executor, not only by prompt and
+tool advertising. A parsed model-issued call therefore cannot read or mutate
+persistent memory after the user disables the feature. The user-authored `#`
+quick-save remains separate and writes directly through `MemoryStore`.
+
 Availability follows the per-agent lists in `AppToolCatalog.tools(for:)`
 (coder, researcher, general/custom; autonomous gets everything through
 `allTools`). Both vocabulary lists carry it: it is in

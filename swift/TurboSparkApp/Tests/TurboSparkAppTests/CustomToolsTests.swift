@@ -141,7 +141,30 @@ final class CustomToolsTests: XCTestCase {
         // expanded -- the same class of bug as the quoting, one level out.
         let rendered = CustomToolExecutor.substituteArguments(
             into: "run {{a}} {{b}}", arguments: ["a": "{{b}}", "b": "SECRET"])
-        XCTAssertEqual(rendered, "run '{{b}}' 'SECRET'")
+        XCTAssertEqual(rendered, "run \"${TOOL_ARG_A}\" \"${TOOL_ARG_B}\"")
+    }
+
+    func testAQuotedArgumentValueCannotAddASecondCommand() async throws {
+        let tempDir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let witness = tempDir.appendingPathComponent("quoted-pwned.txt")
+
+        let tool = CustomToolDefinition(
+            name: "echo_quoted_arg",
+            toolDescription: "echoes",
+            execution: CustomToolExecution(
+                type: .command, command: "echo 'Result: {{greeting}} {{target}}'"))
+        let output = try await CustomToolExecutor.execute(
+            tool: tool,
+            arguments: [
+                "greeting": "; touch \(witness.path); #",
+                "target": "TurboSpark"
+            ],
+            projectRootURL: tempDir
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: witness.path))
+        XCTAssertTrue(output.contains("Result: ; touch \(witness.path); # TurboSpark"))
     }
 
     func testAMarkerNamingNoArgumentIsLeftAlone() {

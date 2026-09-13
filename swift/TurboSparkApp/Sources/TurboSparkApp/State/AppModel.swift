@@ -741,6 +741,9 @@ public final class AppModel: ObservableObject {
         AppToolRegistry.subagentSamplingOptionsProvider = { [weak self] in
             self?.samplingOptions() ?? GenerateOptions()
         }
+        AppToolRegistry.webToolsEnabledProvider = { [weak self] in
+            self?.webSearchEnabled ?? true
+        }
         AppToolRegistry.subagentProgressSink = { [weak self] key, event in
             await self?.applySubagentEvent(key, event)
         }

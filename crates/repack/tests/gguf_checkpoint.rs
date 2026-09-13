@@ -59,6 +59,34 @@ impl Fixture {
     }
 }
 
+/// Routed weights are consumed with architecture dimensions rather than
+/// dimensions carried through layout.json. Accepting a smaller rank-2 body
+/// would therefore let the Metal kernels read beyond the packed expert slot.
+#[test]
+fn rank_two_routed_weights_are_rejected_before_install() {
+    for name in [
+        "blk.0.ffn_gate_up_exps.weight",
+        "blk.0.ffn_down_exps.weight",
+    ] {
+        let f = Fixture::new();
+        let mut header = f.header.clone();
+        header.tensors.get_mut(name).expect("routed tensor").dims = vec![32, f.shape.num_experts];
+
+        let err = match orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&f.bytes)) {
+            Ok(_) => panic!("a rank-2 routed weight must not reach the packed layout"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, GgufRepackError::ShapeMismatch { .. }),
+            "expected a shape error for {name}, got {err}"
+        );
+        assert!(
+            err.to_string().contains("expected routed shape"),
+            "{name}: {err}"
+        );
+    }
+}
+
 #[test]
 fn resident_tensors_keep_their_bytes_names_and_logical_shapes() {
     let f = Fixture::new();

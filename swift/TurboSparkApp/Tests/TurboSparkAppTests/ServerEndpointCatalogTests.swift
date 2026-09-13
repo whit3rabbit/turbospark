@@ -122,7 +122,9 @@ final class ServerEndpointCatalogTests: XCTestCase {
         XCTAssertEqual(
             claude?.body.contains(
                 "\"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT\":\"1\""), true)
-        XCTAssertEqual(claude?.body.contains("claude --settings"), true)
+        XCTAssertEqual(claude?.body.contains("chmod 600 \"$settings_file\""), true)
+        XCTAssertEqual(claude?.body.contains("claude --settings \"$settings_file\""), true)
+        XCTAssertEqual(claude?.body.contains("claude --settings '{\"env\""), false)
     }
 
     /// With nothing loaded the model field says what to do rather than
@@ -153,7 +155,7 @@ final class ServerEndpointCatalogTests: XCTestCase {
         let claude = snippets.first { $0.id == "claude-code" }?.body ?? ""
         XCTAssertTrue(
             claude.contains("\"ANTHROPIC_API_KEY\":\"a\\\\b\\\"c$d`e;rm\""),
-            "the JSON settings argument must preserve the key literally: \(claude)")
+            "the JSON settings file must preserve the key literally: \(claude)")
         XCTAssertFalse(
             claude.contains("\"ANTHROPIC_API_KEY\":\"a\\b"),
             "an unescaped backslash leaked into the JSON settings argument")
