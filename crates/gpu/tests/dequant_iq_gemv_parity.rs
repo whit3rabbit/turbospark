@@ -91,6 +91,26 @@ fn iq3_xxs_row(n: usize, seed: u32) -> Vec<u8> {
     out
 }
 
+/// Valid arbitrary blocks for the six new 256-element layouts. Every field
+/// is an index, sign bit, or scale bit, so a random byte is valid. IQ1_M is
+/// the exception: its scale words also carry `d`, which is pinned to a small
+/// finite f16 rather than accepting a random NaN.
+fn lowbit_iq_row(n: usize, bytes: usize, seed: u32, iq1_m: bool) -> Vec<u8> {
+    let mut lcg = Lcg::new(seed);
+    let mut out = Vec::with_capacity(n / 256 * bytes);
+    for _ in 0..n / 256 {
+        let mut block: Vec<u8> = (0..bytes).map(|_| lcg.byte()).collect();
+        if iq1_m {
+            // Reassembles to f16 0x2c00 through IQ1_M's four scale words.
+            block[48..56].copy_from_slice(&[0, 0, 0, 0, 0, 0xc0, 0, 0x20]);
+        } else {
+            block[..2].copy_from_slice(&F16_SMALL.to_le_bytes());
+        }
+        out.extend_from_slice(&block);
+    }
+    out
+}
+
 fn x_vector(n: usize, seed: u32) -> (Vec<f32>, Vec<f16>) {
     let mut lcg = Lcg::new(seed);
     let f32s: Vec<f32> = (0..n).map(|_| lcg.unit()).collect();
@@ -190,4 +210,61 @@ fn iq3_xxs_agrees_at_every_scale_nibble() {
         cpu[0],
         cpu[15]
     );
+}
+
+#[test]
+fn dense_gsq_rco_iq_layouts_match_the_cpu_references() {
+    type CpuGemv = fn(&[&[u8]], &[f32], usize) -> Vec<f32>;
+    type Case = (IqBlockType, usize, bool, CpuGemv);
+
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let n = 2 * 256;
+    let cases: [Case; 6] = [
+        (
+            IqBlockType::Iq2Xxs,
+            66,
+            false,
+            turbospark_compute::dequant_iq2_xxs_gemv,
+        ),
+        (
+            IqBlockType::Iq2Xs,
+            74,
+            false,
+            turbospark_compute::dequant_iq2_xs_gemv,
+        ),
+        (
+            IqBlockType::Iq1S,
+            50,
+            false,
+            turbospark_compute::dequant_iq1_s_gemv,
+        ),
+        (
+            IqBlockType::Iq3S,
+            110,
+            false,
+            turbospark_compute::dequant_iq3_s_gemv,
+        ),
+        (
+            IqBlockType::Iq2S,
+            82,
+            false,
+            turbospark_compute::dequant_iq2_s_gemv,
+        ),
+        (
+            IqBlockType::Iq1M,
+            56,
+            true,
+            turbospark_compute::dequant_iq1_m_gemv,
+        ),
+    ];
+    let (x_f32, x_f16) = x_vector(n, 101);
+    for (case, bytes, iq1_m, cpu_fn) in cases {
+        let rows: Vec<Vec<u8>> = (0..M)
+            .map(|r| lowbit_iq_row(n, bytes, 109 + r as u32, iq1_m))
+            .collect();
+        let refs: Vec<&[u8]> = rows.iter().map(Vec::as_slice).collect();
+        let cpu = cpu_fn(&refs, &x_f32, n);
+        let gpu = dequant_iq_gemv(&mut context, case, &refs, &x_f16, n).unwrap();
+        assert_matches(&format!("{case:?}"), &gpu, &cpu, n);
+    }
 }

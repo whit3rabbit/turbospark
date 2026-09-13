@@ -43,6 +43,20 @@ pub fn map_llama_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
     }
 }
 
+/// Qwen2 uses the ordinary Llama tensor names plus biases on the three input
+/// projections. It has no output-projection bias, so that name deliberately
+/// remains unmapped and is refused by the GGUF walk.
+pub fn map_qwen2_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
+    let p = layer_prefix(layer);
+    let resident = |tail: &str| Some(GgufMapping::Resident(format!("{p}{tail}")));
+    match suffix {
+        "attn_q.bias" => resident("self_attn.q_proj.bias"),
+        "attn_k.bias" => resident("self_attn.k_proj.bias"),
+        "attn_v.bias" => resident("self_attn.v_proj.bias"),
+        _ => map_llama_layer(suffix, layer),
+    }
+}
+
 /// True for a pre-merge per-expert tensor suffix: `ffn_down.3.weight` and
 /// friends, which a 2023-era Mixtral conversion carries 256 of per role.
 ///

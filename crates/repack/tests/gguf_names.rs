@@ -272,6 +272,38 @@ fn architecture_strings_are_the_converters_names_not_the_familys() {
         family_for_architecture("qwen3moe"),
         family_for_architecture("qwen35moe")
     );
+    assert_eq!(gguf_architecture(ModelFamily::Qwen2Dense), Some("qwen2"));
+    assert_eq!(
+        family_for_architecture("qwen2"),
+        Some(ModelFamily::Qwen2Dense)
+    );
+}
+
+#[test]
+fn maps_qwen2_attention_biases_without_accepting_an_output_bias() {
+    let family = ModelFamily::Qwen2Dense;
+    let prefix = "language_model.model.layers.3.";
+    for (gguf, canonical) in [
+        ("blk.3.attn_q.weight", "self_attn.q_proj.weight"),
+        ("blk.3.attn_k.weight", "self_attn.k_proj.weight"),
+        ("blk.3.attn_v.weight", "self_attn.v_proj.weight"),
+        ("blk.3.attn_output.weight", "self_attn.o_proj.weight"),
+        ("blk.3.attn_q.bias", "self_attn.q_proj.bias"),
+        ("blk.3.attn_k.bias", "self_attn.k_proj.bias"),
+        ("blk.3.attn_v.bias", "self_attn.v_proj.bias"),
+        ("blk.3.attn_norm.weight", "input_layernorm.weight"),
+        ("blk.3.ffn_norm.weight", "post_attention_layernorm.weight"),
+        ("blk.3.ffn_gate.weight", "mlp.gate_proj.weight"),
+        ("blk.3.ffn_up.weight", "mlp.up_proj.weight"),
+        ("blk.3.ffn_down.weight", "mlp.down_proj.weight"),
+    ] {
+        assert_eq!(
+            resident(gguf, family),
+            format!("{prefix}{canonical}"),
+            "{gguf}"
+        );
+    }
+    assert!(map_gguf_name("blk.3.attn_output.bias", family).is_err());
 }
 
 /// Qwen3-MoE's per-layer table: the `llama` set plus the two per-head norms.

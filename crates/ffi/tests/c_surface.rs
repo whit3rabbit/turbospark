@@ -1129,6 +1129,26 @@ async fn a_model_attached_to_a_running_server_is_served_on_the_same_port() {
 
     let (status, body) = chat(&base, "alpha.gturbo").await;
     assert_eq!(status, 200, "{body}");
+
+    let alias = "claude-turbospark-alpha.gturbo";
+    let (status, body) = chat(&base, alias).await;
+    assert_eq!(status, 200, "{body}");
+
+    let listed: serde_json::Value = reqwest::get(format!("{base}/v1/models"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        listed["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["alpha.gturbo", alias]
+    );
     assert_eq!(server_info(server)["models"][0], "alpha.gturbo");
 
     unsafe { ts_server_stop(server) };
@@ -1193,6 +1213,30 @@ fn attaching_a_second_model_under_the_same_id_is_refused() {
         1,
         "the refused attach must not have half-added anything"
     );
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// A canonical id must not steal another model's Claude discovery alias. The
+/// FFI registry is mutable, so this is the live-server counterpart to the
+/// static registry's identity-collision checks.
+#[test]
+fn attaching_a_model_under_an_existing_claude_alias_is_refused() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let first = named_session("/models/alpha.gturbo", 32);
+    let colliding = named_session("/models/claude-turbospark-alpha.gturbo", 32);
+    unsafe { attach(server, &first) };
+
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_server_attach_session(server, &colliding, &mut out) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(out.is_null(), "a refused attach must not write an id");
+    assert!(
+        last_error().contains("already attached"),
+        "{:?}",
+        last_error()
+    );
+    assert_eq!(server_info(server)["models"].as_array().unwrap().len(), 1);
 
     unsafe { ts_server_stop(server) };
 }

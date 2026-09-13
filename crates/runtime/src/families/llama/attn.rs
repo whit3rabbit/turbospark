@@ -71,6 +71,20 @@ pub(crate) fn encode_attention_block(
         )?;
     }
 
+    // Qwen2 applies all three projection biases before RoPE. Applying them
+    // after rotation would rotate the learned bias differently at every
+    // position, producing finite but incorrect attention logits.
+    if llama.qkv_bias {
+        for (suffix, elems, out) in [
+            ("q_proj.bias", q_dim, (&scratch.q, 0u64)),
+            ("k_proj.bias", kv_dim, (k_buf, k_off)),
+            ("v_proj.bias", kv_dim, (v_buf, v_off)),
+        ] {
+            let bias = crate::real_forward_utils::norm_view(weights, index, &name(suffix), elems)?;
+            gpu::encode_bias_add(context, pass, out, bias, elems as u32).map_err(gpu_err)?;
+        }
+    }
+
     // Normalize before RoPE: learned norm weights make the reverse order
     // a different function, even when its outputs look plausible.
     for (data, heads, suffix) in [

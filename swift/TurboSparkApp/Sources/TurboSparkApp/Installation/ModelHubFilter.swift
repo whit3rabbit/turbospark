@@ -17,6 +17,7 @@ struct ModelHubFilter: Equatable {
     /// Which half of the catalog to show.
     enum Tab: String, CaseIterable, Identifiable {
         case discover = "Discover"
+        case recommended = "Recommended"
         case onDevice = "On Device"
         var id: String { rawValue }
     }
@@ -120,6 +121,11 @@ struct ModelHubFilter: Equatable {
 
         if tab == .onDevice {
             list = list.filter { installedAliases.contains($0.alias) || $0.installed }
+        } else if tab == .recommended {
+            list = list.filter { entry in
+                guard let rec = recommendations[entry.alias] else { return true }
+                return rec.runs && rec.verdict != .refused
+            }
         }
 
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -150,8 +156,19 @@ struct ModelHubFilter: Equatable {
         switch sort {
         case .recommended:
             list.sort { lhs, rhs in
-                let lhsRank = Self.verdictRank(recommendations[lhs.alias]?.verdict)
-                let rhsRank = Self.verdictRank(recommendations[rhs.alias]?.verdict)
+                let lhsRec = recommendations[lhs.alias]
+                let rhsRec = recommendations[rhs.alias]
+
+                if tab == .recommended {
+                    let lhsP = Self.recommendedPriority(entry: lhs, recommendation: lhsRec)
+                    let rhsP = Self.recommendedPriority(entry: rhs, recommendation: rhsRec)
+                    if lhsP.tier != rhsP.tier { return lhsP.tier < rhsP.tier }
+                    if lhsP.rank != rhsP.rank { return lhsP.rank < rhsP.rank }
+                    return lhsP.alias < rhsP.alias
+                }
+
+                let lhsRank = Self.verdictRank(lhsRec?.verdict)
+                let rhsRank = Self.verdictRank(rhsRec?.verdict)
                 if lhsRank != rhsRank { return lhsRank < rhsRank }
                 return lhs.alias < rhs.alias
             }
@@ -162,6 +179,49 @@ struct ModelHubFilter: Equatable {
         }
 
         return list
+    }
+
+    /// Priorities for the Recommended tab: optimal MLX, optimal MoE, optimal dense, then tight fits.
+    static func recommendedPriority(
+        entry: CatalogEntry,
+        recommendation: ModelRecommendation?
+    ) -> (tier: Int, rank: Int, alias: String) {
+        let rank = verdictRank(recommendation?.verdict)
+        let isOptimal = rank <= 1
+        let visuals = visuals(for: entry)
+        let isMlx = visuals.formatLabel.localizedCaseInsensitiveContains("mlx")
+        let isMoe = visuals.capabilities.contains("MoE")
+            || recommendation?.verdict == .streams
+            || entry.name.localizedCaseInsensitiveContains("moe")
+            || entry.family.localizedCaseInsensitiveContains("moe")
+
+        let tier: Int
+        if isOptimal && isMlx {
+            tier = 0
+        } else if isOptimal && isMoe {
+            tier = 1
+        } else if isOptimal {
+            tier = 2
+        } else if isMlx || isMoe {
+            tier = 3
+        } else {
+            tier = 4
+        }
+
+        return (tier, rank, entry.alias)
+    }
+
+    /// Identifies models that use Apple Silicon native MLX formats or MoE architectures.
+    static func isMlxOrMoe(
+        entry: CatalogEntry,
+        recommendation: ModelRecommendation? = nil
+    ) -> Bool {
+        let visuals = visuals(for: entry)
+        return visuals.formatLabel.localizedCaseInsensitiveContains("mlx")
+            || visuals.capabilities.contains("MoE")
+            || recommendation?.verdict == .streams
+            || entry.name.localizedCaseInsensitiveContains("moe")
+            || entry.family.localizedCaseInsensitiveContains("moe")
     }
 
     /// Sort order for the "Best fit" option: what runs best comes first.

@@ -319,6 +319,7 @@ impl RealForwardRunner {
             model_io::ModelFamily::Llama
             | model_io::ModelFamily::Qwen3Moe
             | model_io::ModelFamily::Qwen3Dense
+            | model_io::ModelFamily::Qwen2Dense
             | model_io::ModelFamily::MiniMaxM2 => {
                 runner.real_llama = Some(crate::families::llama::RealLlamaState::build(
                     &mut runner.context,
