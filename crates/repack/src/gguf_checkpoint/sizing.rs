@@ -66,10 +66,7 @@ pub fn minimax_gguf_sizing(header: &GgufHeader) -> Result<MiniMaxSizing, GgufRep
     for sources in plan.routed.values() {
         let mut used = 0;
         for source in sources {
-            used = add(
-                used,
-                plan::per_expert_bytes(header, source.name, arch.num_experts as u64)?,
-            )?;
+            used = add(used, plan::per_expert_bytes(header, source, &arch)?)?;
         }
         let stride = align(used, GTURBO_PAGE_BYTES)?;
         max_expert_stride = max_expert_stride.max(stride);
