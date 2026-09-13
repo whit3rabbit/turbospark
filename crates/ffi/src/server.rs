@@ -58,12 +58,14 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use turbospark_server::observe::ServerObserver;
 
 use crate::server_registry::{EventRing, LiveRegistry};
 use crate::session::SessionCore;
+
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(1);
 
 /// What `ts_server_start` writes to `*out`, and what `ts_server_stop` frees.
 pub struct Server {
@@ -203,11 +205,22 @@ impl Server {
                     // has no caller left to report to by the time it
                     // happens; the thread simply ends, same as a graceful
                     // shutdown does.
-                    let _ = axum::serve(listener, router)
-                        .with_graceful_shutdown(async {
-                            let _ = shutdown_rx.await;
-                        })
-                        .await;
+                    let (grace_started_tx, grace_started_rx) = tokio::sync::oneshot::channel();
+                    let server = axum::serve(listener, router).with_graceful_shutdown(async {
+                        let _ = shutdown_rx.await;
+                        let _ = grace_started_tx.send(());
+                    });
+                    tokio::pin!(server);
+                    tokio::select! {
+                        _ = &mut server => {}
+                        _ = async {
+                            if grace_started_rx.await.is_ok() {
+                                tokio::time::sleep(SHUTDOWN_GRACE_PERIOD).await;
+                            } else {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {}
+                    }
                 });
             })
             .map_err(|e| format!("failed to start the server thread: {e}"))?;
@@ -337,7 +350,8 @@ impl Server {
     }
 
     /// Signals graceful shutdown and blocks until the background thread has
-    /// actually stopped serving. Idempotent: a second call is a no-op.
+    /// stopped serving, forcing it after a bounded grace period. Idempotent:
+    /// a second call is a no-op.
     ///
     /// `stopping` is set BEFORE the shutdown signal is sent, and before the
     /// join below blocks this thread: axum's graceful shutdown waits for
@@ -346,7 +360,9 @@ impl Server {
     /// `ts_server_stop`) for up to that request's whole `max_tokens`. Every
     /// `FfiChatModel` this server attached reads the same flag from its
     /// cancel predicate, so setting it here is what actually ends the
-    /// decode the join is waiting on, not the signal to axum by itself.
+    /// decode the join is waiting on, not the signal to axum by itself. A
+    /// connection stalled before model dispatch cannot observe that flag, so
+    /// the server task is dropped after `SHUTDOWN_GRACE_PERIOD` as a backstop.
     fn stop(&mut self) {
         self.stopping.store(true, Ordering::Release);
         if let Some(tx) = self.shutdown.take() {

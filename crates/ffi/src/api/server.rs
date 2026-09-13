@@ -202,8 +202,9 @@ pub unsafe extern "C" fn ts_server_detach_model(
     })
 }
 
-/// Signals the server to stop, blocks until its background thread has
-/// actually exited, and frees the handle. Null is a no-op.
+/// Signals the server to stop, waits through its bounded graceful-shutdown
+/// period until the background thread exits, and frees the handle. Null is a
+/// no-op.
 ///
 /// This is also what releases every attached model.
 #[no_mangle]
