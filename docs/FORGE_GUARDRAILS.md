@@ -152,6 +152,13 @@ Under `required` or a named function the caller has stated that prose is
 not an acceptable answer, and that is the one case where a re-ask is
 clearly right.
 
+**UNTAGGED JSON MUST BE THE WHOLE VISIBLE RESPONSE.** The rescue tier does
+not scan ordinary prose for an embedded JSON object. Doing so can discard a
+warning such as "do not execute this example" and reinterpret the quoted
+object as control data. A dialect's explicit tool marker remains sufficient;
+without one, the trimmed response must parse in full as a JSON object or
+array before the heuristic rescuer runs.
+
 ## 3. The retry, and why it re-renders the prompt
 
 `run_guarded` is the loop. On `Retry` it appends two messages to a CLONE of

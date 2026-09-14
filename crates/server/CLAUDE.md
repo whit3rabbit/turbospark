@@ -303,6 +303,13 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    `an_invalid_call_is_retried_and_the_second_answer_wins` is the guard, and it
    failed on the first run by returning a call with empty arguments.
 
+   **UNTAGGED JSON IS RESCUED ONLY WHEN IT IS THE WHOLE VISIBLE RESPONSE.**
+   Scanning ordinary prose for a balanced object can erase a warning or quoted
+   example and reinterpret data as an actionable call. Explicit dialect
+   markers remain eligible because they are the model's control-channel
+   signal; otherwise `rescue_candidate` requires the trimmed text to parse in
+   full as a JSON object or array.
+
    **A retry cannot be tested with `ScriptedChatModel`**, and the reason is
    worth knowing before someone tries: `with_producer` rebuilds the producer
    from the same steps on every call, so it replays one answer forever.
