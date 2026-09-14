@@ -27,6 +27,9 @@ extension AppModel {
         }
         guard kernReturn == KERN_SUCCESS, let threads = threadsList else { return nil }
         defer {
+            for i in 0..<Int(threadsCount) {
+                mach_port_deallocate(mach_task_self_, threads[i])
+            }
             let size = vm_size_t(threadsCount * UInt32(MemoryLayout<thread_t>.stride))
             vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: threads)), size)
         }
