@@ -8,6 +8,8 @@ use compute::rope::rope_neox;
 use compute::vision::matmul_bias;
 use model_io::safetensors::SafetensorsFile;
 
+use crate::packed::PackedTensorStore;
+
 pub const HIDDEN_SIZE: usize = 2560;
 pub const INTERMEDIATE_SIZE: usize = 9728;
 pub const NUM_LAYERS: usize = 36;
@@ -18,10 +20,17 @@ pub const HEAD_DIM: usize = 128;
 pub const RMS_NORM_EPS: f32 = 1e-6;
 pub const ROPE_THETA: f32 = 1000000.0;
 
+/// Common tensor-loading contract for source and packed image components.
+pub trait TensorLoader {
+    fn contains_tensor(&self, name: &str) -> bool;
+    fn load_tensor(&self, name: &str) -> Result<Vec<f32>, String>;
+}
+
 /// Helper to load weights across multiple safetensors shards.
 pub struct ShardedSafetensors {
-    shards: BTreeMap<String, SafetensorsFile>,
-    weight_map: BTreeMap<String, String>,
+    pub(crate) shards: BTreeMap<String, SafetensorsFile>,
+    pub(crate) weight_map: BTreeMap<String, String>,
+    packed: Option<PackedTensorStore>,
 }
 
 impl ShardedSafetensors {
@@ -32,8 +41,38 @@ impl ShardedSafetensors {
     /// Open a component whose safetensors index has a non-text-encoder name.
     pub fn open_indexed(model_dir: &Path, index_name: &str) -> Result<Self, String> {
         let index_path = model_dir.join(index_name);
-        let mut index_file = File::open(&index_path)
-            .map_err(|e| format!("failed to open {}: {e}", index_path.display()))?;
+        let mut index_file = match File::open(&index_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let shard_name = index_name.strip_suffix(".index.json").ok_or_else(|| {
+                    format!(
+                        "indexed safetensors file {} is missing and has no single-file name",
+                        index_path.display()
+                    )
+                })?;
+                let shard_path = model_dir.join(shard_name);
+                let shard = SafetensorsFile::open(&shard_path).map_err(|e| {
+                    format!(
+                        "failed to open single-file safetensors component {}: {e}",
+                        shard_path.display()
+                    )
+                })?;
+                let weight_map = shard
+                    .tensor_names()
+                    .map(|name| (name.to_string(), shard_name.to_string()))
+                    .collect();
+                let mut shards = BTreeMap::new();
+                shards.insert(shard_name.to_string(), shard);
+                return Ok(Self {
+                    shards,
+                    weight_map,
+                    packed: None,
+                });
+            }
+            Err(error) => {
+                return Err(format!("failed to open {}: {error}", index_path.display()));
+            }
+        };
         let mut index_str = String::new();
         index_file
             .read_to_string(&mut index_str)
@@ -62,10 +101,32 @@ impl ShardedSafetensors {
             }
         }
 
-        Ok(Self { shards, weight_map })
+        Ok(Self {
+            shards,
+            weight_map,
+            packed: None,
+        })
+    }
+
+    /// Open a component written by [`crate::packed::pack_component`].
+    pub fn open_packed(model_dir: &Path) -> Result<Self, String> {
+        Ok(Self {
+            shards: BTreeMap::new(),
+            weight_map: BTreeMap::new(),
+            packed: Some(PackedTensorStore::open(model_dir)?),
+        })
+    }
+
+    pub(crate) fn source_tensors(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.weight_map
+            .iter()
+            .map(|(name, shard)| (name.as_str(), shard.as_str()))
     }
 
     pub fn load_tensor(&self, name: &str) -> Result<Vec<f32>, String> {
+        if let Some(packed) = &self.packed {
+            return packed.load_tensor(name);
+        }
         let shard_name = self
             .weight_map
             .get(name)
@@ -85,6 +146,17 @@ impl ShardedSafetensors {
         name: &str,
         expected_shape: &[usize],
     ) -> Result<Vec<f32>, String> {
+        if let Some(packed) = &self.packed {
+            let actual_shape = packed
+                .shape(name)
+                .ok_or_else(|| format!("tensor {name} not found in packed index"))?;
+            if actual_shape != expected_shape {
+                return Err(format!(
+                    "tensor {name} has shape {actual_shape:?}, expected {expected_shape:?}"
+                ));
+            }
+            return packed.load_tensor(name);
+        }
         let shard_name = self
             .weight_map
             .get(name)
@@ -107,6 +179,23 @@ impl ShardedSafetensors {
 
     pub fn load_token_embeddings(&self, token_ids: &[i64]) -> Result<Vec<f32>, String> {
         let name = "model.embed_tokens.weight";
+        if let Some(packed) = &self.packed {
+            let shape = packed
+                .shape(name)
+                .ok_or_else(|| format!("tensor {name} not found in packed index"))?;
+            if shape.len() != 2 || shape[1] != HIDDEN_SIZE {
+                return Err(format!("tensor {name} has invalid shape {shape:?}"));
+            }
+            let mut out = Vec::with_capacity(token_ids.len() * HIDDEN_SIZE);
+            for &id in token_ids {
+                let row_idx = usize::try_from(id).map_err(|_| format!("invalid token id {id}"))?;
+                if row_idx >= shape[0] {
+                    return Err(format!("token id {id} out of embedding table bounds"));
+                }
+                out.extend_from_slice(&packed.load_row(name, row_idx)?);
+            }
+            return Ok(out);
+        }
         let shard_name = self
             .weight_map
             .get(name)
@@ -134,6 +223,30 @@ impl ShardedSafetensors {
             }
         }
         Ok(out)
+    }
+}
+
+impl TensorLoader for ShardedSafetensors {
+    fn contains_tensor(&self, name: &str) -> bool {
+        self.packed.as_ref().map_or_else(
+            || self.weight_map.contains_key(name),
+            |packed| packed.contains_tensor(name),
+        )
+    }
+
+    fn load_tensor(&self, name: &str) -> Result<Vec<f32>, String> {
+        ShardedSafetensors::load_tensor(self, name)
+    }
+}
+
+impl TensorLoader for SafetensorsFile {
+    fn contains_tensor(&self, name: &str) -> bool {
+        SafetensorsFile::contains_tensor(self, name)
+    }
+
+    fn load_tensor(&self, name: &str) -> Result<Vec<f32>, String> {
+        self.load_as_f32(name)
+            .map_err(|e| format!("failed to load tensor {name}: {e}"))
     }
 }
 
@@ -339,6 +452,18 @@ pub fn forward_layer(x: &mut [f32], seq_len: usize, w: &LayerWeights) {
 ///
 /// Runs embedding lookup and layers 0..=34 (35 layers), returning layer 34 output pre-final-norm.
 pub fn encode_tokens(token_ids: &[i64], shards: &ShardedSafetensors) -> Result<Vec<f32>, String> {
+    encode_tokens_with_cancel(token_ids, shards, |_, _| true)
+}
+
+/// Execute the text encoder and allow the caller to stop between layers.
+pub fn encode_tokens_with_cancel<F>(
+    token_ids: &[i64],
+    shards: &ShardedSafetensors,
+    mut should_continue: F,
+) -> Result<Vec<f32>, String>
+where
+    F: FnMut(usize, usize) -> bool,
+{
     let seq_len = token_ids.len();
     if seq_len == 0 {
         return Ok(Vec::new());
@@ -349,6 +474,9 @@ pub fn encode_tokens(token_ids: &[i64], shards: &ShardedSafetensors) -> Result<V
     for layer_idx in 0..EXTRACT_LAYER_COUNT {
         let layer_weights = LayerWeights::load(shards, layer_idx)?;
         forward_layer(&mut x, seq_len, &layer_weights);
+        if !should_continue(layer_idx + 1, EXTRACT_LAYER_COUNT) {
+            return Err("image generation cancelled".to_string());
+        }
     }
 
     Ok(x)

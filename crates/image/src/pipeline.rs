@@ -21,7 +21,7 @@ pub const Z_IMAGE_HEADS: usize = 30;
 pub const Z_IMAGE_HEAD_DIM: usize = 128;
 pub const Z_IMAGE_CAP_DIM: usize = 2560;
 pub const Z_IMAGE_TIME_DIM: usize = 256;
-const Z_IMAGE_FFN_DIM: usize = 10240;
+pub const Z_IMAGE_FFN_DIM: usize = 10240;
 const Z_IMAGE_REFINER_BLOCKS: usize = 2;
 const Z_IMAGE_MAIN_BLOCKS: usize = 30;
 
@@ -38,6 +38,13 @@ impl ZImageTransformer {
                 model_dir,
                 "diffusion_pytorch_model.safetensors.index.json",
             )?,
+        })
+    }
+
+    /// Open a packed transformer component produced by [`crate::pack_component`].
+    pub fn open_packed(model_dir: &Path) -> Result<Self, String> {
+        Ok(Self {
+            weights: ShardedSafetensors::open_packed(model_dir)?,
         })
     }
 
@@ -69,6 +76,25 @@ impl ZImageTransformer {
     ) -> Result<Vec<f32>, String>
     where
         F: FnMut(&str),
+    {
+        self.forward_with_progress_cancel(latent, height, width, timestep, conditioning, |name| {
+            completed(name);
+            true
+        })
+    }
+
+    /// Forward one timestep and allow cancellation between transformer blocks.
+    pub fn forward_with_progress_cancel<F>(
+        &self,
+        latent: &[f32],
+        height: usize,
+        width: usize,
+        timestep: f32,
+        conditioning: &[f32],
+        mut should_continue: F,
+    ) -> Result<Vec<f32>, String>
+    where
+        F: FnMut(&str) -> bool,
     {
         if !timestep.is_finite() {
             return Err("timestep must be finite".to_string());
@@ -108,7 +134,9 @@ impl ZImageTransformer {
             let name = format!("noise_refiner.{index}");
             let block = self.load_block(&name, true)?;
             image = block.forward(&image, Some(&attend_image), &image_freqs, Some(&t_emb))?;
-            completed(&name);
+            if !should_continue(&name) {
+                return Err("image generation cancelled".to_string());
+            }
         }
 
         let mut caption = self.embed_caption(conditioning)?;
@@ -124,7 +152,9 @@ impl ZImageTransformer {
             let name = format!("context_refiner.{index}");
             let block = self.load_block(&name, false)?;
             caption = block.forward(&caption, Some(&attend_caption), &caption_freqs, None)?;
-            completed(&name);
+            if !should_continue(&name) {
+                return Err("image generation cancelled".to_string());
+            }
         }
 
         let mut unified = Vec::with_capacity((image_padded_len + cap_padded_len) * Z_IMAGE_DIM);
@@ -142,7 +172,9 @@ impl ZImageTransformer {
                 &unified_freqs,
                 Some(&t_emb),
             )?;
-            completed(&name);
+            if !should_continue(&name) {
+                return Err("image generation cancelled".to_string());
+            }
         }
 
         let final_layer = FinalLayer::new(

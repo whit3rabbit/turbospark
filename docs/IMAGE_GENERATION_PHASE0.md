@@ -1,16 +1,18 @@
 # Z-Image-Turbo Phase 0 evidence
 
-Status: IG0 resource evidence remains open. Native IG1 parity is closed for the
-available fixtures: the full-width native checkpoint block, complete nine-step
+Status: IG0 resource evidence and the resource/manifest contract are closed for
+the reference envelope. Native IG1 parity is closed for the available
+fixtures: the full-width native checkpoint block, complete nine-step
 DiT gate, and real 1024-by-1024 VAE decode gate pass their frozen contracts.
 The optional raw-pixel arrays are absent from this checkout, so the VAE test's
 conditional pixel comparisons were not exercised. This page records measured
 facts and unresolved gates for
 [the image-generation design](IMAGE_GENERATION.md). It does not establish
-a supported RAM minimum, general image-quality guarantee, or production disk schema.
-The next work is the remaining IG0 resource closure. IG2 production runtime
-work follows that evidence, and app work remains IG4 after IG3 proves bounded
-lifetimes; neither a CLI nor app launch belongs to the current evidence gate.
+a supported RAM minimum, general image-quality guarantee, or packed INT4
+runtime result. The frozen [IG0 resource and manifest contract](verification/z-image-ig0-resource-contract.json)
+records the supported first envelope and the fields the IG2 installer must
+populate. IG2 production runtime work follows that contract, and app work
+remains IG4 after IG3 proves bounded lifetimes.
 
 ## Inputs and reproducibility
 
@@ -344,9 +346,10 @@ and are not production throughput. The qualified quiet-AC reference series
 is now recorded in [quiet-05](verification/z-image-ig0-benchmarks-quiet-05.json),
 [quiet-06](verification/z-image-ig0-benchmarks-quiet-06.json), and
 [quiet-07](verification/z-image-ig0-benchmarks-quiet-07.json). Exact MPS
-operator scratch remains unavailable; the resource contract must therefore
-bound live tensors, driver-retained capacity, and whole-process footprint
-without labeling driver allocation minus live allocation as scratch.
+operator scratch remains unavailable. The frozen [resource contract](verification/z-image-ig0-resource-contract.json)
+therefore bounds live tensors, driver-retained capacity, and whole-process
+footprint with an inclusive non-parameter budget, without labeling driver
+allocation minus live allocation as scratch.
 
 The qualified stage observations are:
 
@@ -414,10 +417,14 @@ target/ig0/venv/bin/python scripts/z_image_benchmark_summary.py \
 - [x] Measure repeated stages, cold/warm storage, retained memory, swap, and
   physical reads on quiet AC hardware. The denoiser reuse load is recorded as
   mixed and its resident phases are qualified separately.
-- [ ] Freeze the supported memory and latency envelope with explicit staged
-  ownership, allocator headroom, and the limitation that it is not a hard
-  whole-process or whole-machine RAM cap.
-- [ ] Finalize the image manifest contract from those measurements.
+- [x] Freeze the supported memory envelope and reference latency observation
+  envelope with explicit staged ownership, inclusive allocator/process
+  headroom, and the limitation that it is not a hard whole-process or
+  whole-machine RAM cap. See the frozen
+  [resource contract](verification/z-image-ig0-resource-contract.json).
+- [x] Finalize the image manifest contract from those measurements. The
+  contract is frozen for IG2; the installed packed manifest and its runtime
+  measurements are IG2 deliverables.
 
 ## Reproduction and handoff
 
@@ -509,8 +516,10 @@ Text-only consumers must reject this capability. Cross-component dimensions
 must agree before loading weights; every required tensor needs a shape,
 storage dtype, byte span, hash, and component owner. The packed tensor list
 must be explicit so protected projections cannot silently become INT4.
-Measured activation/scratch limits and final allocation ownership remain
-open. These are proposed requirements, not production serialization changes.
+The measured activation/scratch field is an inclusive process budget because
+exact MPS operator scratch is not observable. The final allocation ownership
+policy is frozen in the [IG0 contract](verification/z-image-ig0-resource-contract.json);
+the installed packed manifest and runtime implementation remain IG2 work.
 
 Thirteen tests pass. Eleven validator/preflight mutations (component omission,
 header shape/bytes, fixture shape, corruption, non-finite values, revision,

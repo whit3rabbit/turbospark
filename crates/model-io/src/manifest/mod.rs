@@ -45,10 +45,18 @@ pub fn load(dir: &Path, expecting: &ArchConfig, max_bytes: u64) -> Result<Manife
         call: "read".to_string(),
         detail: e.to_string(),
     })?;
-    let manifest: Manifest =
+    let raw: serde_json::Value =
         serde_json::from_slice(&data).map_err(|e| ModelError::IndexCorrupt {
             detail: format!("manifest.json: {e}"),
         })?;
+    if raw.get("capability").and_then(serde_json::Value::as_str) == Some("image-generation") {
+        return Err(ModelError::UnsupportedCapability {
+            capability: "image-generation".to_string(),
+        });
+    }
+    let manifest: Manifest = serde_json::from_value(raw).map_err(|e| ModelError::IndexCorrupt {
+        detail: format!("manifest.json: {e}"),
+    })?;
     validate(&manifest, expecting)?;
     Ok(manifest)
 }

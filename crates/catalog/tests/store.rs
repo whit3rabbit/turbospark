@@ -45,6 +45,16 @@ fn an_install_path_is_the_alias_under_models() {
 }
 
 #[test]
+fn an_image_install_has_its_own_suffix_and_resolves_without_a_record() {
+    let root = temp_root("image-path");
+    let store = Store::new(&root);
+    let path = store.image_install_path("z-image");
+    assert_eq!(path, root.join("models").join("z-image.image.gturbo"));
+    std::fs::create_dir_all(&path).unwrap();
+    assert_eq!(store.resolve("z-image").unwrap(), path);
+}
+
+#[test]
 fn the_record_round_trips_and_drops_rows_whose_directory_is_gone() {
     let root = temp_root("record");
     let store = Store::new(&root);

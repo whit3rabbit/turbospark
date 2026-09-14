@@ -9,6 +9,9 @@ pub enum ModelError {
         path: String,
     },
     NotAGTurboDirectory,
+    UnsupportedCapability {
+        capability: String,
+    },
     UnsupportedVersion {
         major: i64,
         minor: i64,
@@ -63,6 +66,10 @@ impl fmt::Display for ModelError {
             ModelError::NotAGTurboDirectory => {
                 write!(f, "manifest.json magic does not equal \"GTURBO\"")
             }
+            ModelError::UnsupportedCapability { capability } => write!(
+                f,
+                "model capability {capability:?} is not supported by the text-model loader"
+            ),
             ModelError::UnsupportedVersion { major, minor } => write!(
                 f,
                 "manifest version {major}.{minor} is not supported (need 1.x)"

@@ -172,6 +172,7 @@ public enum ToolRiskClassifier {
         switch lowerName {
         case "list_directory", "list_dir", "ls", "glob", "read_file", "view_file", "cat", "fileread", "read",
              "search_code", "grep", "search", "skill", "todowrite", "todo_write", "snip", "extract_snippet",
+             "codesearch", "code_search",
              "ctxinspect", "ctx_inspect", "listmcpresources", "list_mcp_resources", "list_resources",
              "readmcpresource", "read_mcp_resource", "read_resource", "tasklist", "task_list", "taskget",
              "task_get", "taskoutput", "task_output", "sleep", "delay", "askuserquestion", "ask_user_question",

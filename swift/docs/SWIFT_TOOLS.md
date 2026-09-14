@@ -2,6 +2,7 @@
 
 For native fused validation, durable output observations, bounded recall, and
 locally verified terminal reductions, see [SWIFT_AGENT_EFFICIENCY.md](SWIFT_AGENT_EFFICIENCY.md).
+For the comprehensive catalog of all tool parameters, return shapes, and permissions, see [SWIFT_TOOL_CATALOG.md](SWIFT_TOOL_CATALOG.md).
 
 `swift/TurboSparkApp` runs model-proposed tool calls in process: file reads
 and writes, a shell, web search and fetch, skills, subagents, user-defined
@@ -717,25 +718,46 @@ built-ins live in `State/AgentManager+BuiltIns.swift`; their prompts and
 when-to-use descriptions are written to Claude Code's Explore shape: an
 explicit read-only prohibition block (no writes, no deletes, no redirects
 or heredocs into files, no state-changing commands), per-tool guidance
-naming the ADVERTISED wire names (`Glob`, `Grep`, `FileRead`, `Bash` --
-not the legacy synonyms the dispatch also accepts), a batching instruction
-(one turn executes every parsed call), and the search-breadth levels a
-caller may specify (quick / medium / very thorough). `explore` additionally
-sets `omitsProjectInstructions` (Claude Code's `omitClaudeMd`):
-`SubagentRunner.buildSystemPrompt` skips the project's custom-instructions
-section for such an agent, keeping the workspace root it needs to search
-and the memory section. A project agent shadowing a built-in is still held
-to its deny set and turn budget (state#22/#95); the prompts and
-descriptions are the project's own. Explore's read-only is also ENFORCED,
-not only asked for: its `tools` allowlist (`FileRead`, `Glob`, `Grep`,
-`Bash`, `WebFetch`, `WebSearch`) fails closed over every other tool,
-today's and future -- the one structural idea taken from opencode's
-registry, where `explore` is `"*": "deny"` plus six explicit allows. The
-allowlist is a ceiling like the deny set: `constrained` intersects a
-shadowing project agent's allowlist with it, so an `explore.md` with no
-`tools:` clause inherits read-only rather than the default set. Its prompt
-also carries opencode's two reporting rules: absolute paths in the final
-response, and no emojis.
+naming the ADVERTISED wire names (`Glob`, `Grep`, `grep_search`,
+`FileRead`, `Bash` -- not the legacy synonyms the dispatch also accepts),
+a batching instruction (one turn executes every parsed call), and the
+search-breadth levels a caller may specify (quick / medium / very
+thorough). Syntext (`grep_search`) is the default, primary code-discovery
+tool, providing indexed sub-millisecond regex and literal searches with
+ripgrep-formatted output, and the prompt instructs the agent never to
+shell out to grep, find, or ripgrep via `Bash` when `grep_search` or `Glob`
+is available. `explore` additionally sets `omitsProjectInstructions`
+(Claude Code's `omitClaudeMd`): `SubagentRunner.buildSystemPrompt` skips
+the project's custom-instructions section for such an agent, keeping the
+workspace root it needs to search and the memory section. A project agent
+shadowing a built-in is still held to its deny set and turn budget
+(state#22/#95); the prompts and descriptions are the project's own.
+Explore's read-only is also ENFORCED, not only asked for: its `tools`
+allowlist (`FileRead`, `Glob`, `Grep`, `grep_search`, `Bash`, `WebFetch`,
+`WebSearch`) fails closed over every other tool, today's and future --
+the one structural idea taken from opencode's registry, where `explore` is
+`"*": "deny"` plus explicit allows. Its explicit deny set similarly
+blocks writes and edits (`write_file`, `edit_file`, `apply_patch`,
+`notebook_edit`), spawning subagents (`agent`, `subagent`, `task`), plan
+modes (`enter_plan_mode`, `exit_plan_mode`), and artifact/worktree tools
+(`todowrite`, `enter_worktree`, `exit_worktree`). The allowlist is a
+ceiling like the deny set: `constrained` intersects a shadowing project
+agent's allowlist with it, so an `explore.md` with no `tools:` clause
+inherits read-only rather than the default set. Its prompt also carries
+opencode's two reporting rules: absolute paths in the final response, and
+no emojis.
+
+`plan` follows the same read-only containment contract: its allowlist
+(`FileRead`, `Glob`, `Grep`, `grep_search`, `Bash`, `WebFetch`, `WebSearch`)
+and denylist (`write_file`, `edit_file`, `apply_patch`, `notebook_edit`,
+`agent`, `subagent`, `task`, `enter_plan_mode`, `exit_plan_mode`,
+`todowrite`, `enter_worktree`, `exit_worktree`) prevent modifications
+while enabling deep architectural exploration via Syntext. Its prompt
+enforces a 4-step process (Understand Requirements, Explore Thoroughly,
+Design Solution, Detail the Plan) and requires output to conclude with a
+"### Critical Files for Implementation" section listing 3-5 key files.
+
+`general-purpose` serves as the versatile research and multi-step execution subagent (and the default fallback when `subagent_type` is omitted or unrecognized). Unlike `explore` and `plan`, it is unconstrained (declaring no `disallowedTools` and no restricted allowlist), allowing it to inspect code, edit files, and run commands. It retains project instructions (`omitsProjectInstructions == false`), leverages Syntext `grep_search` for pattern discovery across large repositories, and produces concise reports covering key findings and actions taken.
 
 The parent's system prompt lists the ENABLED agents resolved for the
 turn's project -- one `- \`name\`: when-to-use` line each, descriptions

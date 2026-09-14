@@ -1,0 +1,322 @@
+{
+  "schema_version": 1,
+  "contract_id": "z-image-ig0-resource-and-manifest",
+  "status": "frozen_for_ig2",
+  "frozen_on": "2026-09-13",
+  "scope": "IG0 reference resource envelope and image-install manifest contract. This is not a packed runtime measurement and does not claim a minimum whole-machine RAM size.",
+  "reference_source": {
+    "model": "Tongyi-MAI/Z-Image-Turbo",
+    "model_revision": "f332072aa78be7aecdf3ee76d5c247082da564a6",
+    "diffusers_revision": "a71e62e0d226c284b86abf518791a5ffbba064bf",
+    "mflux_revision": "051ba9ff25c9a8a8703356053a012a0dfad3fe39",
+    "license": "Apache-2.0"
+  },
+  "supported_envelope": {
+    "reference_hardware": {
+      "platform": "macOS",
+      "gpu": "Apple M4 Max",
+      "cpu_cores": 14,
+      "unified_ram_bytes": 36000000000,
+      "power": "AC"
+    },
+    "width": 1024,
+    "height": 1024,
+    "batch": 1,
+    "scheduler_steps": 9,
+    "transformer_forwards": 9,
+    "guidance_scale": 0.0,
+    "prompt_max_tokens": 512,
+    "latent_shape": [1, 16, 128, 128],
+    "seed": {
+      "required": true,
+      "type": "unsigned-64-bit-integer",
+      "cross_backend_noise_equivalence": "not assumed"
+    },
+    "dimensions_policy": "IG2 may advertise only 1024x1024 until another dimension has its own resource and quality evidence.",
+    "quantization_policy": {
+      "candidate": "four-bit-linear-weights-group-64",
+      "selection": "validated candidate from IG0 emulation evidence; packed Metal representation and protected tensor list are an IG2 gate",
+      "source_reference_dtypes": {
+        "text_encoder": "BF16",
+        "transformer": "FP32",
+        "vae": "BF16"
+      },
+      "must_not_claim": "INT4 resource behavior from the BF16 reference measurements"
+    }
+  },
+  "stage_observations": {
+    "text_encoder": {
+      "evidence": ["verification/z-image-ig0-benchmarks-quiet-05.json"],
+      "qualification": "cold-copy and reuse arms qualified; exact output and quiet windows passed",
+      "tensor_count": 398,
+      "source_storage_dtype": "BF16",
+      "source_weight_bytes": 8044936192,
+      "peak_process_footprint_bytes": 8969979152,
+      "resident_parameter_bytes": 8044936192,
+      "inclusive_non_parameter_process_bytes": 925042960,
+      "retained_driver_bytes": 8322236416,
+      "after_empty_cache_driver_bytes": 737280,
+      "resident_seconds": {
+        "min": 0.39532458293251693,
+        "median": 0.3969310629181564,
+        "max": 0.4004368749447167
+      },
+      "physical_read_regimes": ["disk-read", "cached"]
+    },
+    "transformer": {
+      "evidence": [
+        "verification/z-image-ig0-benchmarks-quiet-05.json",
+        "verification/z-image-ig0-benchmarks-quiet-07.json"
+      ],
+      "qualification": "cold load, first execution, and resident phases qualified in quiet-05; all three reuse resident phases were phase-qualified in quiet-07, while reuse load and first execution were physically mixed",
+      "tensor_count": 521,
+      "source_storage_dtype": "FP32",
+      "source_weight_bytes": 24619634944,
+      "resident_parameter_bytes": 12309817472,
+      "peak_process_footprint_bytes": 17512599008,
+      "inclusive_non_parameter_process_bytes": 5202781536,
+      "retained_driver_bytes": 14018134016,
+      "after_empty_cache_driver_bytes": 737280,
+      "resident_seconds": {
+        "min": 51.77254529087804,
+        "median": 52.044627292081714,
+        "max": 56.22274808306247
+      },
+      "physical_read_regimes": ["disk-read", "mixed", "cached"],
+      "forward_count_per_execution": 9
+    },
+    "vae_decoder": {
+      "evidence": ["verification/z-image-ig0-benchmarks-quiet-06.json"],
+      "qualification": "cold-copy and reuse arms qualified; exact decoded output and quiet windows passed",
+      "tensor_count": 244,
+      "source_storage_dtype": "BF16",
+      "source_weight_bytes": 167639366,
+      "resident_parameter_bytes": 335278732,
+      "peak_process_footprint_bytes": 11025630840,
+      "inclusive_non_parameter_process_bytes": 10690352108,
+      "retained_driver_bytes": 10060791808,
+      "after_empty_cache_driver_bytes": 2150318080,
+      "resident_seconds": {
+        "min": 0.9327381670009345,
+        "median": 0.9350498744752258,
+        "max": 0.9381314998026937
+      },
+      "physical_read_regimes": ["disk-read", "cached"]
+    }
+  },
+  "system_observations": {
+    "swap": {
+      "qualified_window_start": "2095.19 MiB used",
+      "qualified_window_end": "2095.19 MiB used",
+      "changed": false,
+      "interpretation": "Swap was already in use before the runs; no isolated minimum-RAM or swap-causality claim is made."
+    },
+    "load_physical_read_bytes": {
+      "text_encoder": {
+        "cold_copy": 8056537088,
+        "reuse": 0,
+        "evidence": "quiet-05"
+      },
+      "transformer": {
+        "cold_copy": 24625070080,
+        "reuse_mixed": 7533252608,
+        "reuse_mixed_eligible": false,
+        "evidence": "quiet-05"
+      },
+      "vae_decoder": {
+        "cold_copy": 167669760,
+        "reuse": 0,
+        "evidence": "quiet-06"
+      }
+    },
+    "physical_read_classification": "cold-copy is disk-read when at least 90 percent of stored payload bytes are read; reuse is cached at most 1 percent and mixed otherwise. This classifies the observed file-cache regime, not a system-wide SSD purge."
+  },
+  "headroom_policy": {
+    "accounting_unit": "bytes",
+    "stage_ceiling_definition": "A stage ceiling is the largest qualified fresh-process peak footprint for that stage. It includes framework allocations, live tensors, staging, allocator retention, and any unobservable MPS scratch present during the run.",
+    "inclusive_non_parameter_definition": "peak_process_footprint_bytes minus resident_parameter_bytes; this is an inclusive budget for activations, temporary tensors, staging, process overhead, allocator retention, and unknown MPS scratch, not an exact activation or scratch measurement",
+    "exact_mps_scratch_bytes_known": false,
+    "driver_minus_live_is_scratch": false,
+    "stage_peaks_are_additive": false,
+    "ownership": "Only one heavyweight stage owns managed GPU residency at a time. Conditioning and final latents may cross the stage boundary; heavyweight weights and their stage workspaces may not.",
+    "admission": [
+      "Before a stage starts, account for its installed packed weights, conditioning or latent buffers, staging buffers, in-flight GPU work, and allocator-retained capacity.",
+      "Require current available system headroom in addition to the stage budget. The resource contract does not convert the 36 GB reference machine into a universal RAM minimum.",
+      "Refuse before execution when the stage lower bound or measured stage budget cannot fit. Do not begin execution and rely on swap.",
+      "Release the previous heavyweight stage and wait for its outstanding GPU and I/O consumers before admitting the next stage.",
+      "Do not sum the three fresh-process peak values as a simultaneous allocation. Repeated-job and resident-versus-streamed proof remains IG3."
+    ],
+    "headroom_claim": "The measured inclusive non-parameter budgets are the frozen accounting allowance for the reference envelope. IG2 must report packed-runtime values separately and may not label an unmeasured reduction as available headroom.",
+    "minimum_ram_claim": false,
+    "latency_claim": "Observed resident timings are reference observations, not a production SLA. IG2 records packed-runtime timings against this stage evidence."
+  },
+  "manifest_contract": {
+    "filename": "manifest.json",
+    "install_binding": "The image manifest is covered by the existing verified-install.json receipt and file hash rules.",
+    "capability": "image-generation",
+    "schema_name": "turbospark.image.v1",
+    "required_top_level_fields": [
+      "magic",
+      "version",
+      "capability",
+      "source",
+      "supported",
+      "components",
+      "files",
+      "verification",
+      "resource_envelope"
+    ],
+    "required_values": {
+      "magic": "GTURBO",
+      "capability": "image-generation",
+      "supported_dimensions": [[1024, 1024]],
+      "batch": 1,
+      "scheduler_steps": 9,
+      "transformer_forwards": 9,
+      "guidance_scale": 0.0,
+      "prompt_max_tokens": 512
+    },
+    "component_order": [
+      "tokenizer",
+      "text_encoder",
+      "transformer",
+      "scheduler",
+      "vae_decoder"
+    ],
+    "components": {
+      "tokenizer": {
+        "required": true,
+        "owner": "text_encoder_stage",
+        "required_metadata": [
+          "asset_paths",
+          "asset_sha256",
+          "chat_template",
+          "enable_thinking",
+          "truncation_policy",
+          "padding_policy",
+          "max_tokens"
+        ],
+        "max_tokens": 512
+      },
+      "text_encoder": {
+        "required": true,
+        "owner": "text_encoder_stage",
+        "architecture": "Qwen3Model",
+        "source_tensor_count": 398,
+        "source_storage_dtype": "BF16",
+        "required_metadata": [
+          "canonical_revision",
+          "tensor_inventory",
+          "hidden_state_output",
+          "causal_mask",
+          "qk_norm_epsilon",
+          "quantized_tensor_names",
+          "protected_tensor_names"
+        ],
+        "hidden_state_output": "hidden_states[-2]"
+      },
+      "transformer": {
+        "required": true,
+        "owner": "transformer_stage",
+        "architecture": "ZImageTransformer2DModel",
+        "source_tensor_count": 521,
+        "source_storage_dtype": "FP32",
+        "required_metadata": [
+          "canonical_revision",
+          "tensor_inventory",
+          "patch_order",
+          "learned_pad_token",
+          "sequence_padding",
+          "timestep_modulation",
+          "three_axis_rope",
+          "quantization_scheme",
+          "group_size",
+          "nibble_order",
+          "scale_and_bias_convention",
+          "quantized_tensor_names",
+          "protected_tensor_names"
+        ],
+        "block_layout": {
+          "noise_refiner": 2,
+          "context_refiner": 2,
+          "main": 30
+        }
+      },
+      "scheduler": {
+        "required": true,
+        "owner": "pipeline_control",
+        "architecture": "FlowMatchEulerDiscreteScheduler",
+        "required_metadata": [
+          "config_sha256",
+          "num_train_timesteps",
+          "shift",
+          "sigma_endpoints",
+          "evaluation_count",
+          "guidance_policy",
+          "noise_provenance"
+        ],
+        "num_train_timesteps": 1000,
+        "shift": 3.0,
+        "evaluation_count": 9,
+        "guidance_policy": "zero"
+      },
+      "vae_decoder": {
+        "required": true,
+        "owner": "vae_stage",
+        "architecture": "AutoencoderKL",
+        "source_tensor_count": 244,
+        "source_storage_dtype": "BF16",
+        "required_metadata": [
+          "canonical_revision",
+          "decoder_tensor_subset",
+          "latent_layout",
+          "normalization",
+          "scale_and_shift",
+          "output_range",
+          "pixel_conversion",
+          "quantized_tensor_names",
+          "protected_tensor_names"
+        ],
+        "output_shape": [3, 1024, 1024]
+      }
+    },
+    "file_entry": {
+      "required_fields": [
+        "path",
+        "owner",
+        "size_bytes",
+        "sha256",
+        "storage_dtype",
+        "quantization",
+        "tensor_inventory_sha256"
+      ],
+      "hash": "sha256 over the complete installed file payload",
+      "shape_and_span_rule": "Every required tensor has a name, shape, storage dtype, byte span, hash or file binding, and component owner."
+    },
+    "quantization": {
+      "candidate": "four-bit-linear-weights-group-64",
+      "group_size": 64,
+      "nibble_order": "must be declared by the installed kernel contract",
+      "scale_and_bias_convention": "must be declared per packed tensor class",
+      "protected_tensor_names": "must be explicit and non-empty for every component that mixes quantized and unquantized tensors",
+      "runtime_validation": "IG2 must validate packed Metal output against the frozen IG1 component fixtures before marking an install runnable."
+    },
+    "resource_envelope": {
+      "reference_contract": "docs/verification/z-image-ig0-resource-contract.json",
+      "stage_limits_are": "per-stage inclusive process ceilings, not simultaneous allocations",
+      "exact_scratch": "unavailable; use the inclusive non-parameter accounting rule"
+    },
+    "verification": {
+      "required_evidence": [
+        "verification/z-image-ig0-inputs.json",
+        "verification/z-image-ig1-mutations.json",
+        "verification/z-image-ig0-benchmarks-quiet-05.json",
+        "verification/z-image-ig0-benchmarks-quiet-06.json",
+        "verification/z-image-ig0-benchmarks-quiet-07.json"
+      ],
+      "install_gate": "Verify every declared file size and SHA-256 before marking installation complete.",
+      "runtime_gate": "Verify dimensions, batch, steps, forwards, guidance, tensor inventory, packed layout, and component ownership before execution.",
+      "text_consumer_gate": "Text-only consumers reject capability image-generation with a clear error."
+    }
+  }
+}

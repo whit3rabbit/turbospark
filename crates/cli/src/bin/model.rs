@@ -32,6 +32,8 @@ COMMANDS:
     recommend                   what this machine should run, ranked
     pull <ALIAS>                install a curated model
     pull --repo <REPO>[@REV]    install any repo the probe accepts
+    pull-image --source ROOT --alias NAME --model-id ID --model-revision REV
+                                install a pinned local Diffusers image export
     pull-vision <ALIAS>         install a curated vision-tower sidecar
     pull-vision --repo <REPO>[@REV] --alias <NAME>
                                 install any repo's vision tower directly,
@@ -44,6 +46,9 @@ COMMANDS:
 
 OPTIONS:
     --out <DIR>                 install here instead of the default store
+    --source <DIR>              local Diffusers export for `pull-image`
+    --model-id <ID>             source model id for `pull-image`
+    --model-revision <REV>      immutable 40-hex source revision for `pull-image`
     --alias <NAME>              name a --repo pull (required for one)
     --file <NAME.gguf>          pick one file where a repo offers several,
                                 or (with `pull-vision`) an explicit filename
@@ -123,6 +128,9 @@ impl From<String> for Error {
 #[derive(Debug, Default)]
 pub struct Options {
     pub out: Option<String>,
+    pub source: Option<String>,
+    pub model_id: Option<String>,
+    pub model_revision: Option<String>,
     pub context: Option<u32>,
     pub budget: Option<u64>,
     /// How much of the machine a session would be allowed to commit.
@@ -221,6 +229,10 @@ fn run(args: &[String]) -> Result<(), Error> {
             ])?;
             model_cmd::pull(&catalog, &store, &client, &positionals, &options)
         }
+        "pull-image" => {
+            options.reject_unused(&["out", "alias", "source", "model-id", "model-revision"])?;
+            model_cmd::pull_image(&store, &positionals, &options)
+        }
         "pull-vision" => {
             options.reject_unused(&["out", "alias", "file", "force", "hf-token"])?;
             model_cmd::pull_vision(&catalog, &store, &client, &positionals, &options)
@@ -310,6 +322,18 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--out" => {
                 options.out = Some(value_for(&mut index, "--out")?);
                 seen.push("out");
+            }
+            "--source" => {
+                options.source = Some(value_for(&mut index, "--source")?);
+                seen.push("source");
+            }
+            "--model-id" => {
+                options.model_id = Some(value_for(&mut index, "--model-id")?);
+                seen.push("model-id");
+            }
+            "--model-revision" => {
+                options.model_revision = Some(value_for(&mut index, "--model-revision")?);
+                seen.push("model-revision");
             }
             "--alias" => {
                 options.alias = Some(value_for(&mut index, "--alias")?);

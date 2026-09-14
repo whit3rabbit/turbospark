@@ -18,6 +18,12 @@ This page stays the home for facts about the CHECKPOINT. Facts about the
 IMPLEMENTATION -- the pipeline, the four gates, the injection seams, the
 cross-engine rows -- live in `docs/VISION.md` and are not duplicated here.
 
+The two checkpoints below are dense `qwen3_5` artifacts. Their 333-tensor
+`vision_tower.` component is also the tower prefix recognized for
+`qwen3_5_moe` / `qwen35moe`, but the MoE family has not yet received an
+independent real-install image gate. Do not read the dense checkpoint evidence
+here as a release claim for the MoE trunk.
+
 Checkpoints probed: `prism-ml/Bonsai-27B-mlx-1bit` (1-bit) and
 `mlx-community/Qwen3.8-27B-4bit` (INT4). Their `vision_config`,
 `chat_template.jinja`, `tokenizer_config.json` and `preprocessor_config.json`
@@ -67,18 +73,21 @@ the same checkpoint's bytes, the same revision, and the same patch rows
 
 **Per-stage agreement with mlx-vlm**, `mlx-community/Qwen3.8-27B-4bit` at
 revision `3e6447f0`, the 1024x1280 page of item 3 (grid 1x80x64, 5,120
-patches):
+patches). The table preserves the original 2026-08-28 measurement and adds
+the current post-B7 cosine values, where the tower's RoPE angle table remains
+at full precision until dispatch:
 
-| stage | rms | absmax | worst | worst/absmax | cosine |
-|---|---|---|---|---|---|
-| patch embed + pos | 0.5043 | 8.9453 | 0.0078 | 0.000873 | 0.99999995 |
-| block 0 | 0.7971 | 11.2500 | 0.0195 | 0.001736 | 0.99999970 |
-| block 26 | 116.6840 | 7904.0000 | 152.0000 | 0.019231 | 0.99999383 |
-| merger | 0.6821 | 140.8750 | 1.4375 | 0.010204 | 0.99999334 |
+| stage | rms | absmax | worst | worst/absmax | cosine (2026-08-28) | cosine (2026-09-07, post-B7) |
+|---|---|---|---|---|---|---|
+| patch embed + pos | 0.5043 | 8.9453 | 0.0078 | 0.000873 | 0.99999995 | 0.99999995 |
+| block 0 | 0.7971 | 11.2500 | 0.0195 | 0.001736 | 0.99999970 | 0.99999977 |
+| block 26 | 116.6840 | 7904.0000 | 152.0000 | 0.019231 | 0.99999383 | 0.99999843 |
+| merger | 0.6821 | 140.8750 | 1.4375 | 0.010204 | 0.99999334 | **0.99999801** |
 
-**The merger's 0.99999334 is AT item 3's own FP16-vs-FP32 floor of 0.999993**,
-not above it: this port differs from mlx-vlm's FP16 by about what mlx-vlm's
-FP16 differs from its own FP32. There is no gap left to attribute.
+**The original merger value, 0.99999334, was AT item 3's own FP16-vs-FP32
+floor of 0.999993.** The post-B7 value is 0.99999801, above that floor. The
+full implementation discussion and the reason for the change live in
+`docs/VISION.md`.
 
 **Item 3's activation shape reproduced on a DIFFERENT checkpoint.** That
 section's trace is Bonsai's tower; this one is Qwen3.8's, and it shows the
@@ -158,8 +167,9 @@ deleted, because "the gate we deferred it to has run" reads like an answer.
 **Item 3's FP16 decision is exercised rather than merely argued.** The
 extreme-page probe put peak activations at 13.8% of FP16's ceiling; the tower
 has since run FP16 end to end through a real page on two checkpoints with no
-overflow, and `docs/VISION.md`'s "what is not built" still lists an FP16
-overflow CAPTURE as owed -- the headroom is measured, the guard is not.
+overflow. `docs/VISION.md` now records the FP16 overflow capture as implemented
+and synthetically covered; the `TURBOSPARK_VISION_OVERFLOW` environment hook
+remains an optional diagnostic rather than a release gate.
 
 ---
 

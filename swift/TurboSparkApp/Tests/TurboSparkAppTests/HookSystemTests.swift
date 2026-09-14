@@ -151,6 +151,48 @@ final class HookSystemTests: XCTestCase {
         await store.deleteCustomHook(id: benignHook.id)
     }
 
+    func testProjectDirectoryPlaceholderDoesNotExecuteShellSyntax() async throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let marker = "injected-\(UUID().uuidString)"
+        let project = parent.appendingPathComponent(
+            "project; touch \(marker); #", isDirectory: true)
+        let hookDirectory = project.appendingPathComponent("hooks", isDirectory: true)
+        let script = hookDirectory.appendingPathComponent("check.sh")
+        let expectedOutput = project.appendingPathComponent("hook-ran")
+
+        try FileManager.default.createDirectory(at: hookDirectory, withIntermediateDirectories: true)
+        try "#!/bin/sh\ntouch hook-ran\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        let hook = AppHookCommand(
+            name: "Project Path Guard",
+            event: .sessionStart,
+            type: .command,
+            command: #"${CLAUDE_PROJECT_DIR}/hooks/check.sh"#,
+            shell: .sh,
+            sourceType: .custom
+        )
+        let store = await AppHookStore.shared
+        await store.addCustomHook(hook)
+        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+
+        let results = await AppHookExecutionEngine.shared.dispatch(
+            event: .sessionStart,
+            sessionID: UUID().uuidString,
+            workingDirectory: project.path
+        )
+
+        let result = try XCTUnwrap(results.first(where: { $0.hookID == hook.id }))
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expectedOutput.path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: project.appendingPathComponent(marker).path),
+            "Shell syntax in the project directory must remain data, not execute as hook code."
+        )
+    }
+
     func testHookThatExitsBeforeReceivingLargePayloadStaysContained() async {
         // A PostToolUse payload can embed a large diagnostic result. The hook
         // exits immediately without reading it, which closes stdin while the

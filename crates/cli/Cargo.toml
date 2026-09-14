@@ -23,6 +23,10 @@ path = "src/main.rs"
 name = "turbospark-model"
 path = "src/bin/model.rs"
 
+[[bin]]
+name = "turbospark-image"
+path = "src/bin/image.rs"
+
 [dependencies]
 libc = "0.2"
 invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.1.0" }
@@ -32,6 +36,7 @@ selection = { package = "turbospark-selection", path = "../selection", version =
 tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
 repack = { package = "turbospark-repack", path = "../repack", version = "0.1.0" }
 model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
+image = { package = "turbospark-image", path = "../image", version = "0.1.0" }
 window_fit = { package = "turbospark-window-fit", path = "../window-fit", version = "0.1.0" }
 # `--image` (ROADMAP M-V7): decode, preprocess, the splice and the mRoPE
 # walk. UNALIASED, matching `crates/runtime`'s and `crates/bench`'s spelling

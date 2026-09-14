@@ -389,3 +389,10 @@ cargo test -p turbospark-tokenizer
     on Harmony and Muse Glimmer, which are not fixtures here.
     `the_probe_sweeps_every_spelling_the_parser_accepts` ties `ALL` to `parse`
     for that reason rather than restating five names.
+
+14. **CHAT TEMPLATES ARE UNTRUSTED PROGRAMS WITH OUTPUT TOO.** A tokenizer
+    sidecar can consume unbounded template instructions or emit unbounded text
+    before the model ever runs. Set a VM fuel limit and render into a bounded
+    writer, then keep a regression for both an output flood and a nested-loop
+    workload. Do not rely on the output cap alone, because a loop can burn CPU
+    without producing many bytes.

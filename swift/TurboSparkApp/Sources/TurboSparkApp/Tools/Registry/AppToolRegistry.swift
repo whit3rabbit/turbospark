@@ -249,6 +249,9 @@ public enum AppToolRegistry {
                     }
                 }
 
+            case "multiedit", "multi_edit":
+                output = try await MultiEditExecutor.execute(arguments: call.arguments, rootURL: rootURL)
+
             case "search_code", "grep", "search", "grep_search":
                 guard let pattern = call.arguments["pattern"]
                     ?? call.arguments["query"]
@@ -422,6 +425,9 @@ public enum AppToolRegistry {
                     timeout: timeout
                 )
 
+            case "codesearch", "code_search":
+                output = try await CodeSearchExecutor.execute(arguments: call.arguments)
+
             case "skill":
                 guard let skillName = call.arguments["name"] ?? call.arguments["skill_name"] else {
                     throw NSError(domain: "TurboSparkTool", code: 18, userInfo: [NSLocalizedDescriptionKey: "Missing 'name' argument for skill tool call."])
@@ -487,6 +493,15 @@ public enum AppToolRegistry {
 
             case "memory", "remember":
                 output = try MemoryToolExecutor.execute(arguments: call.arguments, project: project)
+
+            case "batch":
+                output = try await BatchToolExecutor.execute(
+                    arguments: call.arguments,
+                    project: project,
+                    chatID: chatID,
+                    subagentDepth: subagentDepth,
+                    webToolsEnabled: webToolsEnabled
+                )
 
             case "agent", "subagent", "task":
                 guard let prompt = call.arguments["prompt"]

@@ -1,12 +1,15 @@
 # Native image generation: Z-Image-Turbo
 
-Status: IG0 resource evidence remains open. IG1 native component parity is
-closed for the available fixtures: the full-width checkpoint block, complete
+Status: IG0 resource evidence and the IG0 resource/manifest contract are
+closed for the reference envelope. IG1 native component parity is closed for
+the available fixtures: the full-width checkpoint block, complete
 nine-step DiT rollout, and real 1024-by-1024 VAE decode gate pass their frozen
 contracts. The optional raw-pixel arrays were not present in this checkout, so
 the VAE test's conditional pixel comparisons were not exercised.
 [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
 real-image captures, and component comparisons.
+The reusable bring-up process and the lessons from this model are summarized
+in [ZIMAGE_TURBO.md](ZIMAGE_TURBO.md).
 
 Quiet-AC resource evidence now exists for all three reference stages. The
 encoder cold and reuse arms, both VAE arms, and the denoiser cold load and
@@ -17,6 +20,12 @@ reference-stage observations, not a packed INT4 runtime measurement. The
 resource records are [quiet-05](verification/z-image-ig0-benchmarks-quiet-05.json),
 [quiet-06](verification/z-image-ig0-benchmarks-quiet-06.json), and
 [quiet-07](verification/z-image-ig0-benchmarks-quiet-07.json).
+The frozen resource and install-manifest contract is
+[z-image-ig0-resource-contract.json](verification/z-image-ig0-resource-contract.json).
+It limits the first production envelope to 1024-by-1024, batch one, nine
+steps, nine transformer forwards, guidance zero, and one heavyweight stage
+resident at a time. Its stage budgets are inclusive process ceilings from the
+BF16 reference runs, not a packed INT4 runtime result.
 
 Current IG1 evidence status:
 
@@ -73,18 +82,63 @@ Current IG1 evidence status:
   `3.764033317565918e-05` and relative L2 `1.3302375354987454e-06`, below the
   frozen `6e-5` and `3e-6` limits.
 
-No image-generation runtime, CLI command, catalog alias, or app mode is
-implemented by this document. The open work is tracked in
+The current IG2 implementation includes a checked packed component format,
+image-manifest admission validation, a staged runtime seam, a macOS-only
+Metal backend, image-specific MSL operators, and an explicit CPU reference
+CLI path. The local `turbospark-image pack` command assembles the tokenizer,
+text encoder, transformer, scheduler, and VAE source tree into an atomic
+install and emits the existing `verified-install.json` receipt. The model CLI
+also has an explicit `pull-image` route that records image installs separately
+from text catalog rows. Native packed parity and resource tests are present as
+opt-in gates. This does not close IG2: no complete packed install has passed
+the real-model quality, memory, latency, and cancellation evidence gates yet.
+The remaining work is tracked in
 [ROADMAP](../ROADMAP.md). This page owns the design, gates, and rationale;
 the roadmap owns the remaining task checklist.
 
-The next work is IG0 resource-contract closure: interpret retained allocator
-capacity and the unobservable exact MPS scratch budget conservatively, freeze a
-supported memory envelope, and finalize the image manifest. Repeated
-full-pipeline stability, resident-versus-streamed ownership, and cancellation
-lifetime proof remain IG3 work. IG2 may begin after the IG0 envelope and
-manifest are written; app work remains IG4 after IG3 establishes bounded
-lifetimes.
+### Artifact support boundary
+
+The current runtime does not load arbitrary Hugging Face MLX image exports
+directly. The intended source is a pinned Diffusers-style Z-Image-Turbo
+export, which `turbospark image pack` converts into the repository's separate
+`.image.gturbo` install format. `turbospark-model pull-image` currently accepts
+that source as a local directory; it does not yet download an image model by
+Hugging Face repository ID.
+
+The first IG2 production profile is this repository's affine INT4 linear
+format at group size 64. It is not an all-tensor INT4 claim: embeddings,
+normalization, modulation, positional, and other protected tensors remain at
+higher precision, as do image-sensitive operations such as the VAE. The
+already-quantized [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit)
+and [`uqer1244/MLX-z-image`](https://huggingface.co/uqer1244/MLX-z-image) exports
+are close candidates by model and bit width, but their MLX tensor layout needs
+an explicit adapter and packed parity evidence. The 2-bit, 8-bit, and
+full-precision variants are not current IG2 runtime profiles. Do not register
+any of these as ordinary text `Mlx` catalog rows.
+
+The image crate is intentional. `turbospark-image` owns the image graph,
+image-specific install schema, packed storage, scheduler, VAE, and the native
+Metal backend. It shares only matching context, pass, and resident-buffer
+contracts with `turbospark-gpu`. The same image crate is the future shared
+runtime for the CLI and the C ABI/Swift package; no second image GPU crate is
+needed at this stage.
+
+The memory strategy is stage ownership first: text encoder, transformer, and
+VAE do not remain resident together. Packed linear weights stay in the mapped
+component payload and are decoded by Metal at use rather than expanded into a
+full-precision copy. The current wrappers are still correctness-first and
+create many operation-level command buffers and temporary buffers, so the
+native packed memory envelope is not frozen. Pooled scratch, activation reuse,
+fewer command-buffer boundaries, safe BF16/FP16 storage for non-INT4 tensors,
+and repeated cold/warm measurements are the next memory steps.
+
+IG0 is now closed by the measured reference contract. Exact MPS operator
+scratch is not observable, so the contract uses an inclusive non-parameter
+process budget and explicitly does not call driver-retained bytes scratch or
+claim a minimum whole-machine RAM size. Repeated full-pipeline stability,
+resident-versus-streamed ownership, and cancellation lifetime proof remain IG3
+work. IG2 implementation has begun; app work remains IG4 after IG3 establishes
+bounded lifetimes.
 
 ## Direction and first release
 
@@ -160,8 +214,10 @@ architecture fields.
   numerical tolerances and image-quality criteria from reference evidence.
 
 Gate: a reproducible component contract, reference fixtures, operator gap
-table, chosen quantization layout, and target memory/latency envelope. Do not
-freeze a disk format or advertise a memory minimum before this evidence.
+table, chosen quantization candidate, and resource/manifest contract. This gate
+is closed by [the frozen IG0 contract](verification/z-image-ig0-resource-contract.json).
+The packed representation and its measured Metal behavior remain IG2 gates;
+no minimum whole-machine RAM claim is made.
 
 The [official Turbo example](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo)
 requests nine scheduler steps, guidance zero, and 1024-by-1024 output; its
@@ -265,6 +321,113 @@ Gate: an installed quantized model produces a valid PNG through the unified
 CLI, with progress, cancellation, settings metadata, and measured stage peaks.
 If the transformer cannot fit the target budget, IG3 becomes a release
 prerequisite rather than reporting that budget as supported.
+
+The offline packer accepts this source tree shape and refuses to overwrite its
+destination:
+
+```text
+source/
+  tokenizer/                         tokenizer.json and config/assets
+  text_encoder/model.safetensors.index.json and shards
+  transformer/diffusion_pytorch_model.safetensors.index.json and shards
+  scheduler/scheduler_config.json
+  vae/diffusion_pytorch_model.safetensors.index.json and shards
+```
+
+The packer also accepts the internal `scheduler/config.json` and
+`vae_decoder/` names used by synthetic fixtures, but standard Diffusers names
+are preferred for a pinned export.
+
+```sh
+turbospark image pack \
+  --source /path/to/Z-Image-Turbo \
+  --output /path/to/z-image-turbo.image.gturbo \
+  --model-id Tongyi-MAI/Z-Image-Turbo \
+  --model-revision f332072aa78be7aecdf3ee76d5c247082da564a6
+```
+
+The packer writes component `index.json` and `tensors.bin` files, derives
+the manifest inventory from those indexes, writes `verified-install.json`,
+and verifies the final hashes against the future published path before the
+directory rename.
+
+#### IG2 handoff checklist
+
+The following records implementation status and the remaining evidence work:
+
+1. **Native backend implementation.** The macOS-only `MetalImageBackend`,
+   image-specific shaders, and host wrappers now cover text conditioning, the
+   nine-step DiT transformer, scheduler state, and VAE decode. Existing GPU
+   primitives were reused only for context, pass, and resident-buffer
+   contracts; image linear and attention layouts use dedicated wrappers.
+2. **Packed storage on the device.** The backend loads each packed component
+   from its checked `index.json`, preserves the affine INT4 group-64 nibble,
+   scale, and bias layout, and maps the component payload without copying a
+   whole tensor for a row read. Real-install stage ownership remains to be
+   measured.
+3. **Packed parity gate.** The opt-in test now compares conditioning, all nine
+   latent updates, final latents, and VAE decoded output against the IG1
+   fixtures. It has not passed on a complete pinned packed install in this
+   checkout.
+4. **Explicit image install route.** `turbospark-model pull-image` packages a
+   pinned local Diffusers export and records it as an image install, not as a
+   text `Mlx` row. A network-backed catalog source plan and rot-guard remain
+   open if remote installation is required.
+5. **CLI production selection.** On macOS, `turbospark image generate`
+   selects native Metal by default; `--backend reference` is explicit. The
+   offline gates cover help, invalid envelope values, overwrite refusal, and
+   unsupported-platform refusal. Real missing-component, cancellation,
+   deterministic-output, and no-device paths remain to be exercised.
+6. **Real gates.** The packed PNG metadata, quality, and resource-oracle
+   tests are present as ignored tests. The resource report records stage and
+   total latency, nine forwards, peak `phys_footprint`, Metal buffer
+   allocations, idle retained buffers, process page-ins, and swap deltas.
+   Quiet cold and warm runs against a complete install remain required.
+
+The original implementation requirements are preserved below as the
+acceptance contract:
+
+1. **Native backend contract.** Use the existing
+   `turbospark-gpu` `MetalContext` and `PassEncoder` APIs, and reuse an
+   existing GPU primitive only after checking its tensor layout, precision,
+   dispatch shape, and buffer lifetime.
+2. **Packed storage contract.** Load each packed component from
+   its checked `index.json`, preserve the affine INT4 group-64 nibble, scale,
+   and bias layout, and bind resident or bounded staging buffers without
+   copying an entire tensor for a row read. Keep stage ownership explicit:
+   text encoder, transformer, and VAE must not all remain resident together.
+3. **Packed parity contract.** Compare the packed native backend with the
+   existing CPU/reference fixtures at conditioning, each transformer update,
+   final latents, and decoded output. Use the fixed 1024-by-1024, batch-one,
+   nine-step, guidance-zero, fixed-seed contract. Explain the first divergent
+   intermediate and mutation-check every assertion.
+4. **Real install contract.** Extend `crates/catalog` and
+   `turbospark-model` with an explicit image install plan for the pinned
+   Diffusers export. Do not encode this as an ordinary text `Mlx` model row.
+   Fetch and verify all five components before the atomic publish, preserve
+   the source revision in the manifest and receipt, and add catalog rot-guard
+   coverage before adding an alias.
+5. **CLI contract.** On macOS, `turbospark image generate`
+   should select the native backend. The CPU backend remains an explicit
+   reference path for fixtures and diagnostics. Non-macOS and no-device
+   failures must be clear. Add CLI coverage for invalid options, missing
+   components, deterministic metadata, valid PNG output, overwrite refusal,
+   export failure, and cancellation in every stage.
+6. **Evidence contract.** Add a packed image quality gate and image memory
+   oracle. Run cold and warm measurements on a quiet machine and record stage
+   peaks, total seconds/image, actual transformer evaluations, peak
+   `phys_footprint`, managed allocations, retained buffers, physical reads,
+   and swap. Compare against the inclusive IG0 reference ceilings, but do not
+   relabel retained driver capacity as exact scratch or claim a whole-machine
+   minimum RAM figure.
+
+Prerequisites for this work are the pinned Z-Image-Turbo export at the
+revision recorded in the manifest example, a Metal-capable macOS machine with
+the Xcode Metal toolchain, the existing `target/ig0` fixtures, and enough
+free disk for the source tree plus a staged packed install. Keep the first
+release envelope fixed at 1024-by-1024, batch one, nine steps, nine forwards,
+guidance zero, one image per prompt, and no app/Swift integration. IG2 is not
+closed until the native packed path passes all six items on one real install.
 
 ### IG3: Bound memory and add dense streaming where necessary
 
@@ -411,4 +574,6 @@ processes. Freeze a memory-versus-latency curve, not an isolated RAM headline.
 Upstream links above are discovery entry points, not pinned implementation
 dependencies. [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) supplies exact
 comparison revisions, the limited visual review, and resource observations.
-Qualified performance limits and a minimum RAM figure remain open.
+The reference latency observations are frozen in the IG0 contract, but packed
+runtime performance limits and a minimum RAM figure remain intentionally open
+until IG2 and IG3 measure them.

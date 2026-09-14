@@ -6,6 +6,7 @@
 //! - Coding agent connectors (`start claude`, `start codex`, etc.)
 //! - Model catalog and management (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`)
 //! - Benchmark harness (`bench`)
+//! - Image generation (`image generate`)
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
@@ -50,6 +51,10 @@ MODEL MANAGEMENT (Unsloth & oMLX style):
 BENCHMARK:
     bench [OPTIONS]                run throughput and memory benchmarks
 
+IMAGE:
+    image generate [OPTIONS]       generate one 1024x1024 PNG from a prompt
+    image pack [OPTIONS]           pack a Diffusers image export into an install
+
 GLOBAL OPTIONS:
     --help, -h, help               print this help message
     --version, -V, version         print version
@@ -58,6 +63,8 @@ For command-specific options, pass --help to that command:
     turbospark run --help
     turbospark serve --help
     turbospark pull --help
+    turbospark image generate --help
+    turbospark image pack --help
 ";
 
 fn find_peer_binary(name: &str) -> PathBuf {
@@ -133,6 +140,18 @@ fn handle_run(args: &[String]) -> ExitCode {
     execute_peer("turbospark-check", &check_args)
 }
 
+fn handle_image(args: &[String]) -> ExitCode {
+    let mut image_args = Vec::with_capacity(args.len() + 2);
+    if args.first().map(String::as_str) != Some("generate") {
+        image_args.push("generate".to_string());
+    }
+    image_args.extend_from_slice(args);
+    if args.is_empty() {
+        image_args.push("--help".to_string());
+    }
+    execute_peer("turbospark-image", &image_args)
+}
+
 fn handle_start(args: &[String]) -> ExitCode {
     if let Some(first) = args.first() {
         if agent::is_agent(first) {
@@ -205,6 +224,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "run" => handle_run(rest),
+        "image" => handle_image(rest),
         "serve" => execute_peer("turbospark-server", rest),
         "start" => handle_start(rest),
         "stop" => handle_stop(),

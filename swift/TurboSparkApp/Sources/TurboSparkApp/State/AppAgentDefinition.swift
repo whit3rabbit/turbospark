@@ -145,8 +145,16 @@ public struct AppAgentDefinition: Identifiable, Codable, Equatable, Sendable {
             return "edit_file"
         case "applypatch", "patch":
             return "apply_patch"
-        case "searchcode", "grep", "search", "searchfiles":
+        case "searchcode", "grep", "search", "searchfiles", "grepsearch":
             return "search_code"
+        case "notebookedit":
+            return "notebook_edit"
+        case "enterplanmode", "planmode":
+            return "enter_plan_mode"
+        case "exitplanmode":
+            return "exit_plan_mode"
+        case "todowrite":
+            return "todo_write"
         case "listdirectory", "listdir", "ls", "glob":
             return "list_directory"
         case "runcommand", "bash", "shell", "exec", "terminal":

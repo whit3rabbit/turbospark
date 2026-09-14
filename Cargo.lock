@@ -2070,6 +2070,7 @@ dependencies = [
  "libc",
  "serde_json",
  "turbospark-catalog",
+ "turbospark-image",
  "turbospark-invocation",
  "turbospark-model-io",
  "turbospark-repack",
@@ -2134,12 +2135,15 @@ dependencies = [
 name = "turbospark-image"
 version = "0.1.0"
 dependencies = [
+ "metal",
  "ndarray",
  "png",
  "rayon",
+ "serde",
  "serde_json",
  "turbospark-compute",
  "turbospark-core",
+ "turbospark-gpu",
  "turbospark-model-io",
  "turbospark-tokenizer",
 ]

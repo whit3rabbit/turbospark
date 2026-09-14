@@ -2,6 +2,13 @@
 
 This document specifies the `.gturbo` model installation directory format, its binary layout, streaming mechanics, and compatibility with the upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (Mference) inference engine.
 
+This specification covers autoregressive text-model installs. Z-Image-Turbo
+uses a separate image-generation install with the `.image.gturbo` convention,
+its own manifest schema, component ownership, and packed tensor indexes. Do
+not make an image install look like a text `Mlx` row or assume that this text
+manifest can validate it. See [Native image generation](IMAGE_GENERATION.md)
+and [Z-Image-Turbo](ZIMAGE_TURBO.md).
+
 ---
 
 ## 1. Overview & Architectural Motivation
@@ -41,7 +48,7 @@ A `.gturbo` model installation is a directory structured as follows:
 
 ### Upstream Parity & Interoperability
 - **Magic Signature**: `manifest.json` specifies `"magic": "GTURBO"` and `"versionMajor": 1`.
-- **100% Binary Compatible**: Both `turbospark` (Rust) and `turbo-fieldfare` (Swift) load, validate, and execute the exact same `.gturbo` directory format.
+- **100% Binary Compatible for text installs**: Both `turbospark` (Rust) and `turbo-fieldfare` (Swift) load, validate, and execute the exact same text `.gturbo` directory format. This does not apply to the separate image-generation install.
 - **Verification**: In cross-engine benchmarks, both `turbospark-cli` and Swift's `MferenceCLI` run against identical `.gturbo` model directories under strict `.fullSha256` integrity verification.
 
 ---

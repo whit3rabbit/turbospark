@@ -97,6 +97,15 @@ impl Store {
         self.root.join("models").join(format!("{alias}.gturbo"))
     }
 
+    /// Where a separately packaged image install lands. The suffix keeps an
+    /// image artifact from colliding with a text model that happens to use the
+    /// same local alias.
+    pub fn image_install_path(&self, alias: &str) -> PathBuf {
+        self.root
+            .join("models")
+            .join(format!("{alias}.image.gturbo"))
+    }
+
     /// Where a vision-tower sidecar pull of `alias` lands by default: the
     /// same `models/` directory, `-vision` distinguishing it from a trunk
     /// install of the same alias.
@@ -246,7 +255,11 @@ impl Store {
         // path the install actually used, so this is only reached when
         // nothing was ever recorded.
         let vision_default = self.vision_install_path(name);
-        vision_default.is_dir().then_some(vision_default)
+        if vision_default.is_dir() {
+            return Some(vision_default);
+        }
+        let image_default = self.image_install_path(name);
+        image_default.is_dir().then_some(image_default)
     }
 }
 

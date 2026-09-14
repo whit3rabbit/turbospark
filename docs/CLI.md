@@ -1,10 +1,11 @@
 # CLI reference
 
-The primary command-line interface is the unified `turbospark` binary, alongside three specialized standalone binaries and a benchmark harness:
+The primary command-line interface is the unified `turbospark` binary, alongside specialized standalone binaries and a benchmark harness:
 
-- `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
+- `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`, `image`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
 - `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/CLAUDE.md`](../crates/cli/CLAUDE.md).
-- `turbospark-model` -- find, inspect, and install models into the `~/.turbospark` store. See [`docs/MODELS.md`](MODELS.md).
+- `turbospark-model` -- find, inspect, and install text models and image installs into the `~/.turbospark` store. See [`docs/MODELS.md`](MODELS.md).
+- `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/CLAUDE.md`](../crates/server/CLAUDE.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
@@ -39,7 +40,30 @@ Inspired by oMLX and Unsloth workflows, `turbospark` provides a single unified t
 | | `turbospark recommend` | Rank catalog models by fit for current hardware |
 | | `turbospark auth [token]` | Inspect, set, or clear Hugging Face credentials |
 | | `turbospark path <alias>` | Print install directory |
+| **Image** | `turbospark image generate [options]` | Generate one 1024x1024 PNG, using native Metal on macOS by default |
+| | `turbospark image pack [options]` | Pack a local Diffusers image export into the separate image install format |
 | **Bench** | `turbospark bench [options]` | Run benchmark harness |
+
+### Image generation
+
+```sh
+turbospark image generate \
+  --model z-image-turbo \
+  --prompt "A red rabbit under a moonlit sky" \
+  --output image.png
+
+turbospark image pack \
+  --source /path/to/Z-Image-Turbo \
+  --output /path/to/z-image-turbo.image.gturbo \
+  --model-id Tongyi-MAI/Z-Image-Turbo \
+  --model-revision f332072aa78be7aecdf3ee76d5c247082da564a6
+```
+
+The image command supports the frozen 1024-by-1024, batch-one, nine-step
+Z-Image-Turbo envelope. Native Metal is the default on macOS. The CPU backend
+is available only as an explicit `--backend reference` diagnostic path. Image
+installs use their own manifest and `.image.gturbo` suffix; they are not text
+model rows and are not opened by `turbospark-check`.
 
 ### oMLX compatibility
 

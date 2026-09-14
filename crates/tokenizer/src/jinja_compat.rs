@@ -48,48 +48,51 @@ pub(crate) fn parenthesize_conditional_kwargs(source: &str) -> std::borrow::Cow<
     let bytes = source.as_bytes();
     let mut out = String::new();
     let mut rewrote = false;
+    let mut last_copied = 0usize;
     let mut i = 0usize;
 
     while i < bytes.len() {
-        // Only Jinja blocks are scanned; everything else is template text.
-        let block = block_at(bytes, i);
-        let Some((open_len, close, is_comment)) = block else {
-            // **COPY ONE UTF-8 CHARACTER, NOT ONE BYTE.** Templates are
-            // mostly prose, and real prose is multibyte: Spark-X2.5's ships
-            // a `{#- 0826版本 -#}` comment and fullwidth-bar markers, and
-            // pushing `bytes[i] as char` here turned every one of those
-            // bytes into a Latin-1 mojibake character in the rendered
-            // template. `i` is always a char boundary here (it starts at 0
-            // and only ever advances by whole characters or whole blocks),
-            // so the slice below is safe.
-            let ch_len = source[i..].chars().next().map(char::len_utf8).unwrap_or(1);
-            out.push_str(&source[i..i + ch_len]);
-            i += ch_len;
+        if bytes[i] != b'{' {
+            i += 1;
+            continue;
+        }
+
+        let Some((open_len, close, is_comment)) = block_at(bytes, i) else {
+            i += 1;
             continue;
         };
+
         let start = i;
         let body_start = i + open_len;
-        let Some(body_end) = find_close(source, body_start, close) else {
-            // Unterminated block: copy the rest verbatim and let minijinja
-            // report it. Guessing at a repair here would turn a clear
-            // syntax error into a confusing one.
-            out.push_str(&source[start..]);
-            i = bytes.len();
-            continue;
+        let Some(body_end) = find_close(bytes, body_start, close.as_bytes(), is_comment) else {
+            // Unterminated block: stop rewriting and leave the remainder
+            // for minijinja to report.
+            break;
         };
-        out.push_str(&source[start..body_start]);
-        if is_comment {
-            out.push_str(&source[body_start..body_end + close.len()]);
-        } else {
-            let (rewritten, changed) = rewrite_expression(&source[body_start..body_end]);
-            rewrote |= changed;
-            out.push_str(&rewritten);
-            out.push_str(close);
+
+        let close_end = body_end + close.len();
+
+        if !is_comment {
+            let body = &source[body_start..body_end];
+            let (rewritten, changed) = rewrite_expression(body);
+            if changed {
+                if !rewrote {
+                    out.reserve(source.len() + 32);
+                    rewrote = true;
+                }
+                out.push_str(&source[last_copied..start]);
+                out.push_str(&source[start..body_start]);
+                out.push_str(&rewritten);
+                out.push_str(close);
+                last_copied = close_end;
+            }
         }
-        i = body_end + close.len();
+
+        i = close_end;
     }
 
     if rewrote {
+        out.push_str(&source[last_copied..]);
         std::borrow::Cow::Owned(out)
     } else {
         std::borrow::Cow::Borrowed(source)
@@ -110,16 +113,27 @@ fn block_at(bytes: &[u8], i: usize) -> Option<(usize, &'static str, bool)> {
     }
 }
 
-/// Index of `close` at or after `from`, skipping string literals.
-fn find_close(source: &str, from: usize, close: &str) -> Option<usize> {
-    let bytes = source.as_bytes();
+/// Index of `close` at or after `from`, operating on byte slices to ensure
+/// UTF-8 safety. Inside comments, delimiter matching is literal (quotes are
+/// not tracked). Inside expressions, string literals are skipped so closing
+/// delimiters inside quotes do not terminate the block early.
+fn find_close(bytes: &[u8], from: usize, close: &[u8], is_comment: bool) -> Option<usize> {
     let mut i = from;
+    if is_comment {
+        while i + close.len() <= bytes.len() {
+            if bytes[i..].starts_with(close) {
+                return Some(i);
+            }
+            i += 1;
+        }
+        return None;
+    }
     let mut quote: Option<u8> = None;
     while i < bytes.len() {
         let c = bytes[i];
         match quote {
             Some(q) => {
-                if c == b'\\' {
+                if c == b'\\' && i + 1 < bytes.len() {
                     i += 2;
                     continue;
                 }
@@ -130,15 +144,9 @@ fn find_close(source: &str, from: usize, close: &str) -> Option<usize> {
             None => {
                 if c == b'\'' || c == b'"' {
                     quote = Some(c);
-                } else if (c & 0xC0) != 0x80 && source[i..].starts_with(close) {
+                } else if bytes[i..].starts_with(close) {
                     return Some(i);
                 }
-                // The continuation-byte guard above is what keeps the slice
-                // legal: a byte with the 0x80 pattern is mid-character, so
-                // stepping onto one means the close delimiter is not here
-                // (its first byte is ASCII), and `source[i..]` at a
-                // non-boundary would panic. Spark-X2.5's template hit
-                // exactly that, scanning for `#}` across its `版本` comment.
             }
         }
         i += 1;
@@ -149,79 +157,61 @@ fn find_close(source: &str, from: usize, close: &str) -> Option<usize> {
 /// Rewrites one Jinja expression/statement body.
 fn rewrite_expression(body: &str) -> (String, bool) {
     let bytes = body.as_bytes();
-    let mut out = String::with_capacity(body.len());
+    let mut out = String::new();
     let mut changed = false;
+    let mut last_copied = 0usize;
     let mut i = 0usize;
     let mut quote: Option<u8> = None;
     let mut depth = 0usize;
 
     while i < bytes.len() {
-        // **ANY NON-ASCII BYTE STARTS A CHARACTER THAT IS COPIED WHOLE.**
-        // Every arm below pushes `c as char`, which turns one byte of a
-        // multibyte character into one Latin-1 mojibake character; and the
-        // keyword-argument logic itself is ASCII-only (`=`, quotes,
-        // brackets), so a multibyte character can simply pass through.
-        if bytes[i] >= 0x80 {
-            let ch_len = body[i..].chars().next().map(char::len_utf8).unwrap_or(1);
-            out.push_str(&body[i..i + ch_len]);
-            i += ch_len;
-            continue;
-        }
         let c = bytes[i];
-        if let Some(q) = quote {
-            out.push(c as char);
-            if c == b'\\' && i + 1 < bytes.len() {
-                out.push(bytes[i + 1] as char);
-                i += 2;
-                continue;
-            }
-            if c == q {
-                quote = None;
-            }
-            i += 1;
-            continue;
-        }
-        match c {
-            b'\'' | b'"' => {
-                quote = Some(c);
-                out.push(c as char);
-                i += 1;
-            }
-            b'(' | b'[' | b'{' => {
-                depth += 1;
-                out.push(c as char);
-                i += 1;
-            }
-            b')' | b']' | b'}' => {
-                depth = depth.saturating_sub(1);
-                out.push(c as char);
-                i += 1;
-            }
-            b'=' if depth > 0 && is_kwarg_eq(bytes, i) => {
-                out.push('=');
-                let value_start = i + 1;
-                let value_end = kwarg_value_end(bytes, value_start);
-                let value = &body[value_start..value_end];
-                if contains_top_level_conditional(value) {
-                    out.push('(');
-                    out.push_str(value.trim_end());
-                    out.push(')');
-                    // Preserve trailing whitespace outside the parens so the
-                    // rewrite is byte-identical apart from the two brackets.
-                    out.push_str(&value[value.trim_end().len()..]);
-                    changed = true;
-                } else {
-                    out.push_str(value);
+        match quote {
+            Some(q) => {
+                if c == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                    continue;
                 }
-                i = value_end;
+                if c == q {
+                    quote = None;
+                }
             }
-            _ => {
-                out.push(c as char);
-                i += 1;
-            }
+            None => match c {
+                b'\'' | b'"' => quote = Some(c),
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b'=' if depth > 0 && is_kwarg_eq(bytes, i) => {
+                    let value_start = i + 1;
+                    let value_end = kwarg_value_end(bytes, value_start);
+                    let value = &body[value_start..value_end];
+                    if contains_top_level_conditional(value) {
+                        if !changed {
+                            out.reserve(body.len() + 16);
+                            changed = true;
+                        }
+                        out.push_str(&body[last_copied..value_start]);
+                        out.push('(');
+                        let trimmed = value.trim_end();
+                        out.push_str(trimmed);
+                        out.push(')');
+                        out.push_str(&value[trimmed.len()..]);
+                        last_copied = value_end;
+                    }
+                    i = value_end;
+                    continue;
+                }
+                _ => {}
+            },
         }
+        i += 1;
     }
-    (out, changed)
+
+    if changed {
+        out.push_str(&body[last_copied..]);
+        (out, true)
+    } else {
+        (String::new(), false)
+    }
 }
 
 /// True when the `=` at `i` is a keyword-argument assignment rather than a
@@ -230,7 +220,12 @@ fn is_kwarg_eq(bytes: &[u8], i: usize) -> bool {
     if bytes.get(i + 1) == Some(&b'=') {
         return false; // ==
     }
-    let Some(&prev) = bytes.get(i.wrapping_sub(1)) else {
+    // Look backwards past any whitespace to find the preceding token.
+    let mut p = i;
+    while p > 0 && bytes[p - 1].is_ascii_whitespace() {
+        p -= 1;
+    }
+    let Some(&prev) = bytes.get(p.wrapping_sub(1)) else {
         return false;
     };
     if matches!(prev, b'=' | b'!' | b'<' | b'>') {
@@ -249,7 +244,7 @@ fn kwarg_value_end(bytes: &[u8], from: usize) -> usize {
         let c = bytes[i];
         match quote {
             Some(q) => {
-                if c == b'\\' {
+                if c == b'\\' && i + 1 < bytes.len() {
                     i += 2;
                     continue;
                 }
@@ -287,7 +282,7 @@ fn contains_top_level_conditional(value: &str) -> bool {
         let c = bytes[i];
         match quote {
             Some(q) => {
-                if c == b'\\' {
+                if c == b'\\' && i + 1 < bytes.len() {
                     i += 2;
                     continue;
                 }
@@ -299,9 +294,18 @@ fn contains_top_level_conditional(value: &str) -> bool {
                 b'\'' | b'"' => quote = Some(c),
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-                b'i' if depth == 0 && value[i..].starts_with("if ") => {
+                b'i' if depth == 0 && bytes[i..].starts_with(b"if ") => {
                     let before = i.checked_sub(1).map(|p| bytes[p]);
-                    if matches!(before, Some(b' ') | Some(b'\t') | Some(b'\n')) {
+                    if matches!(
+                        before,
+                        Some(b' ')
+                            | Some(b'\t')
+                            | Some(b'\n')
+                            | Some(b'\r')
+                            | Some(b')')
+                            | Some(b']')
+                            | Some(b'}')
+                    ) {
                         return true;
                     }
                 }

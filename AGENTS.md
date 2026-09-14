@@ -39,6 +39,7 @@ read the page before proposing the thing it refutes.
 | `docs/OBLITERATION.md` | live directional steering, with measurement | changing steering |
 | `docs/TRUBOQUANT.md` | TurboQuant KV-cache quantization: the assessment, and the `--kv-bits` feature built on it | touching KV quantization, or quoting the assessment it reversed |
 | `docs/VISION.md` | the vision PIPELINE: injection, mRoPE dispatch, the four gates, the cross-engine rows | touching anything an image passes through |
+| `docs/ZIMAGE_TURBO.md` | the Z-Image-Turbo image-model case study, IG0/IG1 lessons, resource protocol, and reusable image bring-up sequence | starting another image-generation model, or quoting the Z-Image phase order |
 | `docs/VISION_PHASE0.md` | the vision CHECKPOINT: tensors, mRoPE semantics, activation magnitudes, the INT4 decision | reading a tower fact off the checkpoint |
 | `docs/QWEN4_PHASE0.md` | `qwen4_exp` (Qwen3.8-Flash-Next) Phase 0 fact-finding: config, tensor layout, two independent references cross-checked | reading a `qwen4_exp` fact, or continuing that bring-up |
 | `docs/QWEN4_EXP.md` | `qwen4_exp` bring-up beyond Phase 0: intake, decode wiring, memory policy, the router/shared-expert-gate dtype bug and fix, first real-hardware decode | touching `families/qwen4/` or the safetensors write path, or continuing that bring-up |
@@ -47,6 +48,7 @@ read the page before proposing the thing it refutes.
 | `docs/SKILL_STATE.md` | the SKILL.state bounded-state agent runtime, a measured POSITIVE with its scale caveat | proposing agent context compaction, structured output, or constrained decoding |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `swift/docs/SWIFT_TOOLS.md` | Swift native tool implementation: execution, containment, adding new tools | implementing or changing tools in TurboSparkApp |
+| `swift/docs/SWIFT_TOOL_CATALOG.md` | full reference catalog: all built-in tools, parameters, schemas, permission matrix, and patterns | inspecting or using specific tool APIs and parameters |
 | `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, live file buffer, and dual-staticlib symbol localization | touching Syntext integration, grep_search, or project code search |
 | `swift/docs/SWIFT_AGENT_MODE.md` | the `.agentAuto` permission mode: a local-model classifier judges the ask-band, with hard gates, fallback counters, and hints | touching the classifier routing, `hardGated`, `AgentModeGate`, or quoting a permission verdict |
 | `swift/docs/SWIFT_SKILLS.md` | Swift skills: architecture, scopes, file layout, and marketplace integration | changing skills, discovery, or marketplace |
@@ -1955,6 +1957,28 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     prefer two cheap independent methods over one expensive one -- their
     agreement is what makes a share believable, and neither alone was.
 
+67. **SECURITY DOCUMENTATION MUST DESCRIBE THE ACTUAL TRUST BOUNDARY.**
+    Loopback limits network exposure, but it does not isolate a listener from
+    other local processes, and Tailnet ACLs do not replace application
+    authentication. When documenting a server or ABI, state the available API
+    key configuration and the limits of each bind mode together.
+
+68. **RUN THE RUST BUILD BEFORE STAGING THE SWIFT BINDING.** The Swift package
+    can hide a Rust baseline failure because its staged header and static
+    library are copied only after a release build. In this tree, a comparison
+    between a `String` field and `&str` in the repack path kept the workspace
+    build red while Swift-only checks looked unrelated. Keep the type and
+    format gates green before interpreting Swift test results.
+
+69. **`make swift-lib` CAN PASS WHILE `make swift-test` STILL CANNOT LINK.** The
+    staging script removes `_rust_eh_personality` from the Rust static library
+    to avoid collisions when the app links multiple Rust archives. The
+    standalone `swift/TurboSpark` package then has no remaining definition for
+    that symbol and its test link fails, even though the Rust build and staging
+    succeeded. Treat this as a baseline Swift packaging failure, not as a
+    regression in an unrelated Swift source change, and record it before
+    merging such a PR.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas. The Swift tree is not a crate and has one too:
@@ -2084,6 +2108,32 @@ convention against the line that IMPLEMENTS it -- brew ships llama.cpp's
 headers to `/opt/homebrew/include` and its sources are one
 `raw.githubusercontent.com` fetch away, so this class of question costs no
 download at all.
+
+## Code discovery, search, and explore agent harness
+
+This repository uses Syntext as its indexed code search engine (see `swift/docs/SYNTEXT.md` and `swift/docs/SWIFT_TOOLS.md`).
+
+- **Default search tool**: Use `grep_search` for code discovery, symbol lookup, and pattern matching. It uses the project's Syntext index for sub-millisecond regex and literal search with line numbers and context lines in ripgrep format.
+- **Do not shell out for searching**: Never shell out to `grep`, `find`, or `ripgrep` via Bash or terminal execution when `grep_search` or `Glob` is available.
+- **File locating and reading**: Use `Glob` (`list_directory`) for file path patterns and `FileRead` (`read_file`) for inspecting specific files or line ranges.
+- **Explore subagent contract**:
+  - The `explore` agent (`AgentManager+BuiltIns.swift` and `.turbospark/agents/explore.md`) is strictly read-only.
+  - Allowed tools: `FileRead`, `Glob`, `Grep`, `grep_search`, `Bash` (strictly read-only commands: `ls`, `git status`, `git log`, `git diff`), `WebFetch`, `WebSearch`.
+  - Disallowed tools: all write and edit tools (`write_file`, `edit_file`, `apply_patch`, `notebook_edit`), subagent creation (`agent`, `subagent`, `task`), planning mode tools (`enter_plan_mode`, `exit_plan_mode`), and artifact/worktree tools (`todowrite`, `enter_worktree`, `exit_worktree`).
+  - Project instructions are omitted (`omitsProjectInstructions` / `omit_claude_md: true`) to preserve context window and reduce prefill latency for fast search fan-out.
+  - All findings must report absolute paths and avoid emojis.
+- **Plan subagent contract**:
+  - The `plan` agent (`AgentManager+BuiltIns.swift` and `.turbospark/agents/plan.md`) is strictly read-only for designing architectural and implementation plans.
+  - Allowed tools: `FileRead`, `Glob`, `Grep`, `grep_search`, `Bash` (strictly read-only commands: `ls`, `git status`, `git log`, `git diff`), `WebFetch`, `WebSearch`.
+  - Disallowed tools: all write and edit tools (`write_file`, `edit_file`, `apply_patch`, `notebook_edit`), subagent creation (`agent`, `subagent`, `task`), planning mode tools (`enter_plan_mode`, `exit_plan_mode`), and artifact/worktree tools (`todowrite`, `enter_worktree`, `exit_worktree`).
+  - Structured process: Understand Requirements, Explore Thoroughly (using Syntext `grep_search` and `Glob`), Design Solution, Detail the Plan.
+  - Required output ending: Concludes with "### Critical Files for Implementation" listing 3-5 critical files. All findings avoid emojis.
+- **General-purpose subagent contract**:
+  - The `general-purpose` agent (`AgentManager+BuiltIns.swift`, `.turbospark/agents/general-purpose.md`, and `.claude/agents/general-purpose.md`) is the fallback execution and research subagent.
+  - Unlike `explore` and `plan`, it is unconstrained (has no tool ceiling and no disallowed tools), enabling multi-step task execution, file editing, and command running.
+  - Retains project instructions (`omitsProjectInstructions == false`) for full codebase and architectural context.
+  - Uses Syntext `grep_search` for fast indexed code and pattern search across large codebases.
+  - Completes tasks fully without gold-plating or leaving half-done, returning a concise report with essentials.
 
 <!-- BEGIN AGENT-CONFIG:mf -->
 Before exploring this codebase, run `mf search "<question>" --field notes`.

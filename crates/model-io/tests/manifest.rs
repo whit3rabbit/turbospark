@@ -112,6 +112,23 @@ fn load_succeeds_for_a_matching_toy_manifest() {
 }
 
 #[test]
+fn text_loader_rejects_an_image_capability_with_a_clear_error() {
+    let dir = tempfile_dir();
+    write_manifest(
+        dir.path(),
+        r#"{"magic":"GTURBO","version":1,"capability":"image-generation"}"#,
+    );
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    assert_eq!(
+        err,
+        ModelError::UnsupportedCapability {
+            capability: "image-generation".to_string()
+        }
+    );
+    assert!(err.to_string().contains("text-model loader"));
+}
+
+#[test]
 fn load_rejects_hidden_size_mismatch() {
     let dir = tempfile_dir();
     write_manifest(dir.path(), &toy_manifest_json());

@@ -75,6 +75,7 @@ final class FabricatedToolSuccessTests: XCTestCase {
         for implemented in [
             "bash", "bashoutput", "killshell", "fileread", "filewrite", "fileedit", "grep", "glob", "apply_patch",
             "skill", "agent", "todowrite", "webfetch", "websearch",
+            "batch", "multiedit", "codesearch",
             "askuserquestion", "enterplanmode", "exitplanmode", "reportfindings",
             "proposeskills", "proposegoal", "sendfeedback", "notebookedit",
             "snip", "senduserfile", "taskcreate", "taskget", "tasklist",

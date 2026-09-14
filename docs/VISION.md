@@ -5,20 +5,30 @@ What is built, what it measures, and the traps. Facts about the CHECKPOINT
 live in `docs/VISION_PHASE0.md` and are not repeated here; this page is about
 the IMPLEMENTATION.
 
-Status as of 2026-09-06: milestones M-V0 through M-V9 are done AND COMMITTED
-(`c400329`, `2aee922`; the "not yet committed" note that stood in "What is
-not built" for a week is corrected there), and the FFI and the macOS app
-reach the tower too. The tower runs, agrees with mlx-vlm, and an image
-reaches a generated token from the CLI, from both server endpoints, and from
-`ts_generate` -- which is what the SwiftUI app and the in-process server sit
-on. An image prompt also CHUNKS its prefill now, on the CLI and through the
-FFI; the server's image path still takes the sequential loop.
+Status as of 2026-09-13: milestones M-V0 through M-V9, sidecar Parts A1
+through A6, memory work B1 through B3, and Part C are complete. The dense
+Qwen GDN tower runs, agrees with mlx-vlm, and an image reaches generated
+output from the CLI, both server endpoints, and `ts_generate`, which is the
+path used by the SwiftUI app and in-process server. Dense Qwen image prompts
+also use the chunked prefill path through the CLI and FFI; the server keeps its
+sequential image path.
 
-**Updated 2026-09-06**: the tower no longer has to be bundled inside a full
-trunk install to run one. "The vision memory sidecar" section below covers
-the standalone `<alias>.gturbo-vision/` format, `--vision-sidecar`, and
-`pull-vision`, verified end to end on real hardware; its own closing
-subsection names what is still open (B2, B3, Part C, Part D).
+The standalone `<alias>.gturbo-vision/` sidecar format, `--vision-sidecar`,
+and `pull-vision` are verified on real hardware. The Qwen GDN MoE family shares
+the tower classifier, writer, and sequential runtime path, but it has no
+independent real-model image gate. Its chunked prefill remains refused, and a
+dense sidecar cannot attach to it because sidecar pairing is by exact family
+and hidden size.
+
+## Compatibility boundary
+
+| Surface | Current behavior |
+| --- | --- |
+| CLI | Combined dense-Qwen installs and matching sidecars work with `--messages-file` and `--chat`. Raw `--prompt --image` is refused because it has no chat-template image marker. |
+| Server | `/v1/chat/completions` and `/v1/messages` serve base64 data URLs on a real vision install. Remote URLs are refused, and the server uses the sequential image path. A text-only backend reports the dropped image instead of silently claiming to have seen it. |
+| FFI and Swift | `ts_generate` accepts ordered image parts, and the Swift-facing open options expose the sidecar. Actual encoding requires the macOS Metal runtime; scripted and non-macOS sessions cannot serve images. |
+| Image modes | Still images only. The manifest carries video token fields for tokenizer compatibility, but there is no video preprocessing or video runtime path. |
+| Prefill and speculation | Dense Qwen image prompts can use chunked prefill. Qwen GDN MoE remains sequential, `TURBOSPARK_BATCHED_GEMV` with an image is refused, and MTP/DFlash2 verify is refused for vision rather than run with unverified positions. |
 
 **THE FRONT-END GAP WAS THE LAST ONE AND IT WAS INVISIBLE FROM THIS PAGE.**
 Every milestone through M-V9 was true of the engine and of two front ends,
@@ -604,8 +614,8 @@ the page's line numbers.
 
 ## The vision memory sidecar
 
-Status as of 2026-09-06: Parts A1 through A6 and B1 are done, on top of M-V0
-through M-V9 above. What this closes: every vision-capable install used to
+Status as of 2026-09-13: Parts A1 through A6, B1 through B3, and C are done,
+on top of M-V0 through M-V9 above. What this closes: every vision-capable install used to
 bundle the tower inside a full trunk, so `~/models/qwen38-27b.gturbo` and
 `~/models/qwen38-27b-vision.gturbo` are two independent 15 GB streams of the
 SAME checkpoint, differing by ~0.9 GiB of tower. A sidecar is the tower
@@ -871,14 +881,13 @@ directory or un-declaring the install's vision capability -- the next
 image reopens the tower from wherever it would have opened from before.
 
 Part D (a Qwen3-VL Phase 0 scoping document, `docs/QWEN3VL_PHASE0.md`) is
-the one sub-part that is deliberately documentation only, with no code:
-fact-finding for a future bring-up, not a bring-up.
+deliberately documentation only, with no code: fact-finding for a future
+bring-up, not a bring-up.
 
-## What is not built
+## Current limitations and deferred work
 
-Nothing of M-V0 through M-V9, as of 2026-08-29: all three of M-V9's items
-landed and are on `main` (see the last paragraph of this section, which
-corrects what this line used to point at).
+M-V0 through M-V9 are complete. The remaining work below is capability scope,
+not an unfinished milestone in the existing Qwen3.8 dense image path.
 
 **One thing the milestone list never covered and that IS now built
 (2026-09-06): an image prompt can CHUNK its prefill.** The dense qwen
@@ -911,7 +920,8 @@ itself refuses by name as defense in depth for a caller that drives the
 verify without asking the policy first. A vision-aware verify pass remains
 unbuilt, deliberately: there is no artifact that carries both halves, so
 that path would be untested numeric code whose failure mode is fluent
-wrong output. The synthetic pair in
+wrong output. This is a deliberate safety boundary, not general multimodal
+speculative support. The synthetic pair in
 `real_forward_qwen35_mtp.rs::attaching_a_vision_sidecar_flips_the_engine_blocker_...`
 is the fixture that holds this contract.
 

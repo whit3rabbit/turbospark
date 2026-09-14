@@ -14,6 +14,8 @@
 
 use std::io::Cursor;
 
+use crate::text_encoder::TensorLoader;
+
 pub const VAE_LATENT_CHANNELS: usize = 16;
 pub const VAE_OUT_CHANNELS: usize = 3;
 pub const VAE_SCALE_FACTOR: f32 = 0.3611;
@@ -582,15 +584,15 @@ pub struct VaeDecoder {
 impl VaeDecoder {
     /// Load full VAE decoder network from safetensors.
     pub fn from_safetensors(sf: &model_io::safetensors::SafetensorsFile) -> Result<Self, String> {
-        let load = |name: &str| -> Result<Vec<f32>, String> {
-            sf.load_as_f32(name)
-                .map_err(|e| format!("failed to load {name}: {e}"))
-        };
+        Self::from_tensor_loader(sf)
+    }
+
+    /// Load the decoder from either source safetensors or a packed component.
+    pub fn from_tensor_loader<L: TensorLoader>(sf: &L) -> Result<Self, String> {
+        let load = |name: &str| -> Result<Vec<f32>, String> { sf.load_tensor(name) };
         let load_opt = |name: &str| -> Result<Option<Vec<f32>>, String> {
             if sf.contains_tensor(name) {
-                sf.load_as_f32(name)
-                    .map(Some)
-                    .map_err(|e| format!("failed to load {name}: {e}"))
+                sf.load_tensor(name).map(Some)
             } else {
                 Ok(None)
             }

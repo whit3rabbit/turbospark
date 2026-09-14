@@ -99,6 +99,9 @@ public enum AgentParser {
 
         let tools = parseListField(parsedDict["tools"])
         let disallowedTools = parseListField(parsedDict["disallowed_tools"] ?? parsedDict["disallowedTools"])
+        let omitsProjectInstructions = ["true", "1", "yes"].contains(
+            (parsedDict["omit_claude_md"] ?? parsedDict["omitClaudeMd"] ?? parsedDict["omits_project_instructions"] ?? parsedDict["omitsProjectInstructions"])?.lowercased() ?? ""
+        )
 
         let prompt = parsedDict["prompt"] ?? bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -111,6 +114,7 @@ public enum AgentParser {
             disallowedTools: disallowedTools,
             model: model,
             maxTurns: maxTurns,
+            omitsProjectInstructions: omitsProjectInstructions,
             sourceAgent: sourceAgent,
             scope: scope,
             filePath: sourceURL.path,
@@ -151,6 +155,11 @@ public enum AgentParser {
 
         let tools = (json["tools"] as? [String]) ?? parseListField(json["tools"] as? String)
         let disallowedTools = (json["disallowedTools"] as? [String]) ?? (json["disallowed_tools"] as? [String]) ?? parseListField(json["disallowedTools"] as? String)
+        let omitsProjectInstructions = (json["omitsProjectInstructions"] as? Bool)
+            ?? (json["omits_project_instructions"] as? Bool)
+            ?? (json["omitClaudeMd"] as? Bool)
+            ?? (json["omit_claude_md"] as? Bool)
+            ?? false
 
         return AppAgentDefinition(
             name: name,
@@ -161,6 +170,7 @@ public enum AgentParser {
             disallowedTools: disallowedTools,
             model: model,
             maxTurns: maxTurns,
+            omitsProjectInstructions: omitsProjectInstructions,
             sourceAgent: sourceAgent,
             scope: scope,
             filePath: sourceURL.path,

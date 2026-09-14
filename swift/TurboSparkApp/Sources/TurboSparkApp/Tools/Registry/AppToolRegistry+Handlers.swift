@@ -389,6 +389,14 @@ extension AppToolRegistry {
         return lines.map { $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }.joined(separator: "\n")
     }
 
+    /// Normalizes lines by trimming leading and trailing whitespace and collapsing internal runs.
+    public static func normalizeLineWhitespace(_ str: String) -> [String] {
+        return str.components(separatedBy: "\n").map { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return trimmed.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        }
+    }
+
     static func editFile(
         relPath: String,
         oldString: String = "",
@@ -523,6 +531,40 @@ extension AppToolRegistry {
                                 break
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // 5. Line-based normalized indentation and whitespace matching attempt (non-markdown)
+        if matchedSpan == nil && !isMarkdown {
+            let oldNormLines = normalizeLineWhitespace(targetOld)
+            if !oldNormLines.isEmpty && oldNormLines.contains(where: { !$0.isEmpty }) {
+                let contentLines = content.components(separatedBy: "\n")
+                if contentLines.count >= oldNormLines.count {
+                    var candidateWindows: [Range<String.Index>] = []
+                    var candidateTexts: [String] = []
+                    let targetCount = oldNormLines.count
+
+                    let contentNormLines = contentLines.map { line in
+                        line.trimmingCharacters(in: .whitespaces)
+                            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                    }
+
+                    for i in 0...(contentLines.count - targetCount) {
+                        let windowSlice = contentNormLines[i..<(i + targetCount)]
+                        if Array(windowSlice) == oldNormLines {
+                            let rawWindowText = contentLines[i..<(i + targetCount)].joined(separator: "\n")
+                            if let r = content.range(of: rawWindowText) {
+                                candidateWindows.append(r)
+                                candidateTexts.append(rawWindowText)
+                            }
+                        }
+                    }
+
+                    if candidateWindows.count == 1 {
+                        targetOld = candidateTexts[0]
+                        matchedSpan = candidateWindows[0]
                     }
                 }
             }

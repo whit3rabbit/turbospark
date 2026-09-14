@@ -8,6 +8,27 @@ use runtime::{
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
 
+fn reject_image_install(model_dir: &std::path::Path) -> Result<(), String> {
+    let path = model_dir.join(image::install::IMAGE_MANIFEST_NAME);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Ok(());
+    };
+    let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(());
+    };
+    if manifest
+        .get("capability")
+        .and_then(serde_json::Value::as_str)
+        == Some(image::install::IMAGE_CAPABILITY)
+    {
+        return Err(format!(
+            "{} is an image-generation install; use `turbospark image generate`",
+            model_dir.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Everything a generating mode needs: the loaded model, its tokenizer, and
 /// the validated sampling configuration. Opened once per process, reused by
 /// every turn of an interactive chat.
@@ -52,6 +73,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // one on the command line, fluently and with no error.
     let resolved = catalog::resolve_model_arg(&request.model);
     let model_dir = resolved.as_path();
+    reject_image_install(model_dir)?;
     let arch = repack::peek_manifest_arch(model_dir)?;
     // Captured this early because the open below consumes `arch`: the
     // `--vision-sidecar auto` resolution after the open needs the trunk's
@@ -496,5 +518,36 @@ fn map_power_profile(profile: invocation::PowerProfile) -> runtime::PowerProfile
         invocation::PowerProfile::Performance => runtime::PowerProfile::Performance,
         invocation::PowerProfile::Balanced => runtime::PowerProfile::Balanced,
         invocation::PowerProfile::Efficiency => runtime::PowerProfile::Efficiency,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reject_image_install;
+
+    #[test]
+    fn text_session_rejects_an_image_install() {
+        let root = std::env::temp_dir().join(format!(
+            "turbospark-image-install-guard-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is before the Unix epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create test install");
+        let manifest = root.join(image::install::IMAGE_MANIFEST_NAME);
+        std::fs::write(
+            &manifest,
+            format!(r#"{{"capability":"{}"}}"#, image::install::IMAGE_CAPABILITY),
+        )
+        .expect("write image manifest");
+
+        let result = reject_image_install(&root);
+        std::fs::remove_dir_all(&root).expect("remove test install");
+
+        let error = result.expect_err("text session accepted an image install");
+        assert!(error.contains("image-generation"));
+        assert!(error.contains("turbospark image generate"));
     }
 }

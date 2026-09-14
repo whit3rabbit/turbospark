@@ -43,6 +43,36 @@ turbospark-model probe TheBloke/SomeModel-GGUF --file some-model.Q4_K_M.gguf
 
 ---
 
+## Image-generation installs are separate
+
+Z-Image-Turbo is not a text model row. Do not add a Diffusers or MLX image
+export to the ordinary text catalog as an `Mlx` model. The image route writes
+the image-specific `.image.gturbo` format, with its own manifest, component
+owners, packed tensors, and verification receipt.
+
+The current route takes a pinned local Diffusers-style source directory:
+
+```sh
+turbospark-model pull-image \
+  --source /path/to/Z-Image-Turbo \
+  --alias z-image-turbo \
+  --model-id Tongyi-MAI/Z-Image-Turbo \
+  --model-revision f332072aa78be7aecdf3ee76d5c247082da564a6
+turbospark image generate --model z-image-turbo \
+  --prompt "A red rabbit under a moonlit sky" --output image.png
+```
+
+`pull-image` currently does not fetch by Hugging Face repository ID. It packs
+the local source atomically and records the image install separately from text
+rows. Already-quantized MLX exports such as
+[`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit)
+and [`uqer1244/MLX-z-image`](https://huggingface.co/uqer1244/MLX-z-image) are
+not drop-in inputs: their MLX tensor layout requires an explicit adapter and
+parity gate. The first image runtime profile is this port's affine INT4 linear
+weights at group size 64, not a promise to support every MLX bit width.
+
+---
+
 ## Before anything else: a pull cannot resume
 
 `crates/repack`'s ranged downloader retries a chunk eight times and then gives

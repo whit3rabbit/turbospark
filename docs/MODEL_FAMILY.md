@@ -277,20 +277,41 @@ Two structural readings fall out of the census:
   -- need recurrent state machinery beside the GDN state manager, not a
   new attention kernel; this port has none of it today.
 
-**Vision is per-tower, not per-family, so this page records it once**: the
-engine runs exactly one vision tower (the `qwen3_5` tower, the Qwen3-VL-lineage
-ViT with mRoPE), and only the `qwen3_5` family consumes it end to end --
-[`docs/VISION.md`](VISION.md) is the home for how it works. A VLM checkpoint of
-any other running family parses to a TEXT-only config today: Gemma 4's and
-Muse Glimmer's vision tensors are dropped at repack, and "Full Support" above
-therefore never means vision support. The per-model vision inventory -- which
-vision-capable models `mlx-vlm` ships and which of them this port lacks --
-was recorded in the 2026-09-06 mlx-vlm audit; ROADMAP.md pruned it on
-2026-09-07 and it is recoverable from git history
-(`git show 3d58b83^:ROADMAP.md`, section 14). Its headline for this page:
-this port runs exactly one tower, and the nearest-term vision gap is Gemma
-4 vision (`gemma4_unified`), whose text half already runs here and whose
-~815 vision tensors are dropped at repack today.
+**Vision is per-tower, not per-family, so it is separate from the execution
+matrix above.** The engine has one implemented tower, the Qwen3-VL-lineage ViT
+with mRoPE used by the Qwen GDN flow. `Full Support` in the table above never
+means image support.
+
+| Rust family | Vision compatibility | Current evidence and boundary |
+| --- | --- | --- |
+| `QwenGdnDense` (`qwen35`, upstream `qwen3_5`) | **Real-gated** | Complete image path through CLI, server, FFI, and Swift-facing APIs. Combined and standalone sidecar installs are real-model tested. |
+| `QwenGdnMoe` (`qwen35moe`, upstream `qwen3_5_moe`) | **Structural, unverified** | Shares the tower classifier, writer, and sequential runtime path, but has no independent real-model image gate. Chunked prefill remains refused, and the dense sidecar does not pair with this distinct family identifier. |
+| `Gemma4` | **Text-only** | Its vision tensors are excluded at repack. SigLIP-class support remains a roadmap item. |
+| `MuseGlimmer` | **Text-only** | Vision tower, adapter, and projection tensors are excluded at repack. |
+| `Qwen4Exp` | **Text-only** | VLM configuration is recognized, but only the text tower is ingested and executed. |
+| `DeepseekV4Flash` | **Text-only** | The family is scaffolded and its witnessed checkpoint carries a vision tower, but this port has no executable intake or runtime vision path. |
+| `Llama`, `Qwen3Moe`, `Qwen3Dense`, `Qwen2Dense`, `GptOss`, `Spark25`, `MiniMaxM2` | **Text-only** | No image tower is implemented for these families. |
+
+`Real-gated` means an image was encoded and changed generated output on a real
+install. `Structural, unverified` means the shared code accepts the family and
+can carry a tower, but the family lacks the real artifact and end-to-end gates
+needed for a release claim. `Text-only` also describes the current behavior of
+the request surfaces: they may validate or report an image, but the image does
+not reach the model.
+
+The current real gate covers Qwen3.8 dense. It supports still images only, on
+the macOS Metal runtime. CLI image prompts require `--messages-file` or
+`--chat`; raw `--prompt --image` has no chat-template marker. The server accepts
+base64 data URLs on both OpenAI and Anthropic endpoints, refuses remote URLs,
+and uses its sequential image path. The FFI and Swift-facing path accepts image
+parts and sidecar options, while scripted and non-macOS sessions cannot encode
+an image. `qwen3_vl` is not registered; its unresolved trunk and deepstack
+questions remain scoped in [`docs/QWEN3VL_PHASE0.md`](QWEN3VL_PHASE0.md).
+
+The nearest implemented-family gap is Gemma 4 vision (`gemma4_unified`), whose
+text half already runs here and whose roughly 815 vision tensors are dropped
+at repack today. The nearest shared-path evidence gap is a real Qwen GDN MoE
+vision install.
 
 ---
 

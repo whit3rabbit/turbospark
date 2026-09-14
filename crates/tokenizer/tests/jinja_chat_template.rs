@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use turbospark_tokenizer::{
     render_generic_chat_template, ContentPart, Message, MfTokenizer, ReasoningEffort, Role,
+    TokenizerError,
 };
 
 fn load() -> MfTokenizer {
@@ -417,4 +418,60 @@ fn a_conditional_kwarg_rewrites_beside_multibyte_text() {
         ),
         "[1]版本"
     );
+}
+
+/// A comment containing both multibyte text and an equals sign does not
+/// panic the scanner. Validated security report PoC.
+#[test]
+fn multibyte_comment_with_equals_does_not_panic() {
+    assert_eq!(render_with("poc", "{# café = x #}{{ 'ok' }}"), "ok");
+}
+
+/// An unbalanced quote inside a Jinja comment must not prevent subsequent
+/// blocks from being scanned and rewritten.
+#[test]
+fn unbalanced_quote_in_comment_with_equals_does_not_break_rewrite() {
+    assert_eq!(
+        render_with(
+            "unbal-comment",
+            "{# don't do this = x #}{%- set ns = namespace(a=1 if true else 2) -%}[{{ ns.a }}]"
+        ),
+        "[1]"
+    );
+}
+
+/// An escaped character followed by multibyte text inside a string literal
+/// does not misalign the index or panic on non-character boundaries.
+#[test]
+fn escaped_multibyte_in_string_literal_does_not_panic() {
+    assert_eq!(
+        render_with(
+            "escaped-multibyte",
+            "{%- set ns = namespace(v='\\café' if true else 'alt') -%}[{{ ns.v }}]"
+        ),
+        "[\\café]"
+    );
+}
+
+/// Multibyte characters in string literals survive conditional rewriting
+/// without mojibake or UTF-8 corruption.
+#[test]
+fn multibyte_in_string_literal_preserves_utf8() {
+    assert_eq!(
+        render_with(
+            "multibyte-lit",
+            "{%- set ns = namespace(v='café \\'quoted\\' = val' if true else 'alt') -%}[{{ ns.v }}]"
+        ),
+        "[café 'quoted' = val]"
+    );
+}
+
+/// An unterminated Jinja block returns TokenizerError rather than panicking.
+#[test]
+fn unterminated_block_returns_tokenizer_error_rather_than_panic() {
+    let tok = tokenizer_with_template("unterminated", "{%- set ns = namespace(a=1 if true");
+    let messages = vec![Message::new(Role::User, "hi")];
+    let err =
+        render_generic_chat_template(&tok, &messages, &[], true, ReasoningEffort::Off).unwrap_err();
+    assert!(matches!(err, TokenizerError::InvalidChatTemplate(_)));
 }

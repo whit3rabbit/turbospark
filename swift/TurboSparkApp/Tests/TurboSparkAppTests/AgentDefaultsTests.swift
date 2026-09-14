@@ -42,9 +42,10 @@ final class AgentDefaultsTests: XCTestCase {
 
         // Tool guidance must name the ADVERTISED wire names (what the
         // subagent's Available Tools listing prints), not legacy synonyms.
-        for wireName in ["Glob", "Grep", "FileRead", "FileWrite", "FileEdit", "Bash"] {
+        for wireName in ["Glob", "Grep", "grep_search", "FileRead", "FileWrite", "FileEdit", "Bash"] {
             XCTAssertTrue(prompt.contains(wireName), "prompt does not mention \(wireName)")
         }
+        XCTAssertTrue(prompt.contains("Syntext"), "prompt does not mention Syntext")
         XCTAssertTrue(prompt.contains("read-only operations"), "prompt lost the Bash read-only guidance")
         XCTAssertTrue(prompt.contains("thoroughness level"), "prompt lost the search-breadth guidance")
         XCTAssertTrue(prompt.contains("batch multiple tool calls"), "prompt lost the batching guidance")
@@ -52,12 +53,12 @@ final class AgentDefaultsTests: XCTestCase {
         XCTAssertTrue(prompt.contains("avoid using emojis"), "prompt lost opencode's no-emoji rule")
 
         // Read-only is ENFORCED by an allowlist, not only asked for in the
-        // prompt (opencode's `"*": "deny"` + six allows). Every tool the
+        // prompt (opencode's `"*": "deny"` + explicit allows). Every tool the
         // app gains later stays out by default.
-        for allowed in ["FileRead", "Glob", "Grep", "Bash", "WebFetch", "WebSearch"] {
+        for allowed in ["FileRead", "Glob", "Grep", "grep_search", "Bash", "WebFetch", "WebSearch"] {
             XCTAssertTrue(explore?.isToolAllowed(allowed) ?? false, "explore lost \(allowed)")
         }
-        for refused in ["FileWrite", "FileEdit", "apply_patch", "NotebookEdit", "agent", "TodoWrite", "memory", "skill"] {
+        for refused in ["FileWrite", "FileEdit", "apply_patch", "NotebookEdit", "notebook_edit", "agent", "TodoWrite", "memory", "skill", "exit_plan_mode"] {
             XCTAssertFalse(explore?.isToolAllowed(refused) ?? true, "explore must not gain \(refused)")
         }
 
@@ -82,9 +83,18 @@ final class AgentDefaultsTests: XCTestCase {
         ]
 
         let explore = agents.first { $0.name == "explore" }
+        let expectedExploreDenies: Set<String> = writeDenies.union([
+            "notebook_edit", "notebookedit",
+            "agent", "subagent", "task",
+            "enter_plan_mode", "enterplanmode",
+            "exit_plan_mode", "exitplanmode",
+            "todowrite", "todo_write",
+            "enter_worktree", "enterworktree",
+            "exit_worktree", "exitworktree"
+        ])
         XCTAssertEqual(
             Set(explore?.disallowedTools ?? []),
-            writeDenies.union(["agent", "subagent"]),
+            expectedExploreDenies,
             "explore's deny set moved")
         // The allowlist is the enforced half of explore's read-only
         // contract and, like the deny set, a ceiling: a project agent
@@ -92,17 +102,72 @@ final class AgentDefaultsTests: XCTestCase {
         // one, so widening it widens every shadowing override too.
         XCTAssertEqual(
             Set(explore?.tools ?? []),
-            ["FileRead", "Glob", "Grep", "Bash", "WebFetch", "WebSearch"],
+            ["FileRead", "Glob", "Grep", "grep_search", "Bash", "WebFetch", "WebSearch"],
             "explore's allowlist moved")
-        for readOnlyName in ["plan", "reviewer"] {
-            let agent = agents.first { $0.name == readOnlyName }
-            XCTAssertEqual(
-                Set(agent?.disallowedTools ?? []),
-                writeDenies,
-                "\(readOnlyName)'s deny set moved")
-        }
+        let plan = agents.first { $0.name == "plan" }
+        XCTAssertEqual(
+            Set(plan?.disallowedTools ?? []),
+            expectedExploreDenies,
+            "plan's deny set moved")
+        XCTAssertEqual(
+            Set(plan?.tools ?? []),
+            ["FileRead", "Glob", "Grep", "grep_search", "Bash", "WebFetch", "WebSearch"],
+            "plan's allowlist moved")
+
+        let reviewer = agents.first { $0.name == "reviewer" }
+        XCTAssertEqual(
+            Set(reviewer?.disallowedTools ?? []),
+            writeDenies,
+            "reviewer's deny set moved")
         let generalPurpose = agents.first { $0.name == "general-purpose" }
         XCTAssertNil(generalPurpose?.disallowedTools, "general-purpose must stay unrestricted")
+    }
+
+    func testPlanBuiltInCarriesTheReadOnlyContract() {
+        let plan = AgentManager.shared.builtInAgents.first { $0.name == "plan" }
+        let prompt = plan?.systemPrompt ?? ""
+
+        XCTAssertTrue(prompt.contains("CRITICAL: READ-ONLY MODE"), "prompt lost the critical read-only banner")
+        XCTAssertTrue(prompt.contains("STRICTLY PROHIBITED"), "prompt lost the prohibition list")
+        XCTAssertTrue(prompt.contains("redirect operators"), "prompt lost the redirect/heredoc prohibition")
+        XCTAssertTrue(prompt.contains("Critical Files for Implementation"), "prompt lost the required Critical Files output section")
+
+        for wireName in ["Glob", "Grep", "grep_search", "FileRead", "FileWrite", "FileEdit", "Bash"] {
+            XCTAssertTrue(prompt.contains(wireName), "prompt does not mention \(wireName)")
+        }
+        XCTAssertTrue(prompt.contains("Syntext"), "prompt does not mention Syntext")
+        XCTAssertTrue(prompt.contains("read-only operations"), "prompt lost the Bash read-only guidance")
+        XCTAssertTrue(prompt.contains("avoid using emojis"), "prompt lost opencode's no-emoji rule")
+
+        for allowed in ["FileRead", "Glob", "Grep", "grep_search", "Bash", "WebFetch", "WebSearch"] {
+            XCTAssertTrue(plan?.isToolAllowed(allowed) ?? false, "plan lost \(allowed)")
+        }
+        for refused in ["FileWrite", "FileEdit", "apply_patch", "NotebookEdit", "notebook_edit", "agent", "TodoWrite", "memory", "skill", "exit_plan_mode"] {
+            XCTAssertFalse(plan?.isToolAllowed(refused) ?? true, "plan must not gain \(refused)")
+        }
+
+        let description = plan?.agentDescription ?? ""
+        XCTAssertTrue(description.lowercased().contains("architect"), "description lost architect guidance")
+        XCTAssertTrue(description.lowercased().contains("implementation plans"), "description lost plans guidance")
+    }
+
+    func testGeneralPurposeBuiltInContract() {
+        let gp = AgentManager.shared.builtInAgents.first { $0.name == "general-purpose" }
+        XCTAssertNotNil(gp, "general-purpose agent must exist")
+        XCTAssertNil(gp?.disallowedTools, "general-purpose must have no disallowedTools")
+        XCTAssertNil(gp?.tools, "general-purpose must have no restricted tools allowlist")
+        XCTAssertEqual(gp?.omitsProjectInstructions, false, "general-purpose must not omit project instructions")
+        XCTAssertEqual(gp?.maxTurns, 6, "general-purpose maxTurns should be 6")
+
+        let prompt = gp?.systemPrompt ?? ""
+        XCTAssertTrue(prompt.contains("TurboSpark"), "prompt must mention TurboSpark")
+        XCTAssertTrue(prompt.contains("Syntext"), "prompt must mention Syntext for search")
+        XCTAssertTrue(prompt.contains("Searching for code"), "prompt must mention code search strength")
+        XCTAssertTrue(prompt.contains("concise report"), "prompt must ask for concise report")
+
+        let desc = gp?.agentDescription ?? ""
+        XCTAssertTrue(desc.contains("researching complex questions"), "description lost complex questions")
+        XCTAssertTrue(desc.contains("searching for code"), "description lost searching for code")
     }
 
     func testExploreBuiltInOmitsProjectInstructions() {
@@ -114,6 +179,19 @@ final class AgentDefaultsTests: XCTestCase {
                 agent?.omitsProjectInstructions, false,
                 "\(name) must still see project instructions")
         }
+    }
+
+    func testParserRecognizesOmitClaudeMdFrontmatter() {
+        let markdown = """
+        ---
+        name: custom-scout
+        omit_claude_md: true
+        ---
+        Fast search.
+        """
+        let parsed = AgentParser.parseMarkdownContent(
+            markdown, sourceURL: URL(fileURLWithPath: "/tmp/custom-scout.md"))
+        XCTAssertTrue(parsed.omitsProjectInstructions, "omit_claude_md frontmatter was not parsed")
     }
 
     func testOmitFlagDropsOnlyTheProjectInstructionsSection() {

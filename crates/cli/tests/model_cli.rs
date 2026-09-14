@@ -189,6 +189,41 @@ fn a_malformed_invocation_exits_two_and_prints_usage() {
     }
 }
 
+#[test]
+fn pull_image_requires_a_pinned_local_source_contract() {
+    let (code, _, stderr) = run(&["pull-image"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("--alias"), "{stderr}");
+
+    let (code, _, stderr) = run(&[
+        "pull-image",
+        "--alias",
+        "z-image",
+        "--source",
+        "/tmp/source",
+        "--model-id",
+        "Tongyi-MAI/Z-Image-Turbo",
+        "--model-revision",
+        "main",
+    ]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("40-hex"), "{stderr}");
+
+    let (code, _, stderr) = run(&[
+        "pull-image",
+        "--alias",
+        "../escape",
+        "--source",
+        "/tmp/source",
+        "--model-id",
+        "Tongyi-MAI/Z-Image-Turbo",
+        "--model-revision",
+        "f332072aa78be7aecdf3ee76d5c247082da564a6",
+    ]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("ASCII letters"), "{stderr}");
+}
+
 /// An option that the current command does not read is an ERROR, not a
 /// silent no-op. `--force` on `list` doing nothing reads as the command
 /// having considered and ignored it.

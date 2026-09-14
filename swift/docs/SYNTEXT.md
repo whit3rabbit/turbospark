@@ -100,6 +100,9 @@ case "search_code", "grep", "search", "grep_search":
   falls back to standard unindexed file scanning (`searchCode`).
 - Tool names `grep_search`, `grep`, and `search_code` are registered in `supportedToolNames`
   and `workspaceRootedToolNames` in `Tools/Registry/AppToolRegistry+Vocabulary.swift`.
+- The built-in `explore` subagent (`AgentManager+BuiltIns.swift`) and project-level
+  `explore.md` definitions designate `grep_search` as their primary code-discovery tool,
+  using Syntext indexed search by default rather than shelling out to grep/find via Bash.
 
 ### Incremental Live Updates and Quiet Sync
 When agent tools modify workspace files (`write_file`, `edit_file`, `apply_patch`),

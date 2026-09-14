@@ -215,6 +215,108 @@ pub fn pull(
     Ok(())
 }
 
+/// Package a pinned local Diffusers image export. This deliberately bypasses
+/// the text catalog and its Mlx/GGUF probe: an image install has five
+/// components, a different manifest, and a different runtime capability.
+pub fn pull_image(store: &Store, positionals: &[String], options: &Options) -> Result<(), Error> {
+    if !positionals.is_empty() {
+        return Err(Error::Usage(
+            "pull-image takes --alias <NAME>, not a positional alias".to_string(),
+        ));
+    }
+    let alias = options
+        .alias
+        .as_deref()
+        .ok_or_else(|| Error::Usage("pull-image needs --alias <NAME>".to_string()))?;
+    if alias.is_empty()
+        || !alias
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(Error::Usage(
+            "--alias must contain only ASCII letters, digits, '.', '_' or '-'".to_string(),
+        ));
+    }
+    let source = options
+        .source
+        .as_deref()
+        .ok_or_else(|| Error::Usage("pull-image needs --source <DIR>".to_string()))?;
+    let model_id = options
+        .model_id
+        .as_deref()
+        .ok_or_else(|| Error::Usage("pull-image needs --model-id <ID>".to_string()))?;
+    let model_revision = options
+        .model_revision
+        .as_deref()
+        .ok_or_else(|| Error::Usage("pull-image needs --model-revision <REV>".to_string()))?;
+    if model_revision.len() != 40 || !model_revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(Error::Usage(
+            "--model-revision must be an immutable 40-hex commit revision".to_string(),
+        ));
+    }
+    let output = options
+        .out
+        .clone()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| store.image_install_path(alias));
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            Error::Failed(format!(
+                "creating image install parent {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    let report = image::build_image_install(&image::ImageInstallSpec {
+        source_root: std::path::PathBuf::from(source),
+        output_root: output,
+        model_id: model_id.to_string(),
+        model_revision: model_revision.to_string(),
+    })
+    .map_err(Error::Failed)?;
+    let path = report
+        .output_root
+        .canonicalize()
+        .unwrap_or_else(|_| report.output_root.clone());
+    let model = catalog::InstalledModel {
+        alias: alias.to_string(),
+        repo: model_id.to_string(),
+        revision: model_revision.to_string(),
+        path: path.clone(),
+        family: "z-image-turbo".to_string(),
+        install_bytes: report.total_bytes,
+        installed_on: today(),
+        status: "unlisted".to_string(),
+        kind: Some("image".to_string()),
+    };
+    store.record(&model).map_err(Error::Failed)?;
+    println!(
+        "installed image {} ({} bytes) to {}",
+        alias,
+        report.total_bytes,
+        path.display()
+    );
+    Ok(())
+}
+
+fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    let z = secs.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 /// Install a curated vision-tower row, or an ad-hoc `--repo` naming one
 /// directly (vision memory sidecar, part A5). Mirrors [`pull`], with two
 /// differences: the default install directory carries the `-vision` suffix
