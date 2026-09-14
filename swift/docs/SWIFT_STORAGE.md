@@ -14,6 +14,12 @@ an `AppModel`, or touching any of the seven stores listed below.
 `settings.json`, `chats_archive.json`, `projects_archive.json`, each
 written whole with `.atomic` on every mutation.
 
+Hook option values have a separate split store. Ordinary values live in
+`Hooks/hook_options_values.json`, written with mode 0600. Options whose
+plugin manifest sets `sensitive` live in the macOS Keychain and are omitted
+from that JSON file. Discovery migrates any legacy plaintext sensitive value
+to Keychain and rewrites the JSON without it.
+
 **A decode failure used to be silently fatal to the file's content.**
 Every store's `load()` swallowed a decode failure and returned the empty
 default, so a schema change that is not backwards-compatible discarded the

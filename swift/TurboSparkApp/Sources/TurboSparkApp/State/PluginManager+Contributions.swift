@@ -319,8 +319,17 @@ extension PluginManager {
 
     func expansionContext(for plugin: LoadedPlugin) -> ExpansionContext {
         let sourceID = "plugin_\(plugin.name)"
-        let stored = Self.hookOptionValues()[sourceID] ?? [:]
+        var stored = Self.hookOptionValues()[sourceID] ?? [:]
         let sensitive = Set(plugin.manifest.userConfig.filter(\.isSensitive).map(\.key))
+        let keychain = HookOptionKeychain()
+        for key in sensitive {
+            if let value = keychain.load(
+                sourceID: sourceID, key: key,
+                storageDirectory: AppStorageRoot.subdirectory("Hooks"))
+            {
+                stored[key] = value
+            }
+        }
         // Defaults from the manifest fill what the user has not set.
         let defaults = Dictionary(
             plugin.manifest.userConfig.compactMap { option in
@@ -336,7 +345,7 @@ extension PluginManager {
 
     /// Reads the hooks options store directly. `AppHookStore` is a
     /// `@MainActor` singleton and this is reached from tool-execution paths;
-    /// the file is plain JSON written by the same store.
+    /// the file contains only non-sensitive values written by the same store.
     static func hookOptionValues() -> [String: [String: String]] {
         let url = AppStorageRoot.subdirectory("Hooks")
             .appendingPathComponent("hook_options_values.json")

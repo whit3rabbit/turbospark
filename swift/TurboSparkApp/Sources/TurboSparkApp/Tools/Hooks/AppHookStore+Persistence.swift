@@ -45,10 +45,44 @@ extension AppHookStore {
     }
 
     func saveOptionValues() {
+        var publicValues = optionValues
+        for (sourceID, keys) in sensitiveOptionKeys {
+            for key in keys {
+                publicValues[sourceID]?.removeValue(forKey: key)
+            }
+            if publicValues[sourceID]?.isEmpty == true {
+                publicValues.removeValue(forKey: sourceID)
+            }
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        AppJSONStore.save(
-            optionValues, to: optionsValuesFileURL, label: "Hook option values", encoder: encoder)
+        if AppJSONStore.save(
+            publicValues, to: optionsValuesFileURL, label: "Hook option values", encoder: encoder)
+        {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: optionsValuesFileURL.path)
+        }
+    }
+
+    /// Loads Keychain-backed values and removes legacy plaintext secrets from
+    /// the preferences file after plugin discovery identifies sensitive keys.
+    func synchronizeSensitiveOptionValues() {
+        var foundLegacyPlaintext = false
+        for (sourceID, keys) in sensitiveOptionKeys {
+            for key in keys {
+                if let plaintext = optionValues[sourceID]?[key] {
+                    optionSecretStore.save(
+                        plaintext, sourceID: sourceID, key: key,
+                        storageDirectory: storageDirectory)
+                    foundLegacyPlaintext = true
+                } else if let secret = optionSecretStore.load(
+                    sourceID: sourceID, key: key, storageDirectory: storageDirectory)
+                {
+                    optionValues[sourceID, default: [:]][key] = secret
+                }
+            }
+        }
+        if foundLegacyPlaintext { saveOptionValues() }
     }
 
     /// **A DECODE FAILURE HERE USED TO BE PERMANENT.** The old body was one

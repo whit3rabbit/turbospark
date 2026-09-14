@@ -46,6 +46,9 @@ Shared across profiles by design: downloaded model weights and the install
 registry (`~/.turbospark/models`, `installed.json`, the Rust catalog), the
 Keychain server API key, and the UI language (a `@AppStorage` key). Model
 favorites, nicknames and tags ARE per profile (`model_organization.json`).
+Sensitive plugin hook options use Keychain accounts derived from the
+profile-aware hook storage path, so unlike the server key they remain isolated
+between profiles.
 
 ## How the seam works
 

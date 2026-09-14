@@ -129,7 +129,9 @@ public struct HookOptionsConfigSheet: View {
                             get: { values[spec.key] ?? "" },
                             set: { val in
                                 values[spec.key] = val
-                                hookStore.updateOptionValue(sourceID: group.id, key: spec.key, value: val)
+                                hookStore.updateOptionValue(
+                                    sourceID: group.id, key: spec.key, value: val,
+                                    isSensitive: true)
                             }
                         )
                     )

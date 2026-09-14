@@ -1,6 +1,19 @@
 import XCTest
 @testable import TurboSparkApp
 
+private final class InMemoryHookOptionSecrets: HookOptionSecretStoring {
+    private(set) var values: [String: String] = [:]
+
+    func load(sourceID: String, key: String, storageDirectory: URL) -> String? {
+        values["\(sourceID).\(key)"]
+    }
+
+    func save(_ value: String, sourceID: String, key: String, storageDirectory: URL) -> Bool {
+        values["\(sourceID).\(key)"] = value
+        return true
+    }
+}
+
 final class HookSystemTests: XCTestCase {
 
     func testHookContentHashDeterminism() {
@@ -93,6 +106,44 @@ final class HookSystemTests: XCTestCase {
 
         let fallback = await store.getOptionValue(sourceID: sourceID, key: "missing_key", defaultVal: "default-val")
         XCTAssertEqual(fallback, "default-val")
+    }
+
+    @MainActor
+    func testSensitiveOptionUsesSecretStoreAndIsOmittedFromRestrictedJSON() throws {
+        let secrets = InMemoryHookOptionSecrets()
+        let sourceID = "security-test-\(UUID().uuidString)"
+        let optionsURL = AppStorageRoot.subdirectory("Hooks")
+            .appendingPathComponent("hook_options_values.json")
+        let legacy = [sourceID: ["api_key": "legacy-secret", "region": "local"]]
+        try JSONEncoder().encode(legacy).write(to: optionsURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: optionsURL) }
+
+        let store = AppHookStore(optionSecretStore: secrets)
+        store.sourceGroups = [
+            AppHookSourceGroup(
+                id: sourceID, title: "Security test", subtitle: "", sourceType: .plugin,
+                optionSpecs: [
+                    AppHookOptionSpec(
+                        key: "api_key", type: .string, title: "API key", description: "",
+                        isSensitive: true),
+                    AppHookOptionSpec(
+                        key: "region", type: .string, title: "Region", description: "")
+                ])
+        ]
+        store.synchronizeSensitiveOptionValues()
+
+        XCTAssertEqual(secrets.values["\(sourceID).api_key"], "legacy-secret")
+        store.updateOptionValue(
+            sourceID: sourceID, key: "api_key", value: "not-in-json", isSensitive: true)
+
+        let data = try Data(contentsOf: store.optionsValuesFileURL)
+        let persisted = try JSONDecoder().decode([String: [String: String]].self, from: data)
+        XCTAssertNil(persisted[sourceID]?["api_key"])
+        XCTAssertEqual(persisted[sourceID]?["region"], "local")
+        XCTAssertEqual(secrets.values["\(sourceID).api_key"], "not-in-json")
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: store.optionsValuesFileURL.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? NSNumber, NSNumber(value: 0o600))
     }
 
     func testExecutionEngineEvaluatesPreToolUseExitCode2AsBlocking() async {
