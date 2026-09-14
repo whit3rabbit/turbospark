@@ -34,6 +34,33 @@ pub(crate) fn encode_embed_any(
     embed_scale: f32,
 ) -> Result<(), RealForwardError> {
     let e = entry(index, name)?;
+    let shape = e.shape;
+    if shape.0 == 0 || shape.1 != hidden || shape.2 != 0 || shape.3 != 0 {
+        return Err(RealForwardError::Unsupported(format!(
+            "embedding table {name}: expected [rows, {hidden}], got {shape:?}"
+        )));
+    }
+    if token >= shape.0 {
+        return Err(RealForwardError::Unsupported(format!(
+            "embedding table {name}: token {token} is outside {} rows",
+            shape.0
+        )));
+    }
+    let row_block = match e.dtype {
+        DTYPE_GGUF_Q8_0 => Some(gpu::Q8_0_BLOCK_ELEMS),
+        DTYPE_GGUF_Q4_K => Some(gpu::Q4_K_BLOCK_ELEMS),
+        DTYPE_GGUF_Q6_K => Some(gpu::Q6_K_BLOCK_ELEMS),
+        DTYPE_GGUF_IQ1_M => Some(gpu::IQ1_M_BLOCK_ELEMS),
+        _ => None,
+    };
+    if let Some(block) = row_block {
+        if hidden as usize % block != 0 {
+            return Err(RealForwardError::Unsupported(format!(
+                "embedding table {name}: row width {hidden} is not divisible by its \
+                 {block}-element block"
+            )));
+        }
+    }
     let base = index.header.index_size;
     let table = (weights.buffer(), weights.gpu_offset(e.file_offset - base));
     // A GGUF embedding table is one contiguous byte run per row with its

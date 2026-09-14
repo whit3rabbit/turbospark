@@ -75,7 +75,7 @@ impl std::error::Error for GgufConfigError {}
 /// embedding's row count is the authority for the MODEL, and a checkpoint
 /// whose embedding is padded past the token list would otherwise produce an
 /// `ArchConfig` that disagrees with its own weights.
-fn vocab_size(header: &GgufHeader) -> Result<i64, GgufConfigError> {
+fn vocab_size(header: &GgufHeader, hidden_size: i64) -> Result<i64, GgufConfigError> {
     let name = "token_embd.weight";
     let info = header
         .tensors
@@ -84,14 +84,31 @@ fn vocab_size(header: &GgufHeader) -> Result<i64, GgufConfigError> {
             name: name.to_string(),
         })?;
     // Dims are stored fastest-varying first, so this is [hidden, vocab].
-    info.dims
-        .get(1)
-        .copied()
-        .map(|v| v as i64)
-        .ok_or(GgufConfigError::BadValue {
+    // The first dimension is also the independently encoded row. Checking
+    // only the product would allow quantization blocks to straddle rows.
+    if info.dims.len() != 2 || info.dims[0] != hidden_size as u64 {
+        return Err(GgufConfigError::BadValue {
             key: name.to_string(),
-            detail: format!("expected rank 2, got {:?}", info.dims),
-        })
+            detail: format!("expected [{hidden_size}, vocab], got {:?}", info.dims),
+        });
+    }
+    let (block_elems, _) =
+        crate::gguf_header::ggml_type_block(info.ggml_type).ok_or_else(|| {
+            GgufConfigError::BadValue {
+                key: name.to_string(),
+                detail: format!("unsupported ggml type {}", info.ggml_type),
+            }
+        })?;
+    if info.dims[0] % block_elems != 0 {
+        return Err(GgufConfigError::BadValue {
+            key: name.to_string(),
+            detail: format!(
+                "row width {} is not divisible by the type-{} block size {block_elems}",
+                info.dims[0], info.ggml_type
+            ),
+        });
+    }
+    Ok(info.dims[1] as i64)
 }
 
 /// Rebuild an [`ArchConfig`] from GGUF metadata.
@@ -198,7 +215,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         None if arch.num_experts > 0 => m.i64("feed_forward_length")?,
         None => 0,
     };
-    arch.vocab_size = vocab_size(header)?;
+    arch.vocab_size = vocab_size(header, arch.hidden_size)?;
     // Untied only when the checkpoint actually ships a separate head.
     arch.tie_word_embeddings = !header.tensors.contains_key("output.weight");
 

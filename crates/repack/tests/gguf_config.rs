@@ -381,3 +381,42 @@ fn rejects_a_file_with_no_embedding_tensor() {
         other => panic!("expected MissingTensor, got {other:?}"),
     }
 }
+
+#[test]
+fn rejects_an_embedding_whose_width_disagrees_with_metadata() {
+    let (bytes, _) = GgufBuilder::new()
+        .metadata_str("general.architecture", "llama")
+        .metadata_u32("llama.block_count", 1)
+        .metadata_u32("llama.embedding_length", 96)
+        .metadata_u32("llama.attention.head_count", 8)
+        .metadata_u32("llama.feed_forward_length", 128)
+        .metadata_f32("llama.rope.freq_base", 10_000.0)
+        .q8_0_tensor("token_embd.weight", &[64, 2], 1)
+        .build();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let error = arch_from_gguf(&h).unwrap_err().to_string();
+    assert!(
+        error.contains("expected [96, vocab], got [64, 2]"),
+        "{error}"
+    );
+}
+
+#[test]
+fn rejects_quantized_embedding_blocks_that_straddle_rows() {
+    let (bytes, _) = GgufBuilder::new()
+        .metadata_str("general.architecture", "llama")
+        .metadata_u32("llama.block_count", 1)
+        .metadata_u32("llama.embedding_length", 384)
+        .metadata_u32("llama.attention.head_count", 8)
+        .metadata_u32("llama.feed_forward_length", 512)
+        .metadata_f32("llama.rope.freq_base", 10_000.0)
+        // Three complete Q4_K blocks in total, but one and a half per row.
+        .tensor("token_embd.weight", 12, &[384, 2], vec![0; 3 * 144])
+        .build();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let error = arch_from_gguf(&h).unwrap_err().to_string();
+    assert!(
+        error.contains("row width 384 is not divisible by the type-12 block size 256"),
+        "{error}"
+    );
+}
