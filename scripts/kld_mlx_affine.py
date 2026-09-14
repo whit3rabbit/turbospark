@@ -362,8 +362,8 @@ def main() -> None:
             "  the checkpoint name is REQUIRED; see the module doc for why"
         )
     dump = pathlib.Path(sys.argv[1])
-    name = sys.argv[2]
-    spec = CHECKPOINTS[name]
+    checkpoint_name = sys.argv[2]
+    spec = CHECKPOINTS[checkpoint_name]
     meta = json.loads((dump / "meta.json").read_text())
     rows, vocab, ids = meta["rows"], meta["vocab_size"], meta["token_ids"]
 
@@ -376,9 +376,9 @@ def main() -> None:
 
     cached, quantization = mlx_logits(ids, cached=True, spec=spec)
     batched, _ = mlx_logits(ids, cached=False, spec=spec)
-    for name, arr in (("cached", cached), ("batched", batched)):
+    for shape_name, arr in (("cached", cached), ("batched", batched)):
         if arr.shape != port.shape:
-            sys.exit(f"mlx {name} returned {arr.shape}, this port dumped {port.shape}")
+            sys.exit(f"mlx {shape_name} returned {arr.shape}, this port dumped {port.shape}")
 
     # REPORTED, never checked against an invented bound. This family declares
     # no logit softcap, so there is no transform for the two heads to
@@ -416,7 +416,9 @@ def main() -> None:
     # Named per artifact, for `kld_llamacpp.py`'s reason: every arm of every
     # model is the same shape, so a shared filename lets one run's report be
     # read as another's.
-    (dump / f"kld_mlx_affine-{name}.json").write_text(json.dumps(report, indent=2) + "\n")
+    (dump / f"kld_mlx_affine-{checkpoint_name}.json").write_text(
+        json.dumps(report, indent=2) + "\n"
+    )
 
 
 if __name__ == "__main__":
