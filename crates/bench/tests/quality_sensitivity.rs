@@ -12,14 +12,13 @@
 //! quantization-shaped perturbation of the routed experts -- not a broken
 //! model, which every existing smoke already catches.
 //!
-//! THE DAMAGE IS ONE QUANTIZATION LEVEL, applied to a strided subset. XOR
-//! `0x01` into a byte of an int4 blob flips the low nibble's least
+//! THE DAMAGE IS ONE QUANTIZATION LEVEL, applied to a strided subset of the
+//! weight ranges identified by `packed_experts/layout.json`. XOR `0x01` into
+//! a byte of an int4 weight flips the low nibble's least
 //! significant bit, moving that weight by exactly one of its sixteen
 //! levels: the smallest error a requantization can make, and the direction
-//! a sub-4-bit config errs in. It cannot produce a NaN or an infinity even
-//! if it lands on an FP16 scale, because bit 0 of either scale byte is a
-//! mantissa bit -- which matters, since a NaN would make this test pass for
-//! the wrong reason (a destroyed model, not a degraded one).
+//! a sub-4-bit config errs in. BF16 scales, biases, and padding are excluded,
+//! so the stimulus cannot pass by severely corrupting a companion tensor.
 //!
 //! ONLY `packed_experts/` IS TOUCHED, so the resident core (attention,
 //! embeddings, router, shared expert) is bit-identical and the measured
@@ -40,30 +39,15 @@ mod quality_common;
 
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 /// Damage one 4 KiB page in every `DAMAGE_PAGE_STRIDE`.
 ///
-/// A whole page rather than scattered bytes so the write pattern is
-/// page-aligned (the expert layout is too, and a read-modify-write of
-/// partial pages would cost far more I/O for the same effect).
-///
-/// MEASURED RESPONSE on the real Gemma 4 install, 2026-08-07, clean
-/// perplexity 37.3105 (also in `docs/BENCHMARKS.md`):
-///
-/// | stride | expert bytes touched | perplexity | drift |
-/// |---|---|---|---|
-/// | 8 | 12.5% | 12,249,392 | model destroyed |
-/// | 512 (this value) | 0.195% | 51.3597 | +37.7% |
-/// | 8192 | 0.0122% | 41.2186 | +10.5% |
-/// | 65536 | 0.0015% | 37.5118 | +0.54%, UNDER the gate's 2% band |
-///
-/// 512 is chosen for margin, not for being the smallest detectable damage:
-/// it is 19x the gate's tolerance, so the assertion below cannot flake, and
-/// it is still only one weight byte in 512. The 65536 row is the useful
-/// bound in the other direction -- damage that small does NOT clear the
-/// gate's band, so the gate's floor is somewhere between 0.0015% and
-/// 0.0122% of expert bytes at one quantization level.
+/// Page selection remains relative to each layer file, but only the portions
+/// that overlap packed INT4 weight tensors are written. The previous measured
+/// response also changed BF16 scales and biases and is intentionally not used
+/// as evidence for this corrected stimulus.
 const DAMAGE_PAGE_STRIDE: u64 = 512;
 
 const PAGE_BYTES: usize = 4096;
@@ -158,20 +142,31 @@ fn clone_install(dir: &Path) -> PathBuf {
 /// Flip one quantization level in every `DAMAGE_PAGE_STRIDE`-th page of
 /// every expert blob. Returns (blobs touched, pages damaged).
 fn damage_experts(install: &Path) -> (usize, u64) {
+    let layout = model_io::load_packed_experts_layout(
+        install,
+        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .expect("packed_experts/layout.json should describe the damage ranges");
     let mut files = 0usize;
     let mut pages = 0u64;
-    let entries = std::fs::read_dir(install.join("packed_experts"))
-        .expect("the install should have a packed_experts directory");
-    // Sorted so the damage is identical across runs; read_dir order is not
-    // specified, and a golden number wants a deterministic input.
-    let mut paths: Vec<PathBuf> = entries
-        .map(|e| e.expect("directory entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "bin"))
-        .collect();
-    paths.sort();
-    assert!(!paths.is_empty(), "no expert blobs to damage");
 
-    for path in paths {
+    for layer in &layout.layers {
+        let path = install.join("packed_experts").join(&layer.file);
+        let mut weight_ranges = Vec::new();
+        for expert in &layer.experts {
+            for (role, tensor) in &expert.sub_tensors {
+                if matches!(role.as_str(), "gate" | "up" | "down") && tensor.dtype == "u32" {
+                    let start = expert.offset + tensor.offset;
+                    weight_ranges.push(start..start + tensor.size);
+                }
+            }
+        }
+        assert_eq!(
+            weight_ranges.len(),
+            layout.experts_per_layer * 3,
+            "{} should contain exactly three packed INT4 weight ranges per expert",
+            layer.file
+        );
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -183,16 +178,52 @@ fn damage_experts(install: &Path) -> (usize, u64) {
         while offset + PAGE_BYTES as u64 <= len {
             file.seek(SeekFrom::Start(offset)).expect("seek");
             file.read_exact(&mut page).expect("read page");
-            for byte in page.iter_mut() {
-                *byte ^= 0x01;
+            let changed = damage_page(&mut page, offset, &weight_ranges);
+            if changed {
+                file.seek(SeekFrom::Start(offset)).expect("seek back");
+                file.write_all(&page).expect("write page");
+                pages += 1;
             }
-            file.seek(SeekFrom::Start(offset)).expect("seek back");
-            file.write_all(&page).expect("write page");
-            pages += 1;
             offset += DAMAGE_PAGE_STRIDE * PAGE_BYTES as u64;
         }
         file.sync_all().expect("flush the damaged blob");
         files += 1;
     }
     (files, pages)
+}
+
+fn damage_page(page: &mut [u8], offset: u64, weight_ranges: &[Range<u64>]) -> bool {
+    let page_end = offset + page.len() as u64;
+    let mut changed = false;
+    for range in weight_ranges {
+        let start = range.start.max(offset);
+        let end = range.end.min(page_end);
+        if start >= end {
+            continue;
+        }
+        for byte in &mut page[(start - offset) as usize..(end - offset) as usize] {
+            *byte ^= 0x01;
+        }
+        changed = true;
+    }
+    changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::damage_page;
+
+    #[test]
+    fn damage_page_changes_only_weight_intersections() {
+        let mut page = [0u8; 16];
+        assert!(damage_page(&mut page, 100, &[98..104, 108..112, 116..120]));
+        assert_eq!(page, [1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn damage_page_ignores_pages_outside_weight_ranges() {
+        let mut page = [0u8; 8];
+        assert!(!damage_page(&mut page, 100, &[0..100, 108..120]));
+        assert_eq!(page, [0; 8]);
+    }
 }

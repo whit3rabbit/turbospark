@@ -319,7 +319,8 @@ TURBOSPARK_GEMMA4_IQ_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
 
 # Proof the gate above can see quantization damage: clone the install
 # (APFS clonefile, original untouched), shift one quantization level in a
-# strided subset of the routed experts, re-measure. About 30 seconds.
+# strided subset of INT4 weight ranges selected from packed_experts/layout.json
+# (never the BF16 scales or biases), and re-measure. About 30 seconds.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test quality_sensitivity --release -- --ignored --nocapture
 
