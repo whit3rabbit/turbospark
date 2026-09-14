@@ -402,8 +402,9 @@ fn dump_text_and_image_logits() {
         .set_prompt_vision(std::slice::from_ref(&embedding), &positions, ids.len())
         .expect("the injection map validates against the reference's prompt");
 
-    // Row i holds the next-token logits after consuming ids[i], so the last id
-    // is fed to nobody -- the reference drops the same row in `prepare`.
+    // Row i holds the next-token logits after consuming ids[i]. The comparison
+    // dump omits the final row because the reference drops it in `prepare`, but
+    // the final id must still enter the KV cache before greedy generation.
     let path = dir.join("port.f16");
     let mut file = BufWriter::new(std::fs::File::create(&path).expect("create port.f16"));
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];
@@ -430,6 +431,15 @@ fn dump_text_and_image_logits() {
     file.flush().expect("flush port.f16");
     assert_eq!(written, header.rows, "row count must match the reference's");
 
+    let final_prompt_position = ids.len() - 1;
+    runner
+        .produce(
+            ids[final_prompt_position],
+            final_prompt_position,
+            &mut logits,
+        )
+        .unwrap_or_else(|e| panic!("produce at position {final_prompt_position}: {e}"));
+
     // GREEDY CONTINUATION, past the prompt. The divergence numbers above are
     // the instrument; this is the thing a reader actually wants to know, and
     // it is the only arm that exercises the DECODE side of the position rule
@@ -442,7 +452,7 @@ fn dump_text_and_image_logits() {
     let mut next = argmax(&logits);
     for step in 0..GENERATE_TOKENS {
         generated.push(next);
-        let position = ids.len() - 1 + step;
+        let position = ids.len() + step;
         runner
             .produce(next, position, &mut logits)
             .unwrap_or_else(|e| panic!("produce at decode position {position}: {e}"));
