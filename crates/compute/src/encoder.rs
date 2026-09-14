@@ -289,10 +289,18 @@ pub fn cls_pool_and_normalize(hidden_states: &[f32], hidden_size: usize) -> Vec<
 /// this stays the dot product it always was.
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len(), "embeddings must match dimension");
-    let norm_sq = |v: &[f32]| v.iter().map(|&x| x * x).sum::<f32>();
+    // Squaring finite f32 values in f32 can overflow or underflow even when
+    // their cosine is well-defined. Widen before every multiply and sum so
+    // the public arbitrary-vector contract also holds at extreme scales.
+    let norm_sq = |v: &[f32]| v.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>();
     let (na, nb) = (norm_sq(a), norm_sq(b));
     if na == 0.0 || nb == 0.0 {
         return 0.0;
     }
-    a.iter().zip(b).map(|(&x, &y)| x * y).sum::<f32>() / na.sqrt() / nb.sqrt()
+    let dot = a
+        .iter()
+        .zip(b)
+        .map(|(&x, &y)| f64::from(x) * f64::from(y))
+        .sum::<f64>();
+    (dot / na.sqrt() / nb.sqrt()).clamp(-1.0, 1.0) as f32
 }

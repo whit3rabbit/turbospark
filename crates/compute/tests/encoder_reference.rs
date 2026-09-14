@@ -43,6 +43,13 @@ fn test_cosine_similarity() {
 
     // A zero vector has no direction.
     assert_eq!(cosine_similarity(&a, &[0.0, 0.0, 0.0]), 0.0);
+
+    // Finite f32 inputs can overflow or underflow when squared in f32. They
+    // still have a well-defined direction and must produce a finite cosine.
+    for magnitude in [f32::MAX, f32::MIN_POSITIVE, f32::from_bits(1)] {
+        assert_eq!(cosine_similarity(&[magnitude], &[magnitude]), 1.0);
+    }
+    assert_eq!(cosine_similarity(&[1e20], &[1e-20]), 1.0);
 }
 
 #[test]
