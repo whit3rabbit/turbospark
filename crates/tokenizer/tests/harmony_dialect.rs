@@ -89,6 +89,19 @@ fn the_installed_template_renders_and_no_bos_is_prepended() {
     );
 }
 
+#[test]
+fn text_continuation_joins_harmony_turn_markers_without_whitespace() {
+    let t = fixture();
+    let actual = t.encode_text_continuation("hello");
+    let mut expected = vec![t.end_of_turn_id];
+    expected.extend(t.encode(
+        "<|start|>user<|message|>hello<|end|><|start|>assistant",
+        false,
+    ));
+
+    assert_eq!(actual, expected);
+}
+
 /// A gpt-oss install that lost its template gets an ERROR, not an invented
 /// prompt. Harmony's real template is 17 KB of system preamble, reasoning
 /// effort and a TypeScript tool namespace; a partial re-implementation is
