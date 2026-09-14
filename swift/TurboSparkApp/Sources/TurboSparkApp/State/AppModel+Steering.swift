@@ -98,7 +98,8 @@ extension AppModel {
         AppSteeringPolicy.needsReload(
             wantEnabled: steeringEnabled,
             wantPreset: resolvedSteeringPreset,
-            sessionSteering: info?.steering
+            sessionSteering: info?.steering,
+            loadedConfiguration: loadedSteeringConfiguration
         )
     }
 
