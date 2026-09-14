@@ -54,6 +54,13 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
     );
     check!("attentionKEqV", a.attention_k_eq_v, e.attention_k_eq_v);
     check!("hiddenActivation", a.hidden_activation, e.hidden_activation);
+    if usize::try_from(a.num_layers).ok() != Some(a.full_attention_layer_mask.len()) {
+        return Err(ModelError::ArchMismatch {
+            field: "fullAttentionLayerMask".to_string(),
+            expected: format!("one entry per layer ({})", a.num_layers),
+            actual: format!("{} entries", a.full_attention_layer_mask.len()),
+        });
+    }
     // `as u8` narrows silently: a manifest value of 257 would read as 1, and
     // a negative one would wrap into a plausible-looking mask byte instead
     // of being refused as the corrupt input it is.
