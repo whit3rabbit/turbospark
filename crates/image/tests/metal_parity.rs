@@ -41,9 +41,10 @@ fn packed_native_matches_conditioning_all_updates_and_decoded_output() {
         .expect("native conditioning");
     let expected_conditioning = read_fixture("conditioning.npy");
     assert_eq!(conditioning.len(), expected_conditioning.len());
+    let conditioning_error = relative_l2(&conditioning, &expected_conditioning);
     assert!(
-        relative_l2(&conditioning, &expected_conditioning) <= TEXT_REL_L2_LIMIT,
-        "native packed conditioning drift exceeds {TEXT_REL_L2_LIMIT}"
+        conditioning_error <= TEXT_REL_L2_LIMIT,
+        "native packed conditioning drift {conditioning_error} exceeds {TEXT_REL_L2_LIMIT}"
     );
 
     let request = request();
