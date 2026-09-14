@@ -341,6 +341,18 @@ fn rejects_a_tensor_offset_that_is_not_aligned() {
     ));
 }
 
+#[test]
+fn rejects_a_zero_tensor_dimension() {
+    let (bytes, _) = GgufBuilder::new()
+        .tensor("blk.0.attn_gate.weight", 0, &[0], Vec::new())
+        .build();
+
+    assert!(matches!(
+        parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES),
+        Err(GgufHeaderError::BadDimensions { .. })
+    ));
+}
+
 /// Counts reads, so the growth policy can be asserted rather than assumed:
 /// the point of [`fetch_gguf_header`] is that it does NOT make one request
 /// per header field.

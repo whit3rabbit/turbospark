@@ -53,10 +53,16 @@ pub fn kv_heads(m: &Meta<'_>, mask: &[u8]) -> Result<(i64, i64), GgufConfigError
 pub fn linear_attention(m: &Meta<'_>) -> Result<LinearAttentionConfig, GgufConfigError> {
     let inner = m.i64("ssm.inner_size")?;
     let num_v_heads = m.i64("ssm.time_step_rank")?;
-    if num_v_heads == 0 {
+    if num_v_heads <= 0 {
         return Err(GgufConfigError::BadValue {
             key: m.key("ssm.time_step_rank"),
-            detail: "must be non-zero".to_string(),
+            detail: "must be positive".to_string(),
+        });
+    }
+    if inner <= 0 {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("ssm.inner_size"),
+            detail: "must be positive".to_string(),
         });
     }
     // `value_head_dim` is DERIVED, not published, so a GGUF whose
