@@ -240,6 +240,11 @@ pub struct CatalogEntry {
     pub family: String,
     pub source: Source,
     pub sidecars: Sidecars,
+    /// Whether a combined model install includes the checkpoint's vision
+    /// tower. Absent means text-only, preserving every row written before
+    /// combined vision installs existed.
+    #[serde(default)]
+    pub include_vision: bool,
     /// Bytes read off the network during a pull. For a GGUF row this is the
     /// published file size; for an MLX row the sum of the shards.
     pub download_bytes: u64,
@@ -350,6 +355,14 @@ impl CatalogEntry {
                 ))
             }
             _ => {}
+        }
+        if self.include_vision
+            && (self.kind != EntryKind::Model || self.source.kind != SourceKind::Mlx)
+        {
+            return Err(format!(
+                "{}: include_vision is only valid for an mlx model row",
+                self.alias
+            ));
         }
         // A GGUF's tokenizer cannot come from the GGUF, so a row that leaves
         // this defaulted is claiming something impossible.
@@ -485,6 +498,7 @@ mod entry_kind_tests {
                 revision: None,
                 files: sidecar_files.iter().map(|s| s.to_string()).collect(),
             },
+            include_vision: false,
             download_bytes: 1,
             install_bytes: 1,
             status: Status::Runs,
