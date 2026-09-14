@@ -210,17 +210,8 @@ pub(crate) fn encode_moe_layer(
             .expect("mapped residency checked above");
         ordered
             .iter()
-            .map(|&(expert, _)| {
-                mapping
-                    .expert_offset(expert)
-                    .map(|offset| (buffer, offset))
-                    .map_err(|e| {
-                        RealForwardError::Unsupported(format!(
-                            "mapped expert layer {layer}, expert {expert}: {e}"
-                        ))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?
+            .map(|&(expert, _)| (buffer, mapping.expert_offset(expert)))
+            .collect()
     } else {
         let layer_slots = &slot_buffers[layer];
         ordered
