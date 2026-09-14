@@ -151,29 +151,21 @@ impl RealForwardRunner {
         let seq_len = (position + 1) as u32;
 
         let gpu_err = RealForwardError::Gpu;
-        let embed = self
-            .index
-            .entries
-            .get("embed_lm_head")
-            .ok_or_else(|| RealForwardError::MissingTensor("embed_lm_head".to_string()))?;
         if (token as usize) >= self.arch.vocab_size as usize {
             return Err(RealForwardError::Unsupported(format!(
                 "token id {token} outside vocab {}",
                 self.arch.vocab_size
             )));
         }
-        let base = self.index.header.index_size;
-        let embed_table = self.weights.gpu_offset(embed.file_offset - base);
-        let embed_scales = self.weights.gpu_offset(embed.scale_offset - base);
-        let embed_biases = self.weights.gpu_offset(embed.bias_offset - base);
+        let embed = resident_matrix(&self.weights, &self.index, "embed_lm_head", vocab, hidden)?;
 
         let mut pass = self.context.begin_pass();
         gpu::encode_embed_lookup_int4(
             &mut self.context,
             &pass,
-            (self.weights.buffer(), embed_table),
-            (self.weights.buffer(), embed_scales),
-            (self.weights.buffer(), embed_biases),
+            (embed.buffer, embed.weights_offset),
+            (embed.buffer, embed.scales_offset),
+            (embed.buffer, embed.biases_offset),
             (&self.scratch.x, 0),
             token as u32,
             hidden as u32,

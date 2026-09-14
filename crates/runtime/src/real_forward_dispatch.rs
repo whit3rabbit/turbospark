@@ -106,6 +106,27 @@ pub(crate) fn encode_embed_any(
             // index size underflows.
             let scales = (weights.buffer(), weights.gpu_offset(e.scale_offset - base));
             let biases = (weights.buffer(), weights.gpu_offset(e.bias_offset - base));
+            let d = hidden as usize;
+            if d == 0 || (e.size_bytes as usize * 2) % d != 0 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "embedding table {name}: {} INT4 bytes is not a whole number of \
+                     {d}-element rows",
+                    e.size_bytes
+                )));
+            }
+            let rows = e.size_bytes as usize * 2 / d;
+            let group_size = affine_group_size(e, name, rows, d, 4)?;
+            if group_size != 64 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "embedding table {name}: INT4 group size {group_size} does not match kernel \
+                     group size 64"
+                )));
+            }
+            if token as usize >= rows {
+                return Err(RealForwardError::Unsupported(format!(
+                    "embedding table {name}: token id {token} outside {rows} rows"
+                )));
+            }
             gpu::encode_embed_lookup_int4(
                 context,
                 pass,
@@ -144,10 +165,10 @@ pub(crate) fn encode_gemv_any(
     let base = index.header.index_size;
     match e.dtype {
         5 => {
-            if e.size_bytes as usize != rows * cols {
+            let group_size = affine_group_size(e, name, rows, cols, 8)?;
+            if group_size != 64 {
                 return Err(RealForwardError::Unsupported(format!(
-                    "tensor {name}: INT8 packed size {} does not match {rows}x{cols}",
-                    e.size_bytes
+                    "tensor {name}: INT8 group size {group_size} does not match kernel group size 64"
                 )));
             }
             let w = gpu::Int8ResidentMatrix {
