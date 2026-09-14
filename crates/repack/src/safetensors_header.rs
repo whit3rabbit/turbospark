@@ -11,7 +11,8 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 
 /// Shape, data type, and byte range metadata for one tensor in a safetensors file.
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +101,134 @@ impl std::error::Error for SafetensorsHeaderError {}
 /// corrupt or hostile length prefix before allocating a buffer for it.
 pub const DEFAULT_MAX_HEADER_BYTES: u64 = 64 * 1024 * 1024;
 
+const MAX_TENSOR_DIMENSIONS: usize = 32;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TensorEntry {
+    dtype: String,
+    #[serde(deserialize_with = "deserialize_shape")]
+    shape: Vec<u64>,
+    data_offsets: (u64, u64),
+}
+
+fn deserialize_shape<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ShapeVisitor;
+
+    impl<'de> Visitor<'de> for ShapeVisitor {
+        type Value = Vec<u64>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                formatter,
+                "at most {MAX_TENSOR_DIMENSIONS} tensor dimensions"
+            )
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut dimensions = Vec::new();
+            while let Some(dimension) = sequence.next_element()? {
+                if dimensions.len() == MAX_TENSOR_DIMENSIONS {
+                    return Err(de::Error::custom(format_args!(
+                        "tensor shape exceeds {MAX_TENSOR_DIMENSIONS} dimensions"
+                    )));
+                }
+                dimensions.push(dimension);
+            }
+            Ok(dimensions)
+        }
+    }
+
+    deserializer.deserialize_seq(ShapeVisitor)
+}
+
+struct HeaderEntries {
+    tensors: BTreeMap<String, TensorEntry>,
+    metadata: Option<BTreeMap<String, String>>,
+}
+
+struct MetadataEntry(Option<BTreeMap<String, String>>);
+
+impl<'de> Deserialize<'de> for MetadataEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct MetadataVisitor;
+
+        impl<'de> Visitor<'de> for MetadataVisitor {
+            type Value = MetadataEntry;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("__metadata__ to be null or an object of string values")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(MetadataEntry(None))
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(MetadataEntry(None))
+            }
+
+            fn visit_map<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut metadata = BTreeMap::new();
+                while let Some((key, value)) = entries.next_entry()? {
+                    metadata.insert(key, value);
+                }
+                Ok(MetadataEntry(Some(metadata)))
+            }
+        }
+
+        deserializer.deserialize_any(MetadataVisitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for HeaderEntries {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct HeaderVisitor;
+
+        impl<'de> Visitor<'de> for HeaderVisitor {
+            type Value = HeaderEntries;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a safetensors header object")
+            }
+
+            fn visit_map<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut tensors = BTreeMap::new();
+                let mut metadata = None;
+                while let Some(key) = entries.next_key::<String>()? {
+                    if key == "__metadata__" {
+                        metadata = entries.next_value::<MetadataEntry>()?.0;
+                    } else {
+                        let entry = entries.next_value()?;
+                        tensors.insert(key, entry);
+                    }
+                }
+                Ok(HeaderEntries { tensors, metadata })
+            }
+        }
+
+        deserializer.deserialize_map(HeaderVisitor)
+    }
+}
+
 /// Parse a safetensors header from the leading bytes of a file (or however
 /// much of it the caller has fetched so far — the length prefix tells the
 /// caller exactly how many more bytes it needs before calling this).
@@ -130,48 +259,15 @@ pub fn parse_header(
     let json_bytes = &leading_bytes[8..end];
     let text = std::str::from_utf8(json_bytes).map_err(|_| SafetensorsHeaderError::InvalidUtf8)?;
 
-    #[derive(Deserialize)]
-    struct TensorEntry {
-        dtype: String,
-        shape: Vec<u64>,
-        data_offsets: (u64, u64),
-    }
-
-    // Every entry's value goes through `serde_json::Value` first rather than
-    // an untagged `Entry` enum with a `Tensor` and a `Metadata` variant:
-    // real converters write `"__metadata__": null` (confirmed against a real
-    // published checkpoint, not assumed), and neither variant of an
-    // object-shaped enum can deserialize from JSON `null` -- the untagged
-    // form failed the whole file with "data did not match any variant",
-    // which named neither the key nor why. `__metadata__` is handled by
-    // NAME rather than by shape, because `null` and `{...}` are its only
-    // two legitimate values and a tensor entry is never named that.
-    let raw: BTreeMap<String, serde_json::Value> = serde_json::from_str(text)
+    // Deserialize one map value at a time. In particular, do not retain a
+    // serde_json::Value tree for the complete header: compact, irrelevant JSON
+    // arrays can expand far beyond the serialized-byte cap when represented as
+    // Values. The typed entry also rejects such unknown fields immediately.
+    let raw: HeaderEntries = serde_json::from_str(text)
         .map_err(|e| SafetensorsHeaderError::InvalidJson(e.to_string()))?;
 
     let mut tensors = BTreeMap::new();
-    let mut metadata = None;
-    for (key, value) in raw {
-        if key == "__metadata__" {
-            match value {
-                serde_json::Value::Null => {}
-                serde_json::Value::Object(_) => {
-                    let m: BTreeMap<String, String> =
-                        serde_json::from_value(value).map_err(|e| {
-                            SafetensorsHeaderError::InvalidJson(format!("__metadata__: {e}"))
-                        })?;
-                    metadata = Some(m);
-                }
-                other => {
-                    return Err(SafetensorsHeaderError::InvalidJson(format!(
-                        "__metadata__ is neither null nor an object: {other}"
-                    )))
-                }
-            }
-            continue;
-        }
-        let entry: TensorEntry = serde_json::from_value(value)
-            .map_err(|e| SafetensorsHeaderError::InvalidJson(format!("{key}: {e}")))?;
+    for (key, entry) in raw.tensors {
         // The format requires a monotone, non-overlapping range per tensor.
         // An inverted one reaches `absolute_range` as a plausible-looking
         // pair and then every unchecked `end - start` downstream of it
@@ -195,7 +291,7 @@ pub fn parse_header(
 
     Ok(SafetensorsHeader {
         tensors,
-        metadata,
+        metadata: raw.metadata,
         header_len,
     })
 }
