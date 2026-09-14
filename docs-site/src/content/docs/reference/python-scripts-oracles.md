@@ -268,8 +268,8 @@ Fetches ONLY the `vision_tower.*` tensors out of a real HF safetensors
 checkpoint, by ranged HTTP, without downloading the (multi-GiB) text trunk.
 Reads the checkpoint's own `model.safetensors.index.json` if present
 (multi-shard installs) or falls back to a single `model.safetensors` file,
-fetches that shard's JSON header (a small ranged read), then issues ONE
-ranged GET spanning the byte offsets of every `vision_tower.*` tensor.
+fetches that shard's size-limited JSON header, validates its tensor offsets,
+then streams each `vision_tower.*` tensor into a bounded output file.
 
 ### Functions
 

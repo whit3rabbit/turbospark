@@ -116,12 +116,11 @@ install that carries a tower. The install opened, decoded text correctly, and
 refused an image as though it were headless. Fixed, with an offline guard
 (`the_manifest_peeker_reads_the_tower_back`).
 
-`vision_tower.*` is NOT contiguous in this checkpoint. `fetch_vision_tower.py`
-spans min..max offset and warns in its own docstring that a future checkpoint
-interleaving the tower with trunk tensors would make it over-fetch rather than
-miss data. That is now measured rather than hypothetical: the span is 4,885
-MiB for 879 MiB of tensors on `mlx-community/Qwen3.8-27B-4bit`, where Bonsai's
-is 879 for 879. The over-fetch is correct and costs disk, not accuracy.
+`vision_tower.*` is NOT contiguous in this checkpoint. The original
+`fetch_vision_tower.py` spanned min..max offset, and that measured 4,885 MiB
+for 879 MiB of tensors on `mlx-community/Qwen3.8-27B-4bit`, where Bonsai's was
+879 for 879. The fetcher now validates and streams each tensor separately, so
+the historical over-fetch finding no longer describes its network or disk use.
 
 ## 0c. What M-V5 through M-V8 settled, and the two items it CLOSES (2026-08-29)
 
