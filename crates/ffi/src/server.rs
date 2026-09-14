@@ -79,6 +79,7 @@ pub struct Server {
     default_system: Option<String>,
     default_reasoning: tokenizer::ReasoningEffort,
     started: Instant,
+    traffic: Arc<crate::server_transport::Traffic>,
     /// Shared with the router on the background thread. Attaching and
     /// detaching mutate THIS, which is what lets a running server gain and
     /// lose models without rebinding.
@@ -113,11 +114,23 @@ impl Server {
     /// second code path.
     pub(crate) fn start(
         port: u16,
+        host: Option<String>,
+        capture_text: bool,
         api_key: Option<String>,
         guardrails: turbospark_server::GuardrailConfig,
         default_system: Option<String>,
         default_reasoning: tokenizer::ReasoningEffort,
     ) -> Result<Self, String> {
+        let host: std::net::IpAddr = host
+            .as_deref()
+            .unwrap_or("127.0.0.1")
+            .parse()
+            .map_err(|_| "Host must be a literal IPv4 or IPv6 address".to_string())?;
+        let api_key = api_key.filter(|key| !key.trim().is_empty());
+        if !host.is_loopback() && api_key.is_none() {
+            return Err("An API key is required for a non-loopback address".into());
+        }
+        let traffic = Arc::new(crate::server_transport::Traffic::new(capture_text));
         let auth_enabled = api_key.is_some();
         let registry = Arc::new(LiveRegistry::default());
         let events = Arc::new(EventRing::default());
@@ -131,6 +144,10 @@ impl Server {
             },
         );
 
+        let router = router.layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&traffic),
+            crate::server_transport::observe,
+        ));
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         // Plain blocking channel, not `tokio::sync`: `start`'s CALLER may or
         // may not be inside a Tokio runtime of its own, and this is how the
@@ -153,8 +170,8 @@ impl Server {
                     }
                 };
                 rt.block_on(async move {
-                    let addr = format!("127.0.0.1:{port}");
-                    let listener = match tokio::net::TcpListener::bind(&addr).await {
+                    let addr = std::net::SocketAddr::new(host, port);
+                    let listener = match tokio::net::TcpListener::bind(addr).await {
                         Ok(l) => l,
                         Err(e) => {
                             let _ = ready_tx.send(Err(format!("failed to bind {addr}: {e}")));
@@ -214,6 +231,7 @@ impl Server {
             default_system,
             default_reasoning,
             started: Instant::now(),
+            traffic,
             registry,
             events,
             stopping: Arc::new(AtomicBool::new(false)),
@@ -314,6 +332,7 @@ impl Server {
             models: ids,
             auth_enabled: self.auth_enabled,
             uptime_seconds: self.started.elapsed().as_secs(),
+            traffic: self.traffic.snapshot(),
         }
     }
 

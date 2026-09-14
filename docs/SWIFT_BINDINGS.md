@@ -712,7 +712,7 @@ unload the weights while the server is still serving them. `detach(modelId:)`
 or `stop()` does. Anything in your UI that says a model is unloaded has to
 have called one of them.
 
-**Unauthenticated does not mean private.** The socket is loopback, which
+**Unauthenticated does not mean private.** The socket defaults to loopback, which
 keeps it off the network and reachable by every process on this machine.
 `apiKey` is the only access control there is, and an empty or
 whitespace-only key means none at all -- `info().authEnabled` is what
@@ -1284,3 +1284,47 @@ every message with the 11.6x prefill win sitting unreachable one file away.
   do
 - [`docs/BENCHMARKS.md`](BENCHMARKS.md): the frozen throughput, memory and
   quality numbers
+
+
+### Server dashboard and transport diagnostics
+
+The app's Server section keeps bind controls, model attachment, traffic charts,
+and a resizable console visible even before startup. Its right inspector holds
+server configuration and saved recipes instead of the chat sampling controls.
+Recipes retain host, port, attached install paths, and context length in the
+existing per-user settings file. Loading a recipe starts a stopped server and
+attaches its models sequentially. Missing installs are reported. Keys and text
+previews are excluded from recipes.
+
+`ServerOptions.host` accepts a literal IPv4 or IPv6 address. The default stays
+`127.0.0.1`; non-loopback binding requires an API key. Invalid addresses and
+occupied ports fail visibly. These are in-process options, not new CLI flags.
+`ServerInfo.host` reports the bind address; `baseURL` substitutes local loopback
+for wildcard addresses so copied local client URLs remain usable.
+
+`ServerInfo.traffic` reports consumed request-body bytes and emitted response-body
+bytes. It excludes HTTP headers, TCP overhead and traffic from other processes.
+The dashboard samples byte deltas over elapsed wall time using the existing
+2 Hz poll, retaining 120 points. Missing counters render as unavailable. Memory
+uses the current Mach physical footprint for the whole app, including chat and
+server, against total installed physical memory. It is not a per-model allocation
+measurement or the process peak.
+
+Optional `captureText` retains raw body fragments for debugging, including JSON
+and SSE framing. It is off by default, applies at startup, never persists, and
+captures at most 256 bytes per fragment from the first 4 KiB of each body, keeping
+64 fragments. Fragments may truncate UTF-8 or JSON and are explicitly previews,
+not a replayable request archive. No request headers enter this buffer. The body
+adapter preserves frames, trailers, errors and backpressure without buffering a
+whole request or response. Copy diagnostics omits keys and captured text; the
+Live text tab has a separate explicit copy action.
+
+Console pause freezes a local snapshot while polling and charts continue. Stopping
+the server retains request logs and graph history for inspection. The menu-bar
+popover displays the same bounded bandwidth and memory history without another
+timer.
+
+New localized UI strings: IP address; Port; Stop the server to edit. Leave the
+port blank for automatic assignment.; HTTP body bandwidth; App + server memory;
+Optional raw HTTP text. Kept in memory, truncated, cleared on restart.; Live text;
+Activity; Capture text previews; Copy diagnostics.

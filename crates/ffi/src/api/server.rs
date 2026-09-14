@@ -92,6 +92,8 @@ pub unsafe extern "C" fn ts_server_start(
         let default_system = options.default_system.filter(|s| !s.trim().is_empty());
         let server = Server::start(
             options.port,
+            options.host,
+            options.capture_text,
             options.api_key,
             guardrails,
             default_system,

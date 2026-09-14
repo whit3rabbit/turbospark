@@ -597,6 +597,10 @@ pub struct SessionInfo {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ServerOptions {
+    /// Literal IPv4/IPv6 bind address; absent keeps loopback.
+    pub host: Option<String>,
+    /// Keep bounded HTTP body previews in memory for debugging.
+    pub capture_text: bool,
     /// 0 (the default, and what an absent key also means) asks the OS for an
     /// ephemeral port; read the one actually bound back from
     /// `ts_server_info_json`.
@@ -637,6 +641,7 @@ pub struct ServerOptions {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerInfo {
+    pub traffic: crate::server_transport::TrafficSnapshot,
     /// The port ACTUALLY bound, never the one requested: `port: 0` in
     /// `ServerOptions` asks for an OS-assigned one, so this is the only
     /// place that number is knowable.

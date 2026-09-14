@@ -85,6 +85,11 @@ const GGML_TYPE_F32: u32 = 0;
 /// llama.cpp ignores it, as it ignores every metadata key here.
 const MODE_KEY: &str = "turbospark.steering_mode";
 
+/// Metadata key used by the GLP projective-vector format. Projective
+/// steering is not the same operation as this port's additive control-vector
+/// modes, so presence of this key is a hard refusal until that kernel exists.
+const GLP_MODE_KEY: &str = "glp.mode";
+
 /// Metadata key recording which 0-based block `direction.1` refers to. See
 /// the module header: 1 (or absent) is llama.cpp's convention, 0 is this
 /// port's pre-correction one.
@@ -124,6 +129,8 @@ pub enum ControlVectorError {
     ZeroLayerIndex,
     /// A direction is not one-dimensional F32.
     BadTensorShape { name: String, detail: String },
+    /// The file declares a steering format this runtime does not implement.
+    UnsupportedMode { key: String, value: String },
     /// Two directions disagree on their element count.
     RaggedWidths { first: usize, then: usize },
     /// The file carries no `direction.*` tensor at all.
@@ -167,6 +174,10 @@ impl std::fmt::Display for ControlVectorError {
             Self::BadTensorShape { name, detail } => {
                 write!(f, "{name}: {detail}; a direction is 1-D F32")
             }
+            Self::UnsupportedMode { key, value } => write!(
+                f,
+                "{key} = {value:?}: projective steering is not implemented; refusing the file rather than treating it as an additive or ablation vector"
+            ),
             Self::RaggedWidths { first, then } => write!(
                 f,
                 "directions disagree on width: {first} then {then}; every layer's \
@@ -281,10 +292,26 @@ fn layer_index(name: &str, base: u64) -> Result<usize, ControlVectorError> {
     Ok(index)
 }
 
+/// Reads the mode metadata without allowing a foreign mode to fall through
+/// to the caller's default. In particular, GLP's `project` operation is
+/// refusal-direction projection, while this runtime's `ablate` is the only
+/// projection it knows how to dispatch. Treating one as the other would make
+/// a downloaded refusal vector do a different edit in silence.
+fn declared_mode(header: &GgufHeader) -> Result<Option<SteeringMode>, ControlVectorError> {
+    if let Some(value) = header.metadata_str(GLP_MODE_KEY) {
+        return Err(ControlVectorError::UnsupportedMode {
+            key: GLP_MODE_KEY.to_string(),
+            value: value.to_string(),
+        });
+    }
+    Ok(header.metadata_str(MODE_KEY).and_then(SteeringMode::parse))
+}
+
 fn read_set(header: &GgufHeader, bytes: &[u8]) -> Result<SteeringSet, ControlVectorError> {
     let mut found: BTreeMap<usize, Vec<f32>> = BTreeMap::new();
     let mut width: Option<usize> = None;
     let base = layer_base(header)?;
+    let declared_mode = declared_mode(header)?;
 
     for (name, info) in &header.tensors {
         let layer = layer_index(name, base)?;
@@ -352,7 +379,7 @@ fn read_set(header: &GgufHeader, bytes: &[u8]) -> Result<SteeringSet, ControlVec
     Ok(SteeringSet {
         layers,
         hidden,
-        declared_mode: header.metadata_str(MODE_KEY).and_then(SteeringMode::parse),
+        declared_mode,
         declared_arch: header.architecture().map(str::to_string),
     })
 }

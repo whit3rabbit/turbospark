@@ -148,6 +148,11 @@ someone else's vector"), and `declaredArch` is advisory because nothing
 validates against it. `minLayer` is normally 1, which is the interop
 convention working rather than a gap.
 
+The parser also refuses a file carrying GLP's `glp.mode` metadata. GLP
+projective vectors are a different intervention from this runtime's
+additive/ablation modes, so the sidebar downloader reports them as unsupported
+instead of silently treating a published refusal vector as `ablate`.
+
 The C ABI (`turbospark.h`) exposes `steering`, `steeringMode`, `steeringScale`,
 `steeringLayers`, `steeringTarget`, `steeringGate` in `ts_session_open` JSON
 and reports
@@ -175,6 +180,127 @@ the raw fields as the expert surface and what is set there becomes an implicit
   `info.steering` read-only for the same reason: that server serves
   already-open sessions, so steering is a property of the load rather than of
   the server.
+
+### Model-sidebar workflow
+
+An installed model's detail pane also has a Steering card. It shows the
+engine's family capability, the directions already registered, and the shape
+result for the model being inspected. From that card a user can download a
+`.gguf` control vector from a Hugging Face `owner/repository`, choose its file
+and revision, and have the app validate it before storing it under the
+profile's `steering-vectors` directory. The app then creates a named preset,
+selects it, and enables steering. The only remaining action is an explicit
+reload, because a session resolves steering once at open.
+
+The download path is deliberately user-selected rather than an unreviewed
+global list of community files. Repositories such as llama.cpp's control
+vector ecosystem and community Hugging Face uploads do exist, but a vector's
+hidden size and layer span are only structural checks. A vector from another
+checkpoint with the same shape can still steer the wrong feature. A future
+curated offer must therefore carry an exact base-checkpoint identity and its
+metadata contract, not just a model-family label.
+
+### Sources, generation, and file formats
+
+TurboSpark accepts a llama.cpp-layout `.gguf` control vector. The sidebar
+download checks the GGUF header, direction shape, layer span, and supported
+metadata before it stores the file. Those checks prove that the file is
+structurally readable; they cannot prove that its direction was extracted from
+the exact checkpoint being loaded.
+
+#### Generate a vector from TurboSpark captures
+
+The repository's supported path for making a vector is
+[`scripts/extract_direction.py`](../scripts/extract_direction.py). Capture the
+same prompt set against two labelled conditions, then reduce the captures into
+one direction per layer:
+
+```sh
+TURBOSPARK_RESID_CAPTURE=/tmp/steer/positive/p1.json \
+  ./target/release/turbospark-check --model ~/models/qwen38-27b.gturbo \
+  --messages-file /tmp/prompt.json --max-new 1 --temperature 0.0001 --top-k 1
+
+uv run --python 3.12 --with numpy scripts/extract_direction.py \
+  --positive /tmp/steer/positive --negative /tmp/steer/negative \
+  --out /tmp/steer/direction.gguf
+```
+
+The default is the difference of the two means, which is the usual refusal
+direction extraction. `--method svd` is available when the paired differences
+need a robust leading direction. The script writes F32 `direction.N` tensors
+in the same format the runtime and llama.cpp read. It does not normalize the
+vectors, because the runtime's modes use the original magnitude differently.
+The format cannot express block 0, so that row is reported and omitted. Use
+the sweep and real-model checks in this page before treating a generated
+direction as useful.
+
+#### Generate vectors with `jukofyork/control-vectors`
+
+The community [`control-vectors`](https://github.com/jukofyork/control-vectors)
+repository is a separate generator, not a TurboSpark dependency. It uses
+Transformers/PyTorch hidden-state activations, prompt stems and continuation
+sets, then exports llama.cpp-compatible GGUF vectors. Its README and
+[`create_control_vectors.py`](https://github.com/jukofyork/control-vectors/blob/main/create_control_vectors.py)
+are the reference for its inputs and output.
+
+That generator commonly writes a debias vector plus named positive and
+negative axis vectors. An axis is not a standalone drop-in: use it with its
+matching debias vector, do not combine both sides of an axis, and start with a
+small scale. The published
+[`creative-writing-control-vectors-v3.0`](https://huggingface.co/jukofyork/creative-writing-control-vectors-v3.0)
+repository is therefore a useful ready-made GGUF source and an interop test
+fixture, but each file still needs an exact base-checkpoint match.
+
+#### Use the assistant-axis dataset as research input
+
+[`pandaman007/assistant-axis-abliteration-vectors`](https://huggingface.co/datasets/pandaman007/assistant-axis-abliteration-vectors)
+is a research dataset, not a ready-made TurboSpark vector repository. Its
+model-specific directories contain PyTorch `.pt` axes, activation captures,
+responses, scores, and model metadata. The `axis.pt` files are useful for
+studying or reproducing the extraction, but they are not the GGUF
+`direction.N` files the sidebar accepts.
+
+The app deliberately does not load arbitrary `.pt` files. PyTorch checkpoints
+can contain pickle payloads, and the dataset also contains large activation
+corpora that are not needed at model-load time. To use one of these axes, first
+convert it offline through an audited converter that records the exact base
+checkpoint, hidden size, layer mapping, mode, and checksum, then import the
+resulting GGUF. Until that converter exists, this dataset is a documented
+research and validation source, not an import option.
+
+#### What this repository has already validated
+
+There are three relevant paths already exercised here:
+
+- TurboSpark-generated Qwen 3.8 vectors, captured from the real install and
+  measured with the steering sweep and real-model gates in this document.
+- A foreign `jukofyork` vector, parsed and checked for llama.cpp's one-based
+  layer placement by `crates/repack/tests/control_vector_file.rs`. The ignored
+  test is intentionally disk-backed so it tests an artifact produced outside
+  this repository.
+- The llama.cpp control-vector layout and the `repeng` ecosystem, which are
+  the format and interoperability references used by the reader.
+
+The sidebar now links directly to the ready-made GGUF collection, the research
+dataset, and a broader Hugging Face search. It only downloads a user-selected
+`.gguf` file. A future curated catalog can make this one click by pinning the
+repository revision, file checksum, exact base checkpoint, supported shape,
+layer band, and a conservative starting scale for every offer. A global list
+without those fields would make a structurally valid but semantically wrong
+vector too easy to apply.
+
+### A base model does not need to be pre-abliterated
+
+The runtime edit does not inspect a model for a baked-in abliteration flag.
+`ablate` projects the selected activation component out of the residual stream
+while the model runs, so it can be applied to an ordinary, non-abliterated
+checkpoint. That can reduce refusal behaviour when the supplied direction was
+extracted from that exact checkpoint. It is not guaranteed merely because the
+file is called `refusal.gguf`, and it is not made safer by using it on a model
+that was already abliterated. Applying the same direction twice, or applying
+one extracted from a different checkpoint, can remove useful behaviour or
+collapse generation. The app therefore checks shape, labels the semantic
+limit, defaults to the measured `0.3` strength, and makes reload explicit.
 
 **Wired today (eleven of thirteen families)**: the qwen flow (`qwen36` and
 `qwen35`, both halves, per-token and batched-verify), `families/llama/`
@@ -2009,6 +2135,13 @@ speculation there is no per-request half, so a server started with
 - Turner et al. (2023), activation addition -- the `add` mode.
 - llama.cpp `--control-vector-scaled` and vgel's `repeng` -- the file format
   this port reads, and the published vector sets it makes reachable.
+- [`jukofyork/control-vectors`](https://github.com/jukofyork/control-vectors) --
+  a Transformers/PyTorch generator that exports GGUF control vectors, and its
+  [`creative-writing-control-vectors-v3.0`](https://huggingface.co/jukofyork/creative-writing-control-vectors-v3.0)
+  ready-made collection.
+- [`pandaman007/assistant-axis-abliteration-vectors`](https://huggingface.co/datasets/pandaman007/assistant-axis-abliteration-vectors)
+  -- model-specific `.pt` axes and activation data for research, not direct
+  import.
 - `elder-plinius/OBLITERATUS` -- the toolkit this question came from. Its
   weight-projection half is what ROADMAP item 9 scoped. Its steering-vector
   half is what this page builds. **AGPL-3.0, so read-only for an MIT

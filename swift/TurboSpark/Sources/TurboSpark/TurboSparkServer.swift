@@ -5,7 +5,7 @@ import Foundation
 /// default) asks the OS to choose a port and starts unauthenticated.
 ///
 /// **UNAUTHENTICATED DOES NOT MEAN PRIVATE TO THIS PROCESS.** The socket is
-/// bound on loopback, which keeps it off the network and reachable by EVERY
+/// bound on loopback by default, which keeps it off the network and reachable by EVERY
 /// process on this machine -- any local program that can guess or read the
 /// port can drive the model. `apiKey` is the only access control this server
 /// has; there is no second gate behind it. This comment used to say the
@@ -16,6 +16,10 @@ public struct ServerOptions: Encodable, Sendable {
     /// 0 (the default) asks the OS for an ephemeral port; read the port
     /// ACTUALLY bound back from `TurboSparkServer.info()`.
     public var port: UInt16
+    /// Literal IPv4/IPv6 bind address. Nil keeps loopback; network binds require a key.
+    public var host: String?
+    /// Optional bounded raw HTTP previews, retained only for this server lifetime.
+    public var captureText: Bool
     /// Require this key on every request except `GET /health`, matching
     /// `turbospark-server --api-key`. `nil` (the default) leaves the server
     /// unauthenticated.
@@ -52,6 +56,8 @@ public struct ServerOptions: Encodable, Sendable {
 
     public init(
         port: UInt16 = 0,
+        host: String? = nil,
+        captureText: Bool = false,
         apiKey: String? = nil,
         guardrails: Guardrails? = nil,
         embeddingModel: String? = nil,
@@ -59,6 +65,8 @@ public struct ServerOptions: Encodable, Sendable {
         defaultSystem: String? = nil,
         defaultReasoning: GenerateOptions.Reasoning? = nil
     ) {
+        self.host = host
+        self.captureText = captureText
         self.port = port
         self.apiKey = apiKey
         self.guardrails = guardrails
@@ -71,6 +79,8 @@ public struct ServerOptions: Encodable, Sendable {
 
 /// What `TurboSparkServer.info()` reports.
 public struct ServerInfo: Decodable, Sendable, Equatable {
+    /// Absent when linked to an older engine without transport counters.
+    public let traffic: ServerTraffic?
     /// The port ACTUALLY bound, never the one requested: `ServerOptions.port
     /// == 0` asks the OS to choose one, so this is the only place that
     /// number is knowable.
@@ -101,7 +111,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// Spelled out because a hand-written `init(from:)` suppresses the
     /// synthesized one.
     private enum CodingKeys: String, CodingKey {
-        case port, host, modelId, models, authEnabled, uptimeSeconds
+        case port, host, modelId, models, authEnabled, uptimeSeconds, traffic
     }
 
     /// Decoded tolerantly for the two fields added after this struct
@@ -111,6 +121,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// than at the on-disk store).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        traffic = try c.decodeIfPresent(ServerTraffic.self, forKey: .traffic)
         port = try c.decode(UInt16.self, forKey: .port)
         host = try c.decode(String.self, forKey: .host)
         modelId = try c.decode(String.self, forKey: .modelId)
@@ -122,13 +133,11 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
 
     /// `http://host:port`, the address a client should actually call.
     ///
-    /// The host is bracketed when it contains a `:`, which is how an IPv6
-    /// literal has to appear in a URL. The engine binds IPv4 today, so that
-    /// branch is unreachable and costs one line -- the point is that this
-    /// helper stays correct without one, rather than becoming the next thing
-    /// that is true only by coincidence.
+    /// Bracket IPv6 literals and use local loopback for wildcard bindings.
+    /// `host` still reports the actual bind address for network diagnostics.
     public var baseURL: URL? {
-        let literal = host.contains(":") ? "[\(host)]" : host
+        let clientHost = host == "0.0.0.0" ? "127.0.0.1" : (host == "::" ? "::1" : host)
+        let literal = clientHost.contains(":") ? "[\(clientHost)]" : clientHost
         return URL(string: "http://\(literal):\(port)")
     }
 }
@@ -422,4 +431,12 @@ public final class TurboSparkServer: @unchecked Sendable {
             from: try takeString { ts_server_info_json(handle.raw, $0) }
         )
     }
+}
+
+/// HTTP body bytes, excluding headers/TCP overhead, and optional raw previews.
+public struct ServerTraffic: Decodable, Sendable, Equatable {
+    public let receivedBytes: UInt64
+    public let sentBytes: UInt64
+    public let captureText: Bool
+    public let previews: [String]
 }

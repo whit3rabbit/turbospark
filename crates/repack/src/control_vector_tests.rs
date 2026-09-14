@@ -352,3 +352,23 @@ fn an_absent_mode_is_none_rather_than_a_default() {
     let set = parse_control_vector(&bytes).expect("parses");
     assert_eq!(set.declared_mode, None);
 }
+
+/// GLP's `project` mode is semantically different from this port's additive
+/// control-vector modes. Refuse it at the shared parser so the CLI, server,
+/// Swift settings and the model-sidebar downloader cannot silently interpret
+/// a published refusal vector as `ablate`.
+#[test]
+fn a_projective_vector_is_refused_rather_than_treated_as_ablation() {
+    let data: Vec<u8> = (0..8).flat_map(|i| (i as f32).to_le_bytes()).collect();
+    let builder = crate::GgufBuilder::new()
+        .metadata_str("glp.mode", "project")
+        .tensor("direction.1", GGML_TYPE_F32, &[8], data);
+
+    assert_eq!(
+        parse_control_vector(&builder.build().0),
+        Err(ControlVectorError::UnsupportedMode {
+            key: "glp.mode".to_string(),
+            value: "project".to_string(),
+        })
+    );
+}

@@ -534,6 +534,10 @@ int32_t ts_generate(const TsSession *s, const char *messages_json,
  * attaching immediately.
  *
  * `options_json` may be NULL or "{}". Recognised keys:
+ *   host    literal IPv4/IPv6 string | null (default 127.0.0.1).
+ *             Non-loopback binding requires a nonempty apiKey.
+ *   captureText bool (default false). Bounded raw HTTP body previews in
+ *             info.traffic, memory only; excludes headers and API keys.
  *   port    number (default 0, meaning let the OS choose; read the port
  *             ACTUALLY bound back from ts_server_info_json)
  *   apiKey  string | null (default null, meaning NO AUTH AT ALL)

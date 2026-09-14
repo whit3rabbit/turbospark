@@ -38,6 +38,7 @@ mod open;
 mod server;
 mod server_model;
 mod server_registry;
+mod server_transport;
 mod session;
 mod strings;
 mod telemetry;
