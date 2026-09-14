@@ -218,6 +218,11 @@ pub fn load_from(
                 .get("size")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| corrupt("malformed expert entry"))?;
+            if size > layer_stride {
+                return Err(corrupt(&format!(
+                    "layer {layer_idx} expert blob size {size} exceeds its stride {layer_stride}"
+                )));
+            }
             let tensors_obj = expert_obj
                 .get("tensors")
                 .and_then(Value::as_object)
@@ -228,13 +233,47 @@ pub fn load_from(
                 let toff = t.get("offset").and_then(Value::as_u64);
                 let tsize = t.get("size").and_then(Value::as_u64);
                 let dtype = t.get("dtype").and_then(Value::as_str);
-                let has_shape = t.get("shape").is_some_and(Value::is_array);
+                let shape = t.get("shape").and_then(Value::as_array);
                 let (Some(toff), Some(tsize)) = (toff, tsize) else {
                     return Err(corrupt(&format!("malformed tensor {role}")));
                 };
-                let (Some(dtype), true) = (dtype, has_shape) else {
+                let (Some(dtype), Some(shape)) = (dtype, shape) else {
                     return Err(corrupt(&format!("malformed tensor {role}")));
                 };
+                let end = toff
+                    .checked_add(tsize)
+                    .ok_or_else(|| corrupt(&format!("tensor {role} byte range overflows u64")))?;
+                if end > size || end > layer_stride {
+                    return Err(corrupt(&format!(
+                        "tensor {role} byte range {toff}..{end} exceeds expert blob size {size}"
+                    )));
+                }
+                if matches!(role.as_str(), "gate_biases" | "up_biases" | "down_biases") {
+                    let elements = match shape.as_slice() {
+                        [width] => width.as_u64().ok_or_else(|| {
+                            corrupt(&format!("tensor {role} has malformed bias shape"))
+                        })?,
+                        _ => {
+                            return Err(corrupt(&format!(
+                                "tensor {role} bias shape must have one dimension"
+                            )))
+                        }
+                    };
+                    let expected_size = elements.checked_mul(4).ok_or_else(|| {
+                        corrupt(&format!("tensor {role} bias byte count overflows u64"))
+                    })?;
+                    if !dtype.eq_ignore_ascii_case("f32") || tsize != expected_size {
+                        return Err(corrupt(&format!(
+                            "tensor {role} bias must be F32 with {expected_size} bytes, found \
+                             {dtype} with {tsize} bytes"
+                        )));
+                    }
+                    if toff % 4 != 0 {
+                        return Err(corrupt(&format!(
+                            "tensor {role} bias offset {toff} is not 4-byte aligned"
+                        )));
+                    }
+                }
                 if let Some(bits) = t.get("bits") {
                     if !bits.is_i64() && !bits.is_u64() {
                         return Err(corrupt(&format!("malformed tensor bits {role}")));
@@ -283,11 +322,22 @@ pub fn load_from(
         if experts.iter().any(Option::is_none) {
             return Err(corrupt("missing expert entries"));
         }
+        let experts: Vec<ExpertEntry> = experts.into_iter().map(Option::unwrap).collect();
+        if let Some(first) = experts.first() {
+            for expert in &experts[1..] {
+                if expert.size != first.size || expert.sub_tensors != first.sub_tensors {
+                    return Err(corrupt(&format!(
+                        "layer {layer_idx} expert {} layout differs from expert {}",
+                        expert.expert, first.expert
+                    )));
+                }
+            }
+        }
         layers.push(LayerLayout {
             layer: layer_idx,
             file,
             expert_stride: layer_stride,
-            experts: experts.into_iter().map(Option::unwrap).collect(),
+            experts,
         });
     }
     if layers.len() != num_layers {

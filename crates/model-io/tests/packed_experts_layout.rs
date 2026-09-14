@@ -33,7 +33,9 @@ fn valid_layout_json() -> &'static str {
                         "expert": 1,
                         "offset": 4096,
                         "size": 4096,
-                        "tensors": {}
+                        "tensors": {
+                            "gate": {"offset": 0, "size": 2048, "dtype": "int4", "shape": [64, 64]}
+                        }
                     }
                 ]
             }
@@ -52,6 +54,91 @@ fn load_succeeds_and_resolves_experts_by_index() {
     assert_eq!(e0.sub_tensors["gate"].size, 2048);
     let e1 = layout.expert(0, 1);
     assert_eq!(e1.offset, 4096);
+    assert_eq!(e1.sub_tensors["gate"].size, 2048);
+}
+
+fn one_tensor_layout(tensor: &str) -> String {
+    format!(
+        r#"{{
+        "expertStride": 64,
+        "numLayers": 1,
+        "expertsPerLayer": 1,
+        "layers": [{{
+            "layer": 0,
+            "file": "layer_00.bin",
+            "experts": [{{"expert": 0, "offset": 0, "size": 64,
+                "tensors": {{"gate_biases": {tensor}}}}}]
+        }}]
+    }}"#
+    )
+}
+
+#[test]
+fn sub_tensor_ranges_must_fit_the_expert_blob() {
+    let dir = tempdir();
+    write_layout(
+        &dir,
+        &one_tensor_layout(r#"{"offset": 60, "size": 8, "dtype": "f32", "shape": [2]}"#),
+    );
+    let err = load_packed_experts_layout(&dir, 1024).unwrap_err();
+    assert!(
+        err.to_string().contains("exceeds expert blob size"),
+        "{err}"
+    );
+
+    let oversized = one_tensor_layout(r#"{"offset": 0, "size": 8, "dtype": "f32", "shape": [2]}"#)
+        .replacen(r#""size": 64,"#, r#""size": 68,"#, 1);
+    assert!(oversized.contains(r#""size": 68,"#));
+    write_layout(&dir, &oversized);
+    let err = load_packed_experts_layout(&dir, 1024).unwrap_err();
+    assert!(err.to_string().contains("exceeds its stride"), "{err}");
+}
+
+#[test]
+fn bias_layout_requires_aligned_f32_bytes_matching_its_shape() {
+    for (tensor, expected) in [
+        (
+            r#"{"offset": 2, "size": 8, "dtype": "f32", "shape": [2]}"#,
+            "4-byte aligned",
+        ),
+        (
+            r#"{"offset": 4, "size": 4, "dtype": "f32", "shape": [2]}"#,
+            "with 8 bytes",
+        ),
+        (
+            r#"{"offset": 4, "size": 8, "dtype": "bf16", "shape": [2]}"#,
+            "must be F32",
+        ),
+        (
+            r#"{"offset": 4, "size": 8, "dtype": "f32", "shape": [1, 2]}"#,
+            "one dimension",
+        ),
+    ] {
+        let dir = tempdir();
+        write_layout(&dir, &one_tensor_layout(tensor));
+        let err = load_packed_experts_layout(&dir, 1024).unwrap_err();
+        assert!(err.to_string().contains(expected), "{err}");
+    }
+}
+
+#[test]
+fn experts_in_one_layer_must_use_the_same_sub_tensor_layout() {
+    let dir = tempdir();
+    let json = valid_layout_json().replacen(
+        r#""offset": 4096,
+                        "size": 4096,
+                        "tensors": {
+                            "gate": {"offset": 0"#,
+        r#""offset": 4096,
+                        "size": 4096,
+                        "tensors": {
+                            "gate": {"offset": 4"#,
+        1,
+    );
+    assert_ne!(json, valid_layout_json(), "fixture mutation must apply");
+    write_layout(&dir, &json);
+    let err = load_packed_experts_layout(&dir, 1024 * 1024).unwrap_err();
+    assert!(err.to_string().contains("layout differs"), "{err}");
 }
 
 /// A layer without its own `expertStride` inherits the top-level one, which
