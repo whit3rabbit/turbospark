@@ -422,6 +422,25 @@ final class QwenParityModulesTests: XCTestCase {
         XCTAssertEqual(grid.csv(), "x\n\"say, \"\"hi\"\"\"")
     }
 
+    func testSpreadsheetSerializersNeutralizeFormulaCells() {
+        let grid = MarkdownTableGrid(
+            header: ["=header", "plain"],
+            rows: [
+                ["=HYPERLINK(\"https://example.invalid\",\"Open\")", "+SUM(1,1)"],
+                ["  -1+2", "\t@SUM(1+1)"],
+            ]
+        )
+
+        XCTAssertEqual(
+            grid.csv(),
+            "'=header,plain\n\"'=HYPERLINK(\"\"https://example.invalid\"\",\"\"Open\"\")\",\"'+SUM(1,1)\"\n'  -1+2,'\t@SUM(1+1)"
+        )
+        XCTAssertEqual(
+            grid.tsv(),
+            "'=header\tplain\n'=HYPERLINK(\"https://example.invalid\",\"Open\")\t'+SUM(1,1)\n'  -1+2\t'\\t@SUM(1+1)"
+        )
+    }
+
     func testNonTablePipeLineIsNotATable() {
         // A pipe-delimited line with no separator line under it is prose.
         let segments = MarkdownTableGrid.segments(in: "| just | text |")
