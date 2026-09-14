@@ -251,6 +251,7 @@ impl RealForwardRunner {
                 (&scratch.x, (m * hidden) as u64 * 2),
                 token as u32,
                 hidden as u32,
+                vocab,
                 1.0,
             )?;
         }

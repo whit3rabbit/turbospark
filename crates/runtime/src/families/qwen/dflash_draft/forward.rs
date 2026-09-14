@@ -51,6 +51,7 @@ impl RealForwardRunner {
             (&dflash.x, 0),
             anchor as u32,
             hidden as u32,
+            vocab,
             RESIDUAL_RESCALE,
         )?;
         for r in 1..rows {
@@ -63,6 +64,7 @@ impl RealForwardRunner {
                 (&dflash.x, r as u64 * row_bytes),
                 DFLASH_MASK_TOKEN as u32,
                 hidden as u32,
+                vocab,
                 RESIDUAL_RESCALE,
             )?;
         }

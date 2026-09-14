@@ -234,6 +234,7 @@ impl RealForwardRunner {
                     (&qwen4.wide_x, row_off + (c * hidden * 2) as u64),
                     token as u32,
                     hidden as u32,
+                    vocab,
                 )?;
             }
         }
@@ -583,6 +584,9 @@ fn encode_embed_any_qwen4(
     out: (&gpu::MetalBuffer, u64),
     token: u32,
     hidden: u32,
+    vocab: usize,
 ) -> Result<(), RealForwardError> {
-    encode_embed_any(context, pass, weights, index, name, out, token, hidden, 1.0)
+    encode_embed_any(
+        context, pass, weights, index, name, out, token, hidden, vocab, 1.0,
+    )
 }

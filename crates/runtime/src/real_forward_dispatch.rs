@@ -31,8 +31,14 @@ pub(crate) fn encode_embed_any(
     out: (&gpu::MetalBuffer, u64),
     token: u32,
     hidden: u32,
+    expected_rows: usize,
     embed_scale: f32,
 ) -> Result<(), RealForwardError> {
+    if token as usize >= expected_rows {
+        return Err(RealForwardError::Unsupported(format!(
+            "token id {token} outside embedding table with {expected_rows} rows"
+        )));
+    }
     let e = entry(index, name)?;
     let base = index.header.index_size;
     let table = (weights.buffer(), weights.gpu_offset(e.file_offset - base));
@@ -62,23 +68,10 @@ pub(crate) fn encode_embed_any(
         // checkpoint quantizes `embed_tokens` at one bit like everything else,
         // which was read off its safetensors header rather than assumed.
         //
-        // The ROW COUNT is derived rather than passed: this function's callers
-        // know the hidden size and the token id, never the vocabulary, and the
-        // group size cannot be read off the companion planes without it. One
-        // bit per element makes it exact.
         DTYPE_INT1_AFFINE | DTYPE_INT2_AFFINE => {
             let bits = if e.dtype == DTYPE_INT1_AFFINE { 1 } else { 2 };
-            let elements_per_byte = 8 / bits;
             let d = hidden as usize;
-            if d == 0 || (e.size_bytes as usize * elements_per_byte) % d != 0 {
-                return Err(RealForwardError::Unsupported(format!(
-                    "embedding table {name}: {} {bits}-bit bytes is not a whole number of \
-                     {d}-element rows",
-                    e.size_bytes
-                )));
-            }
-            let rows = e.size_bytes as usize * elements_per_byte / d;
-            let group_size = affine_group_size(e, name, rows, d, bits)?;
+            let group_size = affine_group_size(e, name, expected_rows, d, bits)?;
             let scales = (weights.buffer(), weights.gpu_offset(e.scale_offset - base));
             let biases = (weights.buffer(), weights.gpu_offset(e.bias_offset - base));
             let encode = if bits == 1 {
