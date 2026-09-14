@@ -250,7 +250,7 @@ pub fn recommendations(rows: &[catalog::Recommendation], machine: &catalog::Mach
 
     let width = rows
         .iter()
-        .map(|r| r.origin.install_target().len())
+        .map(|r| r.origin.install_target().chars().count())
         .max()
         .unwrap_or(8)
         .clamp(8, 40);
@@ -386,9 +386,34 @@ fn tok_s_column(row: &catalog::Recommendation) -> String {
 }
 
 fn truncate(text: &str, width: usize) -> String {
-    if text.len() <= width {
+    if text.chars().count() <= width {
         text.to_string()
     } else {
-        format!("{}...", &text[..width.saturating_sub(3)])
+        format!(
+            "{}...",
+            text.chars()
+                .take(width.saturating_sub(3))
+                .collect::<String>()
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate;
+
+    #[test]
+    fn truncate_handles_unicode_at_the_boundary() {
+        let target = "--repo attacker/model --file aaaaaaaé-Q4_K.gguf";
+
+        assert_eq!(
+            truncate(target, 40),
+            "--repo attacker/model --file aaaaaaaé..."
+        );
+    }
+
+    #[test]
+    fn truncate_preserves_unicode_that_fits() {
+        assert_eq!(truncate("éé", 2), "éé");
     }
 }
