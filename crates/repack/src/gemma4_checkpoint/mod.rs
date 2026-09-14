@@ -48,7 +48,8 @@ pub use vision::{
     BLOCK_ROLES as VISION_BLOCK_ROLES, RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
 };
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use model_io::{ArchConfig, ModelFamily};
 
@@ -61,6 +62,31 @@ use crate::safetensors_header::SafetensorsHeader;
 /// drop before the next layer starts -- peak memory is one layer's blobs,
 /// not thirty. `progress` gets one call per completed stage.
 pub fn write_gemma4_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    mut progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let staging = sibling_work_dir(dir, "staging")?;
+    let result = write_gemma4_install_streamed_in_place(
+        &staging,
+        arch,
+        model_id,
+        shards,
+        quant,
+        &mut progress,
+    );
+    if let Err(error) = result {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    publish_staged_install(&staging, dir)?;
+    Ok(())
+}
+
+fn write_gemma4_install_streamed_in_place(
     dir: &Path,
     arch: &ArchConfig,
     model_id: &str,
@@ -274,6 +300,58 @@ pub fn write_gemma4_install_streamed(
         crate::resident_writer::write_resident_weights_bin_mixed(&resident.entries, w)
     })?;
     progress("manifest written");
+    Ok(())
+}
+
+static WORK_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn sibling_work_dir(dir: &Path, kind: &str) -> Result<PathBuf, crate::WriterError> {
+    let parent = dir.parent().unwrap_or_else(|| Path::new("."));
+    let name = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("install");
+    loop {
+        let n = WORK_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{name}.{kind}.{}.{n}", std::process::id()));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(crate::WriterError::Io {
+                    path: candidate.display().to_string(),
+                    detail: error.to_string(),
+                })
+            }
+        }
+    }
+}
+
+fn publish_staged_install(staging: &Path, dir: &Path) -> Result<(), crate::WriterError> {
+    if !dir.exists() {
+        return std::fs::rename(staging, dir).map_err(|error| crate::WriterError::Io {
+            path: dir.display().to_string(),
+            detail: error.to_string(),
+        });
+    }
+
+    let backup = sibling_work_dir(dir, "backup")?;
+    std::fs::remove_dir(&backup).map_err(|error| crate::WriterError::Io {
+        path: backup.display().to_string(),
+        detail: error.to_string(),
+    })?;
+    std::fs::rename(dir, &backup).map_err(|error| crate::WriterError::Io {
+        path: dir.display().to_string(),
+        detail: error.to_string(),
+    })?;
+    if let Err(error) = std::fs::rename(staging, dir) {
+        let _ = std::fs::rename(&backup, dir);
+        return Err(crate::WriterError::Io {
+            path: dir.display().to_string(),
+            detail: error.to_string(),
+        });
+    }
+    let _ = std::fs::remove_dir_all(backup);
     Ok(())
 }
 
