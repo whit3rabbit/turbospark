@@ -30,6 +30,13 @@ impl LogitProducer for RealForwardRunner {
         // Cleared HERE, beside the cache it describes, so the two can never
         // disagree about what the state holds.
         self.kv_prefix.clear();
+        // `prompt_vision` deliberately survives this generation-entry reset
+        // and will make the freshly-built KV depend on more than token ids.
+        // Re-taint the fresh record so clearing the map after the turn cannot
+        // make those image-derived rows eligible for token-prefix reuse.
+        if self.prompt_vision.is_some() {
+            self.kv_prefix.taint();
+        }
         self.batched_tape = None;
         self.batched_tape_row0 = None;
         self.kv.reset();
