@@ -192,3 +192,25 @@ fn the_requested_slot_count_reaches_the_fit() {
     assert_eq!(slots_of(&auto), 16, "the floor, resolved by ignorance");
     assert_eq!(slots_of(&fixed), 32, "the count the caller asked for");
 }
+
+#[test]
+fn discovered_install_targets_quote_untrusted_shell_syntax() {
+    let origin = Origin::Discovered {
+        repo: "publisher/model name".to_string(),
+        file: Some("model-Q4_K-$(touch /tmp/pwn)-it's.gguf".to_string()),
+    };
+
+    assert_eq!(
+        origin.install_args(),
+        [
+            "--repo",
+            "publisher/model name",
+            "--file",
+            "model-Q4_K-$(touch /tmp/pwn)-it's.gguf"
+        ]
+    );
+    assert_eq!(
+        origin.install_target(),
+        "--repo 'publisher/model name' --file 'model-Q4_K-$(touch /tmp/pwn)-it'\"'\"'s.gguf'"
+    );
+}

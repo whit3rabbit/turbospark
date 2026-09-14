@@ -98,16 +98,39 @@ pub enum Origin {
 }
 
 impl Origin {
-    /// What to type to install it.
-    pub fn install_target(&self) -> String {
+    /// Arguments to pass to `turbospark-model pull` to install this candidate.
+    pub fn install_args(&self) -> Vec<String> {
         match self {
-            Self::Catalog(alias) => alias.clone(),
-            Self::Discovered { repo, file } => match file {
-                Some(f) => format!("--repo {repo} --file {f}"),
-                None => format!("--repo {repo}"),
-            },
+            Self::Catalog(alias) => vec![alias.clone()],
+            Self::Discovered { repo, file } => {
+                let mut args = vec!["--repo".to_string(), repo.clone()];
+                if let Some(file) = file {
+                    args.extend(["--file".to_string(), file.clone()]);
+                }
+                args
+            }
         }
     }
+
+    /// Shell-safe rendering of [`Self::install_args`] for display and copying.
+    pub fn install_target(&self) -> String {
+        self.install_args()
+            .iter()
+            .map(|arg| shell_quote(arg))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn shell_quote(arg: &str) -> String {
+    if !arg.is_empty()
+        && arg
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&byte))
+    {
+        return arg.to_string();
+    }
+    format!("'{}'", arg.replace('\'', "'\"'\"'"))
 }
 
 /// A measured decode band and the chip it was taken on.
