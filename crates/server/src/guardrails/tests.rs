@@ -99,7 +99,7 @@ fn a_request_with_no_tools_is_never_inspected() {
 fn a_bare_json_call_the_decoder_missed_is_rescued() {
     let request = weather_request(None);
     let gen = generated(
-        r#"Sure, let me check. {"name": "get_weather", "arguments": {"city": "Oslo"}}"#,
+        r#"{"name": "get_weather", "arguments": {"city": "Oslo"}}"#,
         vec![],
     );
     let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
@@ -108,6 +108,16 @@ fn a_bare_json_call_the_decoder_missed_is_rescued() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].name, "get_weather");
     assert!(calls[0].arguments_json.contains("Oslo"));
+}
+
+#[test]
+fn a_bare_json_example_embedded_in_prose_is_not_rescued() {
+    let request = weather_request(None);
+    let gen = generated(
+        r#"Do not execute this example: {"name":"get_weather","arguments":{"city":"Oslo"}}"#,
+        vec![],
+    );
+    assert_eq!(verdict_for(&request, &gen), Verdict::Accept);
 }
 
 #[test]

@@ -170,6 +170,34 @@ fn requires_tool_call(request: &ChatCompletionRequest) -> bool {
     }
 }
 
+/// Whether raw text is unambiguous enough to reinterpret as control data.
+///
+/// Tagged dialects carry an explicit control marker. Untagged JSON does not,
+/// so it is eligible only when the entire visible response is one JSON value;
+/// scanning prose for an embedded object can otherwise erase a warning or a
+/// quoted example and turn it into an actionable call.
+fn rescue_candidate(text: &str) -> bool {
+    const CONTROL_MARKERS: &[&str] = &[
+        "[ARGS]",
+        "<function=",
+        "[TOOL_CALLS]",
+        "<arg_key>",
+        "<invoke ",
+        "call:",
+        "<|tool_call_begin|>",
+        "<longcat_tool_call>",
+    ];
+
+    if CONTROL_MARKERS.iter().any(|marker| text.contains(marker)) {
+        return true;
+    }
+
+    matches!(
+        serde_json::from_str::<serde_json::Value>(text.trim()),
+        Ok(serde_json::Value::Object(_) | serde_json::Value::Array(_))
+    )
+}
+
 /// Read one generation against the schemas the request sent.
 ///
 /// Pure: no I/O, no model, no clock. Every branch is unit-testable, which is
@@ -204,20 +232,21 @@ pub(crate) fn inspect(
     // K2, and nothing for Longcat, which forge's JSON scan already covers);
     // forge's four strategies keep everything else, so bare JSON and
     // Mistral's `[TOOL_CALLS]` take exactly the path they always did.
-    let rescued = if generated.calls.is_empty() && config.rescue {
-        let local = extra_formats::rescue(&generated.text, &names);
-        if local.is_empty() {
-            rescue_tool_call(&generated.text, &names)
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| from_forge_call(c, i))
-                .collect()
+    let rescued =
+        if generated.calls.is_empty() && config.rescue && rescue_candidate(&generated.text) {
+            let local = extra_formats::rescue(&generated.text, &names);
+            if local.is_empty() {
+                rescue_tool_call(&generated.text, &names)
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, c)| from_forge_call(c, i))
+                    .collect()
+            } else {
+                local
+            }
         } else {
-            local
-        }
-    } else {
-        Vec::new()
-    };
+            Vec::new()
+        };
     let calls: &[ParsedToolCall] = if rescued.is_empty() {
         &generated.calls
     } else {
