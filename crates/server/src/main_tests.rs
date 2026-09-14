@@ -584,9 +584,9 @@ fn kv_bits_flag_defaults_to_off_and_parses_documented_widths() {
 }
 
 #[test]
-fn prefix_reuse_flag_defaults_to_on_and_parses_on_off() {
+fn prefix_reuse_flag_defaults_to_off_and_parses_on_off() {
     let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
-    assert!(d.prefix_reuse);
+    assert!(!d.prefix_reuse);
 
     let on = parse(&["--model", "/tmp/m", "--prefix-reuse", "on"])
         .unwrap()
@@ -606,9 +606,16 @@ fn session_slots_defaults_to_one_and_parses_a_count() {
     let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
     assert_eq!(d.session_slots, 1);
 
-    let three = parse(&["--model", "/tmp/m", "--session-slots", "3"])
-        .unwrap()
-        .unwrap();
+    let three = parse(&[
+        "--model",
+        "/tmp/m",
+        "--prefix-reuse",
+        "on",
+        "--session-slots",
+        "3",
+    ])
+    .unwrap()
+    .unwrap();
     assert_eq!(three.session_slots, 3);
 
     assert!(
@@ -626,6 +633,7 @@ fn session_slots_defaults_to_one_and_parses_a_count() {
 /// does another.
 #[test]
 fn session_slots_above_one_needs_prefix_reuse_on() {
+    assert!(parse(&["--model", "/tmp/m", "--session-slots", "2"]).is_err());
     assert!(parse(&[
         "--model",
         "/tmp/m",
@@ -769,6 +777,8 @@ fn omlx_compatibility_extended_flags() {
     let args = parse(&[
         "--model",
         "/tmp/m",
+        "--prefix-reuse",
+        "on",
         "--max-concurrent-requests",
         "16",
         "--hf-endpoint",

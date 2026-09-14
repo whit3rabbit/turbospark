@@ -1127,8 +1127,10 @@ live network).
   (`RealForwardRunner::set_prefix_reuse`). `--chat` was the first caller;
   `crates/ffi`'s `open()` opts in unconditionally as of 2026-09-01 (every
   `TurboSparkApp` session is multi-turn by construction), and
-  `turbospark-server` gained a real `--prefix-reuse on|off` flag (default
-  on) the same day, paired with a swap-based `--session-slots` pool
+  `turbospark-server` gained a real `--prefix-reuse on|off` flag (now default
+  off because its process-wide cache would otherwise create a cross-client
+  prefix timing oracle) the same day, paired with a swap-based
+  `--session-slots` pool
   (`crate::session_pool::SessionPool`) that fixes the cross-conversation
   KV-stomping hazard a single-runner server has and a per-session FFI
   binding does not. See `crates/server/CLAUDE.md` Gotchas 31-32 and
