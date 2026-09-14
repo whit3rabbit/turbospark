@@ -8,6 +8,7 @@ mod config;
 #[cfg(target_os = "macos")]
 pub mod encoder;
 mod error;
+mod expert_layout_validation;
 #[cfg(target_os = "macos")]
 mod families;
 #[cfg(target_os = "macos")]
