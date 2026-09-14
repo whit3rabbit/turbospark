@@ -35,7 +35,8 @@ set -u
 PAIRS="${1:-2}"
 MODEL="${MODEL:-$HOME/models/gemma4.gturbo}"
 RUST_BENCH="${RUST_BENCH:-./target/release/turbospark-bench}"
-OUT="${OUT:-/tmp/mference-power}"
+OUT_WAS_SET="${OUT+x}"
+OUT="${OUT:-}"
 LABEL="${LABEL:-unlabelled}"
 # ARMS names the comparison axis, comma separated. THREE kinds of token are
 # understood, because the arm name is a single column in rows.tsv:
@@ -251,7 +252,40 @@ case "$COOLING" in
   *) echo "unknown COOLING=$COOLING (want auto|max)" >&2; exit 2;;
 esac
 
-mkdir -p "$OUT"
+# The default must not be a predictable name in the shared temporary
+# namespace. An explicit output directory remains reusable, but only when it
+# is owned by this user and inaccessible to other users; that makes the
+# predictable filenames below safe from cross-user symlink planting.
+if [ -z "$OUT_WAS_SET" ]; then
+  OUT=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/turbospark-power.XXXXXX") || {
+    echo "could not create a private output directory" >&2
+    exit 2
+  }
+else
+  if [ ! -e "$OUT" ] && [ ! -L "$OUT" ]; then
+    (umask 077 && mkdir -m 700 "$OUT") || exit 2
+  fi
+  python3 - "$OUT" <<'PY' || exit 2
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+try:
+    info = os.lstat(path)
+except OSError as error:
+    print(f"unsafe OUT={path}: {error}", file=sys.stderr)
+    raise SystemExit(1)
+if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+    print(f"unsafe OUT={path}: must be a directory owned by the current user",
+          file=sys.stderr)
+    raise SystemExit(1)
+if stat.S_IMODE(info.st_mode) & 0o077:
+    print(f"unsafe OUT={path}: group and other permissions must be disabled",
+          file=sys.stderr)
+    raise SystemExit(1)
+PY
+fi
 : > "$OUT/rows.tsv"
 
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
