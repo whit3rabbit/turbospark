@@ -378,7 +378,11 @@ fn hostile_parity_at(
     let weights = context.new_buffer_with_data(&blob);
 
     for &batch in batches {
-        let x_values = f16_ragged(0xA5A5 + batch as u64, batch * cols);
+        // The MMA positive control below loads complete 8-row tiles even
+        // when the logical batch is smaller, so its input must include the
+        // otherwise-unused rows in the final tile.
+        let x_rows = batch.div_ceil(8) * 8;
+        let x_values = f16_ragged(0xA5A5 + batch as u64, x_rows * cols);
 
         // THE DATA MUST BE ORDER-SENSITIVE, and this is the first of two
         // checks that say so. The kernel's per-block activation sum is
