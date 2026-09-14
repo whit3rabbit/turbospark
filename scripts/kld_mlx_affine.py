@@ -327,6 +327,44 @@ def assert_reference_matches(model, spec) -> dict:
     return {f"{name}(bits={b},group={g})": n for (name, b, g), n in sorted(detail.items(), key=str)}
 
 
+def assert_dump_matches_checkpoint(meta: dict, spec: dict) -> None:
+    """Bind the dump's install identity to the selected MLX checkpoint."""
+    install = pathlib.Path(meta["install"])
+    manifest_path = install / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.exit(f"cannot read dump install identity from {manifest_path}: {exc}")
+
+    installed_repo = manifest.get("modelID")
+    if installed_repo != spec["repo"]:
+        sys.exit(
+            "dump install does not match the selected reference checkpoint.\n"
+            f"  dump install: {installed_repo or 'missing modelID'}\n"
+            f"  selected reference: {spec['repo']}"
+        )
+
+    receipt_path = install / "verified-install.json"
+    if not receipt_path.exists():
+        return
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.exit(f"cannot read dump install provenance from {receipt_path}: {exc}")
+    source_repo = receipt.get("sourceRepoId")
+    source_revision = receipt.get("sourceRevision")
+    if source_repo is not None and source_repo != spec["repo"]:
+        sys.exit(
+            f"dump receipt source repo {source_repo} does not match {spec['repo']}"
+        )
+    if source_revision is not None and source_revision != spec["revision"]:
+        sys.exit(
+            "dump receipt source revision does not match the selected reference.\n"
+            f"  dump revision: {source_revision}\n"
+            f"  selected revision: {spec['revision']}"
+        )
+
+
 def mlx_logits(token_ids: list[int], cached: bool, spec) -> tuple[np.ndarray, dict]:
     """mlx-lm's next-token logits per position, as float32 [rows, vocab].
 
@@ -366,6 +404,7 @@ def main() -> None:
     spec = CHECKPOINTS[name]
     meta = json.loads((dump / "meta.json").read_text())
     rows, vocab, ids = meta["rows"], meta["vocab_size"], meta["token_ids"]
+    assert_dump_matches_checkpoint(meta, spec)
 
     mlx_build = require_the_mlx_build(spec)
 
