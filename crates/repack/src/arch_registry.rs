@@ -264,6 +264,11 @@ pub fn hf_family_for_model_type(model_type: &str) -> Option<ModelFamily> {
 /// class names (`Gemma4ForConditionalGeneration`), which is a third naming
 /// scheme and would need a third table to buy nothing.
 pub fn config_json_family(root: &serde_json::Value) -> Option<ModelFamily> {
+    config_json_resolution(root).map(|(_, family)| family)
+}
+
+/// The recognized `model_type` string and family selected from a config.
+fn config_json_resolution(root: &serde_json::Value) -> Option<(&str, ModelFamily)> {
     ["model_type"]
         .iter()
         .filter_map(|k| root.get(k).and_then(|v| v.as_str()))
@@ -272,7 +277,9 @@ pub fn config_json_family(root: &serde_json::Value) -> Option<ModelFamily> {
                 .and_then(|tc| tc.get("model_type"))
                 .and_then(|v| v.as_str()),
         )
-        .find_map(hf_family_for_model_type)
+        .find_map(|model_type| {
+            hf_family_for_model_type(model_type).map(|family| (model_type, family))
+        })
 }
 
 /// Guards a family-specific `config.json` parser against being handed
@@ -289,8 +296,8 @@ pub fn refuse_foreign_config(
     root: &serde_json::Value,
     expected: ModelFamily,
 ) -> Result<(), String> {
-    match config_json_family(root) {
-        Some(found) if found != expected => Err(format!(
+    match config_json_resolution(root) {
+        Some((model_type, found)) if found != expected => Err(format!(
             // QUOTES THE FILE, then names the two families as families.
             //
             // This used to read "model_type says {found.as_str()}", which
@@ -303,26 +310,12 @@ pub fn refuse_foreign_config(
             // claimed to quote a key and reported something else, sending a
             // reader to grep a config for a token that is not in it.
             "model_type {} resolves to the {} family, not {}",
-            config_json_model_type(root).unwrap_or("<absent>"),
+            model_type,
             found.as_str(),
             expected.as_str()
         )),
         _ => Ok(()),
     }
-}
-
-/// The raw `model_type` string a config claims, for error messages that quote
-/// the file rather than this port's own naming.
-///
-/// Same precedence as [`config_json_family`] -- root first, then
-/// `text_config` -- so a message and the resolution it explains cannot name
-/// different keys.
-fn config_json_model_type(root: &serde_json::Value) -> Option<&str> {
-    root.get("model_type").and_then(|v| v.as_str()).or_else(|| {
-        root.get("text_config")
-            .and_then(|tc| tc.get("model_type"))
-            .and_then(|v| v.as_str())
-    })
 }
 
 /// One sentence explaining what this port makes of an architecture string,
