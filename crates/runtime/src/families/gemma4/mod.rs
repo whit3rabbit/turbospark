@@ -23,6 +23,30 @@ use crate::steering::encode_steering;
 
 const RMS_EPS: f32 = 1e-6;
 
+/// Keeps asynchronously submitted routed work from outliving the no-copy
+/// model buffers it reads when a later encode operation returns an error.
+#[derive(Default)]
+struct PendingRouted(Option<gpu::CommittedPass>);
+
+impl PendingRouted {
+    fn take(&mut self) -> Option<gpu::CommittedPass> {
+        self.0.take()
+    }
+
+    fn set(&mut self, pass: gpu::CommittedPass) {
+        debug_assert!(self.0.is_none(), "routed pipeline depth is 1");
+        self.0 = Some(pass);
+    }
+}
+
+impl Drop for PendingRouted {
+    fn drop(&mut self) {
+        if let Some(pending) = self.0.take() {
+            pending.wait();
+        }
+    }
+}
+
 impl RealForwardRunner {
     /// Times the whole forward pass into `phases.total_nanos`; the inner
     /// function accumulates the per-phase buckets it is carved into.
@@ -90,7 +114,7 @@ impl RealForwardRunner {
             embed_scale,
         )?;
 
-        let mut pending_routed: Option<gpu::CommittedPass> = None;
+        let mut pending_routed = PendingRouted::default();
 
         let sequential = moe::RoutedSlot::sequential();
         let h1 = self.real.as_ref().expect("real state present").h1.clone();
@@ -163,8 +187,7 @@ impl RealForwardRunner {
             )?;
 
             if self.routed_pipeline {
-                debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-                pending_routed = Some(pass.commit());
+                pending_routed.set(pass.commit());
                 pass = self.context.begin_pass_labeled("cb1 (attn+router)");
             }
         }
