@@ -714,33 +714,22 @@ after that change and are not comparable to the pre-2026-08-08 ones.
 A frozen number with a 2% band is only worth its band if real damage lands
 outside it. `crates/bench/tests/quality_sensitivity.rs` measures that
 directly: it APFS-clones the install (`clonefile`, 13 GB in ~8 ms, so only
-written pages cost disk), flips ONE quantization level in a strided subset
-of the routed-expert blobs, and re-measures. XOR `0x01` into an int4 byte
-moves that weight by one of its sixteen levels and cannot make a NaN or an
-infinity even if it lands on an FP16 scale, so what is being measured is
-degradation, not breakage. Nothing outside `packed_experts/` is touched, so
+written pages cost disk), reads `packed_experts/layout.json`, flips ONE
+quantization level in a strided subset of only the INT4 weight ranges, and
+re-measures. BF16 scales and biases and alignment padding are excluded, so
 the move is attributable to routed-expert weights alone.
 
-Gemma 4, clean perplexity 37.3105, 2026-08-07:
-
-| Expert bytes touched | Damaged perplexity | Drift | Verdict |
-| ---: | ---: | ---: | --- |
-| 12.5% | 12,249,392 | +3e7% | model destroyed |
-| 0.195% | 51.3597 | +37.7% | detected, 19x the band |
-| 0.0122% | 41.2186 | +10.5% | detected, 5x the band |
-| 0.0015% | 37.5118 | +0.54% | NOT detected, inside the band |
-
-So the gate's floor sits between 0.0015% and 0.0122% of expert bytes at one
-quantization level, and Phase S's expected damage (whole percent) is orders
-of magnitude above it. The test asserts the 0.195% row, chosen for margin
-rather than for being the smallest detectable damage, so it cannot flake.
-Every number here reproduced exactly across runs.
+The 2026-08-07 rows are withdrawn. The old damage loop XORed complete pages,
+including BF16 scale and bias ranges. In little-endian BF16 that changed an
+exponent bit as well as a mantissa bit, so the resulting drift did not isolate
+one-level INT4 damage and could not establish a detection floor. Re-run the
+corrected weight-only stimulus before publishing a replacement floor.
 
 ### Cross-engine: token-level KL divergence against mlx-lm
 
-The table above establishes that the metric responds to damage. It cannot
-say whether the undamaged starting point is RIGHT, because every number in
-it is this port measured against itself. That is what this section adds:
+The sensitivity experiment compares this port against its own damaged model.
+Even after its corrected rows are measured, it cannot say whether the
+undamaged starting point is RIGHT. That is what this section adds:
 the same corpus, the same token ids, and the same quantized checkpoint run
 through a second engine.
 
