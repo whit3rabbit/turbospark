@@ -8,8 +8,9 @@
 
 use model_io::ModelFamily;
 use turbospark_repack::{
-    arch_from_gguf, build_synthetic_gemma4_gguf, parse_gguf_header, GgufBuilder, GgufConfigError,
-    SyntheticGgufShape, GGUF_DEFAULT_MAX_HEADER_BYTES,
+    arch_from_gguf, build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, parse_gguf_header,
+    GgufBuilder, GgufConfigError, SyntheticGgufShape, SyntheticGptOssShape,
+    GGUF_DEFAULT_MAX_HEADER_BYTES,
 };
 
 fn arch_of(shape: SyntheticGgufShape) -> model_io::ArchConfig {
@@ -252,6 +253,42 @@ fn rejects_a_required_field_that_exceeds_i64() {
             assert!(detail.contains("i64"), "{detail}");
         }
         other => panic!("expected BadValue, got {other:?}"),
+    }
+}
+
+/// A representable but implausibly large depth must be refused before the
+/// gpt-oss mask builder allocates one byte per claimed layer.
+#[test]
+fn rejects_a_gpt_oss_layer_count_above_the_allocation_bound() {
+    let (bytes, _) = build_synthetic_gpt_oss_gguf(SyntheticGptOssShape::default());
+    let mut h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    h.metadata.insert(
+        "gpt-oss.block_count".to_string(),
+        turbospark_repack::GgufValue::U64(4097),
+    );
+    match arch_from_gguf(&h) {
+        Err(GgufConfigError::BadValue { key, detail }) => {
+            assert_eq!(key, "gpt-oss.block_count");
+            assert!(detail.contains("1..=4096"), "{detail}");
+        }
+        other => panic!("expected bounded block_count error, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_a_zero_layer_model_before_building_its_mask() {
+    let (bytes, _) = build_synthetic_gpt_oss_gguf(SyntheticGptOssShape::default());
+    let mut h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    h.metadata.insert(
+        "gpt-oss.block_count".to_string(),
+        turbospark_repack::GgufValue::U32(0),
+    );
+    match arch_from_gguf(&h) {
+        Err(GgufConfigError::BadValue { key, detail }) => {
+            assert_eq!(key, "gpt-oss.block_count");
+            assert!(detail.contains("outside 1..=4096"), "{detail}");
+        }
+        other => panic!("expected positive block_count error, got {other:?}"),
     }
 }
 
