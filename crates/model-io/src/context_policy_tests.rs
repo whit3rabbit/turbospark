@@ -321,6 +321,30 @@ fn a_machine_smaller_than_its_install_refuses_rather_than_underflowing() {
     assert_eq!(err.largest_fitting, 0);
 }
 
+/// `Auto` must not turn an exhausted budget into a successful zero-token
+/// plan. The runner requires a positive context, so accepting zero here
+/// would turn an untrusted install's inflated committed size into a panic.
+#[test]
+fn auto_refuses_when_the_machine_cannot_hold_one_context_granule() {
+    let err = resolve_max_context(
+        MaxContext::Auto,
+        &dense_7b(),
+        None,
+        DEFAULT,
+        8 * GIB,
+        CommittedBytes::resident_only(16 * GIB),
+        &LoadPolicy::default(),
+    )
+    .unwrap_err();
+    let ContextRefused::TooLarge(err) = err else {
+        panic!("expected a memory refusal, got {err:?}");
+    };
+    assert_eq!(err.requested, 0);
+    assert_eq!(err.needs, 0);
+    assert_eq!(err.available, 0);
+    assert_eq!(err.largest_fitting, 0);
+}
+
 /// **An unknown machine imposes no bound.** `physical_memory()` answers
 /// 0 off macOS, and reading that as an empty budget would resolve every
 /// `Auto` to a context of ZERO -- which admits no prompt at all -- and
