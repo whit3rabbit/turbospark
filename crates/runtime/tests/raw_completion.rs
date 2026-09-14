@@ -601,6 +601,7 @@ fn peak_memory_pressure_accumulates_worst_level_and_does_not_regress() {
 /// fed, so chunked reuse arithmetic is verifiable without GPU kernels.
 struct ChunkedRecordingProducer {
     fed_chunks: Vec<(Vec<i32>, usize)>,
+    final_prompt_chunks: Vec<bool>,
     fed_decode: Vec<(i32, usize)>,
     reusable: usize,
     resets: usize,
@@ -612,6 +613,7 @@ impl ChunkedRecordingProducer {
     fn new(vocab: usize, reusable: usize, next: usize) -> Self {
         Self {
             fed_chunks: Vec::new(),
+            final_prompt_chunks: Vec::new(),
             fed_decode: Vec::new(),
             reusable,
             resets: 0,
@@ -652,6 +654,17 @@ impl turbospark_runtime::ChunkedPrefillRunner for ChunkedRecordingProducer {
         self.fed_chunks.push((chunk.to_vec(), start_position));
         logits.copy_from_slice(&one_hot(self.vocab, self.next));
         Ok(())
+    }
+
+    fn prefill_chunk_with_status(
+        &mut self,
+        chunk: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        is_final_prompt_chunk: bool,
+    ) -> Result<(), String> {
+        self.final_prompt_chunks.push(is_final_prompt_chunk);
+        self.prefill_chunk(chunk, start_position, logits)
     }
 }
 
@@ -708,6 +721,7 @@ fn chunked_no_reusable_prefix_resets_and_feeds_all_chunks() {
         producer.fed_chunks,
         vec![(vec![10, 11], 0), (vec![12, 13], 2), (vec![14], 4)]
     );
+    assert_eq!(producer.final_prompt_chunks, [false, false, true]);
     assert_eq!(producer.resets, 1);
     assert_eq!(result.reused_prefix_tokens, 0);
     assert_eq!(result.prompt_tokens, 5);

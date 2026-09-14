@@ -343,7 +343,10 @@ impl RealForwardRunner {
         // Position is the LAST token of the micro-batch, `t == m - 1` --
         // the row the per-token loop above left the capture buffer holding
         // (`crates/runtime/CLAUDE.md` Gotcha 20).
-        let skip_head = !want_head;
+        // `want_head` is local to this `prefill_chunk` call. A long prompt
+        // has several outer calls, so only the final outer chunk may consume
+        // the generation's one-shot last-prompt-token capture.
+        let skip_head = !want_head || !self.prefill_chunk_is_final;
         let last_position = start_position + m - 1;
         if let Some(capture) = self.resid_capture.as_mut() {
             capture.record_pass(last_position, skip_head);

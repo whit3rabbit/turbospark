@@ -86,7 +86,7 @@ pub fn run_raw_completion_chunked_cancellable(
     let spans = prefill_chunk_spans(prompt_ids.len() - reused, reused, chunk_tokens);
     history.extend_from_slice(&prompt_ids[..reused]);
     let mut position = reused;
-    for span in &spans {
+    for (span_index, span) in spans.iter().enumerate() {
         commit_state
             .require_clean("chunked prefill")
             .map_err(|e| RuntimeError::Producer(e.to_string()))?;
@@ -96,7 +96,12 @@ pub fn run_raw_completion_chunked_cancellable(
         let chunk = &prompt_ids[base..base + span.token_count];
         commit_state.mark_dirty(span.start_position, span.token_count);
         producer
-            .prefill_chunk(chunk, span.start_position, &mut logits)
+            .prefill_chunk_with_status(
+                chunk,
+                span.start_position,
+                &mut logits,
+                span_index + 1 == spans.len(),
+            )
             .map_err(RuntimeError::Producer)?;
         commit_state.mark_committed();
 

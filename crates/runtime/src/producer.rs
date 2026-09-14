@@ -110,6 +110,20 @@ pub trait ChunkedPrefillRunner: LogitProducer {
         start_position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String>;
+
+    /// Runs one outer chunk and identifies whether it contains the final
+    /// prompt token. Implementors that do not distinguish headless chunks
+    /// retain the original [`Self::prefill_chunk`] behavior.
+    fn prefill_chunk_with_status(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        is_final_prompt_chunk: bool,
+    ) -> Result<(), String> {
+        let _ = is_final_prompt_chunk;
+        self.prefill_chunk(tokens, start_position, logits)
+    }
 }
 
 /// A [`LogitProducer`] that can also DRAFT tokens ahead of itself and VERIFY
