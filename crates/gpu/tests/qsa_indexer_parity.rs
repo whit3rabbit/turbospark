@@ -461,13 +461,10 @@ fn advance_blocks_leaves_earlier_blocks_untouched_on_a_later_incremental_call() 
     );
 }
 
-/// **RELU IS OUTSIDE THE HEAD SUM.** `q` has TWO heads that individually
-/// dot to a strongly negative and a strongly positive value against the
-/// same pooled block, chosen so their SUM is negative (relu-after-sum ->
-/// 0) while relu-BEFORE-sum would keep the positive head's contribution
-/// and report a large positive score instead.
+/// `q` has two heads whose dot products have opposite signs, proving that
+/// ReLU is applied to each head before the scores are summed.
 #[test]
-fn score_blocks_applies_relu_after_summing_across_heads() {
+fn score_blocks_applies_relu_to_each_head_before_summing() {
     let mut context = MetalContext::new().expect("Metal device");
     let head_dim = 4u32;
     let num_heads = 2u32;
@@ -477,7 +474,7 @@ fn score_blocks_applies_relu_after_summing_across_heads() {
     // head 0: dot = 4 + 4 + 4 + 4 = ... use distinct magnitudes instead so
     // relu-before-sum vs relu-after-sum give clearly different signs.
     // head 0 dot = 3+3+3+3 = 12 (positive), head 1 dot = -5-5-5-5 = -20
-    // (negative). Sum = -8 -> relu(-8) = 0. relu(12)+relu(-20) = 12+0 = 12.
+    // (negative). relu(12)+relu(-20) = 12, then sqrt(4) scaling gives 6.
     let q16: Vec<f16> = vec![
         f16::from_f32(3.0),
         f16::from_f32(3.0),
@@ -492,9 +489,8 @@ fn score_blocks_applies_relu_after_summing_across_heads() {
     let got = run_score(&mut context, &q16, &pooled16, num_heads, head_dim);
     assert_eq!(got.len(), 1);
     assert!(
-        got[0].abs() < 1e-3,
-        "relu(sum over heads) must be 0 here (sum = -8), got {} \
-         (a per-head relu would read 12 / sqrt(4) = 6.0)",
+        (got[0] - 6.0).abs() < 1e-3,
+        "per-head relu must produce 12 / sqrt(4) = 6.0, got {}",
         got[0]
     );
 }

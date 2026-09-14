@@ -123,22 +123,13 @@ pub fn pool_blocks_mean(keys: &[f32], head_dim: usize, compress_ratio: usize) ->
     pooled
 }
 
-/// `scores[b] = relu(sum_h(q[h] . pooled[b])) / sqrt(head_dim)`, summed over
+/// `scores[b] = sum_h(relu(q[h] . pooled[b])) / sqrt(head_dim)`, summed over
 /// the `num_heads` query heads against the ONE shared pooled key per block
 /// (`index_kv_heads == 1`, so every head reads the same `pooled[b]` row).
 /// `q` is `[num_heads * head_dim]`, already normed and roped; `pooled` is
 /// `[num_blocks * head_dim]`, already normed and roped at its block's first
 /// token's position (section 5: "rope(..., position of the block's FIRST
 /// token)").
-///
-/// **The `relu` is OUTSIDE the head sum, matching section 5's own
-/// parenthesization** (`relu(q @ pooled^T).sum(over heads)`, not
-/// `relu(...).sum` per head then combined): the dot product `q @ pooled^T`
-/// is computed per head first, summed across heads, and `relu` is applied
-/// once to that total, not once per head before the sum. Applying it per
-/// head would clip a head's own negative contribution to zero before the
-/// heads combine, which is a different, smaller number whenever any head
-/// disagrees in sign with the total.
 pub fn score_blocks(q: &[f32], pooled: &[f32], num_heads: usize, head_dim: usize) -> Vec<f32> {
     assert!(num_heads > 0, "num_heads must be positive");
     assert!(head_dim > 0, "head_dim must be positive");
@@ -164,9 +155,9 @@ pub fn score_blocks(q: &[f32], pooled: &[f32], num_heads: usize, head_dim: usize
             let dot: f32 = (0..head_dim)
                 .map(|d| q[q_base + d] * pooled[block_base + d])
                 .sum();
-            total += dot;
+            total += dot.max(0.0);
         }
-        *score = total.max(0.0) * inv_sqrt_d;
+        *score = total * inv_sqrt_d;
     }
     scores
 }
@@ -367,15 +358,13 @@ mod tests {
     }
 
     #[test]
-    fn scoring_sums_dot_products_across_heads_before_relu() {
+    fn scoring_applies_relu_to_each_head_before_summing() {
         // head_dim=1, num_heads=2, one block. q = [3, -5], pooled = [2].
-        // Per-head dots: 6, -10. Summed BEFORE relu: -4 -> relu = 0.
-        // A per-head relu (wrong parenthesization) would give relu(6) +
-        // relu(-10) = 6, a materially different and positive answer.
+        // Per-head dots: 6, -10. relu(6) + relu(-10) = 6.
         let q = vec![3.0, -5.0];
         let pooled = vec![2.0];
         let scores = score_blocks(&q, &pooled, 2, 1);
-        assert_eq!(scores, vec![0.0]);
+        assert_eq!(scores, vec![6.0]);
     }
 
     #[test]
