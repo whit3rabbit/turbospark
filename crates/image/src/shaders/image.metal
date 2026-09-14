@@ -132,7 +132,7 @@ void image_linear(
     output[gid] = sum;
 }
 
-// Input-tiled version of image_linear. One 8x8 output tile shares each 32-wide
+// Input-tiled version of image_linear. One 32x8 output tile shares each 32-wide
 // input tile across its 256 threads. The row-major packed contract is unchanged,
 // including the per-row INT4 scales and biases.
 [[kernel, max_total_threads_per_threadgroup(256)]]
@@ -146,7 +146,7 @@ void image_linear_tiled(
     uint2 group [[threadgroup_position_in_grid]]) {
     threadgroup float x_tile[8][32];
     const uint row = group.y * 8 + tid.y;
-    const uint col = group.x * 8 + tid.x;
+    const uint col = group.x * 32 + tid.x;
     float sum = 0.0f;
     for (uint k_base = 0; k_base < p.in_dim; k_base += 32) {
         const uint k = k_base + tid.x;

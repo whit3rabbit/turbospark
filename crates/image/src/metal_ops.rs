@@ -155,7 +155,7 @@ fn dispatch_tiled(
         pipeline,
         buffers,
         bytes,
-        (columns.div_ceil(8) as u64, rows.div_ceil(8) as u64, 1),
+        (columns.div_ceil(32) as u64, rows.div_ceil(8) as u64, 1),
         (32, 8, 1),
     );
 }
