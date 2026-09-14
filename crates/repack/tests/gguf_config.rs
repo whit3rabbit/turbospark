@@ -255,6 +255,26 @@ fn rejects_a_required_field_that_exceeds_i64() {
     }
 }
 
+/// Layer counts size per-layer allocations during import, so malformed GGUF
+/// metadata must be rejected before any mask allocation is attempted.
+#[test]
+fn rejects_llama_block_counts_outside_the_model_limit() {
+    for block_count in [0, 4097] {
+        let (bytes, _) = GgufBuilder::new()
+            .metadata_str("general.architecture", "llama")
+            .metadata_u32("llama.block_count", block_count)
+            .build();
+        let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+        match arch_from_gguf(&h) {
+            Err(GgufConfigError::BadValue { key, detail }) => {
+                assert_eq!(key, "llama.block_count");
+                assert!(detail.contains("between 1 and 4096"), "{detail}");
+            }
+            other => panic!("expected bounded block_count error, got {other:?}"),
+        }
+    }
+}
+
 /// A PRESENT optional `i64` field that cannot be read (here: above
 /// `i64::MAX`) must be refused, not silently treated as an ABSENT key with
 /// its default applied. Collapsing the two would read a corrupt or hostile

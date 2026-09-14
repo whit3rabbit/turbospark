@@ -34,6 +34,11 @@ use self::meta::Meta;
 use crate::gguf_header::{GgufHeader, GgufValue};
 use crate::gguf_names::family_for_architecture;
 
+// Model depth controls several per-layer allocations during import. This is
+// deliberately far above every supported architecture, while still bounding
+// attacker-controlled GGUF metadata before it is converted to `usize`.
+const MAX_MODEL_LAYERS: i64 = 4096;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GgufConfigError {
     MissingArchitecture,
@@ -164,10 +169,14 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     // derivations are unchanged.
     let mtp_blocks = m.opt_i64("nextn_predict_layers")?.unwrap_or(0);
     let block_count = m.i64("block_count")?;
-    // Guarded only when the key is PRESENT and positive. A file that declares
-    // no head is left exactly as it was before this subtraction existed,
-    // including the degenerate zero-block fixtures whose block count this
-    // function has never had an opinion about.
+    if !(1..=MAX_MODEL_LAYERS).contains(&block_count) {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("block_count"),
+            detail: format!("must be between 1 and {MAX_MODEL_LAYERS}"),
+        });
+    }
+    // Guard the subtraction only when the optional head count is positive. A
+    // file that declares no head keeps the validated block count unchanged.
     if mtp_blocks < 0 || (mtp_blocks > 0 && mtp_blocks >= block_count) {
         return Err(GgufConfigError::BadValue {
             key: m.key("nextn_predict_layers"),
@@ -175,6 +184,10 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         });
     }
     let num_layers = block_count - mtp_blocks;
+    let num_layers_usize = usize::try_from(num_layers).map_err(|_| GgufConfigError::BadValue {
+        key: m.key("block_count"),
+        detail: "trunk layer count is not representable as usize".into(),
+    })?;
     arch.num_layers = num_layers;
     arch.hidden_size = m.i64("embedding_length")?;
     arch.num_heads = m.i64("attention.head_count")?;
@@ -203,18 +216,18 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     arch.tie_word_embeddings = !header.tensors.contains_key("output.weight");
 
     arch.full_attention_layer_mask = match family {
-        ModelFamily::Gemma4 => gemma4_layer_mask(&m, num_layers as usize)?,
+        ModelFamily::Gemma4 => gemma4_layer_mask(&m, num_layers_usize)?,
         // Spark-X2.5 publishes the SAME bool-array key with the SAME
         // convention (true = this layer slides), so the Gemma builder IS
         // this family's builder; only the rope divergence below is its own.
-        ModelFamily::Spark25 => gemma4_layer_mask(&m, num_layers as usize)?,
+        ModelFamily::Spark25 => gemma4_layer_mask(&m, num_layers_usize)?,
         // ONE builder for both halves, because both publish the same
         // `full_attention_interval` key and the same every-fourth-layer rule.
         // The dense half was refused here until `ornith-ai/Ornith-1.5-9B-GGUF`
         // became the first published `qwen35` file; before it the mask would
         // have been invented, which is why the refusal was right at the time.
         ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense => {
-            qwen_gdn_moe_layer_mask(&m, num_layers as usize)?
+            qwen_gdn_moe_layer_mask(&m, num_layers_usize)?
         }
         // Every layer is full attention: neither a dense Llama nor a Mixtral
         // publishes `attention.sliding_window`, and Mistral 7B's window is a
@@ -227,9 +240,9 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2 => {
-            vec![1u8; num_layers as usize]
+            vec![1u8; num_layers_usize]
         }
-        ModelFamily::GptOss => gpt_oss_layer_mask(&m, num_layers as usize)?,
+        ModelFamily::GptOss => gpt_oss_layer_mask(&m, num_layers_usize)?,
         // Refused rather than defaulted: no GGUF exists for either, so any
         // mask here would be invented. `muse_glimmer`'s is doubly so -- its
         // `[0,0,0,1]` window comes from a `layer_types` ARRAY that no GGUF
