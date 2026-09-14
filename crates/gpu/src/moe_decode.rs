@@ -116,8 +116,6 @@ pub(crate) fn constants_key(use_silu: bool) -> [u8; 1] {
 /// current token's expert blob pointers before each MoE dispatch pair.
 pub struct RoutedBlobsBuffer {
     buffer: metal::Buffer,
-    encoders: Vec<(&'static str, &'static str)>,
-    use_silu: bool,
 }
 
 impl RoutedBlobsBuffer {
@@ -145,37 +143,18 @@ impl RoutedBlobsBuffer {
         function: &'static str,
         use_silu: bool,
     ) -> Result<Self, GpuError> {
-        Self::new_for_encoders(context, &[(source, function)], use_silu)
-    }
-
-    /// Allocates one reusable buffer large enough for every listed encoder.
-    /// This is used when model layers select different built-in shader
-    /// libraries but share the buffer in the decode runner.
-    pub fn new_for_encoders(
-        context: &mut MetalContext,
-        encoders: &[(&'static str, &'static str)],
-        use_silu: bool,
-    ) -> Result<Self, GpuError> {
-        assert!(!encoders.is_empty());
-        let mut encoded_length = 0;
-        for &(source, function) in encoders {
-            let encoder = context.argument_encoder(
-                source,
-                function,
-                &moe_function_constants(use_silu),
-                &constants_key(use_silu),
-                0,
-            )?;
-            encoded_length = encoded_length.max(encoder.encoded_length());
-        }
-        let buffer = context
-            .device()
-            .new_buffer(encoded_length, MTLResourceOptions::StorageModeShared);
-        Ok(Self {
-            buffer,
-            encoders: encoders.to_vec(),
-            use_silu,
-        })
+        let encoder = context.argument_encoder(
+            source,
+            function,
+            &moe_function_constants(use_silu),
+            &constants_key(use_silu),
+            0,
+        )?;
+        let buffer = context.device().new_buffer(
+            encoder.encoded_length(),
+            MTLResourceOptions::StorageModeShared,
+        );
+        Ok(Self { buffer })
     }
 
     /// Points the argument buffer's `blob[i]` entries at `blobs[i]`
@@ -216,17 +195,6 @@ impl RoutedBlobsBuffer {
         blobs: &[(&metal::Buffer, u64)],
     ) -> Result<(), GpuError> {
         assert!(!blobs.is_empty() && blobs.len() <= MAX_STREAMED_EXPERTS);
-        let has_encoder = self
-            .encoders
-            .iter()
-            .any(|&(allocated_source, allocated_function)| {
-                std::ptr::eq(allocated_source, source) && allocated_function == function
-            });
-        if !has_encoder || self.use_silu != use_silu {
-            return Err(GpuError::ArgumentBufferMismatch(format!(
-                "buffer was not allocated for requested encoder {function}"
-            )));
-        }
         let encoder = context.argument_encoder(
             source,
             function,

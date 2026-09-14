@@ -13,9 +13,6 @@ pub enum GpuError {
     PipelineCreate(String),
     /// Buffer allocation error with details.
     BufferCreate(String),
-    /// An argument buffer was encoded with a different reflected ABI than
-    /// the one used to allocate it.
-    ArgumentBufferMismatch(String),
 }
 
 impl std::fmt::Display for GpuError {
@@ -29,9 +26,6 @@ impl std::fmt::Display for GpuError {
             }
             GpuError::BufferCreate(detail) => {
                 write!(f, "buffer creation failed: {detail}")
-            }
-            GpuError::ArgumentBufferMismatch(detail) => {
-                write!(f, "argument buffer layout mismatch: {detail}")
             }
         }
     }
