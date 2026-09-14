@@ -408,7 +408,7 @@ fn mma_threadgroups(rows: usize, wide: bool) -> u64 {
 /// `docs/MTP_SPECULATIVE.md` for what it buys.
 ///
 /// `x` must be sized for a whole number of 8-token column tiles
-/// (`ceil(batch / 8) * cols` halfs), because the kernel loads its
+/// (`ceil(batch / 8) * 8 * cols` halfs), because the kernel loads its
 /// right-hand side a tile at a time. `y` needs only `batch * rows`.
 pub fn encode_dequant_int4_gemm_mma_resident(
     context: &mut MetalContext,
