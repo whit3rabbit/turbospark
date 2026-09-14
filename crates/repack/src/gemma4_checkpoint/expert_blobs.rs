@@ -22,6 +22,11 @@ pub fn expert_stride_from_headers(
     if routed.is_empty() {
         return Ok(0);
     }
+    if arch.num_experts <= 0 {
+        return Err(Gemma4Error::Config(
+            "routed expert tensors require a positive num_experts".to_string(),
+        ));
+    }
     let expert_count = arch.num_experts as u64;
     let mut max_blob = 0u64;
     for layer in 0..arch.num_layers as usize {
@@ -78,6 +83,11 @@ pub fn plan_one_expert_layer(
     routed: &BTreeMap<usize, BTreeMap<&'static str, &str>>,
     layer: usize,
 ) -> Result<(LayerBlobs, u64), Gemma4Error> {
+    if arch.num_experts <= 0 {
+        return Err(Gemma4Error::Config(
+            "routed expert tensors require a positive num_experts".to_string(),
+        ));
+    }
     let expert_count = arch.num_experts as usize;
     let bundle = routed
         .get(&layer)
@@ -207,4 +217,29 @@ pub fn plan_one_expert_layer(
         blob_used += (w_per + s_per + b_per) as u64;
     }
     Ok((LayerBlobs { layer, experts }, blob_used))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn routed_layout_refuses_zero_experts_before_division() {
+        let arch = crate::tiny_muse_glimmer_arch(64, 4);
+        let shards = Gemma4Shards::new(Vec::new()).expect("empty shard registry");
+        let routed = BTreeMap::from([(
+            0,
+            BTreeMap::from([(
+                "gate",
+                "language_model.model.layers.0.experts.switch_glu.gate_proj.weight",
+            )]),
+        )]);
+
+        let err = expert_stride_from_headers(&shards, &arch, &Gemma4Quant::default(), &routed)
+            .expect_err("a routed map cannot be laid out with zero experts");
+        assert!(
+            err.to_string().contains("positive num_experts"),
+            "unexpected error: {err}"
+        );
+    }
 }

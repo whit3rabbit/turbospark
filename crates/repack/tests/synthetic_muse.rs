@@ -154,6 +154,19 @@ fn the_vision_towers_are_classified_as_excluded() {
     }
 }
 
+/// A repository-controlled tensor name cannot contradict the family's dense
+/// architecture and enter the routed-expert layout path.
+#[test]
+fn routed_looking_tensors_are_refused_for_muse_glimmer() {
+    use turbospark_repack::{classify_for_family, Gemma4Bucket};
+
+    let name = "language_model.model.layers.0.experts.switch_glu.gate_proj.weight";
+    assert_eq!(
+        classify_for_family(name, LAYERS as usize, ModelFamily::MuseGlimmer),
+        Gemma4Bucket::Unknown
+    );
+}
+
 /// The fixture refuses a layer count that would leave the NoPE branch
 /// uncovered.
 ///
