@@ -413,10 +413,10 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    asserts the transcription contains the page's own line numbers, and both
    endpoints return byte-identical text on the real install.
 
-22. **`/health` READS ONLY A FIELD, NOT THE RUNNER, ON PURPOSE.**
-    `handler::health` calls `ChatModel::model_id()` alone, which every
-    backend answers from a plain `&str` field (`RealChatModel::model_id`
-    never touches its `Mutex<RealForwardRunner>`). A liveness probe that
+22. **`/health` READS ONLY THE REGISTRY, NOT THE RUNNER, ON PURPOSE.**
+    `handler::health` reads only the registry's in-memory row count, and
+    exposes readiness without returning model identities or build metadata.
+    A liveness probe that
     queued behind the one generation this process can run at a time would
     answer the wrong question -- "is the process alive" needs to stay true
     while a request is mid-decode, not just between requests.

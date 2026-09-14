@@ -126,9 +126,8 @@ async fn an_exact_model_id_reaches_that_model() {
         let (status, body) = chat(&base, id).await;
         assert_eq!(status, 200, "{id} should have been served");
         // The response echoes the request's own model name, so routing is
-        // read off `/health` instead -- see the dedicated case below. What
-        // this asserts is that both ids are ACCEPTED, which is the half a
-        // 404 would break.
+        // What this asserts is that both ids are ACCEPTED, which is the half
+        // a 404 would break.
         assert_eq!(body["object"], "chat.completion");
     }
 }
@@ -188,8 +187,7 @@ async fn an_empty_server_reports_itself_unavailable_rather_than_missing() {
         .await
         .unwrap();
     assert_eq!(health["state"], "empty");
-    assert!(health["model"].is_null());
-    assert_eq!(health["models"].as_array().unwrap().len(), 0);
+    assert_eq!(health["status"], "ok");
 }
 
 /// `/v1/models/:id` answers about the id it was ASKED about, and must not

@@ -115,10 +115,7 @@ async fn health_endpoint_reports_ready_without_a_body() {
     let response = client.get(format!("{base}/health")).send().await.unwrap();
     assert_eq!(response.status(), 200);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
-    assert_eq!(body["model"], "scripted");
-    assert_eq!(body["state"], "ready");
-    assert!(body["version"].is_string());
+    assert_eq!(body, serde_json::json!({"status": "ok", "state": "ready"}));
 }
 
 /// **THE DISCRIMINATING HALF**: a request that asks for nothing this server

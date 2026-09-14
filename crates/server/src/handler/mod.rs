@@ -209,23 +209,15 @@ pub(crate) fn gen_error_response(e: GenError) -> Response {
     }
 }
 
-/// `GET /health`. Reads only per-process fields the backend resolved at
-/// open (`model_id`), so it answers even while a generation holds the
-/// runner's lock -- the point of a liveness probe is to say the process is
-/// alive, not to queue behind whatever request got there first.
+/// `GET /health`. Reads only the registry's in-memory row count, so it answers
+/// even while a generation holds the runner's lock. It deliberately omits
+/// model identities and build metadata because this route is exempt from
+/// authentication and exists only as a liveness/readiness probe.
 pub async fn health(State(state): State<crate::ServerState>) -> Response {
     let rows = state.registry.rows();
     Json(serde_json::json!({
         "status": "ok",
-        // `model` stays a bare string for every client that already reads it,
-        // and is the FIRST attached model rather than a list. `models` beside
-        // it is the multi-model answer. A server with nothing attached reports
-        // null and `state: "empty"`, which is a real state a host can start
-        // one in rather than a failure.
-        "model": rows.first().map(|r| r.id.clone()),
-        "models": rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
         "state": if rows.is_empty() { "empty" } else { "ready" },
-        "version": env!("CARGO_PKG_VERSION"),
     }))
     .into_response()
 }
