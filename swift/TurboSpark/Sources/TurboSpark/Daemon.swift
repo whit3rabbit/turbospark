@@ -94,7 +94,12 @@ public struct TurboSparkAgent: Sendable {
             let modelArgument = canonicalModelID.map {
                 " --model \(shellDoubleQuoted("claude-turbospark-\($0)"))"
             } ?? ""
-            return "claude --settings \(shellSingleQuoted(claudeSettingsJSON(baseURL: baseURL, apiKey: apiKey)))\(modelArgument)"
+            let settings = shellSingleQuoted(claudeSettingsJSON(baseURL: baseURL, apiKey: apiKey))
+            return "(settings_file=$(mktemp \"${TMPDIR:-/tmp}/turbospark-claude.XXXXXX\")"
+                + " && chmod 600 \"$settings_file\""
+                + " && trap 'rm -f \"$settings_file\"' EXIT HUP INT TERM"
+                + " && printf '%s' \(settings) > \"$settings_file\""
+                + " && claude --settings \"$settings_file\"\(modelArgument))"
         case "codex":
             return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey)) && codex"
         case "opencode":
@@ -119,9 +124,9 @@ public struct TurboSparkAgent: Sendable {
         return "\"\(escaped)\""
     }
 
-    /// This command-line overlay gives the ephemeral local server port an
-    /// explicit one-session source, even when a prior server left a different
-    /// port in a saved Claude Code `env` block.
+    /// This temporary-file overlay gives the ephemeral local server port an
+    /// explicit one-session source without exposing the API key in Claude's
+    /// process arguments.
     private static func claudeSettingsJSON(baseURL: String, apiKey: String) -> String {
         let settings: [String: [String: String]] = [
             "env": [

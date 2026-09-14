@@ -134,6 +134,13 @@ sent. A reminder that qualified on step 3 leaves no residue when it no
 longer qualifies on step 4 -- which is what lets the staleness rule be
 "state of the world right now" rather than bookkeeping.
 
+The reminder tag is formatting, not an authority boundary. Repository rules
+and CONTEXT.md are escaped before prompt interpolation so they cannot close
+their untrusted wrapper or reproduce a reminder tag. The environment prompt
+also assigns no authority to textual tags; genuine reminders are trusted
+because the app constructs them from its own state, not because of their
+spelling.
+
 The SKILL.state history path deliberately gets NO reminders: its prompt is
 O(1) in step count with its own state patch format (`docs/SKILL_STATE.md`),
 and a per-turn reminder would defeat the bound it exists for.

@@ -1025,3 +1025,10 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     extra slot bytes in both admission and vision-scratch budgeting, compute
     that amount once, and pass the same committed-memory total through all
     downstream guards.
+
+35. **TEST-ONLY IMAGE HELPERS STILL NEED A DIRECT DEV DEPENDENCY.** Workspace
+    builds do not compile server test modules, so a transitive image crate can
+    hide a missing dependency until `cargo test --workspace`. Declare test
+    helpers directly in `[dev-dependencies]` and run the full workspace test
+    gate after adding image coverage.
+

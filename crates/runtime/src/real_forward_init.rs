@@ -9,6 +9,18 @@ use crate::real_forward_types::RealForwardError;
 use model_io::ExpertCacheSlots;
 
 pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealForwardError> {
+    for (name, value) in [
+        ("num_kv_heads", expecting.num_kv_heads),
+        ("num_full_kv_heads", expecting.num_full_kv_heads),
+        ("head_dim", expecting.head_dim),
+        ("full_head_dim", expecting.full_head_dim),
+    ] {
+        if value <= 0 {
+            return Err(RealForwardError::Unsupported(format!(
+                "{name} must be positive, got {value}"
+            )));
+        }
+    }
     // The gpt-oss attention flow uses the full-attention dimensions for every
     // layer. Its sliding and full pairs are equal in canonical installs, and
     // the KV cache relies on that invariant when sizing a sliding layer.
@@ -376,7 +388,7 @@ pub(crate) fn open_expert_streamers(
 
 #[cfg(test)]
 mod tests {
-    use super::mapped_residency_refusal;
+    use super::{mapped_residency_refusal, validate_arch_config};
     use model_io::ModelFamily;
 
     /// EVERY family is listed, not a sample, so adding a `ModelFamily`
@@ -400,6 +412,38 @@ mod tests {
         ModelFamily::MiniMaxM2,
         ModelFamily::Qwen2Dense,
     ];
+
+    fn assert_invalid_kv_dimension(name: &str, value: i64, mutate: fn(&mut model_io::ArchConfig)) {
+        let mut arch = model_io::gemma4_26b_a4b();
+        mutate(&mut arch);
+        let error = validate_arch_config(&arch).expect_err(name);
+        assert_eq!(
+            error.to_string(),
+            format!("unsupported: {name} must be positive, got {value}")
+        );
+    }
+
+    #[test]
+    fn negative_swa_kv_heads_are_refused_before_gpu_allocation() {
+        assert_invalid_kv_dimension("num_kv_heads", -4_294_967_294, |arch| {
+            arch.num_kv_heads = -4_294_967_294
+        });
+    }
+
+    #[test]
+    fn zero_full_kv_heads_are_refused_before_gpu_allocation() {
+        assert_invalid_kv_dimension("num_full_kv_heads", 0, |arch| arch.num_full_kv_heads = 0);
+    }
+
+    #[test]
+    fn zero_swa_head_dim_is_refused_before_gpu_allocation() {
+        assert_invalid_kv_dimension("head_dim", 0, |arch| arch.head_dim = 0);
+    }
+
+    #[test]
+    fn negative_full_head_dim_is_refused_before_gpu_allocation() {
+        assert_invalid_kv_dimension("full_head_dim", -1, |arch| arch.full_head_dim = -1);
+    }
 
     #[test]
     fn mapped_residency_is_served_on_gemma4_and_refused_by_name_everywhere_else() {

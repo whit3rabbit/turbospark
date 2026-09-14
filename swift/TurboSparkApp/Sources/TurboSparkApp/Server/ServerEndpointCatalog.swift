@@ -163,10 +163,8 @@ public enum ServerConnectRecipes {
         let claudeModel = modelID.isEmpty
             ? "<load a model first>"
             : "claude-turbospark-\(modelID)"
-        // `--settings` is deliberately part of the command instead of only
-        // setting shell variables. A saved `env` block can retain a stale
-        // port from a previous local server run; this command-line overlay
-        // gives the ephemeral port an explicit one-session source.
+        // A temporary settings file overrides a stale saved port without
+        // exposing the API key in Claude's process arguments.
         let claudeSettings = """
         {"env":{"ANTHROPIC_BASE_URL":"\(Self.jsonEscaped(baseURL))","ANTHROPIC_API_KEY":"\(Self.jsonEscaped(key))","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}
         """
@@ -185,8 +183,11 @@ public enum ServerConnectRecipes {
                 note: "Anthropic-native. Overrides stale saved gateway settings; starts with the loaded model.",
                 language: "bash",
                 body: """
-                    claude --settings \(Self.shellSingleQuoted(claudeSettings)) \\
-                      --model \(Self.shellDoubleQuoted(claudeModel))
+                    (settings_file=$(mktemp "${TMPDIR:-/tmp}/turbospark-claude.XXXXXX") && \\
+                      chmod 600 "$settings_file" && \\
+                      trap 'rm -f "$settings_file"' EXIT HUP INT TERM && \\
+                      printf '%s' \(Self.shellSingleQuoted(claudeSettings)) > "$settings_file" && \\
+                      claude --settings "$settings_file" --model \(Self.shellDoubleQuoted(claudeModel)))
                     """),
             ServerConnectSnippet(
                 id: "openai-python",

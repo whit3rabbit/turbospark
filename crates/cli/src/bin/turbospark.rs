@@ -46,7 +46,7 @@ MODEL MANAGEMENT (Unsloth & oMLX style):
     probe <REPO>[@REV]             inspect Hugging Face repo headers without download
     recommend                      rank models by fit for this machine's memory
     path <ALIAS>                   print install path for an alias
-    auth [TOKEN]                   manage Hugging Face credentials (--set, --status, --clear)
+    auth                           manage Hugging Face credentials (--set, --status, --clear)
 
 BENCHMARK:
     bench [OPTIONS]                run throughput and memory benchmarks
