@@ -415,7 +415,14 @@ fn a_batched_forward_at_one_row_is_compared_against_a_sequential_step() {
     );
 
     println!("\nVERDICT:");
-    if worst_kl < 10.0 * DENSE_SHAPE_FLOOR_NATS {
+    if unstable > 0 {
+        println!(
+            "  `produce_batched` IS NOT DETERMINISTIC -- the same call from the same\n  \
+             checkpoint gave different logits twice. Stop reading the arithmetic: this\n  \
+             is a scratch buffer carrying state across calls, and every comparison\n  \
+             above is measuring that rather than a kernel (AGENTS.md Gotcha 27)."
+        );
+    } else if worst_kl < 10.0 * DENSE_SHAPE_FLOOR_NATS {
         println!(
             "  WITHIN THE SHAPE FLOOR. The two paths differ by about as much as the\n  \
              REFERENCE engines' own batched and cached passes differ from each other on\n  \
@@ -427,13 +434,6 @@ fn a_batched_forward_at_one_row_is_compared_against_a_sequential_step() {
              DO NOT read the differing-LOGIT COUNT as the magnitude: 88% of a vocabulary\n  \
              moving at 1e-5 nats is a tiny distributional difference, and that count is\n  \
              what made this look like a bug worth bisecting."
-        );
-    } else if unstable > 0 {
-        println!(
-            "  `produce_batched` IS NOT DETERMINISTIC -- the same call from the same\n  \
-             checkpoint gave different logits twice. Stop reading the arithmetic: this\n  \
-             is a scratch buffer carrying state across calls, and every comparison\n  \
-             above is measuring that rather than a kernel (AGENTS.md Gotcha 27)."
         );
     } else if m1 > 0 {
         println!(
