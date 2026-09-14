@@ -528,7 +528,7 @@ same family): `crates/compute/src/qsa_indexer.rs`, covering the
 BLOCK-POOLING, SCORING and SELECTION steps of section 5's pseudocode --
 `pool_blocks_mean` (mean-pools consecutive raw key rows into one pooled row
 per complete block, in FP32 as the spec requires, leaving the ragged tail
-untouched), `score_blocks` (`relu(sum over heads of q . pooled) /
+untouched), `score_blocks` (`sum over heads of relu(q . pooled) /
 sqrt(head_dim)`, against the ONE shared pooled key every head reads since
 `index_kv_heads == 1`), and `select_blocks` (top-`min(block_topk,
 num_complete_blocks)` block selection plus the always-selected ragged
@@ -597,7 +597,7 @@ so a reader does not have to re-derive it from the module doc.
 Two new port-local kernels, matched to `crates/compute/src/qsa_indexer.rs`'s
 CPU reference: `qsa_pool_blocks_mean_fp16` (mean-pools consecutive raw key
 rows into one pooled row per complete block, FP32 accumulation) and
-`qsa_score_blocks_fp16` (`relu(sum over heads of q . pooled) / sqrt(D)`,
+`qsa_score_blocks_fp16` (`sum over heads of relu(q . pooled) / sqrt(D)`,
 one threadgroup per block, the same two-stage SIMD-group reduction shape
 `ple_gate_fp16` already uses). `crates/gpu/src/shaders/qsa_indexer.metal`
 and `crates/gpu/src/qsa_indexer.rs`; parity tests in

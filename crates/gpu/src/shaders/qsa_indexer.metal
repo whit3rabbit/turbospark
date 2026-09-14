@@ -60,7 +60,8 @@ void qsa_pool_blocks_mean_fp16(
 // reduction (`ple.metal`).
 constant constexpr uint kQsaMaxSimdGroups = 8;
 
-// scores[b] = relu(sum over (h, d) of q[h*D+d] * pooled[b*D+d]) / sqrt(D)
+// scores[b] = sum over h of relu(sum over d of
+// q[h*D+d] * pooled[b*D+d]) / sqrt(D)
 //
 // `q` is `[num_heads * D]`, ALREADY normed and roped at the query's own
 // current position; `pooled` is `[num_blocks * D]`, ALREADY normed and
@@ -68,18 +69,13 @@ constant constexpr uint kQsaMaxSimdGroups = 8;
 // so every one of the `num_heads` query heads reads the SAME pooled row
 // for a given block.
 //
-// **The `relu` is OUTSIDE the head sum**, matching section 5's own
-// parenthesization (`relu(q @ pooled^T).sum(over heads)`): every head's
-// dot product against this block's pooled key accumulates into ONE total
-// before relu is applied once, not once per head before summing -- the
-// CPU reference's own doc explains why the two read differently whenever
-// a head disagrees in sign with the total.
+// `q @ pooled^T` produces one value per head and block, so relu is applied
+// to each head's dot product before those values are summed over heads.
 //
 // One threadgroup per block, two-stage SIMD reduction (`rms_block_inv`'s
 // and `ple_gate_fp16`'s shape): every thread strides over the full
-// `num_heads * D` term count, reading `pooled` at `i % D` so every head's
-// dot product against the one shared pooled row folds into the same
-// running sum before the per-SIMD-group and cross-SIMD-group reductions.
+// D terms for one head at a time. The barrier between heads lets lane zero
+// accumulate each clamped cross-SIMD-group result without another buffer.
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void qsa_score_blocks_fp16(
     device const half*  q          [[buffer(0)]],   // [num_heads * D] FP16
@@ -95,25 +91,30 @@ void qsa_score_blocks_fp16(
     uint  simdgroups        [[simdgroups_per_threadgroup]]
 ) {
     threadgroup float partial[kQsaMaxSimdGroups];
-    const uint terms = num_heads * d;
     device const half* pooled_block = pooled + block * d;
 
-    float acc = 0.0f;
-    for (uint i = lid; i < terms; i += lsize) {
-        const uint dim = i % d;
-        acc = fma(float(q[i]), float(pooled_block[dim]), acc);
-    }
-    acc = simd_sum(acc);
-    if (simd_lane_id == 0) {
-        partial[simd_group_id] = acc;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    if (simd_group_id == 0) {
-        float v = (simd_lane_id < simdgroups) ? partial[simd_lane_id] : 0.0f;
-        v = simd_sum(v);
-        if (simd_lane_id == 0) {
-            scores[block] = max(v, 0.0f) / sqrt(float(d));
+    float total = 0.0f;
+    for (uint head = 0; head < num_heads; ++head) {
+        float acc = 0.0f;
+        for (uint dim = lid; dim < d; dim += lsize) {
+            acc = fma(float(q[head * d + dim]), float(pooled_block[dim]), acc);
         }
+        acc = simd_sum(acc);
+        if (simd_lane_id == 0) {
+            partial[simd_group_id] = acc;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (simd_group_id == 0) {
+            float v = (simd_lane_id < simdgroups) ? partial[simd_lane_id] : 0.0f;
+            v = simd_sum(v);
+            if (simd_lane_id == 0) {
+                total += max(v, 0.0f);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (lid == 0) {
+        scores[block] = total / sqrt(float(d));
     }
 }
