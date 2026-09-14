@@ -433,6 +433,13 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     short. `max == 0` means unbounded, which is what a final drain before
     shutdown wants.
 
+    The ring is bounded by both 2,000 events and 1 MiB of serialized event
+    data. The byte bound is load-bearing: request-controlled fields can be
+    almost as large as the HTTP body limit, so a count alone can retain far
+    more memory than an embedding host expects. An event larger than the
+    whole byte budget is dropped directly; otherwise the oldest events are
+    evicted until both bounds hold.
+
     **`dropped` IS IN THE PAYLOAD RATHER THAN BEING A SEPARATE QUERY, and
     that is the point of the field.** A ring that quietly discarded its
     oldest rows would make a console read "nothing happened in that window",

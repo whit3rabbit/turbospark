@@ -107,6 +107,12 @@ impl ModelRegistry for LiveRegistry {
 /// the bound exists for the host that stops polling (its window closed, it
 /// is stuck behind a modal) so a busy server cannot grow this without limit.
 const RING_CAPACITY: usize = 2_000;
+/// Maximum serialized event bytes retained by one server.
+///
+/// Request fields can be nearly as large as Axum's body limit, so the count
+/// cap alone is not a memory bound. This also bounds an unbounded poll's JSON
+/// allocation to roughly this size.
+const RING_BYTE_CAPACITY: usize = 1 << 20;
 
 /// A bounded event buffer a host drains.
 ///
@@ -122,11 +128,23 @@ pub(crate) struct EventRing {
 
 #[derive(Default)]
 struct RingInner {
-    events: VecDeque<ServerEvent>,
+    events: VecDeque<BufferedEvent>,
+    bytes: usize,
     /// Dropped since the last drain, not since the server started: a host
     /// reports the gap it just experienced, and a lifetime total would keep
     /// re-reporting one that has already been shown.
     dropped: u64,
+}
+
+struct BufferedEvent {
+    event: ServerEvent,
+    serialized_bytes: usize,
+}
+
+fn serialized_len(event: &ServerEvent) -> usize {
+    serde_json::to_vec(event)
+        .map(|json| json.len())
+        .unwrap_or(usize::MAX)
 }
 
 impl EventRing {
@@ -139,7 +157,10 @@ impl EventRing {
     pub(crate) fn drain(&self, max: usize) -> (Vec<ServerEvent>, u64) {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let take = inner.events.len().min(max);
-        let events: Vec<_> = inner.events.drain(..take).collect();
+        let drained: Vec<_> = inner.events.drain(..take).collect();
+        let drained_bytes: usize = drained.iter().map(|event| event.serialized_bytes).sum();
+        inner.bytes -= drained_bytes;
+        let events = drained.into_iter().map(|event| event.event).collect();
         let dropped = std::mem::take(&mut inner.dropped);
         (events, dropped)
     }
@@ -147,12 +168,25 @@ impl EventRing {
 
 impl ServerObserver for EventRing {
     fn record(&self, event: ServerEvent) {
+        let serialized_bytes = serialized_len(&event);
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        if inner.events.len() >= RING_CAPACITY {
-            inner.events.pop_front();
+        while !inner.events.is_empty()
+            && (inner.events.len() >= RING_CAPACITY
+                || inner.bytes.saturating_add(serialized_bytes) > RING_BYTE_CAPACITY)
+        {
+            let removed = inner.events.pop_front().expect("ring was not empty");
+            inner.bytes -= removed.serialized_bytes;
             inner.dropped += 1;
         }
-        inner.events.push_back(event);
+        if serialized_bytes > RING_BYTE_CAPACITY {
+            inner.dropped += 1;
+            return;
+        }
+        inner.bytes += serialized_bytes;
+        inner.events.push_back(BufferedEvent {
+            event,
+            serialized_bytes,
+        });
     }
 }
 
@@ -212,5 +246,39 @@ mod tests {
         assert_eq!(ring.drain(usize::MAX).1, 1);
         ring.record(event(9_999));
         assert_eq!(ring.drain(usize::MAX).1, 0);
+    }
+
+    #[test]
+    fn byte_overflow_drops_oldest_events() {
+        let ring = EventRing::default();
+        let requested = "x".repeat(RING_BYTE_CAPACITY / 2);
+        for id in 0..3 {
+            ring.record(ServerEvent::RequestRouted {
+                id,
+                requested: Some(requested.clone()),
+                served: "model".to_string(),
+                stream: false,
+            });
+        }
+
+        let (events, dropped) = ring.drain(usize::MAX);
+        assert_eq!(dropped, 2);
+        assert_eq!(events.len(), 1);
+        assert_eq!(id_of(&events[0]), 2);
+    }
+
+    #[test]
+    fn one_event_larger_than_the_byte_budget_is_dropped() {
+        let ring = EventRing::default();
+        ring.record(ServerEvent::RequestRouted {
+            id: 1,
+            requested: Some("x".repeat(RING_BYTE_CAPACITY)),
+            served: "model".to_string(),
+            stream: false,
+        });
+
+        let (events, dropped) = ring.drain(usize::MAX);
+        assert!(events.is_empty());
+        assert_eq!(dropped, 1);
     }
 }
