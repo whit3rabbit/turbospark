@@ -319,6 +319,12 @@ impl RangeSource for HttpRangeSource {
                 return Err(DownloadError::Cancelled);
             }
         }
+        if start > end_exclusive {
+            return Err(DownloadError::InvalidRange {
+                start,
+                end_exclusive,
+            });
+        }
         let chunks = chunk_ranges(start, end_exclusive, MAX_RANGE_BYTES);
         let mut out = vec![0u8; (end_exclusive - start) as usize];
         fill_chunks(
@@ -335,6 +341,18 @@ impl RangeSource for HttpRangeSource {
 mod tests {
     use super::super::{DownloadError, RangeSource};
     use super::{throttle_backoff, throttled_status, CancelFlag, HttpRangeSource};
+
+    #[test]
+    fn an_inverted_range_is_rejected_before_any_request() {
+        let source = HttpRangeSource::new("http://127.0.0.1:1/nothing");
+        assert_eq!(
+            source.read_range(2, 1),
+            Err(DownloadError::InvalidRange {
+                start: 2,
+                end_exclusive: 1,
+            })
+        );
+    }
 
     /// A fired flag aborts `read_range` BEFORE any request: the port here
     /// (:1) is unreachable, so a probe that reached the network would fail
