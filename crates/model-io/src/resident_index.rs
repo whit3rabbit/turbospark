@@ -65,6 +65,55 @@ fn corrupt(detail: impl Into<String>) -> ModelError {
     }
 }
 
+fn validate_fixed_affine_entry(entry: &ResidentIndexEntry) -> Result<(), ModelError> {
+    let bits = match entry.dtype {
+        4 => 4u64,
+        5 => 8u64,
+        _ => return Ok(()),
+    };
+    let rows = u64::from(entry.shape.0);
+    let cols = u64::from(entry.shape.1);
+    if rows == 0 || cols == 0 || cols % 64 != 0 {
+        return Err(corrupt(format!(
+            "tensor {} has invalid affine shape {}x{}",
+            entry.name, rows, cols
+        )));
+    }
+    let elements = rows
+        .checked_mul(cols)
+        .ok_or_else(|| corrupt(format!("tensor {} shape overflows", entry.name)))?;
+    let packed = elements
+        .checked_mul(bits)
+        .and_then(|value| value.checked_div(8))
+        .ok_or_else(|| corrupt(format!("tensor {} packed size overflows", entry.name)))?;
+    let companions = rows
+        .checked_mul(cols / 64)
+        .and_then(|value| value.checked_mul(2))
+        .ok_or_else(|| corrupt(format!("tensor {} companion size overflows", entry.name)))?;
+    if entry.size_bytes != packed || entry.scale_size != companions || entry.bias_size != companions
+    {
+        return Err(corrupt(format!(
+            "tensor {} affine planes are {}, {}, and {} bytes; shape {}x{} requires {}, {}, and {}",
+            entry.name,
+            entry.size_bytes,
+            entry.scale_size,
+            entry.bias_size,
+            rows,
+            cols,
+            packed,
+            companions,
+            companions
+        )));
+    }
+    if entry.scale_offset % 2 != 0 || entry.bias_offset % 2 != 0 {
+        return Err(corrupt(format!(
+            "tensor {} affine companion offsets are not 2-byte aligned",
+            entry.name
+        )));
+    }
+    Ok(())
+}
+
 /// Read the header + index region out of `model_weights.bin`. The tensor
 /// data region (starting at byte `header.index_size`) is not read here.
 pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
@@ -214,6 +263,7 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
             bias_offset,
             bias_size,
         };
+        validate_fixed_affine_entry(&entry)?;
         if entries.contains_key(&name) {
             return Err(corrupt(format!("duplicate tensor name {name}")));
         }

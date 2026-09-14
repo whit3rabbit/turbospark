@@ -45,6 +45,11 @@ fn build_index_bytes(name: &str) -> Vec<u8> {
     buf
 }
 
+fn set_u64(bytes: &mut [u8], field_offset: usize, value: u64) {
+    let start = HEADER_BYTES + field_offset;
+    bytes[start..start + 8].copy_from_slice(&value.to_le_bytes());
+}
+
 fn write_file(bytes: &[u8]) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -171,4 +176,38 @@ fn load_rejects_a_payload_offset_inside_the_index_region() {
         panic!("expected IndexCorrupt, got {err:?}");
     };
     assert!(detail.contains("payload"), "{detail}");
+}
+
+#[test]
+fn load_rejects_affine_planes_shorter_than_the_declared_shape_requires() {
+    let mut bytes = build_index_bytes("x");
+    bytes[HEADER_BYTES + 6] = 4;
+    set_u64(&mut bytes, 16, 2048);
+    set_u64(&mut bytes, 40, 96 + 2048);
+    set_u64(&mut bytes, 48, 2);
+    set_u64(&mut bytes, 56, 96 + 2050);
+    set_u64(&mut bytes, 64, 2);
+
+    let err = load_resident_index(&write_file(&bytes)).unwrap_err();
+    let ModelError::IndexCorrupt { detail } = err else {
+        panic!("expected IndexCorrupt, got {err:?}");
+    };
+    assert!(detail.contains("affine planes"), "{detail}");
+}
+
+#[test]
+fn load_rejects_affine_metadata_with_a_false_shape_or_unaligned_plane() {
+    let mut false_shape = build_index_bytes("x");
+    false_shape[HEADER_BYTES + 6] = 4;
+    false_shape[HEADER_BYTES + 24..HEADER_BYTES + 28].copy_from_slice(&999u32.to_le_bytes());
+    assert!(load_resident_index(&write_file(&false_shape)).is_err());
+
+    let mut unaligned = build_index_bytes("x");
+    unaligned[HEADER_BYTES + 6] = 4;
+    set_u64(&mut unaligned, 16, 2048);
+    set_u64(&mut unaligned, 40, 97);
+    set_u64(&mut unaligned, 48, 128);
+    set_u64(&mut unaligned, 56, 224);
+    set_u64(&mut unaligned, 64, 128);
+    assert!(load_resident_index(&write_file(&unaligned)).is_err());
 }
