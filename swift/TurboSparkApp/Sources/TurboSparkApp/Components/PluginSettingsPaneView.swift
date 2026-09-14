@@ -300,12 +300,20 @@ public struct PluginSettingsPaneView: View {
     private func optionField(spec: AppHookOptionSpec, sourceID: String) -> some View {
         let binding = Binding(
             get: { hookStore.getOptionValue(sourceID: sourceID, key: spec.key, defaultVal: spec.defaultValue ?? "") },
-            set: { hookStore.updateOptionValue(sourceID: sourceID, key: spec.key, value: $0) })
+            set: {
+                hookStore.updateOptionValue(
+                    sourceID: sourceID, key: spec.key, value: $0,
+                    isSensitive: spec.isSensitive)
+            })
         switch spec.type {
         case .boolean:
             Toggle("", isOn: Binding(
                 get: { (hookStore.getOptionValue(sourceID: sourceID, key: spec.key, defaultVal: spec.defaultValue ?? "false")) == "true" },
-                set: { hookStore.updateOptionValue(sourceID: sourceID, key: spec.key, value: $0 ? "true" : "false") }))
+                set: {
+                    hookStore.updateOptionValue(
+                        sourceID: sourceID, key: spec.key, value: $0 ? "true" : "false",
+                        isSensitive: spec.isSensitive)
+                }))
                 .labelsHidden()
         default:
             Group {

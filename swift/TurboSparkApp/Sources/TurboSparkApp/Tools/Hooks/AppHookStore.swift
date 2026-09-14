@@ -47,9 +47,17 @@ public final class AppHookStore: ObservableObject {
     /// default roots point at the real home directory.
     var pluginProvider: ((String?) -> [LoadedPlugin])?
 
+    let optionSecretStore: any HookOptionSecretStoring
+    var explicitlySensitiveOptionKeys: [String: Set<String>] = [:]
+
     let fileManager = FileManager.default
 
-    public init() {
+    public convenience init() {
+        self.init(optionSecretStore: HookOptionKeychain())
+    }
+
+    init(optionSecretStore: any HookOptionSecretStoring) {
+        self.optionSecretStore = optionSecretStore
         loadTrustedHashes()
         loadOptionValues()
     }
@@ -115,15 +123,36 @@ public final class AppHookStore: ObservableObject {
         }
     }
 
-    public func updateOptionValue(sourceID: String, key: String, value: String) {
+    public func updateOptionValue(
+        sourceID: String, key: String, value: String, isSensitive: Bool? = nil
+    ) {
         var current = optionValues[sourceID] ?? [:]
         current[key] = value
         optionValues[sourceID] = current
+        let sensitive = isSensitive ?? sensitiveOptionKeys[sourceID]?.contains(key) == true
+        if sensitive {
+            explicitlySensitiveOptionKeys[sourceID, default: []].insert(key)
+            optionSecretStore.save(
+                value, sourceID: sourceID, key: key, storageDirectory: storageDirectory)
+        }
         saveOptionValues()
     }
 
     public func getOptionValue(sourceID: String, key: String, defaultVal: String? = nil) -> String {
         optionValues[sourceID]?[key] ?? defaultVal ?? ""
+    }
+
+    var sensitiveOptionKeys: [String: Set<String>] {
+        var keys = explicitlySensitiveOptionKeys
+        for group in sourceGroups {
+            keys[group.id, default: []].formUnion(
+                group.optionSpecs.filter(\.isSensitive).map(\.key))
+        }
+        for plugin in lastLoadedPlugins {
+            keys["plugin_\(plugin.name)", default: []].formUnion(
+                plugin.manifest.userConfig.filter(\.isSensitive).map(\.key))
+        }
+        return keys
     }
 
     // MARK: - Custom Hook Creation & Deletion

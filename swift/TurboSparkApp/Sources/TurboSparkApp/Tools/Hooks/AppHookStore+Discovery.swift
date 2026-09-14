@@ -121,6 +121,7 @@ extension AppHookStore {
         }
 
         self.sourceGroups = sorted
+        synchronizeSensitiveOptionValues()
     }
 
     private func sortOrder(for type: AppHookSourceType) -> Int {
