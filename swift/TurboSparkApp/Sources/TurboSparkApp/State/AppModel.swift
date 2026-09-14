@@ -622,6 +622,9 @@ public final class AppModel: ObservableObject {
     /// "a path is set"**: a path is configuration, running the edit is a
     /// decision, and separating them is what makes the A/B one click.
     @Published public var steeringEnabled: Bool = false
+    /// Exact behavior-affecting steering intent captured at successful open.
+    /// The engine summary cannot identify the vector or every option.
+    @Published var loadedSteeringConfiguration: AppSteeringPolicy.Configuration? = nil
     /// Forge Tool-Call Guardrails global mode ("alwaysOn", "alwaysOff", "select").
     @Published public var guardrailsMode: AppGuardrailsMode = .select
     /// What the RUNNING server was started with, or nil when none is.

@@ -236,7 +236,10 @@ extension AppModel {
 
         do {
             let options = buildOpenOptions(modelPath: model.path)
+            let steeringConfiguration = AppSteeringPolicy.configuration(
+                enabled: steeringEnabled, preset: resolvedSteeringPreset)
             session = try await TurboSparkSession(modelPath: model.path, options: options)
+            loadedSteeringConfiguration = steeringConfiguration
             selected = model
             modelPathText = model.path
             restoreReasoningPreference(for: model)
@@ -328,7 +331,10 @@ extension AppModel {
             defer { self.opening = false }
             do {
                 let options = self.buildOpenOptions(modelPath: path)
+                let steeringConfiguration = AppSteeringPolicy.configuration(
+                    enabled: self.steeringEnabled, preset: self.resolvedSteeringPreset)
                 self.session = try await TurboSparkSession(modelPath: path, options: options)
+                self.loadedSteeringConfiguration = steeringConfiguration
                 self.refreshModels()
                 // `refreshModels` runs `reconcileSelection`, which rewrites
                 // `modelPathText` from `selected`. With no matching row that

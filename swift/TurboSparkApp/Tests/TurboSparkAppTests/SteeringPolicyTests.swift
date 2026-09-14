@@ -254,6 +254,51 @@ final class SteeringPolicyTests: XCTestCase {
         )
     }
 
+    func testEveryBehaviorAffectingPresetChangeNeedsAReload() throws {
+        let loadedPreset = AppSteeringPreset(
+            name: "loaded", vectorPath: "/vectors/old.gguf", mode: .clamp,
+            scale: 0.3, layers: "20:45", target: 0.2, gate: 0.1)
+        let loaded = AppSteeringPolicy.configuration(enabled: true, preset: loadedPreset)
+        let session = try sessionSteering(active: true, mode: "clamp", scale: 0.3)
+        var changes: [AppSteeringPreset] = []
+        var changed = loadedPreset
+        changed.vectorPath = "/vectors/replacement.gguf"
+        changes.append(changed)
+        changed = loadedPreset
+        changed.layers = "21:45"
+        changes.append(changed)
+        changed = loadedPreset
+        changed.target = 0.4
+        changes.append(changed)
+        changed = loadedPreset
+        changed.gate = 0.2
+        changes.append(changed)
+
+        for preset in changes {
+            XCTAssertTrue(
+                AppSteeringPolicy.needsReload(
+                    wantEnabled: true, wantPreset: preset,
+                    sessionSteering: session, loadedConfiguration: loaded))
+        }
+    }
+
+    func testIgnoredAndDisplayOnlyPresetChangesNeedNoReload() throws {
+        let loadedPreset = preset()
+        let loaded = AppSteeringPolicy.configuration(enabled: true, preset: loadedPreset)
+        var edited = loadedPreset
+        edited.name = "renamed"
+        edited.notes = "new note"
+        edited.layers = "   "
+        edited.target = 99
+        edited.gate = -1
+
+        XCTAssertFalse(
+            AppSteeringPolicy.needsReload(
+                wantEnabled: true, wantPreset: edited,
+                sessionSteering: try sessionSteering(active: true, mode: "ablate", scale: 0.3),
+                loadedConfiguration: loaded))
+    }
+
     /// The scale makes a round trip through JSON and an f32 in the engine, so
     /// an exact `Double` comparison would report a pending reload forever.
     func testAScaleThatOnlyDiffersByFloatRoundingNeedsNoReload() throws {

@@ -9,6 +9,37 @@ import TurboSpark
 /// couple of integers. `ReasoningLevelPolicy` and `ServerStatusRows` are the
 /// same move for the same reason.
 public enum AppSteeringPolicy {
+    /// The behavior-affecting steering values captured for an open session.
+    /// Display-only preset metadata is deliberately absent.
+    public struct Configuration: Equatable, Sendable {
+        public var active: Bool
+        public var vectorPath: String?
+        public var mode: AppSteeringModeOption?
+        public var scale: Double?
+        public var layers: String?
+        public var target: Double?
+        public var gate: Double?
+    }
+
+    /// Canonicalizes intent exactly as `buildOpenOptions` does.
+    public static func configuration(
+        enabled: Bool,
+        preset: AppSteeringPreset?
+    ) -> Configuration {
+        let path = preset?.vectorPath.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard enabled, !path.isEmpty, let preset else {
+            return Configuration(
+                active: false, vectorPath: nil, mode: nil, scale: nil,
+                layers: nil, target: nil, gate: nil)
+        }
+        let layers = preset.layers.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Configuration(
+            active: true, vectorPath: path, mode: preset.mode, scale: preset.scale,
+            layers: layers.isEmpty ? nil : layers,
+            target: preset.mode == .clamp ? preset.target : nil,
+            gate: preset.gate > 0 ? preset.gate : nil)
+    }
+
     /// Whether a preset's vector can be loaded against a given install.
     ///
     /// **THIS MIRRORS `SteeringSet::validate` AND NOTHING MORE**, which is
@@ -149,9 +180,13 @@ public enum AppSteeringPolicy {
     public static func needsReload(
         wantEnabled: Bool,
         wantPreset: AppSteeringPreset?,
-        sessionSteering: SessionInfo.Steering?
+        sessionSteering: SessionInfo.Steering?,
+        loadedConfiguration: Configuration? = nil
     ) -> Bool {
         guard let sessionSteering else { return false }
+        if let loadedConfiguration {
+            return configuration(enabled: wantEnabled, preset: wantPreset) != loadedConfiguration
+        }
         let wantActive =
             wantEnabled
             && !(wantPreset?.vectorPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
