@@ -163,5 +163,73 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
             XCTAssertNotNil(strings[key], "Required accessibility/tooltip key '\(key)' is missing from Localizable.xcstrings")
         }
     }
+
+    func testResolvedAppThemeHighContrast() {
+        let manager = AppearanceManager.shared
+        let normalTheme = ResolvedAppTheme.resolve(
+            manager: manager,
+            colorScheme: .light,
+            installedFamilies: [],
+            isHighContrast: false,
+            reduceTransparency: false
+        )
+        let highContrastTheme = ResolvedAppTheme.resolve(
+            manager: manager,
+            colorScheme: .light,
+            installedFamilies: [],
+            isHighContrast: true,
+            reduceTransparency: false
+        )
+
+        XCTAssertFalse(normalTheme.isHighContrast)
+        XCTAssertTrue(highContrastTheme.isHighContrast)
+        XCTAssertGreaterThanOrEqual(highContrastTheme.contrast, 95.0)
+        XCTAssertEqual(highContrastTheme.borderStrokeOpacity, 0.85)
+        XCTAssertLessThan(normalTheme.borderStrokeOpacity, 0.85)
+    }
+
+    func testResolvedAppThemeReduceTransparency() {
+        let manager = AppearanceManager.shared
+        let standardTheme = ResolvedAppTheme.resolve(
+            manager: manager,
+            colorScheme: .dark,
+            installedFamilies: [],
+            isHighContrast: false,
+            reduceTransparency: false
+        )
+        let opaqueTheme = ResolvedAppTheme.resolve(
+            manager: manager,
+            colorScheme: .dark,
+            installedFamilies: [],
+            isHighContrast: false,
+            reduceTransparency: true
+        )
+
+        XCTAssertFalse(standardTheme.reduceTransparency)
+        XCTAssertTrue(opaqueTheme.reduceTransparency)
+    }
+
+    func testDynamicTypeScalingInThemeResolution() {
+        let manager = AppearanceManager.shared
+        let standardTheme = ResolvedAppTheme.resolve(
+            manager: manager,
+            colorScheme: .light,
+            installedFamilies: [],
+            isHighContrast: false,
+            reduceTransparency: false,
+            dynamicTypeSize: .large
+        )
+        let largeTheme = ResolvedAppTheme.resolve(
+            manager: manager,
+            colorScheme: .light,
+            installedFamilies: [],
+            isHighContrast: false,
+            reduceTransparency: false,
+            dynamicTypeSize: .accessibility1
+        )
+
+        XCTAssertGreaterThan(largeTheme.uiFontDescriptor.size, standardTheme.uiFontDescriptor.size)
+        XCTAssertGreaterThan(largeTheme.codeFontDescriptor.size, standardTheme.codeFontDescriptor.size)
+    }
 }
 

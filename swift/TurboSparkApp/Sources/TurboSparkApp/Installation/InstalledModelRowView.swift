@@ -122,5 +122,22 @@ struct InstalledModelRowView: View {
                     lineWidth: 1
                 )
         )
+        .help("Select \(modelItem.alias)")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(modelItem.alias)
+        .accessibilityValue(accessibilityDescription)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var accessibilityDescription: String {
+        var parts: [String] = []
+        if isLoaded { parts.append("Loaded") }
+        if isFavorite { parts.append("Favorite") }
+        parts.append(descriptor.routingType == .moe ? "MoE" : "Dense")
+        parts.append(MetricFormat.storage(modelItem.installBytes))
+        if !tags.isEmpty {
+            parts.append("Tags: \(tags.joined(separator: ", "))")
+        }
+        return parts.joined(separator: ", ")
     }
 }

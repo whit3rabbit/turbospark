@@ -27,6 +27,8 @@ public struct ResolvedAppTheme: Equatable, Sendable {
     public var uiFontDescriptor: AppFontDescriptor
     public var codeFontDescriptor: AppFontDescriptor
     public var textSize: AppTextSize
+    public var isHighContrast: Bool
+    public var reduceTransparency: Bool
 
     public init(
         isDark: Bool,
@@ -36,7 +38,9 @@ public struct ResolvedAppTheme: Equatable, Sendable {
         contrast: Double,
         uiFontDescriptor: AppFontDescriptor,
         codeFontDescriptor: AppFontDescriptor,
-        textSize: AppTextSize = .standard
+        textSize: AppTextSize = .standard,
+        isHighContrast: Bool = false,
+        reduceTransparency: Bool = false
     ) {
         self.isDark = isDark
         self.accent = accent
@@ -46,6 +50,8 @@ public struct ResolvedAppTheme: Equatable, Sendable {
         self.uiFontDescriptor = uiFontDescriptor
         self.codeFontDescriptor = codeFontDescriptor
         self.textSize = textSize
+        self.isHighContrast = isHighContrast
+        self.reduceTransparency = reduceTransparency
     }
 
     public var uiFont: Font { uiFontDescriptor.font }
@@ -95,17 +101,37 @@ public struct ResolvedAppTheme: Equatable, Sendable {
 
     /// Secondary text that still clears WCAG AA at the configured contrast.
     public var metadataForeground: Color {
-        contrast > 70 ? Color.primary.opacity(0.9) : Color.secondary
+        (isHighContrast || contrast > 70) ? Color.primary.opacity(0.95) : Color.secondary
     }
 
     /// Stroke opacity for card and chip borders at the configured contrast.
     public var borderStrokeOpacity: Double {
-        max(0.3, (contrast / 100.0) * 0.85)
+        isHighContrast ? 0.85 : max(0.3, (contrast / 100.0) * 0.85)
     }
 
     /// Background color specifically for the prompt composer textbox.
     public var composerBackground: Color {
         TurboSparkTheme.composerBackgroundColor(isDark: isDark, background: background)
+    }
+}
+
+private extension DynamicTypeSize {
+    var accessibilityScaleFactor: CGFloat {
+        switch self {
+        case .xSmall: return 0.82
+        case .small: return 0.88
+        case .medium: return 0.94
+        case .large: return 1.0
+        case .xLarge: return 1.12
+        case .xxLarge: return 1.24
+        case .xxxLarge: return 1.36
+        case .accessibility1: return 1.50
+        case .accessibility2: return 1.65
+        case .accessibility3: return 1.80
+        case .accessibility4: return 2.00
+        case .accessibility5: return 2.25
+        @unknown default: return 1.0
+        }
     }
 }
 
@@ -120,7 +146,10 @@ public extension ResolvedAppTheme {
     static func resolve(
         manager: AppearanceManager,
         colorScheme: ColorScheme,
-        installedFamilies: Set<String>
+        installedFamilies: Set<String>,
+        isHighContrast: Bool = false,
+        reduceTransparency: Bool = false,
+        dynamicTypeSize: DynamicTypeSize? = nil
     ) -> ResolvedAppTheme {
         let isDark = manager.appearance.isDark(systemColorScheme: colorScheme)
         let config = manager.activeConfig(isDark: isDark)
@@ -134,15 +163,16 @@ public extension ResolvedAppTheme {
             offered: AppFontCatalog.offeredCodeFamilies,
             installed: installedFamilies)
 
-        let uiSize = manager.textSize.scaled(CGFloat(manager.uiFontSize))
-        let codeSize = manager.textSize.scaled(CGFloat(manager.codeFontSize))
+        let dynamicScale = dynamicTypeSize?.accessibilityScaleFactor ?? 1.0
+        let uiSize = (manager.textSize.scaled(CGFloat(manager.uiFontSize)) * dynamicScale).rounded()
+        let codeSize = (manager.textSize.scaled(CGFloat(manager.codeFontSize)) * dynamicScale).rounded()
 
         return ResolvedAppTheme(
             isDark: isDark,
             accent: manager.activeAccentColor(isDark: isDark),
             background: manager.activeBackgroundColor(isDark: isDark),
             foreground: manager.activeForegroundColor(isDark: isDark),
-            contrast: config.contrast,
+            contrast: isHighContrast ? max(config.contrast, 95.0) : config.contrast,
             uiFontDescriptor: AppFontDescriptor(
                 family: uiFamily,
                 weight: .fromName(config.uiFontWeight),
@@ -153,16 +183,27 @@ public extension ResolvedAppTheme {
                 weight: .fromName(config.codeFontWeight),
                 size: codeSize,
                 isCode: true),
-            textSize: manager.textSize)
+            textSize: manager.textSize,
+            isHighContrast: isHighContrast,
+            reduceTransparency: reduceTransparency)
     }
 
     /// Convenience for the running app, which always wants the live font list.
     @MainActor
-    static func resolve(manager: AppearanceManager, colorScheme: ColorScheme) -> ResolvedAppTheme {
+    static func resolve(
+        manager: AppearanceManager,
+        colorScheme: ColorScheme,
+        isHighContrast: Bool = false,
+        reduceTransparency: Bool = false,
+        dynamicTypeSize: DynamicTypeSize? = nil
+    ) -> ResolvedAppTheme {
         resolve(
             manager: manager,
             colorScheme: colorScheme,
-            installedFamilies: AppFontCatalog.installedFamilies())
+            installedFamilies: AppFontCatalog.installedFamilies(),
+            isHighContrast: isHighContrast,
+            reduceTransparency: reduceTransparency,
+            dynamicTypeSize: dynamicTypeSize)
     }
 
     /// The value a view sees before `RootView` injects one. Deliberately the
@@ -180,7 +221,10 @@ public extension ResolvedAppTheme {
         uiFontDescriptor: AppFontDescriptor(
             family: AppFontCatalog.systemDefault, weight: .regular, size: 16, isCode: false),
         codeFontDescriptor: AppFontDescriptor(
-            family: AppFontCatalog.systemDefault, weight: .regular, size: 12, isCode: true))
+            family: AppFontCatalog.systemDefault, weight: .regular, size: 12, isCode: true),
+        textSize: .standard,
+        isHighContrast: false,
+        reduceTransparency: false)
 }
 
 private struct AppThemeKey: EnvironmentKey {
@@ -198,11 +242,20 @@ private struct AppThemeKey: EnvironmentKey {
 public struct AppThemeInjector: ViewModifier {
     @ObservedObject private var manager = AppearanceManager.shared
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     public init() {}
 
     public func body(content: Content) -> some View {
-        let theme = ResolvedAppTheme.resolve(manager: manager, colorScheme: colorScheme)
+        let isHighContrast = colorSchemeContrast == .increased
+        let theme = ResolvedAppTheme.resolve(
+            manager: manager,
+            colorScheme: colorScheme,
+            isHighContrast: isHighContrast,
+            reduceTransparency: reduceTransparency,
+            dynamicTypeSize: dynamicTypeSize)
         return content
             .environment(\.appTheme, theme)
             .tint(theme.accent)

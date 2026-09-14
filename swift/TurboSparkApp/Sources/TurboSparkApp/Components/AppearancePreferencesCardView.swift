@@ -28,6 +28,7 @@ public struct AppearancePreferencesCardView: View {
                 Toggle("", isOn: $manager.usePointerCursors)
                     .toggleStyle(.switch)
                     .labelsHidden()
+                    .accessibilityLabel("Use pointer cursors")
                     .appPointerCursor()
             }
 
@@ -46,6 +47,7 @@ public struct AppearancePreferencesCardView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 175)
                 .labelsHidden()
+                .accessibilityLabel("Status bar benchmarks")
             }
 
             Divider().padding(.leading, 16)
@@ -66,6 +68,7 @@ public struct AppearancePreferencesCardView: View {
                 .pickerStyle(.menu)
                 .frame(width: 140)
                 .labelsHidden()
+                .accessibilityLabel("Dock icon")
             }
 
             Divider().padding(.leading, 16)
@@ -83,6 +86,7 @@ public struct AppearancePreferencesCardView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 180)
                 .labelsHidden()
+                .accessibilityLabel("Reduce motion")
             }
 
             Divider().padding(.leading, 16)
@@ -100,6 +104,7 @@ public struct AppearancePreferencesCardView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 220)
                 .labelsHidden()
+                .accessibilityLabel("Text size")
             }
 
             Divider().padding(.leading, 16)
@@ -133,6 +138,8 @@ public struct AppearancePreferencesCardView: View {
                 HStack(spacing: 6) {
                     Stepper("", value: $manager.uiFontSize, in: 11...28, step: 1)
                         .labelsHidden()
+                        .accessibilityLabel("UI font size")
+                        .accessibilityValue("\(Int(manager.uiFontSize)) pixels")
 
                     Text(verbatim: "\(Int(manager.uiFontSize))")
                         .font(theme.ui(.callout, weight: .medium).monospacedDigit())
@@ -183,6 +190,8 @@ public struct AppearancePreferencesCardView: View {
                 HStack(spacing: 6) {
                     Stepper("", value: $manager.codeFontSize, in: 10...24, step: 1)
                         .labelsHidden()
+                        .accessibilityLabel("Code font size")
+                        .accessibilityValue("\(Int(manager.codeFontSize)) pixels")
 
                     Text(verbatim: "\(Int(manager.codeFontSize))")
                         .font(theme.ui(.callout, weight: .medium).monospacedDigit())
@@ -217,6 +226,7 @@ public struct AppearancePreferencesCardView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 140)
                 .labelsHidden()
+                .accessibilityLabel("Diff markers")
             }
 
         }
@@ -268,6 +278,7 @@ public struct AppearancePreferencesCardView: View {
             .pickerStyle(.menu)
             .frame(width: 140)
             .labelsHidden()
+            .accessibilityLabel(isCodeFont ? "Code font family" : "UI font family")
 
             Picker("", selection: weight) {
                 Text("Regular", bundle: .module)
@@ -282,6 +293,7 @@ public struct AppearancePreferencesCardView: View {
             .pickerStyle(.menu)
             .frame(width: 100)
             .labelsHidden()
+            .accessibilityLabel(isCodeFont ? "Code font weight" : "UI font weight")
         }
     }
 }

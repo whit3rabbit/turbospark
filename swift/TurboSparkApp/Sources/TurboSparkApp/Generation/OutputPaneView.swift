@@ -131,6 +131,9 @@ struct OutputPaneView: View {
                     ? "Generation finished. \(count) tokens."
                     : "Generation finished."
                 _ = AccessibilityNotification.Announcement.post(.init(message))
+            } else if !wasRunning && isRunning {
+                let message = model.reasoning != .off ? "Generation started. Thinking." : "Generation started."
+                _ = AccessibilityNotification.Announcement.post(.init(message))
             }
             lastRunningState = isRunning
         }
@@ -258,7 +261,12 @@ private struct ChatTranscriptView: View {
             // A parked question set scrolls itself into view: mid-turn it is
             // the one thing the user has to act on.
             .onChange(of: model.pendingUserQuestions) { _, pending in
-                if pending != nil {
+                if let pending {
+                    let count = pending.items.count
+                    let announcement = count == 1
+                        ? "Assistant is asking a question. Please choose an answer."
+                        : "Assistant is asking \(count) questions. Please choose your answers."
+                    _ = AccessibilityNotification.Announcement.post(.init(announcement))
                     withAnimation(.easeInOut(duration: 0.2)) {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
@@ -273,6 +281,14 @@ private struct ChatTranscriptView: View {
                 guard let target = model.turnNavigationTargetID else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
                     proxy.scrollTo(target, anchor: .top)
+                }
+            }
+            .accessibilityRotor("Messages") {
+                ForEach(model.selectedTurnMessages) { msg in
+                    AccessibilityRotorEntry(
+                        msg.role == .user ? "User: \(msg.content.prefix(40))" : "Assistant: \(msg.content.prefix(40))",
+                        id: msg.id
+                    )
                 }
             }
         }
@@ -451,6 +467,7 @@ private struct MessageRowView: View {
                     text: message.content,
                     isUser: true
                 )
+                .accessibilityHeading(.h2)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .background(.appSurface.opacity(0.85))
@@ -647,6 +664,7 @@ private struct MessageRowView: View {
                             .themedFont(.small, weight: .semibold)
                             .foregroundStyle(theme.metadataForeground)
                     }
+                    .accessibilityHeading(.h2)
                     .padding(.bottom, -2)
 
                     if !message.reasoning.isEmpty {
@@ -723,6 +741,33 @@ private struct MessageRowView: View {
                 },
                 onCancel: { branchTarget = nil }
             )
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "Copy message") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(message.content, forType: .string)
+        }
+        .accessibilityAction(named: isCurrentlySpeakingThis ? "Stop reading message out loud" : "Read message out loud") {
+            if isCurrentlySpeakingThis {
+                speechManager.stop()
+            } else {
+                speechManager.speak(text: message.content, messageID: message.id)
+            }
+        }
+        .accessibilityAction(named: "Edit message") {
+            if canEditThisInPlace {
+                _ = model.beginEdit(messageID: message.id)
+            }
+        }
+        .accessibilityAction(named: "Regenerate response") {
+            if model.canRetry(response: message) {
+                _ = model.regenerateResponse()
+            }
+        }
+        .accessibilityAction(named: "Branch conversation") {
+            if canBranchThis {
+                branchTarget = AppModel.BranchTarget(id: message.id, originalText: message.content)
+            }
         }
     }
 }

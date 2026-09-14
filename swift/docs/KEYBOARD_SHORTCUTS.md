@@ -60,19 +60,35 @@ TurboSparkApp provides complete keyboard-driven navigation, command menus, and V
 ### VoiceOver Support (Cmd+F5)
 
 1. **Live Announcements & Toasts**:
+   - Token generation start announces "Generation started. Thinking." or "Generation started.".
    - Token generation completion posts non-blocking announcements via `AccessibilityNotification.Announcement` ("Generation finished. N tokens.").
+   - Interactive user questions announce "Interactive question from model: [Question text]".
    - Model download, installation, loading, cancellation, and error events trigger spoken announcements and floating visual toasts.
 
-2. **Custom Labels and Hints**:
-   - Icon-only buttons supply explicit `.accessibilityLabel` and `.accessibilityHint` properties.
+2. **Transcript Rotor & Heading Navigation**:
+   - The conversation transcript provides an accessibility rotor titled "Messages". Switch to the Messages rotor (`VO + U` or gesture) to skip between user prompts and assistant answers.
+   - User prompts and assistant responses carry `.accessibilityHeading(.h2)`, allowing rapid jump navigation via `VO + Cmd + H`.
+
+3. **Custom Accessibility Actions (No Mouse Hover Required)**:
+   - Message actions (previously requiring mouse pointer hover) are exposed directly to VoiceOver via `.accessibilityAction`:
+     - Copy message
+     - Read message out loud / Stop reading
+     - Edit message (for user prompts)
+     - Regenerate response (for assistant messages)
+     - Branch conversation into a new chat
+   - Chat sidebar rows provide custom actions: Pin chat, Rename chat, Duplicate chat, Delete chat.
+
+4. **Custom Labels and Hints**:
+   - Icon-only buttons supply explicit `.accessibilityLabel` and `.accessibilityHint` properties across all settings panes, model actions, and file pickers.
    - Status indicators (e.g., pulsing dots, progress spinners) combine into unified accessibility elements.
 
-3. **Colorblind & Differentiate Without Color Support**:
+5. **Colorblind & Differentiate Without Color Support**:
    - Status dots, badges, and recommendation verdicts incorporate distinct glyph shapes (checkmarks, pause, minus, bolts, triangles, octagons) in addition to color.
 
-4. **Contrast Adaptation (WCAG 2.1 AA & High Contrast)**:
-   - Adaptive brand accents meet WCAG 2.1 AA contrast requirements across standard Aqua and DarkAqua appearances (minimum 4.5:1 ratio).
-   - Automatically adapts when macOS Increased Contrast / Accessibility High Contrast modes are active (scaling past 9.5:1 contrast).
+6. **macOS Display & System Accessibility Integrations**:
+   - **Increase Contrast (`colorSchemeContrast == .increased`)**: Theming automatically clamps contrast to at least 95%, elevates subtle borders to high-contrast visible strokes (opacity 0.75), and boosts secondary text opacity to 0.96.
+   - **Reduce Transparency (`accessibilityReduceTransparency`)**: Disables frosted glass and translucent materials, replacing sidebar and card backgrounds with solid high-contrast surfaces.
+   - **Dynamic Type & Larger Text (`dynamicTypeSize`)**: Font sizes in UI controls and code snippets scale proportionally with system-wide text size adjustments set in macOS Accessibility Settings.
 
 ## Alternate chords (unsloth studio compatibility)
 

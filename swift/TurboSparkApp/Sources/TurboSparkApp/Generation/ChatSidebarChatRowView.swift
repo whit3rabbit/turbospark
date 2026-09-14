@@ -99,6 +99,25 @@ struct ChatSidebarChatRowView: View {
             } label: { Text("Delete", bundle: .module) }
             .disabled(model.isRunning)
         }
+        .accessibilityAction(named: chat.isPinned ? "Unpin chat" : "Pin chat") {
+            model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
+        }
+        .accessibilityAction(named: "Rename chat") {
+            if !model.isRunning && !chat.isGhost {
+                renameText = chat.title
+                chatBeingRenamed = chat
+            }
+        }
+        .accessibilityAction(named: "Duplicate chat") {
+            if !model.isRunning && !chat.isGhost {
+                _ = model.duplicateChat(id: chat.id)
+            }
+        }
+        .accessibilityAction(named: "Delete chat") {
+            if !model.isRunning {
+                chatPendingDeletion = chat
+            }
+        }
     }
 
     /// The chat's project accent, or nil for a projectless chat. Resolved

@@ -230,6 +230,7 @@ public struct McpSettingsPaneView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Test connection and discover tools")
+                    .accessibilityLabel("Test connection for \(server.name)")
 
                     Button {
                         editingServer = server
@@ -240,14 +241,16 @@ public struct McpSettingsPaneView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Edit server settings")
+                    .accessibilityLabel("Edit settings for \(server.name)")
 
-                    Toggle("", isOn: Binding(
+                    Toggle("Enable \(server.name)", isOn: Binding(
                         get: { server.isEnabled },
                         set: { model.toggleGlobalMcpServer(id: server.id, isEnabled: $0) }
                     ))
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .accessibilityLabel("Enable \(server.name)")
 
                     Menu {
                         Button {
@@ -275,6 +278,7 @@ public struct McpSettingsPaneView: View {
                     .menuIndicator(.hidden)
                     .frame(width: 18)
                     .help("Server actions")
+                    .accessibilityLabel("Server actions for \(server.name)")
                 }
             }
 
@@ -304,6 +308,7 @@ public struct McpSettingsPaneView: View {
                     .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isExpanded ? "Hide discovered tools for \(server.name)" : "Show \(server.discoveredTools.count) discovered tools for \(server.name)")
 
                 if isExpanded {
                     VStack(alignment: .leading, spacing: 4) {

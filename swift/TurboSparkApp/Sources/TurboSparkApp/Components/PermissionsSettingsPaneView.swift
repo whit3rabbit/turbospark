@@ -143,6 +143,7 @@ public struct PermissionsSettingsPaneView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .help("Prompt macOS to grant file access to \(folder.rawValue)")
+                    .accessibilityLabel("Grant access to \(folder.rawValue)")
                 }
 
                 if let url = folder.defaultURL {
@@ -154,6 +155,7 @@ public struct PermissionsSettingsPaneView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Reveal \(folder.rawValue) in Finder")
+                    .accessibilityLabel("Reveal \(folder.rawValue) in Finder")
                 }
             }
         }
@@ -183,8 +185,8 @@ public struct PermissionsSettingsPaneView: View {
                     permissionsManager.addCustomFolder()
                 } label: {
                     Label {
-                        Text("Add Folder…", bundle: .module)
-                    .settingsControl("Add Folder…", pane: .permissions, timing: .immediate)
+                        Text("Add Folder\u{2026}", bundle: .module)
+                    .settingsControl("Add Folder\u{2026}", pane: .permissions, timing: .immediate)
                     } icon: {
                         Image(systemName: "plus")
                     }
@@ -193,6 +195,8 @@ public struct PermissionsSettingsPaneView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("Authorize an additional workspace directory")
+                .accessibilityLabel("Add Folder")
+                .accessibilityHint("Opens file picker to authorize an additional workspace directory")
             }
 
             if permissionsManager.customFolders.isEmpty {
@@ -245,6 +249,7 @@ public struct PermissionsSettingsPaneView: View {
                             }
                             .buttonStyle(.borderless)
                             .help(Text("Reveal in Finder", bundle: .module))
+                            .accessibilityLabel("Reveal \(customFolder.name) in Finder")
 
                             Button {
                                 permissionsManager.removeCustomFolder(id: customFolder.id)
@@ -255,6 +260,7 @@ public struct PermissionsSettingsPaneView: View {
                             }
                             .buttonStyle(.borderless)
                             .help("Remove authorization")
+                            .accessibilityLabel("Remove authorization for \(customFolder.name)")
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
@@ -339,7 +345,7 @@ public struct PermissionsSettingsPaneView: View {
         .buttonStyle(.plain)
         .appPointerCursor()
         .help("Open macOS \(title) Settings in System Settings")
-        .accessibilityLabel("macOS System Settings: \(title)")
+        .accessibilityLabel("macOS System Settings: \(title). \(subtitle)")
         .accessibilityHint("Opens \(title) privacy settings pane in macOS System Settings")
         .accessibilityAddTraits(.isLink)
     }

@@ -27,6 +27,8 @@ struct InstalledModelActionBarView: View {
                 .foregroundStyle(Color.orange)
                 .disabled(!canUnloadModel)
                 .help("Eject model and release unified memory")
+                .accessibilityLabel("Unload model")
+                .accessibilityHint("Ejects model and releases unified memory")
             } else {
                 Button(action: onLoad) {
                     Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
@@ -38,6 +40,8 @@ struct InstalledModelActionBarView: View {
                 .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 6))
                 .foregroundStyle(Color.accentColor)
                 .help("Load model into memory slot cache for inference")
+                .accessibilityLabel("Load model")
+                .accessibilityHint("Loads model into memory slot cache for inference")
             }
 
             Button(action: onStartChat) {
@@ -50,6 +54,8 @@ struct InstalledModelActionBarView: View {
             .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 6))
             .foregroundStyle(.white)
             .help("Switch to Chat view with this model")
+            .accessibilityLabel("Start chat with \(installedModel.alias)")
+            .accessibilityHint("Switches to Chat view with this model")
 
             Button {
                 ModelStorageManager.revealInFinder(path: installedModel.path)
@@ -82,6 +88,8 @@ struct InstalledModelActionBarView: View {
             // model file is mapped by an open still in flight.
             .disabled(!canDeleteModel)
             .help("Delete model files from disk")
+            .accessibilityLabel("Delete model \(installedModel.alias)")
+            .accessibilityHint("Deletes model files from disk")
         }
     }
 }

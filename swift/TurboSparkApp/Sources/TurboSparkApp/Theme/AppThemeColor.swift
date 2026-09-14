@@ -9,9 +9,9 @@ extension ResolvedAppTheme {
     }
     public var surface: Color { blendedSurface(isDark ? 0.055 : 0.025) }
     public var elevatedSurface: Color { blendedSurface(isDark ? 0.09 : 0.05) }
-    public var secondaryText: Color { foreground.opacity(contrast > 70 ? 0.9 : 0.75) }
-    public var border: Color { foreground.opacity(0.12 + contrast / 500) }
-    public var selection: Color { accent.opacity(isDark ? 0.25 : 0.12) }
+    public var secondaryText: Color { foreground.opacity(isHighContrast ? 0.96 : (contrast > 70 ? 0.9 : 0.75)) }
+    public var border: Color { foreground.opacity(isHighContrast ? 0.75 : (0.12 + contrast / 500)) }
+    public var selection: Color { accent.opacity(isHighContrast ? (isDark ? 0.45 : 0.30) : (isDark ? 0.25 : 0.12)) }
 }
 
 /// Environment-aware styles work even in leaves without an explicit theme property.

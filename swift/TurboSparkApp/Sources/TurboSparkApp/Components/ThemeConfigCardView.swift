@@ -148,6 +148,7 @@ public struct ThemeConfigCardView: View {
             .pickerStyle(.menu)
             .frame(width: 140)
             .labelsHidden()
+            .accessibilityLabel("\(title) accent color")
             .onChange(of: config.accentHex) { _, newHex in
                 config.accentName = AccentOption.name(forHex: newHex, isDark: isDark)
             }
@@ -168,11 +169,13 @@ public struct ThemeConfigCardView: View {
                     set: { hexString.wrappedValue = $0.toHex() }
                 ), supportsOpacity: false)
                 .labelsHidden()
+                .accessibilityLabel("\(title) \(label) color")
 
                 TextField("", text: hexString)
                     .font(theme.code(.small))
                     .frame(width: 80)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("\(title) \(label) hex code")
             }
         }
         .padding(.horizontal, 16)
@@ -189,6 +192,7 @@ public struct ThemeConfigCardView: View {
             Toggle("", isOn: $config.translucentSidebar)
                 .toggleStyle(.switch)
                 .labelsHidden()
+                .accessibilityLabel("\(title) translucent sidebar")
                 .appPointerCursor()
         }
         .padding(.horizontal, 16)
@@ -204,6 +208,8 @@ public struct ThemeConfigCardView: View {
 
             Slider(value: $config.contrast, in: 0...100, step: 1)
                 .frame(width: 160)
+                .accessibilityLabel("\(title) contrast")
+                .accessibilityValue("\(Int(config.contrast)) percent")
 
             Text(verbatim: "\(Int(config.contrast))%")
                 .font(theme.ui(.small).monospacedDigit())
