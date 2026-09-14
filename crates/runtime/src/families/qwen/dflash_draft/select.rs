@@ -19,8 +19,14 @@ impl RealForwardRunner {
     ) -> Result<(), RealForwardError> {
         let d = self.real_dflash.as_ref().expect("caller checked");
         let (rank, vocab) = (d.shape.rank, self.arch.vocab_size as usize);
-        let pred = codebook_view(&self.weights, &self.index, PREDECESSOR_CODEBOOK)?;
-        let succ = codebook_view(&self.weights, &self.index, SUCCESSOR_CODEBOOK)?;
+        let pred = codebook_view(
+            &self.weights,
+            &self.index,
+            PREDECESSOR_CODEBOOK,
+            vocab,
+            rank,
+        )?;
+        let succ = codebook_view(&self.weights, &self.index, SUCCESSOR_CODEBOOK, vocab, rank)?;
 
         let mut row_logits = vec![LogitValue::from_f32(0.0); vocab];
         let hproj = read_f16_rows(&d.hproj, block + 1, rank);
@@ -49,12 +55,12 @@ impl RealForwardRunner {
             let (cand, unary) = top_k(&row_logits, DFLASH_TOP_K);
             // One predecessor row (the previous step's chosen token, or the
             // anchor at step 0) scores against every successor candidate.
-            let pred_row = read_bf16_row(pred, prev_token, rank);
+            let pred_row = read_bf16_row(pred, prev_token)?;
             let proj = &hproj[row * rank..(row + 1) * rank];
             let mut best = 0usize;
             let mut best_score = f32::NEG_INFINITY;
             for (c, &candidate) in cand.iter().enumerate() {
-                let succ_row = read_bf16_row(succ, candidate, rank);
+                let succ_row = read_bf16_row(succ, candidate)?;
                 let mut dot = 0.0f32;
                 for r in 0..rank {
                     dot += pred_row[r] * proj[r] * succ_row[r];
@@ -72,15 +78,34 @@ impl RealForwardRunner {
     }
 }
 
-/// A resident BF16 codebook's (buffer, offset), sized off its own entry so
-/// the host gathers can address rows by token id.
+/// A resident BF16 codebook validated against the model vocabulary and the
+/// selector rank before host gathers can address it by token id.
+#[derive(Clone, Copy)]
+struct CodebookView<'a> {
+    buffer: &'a gpu::MetalBuffer,
+    offset: u64,
+    rows: usize,
+    rank: usize,
+}
+
 fn codebook_view<'a>(
     weights: &'a gpu::ResidentGpuWeights,
     index: &ResidentIndex,
     name: &str,
-) -> Result<(&'a gpu::MetalBuffer, u64), RealForwardError> {
+    rows: usize,
+    rank: usize,
+) -> Result<CodebookView<'a>, RealForwardError> {
     let e = entry(index, name)?;
-    norm_view(weights, index, name, e.size_bytes as usize / 2)
+    let elements = rows.checked_mul(rank).ok_or_else(|| {
+        RealForwardError::Unsupported(format!("{name} element count overflows usize"))
+    })?;
+    let (buffer, offset) = norm_view(weights, index, name, elements)?;
+    Ok(CodebookView {
+        buffer,
+        offset,
+        rows,
+        rank,
+    })
 }
 
 /// The top-K candidates and their logits, by LINEAR SCAN with a running
@@ -118,13 +143,31 @@ pub(crate) fn read_f16_rows(buffer: &gpu::MetalBuffer, rows: usize, width: usize
 }
 
 /// Reads one BF16 codebook row as f32.
-fn read_bf16_row(view: (&gpu::MetalBuffer, u64), token: TokenId, rank: usize) -> Vec<f32> {
-    let raw = gpu::read_buffer_bytes(
-        view.0,
-        view.1 as usize + token as usize * rank * 2,
-        rank * 2,
-    );
-    raw.chunks_exact(2)
+fn read_bf16_row(view: CodebookView<'_>, token: TokenId) -> Result<Vec<f32>, RealForwardError> {
+    let row = usize::try_from(token).map_err(|_| {
+        RealForwardError::Unsupported(format!("negative DFlash2 codebook token id {token}"))
+    })?;
+    if row >= view.rows {
+        return Err(RealForwardError::Unsupported(format!(
+            "DFlash2 codebook token id {token} is outside {} rows",
+            view.rows
+        )));
+    }
+    let row_bytes = view.rank.checked_mul(2).ok_or_else(|| {
+        RealForwardError::Unsupported("DFlash2 codebook row size overflows usize".to_string())
+    })?;
+    let relative = row.checked_mul(row_bytes).ok_or_else(|| {
+        RealForwardError::Unsupported("DFlash2 codebook row offset overflows usize".to_string())
+    })?;
+    let base = usize::try_from(view.offset).map_err(|_| {
+        RealForwardError::Unsupported("DFlash2 codebook offset exceeds usize".to_string())
+    })?;
+    let offset = base.checked_add(relative).ok_or_else(|| {
+        RealForwardError::Unsupported("DFlash2 codebook row address overflows usize".to_string())
+    })?;
+    let raw = gpu::read_buffer_bytes(view.buffer, offset, row_bytes);
+    Ok(raw
+        .chunks_exact(2)
         .map(|c| compute::bf16_to_f32(u16::from_le_bytes([c[0], c[1]])))
-        .collect()
+        .collect())
 }

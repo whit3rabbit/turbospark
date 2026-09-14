@@ -89,6 +89,8 @@ pub const DFLASH_MASK_TOKEN: i32 = 248_070;
 /// The selector's candidate count per proposal step.
 pub const DFLASH_TOP_K: usize = 16;
 
+const DFLASH_LAYERS: usize = 5;
+
 pub(crate) fn dflash_layer_tensor(layer: usize, suffix: &str) -> String {
     prefixed_layer_tensor(DFLASH_PREFIX, layer, suffix)
 }
@@ -158,6 +160,16 @@ impl DflashShape {
             let e = entry(index, name)?;
             Ok((e.shape.0, e.shape.1))
         };
+        let expect = |name: &str, rows: usize, cols: usize| -> Result<(), RealForwardError> {
+            let got = shape_of(name)?;
+            if got != (rows as u32, cols as u32) {
+                return Err(RealForwardError::Unsupported(format!(
+                    "{name} has shape [{}, {}], expected [{rows}, {cols}]",
+                    got.0, got.1
+                )));
+            }
+            Ok(())
+        };
         let head_dim = {
             let e = entry(index, &dflash_layer_tensor(0, "self_attn.q_norm.weight"))?;
             (e.size_bytes / 2) as usize
@@ -167,7 +179,12 @@ impl DflashShape {
         let (gate_rows, _) = shape_of(&dflash_layer_tensor(0, "mlp.gate_proj.weight"))?;
         let (pred_rows, rank) = shape_of("dflash.candidate_selector.predecessor_codebook")?;
         let (succ_rows, succ_rank) = shape_of("dflash.candidate_selector.successor_codebook")?;
-        if pred_rows as usize != vocab || succ_rows as usize != vocab || succ_rank != rank {
+        if rank == 0
+            || rank as usize > hidden
+            || pred_rows as usize != vocab
+            || succ_rows as usize != vocab
+            || succ_rank != rank
+        {
             return Err(RealForwardError::Unsupported(format!(
                 "dflash candidate selector codebook shape mismatch: pred [{pred_rows}, {rank}], succ [{succ_rows}, {succ_rank}], expected [{vocab}, {rank}]"
             )));
@@ -180,6 +197,15 @@ impl DflashShape {
                     .contains_key(&dflash_layer_tensor(l, "input_layernorm.weight"))
             })
             .count();
+        if layers != DFLASH_LAYERS
+            || index
+                .entries
+                .contains_key(&dflash_layer_tensor(layers, "input_layernorm.weight"))
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "the DFlash2 drafter has {layers} contiguous layers, expected {DFLASH_LAYERS}"
+            )));
+        }
         if head_dim == 0 || q_rows as usize % head_dim != 0 || k_rows as usize % head_dim != 0 {
             return Err(RealForwardError::Unsupported(format!(
                 "the DFlash2 drafter's shapes do not divide: q {q_rows}, k {k_rows}, head_dim \
@@ -194,6 +220,33 @@ impl DflashShape {
                 shape_of("dflash.fc.weight")?.0
             )));
         }
+        if q_rows as usize > hidden || k_rows as usize > hidden || gate_rows as usize > 4 * hidden {
+            return Err(RealForwardError::Unsupported(format!(
+                "the DFlash2 drafter widths exceed their allocation bounds: q {q_rows}, k {k_rows}, ffn {gate_rows}, hidden {hidden}"
+            )));
+        }
+        expect("dflash.fc.weight", hidden, aux_count * hidden)?;
+        expect("dflash.hidden_norm.weight", hidden, 1)?;
+        expect("dflash.norm.weight", hidden, 1)?;
+        expect(
+            "dflash.candidate_selector.hidden_projection.weight",
+            rank as usize,
+            hidden,
+        )?;
+        for layer in 0..layers {
+            let name = |suffix| dflash_layer_tensor(layer, suffix);
+            expect(&name("input_layernorm.weight"), hidden, 1)?;
+            expect(&name("post_attention_layernorm.weight"), hidden, 1)?;
+            expect(&name("self_attn.q_norm.weight"), head_dim, 1)?;
+            expect(&name("self_attn.k_norm.weight"), head_dim, 1)?;
+            expect(&name("self_attn.q_proj.weight"), q_rows as usize, hidden)?;
+            expect(&name("self_attn.k_proj.weight"), k_rows as usize, hidden)?;
+            expect(&name("self_attn.v_proj.weight"), k_rows as usize, hidden)?;
+            expect(&name("self_attn.o_proj.weight"), hidden, q_rows as usize)?;
+            expect(&name("mlp.gate_proj.weight"), gate_rows as usize, hidden)?;
+            expect(&name("mlp.up_proj.weight"), gate_rows as usize, hidden)?;
+            expect(&name("mlp.down_proj.weight"), hidden, gate_rows as usize)?;
+        }
         let conv_rows = 2 * gpu::DFLASH_TAPS as usize * (hidden / gpu::DFLASH_GROUP_SIZE as usize);
         let (proj_rows, _) = shape_of(&dflash_layer_tensor(
             0,
@@ -207,6 +260,25 @@ impl DflashShape {
                 gpu::DFLASH_TAPS,
                 gpu::DFLASH_GROUP_SIZE
             )));
+        }
+        for layer in 0..layers {
+            for stem in ["attention_conv", "mlp_conv"] {
+                expect(
+                    &dflash_layer_tensor(layer, &format!("{stem}.kernel_projection.weight")),
+                    conv_rows,
+                    hidden,
+                )?;
+                let base = entry(
+                    index,
+                    &dflash_layer_tensor(layer, &format!("{stem}.base_kernel")),
+                )?;
+                if base.shape != (2, gpu::DFLASH_TAPS, hidden as u32, 1) {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "{}.layers.{layer}.{stem}.base_kernel has shape {:?}, expected [2, {}, {hidden}]",
+                        DFLASH_PREFIX, base.shape, gpu::DFLASH_TAPS
+                    )));
+                }
+            }
         }
         Ok(Self {
             layers,
@@ -381,7 +453,7 @@ mod tests {
             "dflash.candidate_selector.successor_codebook".to_string(),
             make_entry((200, 32), 12800),
         );
-        let index = ResidentIndex {
+        let mut index = ResidentIndex {
             header: model_io::ResidentIndexHeader {
                 index_size: 0,
                 resident_size: 0,
@@ -398,6 +470,24 @@ mod tests {
                     "unexpected msg: {msg}"
                 );
             }
+            other => panic!("expected Unsupported error, got {other:?}"),
+        }
+
+        for name in [
+            "dflash.candidate_selector.predecessor_codebook",
+            "dflash.candidate_selector.successor_codebook",
+        ] {
+            let e = index.entries.get_mut(name).expect("codebook entry");
+            e.shape.0 = 200;
+            e.shape.1 = u32::MAX;
+        }
+        let err = DflashShape::derive(&index, 64, 200)
+            .expect_err("should refuse a codebook rank wider than hidden");
+        match err {
+            RealForwardError::Unsupported(msg) => assert!(
+                msg.contains("codebook shape mismatch"),
+                "unexpected msg: {msg}"
+            ),
             other => panic!("expected Unsupported error, got {other:?}"),
         }
     }
