@@ -256,6 +256,7 @@ impl RealForwardRunner {
             (&scratch.normed, 0),
             next_token as u32,
             hidden as u32,
+            vocab,
             1.0,
         )?;
         let w = norm_view(weights, index, PRE_FC_NORM_EMBEDDING, hidden)?;

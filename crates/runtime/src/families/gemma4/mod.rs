@@ -86,6 +86,7 @@ impl RealForwardRunner {
             (&self.scratch.x, 0),
             token as u32,
             hidden as u32,
+            vocab,
             embed_scale,
         )?;
 

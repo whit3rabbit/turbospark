@@ -145,6 +145,7 @@ impl RealForwardRunner {
                 (&self.scratch.x, x_off),
                 token as u32,
                 hidden as u32,
+                vocab,
                 1.0,
             )?;
             gpu::encode_rms_norm_no_scale(
