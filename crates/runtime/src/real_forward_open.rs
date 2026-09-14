@@ -143,14 +143,28 @@ impl RealForwardRunner {
             Some(layout) => {
                 let offsets = moe_offsets_from_layout(layout)?;
                 let layouts = routed_layouts_from_layout(layout)?;
-                let routed = gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
-                    .map_err(RealForwardError::Gpu)?;
+                if layouts.is_empty() {
+                    return Err(RealForwardError::Unsupported(
+                        "packed expert layout has no routed layers".to_string(),
+                    ));
+                }
+                let mut blob_encoders = Vec::new();
+                for layer in &layouts {
+                    let encoder = layer.phase1.source_function();
+                    if !blob_encoders.iter().any(|&(source, function)| {
+                        std::ptr::eq(source, encoder.0) && function == encoder.1
+                    }) {
+                        blob_encoders.push(encoder);
+                    }
+                }
+                let new_routed = |context: &mut gpu::MetalContext| {
+                    gpu::RoutedBlobsBuffer::new_for_encoders(context, &blob_encoders, use_silu)
+                        .map_err(RealForwardError::Gpu)
+                };
+                let routed = new_routed(&mut context)?;
                 let mut banks = Vec::with_capacity(ROUTED_BANKS - 1);
                 for _ in 1..ROUTED_BANKS {
-                    banks.push(
-                        gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
-                            .map_err(RealForwardError::Gpu)?,
-                    );
+                    banks.push(new_routed(&mut context)?);
                 }
                 (offsets, layouts, Some(routed), banks)
             }
