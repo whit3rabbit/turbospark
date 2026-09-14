@@ -359,7 +359,9 @@ The following records implementation status and the remaining evidence work:
    image-specific shaders, and host wrappers now cover text conditioning, the
    nine-step DiT transformer, scheduler state, and VAE decode. Existing GPU
    primitives were reused only for context, pass, and resident-buffer
-   contracts; image linear and attention layouts use dedicated wrappers.
+   contracts; image linear and grouped attention layouts use dedicated
+   wrappers. The attention kernel is validated independently on a small GQA
+   and causal-mask fixture before the full image gate.
 2. **Packed storage on the device.** The backend loads each packed component
    from its checked `index.json`, preserves the affine INT4 group-64 nibble,
    scale, and bias layout, and maps the component payload without copying a
@@ -387,9 +389,11 @@ The following records implementation status and the remaining evidence work:
    Quiet cold and warm runs against a complete install remain required.
    The pinned local export currently packs to 11 files and 6,906,461,695
    bytes. Its packed conditioning error is 0.081541 against the 0.084 IG0
-   INT4 envelope, but the first nine-step native denoise run did not complete
-   within roughly twelve minutes, so the quality, cancellation, and resource
-   gates remain open.
+   INT4 envelope. The grouped Metal attention kernel passes the focused GQA
+   and causal-mask parity test, but the first full nine-step native denoise
+   run still did not complete within roughly six minutes after the change
+   (the earlier elementwise kernel exceeded twelve minutes), so the quality,
+   cancellation, and resource gates remain open.
 
 The original implementation requirements are preserved below as the
 acceptance contract:

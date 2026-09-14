@@ -300,10 +300,12 @@ native Metal by default on macOS; `--backend reference` is explicit. The
 packed comparison, metadata, quality, and resource gates are present as
 opt-in tests. A pinned local export now packs successfully to 11 files and
 6,906,461,695 bytes. Its native conditioning error is 0.081541 against the
-frozen 0.084 INT4 quality envelope, but the nine-step native denoise did not
-complete within roughly twelve minutes, so no complete packed install has
-passed the real gates. IG2 therefore remains open. Keep the CPU backend as
-the diagnostic oracle, not as an unrecorded fallback. See
+frozen 0.084 INT4 quality envelope. The grouped Metal attention kernel passes
+a focused GQA and causal-mask parity fixture, but the nine-step native denoise
+still did not complete within roughly six minutes after that optimization, so
+no complete packed install has passed the real gates. IG2 therefore remains
+open. Keep the CPU backend as the diagnostic oracle, not as an unrecorded
+fallback. See
 [IMAGE_GENERATION.md](IMAGE_GENERATION.md#ig2-handoff-checklist) for the
 file-level checklist and stop conditions.
 

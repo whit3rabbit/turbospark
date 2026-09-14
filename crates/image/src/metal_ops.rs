@@ -368,6 +368,26 @@ pub(crate) fn attention(
     head_dim: usize,
     causal: bool,
 ) -> Result<GpuTensor, String> {
+    if q_rows == 0 || kv_rows == 0 || q_heads == 0 || kv_heads == 0 || head_dim == 0 {
+        return Err("image attention dimensions must be non-zero".to_string());
+    }
+    if q_heads % kv_heads != 0 || head_dim > 128 || head_dim % 32 != 0 {
+        return Err("image attention dimensions are not supported by the Metal kernel".to_string());
+    }
+    let expected_q = q_rows
+        .checked_mul(q_heads)
+        .and_then(|value| value.checked_mul(head_dim))
+        .ok_or_else(|| "image attention query shape overflowed".to_string())?;
+    let expected_kv = kv_rows
+        .checked_mul(kv_heads)
+        .and_then(|value| value.checked_mul(head_dim))
+        .ok_or_else(|| "image attention key/value shape overflowed".to_string())?;
+    let threadgroups = q_heads
+        .checked_mul(q_rows.div_ceil(4))
+        .ok_or_else(|| "image attention grid shape overflowed".to_string())?;
+    if q.len != expected_q || k.len != expected_kv || v.len != expected_kv {
+        return Err("image attention tensor lengths do not match the requested shape".to_string());
+    }
     let output = GpuTensor {
         buffer: context.new_output_buffer((q.len * 4) as u64),
         len: q.len,
@@ -382,9 +402,7 @@ pub(crate) fn attention(
     ]);
     let shader = pipeline(context, "image_attention")?;
     let pass = context.begin_pass_labeled("image-attention");
-    dispatch(
-        context,
-        &pass,
+    pass.encode_threadgroups_3d(
         &shader,
         &[
             (&q.buffer, 0, 0),
@@ -393,7 +411,8 @@ pub(crate) fn attention(
             (&output.buffer, 3, 0),
         ],
         &[(&params, 4)],
-        output.len,
+        (threadgroups as u64, 1, 1),
+        ((head_dim * 4) as u64, 1, 1),
     );
     pass.commit_and_wait();
     Ok(output)
@@ -931,6 +950,111 @@ mod tests {
         assert_close(&read(&int4_output), &expected_int4, 2e-5);
         drop(component);
         fs::remove_dir_all(root).expect("remove synthetic component");
+    }
+
+    #[test]
+    #[ignore = "opt-in Metal kernel parity test"]
+    fn grouped_attention_matches_cpu_for_gqa_and_causal_mask() {
+        let Ok(mut context) = MetalContext::new() else {
+            eprintln!("NOTE: skipping image Metal parity test, no Metal device");
+            return;
+        };
+        let q_rows = 5;
+        let kv_rows = 6;
+        let q_heads = 2;
+        let kv_heads = 1;
+        let head_dim = 32;
+        let q: Vec<f32> = (0..q_rows * q_heads * head_dim)
+            .map(|index| ((index * 13 % 71) as f32 - 35.0) / 53.0)
+            .collect();
+        let k: Vec<f32> = (0..kv_rows * kv_heads * head_dim)
+            .map(|index| ((index * 7 % 61) as f32 - 30.0) / 47.0)
+            .collect();
+        let v: Vec<f32> = (0..kv_rows * kv_heads * head_dim)
+            .map(|index| ((index * 19 % 83) as f32 - 41.0) / 67.0)
+            .collect();
+        let q_gpu = upload(&context, &q);
+        let k_gpu = upload(&context, &k);
+        let v_gpu = upload(&context, &v);
+
+        for causal in [false, true] {
+            let actual = attention(
+                &mut context,
+                &q_gpu,
+                &k_gpu,
+                &v_gpu,
+                q_rows,
+                kv_rows,
+                q_heads,
+                kv_heads,
+                head_dim,
+                causal,
+            )
+            .expect("grouped attention");
+            let expected = cpu_attention(
+                &q, &k, &v, q_rows, kv_rows, q_heads, kv_heads, head_dim, causal,
+            );
+            assert_close(&read(&actual), &expected, 2e-5);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn cpu_attention(
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        q_rows: usize,
+        kv_rows: usize,
+        q_heads: usize,
+        kv_heads: usize,
+        head_dim: usize,
+        causal: bool,
+    ) -> Vec<f32> {
+        let mut output = vec![0.0; q.len()];
+        let group_size = q_heads / kv_heads;
+        let scale = (head_dim as f32).sqrt().recip();
+        for query in 0..q_rows {
+            for head in 0..q_heads {
+                let kv_head = head / group_size;
+                let mut maximum = f32::NEG_INFINITY;
+                for key in 0..kv_rows {
+                    if causal && key > query {
+                        continue;
+                    }
+                    let score = (0..head_dim)
+                        .map(|d| {
+                            q[(query * q_heads + head) * head_dim + d]
+                                * k[(key * kv_heads + kv_head) * head_dim + d]
+                        })
+                        .sum::<f32>()
+                        * scale;
+                    maximum = maximum.max(score);
+                }
+                let mut denominator = 0.0;
+                for key in 0..kv_rows {
+                    if causal && key > query {
+                        continue;
+                    }
+                    let score = (0..head_dim)
+                        .map(|d| {
+                            q[(query * q_heads + head) * head_dim + d]
+                                * k[(key * kv_heads + kv_head) * head_dim + d]
+                        })
+                        .sum::<f32>()
+                        * scale;
+                    let probability = (score - maximum).exp();
+                    denominator += probability;
+                    for d in 0..head_dim {
+                        output[(query * q_heads + head) * head_dim + d] +=
+                            probability * v[(key * kv_heads + kv_head) * head_dim + d];
+                    }
+                }
+                for d in 0..head_dim {
+                    output[(query * q_heads + head) * head_dim + d] /= denominator;
+                }
+            }
+        }
+        output
     }
 
     fn append_f32(payload: &mut Vec<u8>, values: &[f32]) -> u64 {

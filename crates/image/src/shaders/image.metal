@@ -269,48 +269,93 @@ void image_rope_adjacent(
     output[gid] = ((col & 1) == 0) ? value * c - partner * s : partner * c + value * s;
 }
 
-[[kernel, max_total_threads_per_threadgroup(256)]]
+// Four queries for one head share each key vector. The old elementwise kernel
+// recomputed every dot product once per output element, while the first
+// grouped version still loaded each key vector once per query. Keeping four
+// query lanes in one group cuts that dominant global-memory read by four.
+[[kernel, max_total_threads_per_threadgroup(512)]]
 void image_attention(
     device const float *q [[buffer(0)]],
     device const float *k [[buffer(1)]],
     device const float *v [[buffer(2)]],
     device float *output [[buffer(3)]],
     constant AttentionParams &p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]) {
-    const uint total = p.q_rows * p.q_heads * p.head_dim;
-    if (gid >= total) return;
-    const uint d = gid % p.head_dim;
-    const uint head = (gid / p.head_dim) % p.q_heads;
-    const uint query = gid / (p.q_heads * p.head_dim);
-    const uint group = p.q_heads / p.kv_heads;
-    const uint kv_head = head / group;
+    uint lane [[thread_position_in_threadgroup]],
+    uint group_id [[threadgroup_position_in_grid]],
+    uint simd_lane [[thread_index_in_simdgroup]]) {
+    threadgroup float key_shared[128];
+    threadgroup float partials[4][4];
+    threadgroup float scores[4];
+    threadgroup float running_max[4];
+    threadgroup float denominator[4];
+    threadgroup float rescale[4];
+    threadgroup float probability[4];
+
+    const uint query_blocks = (p.q_rows + 3) / 4;
+    const uint head = group_id / query_blocks;
+    const uint query_block = group_id - head * query_blocks;
+    const uint group_size = p.q_heads / p.kv_heads;
+    const uint kv_head = head / group_size;
+    const uint query_slot = lane / p.head_dim;
+    const uint local_lane = lane - query_slot * p.head_dim;
+    const uint local_simd_group = local_lane / 32;
+    const uint query = query_block * 4 + query_slot;
+    const bool active = query < p.q_rows;
+    const uint64_t q_base = (uint64_t(query) * p.q_heads + head) * p.head_dim;
+    const float q_value = active ? q[q_base + local_lane] : 0.0f;
     const float inv_scale = rsqrt(float(p.head_dim));
-    float maximum = -INFINITY;
-    for (uint key = 0; key < p.kv_rows; ++key) {
-        if (p.causal != 0 && key > query) continue;
-        float score = 0.0f;
-        for (uint i = 0; i < p.head_dim; ++i) {
-            const float qv = q[(uint64_t(query) * p.q_heads + head) * p.head_dim + i];
-            const float kv = k[(uint64_t(key) * p.kv_heads + kv_head) * p.head_dim + i];
-            score = fma(qv, kv, score);
-        }
-        maximum = max(maximum, score * inv_scale);
+
+    if (local_lane == 0) {
+        running_max[query_slot] = -INFINITY;
+        denominator[query_slot] = 0.0f;
     }
-    float denominator = 0.0f;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
     float numerator = 0.0f;
     for (uint key = 0; key < p.kv_rows; ++key) {
-        if (p.causal != 0 && key > query) continue;
-        float score = 0.0f;
-        for (uint i = 0; i < p.head_dim; ++i) {
-            const float qv = q[(uint64_t(query) * p.q_heads + head) * p.head_dim + i];
-            const float kv = k[(uint64_t(key) * p.kv_heads + kv_head) * p.head_dim + i];
-            score = fma(qv, kv, score);
+        if (lane < p.head_dim) {
+            const uint64_t k_base = (uint64_t(key) * p.kv_heads + kv_head) * p.head_dim;
+            key_shared[lane] = k[k_base + lane];
         }
-        const float probability = exp(score * inv_scale - maximum);
-        denominator += probability;
-        numerator += probability * v[(uint64_t(key) * p.kv_heads + kv_head) * p.head_dim + d];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        const bool allowed = active && (p.causal == 0 || key <= query);
+        const float partial = allowed ? q_value * key_shared[local_lane] : 0.0f;
+        const float reduced = simd_sum(partial);
+        if (simd_lane == 0) partials[query_slot][local_simd_group] = reduced;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (local_simd_group == 0) {
+            const uint groups_per_query = p.head_dim / 32;
+            float merged = simd_lane < groups_per_query ? partials[query_slot][simd_lane] : 0.0f;
+            merged = simd_sum(merged) * inv_scale;
+            if (simd_lane == 0) scores[query_slot] = merged;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (local_lane == 0) {
+            if (allowed) {
+                const float next_max = max(running_max[query_slot], scores[query_slot]);
+                rescale[query_slot] = exp(running_max[query_slot] - next_max);
+                probability[query_slot] = exp(scores[query_slot] - next_max);
+                running_max[query_slot] = next_max;
+                denominator[query_slot] =
+                    denominator[query_slot] * rescale[query_slot] + probability[query_slot];
+            } else {
+                rescale[query_slot] = 1.0f;
+                probability[query_slot] = 0.0f;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (allowed) {
+            const uint64_t v_base = (uint64_t(key) * p.kv_heads + kv_head) * p.head_dim;
+            numerator = numerator * rescale[query_slot] + probability[query_slot] * v[v_base + local_lane];
+        } else {
+            numerator *= rescale[query_slot];
+        }
     }
-    output[gid] = numerator / denominator;
+
+    if (active) {
+        output[(uint64_t(query) * p.q_heads + head) * p.head_dim + local_lane] =
+            numerator / denominator[query_slot];
+    }
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]
