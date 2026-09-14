@@ -13,6 +13,7 @@ mod resolve;
 mod resolvers;
 
 use std::collections::BTreeSet;
+use std::io::Read;
 use std::path::Path;
 
 use tokenizers::Tokenizer;
@@ -24,6 +25,23 @@ pub(crate) use self::resolve::{
     SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use crate::error::TokenizerError;
+
+const MAX_GENERATION_CONFIG_BYTES: u64 = 1 << 20;
+
+fn read_generation_config(path: &Path) -> Option<GenerationConfig> {
+    let file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > MAX_GENERATION_CONFIG_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_GENERATION_CONFIG_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_GENERATION_CONFIG_BYTES {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
 
 /// Chat framing dialect, resolved from the loaded tokenizer's special
 /// tokens. `Deepseek` is detected by the presence of the `<|User|>` special
@@ -290,9 +308,7 @@ impl MfTokenizer {
         // looks single-stop without this. The real Gemma 4 26B-A4B
         // declares `eos_token_id: [1, 106, 50]` while its
         // tokenizer_config says only `<eos>`.
-        let extra_eos = std::fs::read_to_string(dir.join("generation_config.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str::<GenerationConfig>(&s).ok())
+        let extra_eos = read_generation_config(&dir.join("generation_config.json"))
             .map(|g| g.eos_ids())
             .unwrap_or_default();
         Self::new(tokenizer, &config, chat_template_source, &extra_eos)
@@ -306,9 +322,12 @@ impl MfTokenizer {
     ) -> Result<Self, TokenizerError> {
         let dialect = resolve::detect_dialect(&tokenizer);
         let mut resolved = resolve::resolve_dialect(dialect, &tokenizer, config)?;
-        resolved
-            .stop_token_ids
-            .extend(extra_eos.iter().copied().filter(|&id| id >= 0));
+        resolved.stop_token_ids.extend(
+            extra_eos
+                .iter()
+                .copied()
+                .filter(|&id| id >= 0 && (id as usize) < resolved.vocab_size),
+        );
         Ok(Self {
             dialect,
             bos_id: resolved.bos_id,

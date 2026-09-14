@@ -74,3 +74,40 @@ fn invalid_or_missing_sidecar_is_tolerated() {
     assert!(!tok.stop_token_ids.contains(&-1));
     assert!(tok.stop_token_ids.contains(&7));
 }
+
+#[test]
+fn oversized_sidecar_is_ignored() {
+    let dir = temp_fixture_copy();
+    let baseline = MfTokenizer::load_from_dir(&dir).expect("loads without sidecar");
+    let mut sidecar = br#"{"eos_token_id": [7]}"#.to_vec();
+    sidecar.resize((1 << 20) + 1, b' ');
+    std::fs::write(dir.join("generation_config.json"), sidecar).unwrap();
+
+    let tok = MfTokenizer::load_from_dir(&dir).expect("oversized sidecar ignored");
+    assert_eq!(tok.stop_token_ids, baseline.stop_token_ids);
+}
+
+#[test]
+fn excessive_or_out_of_vocab_eos_ids_are_ignored() {
+    let dir = temp_fixture_copy();
+    let baseline = MfTokenizer::load_from_dir(&dir).expect("loads without sidecar");
+    let ids = std::iter::repeat_n("7", 257).collect::<Vec<_>>().join(",");
+    std::fs::write(
+        dir.join("generation_config.json"),
+        format!(r#"{{"eos_token_id": [{ids}]}}"#),
+    )
+    .unwrap();
+    let tok = MfTokenizer::load_from_dir(&dir).expect("excessive array ignored");
+    assert_eq!(tok.stop_token_ids, baseline.stop_token_ids);
+
+    std::fs::write(
+        dir.join("generation_config.json"),
+        r#"{"eos_token_id": [9, 1000000, 4294967303]}"#,
+    )
+    .unwrap();
+    let tok = MfTokenizer::load_from_dir(&dir).expect("invalid ids ignored");
+    assert!(tok.stop_token_ids.contains(&9));
+    assert!(!tok.stop_token_ids.contains(&7));
+    assert!(!tok.stop_token_ids.contains(&1_000_000));
+    assert_eq!(tok.stop_token_ids.len(), baseline.stop_token_ids.len() + 1);
+}
