@@ -200,3 +200,55 @@ fn is_sidecar_dir_false_for_a_record_with_a_different_kind() {
     .unwrap();
     assert!(!turbospark_model_io::is_sidecar_dir(&dir));
 }
+
+/// Probing a directory must reject an oversized record without reading the
+/// attacker-controlled remainder into memory.
+#[test]
+fn is_sidecar_dir_rejects_an_oversized_record() {
+    let dir = tempfile_dir();
+    let path = dir.join(turbospark_model_io::SIDECAR_RECORD_FILE);
+    std::fs::write(&path, vec![b' '; 64 * 1024 + 1]).expect("write oversized record");
+
+    assert!(!turbospark_model_io::is_sidecar_dir(&dir));
+    let error = turbospark_model_io::SidecarRecord::read(&dir)
+        .expect_err("an oversized sidecar record must be refused");
+    assert!(
+        error.to_string().contains("exceeds metadata cap 65536"),
+        "unexpected error: {error}"
+    );
+}
+
+/// The preliminary arch peek must enforce the manifest cap before attempting
+/// JSON parsing, rather than relying on the later validated manifest load.
+#[test]
+fn sidecar_load_rejects_an_oversized_manifest_before_parsing() {
+    let dir = tempfile_dir();
+    let record = turbospark_model_io::SidecarRecord {
+        kind: turbospark_model_io::SIDECAR_KIND.to_string(),
+        pairs_with: turbospark_model_io::PairsWith {
+            family: ModelFamily::QwenGdnDense.as_str().to_string(),
+            hidden_size: 5120,
+        },
+        source: turbospark_model_io::SidecarSource {
+            repo: "test/repo".to_string(),
+            revision: "deadbeef".to_string(),
+            prefix: "vision_tower.".to_string(),
+            file: "model.safetensors".to_string(),
+        },
+        tower_blocks: 2,
+        block_stride: 65536,
+    };
+    record.write(&dir).expect("write vision_sidecar.json");
+    std::fs::write(
+        dir.join("manifest.json"),
+        vec![b' '; turbospark_model_io::DEFAULT_MAX_BYTES as usize + 1],
+    )
+    .expect("write oversized manifest");
+
+    let error = turbospark_model_io::load_vision_sidecar(&dir)
+        .expect_err("an oversized manifest must be refused");
+    assert!(
+        error.to_string().contains("exceeds metadata cap 4194304"),
+        "unexpected error: {error}"
+    );
+}

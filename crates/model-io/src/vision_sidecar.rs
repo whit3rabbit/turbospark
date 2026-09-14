@@ -23,6 +23,7 @@
 //! `visionOutHiddenSize` on every [`load`]), and where the tower's bytes came
 //! from (`source`).
 
+use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,29 @@ pub const SIDECAR_RECORD_FILE: &str = "vision_sidecar.json";
 /// rather than a bare string literal at each call site, so a typo in one
 /// arm cannot silently stop matching the other.
 pub const SIDECAR_KIND: &str = "vision-tower";
+
+/// Maximum size accepted for `vision_sidecar.json`.
+const SIDECAR_RECORD_MAX_BYTES: u64 = 64 * 1024;
+
+fn read_bounded(path: &Path, name: &str, max_bytes: u64) -> Result<Vec<u8>, ModelError> {
+    let file = std::fs::File::open(path).map_err(|e| ModelError::IoFailed {
+        call: "read".to_string(),
+        detail: format!("{}: {e}", path.display()),
+    })?;
+    let mut data = Vec::new();
+    file.take(max_bytes + 1)
+        .read_to_end(&mut data)
+        .map_err(|e| ModelError::IoFailed {
+            call: "read".to_string(),
+            detail: format!("{}: {e}", path.display()),
+        })?;
+    if data.len() as u64 > max_bytes {
+        return Err(ModelError::IndexCorrupt {
+            detail: format!("{name} size exceeds metadata cap {max_bytes}"),
+        });
+    }
+    Ok(data)
+}
 
 /// Which text family and hidden size this tower's merger was built to feed.
 ///
@@ -116,10 +140,7 @@ impl SidecarRecord {
     /// cross-check -- see [`load`] for the full, validated read.
     pub fn read(dir: &Path) -> Result<Self, ModelError> {
         let path = dir.join(SIDECAR_RECORD_FILE);
-        let data = std::fs::read(&path).map_err(|e| ModelError::IoFailed {
-            call: "read".to_string(),
-            detail: format!("{}: {e}", path.display()),
-        })?;
+        let data = read_bounded(&path, SIDECAR_RECORD_FILE, SIDECAR_RECORD_MAX_BYTES)?;
         serde_json::from_slice(&data).map_err(|e| ModelError::IndexCorrupt {
             detail: format!("vision_sidecar.json: {e}"),
         })
@@ -196,10 +217,11 @@ pub fn load(dir: &Path) -> Result<(SidecarRecord, VisionConfig), ModelError> {
     // carries are what `sidecar_arch` needs BEFORE the full validated load
     // below has anything to validate against.
     let manifest_path = dir.join("manifest.json");
-    let data = std::fs::read(&manifest_path).map_err(|e| ModelError::IoFailed {
-        call: "read".to_string(),
-        detail: format!("{}: {e}", manifest_path.display()),
-    })?;
+    let data = read_bounded(
+        &manifest_path,
+        "manifest.json",
+        crate::manifest::DEFAULT_MAX_BYTES,
+    )?;
     let raw: serde_json::Value =
         serde_json::from_slice(&data).map_err(|e| ModelError::IndexCorrupt {
             detail: format!("manifest.json: {e}"),
