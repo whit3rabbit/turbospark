@@ -197,6 +197,12 @@ final class WorktreeTests: XCTestCase {
         XCTAssertFalse(worktrees[1].isCurrent)
     }
 
+    func testGitCheckoutTreatsDashPrefixedBranchAsAnOperand() {
+        let arguments = WorktreeModel.gitCheckoutArguments(branch: "--force")
+        XCTAssertEqual(arguments.switchArgs, ["switch", "--", "--force"])
+        XCTAssertEqual(arguments.checkoutArgs, ["checkout", "--", "--force"])
+    }
+
     func testParseNameStatusAndNumstat() {
         let numstat = "12\t4\tsrc/main.swift\n20\t0\tsrc/new.swift\n0\t15\tsrc/old.swift\n"
         let nameStatus = "M\tsrc/main.swift\nA\tsrc/new.swift\nD\tsrc/old.swift\n"
