@@ -261,6 +261,17 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
     }
 }
 
+fn is_dense_family(family: ModelFamily) -> bool {
+    matches!(
+        family,
+        ModelFamily::QwenGdnDense
+            | ModelFamily::MuseGlimmer
+            | ModelFamily::Spark25
+            | ModelFamily::Qwen3Dense
+            | ModelFamily::Qwen2Dense
+    )
+}
+
 /// The container `qwen4_exp`'s sharded n-gram embedding lives under.
 ///
 /// Every name below it is one of two things and NOTHING else, which is what
@@ -347,7 +358,14 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
                 return bucket;
             }
         }
-        if name.contains(routed_marker(family)) {
+        let looks_routed = name.contains(routed_marker(family));
+        if looks_routed && is_dense_family(family) {
+            // A dense checkpoint has no valid destination for an expert
+            // tensor. Refuse the contradictory name instead of filing it as
+            // resident or letting a zero-expert layout reach the writer.
+            return Gemma4Bucket::Unknown;
+        }
+        if looks_routed {
             let role = if name.contains(".gate_proj.") {
                 Some("gate")
             } else if name.contains(".up_proj.") {
