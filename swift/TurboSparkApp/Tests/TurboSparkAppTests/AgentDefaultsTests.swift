@@ -365,6 +365,26 @@ final class AgentDefaultsTests: XCTestCase {
         XCTAssertEqual(reread.maxTurns, 9)
     }
 
+    func testSaveAgentRefusesToOverwriteJSONWithMarkdown() throws {
+        let fileURL = tempDirURL.appendingPathComponent("external-agent.json")
+        let original = """
+        {"name":"external-agent","prompt":"Original prompt."}
+        """
+        try original.write(to: fileURL, atomically: true, encoding: .utf8)
+        var agent = try AgentParser.parseFile(
+            at: fileURL, scope: .project, sourceAgent: .openCode)
+        agent.systemPrompt = "Edited prompt."
+
+        XCTAssertThrowsError(try AgentManager.shared.saveAgent(agent)) { error in
+            guard case AgentManager.AgentFileError.unsupportedEditFormat = error else {
+                return XCTFail("expected unsupportedEditFormat, got \(error)")
+            }
+        }
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), original)
+        XCTAssertNoThrow(try AgentParser.parseFile(
+            at: fileURL, scope: .project, sourceAgent: .openCode))
+    }
+
     func testDeleteAgentRemovesTheFile() throws {
         let agent = try makeAgentFile()
         try AgentManager.shared.deleteAgent(agent)

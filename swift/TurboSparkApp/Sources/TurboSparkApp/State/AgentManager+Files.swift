@@ -22,6 +22,7 @@ extension AgentManager {
         case projectRootRequired
         case destinationExists(String)
         case missingFilePath(String)
+        case unsupportedEditFormat(String)
 
         public var errorDescription: String? {
             switch self {
@@ -35,6 +36,8 @@ extension AgentManager {
                 return "An agent file named '\(name)' already exists. Rename the new agent or delete the old file first."
             case .missingFilePath(let name):
                 return "Agent '\(name)' has no file on disk to save to."
+            case .unsupportedEditFormat(let path):
+                return "Agent file '\(path)' is not Markdown and cannot be edited by TurboSpark."
             }
         }
     }
@@ -130,6 +133,9 @@ extension AgentManager {
             throw AgentFileError.missingFilePath(agent.name)
         }
         let fileURL = URL(fileURLWithPath: path)
+        guard fileURL.pathExtension.lowercased() == "md" else {
+            throw AgentFileError.unsupportedEditFormat(path)
+        }
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let serialized = AgentParser.serializeAgent(agent)
