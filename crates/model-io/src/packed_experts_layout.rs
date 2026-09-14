@@ -207,6 +207,14 @@ pub fn load_from(
                  {expert_stride} that sizes every consumer's slot"
             )));
         }
+        if layer_stride == 0 {
+            return Err(corrupt(&format!(
+                "layer {layer_idx} declares a zero expert stride"
+            )));
+        }
+        let layer_file_size = layer_stride
+            .checked_mul(experts_per_layer as u64)
+            .ok_or_else(|| corrupt(&format!("layer {layer_idx} file size overflows u64")))?;
 
         let mut experts: Vec<Option<ExpertEntry>> = vec![None; experts_per_layer];
         for expert_obj in experts_arr {
@@ -218,6 +226,23 @@ pub fn load_from(
                 .get("size")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| corrupt("malformed expert entry"))?;
+            if size != layer_stride {
+                return Err(corrupt(&format!(
+                    "layer {layer_idx} expert at offset {offset} declares size {size}, expected \
+                     the layer stride {layer_stride}"
+                )));
+            }
+            let expert_end = offset.checked_add(size).ok_or_else(|| {
+                corrupt(&format!(
+                    "layer {layer_idx} expert range {offset}+{size} overflows u64"
+                ))
+            })?;
+            if expert_end > layer_file_size {
+                return Err(corrupt(&format!(
+                    "layer {layer_idx} expert range {offset}..{expert_end} exceeds its \
+                     {layer_file_size}-byte layer file"
+                )));
+            }
             let tensors_obj = expert_obj
                 .get("tensors")
                 .and_then(Value::as_object)
@@ -235,6 +260,17 @@ pub fn load_from(
                 let (Some(dtype), true) = (dtype, has_shape) else {
                     return Err(corrupt(&format!("malformed tensor {role}")));
                 };
+                let tensor_end = toff.checked_add(tsize).ok_or_else(|| {
+                    corrupt(&format!(
+                        "layer {layer_idx} tensor {role} range {toff}+{tsize} overflows u64"
+                    ))
+                })?;
+                if tensor_end > size {
+                    return Err(corrupt(&format!(
+                        "layer {layer_idx} tensor {role} range {toff}..{tensor_end} exceeds its \
+                         {size}-byte expert blob"
+                    )));
+                }
                 if let Some(bits) = t.get("bits") {
                     if !bits.is_i64() && !bits.is_u64() {
                         return Err(corrupt(&format!("malformed tensor bits {role}")));
@@ -283,11 +319,23 @@ pub fn load_from(
         if experts.iter().any(Option::is_none) {
             return Err(corrupt("missing expert entries"));
         }
+        let experts: Vec<ExpertEntry> = experts.into_iter().map(Option::unwrap).collect();
+        if let Some(first) = experts.first() {
+            for expert in &experts[1..] {
+                if expert.sub_tensors != first.sub_tensors {
+                    return Err(corrupt(&format!(
+                        "layer {layer_idx} expert {} has a different sub-tensor layout from \
+                         expert {}",
+                        expert.expert, first.expert
+                    )));
+                }
+            }
+        }
         layers.push(LayerLayout {
             layer: layer_idx,
             file,
             expert_stride: layer_stride,
-            experts: experts.into_iter().map(Option::unwrap).collect(),
+            experts,
         });
     }
     if layers.len() != num_layers {
