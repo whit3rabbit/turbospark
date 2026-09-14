@@ -535,6 +535,34 @@ fn a_routed_expert_weight_run_shorter_than_its_declared_shape_is_refused() {
     );
 }
 
+#[test]
+fn zero_rank_routed_expert_companions_are_refused() {
+    for suffix in ["scales", "biases"] {
+        let mut tensors = fixture();
+        let target = format!("language_model.model.layers.0.experts.switch_glu.gate_proj.{suffix}");
+        tensors
+            .iter_mut()
+            .find(|t| t.name == target)
+            .expect("fixture carries the target companion")
+            .shape
+            .clear();
+
+        let blob = assemble(&tensors);
+        let header = turbospark_repack::parse_header(&blob, 1 << 20).expect("header parses");
+        let source = MemoryRangeSource::new(&blob);
+        let arch = parse_gemma4_config(&config_json()).expect("config");
+        let quant = parse_gemma4_quantization(&config_json()).expect("quant");
+        let Err(err) = orchestrate_gemma4_checkpoint(&header, &source, &arch, &quant) else {
+            panic!("a zero-rank routed expert {suffix} tensor must be refused");
+        };
+        let Gemma4Error::ShapeMismatch { tensor, detail } = err else {
+            panic!("expected ShapeMismatch, got {err:?}");
+        };
+        assert_eq!(tensor, target);
+        assert!(detail.contains("expected rank-3"), "{detail}");
+    }
+}
+
 /// A 1-bit tensor passes through as `Int1`, 32 elements per packed word.
 #[test]
 fn a_one_bit_tensor_passes_through_as_int1() {

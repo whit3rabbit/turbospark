@@ -122,6 +122,17 @@ pub fn plan_one_expert_layer(
                 dtype: format!("{}/{} companions", s.dtype, b.dtype),
             });
         }
+        for (companion_name, companion) in [(&s_name, s), (&b_name, b)] {
+            if companion.shape.len() != 3 || companion.shape[0] as usize != expert_count {
+                return Err(Gemma4Error::ShapeMismatch {
+                    tensor: companion_name.to_string(),
+                    detail: format!(
+                        "expected rank-3 with leading {expert_count}, got {:?}",
+                        companion.shape
+                    ),
+                });
+            }
+        }
 
         let w_bytes = shards.read(name)?;
         let s_bytes = shards.read(&s_name)?;
