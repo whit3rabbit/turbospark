@@ -28,6 +28,7 @@ use super::config::Gemma4Error;
 use super::narrow::convert_raw_to_fp16;
 use super::shards::{shape4, Gemma4Shards, GTURBO_PAGE_BYTES};
 use crate::gturbo_writer::{ExpertBlob, LayerBlobs, SubTensor};
+use crate::qwen36_config::SUPPORTED_VISION_DEPTH;
 use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
 /// One block's twelve sub-tensors: `(role in the blob, suffix in the
@@ -202,20 +203,67 @@ pub fn read_vision_entries(
     vision_bases: &[&str],
     vision: &VisionConfig,
 ) -> Result<VisionRead, Gemma4Error> {
-    let depth = vision.depth as usize;
-    if depth == 0 {
-        return Err(Gemma4Error::Config(
-            "read_vision_entries called with VisionConfig::NONE; the caller should have \
-             checked `vision.is_active()`"
-                .to_string(),
-        ));
+    let depth = usize::try_from(vision.depth).map_err(|_| {
+        Gemma4Error::Config(format!(
+            "vision depth {} cannot be represented as a block count",
+            vision.depth
+        ))
+    })?;
+    if vision.depth != SUPPORTED_VISION_DEPTH {
+        return Err(Gemma4Error::Config(format!(
+            "vision depth {} is unsupported; expected {SUPPORTED_VISION_DEPTH}",
+            vision.depth
+        )));
+    }
+
+    // Establish that the artifact actually contains every declared block
+    // before allocating the per-block buckets. This pass is intentionally
+    // independent of `depth`: malformed metadata cannot make its memory use
+    // proportional to an attacker-controlled number.
+    let mut present_blocks = [false; SUPPORTED_VISION_DEPTH as usize];
+    for &name in vision_bases {
+        let Some(rest) = name
+            .strip_prefix(VISION_PREFIX)
+            .and_then(|tail| tail.strip_prefix("blocks."))
+        else {
+            continue;
+        };
+        let (index, _) = rest.split_once('.').ok_or_else(|| {
+            Gemma4Error::UnknownTensor(format!("{name}: no block index and suffix"))
+        })?;
+        let index: usize = index.parse().map_err(|_| {
+            Gemma4Error::UnknownTensor(format!("{name}: block index is not a number"))
+        })?;
+        if index >= depth {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!("block {index} is past the declared depth of {depth}"),
+            });
+        }
+        present_blocks[index] = true;
+    }
+    if let Some(index) = present_blocks.iter().position(|present| !present) {
+        return Err(Gemma4Error::MissingTensor(format!(
+            "{VISION_PREFIX}blocks.{index}.*"
+        )));
     }
 
     // Bucket every name first, so an unknown one is refused before any bytes
     // move. On the real checkpoint that is 333 header lookups against a
     // multi-GB stream, which is the cheap half of Gotcha 8's rule applied
     // inside a single function.
-    let mut block_names: Vec<Vec<Option<&str>>> = vec![vec![None; BLOCK_ROLES.len()]; depth];
+    let mut block_names = Vec::new();
+    block_names.try_reserve_exact(depth).map_err(|e| {
+        Gemma4Error::Config(format!("cannot allocate {depth} vision block buckets: {e}"))
+    })?;
+    for _ in 0..depth {
+        let mut roles = Vec::new();
+        roles.try_reserve_exact(BLOCK_ROLES.len()).map_err(|e| {
+            Gemma4Error::Config(format!("cannot allocate vision block role buckets: {e}"))
+        })?;
+        roles.resize(BLOCK_ROLES.len(), None);
+        block_names.push(roles);
+    }
     let mut resident_names: Vec<Option<&str>> = vec![None; RESIDENT_TENSORS.len()];
 
     for &name in vision_bases {
@@ -344,4 +392,39 @@ pub fn read_vision_entries(
         block_stride: widest.div_ceil(GTURBO_PAGE_BYTES) * GTURBO_PAGE_BYTES,
         lossy_conversion,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use crate::ranged_download::MemoryRangeSource;
+    use crate::safetensors_header::SafetensorsHeader;
+
+    use super::*;
+
+    #[test]
+    fn direct_reader_rejects_unbounded_depth_without_allocating() {
+        let header = SafetensorsHeader {
+            tensors: BTreeMap::new(),
+            metadata: None,
+            header_len: 0,
+        };
+        let source = MemoryRangeSource::new(&[]);
+        let shards = Gemma4Shards::single(&header, &source);
+        let mut vision = VisionConfig::NONE;
+        vision.depth = i64::MAX;
+
+        let error = read_vision_entries(&shards, &["vision_tower.blocks.0.norm1.weight"], &vision)
+            .err()
+            .expect("the public reader must defend against a manually built config");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "config.json invalid: vision depth {} is unsupported; expected {}",
+                i64::MAX,
+                27
+            )
+        );
+    }
 }

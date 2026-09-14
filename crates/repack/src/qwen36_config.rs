@@ -67,6 +67,48 @@ pub fn parse_qwen_gdn_moe_config(json: &str) -> Result<ArchConfig, Gemma4Error> 
     parse_qwen_family_config(json, ModelFamily::QwenGdnMoe)
 }
 
+#[cfg(test)]
+mod vision_depth_tests {
+    use super::*;
+
+    fn vision_json(depth: i64) -> String {
+        serde_json::json!({
+            "text_config": {"rope_parameters": {"mrope_section": [11, 11, 10]}},
+            "vision_config": {
+                "depth": depth,
+                "hidden_size": 1152,
+                "intermediate_size": 4304,
+                "num_heads": 16,
+                "patch_size": 16,
+                "temporal_patch_size": 2,
+                "in_channels": 3,
+                "spatial_merge_size": 2,
+                "num_position_embeddings": 2304,
+                "out_hidden_size": 5120
+            },
+            "vision_start_token_id": 248056,
+            "vision_end_token_id": 248057,
+            "image_token_id": 248058,
+            "video_token_id": 248059
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn vision_depth_is_bounded_at_the_untrusted_config_boundary() {
+        let error = parse_vision_config(&vision_json(i64::MAX))
+            .expect_err("an attacker-controlled depth must be rejected");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "config.json invalid: vision depth {} is unsupported; expected {}",
+                i64::MAX,
+                27
+            )
+        );
+    }
+}
+
 /// Parses a `qwen3_5` `config.json` into an [`ArchConfig`]
 /// (`prism-ml/Bonsai-27B-mlx-1bit`, ROADMAP's 1-bit entry).
 ///
@@ -121,6 +163,10 @@ pub fn parse_qwen_gdn_dense_config(json: &str) -> Result<ArchConfig, Gemma4Error
 pub fn parse_qwen4_exp_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     parse_qwen_family_config(json, ModelFamily::Qwen4Exp)
 }
+
+/// The only vision-tower depth supported by the current Qwen 3.5 kernels and
+/// packed layout. All published checkpoints use this depth.
+pub(crate) const SUPPORTED_VISION_DEPTH: i64 = 27;
 
 /// Parses `qwen4_exp`'s hyper-connection, indexer and PLE blocks.
 ///
@@ -354,6 +400,13 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
         image_token_id: root_i(root, "image_token_id")?,
         video_token_id: root_i(root, "video_token_id")?,
     };
+
+    if vision.depth != SUPPORTED_VISION_DEPTH {
+        return Err(Gemma4Error::Config(format!(
+            "vision depth {} is unsupported; expected {SUPPORTED_VISION_DEPTH}",
+            vision.depth
+        )));
+    }
 
     // Two consistency checks the fields cannot make individually, both of
     // which produce a wrong STRIDE rather than an error if they fail.
