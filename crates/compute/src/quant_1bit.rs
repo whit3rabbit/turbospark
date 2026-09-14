@@ -146,6 +146,22 @@ fn check_shape(n: usize, group_size: usize) {
     );
 }
 
+fn check_row_shape(row: &Int1AffineRow, n: usize) {
+    assert_eq!(n, row.len(), "n must equal packed.len() * 8");
+    check_shape(n, row.group_size);
+    let n_groups = n / row.group_size;
+    assert_eq!(
+        row.scales.len(),
+        n_groups,
+        "scales.len() must equal n_groups"
+    );
+    assert_eq!(
+        row.biases.len(),
+        n_groups,
+        "biases.len() must equal n_groups"
+    );
+}
+
 /// Symmetric 1-bit affine quantize: `q in {0, 1}`, `w ~= q * scale + bias`
 /// with `bias = -scale / 2`, so the two representable values are
 /// `+/- scale / 2`.
@@ -204,8 +220,7 @@ pub fn quantize_int1_affine_symmetric(row: &[f32], group_size: usize) -> Int1Aff
 
 /// Dequantize an [`Int1AffineRow`] to `n` FP32 elements.
 pub fn dequantize_int1_affine(r: &Int1AffineRow, n: usize) -> Vec<f32> {
-    assert_eq!(n, r.len(), "n must equal packed.len() * 8");
-    check_shape(n, r.group_size);
+    check_row_shape(r, n);
     let mut out = vec![0f32; n];
     for g in 0..n / r.group_size {
         let scale = f16_to_f32(r.scales[g]);
@@ -282,6 +297,7 @@ pub fn embed_lookup_int1(
 /// kernel's lane partials have to be reduced in to match. Mirrors
 /// [`crate::quant::dequant_int4_gemv`].
 pub fn dequant_int1_gemv(weight_rows: &[Int1AffineRow], x: &[f32], n: usize) -> Vec<f32> {
+    assert!(!weight_rows.is_empty(), "weight_rows must not be empty");
     assert_eq!(x.len(), n, "x.len() must equal n");
     let mut out = vec![0f32; weight_rows.len()];
     for (r, row) in weight_rows.iter().enumerate() {
@@ -307,9 +323,11 @@ pub fn dequant_int1_gemv(weight_rows: &[Int1AffineRow], x: &[f32], n: usize) -> 
 /// AGENTS.md Gotcha 27 is about, and it is the reason this is a separate
 /// function instead of an optimization inside the one above.
 pub fn dequant_int1_gemv_symmetric(weight_rows: &[Int1AffineRow], x: &[f32], n: usize) -> Vec<f32> {
+    assert!(!weight_rows.is_empty(), "weight_rows must not be empty");
+    assert_eq!(x.len(), n, "x.len() must equal n");
     let mut out = vec![0f32; weight_rows.len()];
     for (r, row) in weight_rows.iter().enumerate() {
-        assert_eq!(n, row.len(), "n must equal packed.len() * 8");
+        check_row_shape(row, n);
         assert!(
             is_symmetric(row),
             "row {r} is not symmetric binary; use dequant_int1_gemv"
