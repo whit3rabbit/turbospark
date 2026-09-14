@@ -117,10 +117,18 @@ fn clamp_max_new(session: &Session, asked: u32, prompt_len: usize) -> Result<u32
 /// session-level answer, and that is in `sessionInfo.speculation`, said
 /// once.
 ///
-/// A free function taking both inputs rather than a method, so the decision
+/// Active rate control also takes the sequential path. The speculative loop
+/// does not pace commits or poll pressure, so routing a capped turn through it
+/// would silently bypass the session's resource policy.
+///
+/// A free function taking all inputs rather than a method, so the decision
 /// is pinnable without a session and without a 14 GB install.
-pub(crate) fn turn_block(session_block: Option<usize>, deterministic: bool) -> Option<usize> {
-    session_block.filter(|_| deterministic)
+pub(crate) fn turn_block(
+    session_block: Option<usize>,
+    deterministic: bool,
+    rate_controlled: bool,
+) -> Option<usize> {
+    session_block.filter(|_| deterministic && !rate_controlled)
 }
 
 /// Runs one turn, calling `emit(kind, text, a, b)` per event.
@@ -229,7 +237,11 @@ pub(crate) fn generate(
         Engine::Real(runner) => runner.vocab_size(),
         Engine::Scripted(_) => session.info.vocab_size,
     };
-    let block = turn_block(session.speculation_block, config.shaping.is_deterministic());
+    let block = turn_block(
+        session.speculation_block,
+        config.shaping.is_deterministic(),
+        config.rate.is_active(),
+    );
     let decoded: Result<RawDecodeResult, _> = match (vision_scope.engine_mut(), block) {
         // The CONCRETE runner, which is why this sits inside the match:
         // `SpeculativeProducer` has an associated type and cannot be
