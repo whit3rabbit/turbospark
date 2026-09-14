@@ -434,6 +434,23 @@ acceptance contract:
    relabel retained driver capacity as exact scratch or claim a whole-machine
    minimum RAM figure.
 
+#### 2026-09-14 implementation checkpoint
+
+- The tiled linear Metal launch now uses the shader's 32-column threadgroup
+  stride. The focused packed linear parity test passes on real Metal; the
+  host-only grid change was rejected by the packed conditioning gate before
+  the shader stride was corrected.
+- Image operation wrappers now defer command-buffer waits until a CPU read
+  seam, retain the producing pass for the output lifetime, and keep the
+  submission inside the existing autorelease pool. The caption-refiner result
+  is also reused between denoise steps.
+- The full packed native parity gate was rerun against the pinned local
+  install after these changes. It produced no first callback within roughly
+  twelve minutes and was stopped without a numerical result. This is not a
+  quality, cancellation, or memory pass. The next optimization target is to
+  reduce the remaining operation-level command-buffer boundaries, likely by
+  batching or fusing transformer-block work, then rerun the same gate.
+
 Prerequisites for this work are the pinned Z-Image-Turbo export at the
 revision recorded in the manifest example, a Metal-capable macOS machine with
 the Xcode Metal toolchain, the existing `target/ig0` fixtures, and enough
