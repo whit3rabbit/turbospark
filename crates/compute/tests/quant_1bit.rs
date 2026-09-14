@@ -267,6 +267,55 @@ fn dequant_int1_gemv_refuses_a_short_x() {
     let _ = dequant_int1_gemv(&[row], &short_x, n);
 }
 
+#[test]
+#[should_panic(expected = "x.len() must equal n")]
+fn symmetric_gemv_refuses_a_long_x() {
+    let row = oracle_row();
+    let n = row.len();
+    let long_x = vec![1.0f32; n + 1];
+    let _ = dequant_int1_gemv_symmetric(&[row], &long_x, n);
+}
+
+#[test]
+#[should_panic(expected = "not a multiple of the group size")]
+fn symmetric_gemv_refuses_a_partial_group() {
+    let row = Int1AffineRow {
+        packed: vec![0u8; 24],
+        scales: vec![0u16; 2],
+        biases: vec![0u16; 2],
+        group_size: BONSAI_GROUP_SIZE,
+    };
+    let x = vec![1.0f32; row.len()];
+    let n = row.len();
+    let _ = dequant_int1_gemv_symmetric(&[row], &x, n);
+}
+
+#[test]
+#[should_panic(expected = "biases.len() must equal n_groups")]
+fn gemv_refuses_a_missing_companion_group() {
+    let mut row = oracle_row();
+    row.biases.pop();
+    let x = vec![1.0f32; row.len()];
+    let n = row.len();
+    let _ = dequant_int1_gemv(&[row], &x, n);
+}
+
+#[test]
+#[should_panic(expected = "scales.len() must equal n_groups")]
+fn gemv_refuses_an_extra_companion_group() {
+    let mut row = oracle_row();
+    row.scales.push(row.scales[0]);
+    let x = vec![1.0f32; row.len()];
+    let n = row.len();
+    let _ = dequant_int1_gemv(&[row], &x, n);
+}
+
+#[test]
+#[should_panic(expected = "weight_rows must not be empty")]
+fn gemv_refuses_empty_rows() {
+    let _ = dequant_int1_gemv(&[], &[], 0);
+}
+
 /// A row length that is not a whole number of groups is a caller error, not
 /// a truncation.
 #[test]
