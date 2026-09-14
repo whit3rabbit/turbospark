@@ -757,6 +757,32 @@ fn row_tiling_the_mlp_does_not_change_the_towers_output() {
     );
 }
 
+/// Zero is not a meaningful row count, but the hidden override is a safe
+/// public API and must not let allocation disagree with block dispatch.
+#[test]
+fn zero_mlp_tile_is_normalized_to_one_row() {
+    let (dir, arch) = build();
+    let p = params();
+    let img = image(&p);
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("open");
+
+    runner.encode_image(&img, &p).expect("open vision tower");
+    runner.set_vision_mlp_tile_rows(1);
+    let one_row_bytes = runner
+        .vision_scratch_bytes_for(img.grid.patches())
+        .expect("opened tower has scratch prediction");
+
+    runner.set_vision_mlp_tile_rows(0);
+    assert_eq!(
+        runner.vision_scratch_bytes_for(img.grid.patches()),
+        Some(one_row_bytes),
+        "a zero tile override must retain one row of MLP scratch"
+    );
+    runner
+        .encode_image(&img, &p)
+        .expect("normalized zero tile runs safely");
+}
+
 /// The scratch-bytes prediction and the real allocation agree at two
 /// different page sizes, one smaller than its tile and one spanning several.
 ///

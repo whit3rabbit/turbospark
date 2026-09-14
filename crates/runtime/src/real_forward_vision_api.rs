@@ -74,10 +74,12 @@ impl RealForwardRunner {
     /// first [`Self::encode_image`] call, so there is nothing here to
     /// override before that. Call `encode_image` once first to open it, then
     /// this, then `encode_image` again to see the tiled arm.
+    /// A zero override is normalized to one row so scratch allocation and
+    /// block dispatch continue to use the same nonempty tile.
     #[doc(hidden)]
     pub fn set_vision_mlp_tile_rows(&mut self, tile_rows: usize) {
         if let Some(vision) = self.vision.as_mut() {
-            vision.mlp_tile_rows = tile_rows;
+            vision.mlp_tile_rows = tile_rows.max(1);
         }
     }
 
