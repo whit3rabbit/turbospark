@@ -179,6 +179,22 @@ fn each_config_parser_refuses_the_other_family() {
     assert!(e.contains("gemma4"), "{e}");
 }
 
+/// An unknown wrapper type must not be attributed the family selected from
+/// its recognized inner text config in the diagnostic.
+#[test]
+fn foreign_config_error_names_the_model_type_that_resolved() {
+    let wrapped_qwen =
+        r#"{"model_type": "custom_wrapper", "text_config": {"model_type": "qwen3_5"}}"#;
+
+    let error = parse_gemma4_config(wrapped_qwen)
+        .expect_err("gemma parser must refuse the nested qwen config")
+        .to_string();
+    assert!(
+        error.contains("model_type qwen3_5 resolves to the qwen35 family, not gemma4"),
+        "{error}"
+    );
+}
+
 /// An absent or unrecognized `model_type` is NOT evidence of the wrong
 /// family, and the trimmed fixtures elsewhere in this directory omit the key
 /// entirely. Both must get past the guard and fail (or pass) on their own
