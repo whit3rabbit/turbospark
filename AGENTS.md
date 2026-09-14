@@ -2164,6 +2164,23 @@ This repository uses Syntext as its indexed code search engine (see `swift/docs/
   - Uses Syntext `grep_search` for fast indexed code and pattern search across large codebases.
   - Completes tasks fully without gold-plating or leaving half-done, returning a concise report with essentials.
 
+## PR batch merge workflow
+
+- Run `cargo build --workspace` on `main` once before opening the queue, and again after each merge batch if needed.
+- Process a deterministic PR list one by one.
+- The PR branches in this queue are mostly not fast-forwardable, so use merge commits:
+  - `git merge --no-ff origin/pr/<num> -m "Merge pull request #<num>"`.
+  - Keep `gh` commands as an optional shortcut only when authenticated.
+- Run `cargo build --workspace` for each merged PR before continuing.
+- Merge only when build passes:
+  - `gh pr merge <num> --merge --delete-branch` for clean merges.
+  - `gh pr merge <num> --auto --merge --delete-branch` when queueing through conflict checks.
+- For merge conflicts or compile failures, abort/revert immediately and record as blocked; do not silently stack additional PRs on a broken head.
+- Use `git revert -m 1 <merge-sha>` to back out a bad merge commit (safe rollback) instead of destructive history rewrites.
+- If repeated build failures show the same pre-existing error in untouched files, treat it as queue- or branch-state health and stop attributing one-to-one PR blame.
+- Record each PR status and first failure line in the task log; skip and continue on blocked PRs.
+- If repeated build failures show the same pre-existing error in untouched code, treat it as a shared branch health issue and stop attributing it to each PR individually.
+
 <!-- BEGIN AGENT-CONFIG:mf -->
 Before exploring this codebase, run `mf search "<question>" --field notes`.
 Before finishing, write what you learned as a page with `mf write <draft> --field notes`, or stage it with `mf raw add --field notes`.
