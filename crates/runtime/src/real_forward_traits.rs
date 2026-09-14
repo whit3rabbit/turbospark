@@ -420,6 +420,19 @@ impl ChunkedPrefillRunner for RealForwardRunner {
         }
         result
     }
+
+    fn prefill_chunk_with_status(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        is_final_prompt_chunk: bool,
+    ) -> Result<(), String> {
+        self.prefill_chunk_is_final = is_final_prompt_chunk;
+        let result = self.prefill_chunk(tokens, start_position, logits);
+        self.prefill_chunk_is_final = true;
+        result
+    }
 }
 
 impl RealForwardRunner {

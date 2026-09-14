@@ -277,6 +277,10 @@ pub struct RealForwardRunner {
     /// `resid_capture.rs`. This is what a steering direction is extracted
     /// FROM (ROADMAP item 9's prerequisite).
     pub(crate) resid_capture: Option<crate::resid_capture::ResidCapture>,
+    /// Whether the current `prefill_chunk` call contains the prompt's final
+    /// token. Direct API calls retain the historical final-chunk behavior;
+    /// the chunked generation driver supplies the outer-span status.
+    pub(crate) prefill_chunk_is_final: bool,
     /// The directional-steering state, `None` unless a caller passed a
     /// policy carrying a direction set. Built at open; see `steering.rs`.
     pub(crate) steering: Option<crate::steering::SteeringState>,

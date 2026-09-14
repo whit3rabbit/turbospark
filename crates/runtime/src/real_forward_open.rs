@@ -208,6 +208,7 @@ impl RealForwardRunner {
             router_hist,
             ffn_hist,
             resid_capture,
+            prefill_chunk_is_final: true,
             steering: None,
             install_dir: dir.to_path_buf(),
             vision: None,
