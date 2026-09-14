@@ -10,7 +10,11 @@ struct VHeadAxis {
     span: usize,
 }
 
-fn v_head_axis(canonical: &str, arch: &ArchConfig) -> Option<VHeadAxis> {
+fn v_head_axis(
+    name: &str,
+    canonical: &str,
+    arch: &ArchConfig,
+) -> Result<Option<VHeadAxis>, GgufRepackError> {
     // BOTH Qwen halves. The convention belongs to llama.cpp's CONVERTER and
     // to the gated-DeltaNet block, and the two halves share both -- the dense
     // one is the same `linear_attn.*` inventory with a different FFN below it.
@@ -25,28 +29,40 @@ fn v_head_axis(canonical: &str, arch: &ArchConfig) -> Option<VHeadAxis> {
         arch.family,
         ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense
     ) {
-        return None;
+        return Ok(None);
     }
     let la = &arch.linear_attention;
     let rows = |base: usize, span: usize| {
-        Some(VHeadAxis {
+        Ok(Some(VHeadAxis {
             columns: false,
             base,
             span,
-        })
+        }))
     };
-    let v_at = 2 * la.num_k_heads as usize * la.key_head_dim as usize;
-    let width = la.value_head_dim as usize;
-    match canonical.rsplit_once("linear_attn.")?.1 {
+    let dimension_error = || GgufRepackError::ShapeMismatch {
+        tensor: name.to_string(),
+        detail: "V-head dimensions are not positive and representable".to_string(),
+    };
+    let num_k_heads = usize::try_from(la.num_k_heads).map_err(|_| dimension_error())?;
+    let key_head_dim = usize::try_from(la.key_head_dim).map_err(|_| dimension_error())?;
+    let width = usize::try_from(la.value_head_dim).map_err(|_| dimension_error())?;
+    let v_at = num_k_heads
+        .checked_mul(key_head_dim)
+        .and_then(|v| v.checked_mul(2))
+        .ok_or_else(dimension_error)?;
+    let Some((_, suffix)) = canonical.rsplit_once("linear_attn.") else {
+        return Ok(None);
+    };
+    match suffix {
         "A_log" | "dt_bias" | "in_proj_a.weight" | "in_proj_b.weight" => rows(0, 1),
         "conv1d.weight" | "in_proj_qkv.weight" => rows(v_at, width),
         "in_proj_z.weight" => rows(0, width),
-        "out_proj.weight" => Some(VHeadAxis {
+        "out_proj.weight" => Ok(Some(VHeadAxis {
             columns: true,
             base: 0,
             span: width,
-        }),
-        _ => None,
+        })),
+        _ => Ok(None),
     }
 }
 
@@ -64,7 +80,15 @@ fn permute_v_heads<T: Copy>(data: &mut [T], base: usize, span: usize, heads: usi
 }
 
 fn even_v_heads(name: &str, arch: &ArchConfig) -> Result<usize, GgufRepackError> {
-    let heads = arch.linear_attention.num_v_heads as usize;
+    let heads = usize::try_from(arch.linear_attention.num_v_heads).map_err(|_| {
+        GgufRepackError::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!(
+                "the V-head de-interleave needs a representable num_v_heads, got {}",
+                arch.linear_attention.num_v_heads
+            ),
+        }
+    })?;
     if heads < 2 || heads % 2 != 0 {
         return Err(GgufRepackError::ShapeMismatch {
             tensor: name.to_string(),
@@ -149,7 +173,7 @@ pub(crate) fn apply_source_convention(
     cols: usize,
     values: &mut [f32],
 ) -> Result<(), GgufRepackError> {
-    let Some(axis) = v_head_axis(canonical, arch) else {
+    let Some(axis) = v_head_axis(name, canonical, arch)? else {
         return Ok(());
     };
     let heads = even_v_heads(name, arch)?;
@@ -162,8 +186,15 @@ pub(crate) fn apply_source_convention(
             "a column-axis V-head tensor is not expected to arrive as F32".to_string(),
         ));
     }
-    let (base, span) = (axis.base * cols, axis.span * cols);
-    if base + heads * span != values.len() {
+    let base = axis.base.checked_mul(cols);
+    let span = axis.span.checked_mul(cols);
+    let end = span
+        .and_then(|span| heads.checked_mul(span))
+        .and_then(|body| base.and_then(|base| base.checked_add(body)));
+    let (Some(base), Some(span), Some(end)) = (base, span, end) else {
+        return Err(shape_err("V-head shape arithmetic overflowed".to_string()));
+    };
+    if span == 0 || end != values.len() {
         return Err(shape_err(format!(
             "{} values do not fill {base} + {heads} x {span}",
             values.len()
@@ -195,7 +226,7 @@ pub(crate) fn apply_source_convention_bytes(
     if needs_rotary_unpermute(canonical, arch) {
         return unpermute_rotary_rows(name, rows, arch.full_head_dim as usize, bytes);
     }
-    let Some(axis) = v_head_axis(canonical, arch) else {
+    let Some(axis) = v_head_axis(name, canonical, arch)? else {
         return Ok(());
     };
     let heads = even_v_heads(name, arch)?;
@@ -204,7 +235,10 @@ pub(crate) fn apply_source_convention_bytes(
         detail,
     };
     let along = if axis.columns { cols } else { rows };
-    if axis.base + heads * axis.span != along {
+    let end = heads
+        .checked_mul(axis.span)
+        .and_then(|body| axis.base.checked_add(body));
+    if axis.span == 0 || end != Some(along) {
         return Err(shape_err(format!(
             "a {rows}x{cols} tensor's V axis does not fill {} + {heads} x {}",
             axis.base, axis.span

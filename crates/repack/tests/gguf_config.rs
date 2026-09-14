@@ -351,6 +351,19 @@ fn derives_value_head_dim_when_inner_size_divides_evenly() {
 }
 
 #[test]
+fn rejects_zero_linear_attention_inner_size() {
+    let bytes = qwen_gdn_moe_header(0, 4);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    match arch_from_gguf(&h) {
+        Err(GgufConfigError::BadValue { key, detail }) => {
+            assert_eq!(key, "qwen35moe.ssm.inner_size");
+            assert_eq!(detail, "must be positive");
+        }
+        other => panic!("expected BadValue, got {other:?}"),
+    }
+}
+
+#[test]
 fn rejects_a_file_with_no_embedding_tensor() {
     let (bytes, _) = GgufBuilder::new()
         .metadata_str("general.architecture", "gemma4")

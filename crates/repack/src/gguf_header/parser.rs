@@ -164,7 +164,11 @@ pub fn parse_header(leading_bytes: &[u8], max_bytes: u64) -> Result<GgufHeader, 
         }
         let mut dims = Vec::with_capacity(n_dims as usize);
         for _ in 0..n_dims {
-            dims.push(c.u64()?);
+            let dim = c.u64()?;
+            if dim == 0 {
+                return Err(GgufHeaderError::BadDimensions { name, n_dims });
+            }
+            dims.push(dim);
         }
         let ggml_type = c.u32()?;
         let offset = c.u64()?;
