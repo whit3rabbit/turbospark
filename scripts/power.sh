@@ -297,10 +297,12 @@ cleanup() {
   # gated on a flag set at the pin site: this runs on every exit path,
   # including the guards above that abort before anything was pinned.
   if [ -n "${FANS_PINNED:-}" ]; then
-    thermalforge auto >/dev/null 2>&1 \
-      && echo "fans restored to the machine's own curve" \
-      || echo "WARNING could not restore fans; run 'thermalforge auto' by hand" >&2
-    FANS_PINNED=""
+    if thermalforge auto >/dev/null 2>&1; then
+      echo "fans restored to the machine's own curve"
+      FANS_PINNED=""
+    else
+      echo "WARNING could not restore fans; run 'thermalforge auto' by hand" >&2
+    fi
   fi
 }
 trap cleanup EXIT INT TERM
@@ -310,8 +312,10 @@ trap cleanup EXIT INT TERM
 # fans at 100% with nothing left running to put them back.
 if [ "$COOLING" = max ]; then
   echo "pinning fans to maximum for the capture (COOLING=max)"
-  thermalforge max || { echo "thermalforge max failed" >&2; exit 2; }
+  # Assume restoration is needed before invoking the effectful command:
+  # ThermalForge may change the fan state before failing or being interrupted.
   FANS_PINNED=1
+  thermalforge max || { echo "thermalforge max failed" >&2; exit 2; }
   # The fans must reach speed before the first sample, or the early arms
   # are measured mid-ramp and the capture is not the single operating
   # point it claims to be. MEASURED on Mac16,5 2026-08-18: 1350 -> 5763
