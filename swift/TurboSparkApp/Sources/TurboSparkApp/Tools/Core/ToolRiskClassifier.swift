@@ -168,6 +168,25 @@ public enum ToolRiskClassifier {
         let lowerName = name.lowercased()
         let category = AppToolCatalog.category(for: lowerName)
 
+        // A batch is only a transport for its children. Its approval card must
+        // reflect the strongest embedded action rather than the low-risk
+        // automation wrapper, or approving that wrapper conceals a dangerous
+        // shell or file operation.
+        if lowerName == "batch", let items = try? BatchToolExecutor.parseItems(from: arguments) {
+            let childRisks = items.map { assessRisk(name: $0.tool, arguments: $0.parameters) }
+            if let strongest = childRisks.first(where: { $0.level == .high })
+                ?? childRisks.first(where: { $0.level == .low })
+                ?? childRisks.first
+            {
+                return ToolRiskAssessment(
+                    level: strongest.level,
+                    category: strongest.category,
+                    reasons: ["Batch contains \(items.count) nested tool call(s)."]
+                        + strongest.reasons,
+                    hardGated: strongest.hardGated)
+            }
+        }
+
         // 1. Always Safe Builtin Tools
         switch lowerName {
         case "list_directory", "list_dir", "ls", "glob", "read_file", "view_file", "cat", "fileread", "read",

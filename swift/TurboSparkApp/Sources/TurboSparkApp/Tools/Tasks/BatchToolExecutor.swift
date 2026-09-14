@@ -137,11 +137,58 @@ public enum BatchToolExecutor {
         await withTaskGroup(of: (Int, String, AppToolResult).self) { group in
             for (idx, item) in items.enumerated() {
                 group.addTask {
-                    let call = AppToolCall(
+                    var call = AppToolCall(
                         name: item.tool,
                         arguments: item.parameters,
                         category: AppToolCatalog.category(for: item.tool, projectURL: project?.rootDirectoryURL)
                     )
+                    let sessionID = chatID?.uuidString ?? "batch"
+                    let projectDirectory = project?.rootDirectoryPath
+                    let hookDecision = await AppHookExecutionEngine.shared.evaluatePreToolUse(
+                        sessionID: sessionID,
+                        toolName: call.name,
+                        toolArguments: call.arguments,
+                        workingDirectory: projectDirectory,
+                        projectBoundHookDirectory: projectDirectory)
+                    if let updated = hookDecision.updatedInput {
+                        for (key, value) in updated { call.arguments[key] = value }
+                    }
+                    if hookDecision.preventContinuation || hookDecision.behavior != .allow {
+                        let reason = hookDecision.continuationStopReason ?? hookDecision.reason
+                            ?? "Nested batch call was not allowed by a PreToolUse hook."
+                        return (idx, item.tool, refused(call, reason: reason))
+                    }
+
+                    let sessionApproved = await SessionApprovalStore.shared.isApproved(
+                        sessionID: sessionID, toolName: call.name, command: call.shellCommand)
+                    switch AppToolPermissionEngine.evaluate(
+                        call: call, project: project, sessionApproved: sessionApproved)
+                    {
+                    case .deny(let reason):
+                        return (idx, item.tool, refused(call, reason: reason))
+                    case .ask(_, let reason):
+                        let permissionResults = await AppHookExecutionEngine.shared.dispatch(
+                            event: .permissionRequest,
+                            sessionID: sessionID,
+                            toolName: call.name,
+                            toolArguments: call.arguments,
+                            workingDirectory: projectDirectory,
+                            projectBoundHookDirectory: projectDirectory)
+                        let verdict = AppHookDecisionAggregator.aggregate(
+                            permissionResults, event: .permissionRequest)
+                        guard !verdict.preventContinuation,
+                              verdict.permissionDecision == .allow else {
+                            // A batch has no nested approval surface. Never treat approval
+                            // of its outer wrapper as approval of this child call.
+                            let refusal = verdict.continuationStopReason
+                                ?? verdict.permissionReason
+                                ?? "Nested call requires separate approval: \(reason)"
+                            return (idx, item.tool, refused(call, reason: refusal))
+                        }
+                    case .allow:
+                        break
+                    }
+
                     let res = await AppToolRegistry.execute(
                         call: call,
                         in: project,
@@ -149,7 +196,42 @@ public enum BatchToolExecutor {
                         subagentDepth: subagentDepth,
                         webToolsEnabled: webToolsEnabled
                     )
-                    return (idx, item.tool, res)
+                    var hookResults = await AppHookExecutionEngine.shared.dispatch(
+                        event: .postToolUse,
+                        sessionID: sessionID,
+                        toolName: call.name,
+                        toolArguments: call.arguments,
+                        toolOutput: res.output,
+                        toolDurationSeconds: res.durationSeconds,
+                        isError: res.isError,
+                        workingDirectory: projectDirectory,
+                        projectBoundHookDirectory: projectDirectory)
+                    if res.isError {
+                        hookResults += await AppHookExecutionEngine.shared.dispatch(
+                            event: .postToolUseFailure,
+                            sessionID: sessionID,
+                            toolName: call.name,
+                            toolArguments: call.arguments,
+                            toolOutput: res.output,
+                            toolDurationSeconds: res.durationSeconds,
+                            isError: true,
+                            workingDirectory: projectDirectory,
+                            projectBoundHookDirectory: projectDirectory)
+                    }
+                    let verdict = AppHookDecisionAggregator.aggregate(
+                        hookResults, event: .postToolUse)
+                    var output = res.output
+                    if let note = verdict.blockReason ?? verdict.feedbackMessage, !note.isEmpty {
+                        output += "\n\n<hook_feedback>\n\(note)\n</hook_feedback>"
+                    }
+                    if let context = verdict.additionalContext, !context.isEmpty {
+                        output += "\n\n<hook_context>\n\(context)\n</hook_context>"
+                    }
+                    return (idx, item.tool, AppToolResult(
+                        callID: res.callID,
+                        output: output,
+                        isError: res.isError,
+                        durationSeconds: res.durationSeconds))
                 }
             }
 
@@ -176,5 +258,13 @@ public enum BatchToolExecutor {
 
         let summary = "Batch execution completed: \(successCount) succeeded, \(failCount) failed (Total: \(items.count)).\n\n"
         return summary + formattedParts.joined(separator: "\n\n")
+    }
+
+    private static func refused(_ call: AppToolCall, reason: String) -> AppToolResult {
+        AppToolResult(
+            callID: call.id,
+            output: "Error: Nested batch call '\(call.name)' was refused. \(reason)",
+            isError: true,
+            durationSeconds: 0)
     }
 }
