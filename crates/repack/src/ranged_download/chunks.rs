@@ -78,7 +78,7 @@ pub fn chunk_ranges(start: u64, end_exclusive: u64, cap: u64) -> Vec<(u64, u64)>
     let mut out = Vec::new();
     let mut at = start;
     while at < end_exclusive {
-        let next = (at + cap).min(end_exclusive);
+        let next = at.saturating_add(cap).min(end_exclusive);
         out.push((at, next));
         at = next;
     }
@@ -190,6 +190,17 @@ mod tests {
         assert!(
             chunk_ranges(4, 4, 8).is_empty(),
             "empty range yields no GET"
+        );
+    }
+
+    /// Hostile GGUF offsets can place a short, otherwise valid range next to
+    /// `u64::MAX`. Chunking must terminate there instead of wrapping around
+    /// and growing the descriptor vector until the process aborts.
+    #[test]
+    fn chunks_a_range_at_the_end_of_the_address_space() {
+        assert_eq!(
+            chunk_ranges(u64::MAX - 7, u64::MAX, 64),
+            vec![(u64::MAX - 7, u64::MAX)]
         );
     }
 

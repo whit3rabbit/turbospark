@@ -30,6 +30,10 @@ pub enum DownloadError {
         expected: u64,
         actual: u64,
     },
+    InvalidRange {
+        start: u64,
+        end_exclusive: u64,
+    },
     Header(SafetensorsHeaderError),
     GgufHeader(GgufHeaderError),
     /// The file ended before its own header did.
@@ -60,6 +64,10 @@ impl std::fmt::Display for DownloadError {
             DownloadError::ShortRead { expected, actual } => {
                 write!(f, "short read: expected {expected} bytes, got {actual}")
             }
+            DownloadError::InvalidRange {
+                start,
+                end_exclusive,
+            } => write!(f, "invalid byte range: {start}..{end_exclusive}"),
             DownloadError::Header(e) => write!(f, "{e}"),
             DownloadError::GgufHeader(e) => write!(f, "{e}"),
             DownloadError::TruncatedGguf { have, needed } => write!(
