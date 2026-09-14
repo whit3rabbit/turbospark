@@ -553,7 +553,13 @@ pub fn resolve_max_context_with(
     // whole content of that tier: the arithmetic still runs and still sizes
     // `Auto`, and a caller who names a window too large for the machine gets
     // the allocation failure they asked for rather than a message.
-    if known_machine && budget.refuses && kv_bytes > available {
+    // A zero-token automatic window is never a usable plan. In particular,
+    // when the install consumes all calculated headroom, both `kv_bytes` and
+    // `available` are zero, so the ordinary strict comparison below would
+    // accept zero and leave the runner's positive-context invariant to panic.
+    if (request == MaxContext::Auto && resolved == 0)
+        || (known_machine && budget.refuses && kv_bytes > available)
+    {
         return Err(ContextRefused::TooLarge(ContextTooLarge {
             requested: resolved,
             needs: kv_bytes,
