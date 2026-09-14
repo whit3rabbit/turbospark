@@ -1089,7 +1089,6 @@ impl MetalImageBackend {
                 caption_values.extend_from_slice(&pad);
             }
         }
-        let caption_base_values = caption_values.clone();
         let caption = metal_ops::upload(&self.context, &caption_values);
 
         let image_ids = create_coordinate_grid(token_size, (cap_padded_len + 1, 0, 0));
@@ -1125,11 +1124,15 @@ impl MetalImageBackend {
             )?;
         }
         let image_values = metal_ops::read(&image);
-        let caption_values = metal_ops::read(&caption);
+        // The context refiner has no timestep modulation and always starts
+        // from the same caption embedding. Keep its output as the immutable
+        // conditioning input for every denoising step instead of rebuilding
+        // the two context-refiner blocks after each scheduler update.
+        let refined_caption_values = metal_ops::read(&caption);
         let mut unified_values =
             Vec::with_capacity((image_padded_len + cap_padded_len) * Z_IMAGE_DIM);
         unified_values.extend_from_slice(&image_values);
-        unified_values.extend_from_slice(&caption_values);
+        unified_values.extend_from_slice(&refined_caption_values);
         let mut unified = metal_ops::upload(&self.context, &unified_values);
         for step in 0..request.scheduler_steps as usize {
             Self::cancelled(cancellation)?;
@@ -1196,18 +1199,7 @@ impl MetalImageBackend {
                         next_image.extend_from_slice(&pad);
                     }
                 }
-                let mut next_caption = metal_ops::upload(&self.context, &caption_base_values);
-                for index in 0..2 {
-                    next_caption = self.transformer_block(
-                        &component,
-                        next_caption,
-                        &format!("context_refiner.{index}"),
-                        cap_padded_len,
-                        &caption_freqs,
-                        None,
-                    )?;
-                }
-                next_image.extend_from_slice(&metal_ops::read(&next_caption));
+                next_image.extend_from_slice(&refined_caption_values);
                 unified = metal_ops::upload(&self.context, &next_image);
                 for index in 0..2 {
                     unified = self.transformer_block(
