@@ -123,7 +123,7 @@ struct ModelHubFilter: Equatable {
             list = list.filter { installedAliases.contains($0.alias) || $0.installed }
         } else if tab == .recommended {
             list = list.filter { entry in
-                guard let rec = recommendations[entry.alias] else { return true }
+                guard let rec = recommendations[entry.alias] else { return false }
                 return rec.runs && rec.verdict != .refused
             }
         }

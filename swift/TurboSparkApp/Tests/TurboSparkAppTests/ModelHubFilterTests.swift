@@ -346,6 +346,20 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertFalse(aliases.contains("gemma4-gguf"), "refused model must be filtered out")
     }
 
+    /// Tests that an absent fit assessment is not presented as a recommendation.
+    func testRecommendedTabRejectsModelsWithoutFitAssessment() throws {
+        var filter = ModelHubFilter()
+        filter.tab = .recommended
+        let result = filter.apply(
+            to: try catalog(),
+            installedAliases: [],
+            recommendations: [
+                "gemma4": try recommendation(alias: "gemma4", verdict: "streams"),
+            ])
+
+        XCTAssertEqual(result.map(\.alias), ["gemma4"])
+    }
+
     /// Tests that the Recommended tab prioritizes MLX and MoE architectures among runnable models.
     func testRecommendedTabPrioritizesMlxAndMoE() throws {
         var filter = ModelHubFilter()
