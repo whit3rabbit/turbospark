@@ -21,7 +21,6 @@ MODEL="${MODEL:-$HOME/models/gemma4.gturbo}"
 SWIFT_CLI="${SWIFT_CLI:-../Mference/.build/release/MferenceCLI}"
 SWIFT_PROMPTS="${SWIFT_PROMPTS:-../Mference/docs/benchmark-prompts/real-generation-v1}"
 RUST_BENCH="${RUST_BENCH:-./target/release/turbospark-bench}"
-OUT="${OUT:-/tmp/mference-parity}"
 
 CASES=(short-explanation:20260721 medium-review:20260722 long-synthesis:20260723)
 
@@ -29,7 +28,18 @@ for path in "$SWIFT_CLI" "$RUST_BENCH"; do
   [ -x "$path" ] || { echo "missing or not executable: $path" >&2; exit 2; }
 done
 [ -d "$MODEL" ] || { echo "missing install: $MODEL" >&2; exit 2; }
-mkdir -p "$OUT"
+
+# Keep default captures out of shared, predictable paths. An explicit OUT is
+# caller-managed so repeat runs can still accumulate in a chosen directory.
+umask 077
+if [ -z "${OUT:-}" ]; then
+  OUT=$(mktemp -d "${TMPDIR:-/tmp}/turbospark-parity.XXXXXX") || {
+    echo "could not create output directory" >&2
+    exit 2
+  }
+else
+  mkdir -p -- "$OUT"
+fi
 : > "$OUT/rows.tsv"
 
 # Provenance. A number without the machine state attached is not reusable.
