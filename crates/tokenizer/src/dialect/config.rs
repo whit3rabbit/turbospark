@@ -50,18 +50,71 @@ pub(crate) struct GenerationConfig {
     pub(crate) eos_token_id: Option<EosTokenIds>,
 }
 
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
 pub(crate) enum EosTokenIds {
     One(i64),
     Many(Vec<i64>),
 }
 
+pub(crate) const MAX_EOS_TOKEN_IDS: usize = 256;
+
+impl<'de> serde::Deserialize<'de> for EosTokenIds {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct EosTokenIdsVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for EosTokenIdsVisitor {
+            type Value = EosTokenIds;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    formatter,
+                    "an integer or at most {MAX_EOS_TOKEN_IDS} integers"
+                )
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(EosTokenIds::One(value))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                i64::try_from(value)
+                    .map(EosTokenIds::One)
+                    .map_err(|_| E::custom("EOS token id exceeds i64"))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut ids =
+                    Vec::with_capacity(seq.size_hint().unwrap_or(0).min(MAX_EOS_TOKEN_IDS));
+                while let Some(id) = seq.next_element()? {
+                    if ids.len() == MAX_EOS_TOKEN_IDS {
+                        return Err(serde::de::Error::custom("too many EOS token ids"));
+                    }
+                    ids.push(id);
+                }
+                Ok(EosTokenIds::Many(ids))
+            }
+        }
+
+        deserializer.deserialize_any(EosTokenIdsVisitor)
+    }
+}
+
 impl GenerationConfig {
     pub(crate) fn eos_ids(&self) -> Vec<i32> {
         match &self.eos_token_id {
-            Some(EosTokenIds::One(id)) => vec![*id as i32],
-            Some(EosTokenIds::Many(ids)) => ids.iter().map(|&id| id as i32).collect(),
+            Some(EosTokenIds::One(id)) => i32::try_from(*id).into_iter().collect(),
+            Some(EosTokenIds::Many(ids)) => ids
+                .iter()
+                .filter_map(|&id| i32::try_from(id).ok())
+                .collect(),
             None => Vec::new(),
         }
     }
