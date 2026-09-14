@@ -253,6 +253,14 @@ pub(crate) fn warn_on_command_buffer_error(command_buffer: &metal::CommandBuffer
 }
 
 impl CommittedPass {
+    /// Blocks until this buffer finishes without consuming the readiness
+    /// handle. Image tensors retain the handle until their CPU read seam,
+    /// while later image command buffers continue in queue order.
+    pub fn wait_ref(&self) {
+        self.command_buffer.wait_until_completed();
+        warn_on_command_buffer_error(&self.command_buffer);
+    }
+
     /// Blocks until this buffer finishes. Its shared-storage outputs are
     /// CPU-readable after this returns; buffers committed after it may
     /// still be running.

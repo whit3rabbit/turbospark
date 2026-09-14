@@ -5,6 +5,8 @@
 //! per-row interleaved INT4 format. The only shared GPU contracts here are
 //! `MetalContext`, `PassEncoder`, and the zero-copy resident buffer wrapper.
 
+use std::sync::Arc;
+
 use gpu::{MetalContext, PassEncoder, ResidentGpuWeights};
 use metal::{Buffer, ComputePipelineState, FunctionConstantValues};
 
@@ -18,10 +20,11 @@ pub(crate) struct WeightRef {
     pub(crate) row_stride: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct GpuTensor {
     pub(crate) buffer: Buffer,
     pub(crate) len: usize,
+    ready: Option<Arc<gpu::CommittedPass>>,
 }
 
 pub(crate) struct Component {
@@ -114,15 +117,31 @@ pub(crate) fn upload(context: &MetalContext, values: &[f32]) -> GpuTensor {
     GpuTensor {
         buffer: context.new_buffer_with_data(values),
         len: values.len(),
+        ready: None,
     }
 }
 
 pub(crate) fn read(tensor: &GpuTensor) -> Vec<f32> {
+    if let Some(ready) = &tensor.ready {
+        ready.wait_ref();
+    }
     let bytes = gpu::read_buffer_bytes(&tensor.buffer, 0, tensor.len * 4);
     bytes
         .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect()
+}
+
+// Image generation submits hundreds of small command buffers. Keep the
+// readiness handle on each output so same-queue work can continue without a
+// CPU wait, while every CPU read still waits for the producing pass.
+fn commit_deferred(pass: PassEncoder) -> Arc<gpu::CommittedPass> {
+    Arc::new(gpu::autorelease_pool(|| pass.commit()))
+}
+
+fn with_ready(mut output: GpuTensor, ready: Arc<gpu::CommittedPass>) -> GpuTensor {
+    output.ready = Some(ready);
+    output
 }
 
 fn dispatch(
@@ -172,6 +191,7 @@ pub(crate) fn lookup(
     let output = GpuTensor {
         buffer: context.new_output_buffer((ids.len() * dim * 4) as u64),
         len: ids.len() * dim,
+        ready: None,
     };
     let params = u32_bytes(&[ids.len() as u32, dim as u32, vocab as u32, weight.storage]);
     let shader = pipeline(context, "image_lookup")?;
@@ -188,8 +208,8 @@ pub(crate) fn lookup(
         &[(&params, 3)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 // Keep the wrapper arguments flat: each one is part of the image kernel's
@@ -215,6 +235,7 @@ pub(crate) fn linear(
     let output = GpuTensor {
         buffer: context.new_output_buffer((rows * out_dim * 4) as u64),
         len: rows * out_dim,
+        ready: None,
     };
     let params = u32_bytes(&[
         rows as u32,
@@ -235,8 +256,8 @@ pub(crate) fn linear(
         buffers.push((component.resident.buffer(), 3, bias.offset));
     }
     dispatch_tiled(&pass, &shader, &buffers, &[(&params, 4)], rows, out_dim);
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn rms_norm(
@@ -254,6 +275,7 @@ pub(crate) fn rms_norm(
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
+        ready: None,
     };
     let mut params = u32_bytes(&[rows as u32, dim as u32, weight.storage]);
     params.extend_from_slice(&eps.to_le_bytes());
@@ -271,8 +293,8 @@ pub(crate) fn rms_norm(
         &[(&params, 3)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -293,6 +315,7 @@ pub(crate) fn rope(
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
+        ready: None,
     };
     let mut params = u32_bytes(&[rows as u32, heads as u32, dim as u32, weight.storage]);
     params.extend_from_slice(&eps.to_le_bytes());
@@ -311,8 +334,8 @@ pub(crate) fn rope(
         &[(&params, 4)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -333,6 +356,7 @@ pub(crate) fn adjacent_rope(
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
+        ready: None,
     };
     let mut params = u32_bytes(&[rows as u32, heads as u32, dim as u32, weight.storage]);
     params.extend_from_slice(&eps.to_le_bytes());
@@ -351,8 +375,8 @@ pub(crate) fn adjacent_rope(
         &[(&params, 4)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -391,6 +415,7 @@ pub(crate) fn attention(
     let output = GpuTensor {
         buffer: context.new_output_buffer((q.len * 4) as u64),
         len: q.len,
+        ready: None,
     };
     let params = u32_bytes(&[
         q_rows as u32,
@@ -414,8 +439,8 @@ pub(crate) fn attention(
         (threadgroups as u64, 1, 1),
         ((head_dim * 4) as u64, 1, 1),
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn add(
@@ -429,6 +454,7 @@ pub(crate) fn add(
     let output = GpuTensor {
         buffer: context.new_output_buffer((left.len * 4) as u64),
         len: left.len,
+        ready: None,
     };
     let params = u32_bytes(&[left.len as u32]);
     let shader = pipeline(context, "image_add")?;
@@ -445,8 +471,8 @@ pub(crate) fn add(
         &[(&params, 3)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn silu_mul(
@@ -460,6 +486,7 @@ pub(crate) fn silu_mul(
     let output = GpuTensor {
         buffer: context.new_output_buffer((left.len * 4) as u64),
         len: left.len,
+        ready: None,
     };
     let params = u32_bytes(&[left.len as u32]);
     let shader = pipeline(context, "image_silu_mul")?;
@@ -476,8 +503,8 @@ pub(crate) fn silu_mul(
         &[(&params, 3)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn scale_rows(
@@ -493,6 +520,7 @@ pub(crate) fn scale_rows(
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
+        ready: None,
     };
     let params = u32_bytes(&[rows as u32, dim as u32]);
     let shader = pipeline(context, "image_scale_shift")?;
@@ -509,8 +537,8 @@ pub(crate) fn scale_rows(
         &[(&params, 3)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn gate_add(
@@ -527,6 +555,7 @@ pub(crate) fn gate_add(
     let output = GpuTensor {
         buffer: context.new_output_buffer((residual.len * 4) as u64),
         len: residual.len,
+        ready: None,
     };
     let params = u32_bytes(&[rows as u32, dim as u32]);
     let shader = pipeline(context, "image_gate_add")?;
@@ -544,8 +573,8 @@ pub(crate) fn gate_add(
         &[(&params, 4)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn layer_norm(
@@ -562,6 +591,7 @@ pub(crate) fn layer_norm(
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
+        ready: None,
     };
     let mut params = u32_bytes(&[rows as u32, dim as u32, 1]);
     params.extend_from_slice(&eps.to_le_bytes());
@@ -579,8 +609,8 @@ pub(crate) fn layer_norm(
         &[(&params, 3)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn scheduler_step(
@@ -595,6 +625,7 @@ pub(crate) fn scheduler_step(
     let output = GpuTensor {
         buffer: context.new_output_buffer((sample.len * 4) as u64),
         len: sample.len,
+        ready: None,
     };
     let params = delta.to_le_bytes();
     let count = u32_bytes(&[sample.len as u32]);
@@ -612,8 +643,8 @@ pub(crate) fn scheduler_step(
         &[(&params, 3), (&count, 4)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -637,6 +668,7 @@ pub(crate) fn conv2d(
     let output = GpuTensor {
         buffer: context.new_output_buffer((out_channels * height * width * 4) as u64),
         len: out_channels * height * width,
+        ready: None,
     };
     let params = u32_bytes(&[
         channels as u32,
@@ -667,8 +699,8 @@ pub(crate) fn conv2d(
         &[(&params, 4)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -690,6 +722,7 @@ pub(crate) fn group_norm(
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
+        ready: None,
     };
     let mut params = u32_bytes(&[
         channels as u32,
@@ -715,8 +748,8 @@ pub(crate) fn group_norm(
         &[(&params, 4)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn upsample(
@@ -732,6 +765,7 @@ pub(crate) fn upsample(
     let output = GpuTensor {
         buffer: context.new_output_buffer((channels * height * 2 * width * 2 * 4) as u64),
         len: channels * height * 2 * width * 2,
+        ready: None,
     };
     let params = u32_bytes(&[channels as u32, height as u32, width as u32]);
     let shader = pipeline(context, "image_upsample_nearest")?;
@@ -744,14 +778,15 @@ pub(crate) fn upsample(
         &[(&params, 2)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn silu(context: &mut MetalContext, input: &GpuTensor) -> Result<GpuTensor, String> {
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
+        ready: None,
     };
     let params = u32_bytes(&[input.len as u32]);
     let shader = pipeline(context, "image_silu")?;
@@ -764,8 +799,8 @@ pub(crate) fn silu(context: &mut MetalContext, input: &GpuTensor) -> Result<GpuT
         &[(&params, 2)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn vae_attention(
@@ -784,6 +819,7 @@ pub(crate) fn vae_attention(
     let output = GpuTensor {
         buffer: context.new_output_buffer((len * 4) as u64),
         len,
+        ready: None,
     };
     let params = u32_bytes(&[channels as u32, height as u32, width as u32]);
     let shader = pipeline(context, "image_vae_attention")?;
@@ -801,8 +837,8 @@ pub(crate) fn vae_attention(
         &[(&params, 4)],
         output.len,
     );
-    pass.commit_and_wait();
-    Ok(output)
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
 }
 
 pub(crate) fn frequencies(rows: usize, dim: usize, theta: f32) -> Vec<f32> {
