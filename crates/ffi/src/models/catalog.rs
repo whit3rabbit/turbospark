@@ -47,12 +47,80 @@ pub(crate) fn install_bytes(alias: &str) -> Result<(u64, u64), String> {
 /// Deletes an installed model from the store and drops its directory.
 pub(crate) fn delete(alias: &str) -> Result<(), String> {
     let store = Store::default_store()?;
+    delete_from_store(&store, alias)
+}
+
+fn delete_from_store(store: &Store, alias: &str) -> Result<(), String> {
     let path = store
-        .resolve(alias)
+        .installed()
+        .get(alias)
+        .map(|model| model.path.clone())
         .ok_or_else(|| format!("model {alias:?} is not installed"))?;
     if path.exists() {
         std::fs::remove_dir_all(&path)
             .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
     }
     store.forget(alias)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use catalog::InstalledModel;
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "turbospark-ffi-delete-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn record(store: &Store, alias: &str, path: &std::path::Path) {
+        store
+            .record(&InstalledModel {
+                alias: alias.to_string(),
+                repo: "owner/name".to_string(),
+                revision: "main".to_string(),
+                path: path.to_path_buf(),
+                family: "llama".to_string(),
+                install_bytes: 1,
+                installed_on: "2026-09-14".to_string(),
+                status: "runs".to_string(),
+                kind: None,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn delete_removes_a_recorded_install() {
+        let root = temp_root("recorded");
+        let store = Store::new(&root);
+        let install = root.join("models/model.gturbo");
+        std::fs::create_dir_all(&install).unwrap();
+        record(&store, "model", &install);
+
+        delete_from_store(&store, "model").unwrap();
+
+        assert!(!install.exists());
+        assert!(store.installed().is_empty());
+    }
+
+    #[test]
+    fn delete_rejects_an_existing_unrecorded_directory() {
+        let root = temp_root("unrecorded");
+        let store = Store::new(root.join("store"));
+        let victim = root.join("Documents");
+        std::fs::create_dir_all(&victim).unwrap();
+        let sentinel = victim.join("valuable.txt");
+        std::fs::write(&sentinel, "keep").unwrap();
+
+        let error = delete_from_store(&store, victim.to_str().unwrap()).unwrap_err();
+
+        assert!(error.contains("not installed"), "got {error:?}");
+        assert!(sentinel.is_file(), "unrecorded directory was modified");
+    }
 }
