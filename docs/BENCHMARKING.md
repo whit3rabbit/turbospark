@@ -132,7 +132,9 @@ one fresh process per run, arms interleaved pair by pair. Discards a
 warmup per engine per case, rejects any run that does not stop
 `endOfTurn`, refuses to start if another model process is up, and records
 chip, macOS, power source, and both git revisions at the top of its
-output. Results land in `/tmp/mference-parity` (override with `OUT=`).
+output. By default, results land in a new private directory under
+`${TMPDIR:-/tmp}` whose path is printed at the end. Set `OUT` to reuse a
+specific caller-managed directory.
 
 Memory comes from `/usr/bin/time -l` around each launch. Its `peak memory
 footprint` line IS `phys_footprint`, the counter both engines' published
