@@ -56,6 +56,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 import numpy as np
 
@@ -69,18 +70,15 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from kld import check_heads, divergences, perplexity, softcap_of  # noqa: E402
 
 HARNESS_SRC = pathlib.Path(__file__).resolve().parent / "llamacpp_logits.c"
-HARNESS_BIN = pathlib.Path("/tmp/llamacpp_logits")
 
 
-def build_harness() -> None:
-    if HARNESS_BIN.exists() and HARNESS_BIN.stat().st_mtime > HARNESS_SRC.stat().st_mtime:
-        return
+def build_harness(harness_bin: pathlib.Path) -> None:
     prefix = subprocess.run(
         ["brew", "--prefix"], capture_output=True, text=True, check=True
     ).stdout.strip()
     subprocess.run(
         [
-            "cc", "-O2", "-o", str(HARNESS_BIN), str(HARNESS_SRC),
+            "cc", "-O2", "-o", str(harness_bin), str(HARNESS_SRC),
             f"-I{prefix}/include", f"-L{prefix}/lib", "-lllama",
         ],
         check=True,
@@ -88,6 +86,7 @@ def build_harness() -> None:
 
 
 def llamacpp_logits(
+    harness_bin: pathlib.Path,
     model: pathlib.Path,
     ids_path: pathlib.Path,
     out: pathlib.Path,
@@ -108,7 +107,7 @@ def llamacpp_logits(
     else:
         print(f"  running llama.cpp {mode} (ngl={n_gpu_layers})", file=sys.stderr)
         proc = subprocess.run(
-            [str(HARNESS_BIN), str(model), str(ids_path), str(out), mode, str(n_gpu_layers)],
+            [str(harness_bin), str(model), str(ids_path), str(out), mode, str(n_gpu_layers)],
             capture_output=True, text=True, check=True,
         )
         report = dict(
@@ -156,8 +155,6 @@ def main() -> None:
     ids_path = work / "ids.i32"
     np.asarray(ids, dtype=np.int32).tofile(ids_path)
 
-    build_harness()
-
     # The cache filename MUST carry the model stem. Every arm of every model
     # is the same `rows * vocab * 4` bytes, and the reuse check is a size
     # check, so a name keyed only on (mode, ngl) makes a second model
@@ -167,15 +164,27 @@ def main() -> None:
     # names and are simply re-run once under the new ones.
     def arm(mode: str, ngl: int) -> np.ndarray:
         return llamacpp_logits(
-            model, ids_path, work / f"{model.stem}-{mode}-ngl{ngl}.f32", mode, rows, vocab, ngl
+            harness_bin,
+            model,
+            ids_path,
+            work / f"{model.stem}-{mode}-ngl{ngl}.f32",
+            mode,
+            rows,
+            vocab,
+            ngl,
         )
 
     def backend(ngl: int) -> str:
         return "CPU" if ngl == 0 else "Metal"
 
-    cached = arm("cached", n_gpu_layers)
-    batched = arm("batched", n_gpu_layers)
-    cross = arm("cached", other_ngl)
+    # Always compile into a new mode-0700 directory. In particular, never
+    # execute a timestamp-selected binary from the shared temporary directory.
+    with tempfile.TemporaryDirectory(prefix="turbospark-llamacpp-") as temp_dir:
+        harness_bin = pathlib.Path(temp_dir) / "llamacpp_logits"
+        build_harness(harness_bin)
+        cached = arm("cached", n_gpu_layers)
+        batched = arm("batched", n_gpu_layers)
+        cross = arm("cached", other_ngl)
 
     report = {
         "model": str(model),

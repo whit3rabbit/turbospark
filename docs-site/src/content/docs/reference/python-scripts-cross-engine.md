@@ -122,18 +122,20 @@ through llama.cpp on the published GGUF the install was streamed from.
 | Constant | Value |
 |---|---|
 | `HARNESS_SRC` | `scripts/llamacpp_logits.c` (beside this script) |
-| `HARNESS_BIN` | `/tmp/llamacpp_logits` |
+
+The harness is rebuilt for each invocation inside a randomized, mode-0700
+temporary directory and removed after the three llama.cpp runs complete.
 
 ### Functions
 
 ```python
-def build_harness() -> None
+def build_harness(harness_bin: pathlib.Path) -> None
 ```
 
 **(no docstring)**
 
 ```python
-def llamacpp_logits(model: pathlib.Path, ids_path: pathlib.Path, out: pathlib.Path, mode: str, rows: int, vocab: int, n_gpu_layers: int) -> np.ndarray
+def llamacpp_logits(harness_bin: pathlib.Path, model: pathlib.Path, ids_path: pathlib.Path, out: pathlib.Path, mode: str, rows: int, vocab: int, n_gpu_layers: int) -> np.ndarray
 ```
 
 > llama.cpp's next-token logits for every position, as float32
