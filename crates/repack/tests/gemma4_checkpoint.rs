@@ -535,6 +535,34 @@ fn a_routed_expert_weight_run_shorter_than_its_declared_shape_is_refused() {
     );
 }
 
+#[test]
+fn zero_rank_routed_expert_companions_are_refused() {
+    for suffix in ["scales", "biases"] {
+        let mut tensors = fixture();
+        let target = format!("language_model.model.layers.0.experts.switch_glu.gate_proj.{suffix}");
+        tensors
+            .iter_mut()
+            .find(|t| t.name == target)
+            .expect("fixture carries the target companion")
+            .shape
+            .clear();
+
+        let blob = assemble(&tensors);
+        let header = turbospark_repack::parse_header(&blob, 1 << 20).expect("header parses");
+        let source = MemoryRangeSource::new(&blob);
+        let arch = parse_gemma4_config(&config_json()).expect("config");
+        let quant = parse_gemma4_quantization(&config_json()).expect("quant");
+        let Err(err) = orchestrate_gemma4_checkpoint(&header, &source, &arch, &quant) else {
+            panic!("a zero-rank routed expert {suffix} tensor must be refused");
+        };
+        let Gemma4Error::ShapeMismatch { tensor, detail } = err else {
+            panic!("expected ShapeMismatch, got {err:?}");
+        };
+        assert_eq!(tensor, target);
+        assert!(detail.contains("expected rank-3"), "{detail}");
+    }
+}
+
 /// A 1-bit tensor passes through as `Int1`, 32 elements per packed word.
 #[test]
 fn a_one_bit_tensor_passes_through_as_int1() {
@@ -914,4 +942,81 @@ fn streamed_install_matches_in_memory_install() {
         let b = std::fs::read(dir_str.join(file)).expect(file);
         assert_eq!(a, b, "{file} differs between streamed and in-memory paths");
     }
+}
+
+#[test]
+fn failed_streamed_install_leaves_an_existing_install_unchanged() {
+    use turbospark_repack::{write_gemma4_install_streamed, DownloadError, RangeSource};
+
+    struct FailingSource<'a> {
+        data: &'a [u8],
+        fail_start: u64,
+        corrupt_start: u64,
+    }
+
+    impl RangeSource for FailingSource<'_> {
+        fn read_range(&self, start: u64, end: u64) -> Result<Vec<u8>, DownloadError> {
+            if start == self.fail_start {
+                return Err(DownloadError::Request("injected layer failure".to_string()));
+            }
+            let mut bytes = MemoryRangeSource::new(self.data).read_range(start, end)?;
+            if start == self.corrupt_start {
+                bytes[0] ^= 0xff;
+            }
+            Ok(bytes)
+        }
+    }
+
+    let tensors = fixture();
+    let blob = assemble(&tensors);
+    let source = MemoryRangeSource::new(&blob);
+    let header = turbospark_repack::fetch_safetensors_header(&source).expect("header");
+    let arch = parse_gemma4_config(&config_json()).expect("config");
+    let quant = parse_gemma4_quantization(&config_json()).expect("quant");
+    let dir = temp_dir();
+    write_gemma4_install(&dir, &arch, "existing-install", &header, &source, &quant)
+        .expect("existing install");
+
+    let files = [
+        "manifest.json",
+        "model_weights.bin",
+        "packed_experts/layout.json",
+        "packed_experts/layer_00.bin",
+        "packed_experts/layer_01.bin",
+    ];
+    let before: Vec<_> = files
+        .iter()
+        .map(|file| std::fs::read(dir.join(file)).expect(file))
+        .collect();
+    let failed_tensor = header
+        .tensors
+        .get("language_model.model.layers.1.experts.switch_glu.gate_proj.weight")
+        .expect("layer 1 expert tensor");
+    let corrupted_tensor = header
+        .tensors
+        .get("language_model.model.layers.0.experts.switch_glu.gate_proj.weight")
+        .expect("layer 0 expert tensor");
+    let failing = FailingSource {
+        data: &blob,
+        fail_start: header.data_region_start() + failed_tensor.data_offsets.0,
+        corrupt_start: header.data_region_start() + corrupted_tensor.data_offsets.0,
+    };
+    let failing_header = turbospark_repack::fetch_safetensors_header(&failing).expect("header");
+    let shards = Gemma4Shards::single(&failing_header, &failing);
+
+    let error =
+        write_gemma4_install_streamed(&dir, &arch, "replacement-install", &shards, &quant, |_| {})
+            .expect_err("later layer must fail");
+    assert!(error.to_string().contains("injected layer failure"));
+
+    for (file, expected) in files.iter().zip(before) {
+        assert_eq!(
+            std::fs::read(dir.join(file)).expect(file),
+            expected,
+            "{file}"
+        );
+    }
+    let manifest = model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("old install remains loadable");
+    assert_eq!(manifest.model_id, "existing-install");
 }

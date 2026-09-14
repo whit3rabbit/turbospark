@@ -286,13 +286,16 @@ public struct AgentsSettingsPaneView: View {
                     // belong to their plugin, so neither has an editor.
                     if agent.scope == .userGlobal || agent.scope == .project {
                         HStack(spacing: 8) {
-                            Button {
-                                agentToEdit = agent
-                                showingEditorSheet = true
-                            } label: {
-                                Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
+                            if URL(fileURLWithPath: agent.filePath ?? "")
+                                .pathExtension.lowercased() == "md" {
+                                Button {
+                                    agentToEdit = agent
+                                    showingEditorSheet = true
+                                } label: {
+                                    Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
+                                }
+                                .buttonStyle(.bordered)
                             }
-                            .buttonStyle(.bordered)
 
                             Button(role: .destructive) {
                                 agentToDelete = agent

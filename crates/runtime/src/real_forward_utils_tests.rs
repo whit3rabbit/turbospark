@@ -78,6 +78,21 @@ fn a_malformed_sub_four_bit_entry_is_refused_rather_than_dispatched() {
     assert!(affine_group_size(&ragged, "w", 1, 12, 1).is_err());
 }
 
+#[test]
+fn affine_metadata_must_match_the_dispatched_shape_and_alignment() {
+    let mut wrong_shape = entry(8, 256, 64, 4);
+    wrong_shape.shape.0 = 999;
+    assert!(affine_group_size(&wrong_shape, "w", 8, 256, 4).is_err());
+
+    let mut unaligned_scale = entry(8, 256, 64, 4);
+    unaligned_scale.scale_offset += 1;
+    assert!(affine_group_size(&unaligned_scale, "w", 8, 256, 4).is_err());
+
+    let mut unaligned_bias = entry(8, 256, 64, 4);
+    unaligned_bias.bias_offset += 1;
+    assert!(affine_group_size(&unaligned_bias, "w", 8, 256, 4).is_err());
+}
+
 /// The spans have to cover the write exactly and land on the physical
 /// slots `position % capacity` names, or a batched projection writes
 /// somebody else's rows.

@@ -152,11 +152,10 @@ fn run_score(
 }
 
 /// The scoring kernel against the CPU reference, several blocks and several
-/// heads, with values chosen so the relu-after-sum-over-heads
-/// parenthesization matters: some individual head/block dot products are
-/// negative while the total across heads is not (and vice versa), so a
-/// kernel that applied relu PER HEAD before summing would read a different,
-/// generally larger, number.
+/// heads, with values chosen so the per-head relu matters: some individual
+/// head/block dot products are negative while the total across heads is not
+/// (and vice versa), so a kernel that clamps only after summing heads would
+/// read a different, generally smaller, number.
 #[test]
 fn score_blocks_matches_cpu_reference() {
     let mut context = MetalContext::new().expect("Metal device");
@@ -461,13 +460,13 @@ fn advance_blocks_leaves_earlier_blocks_untouched_on_a_later_incremental_call() 
     );
 }
 
-/// **RELU IS OUTSIDE THE HEAD SUM.** `q` has TWO heads that individually
+/// **RELU PRECEDES THE HEAD SUM.** `q` has TWO heads that individually
 /// dot to a strongly negative and a strongly positive value against the
-/// same pooled block, chosen so their SUM is negative (relu-after-sum ->
-/// 0) while relu-BEFORE-sum would keep the positive head's contribution
+/// same pooled block, chosen so their SUM is negative (clamping only that
+/// sum would produce 0) while per-head relu keeps the positive contribution
 /// and report a large positive score instead.
 #[test]
-fn score_blocks_applies_relu_after_summing_across_heads() {
+fn score_blocks_applies_relu_before_summing_across_heads() {
     let mut context = MetalContext::new().expect("Metal device");
     let head_dim = 4u32;
     let num_heads = 2u32;
@@ -475,7 +474,7 @@ fn score_blocks_applies_relu_after_summing_across_heads() {
     // pooled block = [1, 1, 1, 1].
     let pooled16 = vec![f16::from_f32(1.0); head_dim as usize];
     // head 0: dot = 4 + 4 + 4 + 4 = ... use distinct magnitudes instead so
-    // relu-before-sum vs relu-after-sum give clearly different signs.
+    // Per-head relu and a single relu after the head sum differ clearly.
     // head 0 dot = 3+3+3+3 = 12 (positive), head 1 dot = -5-5-5-5 = -20
     // (negative). Sum = -8 -> relu(-8) = 0. relu(12)+relu(-20) = 12+0 = 12.
     let q16: Vec<f16> = vec![
@@ -492,9 +491,8 @@ fn score_blocks_applies_relu_after_summing_across_heads() {
     let got = run_score(&mut context, &q16, &pooled16, num_heads, head_dim);
     assert_eq!(got.len(), 1);
     assert!(
-        got[0].abs() < 1e-3,
-        "relu(sum over heads) must be 0 here (sum = -8), got {} \
-         (a per-head relu would read 12 / sqrt(4) = 6.0)",
+        (got[0] - 6.0).abs() < 1e-3,
+        "sum of per-head relu values must be 12 / sqrt(4) = 6, got {}",
         got[0]
     );
 }

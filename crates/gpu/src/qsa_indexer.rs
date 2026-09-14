@@ -55,7 +55,7 @@ pub fn encode_qsa_pool_blocks_mean(
     Ok(())
 }
 
-/// `scores[b] = relu(sum over (h, d) of q[h*D+d] * pooled[b*D+d]) / sqrt(D)`.
+/// `scores[b] = sum_h(relu(sum_d(q[h*D+d] * pooled[b*D+d]))) / sqrt(D)`.
 ///
 /// `q` is `[num_heads * head_dim]`, ALREADY normed and roped at the
 /// query's own current position; `pooled` is `[num_blocks * head_dim]`,

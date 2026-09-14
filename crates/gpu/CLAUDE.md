@@ -168,7 +168,7 @@ crates/gpu/
 
   `qsa_pool_blocks_mean_fp16`: `pooled[b*D+d] = mean over t in [0, compress_ratio) of keys[(b*compress_ratio+t)*D+d]`, FP32 accumulation into FP16 output, matching the CPU reference's "pooled = mean(block keys) in FP32" contract. Only complete blocks are dispatched -- the ragged tail is never read, since section 5 says it is ALWAYS selected rather than pooled or scored at all. ONE THREAD PER OUTPUT ELEMENT, NO THREADGROUP REDUCTION, the same reasoning `hc_mix_fp16` gives for its own small-`C` mix: `compress_ratio` is small (4 for the real checkpoint) and every input row is already materialized.
 
-  `qsa_score_blocks_fp16`: `scores[b] = relu(sum over (h, d) of q[h*D+d] * pooled[b*D+d]) / sqrt(D)`, one threadgroup per block, the same two-stage SIMD-group reduction shape `ple_gate_fp16` uses for its own dot product (`rms_block_inv`'s shape, not shared with it since the accumulator here strides over `num_heads * D` terms reading `pooled` at `i % D` -- every query head's dot product against the ONE shared pooled row, since `index_kv_heads == 1`, folds into the same running sum). **THE RELU IS OUTSIDE THE HEAD SUM**, matching section 5's own parenthesization (`relu(q @ pooled^T).sum(over heads)`): summing before applying relu once is a materially different, generally SMALLER number than applying relu per head first whenever any head disagrees in sign with the total, and `tests/qsa_indexer_parity.rs::score_blocks_applies_relu_after_summing_across_heads` pins the direction with a two-head fixture where the sum is negative (relu -> 0) while one head alone is strongly positive (a per-head relu would report 6.0 instead of 0.0).
+  `qsa_score_blocks_fp16`: `scores[b] = sum_h(relu(sum_d(q[h,d] * pooled[b,d]))) / sqrt(D)`, one threadgroup per block, with the same two-stage SIMD-group reduction shape `ple_gate_fp16` uses for its own dot product (`rms_block_inv`'s shape). Each query head reads the ONE shared pooled row, since `index_kv_heads == 1`, but its dot product is reduced and clamped independently before the head scores are summed. This matches section 5's tensor-valued parenthesization (`relu(q @ pooled^T).sum(over heads)`), and `tests/qsa_indexer_parity.rs::score_blocks_applies_relu_before_summing_across_heads` pins the direction with a two-head fixture where the combined dot product is negative while one head alone is strongly positive (the specified per-head relu reports 6.0 instead of 0.0).
 
   `tests/qsa_indexer_parity.rs` holds both parity cases (every row/block distinct, so a wrong stride or dropped term reads a wrong number rather than a coincidentally-plausible one) plus `pool_blocks_mean_divides_by_compress_ratio_not_just_summing` (the mean-not-sum discrimination `hc_mix`'s own parity file established the pattern for) and the relu-ordering case above. Three mutations checked (dropping pooling's `/compress_ratio`, dropping scoring's `max(v, 0.0f)`, and reading `pooled` at a fixed block-0 offset regardless of `block`) and each reddens exactly its own case(s): the pooling mutation reddens only the two pooling tests, the relu mutation only the two scoring tests, and the stride mutation only the multi-block parity case -- the single-block relu-discrimination fixture cannot see a stride bug by construction, the same shape this crate's other single-group fixtures have for the identical reason.
 
@@ -615,3 +615,20 @@ cargo test -p turbospark-gpu
     checked multiplication for buffer lengths and strides, and validate every
     copy view against its actual buffer before dispatch. A regression test must
     exercise a wrapping dimension, not only ordinary capacity limits.
+
+15. **A CPU-VS-GPU PARITY TEST IS SELF-RELATIVE WHEN THE SPEC READING ITSELF
+    FLIPS, AND ONLY AN EXTERNAL ANCHOR CAN DECIDE.** The QSA scorer pinned
+    `qsa_score_blocks_fp16` against `compute::score_blocks`, and #79 moved the
+    ReLU placement on BOTH sides in the same commit -- after which the parity
+    pair is green under either ordering and can never again see the divergence
+    it was appealed to. What decided it was outside the pair: the recorded spec
+    pseudocode (`docs/QWEN4_PHASE0.md`'s `relu(q @ pooled^T).sum(over the 4
+    heads)`, where `q @ pooled^T` is a per-head-per-block score matrix, so the
+    elementwise relu precedes the head sum) and the indexer lineage's published
+    convention (per-head ReLU'd scores, summed). Whenever a change moves both
+    sides of a parity test, name the external anchor in the commit and beside
+    the test, and state what the parity test can no longer prove -- otherwise
+    the next reader inherits a green pair that looks like evidence and is not.
+    The old code's own comment had misread its citation in exactly this way:
+    it quoted the matrix parenthesization and then summed before clamping,
+    which is the transpose of what the formula says.

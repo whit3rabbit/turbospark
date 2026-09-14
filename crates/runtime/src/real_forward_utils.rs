@@ -80,10 +80,22 @@ pub(crate) fn affine_group_size(
             "tensor {name}: {bits}-bit shape {rows}x{cols} has a zero dimension"
         ));
     }
+    if e.shape.0 as usize != rows || e.shape.1 as usize != cols {
+        return bad(format!(
+            "tensor {name}: declared shape {}x{} does not match {rows}x{cols}",
+            e.shape.0, e.shape.1
+        ));
+    }
+    if e.scale_offset % 2 != 0 || e.bias_offset % 2 != 0 {
+        return bad(format!(
+            "tensor {name}: affine companion offsets must be aligned to 2 bytes"
+        ));
+    }
     let elements_per_byte = 8 / bits;
-    if (rows * cols) % elements_per_byte != 0
-        || e.size_bytes as usize != rows * cols / elements_per_byte
-    {
+    let elements = rows.checked_mul(cols).ok_or_else(|| {
+        RealForwardError::Unsupported(format!("tensor {name}: shape {rows}x{cols} overflows"))
+    })?;
+    if elements % elements_per_byte != 0 || e.size_bytes as usize != elements / elements_per_byte {
         return bad(format!(
             "tensor {name}: {bits}-bit packed size {} does not match {rows}x{cols} ({} bytes)",
             e.size_bytes,
@@ -135,10 +147,16 @@ pub(crate) fn resident_matrix<'a>(
         .entries
         .get(name)
         .ok_or_else(|| RealForwardError::MissingTensor(name.to_string()))?;
-    if entry.size_bytes as usize != rows * cols / 2 {
+    if entry.dtype != 4 {
         return Err(RealForwardError::Unsupported(format!(
-            "tensor {name}: packed size {} does not match shape {rows}x{cols}",
-            entry.size_bytes
+            "tensor {name}: dtype {} is not INT4-affine",
+            entry.dtype
+        )));
+    }
+    let group_size = affine_group_size(entry, name, rows, cols, 4)?;
+    if group_size != 64 {
+        return Err(RealForwardError::Unsupported(format!(
+            "tensor {name}: INT4 group size {group_size} does not match kernel group size 64"
         )));
     }
     let base = index.header.index_size;
