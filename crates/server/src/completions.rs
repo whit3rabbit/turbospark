@@ -307,10 +307,11 @@ pub async fn completions(
     if n > 1 {
         return error_response(StatusCode::BAD_REQUEST, format!("n must be 1, got {n}"));
     }
-    let config = match build_config(&request) {
+    let mut config = match build_config(&request) {
         Ok(c) => c,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, e),
     };
+    config.rate = model.rate_control();
     let degraded = completion_warnings(&request);
     let prompt = match single_prompt(request.prompt) {
         Ok(p) => p,
