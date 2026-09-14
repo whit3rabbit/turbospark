@@ -712,6 +712,58 @@ fn an_injected_map_survives_the_generation_loops_own_reset() {
     );
 }
 
+/// An image map is installed before the generation loop's mandatory reset,
+/// while its derived KV remains after the caller clears the map. The reset
+/// must therefore transfer the image taint to the fresh prefix record rather
+/// than authorizing that record by token ids alone.
+///
+/// MUTATION: remove the `prompt_vision` re-taint in `reset`. This returns the
+/// whole old prompt here and reddens only this case.
+#[test]
+fn image_derived_kv_is_not_reusable_after_the_map_is_cleared() {
+    let dir = build_vision("prefix-taint-reset");
+    let ids = prompt_ids();
+    let params = params();
+    let mut runner = open(&dir);
+    let embedding = runner
+        .encode_image(&image(&params), &params)
+        .expect("the tower runs");
+    let positions = positions_for(&ids);
+    runner
+        .set_prompt_vision(std::slice::from_ref(&embedding), &positions, ids.len())
+        .expect("validates");
+    runner.set_prefix_reuse(true);
+
+    let config = turbospark_runtime::GenerationConfig {
+        shaping: selection::ShapingConfig::new(0.0, 0, None, 1.0, None).unwrap(),
+        max_new_tokens: 1,
+        stop_strings: Vec::new(),
+        extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
+    };
+    let tokenizer = load_fixture_tokenizer();
+    turbospark_runtime::run_raw_completion(
+        &mut runner,
+        &tokenizer,
+        &ids,
+        &config,
+        4096,
+        VOCAB as usize,
+        |_| {},
+    )
+    .expect("generates");
+
+    runner.clear_prompt_vision();
+    let mut extension = ids.clone();
+    extension.push(42);
+    assert_eq!(
+        runner.try_reuse_prefix(&extension),
+        0,
+        "image-derived KV must remain tainted after its injection map is cleared"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The fixture tokenizer, for the loop's stop matcher and detokenizer alone.
 ///
 /// The synthetic install ships no sidecars, and the loop needs SOME tokenizer;
