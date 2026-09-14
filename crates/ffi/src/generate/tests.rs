@@ -4,20 +4,26 @@ use super::*;
 use crate::generate::prompt::collect_image_parts;
 use crate::wire::WireMessage;
 
-/// The per-turn half of the speculation decision, in all four states.
+/// The per-turn half of the speculation decision, in all eight states.
 ///
-/// Cheap enough to be exhaustive, and worth being: three of the four
+/// Cheap enough to be exhaustive, and worth being: seven of the eight
 /// cells are "decode sequentially" and the one that is not is the only
 /// path in this crate that reaches a batched verify.
 #[test]
 fn a_turn_speculates_only_when_the_session_can_and_the_turn_is_greedy() {
-    assert_eq!(turn_block(Some(2), true), Some(2));
+    assert_eq!(turn_block(Some(2), true, false), Some(2));
     // Sampled: the session's block is DISCARDED rather than honoured,
     // because acceptance is exact only at temperature 0.
-    assert_eq!(turn_block(Some(2), false), None);
+    assert_eq!(turn_block(Some(2), false, false), None);
+    // Rate-controlled: speculation cannot silently bypass the cap or its
+    // thermal and memory-pressure probes.
+    assert_eq!(turn_block(Some(2), true, true), None);
+    assert_eq!(turn_block(Some(2), false, true), None);
     // No drafter: greedy does not conjure one.
-    assert_eq!(turn_block(None, true), None);
-    assert_eq!(turn_block(None, false), None);
+    assert_eq!(turn_block(None, true, false), None);
+    assert_eq!(turn_block(None, false, false), None);
+    assert_eq!(turn_block(None, true, true), None);
+    assert_eq!(turn_block(None, false, true), None);
 }
 
 fn parse(json: &str) -> Vec<WireMessage> {
