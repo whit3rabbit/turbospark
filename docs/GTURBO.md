@@ -308,10 +308,21 @@ During model execution:
 
 ## 5. Verification & Integrity Checking
 
-Every `.gturbo` installation enforces strict integrity checking:
-- **Checksum Manifest**: Every file inside `.gturbo` (including each `layer_NN.bin`) has its SHA-256 hash recorded in `manifest.json`.
-- **Startup Integrity**: `turbospark-model-io::load_manifest` verifies file sizes and checksums against `manifest.json` before execution.
-- **Quality Verification**: Perplexity, greedy digests, and cross-engine KL divergence tests confirm that GGUF and Safetensors repacks produce byte-identical or numerically equivalent outputs compared to reference baselines.
+- **Checksum Manifest**: Files listed in `manifest.files` (including each
+  `layer_NN.bin`) have their sizes and SHA-256 hashes recorded in
+  `manifest.json`.
+- **Startup Validation**: `turbospark-model-io::load_manifest` reads and
+  structurally validates `manifest.json`; ordinary CLI and server startup do
+  not re-hash the listed files. The separate
+  `turbospark-repack::verify_install_full_sha256` operation re-hashes them and
+  rejects mismatches.
+- **Trust Boundary**: Full SHA-256 verification establishes consistency with
+  `manifest.json`, not publisher authenticity. An attacker who can replace
+  both a model file and the manifest can supply matching hashes.
+- **Quality Verification**: Perplexity, greedy digests, and cross-engine KL
+  divergence tests can confirm that a particular GGUF or Safetensors repack
+  is byte-identical or numerically equivalent to a reference baseline; these
+  tests are not an automatic startup integrity check.
 
 ---
 
