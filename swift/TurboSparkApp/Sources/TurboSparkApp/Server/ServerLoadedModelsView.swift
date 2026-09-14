@@ -33,8 +33,8 @@ struct ServerLoadedModelsView: View {
                     Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(model.serverBusy)
+                .controlSize(.regular)
+                .disabled(model.serverBusy || model.server == nil)
             }
 
             if rows.isEmpty {
@@ -60,7 +60,7 @@ struct ServerLoadedModelsView: View {
                         .stroke(.appBorder, lineWidth: 0.5))
             }
 
-            memoryFootprintBar
+
         }
         .sheet(isPresented: $showingPicker) {
             ServerModelPickerSheet(model: model)
@@ -124,7 +124,7 @@ struct ServerLoadedModelsView: View {
                 model.detachModelFromServer(id: row.id)
             } label: {
                 Label { Text("Eject", bundle: .module) } icon: { Image(systemName: "eject") }
-                    .labelStyle(.iconOnly)
+                    .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.borderless)
             .help(
@@ -150,43 +150,7 @@ struct ServerLoadedModelsView: View {
         return parts.joined(separator: " - ")
     }
 
-    /// What the machine has left, so a user can see whether a second model
-    /// fits before they try.
-    @ViewBuilder
-    private var memoryFootprintBar: some View {
-        if let telemetry = model.telemetry, telemetry.physicalMemoryBytes > 0 {
-            let used = Double(TurboSparkSession.peakFootprintBytes ?? 0)
-            let total = Double(telemetry.physicalMemoryBytes)
-            let fraction = min(max(used / total, 0), 1)
-            VStack(alignment: .leading, spacing: 3) {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.secondary.opacity(0.15))
-                        Capsule()
-                            .fill(fraction > 0.8 ? Color.orange : TurboSparkTheme.accentColor)
-                            .frame(width: geometry.size.width * fraction)
-                    }
-                }
-                .frame(height: 4)
 
-                // **`peakFootprintBytes` IS A PEAK, AND THE LABEL SAYS SO.**
-                // It is the high-water mark this process reached rather than
-                // what it holds now, so calling it "used" would overstate
-                // the headroom question it is here to answer.
-                Text(
-                    "\(byteText(UInt64(used))) peak of \(byteText(telemetry.physicalMemoryBytes)) "
-                        + "unified memory")
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
-            }
-        }
-    }
-
-    private func byteText(_ bytes: UInt64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .memory
-        return formatter.string(fromByteCount: Int64(bytes))
-    }
 }
 
 /// Picks an installed model to serve.

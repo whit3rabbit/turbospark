@@ -178,83 +178,88 @@ extension AppModel {
     }
 
     public func startServer() {
-        guard server == nil, !serverBusy else { return }
+        guard server == nil, !serverBusy, serverPortIsValid else { return }
         serverBusy = true
-        Task {
-            defer { serverBusy = false }
-            do {
-                let emb = serverEmbeddingModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                let ep = hfEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                let sys = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                let options = ServerOptions(
-                    port: serverPinnedPort,
-                    apiKey: Self.serverAPIKey(from: serverAPIKeyInput),
-                    guardrails: Self.serverGuardrails(from: guardrailsMode),
-                    embeddingModel: emb.isEmpty ? nil : emb,
-                    hfEndpoint: ep.isEmpty ? nil : ep,
-                    defaultSystem: sys.isEmpty ? nil : sys,
-                    defaultReasoning: reasoning
-                )
-                let started = try TurboSparkServer.start(options: options)
-                // Recorded from the OPTIONS the start actually used, so the
-                // pane reports what is running rather than what the setting
-                // says now.
-                serverStartedGuardrails = options.guardrails
-                // Attached AFTER the bind so a refused attach leaves a
-                // stoppable server rather than a half-started one.
-                if let session {
-                    do {
-                        let id = try started.attach(session)
-                        serverAttachedSessions[id] = session
-                    } catch {
-                        started.stop()
-                        throw error
-                    }
-                }
-                // Read BEFORE publishing the handle. A throwing `info()` on a
-                // successfully started server would otherwise leave one
-                // running and serving behind a "Failed to start" toast and a
-                // toggle showing on -- the UI disagreeing with the machine.
-                let info: ServerInfo
+        Task { await performServerStart(attachChat: true) }
+    }
+
+    func performServerStart(attachChat: Bool) async {
+        defer { serverBusy = false }
+        do {
+            let emb = serverEmbeddingModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            let ep = hfEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sys = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            let options = ServerOptions(
+                port: serverPinnedPort,
+                host: serverHost.trimmingCharacters(in: .whitespacesAndNewlines),
+                captureText: serverCaptureText,
+                apiKey: Self.serverAPIKey(from: serverAPIKeyInput),
+                guardrails: Self.serverGuardrails(from: guardrailsMode),
+                embeddingModel: emb.isEmpty ? nil : emb,
+                hfEndpoint: ep.isEmpty ? nil : ep,
+                defaultSystem: sys.isEmpty ? nil : sys,
+                defaultReasoning: reasoning
+            )
+            let started = try TurboSparkServer.start(options: options)
+            // Recorded from the OPTIONS the start actually used, so the
+            // pane reports what is running rather than what the setting
+            // says now.
+            serverStartedGuardrails = options.guardrails
+            // Attached AFTER the bind so a refused attach leaves a
+            // stoppable server rather than a half-started one.
+            if attachChat, let session {
                 do {
-                    info = try started.info()
+                    let id = try started.attach(session)
+                    serverAttachedSessions[id] = session
                 } catch {
                     started.stop()
                     throw error
                 }
-                // Honour a stop pressed while the bind was in flight, rather
-                // than publishing a server the user has already switched off.
-                if self.serverStopRequested {
-                    self.serverStopRequested = false
-                    started.stop()
-                    self.serverAttachedSessions = [:]
-                    showToast("Server stopped", style: .info)
-                    return
-                }
-                self.server = started
-                self.serverInfo = info
-                self.serverMetrics = ServerMetricsStore()
-                self.serverEventLog = []
-                self.startServerPolling()
-                let auth = info.authEnabled
-                    ? "API key required"
-                    : "no API key: any process on this machine can reach it"
-                showToast(
-                    "Server listening on \(info.host):\(info.port) (\(auth))",
-                    style: .success
-                )
-            } catch {
-                // **THE STOP REQUEST IS RESET ON FAILURE TOO** (state#53).
-                // It is set by a Stop pressed during the bind and cleared
-                // only on the success path, so a start that THREW left it
-                // latched -- and the next successful start read it at the
-                // publish point and stopped itself, reporting "Server
-                // stopped" for a server the user had just asked for.
-                self.serverStopRequested = false
-                let msg = "Failed to start server: \(error.localizedDescription)"
-                self.error = msg
-                showToast(msg, style: .error)
             }
+            // Read BEFORE publishing the handle. A throwing `info()` on a
+            // successfully started server would otherwise leave one
+            // running and serving behind a "Failed to start" toast and a
+            // toggle showing on -- the UI disagreeing with the machine.
+            let info: ServerInfo
+            do {
+                info = try started.info()
+            } catch {
+                started.stop()
+                throw error
+            }
+            // Honour a stop pressed while the bind was in flight, rather
+            // than publishing a server the user has already switched off.
+            if self.serverStopRequested {
+                self.serverStopRequested = false
+                started.stop()
+                self.serverAttachedSessions = [:]
+                showToast("Server stopped", style: .info)
+                return
+            }
+            self.server = started
+            self.serverInfo = info
+            self.serverMetrics = ServerMetricsStore()
+            self.serverLive = ServerLiveHistory()
+            self.serverEventLog = []
+            self.startServerPolling()
+            let auth = info.authEnabled
+                ? "API key required"
+                : "no API key: any process on this machine can reach it"
+            showToast(
+                "Server listening on \(info.host):\(info.port) (\(auth))",
+                style: .success
+            )
+        } catch {
+            // **THE STOP REQUEST IS RESET ON FAILURE TOO** (state#53).
+            // It is set by a Stop pressed during the bind and cleared
+            // only on the success path, so a start that THREW left it
+            // latched -- and the next successful start read it at the
+            // publish point and stopped itself, reporting "Server
+            // stopped" for a server the user had just asked for.
+            self.serverStopRequested = false
+            let msg = "Failed to start server: \(error.localizedDescription)"
+            self.error = msg
+            showToast(msg, style: .error)
         }
     }
 
@@ -396,6 +401,7 @@ extension AppModel {
         // The uptime moves on its own, so the snapshot is refreshed on the
         // timer as well as on the events that change the model list.
         refreshServerInfo()
+        sampleServerLive()
     }
 
     private func ingestServerEvents(_ batch: ServerEventBatch) {

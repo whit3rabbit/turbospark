@@ -115,6 +115,11 @@ public final class AppModel: ObservableObject {
     /// shows the bound address and it is one click to copy. A user pins one
     /// when something ELSE holds the number -- a config file, a shell
     /// profile, a teammate's notes -- and then a changing port is the bug.
+    @Published public var serverHost = "127.0.0.1"
+    @Published public var serverCaptureText = false
+    @Published public var serverPortIsValid = true
+    @Published public var serverFavorites: [ServerFavorite] = []
+    @Published public var serverLive = ServerLiveHistory()
     @Published public var serverPinnedPort: UInt16 = 0
     /// Optional embedding model (.safetensors directory or alias) attached to the server.
     @Published public var serverEmbeddingModelInput: String = ""
@@ -180,9 +185,11 @@ public final class AppModel: ObservableObject {
     /// (swift/docs/SWIFT_MEMORY.md). The `didSet` mirrors the value into
     /// `MemoryStore.shared`, the static surface `AppToolCatalog` and
     /// `SubagentRunner` read -- neither holds an `AppModel`.
-    @Published public var memoryEnabled: Bool = true {
+    @Published public var memoryEnabled: Bool = false {
         didSet { MemoryStore.shared.isModelEnabled = memoryEnabled }
     }
+    /// Profile-local encoder used for semantic memory recall.
+    @Published public var memoryEmbeddingModel: String = ""
     /// Whether Syntext code search and project indexing is enabled globally.
     /// Mirrored to `AppToolRegistry.syntextIndexingEnabled` so tool execution and background
     /// indexers can check it without holding an `AppModel`.

@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/primer/octicons",
+  "revision": "0b52df259a3e4df4396f7741e53438e9a022d46f",
+  "source": "https://raw.githubusercontent.com/primer/octicons/0b52df259a3e4df4396f7741e53438e9a022d46f/icons/mark-github-16.svg",
+  "license": "MIT",
+  "sha256": "7421820090b50ac79d7c2bf7c951a433d7098a8a9c474809207bdd45f62d9d46",
+  "purpose": "Identify GitHub links; no endorsement implied."
+}

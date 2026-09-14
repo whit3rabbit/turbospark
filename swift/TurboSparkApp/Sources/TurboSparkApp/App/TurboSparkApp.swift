@@ -500,9 +500,10 @@ struct TurboSparkApp: App {
             // its own theme applies here, and the menu bar's own text and
             // icons were reading `ResolvedAppTheme.fallback` for the life of
             // the feature (swift/docs/SWIFT_SETTINGS_AUDIT.md item 7).
-            ServerMenuBarView(model: model)
+            ServerMenuDashboardView(model: model)
                 .appThemed()
         }
+        .menuBarExtraStyle(.window)
     }
 }
 

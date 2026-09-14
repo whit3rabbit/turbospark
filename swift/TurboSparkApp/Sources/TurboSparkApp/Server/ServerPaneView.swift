@@ -1,80 +1,65 @@
 import SwiftUI
 
-/// The Server section: start a server, see what is talking to it, and point
-/// a tool at it.
-///
-/// **PROGRESSIVE DISCLOSURE, ONE PANE, AND THE ORDER IS THE ARGUMENT.**
-/// Closed, this is a start button, an address and one card explaining how to
-/// connect -- which is the whole feature for somebody who wants their editor
-/// to talk to a local model. The model table, the charts and the console
-/// appear once a server is running, because before that they would all be
-/// empty boxes. Auth, the pinned port and the raw endpoint list live behind
-/// `Advanced`, which remembers whether it was open.
-///
-/// The alternative shapes were a Simple/Developer mode switch (a persisted
-/// mode a user forgets they set, and two layouts to keep in step) and one
-/// dense pane for everyone (fastest to build, and the thing that makes a
-/// first open intimidating). This is neither.
+/// Keep operations and evidence visible before, during and after a server run.
 struct ServerPaneView: View {
     @ObservedObject var model: AppModel
-
-    @AppStorage("TurboSpark.server.showAdvanced")
-    private var showAdvanced = false
-    @AppStorage("TurboSpark.server.showConnect")
-    private var showConnect = true
-    @AppStorage("TurboSpark.server.consoleHeight")
-    private var consoleHeight: Double = 220
-
-    private var isRunning: Bool { model.server != nil }
+    @State private var tab = 0
+    @AppStorage("TurboSpark.server.consoleHeight") private var consoleHeight = 300.0
+    @State private var dragHeight: Double?
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    ServerHeaderBandView(model: model)
-
-                    if isRunning {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        ServerHeaderBandView(model: model)
+                        ServerConnectionView(model: model)
                         ServerLoadedModelsView(model: model)
-                        ServerChartsView(model: model)
+                        ServerLiveChartsView(model: model)
+                        DisclosureGroup {
+                            ServerChartsView(model: model).padding(.top, 12)
+                        } label: { Text("Traffic", bundle: .module) }
+                        DisclosureGroup {
+                            ServerConnectCardView(model: model).padding(.top, 12)
+                        } label: { Text("Connect an app", bundle: .module) }
+                    }
+                    .padding(20)
+                }
+                .frame(maxHeight: .infinity)
+                Capsule().fill(.appBorder)
+                    .frame(width: 44, height: 4)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 12)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture().onChanged { value in
+                        if dragHeight == nil { dragHeight = consoleHeight }
+                        consoleHeight = min(max((dragHeight ?? 300) - value.translation.height, 200), geometry.size.height * 0.65)
+                    }.onEnded { _ in dragHeight = nil })
+                    .accessibilityLabel(Text("Console", bundle: .module))
+                    .accessibilityAdjustableAction { direction in
+                        consoleHeight = min(max(consoleHeight + (direction == .increment ? 40 : -40), 200), geometry.size.height * 0.65)
                     }
 
-                    DisclosureGroup(isExpanded: $showConnect) {
-                        ServerConnectCardView(model: model)
-                            .padding(.top, 10)
-                    } label: {
-                        sectionLabel("Connect an app", systemImage: "link")
-                    }
-
-                    DisclosureGroup(isExpanded: $showAdvanced) {
-                        ServerAdvancedSettingsView(model: model)
-                            .padding(.top, 10)
-                    } label: {
-                        sectionLabel("Advanced", systemImage: "slider.horizontal.3")
+                VStack(spacing: 0) {
+                    Picker(selection: $tab) {
+                        Text("Console", bundle: .module).tag(0)
+                        Text("Live text", bundle: .module).tag(1)
+                    } label: { Text("Activity", bundle: .module) }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 300)
+                    .padding(10)
+                    if tab == 0 {
+                        ServerConsoleView(model: model)
+                    } else {
+                        ServerTextPreviewView(model: model)
                     }
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if isRunning {
-                Divider()
-                ServerConsoleView(model: model)
-                    .frame(height: consoleHeight)
+                .frame(height: min(max(consoleHeight, 200), geometry.size.height * 0.65))
             }
         }
         .background(.appPage)
-        // The pane is not the only thing that can stop a server (unloading a
-        // model from Chat can), so the timer follows the SERVER rather than
-        // this view's lifetime. Appearing here only picks polling back up if
-        // something started a server while this view was off screen.
         .onAppear {
-            if isRunning { model.startServerPolling() }
+            if model.server != nil { model.startServerPolling() }
         }
-    }
-
-    private func sectionLabel(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .themedFont(.small, weight: .semibold)
-            .foregroundStyle(.appSecondary)
     }
 }

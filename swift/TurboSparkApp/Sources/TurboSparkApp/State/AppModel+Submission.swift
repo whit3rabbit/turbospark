@@ -27,7 +27,7 @@ extension AppModel {
             return
         }
         if BuiltInSlashCommand.isMemoryCommand(userDraft) {
-            handleMemoryCommand()
+            handleMemoryCommand(userDraft)
             return
         }
         // The other never-generate commands (`/stats`, `/export`, `/help`)

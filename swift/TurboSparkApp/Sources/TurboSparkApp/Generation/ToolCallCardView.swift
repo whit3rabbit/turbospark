@@ -23,7 +23,15 @@ struct ToolCallCardView: View {
     @State private var isExpanded: Bool = false
 
     private var summary: ToolCallSummaryInfo {
-        ToolCallDiffFormatter.summarize(callName: call.name, arguments: call.arguments)
+        let presentation = ToolPresentation.resolve(call.name)
+        if let url = ToolPresentation.webURL(for: call) {
+            return ToolCallSummaryInfo(action: presentation.localizedLabel, target: url.absoluteString)
+        }
+        if !presentation.isBuiltIn {
+            return ToolCallSummaryInfo(action: presentation.localizedLabel,
+                target: call.arguments["path"] ?? call.arguments["query"] ?? "")
+        }
+        return ToolCallDiffFormatter.summarize(callName: call.name, arguments: call.arguments)
     }
 
     private var isPendingApproval: Bool {
@@ -52,7 +60,7 @@ struct ToolCallCardView: View {
     }
 
     private var terminalCommand: String? {
-        call.shellCommand
+        ToolPresentation.resolve(call.name).icon == "terminal" ? call.shellCommand : nil
     }
 
     private var isTodoCall: Bool {
@@ -85,17 +93,17 @@ struct ToolCallCardView: View {
 
     private var isStopAgentCall: Bool {
         let n = call.name.lowercased()
-        return n == "stop_agent" || n == "stopagent"
+        return ToolPresentation.resolve(n).icon == "bot-off"
     }
 
     private var isWriteCall: Bool {
         let n = call.name.lowercased()
-        return n.contains("write") || n.contains("create")
+        return ToolPresentation.resolve(n).icon == "file-plus"
     }
 
     private var isEditCall: Bool {
         let n = call.name.lowercased()
-        return n.contains("edit") || n.contains("replace")
+        return ["file-pen", "files"].contains(ToolPresentation.resolve(n).icon)
     }
 
     private var isPatchCall: Bool {
@@ -105,12 +113,12 @@ struct ToolCallCardView: View {
 
     private var isReadCall: Bool {
         let n = call.name.lowercased()
-        return n.contains("read") || n.contains("view")
+        return ToolPresentation.resolve(n).icon == "file-text"
     }
 
     private var isWebFetchCall: Bool {
         let n = call.name.lowercased()
-        return n.contains("fetch") || n.contains("read_url")
+        return ToolPresentation.resolve(n).icon == "globe" || ToolPresentation.resolve(n).icon == "network"
     }
 
     private var isSkillCall: Bool {
@@ -220,8 +228,10 @@ struct ToolCallCardView: View {
             }
         } label: {
             HStack(spacing: 7) {
-                statusLeadingIcon
-
+                BundledToolIcon(name: ToolPresentation.resolve(call.name).icon)
+                if let url = ToolPresentation.webURL(for: call) {
+                    OfflineSiteIcon(url: url)
+                }
                 headerLabelView
 
                 if let additions = summary.additions {
@@ -254,19 +264,20 @@ struct ToolCallCardView: View {
 
                 Spacer()
 
+                statusLeadingIcon
                 statusBadge
 
-                Image(systemName: "chevron.right")
+                Image(systemName: "chevron.down")
                     .themedFont(.tiny, weight: .semibold)
                     .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees((isExpanded || isPendingApproval) ? 90 : 0))
+                    .rotationEffect(.degrees((isExpanded || isPendingApproval || isActiveQuestionSet) ? 180 : 0))
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(summary.action) \(summary.target)")
-        .accessibilityValue(statusLabel)
+        .accessibilityValue(statusLabel + ", " + ((isExpanded || isPendingApproval || isActiveQuestionSet) ? String(localized: "Expanded", bundle: .module) : String(localized: "Collapsed", bundle: .module)))
     }
 
     @ViewBuilder
@@ -291,7 +302,7 @@ struct ToolCallCardView: View {
                     .themedFont(.small)
                     .foregroundStyle(isHighRisk ? Color.red : Color.orange)
             } else {
-                switch call.status {
+                switch ToolPresentation.status(call: call, result: result) {
                 case .running:
                     TaskProgressFlameIcon(size: 12)
                 case .completed:
@@ -319,14 +330,14 @@ struct ToolCallCardView: View {
     private var headerLabelView: some View {
         let isCancelled = call.status == .denied
         if let cmd = terminalCommand {
-            Text(verbatim: "$ \(cmd)")
+            Text(verbatim: ToolPresentation.resolve(call.name).localizedLabel + "  $ " + cmd)
                 .font(theme.code(.small, weight: .semibold))
                 .foregroundStyle(isCancelled ? .secondary : .primary)
                 .strikethrough(isCancelled, color: .secondary)
                 .lineLimit(1)
         } else if call.category == .web, let query = call.arguments["query"] {
             HStack(spacing: 4) {
-                Text("Search:", bundle: .module)
+                Text(ToolPresentation.resolve(call.name).localizedLabel)
                     .themedFont(.base, weight: .medium)
                     .foregroundStyle(.appSecondary)
                 Text(verbatim: "\"\(query)\"")
@@ -337,7 +348,7 @@ struct ToolCallCardView: View {
             .lineLimit(1)
         } else {
             HStack(spacing: 5) {
-                Text(summary.action)
+                Text(ToolPresentation.resolve(call.name).localizedLabel)
                     .themedFont(.base, weight: .medium)
                     .foregroundStyle(isCancelled ? .secondary : .primary)
 
@@ -402,13 +413,13 @@ struct ToolCallCardView: View {
         // A classifier-approved call is marked so "who decided this" is
         // always on the card (`swift/docs/SWIFT_AGENT_MODE.md`).
         if call.autoApprovedBy == "classifier" {
-            switch call.status {
+            switch ToolPresentation.status(call: call, result: result) {
             case .running: return "Classifier Approved"
             case .completed: return "Classifier Approved"
             default: break
             }
         }
-        switch call.status {
+        switch ToolPresentation.status(call: call, result: result) {
         case .pendingApproval: return "Needs Approval"
         case .running: return "Running..."
         case .completed: return "Completed"
@@ -419,7 +430,7 @@ struct ToolCallCardView: View {
 
     private var statusBackground: Color {
         if isPendingApproval { return isHighRisk ? Color.red.opacity(0.15) : Color.orange.opacity(0.15) }
-        switch call.status {
+        switch ToolPresentation.status(call: call, result: result) {
         case .pendingApproval: return Color.orange.opacity(0.15)
         case .running: return Color.blue.opacity(0.15)
         case .completed: return Color.green.opacity(0.15)
@@ -430,7 +441,7 @@ struct ToolCallCardView: View {
 
     private var statusForeground: Color {
         if isPendingApproval { return isHighRisk ? .red : .orange }
-        switch call.status {
+        switch ToolPresentation.status(call: call, result: result) {
         case .pendingApproval: return .orange
         case .running: return .blue
         case .completed: return .green

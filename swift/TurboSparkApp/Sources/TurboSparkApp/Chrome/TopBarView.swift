@@ -31,6 +31,11 @@ struct TopBarView: View {
     let isInspectorVisible: Bool
     let toggleChatSidebar: () -> Void
     let toggleInspector: () -> Void
+    var canPinSummary = false
+    var isSummaryVisible = false
+    var toggleSummary: () -> Void = {}
+    @State private var showsSummaryPopover = false
+    @State private var barWidth: CGFloat = 0
 
     @ScaledMetric private var buttonSize: CGFloat = 26
 
@@ -48,10 +53,39 @@ struct TopBarView: View {
             // Centre. Fixed-size, so the flexible groups either side keep
             // their own widths and the model loader does not slide when a
             // phase indicator appears.
-            ChromeTelemetryView(model: model)
-                .fixedSize()
+            if barWidth >= 760 {
+                ChromeTelemetryView(model: model).fixedSize()
+            }
 
             HStack(spacing: 8) {
+                if model.activeSection == .chat {
+                    ChatShareButton(model: model)
+                    if model.selectedChat.projectID != nil {
+                        Button {
+                            if canPinSummary { toggleSummary() }
+                            else { showsSummaryPopover.toggle() }
+                        } label: {
+                            Image(systemName: "list.bullet.rectangle")
+                                .font(theme.ui(.callout))
+                                .foregroundStyle(canPinSummary && isSummaryVisible ? theme.accent : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(Text("Chat summary", bundle: .module))
+                        .accessibilityLabel(Text("Chat summary", bundle: .module))
+                        .popover(isPresented: $showsSummaryPopover) {
+                            ProjectChatSummaryView(model: model)
+                                .id(model.selectedChatID)
+                                .frame(width: ProjectChatSummary.width, height: 480)
+                                .appThemed()
+                        }
+                        .onChange(of: model.openArtifactID) { _, value in
+                            if value != nil { showsSummaryPopover = false }
+                        }
+                        .onChange(of: canPinSummary) { _, value in
+                            if value { showsSummaryPopover = false }
+                        }
+                    }
+                }
                 inspectorToggle
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -59,7 +93,14 @@ struct TopBarView: View {
         .padding(.leading, AppChromeLayout.trafficLightClearance)
         .padding(.trailing, 10)
         .frame(height: AppChromeLayout.topBarHeight)
-        .background(TurboSparkTheme.barBackgroundColor)
+        .background(.appSurface)
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { barWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { _, width in barWidth = width }
+            }
+        }
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(.appBorder)

@@ -15,13 +15,15 @@ struct ServerConsoleView: View {
     @State private var search = ""
     @State private var showErrorsOnly = false
     @State private var paused = false
+    @State private var frozenRecords: [ServerRequestRecord] = []
+    @State private var frozenEvents: [ServerEvent] = []
     @State private var expanded: Set<UInt64> = []
     @State private var modelFilter: String?
     @State private var copiedAll = false
     @State private var copiedRecordID: UInt64?
 
     private var rows: [ServerRequestRecord] {
-        var records = model.serverMetrics.records.reversed().map { $0 }
+        var records = (paused ? frozenRecords : model.serverMetrics.records).reversed().map { $0 }
         if showErrorsOnly {
             records = records.filter(\.isError)
         }
@@ -47,7 +49,7 @@ struct ServerConsoleView: View {
             Divider()
             if rows.isEmpty {
                 Text(model.serverMetrics.records.isEmpty ? "No traffic yet." : "Nothing matches.")
-                    .themedFont(.tiny)
+                    .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -67,20 +69,20 @@ struct ServerConsoleView: View {
     private var toolbar: some View {
         HStack(spacing: 10) {
             Text("Console", bundle: .module)
-                .themedFont(.tiny, weight: .semibold)
+                .themedFont(.small, weight: .semibold)
                 .foregroundStyle(.appSecondary)
 
             TextField("Filter", text: $search)
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
-                .frame(width: 160)
+                .frame(minWidth: 80, maxWidth: 160)
                 .labelsHidden()
 
             Toggle(isOn: $showErrorsOnly) {
                 Text("Errors only", bundle: .module)
             }
                 .toggleStyle(.checkbox)
-                .themedFont(.tiny)
+                .themedFont(.small)
 
             if model.serverMetrics.servingModels.count > 1 {
                 Picker(selection: $modelFilter) {
@@ -92,14 +94,14 @@ struct ServerConsoleView: View {
                 .pickerStyle(.menu)
                 .controlSize(.small)
                 .labelsHidden()
-                .frame(width: 160)
+                .frame(minWidth: 80, maxWidth: 160)
             }
 
             Spacer()
 
             if model.serverMetrics.droppedEvents > 0 {
                 Label("\(model.serverMetrics.droppedEvents) events dropped", systemImage: "exclamationmark.triangle")
-                    .themedFont(.tiny)
+                    .themedFont(.small)
                     .foregroundStyle(.orange)
                     .help(
                         "The engine's buffer overran while this pane was not polling. "
@@ -107,13 +109,16 @@ struct ServerConsoleView: View {
             }
 
             Button {
+                if !paused {
+                    frozenRecords = model.serverMetrics.records
+                    frozenEvents = model.serverEventLog
+                }
                 paused.toggle()
-                paused ? model.stopServerPolling() : model.startServerPolling()
             } label: {
                 Image(systemName: paused ? "play.fill" : "pause.fill")
             }
             .buttonStyle(.borderless)
-            .help(paused ? "Resume" : "Pause. The engine keeps buffering while paused.")
+            .help(paused ? "Resume" : "Pause console display. Metrics continue updating.")
 
             Button {
                 copyAll()
@@ -132,12 +137,12 @@ struct ServerConsoleView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Text(statusText(record))
-                    .font(theme.code(.tiny, weight: .semibold))
+                    .font(theme.code(.small, weight: .semibold))
                     .foregroundStyle(statusColor(record))
                     .frame(width: 34, alignment: .leading)
 
                 Text(record.method)
-                    .font(theme.code(.tiny))
+                    .font(theme.code(.small))
                     .foregroundStyle(.appSecondary)
                     .frame(width: 38, alignment: .leading)
 
@@ -147,7 +152,7 @@ struct ServerConsoleView: View {
 
                 if record.isError, let err = record.errorMessage, !err.isEmpty {
                     Text(err)
-                        .font(theme.code(.micro))
+                        .font(theme.code(.small))
                         .foregroundStyle(.red.opacity(0.85))
                         .lineLimit(1)
                 }
@@ -156,7 +161,7 @@ struct ServerConsoleView: View {
 
                 if let served = record.servedModel {
                     Text(served)
-                        .themedFont(.tiny)
+                        .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                 }
@@ -168,13 +173,13 @@ struct ServerConsoleView: View {
                 }
                 if let tokens = record.newTokens, tokens > 0 {
                     Text(verbatim: "\(tokens) tok")
-                        .themedFont(.tiny)
+                        .themedFont(.small)
                         .monospacedDigit()
                         .foregroundStyle(.appSecondary)
                 }
                 if let duration = record.durationMs {
                     Text(verbatim: "\(duration) ms")
-                        .themedFont(.tiny)
+                        .themedFont(.small)
                         .monospacedDigit()
                         .foregroundStyle(.appSecondary)
                         .frame(width: 62, alignment: .trailing)
@@ -261,7 +266,7 @@ struct ServerConsoleView: View {
                     help: "The tool-call guardrails re-asked. Both turns really ran.")
             }
 
-            let matchingEvents = model.serverEventLog.filter { $0.requestID == record.id }
+            let matchingEvents = (paused ? frozenEvents : model.serverEventLog).filter { $0.requestID == record.id }
             if !matchingEvents.isEmpty {
                 rawEventsBox(matchingEvents)
             }
@@ -278,7 +283,7 @@ struct ServerConsoleView: View {
                     .foregroundStyle(.red)
                     .imageScale(.small)
                 Text("Error Details (HTTP \(statusText(record)))", bundle: .module)
-                    .themedFont(.tiny, weight: .semibold)
+                    .themedFont(.small, weight: .semibold)
                     .foregroundStyle(.red)
 
                 Spacer()
@@ -298,7 +303,7 @@ struct ServerConsoleView: View {
 
             if let err = record.errorMessage, !err.isEmpty {
                 Text(err)
-                    .font(theme.code(.tiny))
+                    .font(theme.code(.small))
                     .foregroundStyle(.red.opacity(0.95))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -307,7 +312,7 @@ struct ServerConsoleView: View {
                     .cornerRadius(4)
             } else {
                 Text("Request failed with HTTP status \(statusText(record)).", bundle: .module)
-                    .themedFont(.tiny)
+                    .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
         }
@@ -320,7 +325,7 @@ struct ServerConsoleView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text("Raw Events (\(events.count))", bundle: .module)
-                    .themedFont(.tiny, weight: .semibold)
+                    .themedFont(.small, weight: .semibold)
                     .foregroundStyle(.appSecondary)
                 Spacer()
                 Button {
@@ -335,7 +340,7 @@ struct ServerConsoleView: View {
             }
             ForEach(Array(events.enumerated()), id: \.offset) { _, ev in
                 Text(eventDescription(ev))
-                    .font(theme.code(.micro))
+                    .font(theme.code(.small))
                     .foregroundStyle(.appSecondary)
                     .textSelection(.enabled)
             }
@@ -349,11 +354,11 @@ struct ServerConsoleView: View {
     private func detailLine(_ label: String, _ value: String, help: String? = nil) -> some View {
         HStack(spacing: 6) {
             Text(label)
-                .themedFont(.tiny)
+                .themedFont(.small)
                 .foregroundStyle(.appSecondary)
                 .frame(width: 78, alignment: .leading)
             Text(value)
-                .font(theme.code(.tiny))
+                .font(theme.code(.small))
                 .textSelection(.enabled)
             if let help {
                 Image(systemName: "questionmark.circle")

@@ -87,6 +87,12 @@ struct InstalledModelDetailPaneView: View {
 
                 InstalledModelFeatureBadgesView(descriptor: descriptor)
 
+                ModelSteeringCardView(
+                    model: model,
+                    catalogEntry: nil,
+                    installedModel: installedModel
+                )
+
                 InstalledModelMemoryFitCardView(
                     fit: fit,
                     descriptor: descriptor,

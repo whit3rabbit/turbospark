@@ -16,6 +16,7 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
     case htmlPreview(UUID)
     case filePreview(UUID)
     case inspector
+    case projectSummary
 
     /// Precedence: artifact, then the two explicit-click previews, then
     /// inspector.
@@ -38,13 +39,14 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
         openArtifactID: UUID?,
         htmlPreviewID: UUID? = nil,
         previewAttachmentID: UUID?,
-        isInspectorVisible: Bool
+        isInspectorVisible: Bool,
+        showProjectSummary: Bool = false
     ) -> AppRightColumnClaimant {
         if let openArtifactID { return .artifact(openArtifactID) }
         if let htmlPreviewID { return .htmlPreview(htmlPreviewID) }
         if let previewAttachmentID { return .filePreview(previewAttachmentID) }
         if isInspectorVisible { return .inspector }
-        return .none
+        return showProjectSummary ? .projectSummary : .none
     }
 
     /// Whether anything at all occupies the column.
@@ -64,7 +66,7 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
     public var isPreviewPane: Bool {
         switch self {
         case .artifact, .htmlPreview, .filePreview: return true
-        case .none, .inspector: return false
+        case .none, .inspector, .projectSummary: return false
         }
     }
 }
@@ -87,6 +89,7 @@ extension AppChromeLayout {
     ) -> CGFloat {
         switch claimant {
         case .none: return 0
+        case .projectSummary: return ProjectChatSummary.width
         case .artifact, .htmlPreview: return artifactPanelWidth
         case .filePreview: return inspectorWidth
         case .inspector: return inspectorWidth(isExpanded: isExpandedWorktree)

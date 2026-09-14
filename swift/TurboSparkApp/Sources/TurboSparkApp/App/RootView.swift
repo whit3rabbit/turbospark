@@ -24,6 +24,13 @@ struct RootView: View {
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var isChatSearchPresented = false
+    @State private var isSummaryVisible = true
+    @State private var workingWidth: CGFloat = 0
+
+    private var canPinSummary: Bool { ProjectChatSummary.canPin(availableWidth: workingWidth) }
+    private var hasProjectSummary: Bool {
+        ProjectChatSummary.isAvailable(projectID: model.selectedChat.projectID, isChat: model.activeSection == .chat)
+    }
 
     private var effectiveReduceMotion: Bool {
         appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
@@ -44,7 +51,20 @@ struct RootView: View {
                     isChatSidebarVisible: isSidebarExpanded,
                     isInspectorVisible: isInspectorVisible,
                     toggleChatSidebar: { isSidebarExpanded.toggle() },
-                    toggleInspector: { isInspectorVisible.toggle() })
+                    toggleInspector: { isInspectorVisible.toggle() },
+                    canPinSummary: canPinSummary,
+                    isSummaryVisible: isSummaryVisible,
+                    toggleSummary: {
+                        if rightColumnClaimant == .projectSummary {
+                            isSummaryVisible = false
+                        } else {
+                            isSummaryVisible = true
+                            isInspectorVisible = false
+                            model.dismissArtifact()
+                            model.dismissHTMLPreview()
+                            model.dismissPreview()
+                        }
+                    })
 
                 workingArea
 
@@ -60,7 +80,7 @@ struct RootView: View {
                 // here would let the window shrink under its own sidebar in
                 // Files and Server.
                 isSidebarExpanded: isSidebarExpanded,
-                rightColumn: rightColumnClaimant),
+                rightColumn: rightColumnClaimant == .projectSummary ? .none : rightColumnClaimant),
             minHeight: AppChromeLayout.minimumHeight)
         .clipped()
         .background(.appPage)
@@ -149,6 +169,13 @@ struct RootView: View {
             rightColumn
         }
         .frame(maxHeight: .infinity)
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { workingWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { _, width in workingWidth = width }
+            }
+        }
     }
 
     /// Who owns the right column right now, resolved in ONE place.
@@ -161,7 +188,8 @@ struct RootView: View {
             openArtifactID: model.openArtifactID,
             htmlPreviewID: model.htmlPreviewID,
             previewAttachmentID: model.previewAttachmentID,
-            isInspectorVisible: isInspectorVisible)
+            isInspectorVisible: isInspectorVisible,
+            showProjectSummary: hasProjectSummary && canPinSummary && isSummaryVisible)
     }
 
     @ViewBuilder
@@ -169,6 +197,11 @@ struct RootView: View {
         switch rightColumnClaimant {
         case .none:
             EmptyView()
+        case .projectSummary:
+            verticalHairline
+            rightPane(width: ProjectChatSummary.width) {
+                ProjectChatSummaryView(model: model).id(model.selectedChatID)
+            }
         case .artifact(let id):
             verticalHairline
             rightPane(width: AppChromeLayout.artifactPanelWidth) {
@@ -218,7 +251,9 @@ struct RootView: View {
         let currentWidth = AppChromeLayout.inspectorWidth(isExpanded: isExpandedWorktree)
 
         return Group {
-            if model.interactionMode == .projects, let worktree = model.worktree {
+            if model.activeSection == .server {
+                ServerInspectorView(model: model)
+            } else if model.interactionMode == .projects, let worktree = model.worktree {
                 WorktreeView(model: model, worktree: worktree)
             } else {
                 InspectorView(model: model)

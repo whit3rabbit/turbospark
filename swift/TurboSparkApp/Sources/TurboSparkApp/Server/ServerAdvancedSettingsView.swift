@@ -13,8 +13,6 @@ import TurboSpark
 /// (`HfEndpointResolution`, `swift/docs/SWIFT_SETTINGS_AUDIT.md`).
 struct ServerAdvancedSettingsView: View {
     @ObservedObject var model: AppModel
-    @State private var portText: String = ""
-    @State private var portError: String? = nil
     @State private var copiedKey: Bool = false
 
     private var isRunning: Bool { model.server != nil }
@@ -35,7 +33,7 @@ struct ServerAdvancedSettingsView: View {
                     SecureField("", text: $model.serverAPIKeyInput)
                         .textFieldStyle(.roundedBorder)
                         .labelsHidden()
-                        .frame(width: 240)
+                        .frame(maxWidth: .infinity)
                         .disabled(isRunning)
                         .onChange(of: model.serverAPIKeyInput) { _, _ in
                             model.persistSettingsDebounced()
@@ -86,48 +84,13 @@ struct ServerAdvancedSettingsView: View {
             }
 
             field(
-                "Port",
-                help: "0 lets the system choose. Pin one only if something else holds the number."
-            ) {
-                HStack(spacing: 6) {
-                    TextField("", text: $portText)
-                        .textFieldStyle(.roundedBorder)
-                        .labelsHidden()
-                        .frame(width: 90)
-                        .disabled(isRunning)
-                        .onChange(of: portText) { _, value in
-                            // A typo used to become 0, i.e. "automatic", with
-                            // the hint below confirming it as a choice. An
-                            // invalid string now changes nothing and says so.
-                            switch ServerPortInput.parse(value) {
-                            case .success(let port):
-                                portError = nil
-                                model.serverPinnedPort = port
-                                model.persistSettingsDebounced()
-                            case .failure(let error):
-                                portError = error.message
-                            }
-                        }
-                    if let portError {
-                        Text(portError)
-                            .themedFont(.tiny)
-                            .foregroundStyle(.red)
-                    } else if model.serverPinnedPort == 0 {
-                        Text("automatic", bundle: .module)
-                            .themedFont(.tiny)
-                            .foregroundStyle(.appSecondary)
-                    }
-                }
-            }
-
-            field(
                 "Embedding model",
                 help: "Path or alias to an encoder model (e.g. snowflake-arctic-embed-m) to enable /v1/embeddings."
             ) {
                 TextField("snowflake-arctic-embed-m or /path/to/encoder", text: $model.serverEmbeddingModelInput)
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
-                    .frame(width: 280)
+                    .frame(maxWidth: .infinity)
                     .disabled(isRunning)
                     .onChange(of: model.serverEmbeddingModelInput) { _, _ in
                         model.persistSettingsDebounced()
@@ -141,7 +104,7 @@ struct ServerAdvancedSettingsView: View {
                 TextField("https://huggingface.co", text: $model.hfEndpointInput)
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
-                    .frame(width: 280)
+                    .frame(maxWidth: .infinity)
                     // NOT `.disabled(isRunning)`, unlike its neighbors: the
                     // catalog effect below applies regardless of whether a
                     // server happens to be running, and disabling it here
@@ -178,7 +141,7 @@ struct ServerAdvancedSettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(width: 200)
+                .frame(maxWidth: .infinity)
                 .disabled(isRunning)
                 .onChange(of: model.runtimeOptions.loadGuard) { _, _ in
                     model.persistSettingsDebounced()
@@ -205,26 +168,11 @@ struct ServerAdvancedSettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(width: 220)
+                .frame(maxWidth: .infinity)
                 .disabled(isRunning)
             }
 
-            Divider()
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("What this server does not do", bundle: .module)
-                    .themedFont(.tiny, weight: .medium)
-                // Stated rather than left to be discovered. Each of these is
-                // a thing somebody will look for, and the honest answer is
-                // cheaper than the search.
-                bullet("Binds loopback only. There is no setting here to serve the network.")
-                bullet("Serves one turn at a time per model. Concurrent requests queue.")
-                bullet("Serves text embeddings when an embedding model is attached.")
-                bullet("Logs requests, never their bodies. Your prompts stay out of the console.")
-            }
-        }
-        .onAppear {
-            portText = model.serverPinnedPort == 0 ? "" : String(model.serverPinnedPort)
         }
     }
 
@@ -240,10 +188,4 @@ struct ServerAdvancedSettingsView: View {
         }
     }
 
-    private func bullet(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text(verbatim: "-").themedFont(.tiny).foregroundStyle(.appSecondary)
-            Text(text).themedFont(.tiny).foregroundStyle(.appSecondary)
-        }
-    }
 }

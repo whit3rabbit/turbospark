@@ -19,7 +19,7 @@ struct ServerHeaderBandView: View {
                     Text(stateTitle)
                         .themedFont(.callout, weight: .semibold)
                     Text(stateSubtitle)
-                        .themedFont(.tiny)
+                        .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
 
@@ -34,7 +34,7 @@ struct ServerHeaderBandView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(model.serverBusy)
+                .disabled(model.serverBusy || (!isRunning && !model.serverPortIsValid))
             }
 
             if let info, isRunning {
@@ -51,7 +51,7 @@ struct ServerHeaderBandView: View {
                     "Bound and answering, with no model attached. "
                         + "Requests get a 503 until you add one below.",
                     systemImage: "info.circle")
-                    .themedFont(.tiny)
+                    .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
         }
@@ -119,14 +119,14 @@ struct ServerHeaderBandView: View {
             // client bypasses that entirely. Reported here because it cannot
             // be changed without a restart.
             Label("guardrails " + rows.guardrailsLabel, systemImage: "shield.lefthalf.filled")
-                .themedFont(.tiny)
+                .themedFont(.small)
                 .foregroundStyle(Color.secondary)
                 .help(
                     "Tool-call guardrails for requests this server answers. Resolved when the "
                         + "server started; restart it to change them.")
 
             Label(rows.authLabel, systemImage: rows.authIsWarning ? "lock.open" : "lock")
-                .themedFont(.tiny)
+                .themedFont(.small)
                 .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
                 // The warning is not decoration: an unauthenticated loopback
                 // socket is reachable by every process on this machine, and a
@@ -156,7 +156,7 @@ struct ServerHeaderBandView: View {
                 stat("Log gaps", "\(metrics.droppedEvents)", tint: .orange)
             }
         }
-        .themedFont(.tiny)
+        .themedFont(.small)
     }
 
     private func stat(_ label: String, _ value: String, tint: Color? = nil) -> some View {

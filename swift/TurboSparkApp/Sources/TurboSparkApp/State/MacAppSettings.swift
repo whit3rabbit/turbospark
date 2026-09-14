@@ -163,6 +163,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// because the field had a settings UI that reset every launch; the
     /// server API key deliberately does NOT live here (see
     /// `ServerKeychain`).
+    public var serverHost: String
+    public var serverFavorites: [ServerFavorite]
     public var serverPinnedPort: UInt16
     /// Compatibility mirror of the currently selected reusable system prompt.
     /// The prompt library and its selection are the source of truth.
@@ -202,10 +204,10 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var serverEmbeddingModel: String
     /// Hugging Face mirror endpoint override ($HF_ENDPOINT), e.g. https://hf-mirror.com.
     public var hfEndpoint: String
-    /// Whether the model sees the auto-memory section and the `memory` tool
-    /// (swift/docs/SWIFT_MEMORY.md). On by default, like Claude Code's
-    /// `autoMemoryEnabled`.
+    /// Whether the model sees the auto-memory section and the `memory` tool.
     public var memoryEnabled: Bool
+    /// Profile-local encoder model used for semantic memory recall.
+    public var memoryEmbeddingModel: String
     /// Natural-language classifier steering for Agent mode
     /// (`swift/docs/SWIFT_AGENT_MODE.md`): allow / softDeny / hardDeny /
     /// environment sentences embedded in the classifier's policy text.
@@ -262,6 +264,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         evidenceReducer: Bool = true,
         todoBoundaryCompaction: Bool = true,
         compactionKeepRecentTurns: Int = 2,
+        serverHost: String = "127.0.0.1",
+        serverFavorites: [ServerFavorite] = [],
         serverPinnedPort: UInt16 = 0,
         defaultSystemPrompt: String = AppSystemPrompt.builtIns[0].instructions,
         systemPrompts: [AppSystemPrompt] = AppSystemPrompt.builtIns,
@@ -275,7 +279,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         keepServerRunningInBackground: Bool = true,
         serverEmbeddingModel: String = "",
         hfEndpoint: String = "",
-        memoryEnabled: Bool = true,
+        memoryEnabled: Bool = false,
+        memoryEmbeddingModel: String = "",
         agentModeHints: AgentModeHints = AgentModeHints(),
         syntextIndexingEnabled: Bool = true
     ) {
@@ -325,6 +330,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.evidenceReducer = evidenceReducer
         self.todoBoundaryCompaction = todoBoundaryCompaction
         self.compactionKeepRecentTurns = compactionKeepRecentTurns
+        self.serverHost = serverHost
+        self.serverFavorites = serverFavorites
         self.serverPinnedPort = serverPinnedPort
         let starterPrompts = AppSystemPrompt.builtIns
         let usesStarterSelection = systemPrompts == starterPrompts
@@ -360,6 +367,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.serverEmbeddingModel = serverEmbeddingModel
         self.hfEndpoint = hfEndpoint
         self.memoryEnabled = memoryEnabled
+        self.memoryEmbeddingModel = memoryEmbeddingModel
         self.agentModeHints = agentModeHints
         self.syntextIndexingEnabled = syntextIndexingEnabled
     }
@@ -432,6 +440,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .todoBoundaryCompaction, fallback: true)
         self.compactionKeepRecentTurns = c.decodeLenient(
             Int.self, forKey: .compactionKeepRecentTurns, fallback: 2)
+        self.serverHost = c.decodeLenient(String.self, forKey: .serverHost, fallback: "127.0.0.1")
+        self.serverFavorites = c.decodeLenient([ServerFavorite].self, forKey: .serverFavorites, fallback: [])
         self.serverPinnedPort = c.decodeLenient(UInt16.self, forKey: .serverPinnedPort, fallback: 0)
         let legacyDefaultSystemPrompt = c.decodeLenient(
             String.self, forKey: .defaultSystemPrompt, fallback: "")
@@ -491,7 +501,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.hfEndpoint = c.decodeLenient(
             String.self, forKey: .hfEndpoint, fallback: "")
         self.memoryEnabled = c.decodeLenient(
-            Bool.self, forKey: .memoryEnabled, fallback: true)
+            Bool.self, forKey: .memoryEnabled, fallback: false)
+        self.memoryEmbeddingModel = c.decodeLenient(
+            String.self, forKey: .memoryEmbeddingModel, fallback: "")
         self.agentModeHints = c.decodeLenient(
             AgentModeHints.self, forKey: .agentModeHints, fallback: AgentModeHints())
         self.syntextIndexingEnabled = c.decodeLenient(

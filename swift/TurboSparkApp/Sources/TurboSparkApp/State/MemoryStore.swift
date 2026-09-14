@@ -52,7 +52,7 @@ public final class MemoryStore {
     /// `SubagentRunner.buildSystemPrompt` are static surfaces with no
     /// `AppModel` in hand -- the same reason `CommandGate.vetoEnabled` is a
     /// static. Tests may set it directly and restore it.
-    public var isModelEnabled: Bool = true
+    public var isModelEnabled: Bool = false
 
     /// Injected base directory (the `memory` user-scope root). Nil resolves
     /// through `UserProfileStore` per call, which keeps production lazy and

@@ -14,6 +14,7 @@ struct MemorySettingsPaneView: View {
     var body: some View {
         Form {
             enableSection
+            profileSection
             locationSection
             contentsSection
         }
@@ -32,11 +33,52 @@ struct MemorySettingsPaneView: View {
                 Text("Let the model remember across conversations", bundle: .module)
             }
             .settingsControl("Let the model remember across conversations", pane: .memory, timing: .nextTurn)
-            Text("With a project attached, the model gets a persistent memory directory and a `memory` tool: it saves durable facts about you and the project as it learns them, and an index of what it remembers is always in its context. Memories live on disk, one folder per project. Type `#` followed by text to save one yourself, or /memory to open the folder.", bundle: .module)
+            Text("Memory is profile-specific. Project memory remains separate. Type `#` or `/memory text` to save a dated entry, or `/memory` to open the profile memory folder.", bundle: .module)
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
         }
             .settingsControl("Memory", pane: .memory, timing: .nextTurn)
+    }
+
+    private var profileSection: some View {
+        Section(header: Text("Profile Memory", bundle: .module)) {
+            HStack {
+                Text(ProfileMemoryStore.shared.fileURL.path)
+                    .font(theme.code(.small))
+                    .foregroundStyle(.appSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                Spacer()
+                Button {
+                    NSWorkspace.shared.open(ProfileMemoryStore.shared.directory)
+                } label: { Text("Open Folder", bundle: .module) }
+            }
+            TextField("Arctic embedding model path or alias", text: $model.memoryEmbeddingModel)
+                .onSubmit { model.persistSettingsDebounced() }
+            Text("Embeddings are optional. Without a configured model, profile memory uses bounded Markdown and lexical recall.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+            HStack {
+                Label(
+                    ProfileMemoryStore.shared.hasIndex
+                        ? "Index: \(ProfileMemoryStore.shared.indexedModel ?? "ready")"
+                        : "Index: not built",
+                    systemImage: "circle"
+                )
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+                Spacer()
+                Button {
+                    Task { try? await ProfileMemoryStore.shared.rebuildIndex(modelPath: model.memoryEmbeddingModel) }
+                } label: { Text("Rebuild Index", bundle: .module) }
+                .disabled(model.memoryEmbeddingModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    ProfileMemoryStore.shared.clearIndex()
+                } label: { Text("Clear Index", bundle: .module) }
+                .disabled(!ProfileMemoryStore.shared.hasIndex)
+            }
+        }
+            .settingsControl("Profile Memory", pane: .memory, timing: .nextTurn)
     }
 
     /// The selected chat's project root, by the same resolution the submit

@@ -1,11 +1,17 @@
 # Swift auto-memory (persistent project memory)
 
-Auto-memory in TurboSparkApp: a per-project directory on disk holding a
-`MEMORY.md` index plus topic files the model itself writes through a
+Auto-memory in TurboSparkApp: a profile-wide `MEMORY.md` plus the existing
+per-project directory on disk holding a `MEMORY.md` index and topic files the model itself writes through a
 `memory` tool. The index is injected into the system prompt every turn, so
 what was learned in an earlier conversation is visible in the next one. The
 transcript is never consulted; the memory directory is the whole of it.
-Default on.
+Default off. Existing files remain on disk when disabled.
+
+Profile memory is ordinary Markdown at the active profile's user-scope
+`memory/MEMORY.md` and is shared across that profile's projects. Project memory
+remains partitioned by project root. The optional `.embeddings.json` sidecar is
+disposable derived state. The native local encoder API can index an
+Arctic-compatible MLX encoder; lexical recall remains available without one.
 
 Read this before touching `MemoryStore`, `MemoryPromptBuilder`, the
 `memory` tool, or quoting an index budget. Ports Claude Code's `memdir/`

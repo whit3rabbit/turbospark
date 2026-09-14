@@ -93,12 +93,15 @@ extension AppModel {
         self.evidenceReducerEnabled = settings.evidenceReducer
         self.todoBoundaryCompactionEnabled = settings.todoBoundaryCompaction
         self.memoryEnabled = settings.memoryEnabled
+        self.memoryEmbeddingModel = settings.memoryEmbeddingModel
         self.syntextIndexingEnabled = settings.syntextIndexingEnabled
         AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
         // The pinned port is a plain preference; the server API key is a
         // credential and comes from the Keychain instead (ServerKeychain).
+        self.serverHost = settings.serverHost
+        self.serverFavorites = settings.serverFavorites
         self.serverPinnedPort = settings.serverPinnedPort
         self.serverAPIKeyInput = ServerKeychain.loadKey() ?? ""
         self.serverEmbeddingModelInput = settings.serverEmbeddingModel
@@ -190,6 +193,8 @@ extension AppModel {
             evidenceReducer: evidenceReducerEnabled,
             todoBoundaryCompaction: todoBoundaryCompactionEnabled,
             compactionKeepRecentTurns: compactionKeepRecentTurns,
+            serverHost: serverHost,
+            serverFavorites: serverFavorites,
             serverPinnedPort: serverPinnedPort,
             defaultSystemPrompt: defaultSystemPrompt,
             systemPrompts: systemPrompts,
@@ -204,6 +209,7 @@ extension AppModel {
             serverEmbeddingModel: serverEmbeddingModelInput,
             hfEndpoint: hfEndpointInput,
             memoryEnabled: memoryEnabled,
+            memoryEmbeddingModel: memoryEmbeddingModel,
             agentModeHints: agentModeHints,
             syntextIndexingEnabled: syntextIndexingEnabled
         )

@@ -105,7 +105,7 @@ final class CompactionTests: XCTestCase {
             boundary: 0,
             summary: nil)
         let history = model.buildAppendOnlyHistory(chatIndex: 0, project: nil)
-        XCTAssertEqual(history.count, 2)
+        XCTAssertEqual(history.count, 3)
         XCTAssertFalse(history.contains { $0.content.contains("context_summary") })
     }
 

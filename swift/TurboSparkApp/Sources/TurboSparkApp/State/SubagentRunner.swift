@@ -57,6 +57,11 @@ public enum SubagentRunner {
     ) -> String {
         var sections: [String] = []
 
+        sections.append("## Current Date and Time\n\(MemoryPromptBuilder.currentTimestamp())")
+        if MemoryStore.shared.isModelEnabled {
+            sections.append(MemoryPromptBuilder.profileSection(userPrompt: userPrompt))
+        }
+
         // 0. The user's own deployment-wide instructions, ahead of the agent
         //    role for the same reason they lead the main assembler: the role
         //    is a refinement of them, not a competitor.

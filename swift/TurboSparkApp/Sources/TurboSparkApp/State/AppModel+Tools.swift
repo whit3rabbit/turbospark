@@ -230,9 +230,15 @@ extension AppModel {
     ) -> [(section: SystemPromptSection, content: String)] {
         var sections: [(section: SystemPromptSection, content: String)] = []
 
+        sections.append((.environment, "## Current Date and Time\n\(MemoryPromptBuilder.currentTimestamp())"))
+
         let trimmedUserPrompt = userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedUserPrompt.isEmpty {
             sections.append((.userPrompt, trimmedUserPrompt))
+        }
+
+        if MemoryStore.shared.isModelEnabled {
+            sections.append((.memory, MemoryPromptBuilder.profileSection(userPrompt: trimmedUserPrompt)))
         }
 
         let personalityPrompt = resolvedPersonalityPrompt

@@ -25,6 +25,10 @@ public enum MemoryToolExecutor {
                     "The memory tool is disabled in settings."
             ])
         }
+        let scope = (arguments["scope"] ?? "project").lowercased()
+        if scope == "profile" {
+            return try executeProfile(arguments: arguments)
+        }
         guard let root = project?.rootDirectoryURL else {
             throw NSError(domain: "TurboSparkMemory", code: 3, userInfo: [
                 NSLocalizedDescriptionKey:
@@ -93,6 +97,29 @@ public enum MemoryToolExecutor {
             ])
         }
     }
+
+    private static func executeProfile(arguments: [String: String]) throws -> String {
+        let profile = ProfileMemoryStore.shared
+        let action = (arguments["action"] ?? "read").lowercased()
+        switch action {
+        case "save", "write", "remember":
+            let text = arguments["content"] ?? arguments["memory"] ?? arguments["text"] ?? ""
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw NSError(domain: "TurboSparkMemory", code: 5, userInfo: [NSLocalizedDescriptionKey: "Missing 'content': the profile memory is empty."])
+            }
+            _ = try profile.append(text)
+            return "Saved a dated memory to this user's profile MEMORY.md."
+        case "read", "list", "index":
+            let text = profile.load()
+            return text.isEmpty ? "The profile MEMORY.md is empty." : text
+        case "search":
+            let query = arguments["query"] ?? arguments["text"] ?? arguments["content"] ?? ""
+            let results = profile.lexicalSearch(query)
+            return results.isEmpty ? "No matching profile memories." : results.joined(separator: "\n\n")
+        default:
+            throw NSError(domain: "TurboSparkMemory", code: 6, userInfo: [NSLocalizedDescriptionKey: "Unknown profile memory action '\(action)'. Use save, read, or search."])
+        }
+    }
 }
 
 /// OpenAI tool definitions for the memory subsystem. `all` is computed so
@@ -109,13 +136,15 @@ public enum MemoryToolDefinitions {
 
     public static let definition = OpenAITool.function(
         name: "memory",
-        description: "Save, read, or remove a persistent memory for this project. Memories survive across conversations; the MEMORY.md index of what exists is already in your context. Use it when you learn something durable about the user or the project that the repository itself does not record.",
+        description: "Save, read, search, or remove persistent memory. Use scope=profile for durable user preferences shared across projects, or scope=project for project-specific facts.",
         parameters: .object(
             properties: [
                 "action": .string(description: "What to do: \"save\" (write or update), \"read\" (show one memory, or the index when name is omitted), or \"forget\" (remove)."),
                 "name": .string(description: "Short kebab-case name of the memory, e.g. `deploy-workflow`. Required for save and forget."),
                 "description": .string(description: "One-line summary deciding relevance later. Used by save; falls back to the content's first line."),
                 "type": .string(description: "One of user, feedback, project, reference. Used by save; defaults to project."),
+                "scope": .string(description: "Memory scope: profile for this user across projects, or project for the current project."),
+                "query": .string(description: "Search text when action is search and scope is profile."),
                 "content": .string(description: "Markdown body of the memory. Used by save; for feedback memories, include why it matters and how to apply it.")
             ],
             required: ["action"]

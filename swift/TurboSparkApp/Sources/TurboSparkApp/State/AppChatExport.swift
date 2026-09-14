@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 public enum AppChatExportFormat: String, CaseIterable, Identifiable {
     case markdown
     case json
+    case docx
     /// The qwen-code HTML export: one self-contained page per conversation.
     case html
 
@@ -21,6 +22,7 @@ public enum AppChatExportFormat: String, CaseIterable, Identifiable {
         switch self {
         case .markdown: return "md"
         case .json: return "json"
+        case .docx: return "docx"
         case .html: return "html"
         }
     }
@@ -29,6 +31,7 @@ public enum AppChatExportFormat: String, CaseIterable, Identifiable {
         switch self {
         case .markdown: return UTType(filenameExtension: "md") ?? .plainText
         case .json: return .json
+        case .docx: return UTType(filenameExtension: "docx") ?? .data
         case .html: return .html
         }
     }
@@ -331,6 +334,7 @@ public enum AppChatExport {
         text.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     private static func statusText(_ result: AppToolResult) -> String {
@@ -382,6 +386,8 @@ extension AppModel {
             case .markdown:
                 try AppChatExport.markdown(for: chat, modelAlias: selected?.alias)
                     .write(to: url, atomically: true, encoding: .utf8)
+            case .docx:
+                try AppChatShareDocument(chat: chat).data(format: .docx).write(to: url, options: .atomic)
             case .json:
                 try AppChatExport.jsonData(for: chat).write(to: url, options: .atomic)
             case .html:

@@ -72,6 +72,38 @@ extension AppModel {
         )
     }
 
+    /// Checks the selected direction against a target install, rather than
+    /// only against `selected`. This is what the model sidebar and the open
+    /// path use when the user switches models while steering is enabled.
+    public func steeringCompatibility(for target: InstalledModel) -> AppSteeringPolicy.Compatibility {
+        let descriptor = ModelFeatureDescriptor.resolve(installedModel: target)
+        return AppSteeringPolicy.compatibility(
+            preset: resolvedSteeringPreset,
+            modelHidden: descriptor.hiddenSize,
+            modelLayers: descriptor.layerCount)
+    }
+
+    /// The pre-open refusal for an enabled direction on a target install.
+    /// Without this check a global steering selection could make an unrelated
+    /// model fail to load after the user switched rows in the sidebar.
+    public func steeringOpenBlockReason(for target: InstalledModel) -> String? {
+        guard steeringEnabled, let preset = resolvedSteeringPreset else { return nil }
+        let sessionInfo: SessionInfo? = selected?.path == target.path ? info : nil
+        let descriptor = ModelFeatureDescriptor.resolve(
+            installedModel: target,
+            sessionInfo: sessionInfo)
+        return AppSteeringPolicy.disabledReason(
+            familySupported: descriptor.isSteeringReady,
+            familyReason: descriptor.isSteeringReady
+                ? nil
+                : "This model's family does not dispatch live steering: " + target.family,
+            preset: preset,
+            compatibility: AppSteeringPolicy.compatibility(
+                preset: preset,
+                modelHidden: descriptor.hiddenSize,
+                modelLayers: descriptor.layerCount))
+    }
+
     /// Re-opens the selected model so a steering change takes effect.
     ///
     /// Goes through `reloadModel()` rather than opening directly, so the

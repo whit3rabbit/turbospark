@@ -113,4 +113,34 @@ public enum MemoryPromptBuilder {
         lines.append("Do not save what the repository already records (code shape, git history, fix recipes), ephemeral task state, or secrets. Memories persist across conversations and can be stale; verify one against the current state before relying on it.")
         return lines.joined(separator: "\n")
     }
+
+    /// Profile-wide memory is ordinary Markdown rather than the project
+    /// index format. Keep it bounded, preserve hand-authored structure, and
+    /// add lexical recall when an embedding model is not configured.
+    public static func profileSection(
+        store: ProfileMemoryStore = .shared, userPrompt: String = ""
+    ) -> String {
+        let body = store.load()
+        let bounded = String(body.prefix(12_000))
+        let recalled = userPrompt.isEmpty ? [] : store.lexicalSearch(userPrompt, limit: 5)
+        var lines = [
+            "## Profile Memory",
+            "",
+            "This is the active user's persistent memory at `(store.fileURL.path)`. It is user-specific and may be used across projects.",
+            "The current date and time is (currentTimestamp()).",
+            "",
+            bounded.isEmpty ? "(empty -- nothing is remembered yet)" : bounded,
+        ]
+        if !recalled.isEmpty {
+            lines += ["", "Relevant profile-memory recall:", recalled.joined(separator: "\n\n")]
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    public static func currentTimestamp(_ date: Date = Date()) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = .current
+        formatter.formatOptions = [.withInternetDateTime, .withColonSeparatorInTime, .withColonSeparatorInTimeZone]
+        return formatter.string(from: date)
+    }
 }

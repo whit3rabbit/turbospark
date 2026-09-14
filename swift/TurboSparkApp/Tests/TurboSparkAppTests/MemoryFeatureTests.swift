@@ -342,6 +342,7 @@ final class MemoryFeatureTests: XCTestCase {
     func testAHashDraftSavesAMemoryWithoutGenerating() {
         let root = makeScratchDirectory("quicksave-project")
         let model = makeProjectModel(project: makeProject(root: root))
+        model.memoryEnabled = true
         model.promptText = "#  Always deploy with pnpm, never npm"
 
         model.run()
@@ -428,7 +429,7 @@ final class MemoryFeatureTests: XCTestCase {
     }
 
     @MainActor
-    func testTheMemoryCommandWithoutAProjectOpensNothing() {
+    func testTheMemoryCommandWithoutAProjectOpensProfileMemory() {
         let model = AppModel()
         model.interactionMode = .chat
         let chat = AppChat(title: "plain")
@@ -436,20 +437,41 @@ final class MemoryFeatureTests: XCTestCase {
         model.selectedChatID = chat.id
         var opened: [URL] = []
         model.handleMemoryCommand { opened.append($0) }
-        XCTAssertTrue(opened.isEmpty)
+        XCTAssertEqual(opened, [ProfileMemoryStore.shared.directory])
     }
 
     // MARK: - Settings plumbing
 
-    func testMemoryEnabledDefaultsOnAndRoundTripsOff() throws {
-        XCTAssertTrue(MacAppSettings().memoryEnabled)
-        let off = MacAppSettings(memoryEnabled: false)
+    func testMemoryEnabledDefaultsOffAndRoundTripsOn() throws {
+        XCTAssertFalse(MacAppSettings().memoryEnabled)
+        let off = MacAppSettings(memoryEnabled: true)
         let data = try JSONEncoder().encode(off)
-        XCTAssertEqual(try JSONDecoder().decode(MacAppSettings.self, from: data).memoryEnabled, false)
+        XCTAssertEqual(try JSONDecoder().decode(MacAppSettings.self, from: data).memoryEnabled, true)
         let legacy = #"{"temperature":0.2}"#
         XCTAssertEqual(
             try JSONDecoder().decode(MacAppSettings.self, from: Data(legacy.utf8)).memoryEnabled,
-            true,
+            false,
             "a settings file written before the field existed decodes to the default")
+    }
+
+    func testProfileMemoryAppendsTimestampedMarkdownAndSearchesIt() throws {
+        let root = makeScratchDirectory("profile-memory")
+        let store = ProfileMemoryStore(base: root)
+        try store.write("# Existing preference\n")
+        _ = try store.append("Prefer concise release notes", timestamp: Date(timeIntervalSince1970: 0))
+        let text = store.load()
+        XCTAssertTrue(text.contains("# Existing preference"))
+        XCTAssertTrue(text.contains("1970-01-01T00:00:00"))
+        XCTAssertEqual(store.lexicalSearch("concise release").count, 1)
+    }
+
+    func testProfilePromptContainsDateAndProfileMemoryOnlyWhenEnabled() {
+        let previous = MemoryStore.shared.isModelEnabled
+        defer { MemoryStore.shared.isModelEnabled = previous }
+        MemoryStore.shared.isModelEnabled = true
+        let prompt = MemoryPromptBuilder.profileSection(store: ProfileMemoryStore(), userPrompt: "preferences")
+        XCTAssertTrue(prompt.contains("## Profile Memory"))
+        XCTAssertTrue(prompt.contains("T"))
+        MemoryStore.shared.isModelEnabled = false
     }
 }

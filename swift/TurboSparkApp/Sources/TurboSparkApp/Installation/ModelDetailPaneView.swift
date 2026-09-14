@@ -50,6 +50,11 @@ struct ModelDetailPaneView: View {
                 heroHeader
                 capabilityTags
                 actionCard
+                ModelSteeringCardView(
+                    model: model,
+                    catalogEntry: entry,
+                    installedModel: installedModel
+                )
                 ModelHardwareFitCardView(
                     recommendation: recommendation,
                     entry: entry

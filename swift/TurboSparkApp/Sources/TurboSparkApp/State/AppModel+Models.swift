@@ -216,6 +216,12 @@ extension AppModel {
         // up naming different models -- the pane says one thing and the turn
         // runs another, with no error anywhere.
         guard !generating, !opening else { return }
+        if let steeringReason = steeringOpenBlockReason(for: model) {
+            let message = "Cannot load " + model.alias + " with steering enabled: " + steeringReason
+            error = message
+            showToast(message, style: .error, duration: 8.0)
+            return
+        }
         opening = true
         error = nil
         // **DETACHED RATHER THAN MERELY DROPPED, and detached rather than
@@ -463,4 +469,3 @@ extension AppModel {
         }
     }
 }
-

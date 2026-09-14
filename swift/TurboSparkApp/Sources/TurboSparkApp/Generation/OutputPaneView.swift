@@ -7,6 +7,7 @@ struct OutputPaneView: View {
     @ObservedObject var model: AppModel
     @State private var responseCopyFeedbackID: UUID?
     @State private var lastRunningState = false
+    @State private var showingMemoryCapture = false
 
     var body: some View {
         Group {
@@ -34,6 +35,13 @@ struct OutputPaneView: View {
                 copy(model.outputConversationPlainText)
             } label: { Text("Copy conversation", bundle: .module) }
             .disabled(model.outputConversationPlainText.isEmpty)
+
+            if model.memoryEnabled {
+                Button {
+                    showingMemoryCapture = true
+                } label: { Text("Add conversation to memory", bundle: .module) }
+                .disabled(model.outputConversationPlainText.isEmpty)
+            }
 
             Divider()
 
@@ -101,6 +109,12 @@ struct OutputPaneView: View {
         // The qwen-code git-command sheet (`/diff`, `/log`, `/prs`).
         .sheet(isPresented: $model.showGitSheet) {
             GitInfoSheet(model: model)
+        }
+        .sheet(isPresented: $showingMemoryCapture) {
+            ProfileMemoryCaptureSheet(
+                model: model,
+                isPresented: $showingMemoryCapture,
+                source: model.outputConversationPlainText)
         }
         // `/delete` asks first, exactly like the sidebar's Delete action.
         .alert(
@@ -205,7 +219,9 @@ private struct ChatTranscriptView: View {
                     // The live task checklist sits OUTSIDE the streaming row
                     // (same rationale as BackgroundAgentsStripView below): it
                     // must stay visible while the turn runs AND after it ends.
-                    TaskChecklistPanelView(model: model)
+                    if model.selectedChat.projectID == nil {
+                        TaskChecklistPanelView(model: model)
+                    }
 
                     // The active-goal banner, same rationale: the goal must
                     // stay visible (and stoppable) through its whole loop.
