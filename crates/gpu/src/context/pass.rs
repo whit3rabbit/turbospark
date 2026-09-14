@@ -186,6 +186,7 @@ impl PassEncoder {
         }
         CommittedPass {
             command_buffer: self.command_buffer.clone(),
+            wait_on_drop: false,
         }
     }
 }
@@ -208,10 +209,10 @@ impl Drop for PassEncoder {
     }
 }
 
-/// A committed, not-yet-waited-on command buffer. Dropping it without
-/// waiting is fine: the queue keeps the buffer alive until it completes.
+/// A committed, not-yet-waited-on command buffer.
 pub struct CommittedPass {
     command_buffer: metal::CommandBuffer,
+    wait_on_drop: bool,
 }
 
 /// `waitUntilCompleted` returns NORMALLY on a buffer whose work the GPU
@@ -253,12 +254,22 @@ pub(crate) fn warn_on_command_buffer_error(command_buffer: &metal::CommandBuffer
 }
 
 impl CommittedPass {
+    /// Makes dropping this handle wait for completion. Use this whenever
+    /// resources referenced by the pass can otherwise be released after an
+    /// error; Metal retaining its buffer objects does not retain external
+    /// bytes-no-copy backing allocations.
+    pub fn waiting_on_drop(mut self) -> Self {
+        self.wait_on_drop = true;
+        self
+    }
+
     /// Blocks until this buffer finishes. Its shared-storage outputs are
     /// CPU-readable after this returns; buffers committed after it may
     /// still be running.
-    pub fn wait(self) {
+    pub fn wait(mut self) {
         self.command_buffer.wait_until_completed();
         warn_on_command_buffer_error(&self.command_buffer);
+        self.wait_on_drop = false;
     }
 
     /// [`Self::wait`] that also reports the buffer's GPU-side busy
@@ -271,7 +282,7 @@ impl CommittedPass {
     // The allow is for objc's `sel_impl!`, whose expansion carries a
     // `cfg(feature = "cargo-clippy")` this crate does not declare.
     #[allow(unexpected_cfgs)]
-    pub fn wait_with_gpu_time(self) -> f64 {
+    pub fn wait_with_gpu_time(mut self) -> f64 {
         use metal::objc::{msg_send, sel, sel_impl};
         self.command_buffer.wait_until_completed();
         warn_on_command_buffer_error(&self.command_buffer);
@@ -283,6 +294,16 @@ impl CommittedPass {
             let cb: &metal::CommandBufferRef = &self.command_buffer;
             (msg_send![cb, GPUStartTime], msg_send![cb, GPUEndTime])
         };
+        self.wait_on_drop = false;
         (end - start).max(0.0)
+    }
+}
+
+impl Drop for CommittedPass {
+    fn drop(&mut self) {
+        if self.wait_on_drop {
+            self.command_buffer.wait_until_completed();
+            warn_on_command_buffer_error(&self.command_buffer);
+        }
     }
 }

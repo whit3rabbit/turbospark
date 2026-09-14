@@ -173,7 +173,7 @@ impl RealForwardRunner {
                 }
             }
 
-            let cb1 = pass.commit();
+            let cb1 = pass.commit().waiting_on_drop();
             let t_wait = Instant::now();
             self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
@@ -216,16 +216,18 @@ impl RealForwardRunner {
                             previous_slots.clone()
                         },
                     };
-                    if self.shared_cb_overlap {
-                        self.encode_shared_expert_branch(
+                    let _shared_pass = if self.shared_cb_overlap {
+                        Some(self.encode_shared_expert_branch(
                             layer,
                             hidden,
                             inter,
                             use_silu,
                             &slot,
                             (&h1, 0),
-                        )?;
-                    }
+                        )?)
+                    } else {
+                        None
+                    };
                     let routed_pass = self.context.begin_pass_labeled("routed cb");
                     let used = self.encode_gemma4_layer_routed_moe(
                         &routed_pass,
@@ -273,7 +275,7 @@ impl RealForwardRunner {
                         self.retire_routed(&mut pending_routed);
                     }
                     debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-                    pending_routed = Some(routed_pass.commit());
+                    pending_routed = Some(routed_pass.commit().waiting_on_drop());
                     previous_slots = used.into_iter().collect();
                 }
             }

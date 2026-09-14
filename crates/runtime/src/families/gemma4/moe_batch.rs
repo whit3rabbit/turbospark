@@ -131,8 +131,12 @@ impl RealForwardRunner {
         // Under `TURBOSPARK_BATCHED_GEMV` all M tokens share ONE command
         // buffer and three M-row GEMMs; otherwise each rides its own
         // committed buffer with three GEMVs, which is what shipped.
+        // Keep the draining handles alive across every fallible routed-I/O
+        // step below without serializing the shared passes at submission.
+        let mut _shared_passes = Vec::with_capacity(if self.batched_gemv_prefill { 1 } else { m });
         if self.batched_gemv_prefill {
-            self.encode_shared_expert_branch_batched(layer, hidden, inter, use_silu, m)?;
+            _shared_passes
+                .push(self.encode_shared_expert_branch_batched(layer, hidden, inter, use_silu, m)?);
         } else {
             for t in 0..m {
                 let slot = moe::RoutedSlot {
@@ -140,14 +144,14 @@ impl RealForwardRunner {
                     bank: 0,
                     protect: HashSet::new(),
                 };
-                self.encode_shared_expert_branch(
+                _shared_passes.push(self.encode_shared_expert_branch(
                     layer,
                     hidden,
                     inter,
                     use_silu,
                     &slot,
                     (&batch_h1, (t * hidden * 2) as u64),
-                )?;
+                )?);
             }
         }
 
@@ -386,7 +390,7 @@ impl RealForwardRunner {
             }
 
             sub_start += sub_len;
-            committed = Some(pass.commit());
+            committed = Some(pass.commit().waiting_on_drop());
         }
 
         Ok(committed.expect("m >= 1 guarantees at least one sub-batch"))
