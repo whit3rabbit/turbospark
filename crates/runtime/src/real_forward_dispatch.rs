@@ -13,6 +13,58 @@ use crate::real_forward_utils::{affine_group_size, entry, resident_matrix};
 
 pub(crate) use crate::real_forward_dispatch_moe::{encode_moe_phase1_any, encode_moe_phase2_any};
 
+fn validate_q4_k_embedding(
+    e: &model_io::ResidentIndexEntry,
+    name: &str,
+    token: u32,
+    hidden: u32,
+) -> Result<(), RealForwardError> {
+    let (rows, cols, depth, planes) = e.shape;
+    if cols != hidden || depth != 0 || planes != 0 {
+        return Err(RealForwardError::Unsupported(format!(
+            "embedding table {name}: Q4_K shape {:?} does not match [vocab, {hidden}]",
+            e.shape
+        )));
+    }
+    if token >= rows {
+        return Err(RealForwardError::Unsupported(format!(
+            "embedding table {name}: token {token} is outside {rows} rows"
+        )));
+    }
+    let hidden = u64::from(hidden);
+    let block_elems = gpu::Q4_K_BLOCK_ELEMS as u64;
+    if hidden == 0 || hidden % block_elems != 0 {
+        return Err(RealForwardError::Unsupported(format!(
+            "embedding table {name}: Q4_K width {hidden} is not a whole number of {block_elems}-element blocks"
+        )));
+    }
+    let row_bytes = (hidden / block_elems)
+        .checked_mul(gpu::Q4_K_BLOCK_BYTES as u64)
+        .ok_or_else(|| {
+            RealForwardError::Unsupported(format!(
+                "embedding table {name}: Q4_K row size overflows"
+            ))
+        })?;
+    let expected = u64::from(rows).checked_mul(row_bytes).ok_or_else(|| {
+        RealForwardError::Unsupported(format!("embedding table {name}: Q4_K table size overflows"))
+    })?;
+    let selected_end = u64::from(token)
+        .checked_add(1)
+        .and_then(|row| row.checked_mul(row_bytes))
+        .ok_or_else(|| {
+            RealForwardError::Unsupported(format!(
+                "embedding table {name}: Q4_K selected row overflows"
+            ))
+        })?;
+    if e.size_bytes != expected || selected_end > e.size_bytes {
+        return Err(RealForwardError::Unsupported(format!(
+            "embedding table {name}: Q4_K packed size {} does not contain {rows}x{hidden} bytes ({expected}) or selected row {token}",
+            e.size_bytes
+        )));
+    }
+    Ok(())
+}
+
 /// Dispatches the embedding lookup matching the table's dtype tag: 4 =
 /// INT4-affine, 15 = 1-bit affine, plus the GGUF block types a real file puts
 /// an embedding table in.
@@ -45,6 +97,7 @@ pub(crate) fn encode_embed_any(
                 .map_err(RealForwardError::Gpu)
         }
         DTYPE_GGUF_Q4_K => {
+            validate_q4_k_embedding(e, name, token, hidden)?;
             gpu::encode_embed_lookup_q4_k(context, pass, table, out, token, hidden, embed_scale)
                 .map_err(RealForwardError::Gpu)
         }
@@ -444,6 +497,38 @@ pub(crate) fn router_topk_gemma4(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn q4_k_embedding(rows: u32, cols: u32) -> model_io::ResidentIndexEntry {
+        model_io::ResidentIndexEntry {
+            name: "token_embd.weight".to_string(),
+            dtype: DTYPE_GGUF_Q4_K,
+            file_offset: 4096,
+            size_bytes: u64::from(rows)
+                * (u64::from(cols) / gpu::Q4_K_BLOCK_ELEMS as u64)
+                * gpu::Q4_K_BLOCK_BYTES as u64,
+            shape: (rows, cols, 0, 0),
+            scale_offset: 0,
+            scale_size: 0,
+            bias_offset: 0,
+            bias_size: 0,
+        }
+    }
+
+    #[test]
+    fn q4_k_embedding_validation_bounds_shape_size_and_selected_row() {
+        let valid = q4_k_embedding(256, 256);
+        validate_q4_k_embedding(&valid, &valid.name, 255, 256).unwrap();
+
+        let mut wrong_shape = valid.clone();
+        wrong_shape.shape.1 = 512;
+        assert!(validate_q4_k_embedding(&wrong_shape, &wrong_shape.name, 0, 256).is_err());
+
+        let mut short = valid.clone();
+        short.size_bytes -= gpu::Q4_K_BLOCK_BYTES as u64;
+        assert!(validate_q4_k_embedding(&short, &short.name, 255, 256).is_err());
+
+        assert!(validate_q4_k_embedding(&valid, &valid.name, 256, 256).is_err());
+    }
 
     #[test]
     fn router_topk_gemma4_handles_empty_or_zero_k() {
