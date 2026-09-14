@@ -11,92 +11,97 @@ use super::session::Session;
 /// with a short prompt and a long generation if you want a decode number.
 pub(crate) fn print_phases(session: &Session) {
     let phases_enabled = std::env::var("TURBOSPARK_PHASES").as_deref() == Ok("1");
-    if !phases_enabled {
+    let dispatch_profile_enabled =
+        std::env::var("TURBOSPARK_DISPATCH_PROFILE").as_deref() == Ok("1");
+    if !phases_enabled && !dispatch_profile_enabled {
         return;
     }
     let p = session.runner.phase_counters();
     if p.calls == 0 {
         return;
     }
-    let ms = |nanos: u64| nanos as f64 / 1e6;
-    let per_call = |nanos: u64| nanos as f64 / 1e6 / p.calls as f64;
-    // Everything not in a named bucket: CPU dispatch encoding plus the
-    // final full-vocab logits readback.
-    let accounted = p.gpu_wait_nanos
-        + p.final_wait_nanos
-        + p.router_nanos
-        + p.expert_io_nanos
-        + p.bind_nanos
-        + p.pipeline_wait_nanos;
-    let other = p.total_nanos.saturating_sub(accounted);
-    eprintln!(
-        "[phases over {} forward passes, {:.0} ms total]",
-        p.calls,
-        ms(p.total_nanos)
-    );
-    for (label, nanos) in [
-        ("gpu wait (layer cb1)  ", p.gpu_wait_nanos),
-        ("final wait (end token)", p.final_wait_nanos),
-        ("router readback+topk  ", p.router_nanos),
-        ("expert io (pread)     ", p.expert_io_nanos),
-        ("routed bind+upload    ", p.bind_nanos),
-        ("routed cb retire      ", p.pipeline_wait_nanos),
-        ("encode + logit readbk ", other),
-    ] {
+    if phases_enabled {
+        let ms = |nanos: u64| nanos as f64 / 1e6;
+        let per_call = |nanos: u64| nanos as f64 / 1e6 / p.calls as f64;
+        // Everything not in a named bucket: CPU dispatch encoding plus the
+        // final full-vocab logits readback.
+        let accounted = p.gpu_wait_nanos
+            + p.final_wait_nanos
+            + p.router_nanos
+            + p.expert_io_nanos
+            + p.bind_nanos
+            + p.pipeline_wait_nanos;
+        let other = p.total_nanos.saturating_sub(accounted);
         eprintln!(
-            "  {label}: {:>8.1} ms  {:>5.1}%  {:>6.2} ms/token",
-            ms(nanos),
-            100.0 * nanos as f64 / p.total_nanos.max(1) as f64,
-            per_call(nanos)
+            "[phases over {} forward passes, {:.0} ms total]",
+            p.calls,
+            ms(p.total_nanos)
         );
-    }
-    // GPU-side busy time per command-buffer class: a separate axis from
-    // the wall-clock buckets above (never part of their sum). Shared and
-    // hit buffers are dropped unwaited and stay unattributed.
-    if p.cb1_gpu_nanos > 0 {
-        eprintln!(
-            "  gpu busy: cb1 (attn+router{}) {:.2} ms/token, routed cb {:.2}, final {:.2}",
-            if p.routed_cb_gpu_nanos > 0 {
-                ""
+        for (label, nanos) in [
+            ("gpu wait (layer cb1)  ", p.gpu_wait_nanos),
+            ("final wait (end token)", p.final_wait_nanos),
+            ("router readback+topk  ", p.router_nanos),
+            ("expert io (pread)     ", p.expert_io_nanos),
+            ("routed bind+upload    ", p.bind_nanos),
+            ("routed cb retire      ", p.pipeline_wait_nanos),
+            ("encode + logit readbk ", other),
+        ] {
+            eprintln!(
+                "  {label}: {:>8.1} ms  {:>5.1}%  {:>6.2} ms/token",
+                ms(nanos),
+                100.0 * nanos as f64 / p.total_nanos.max(1) as f64,
+                per_call(nanos)
+            );
+        }
+        // GPU-side busy time per command-buffer class: a separate axis from
+        // the wall-clock buckets above (never part of their sum). Shared and
+        // hit buffers are dropped unwaited and stay unattributed.
+        if p.cb1_gpu_nanos > 0 {
+            eprintln!(
+                "  gpu busy: cb1 (attn+router{}) {:.2} ms/token, routed cb {:.2}, final {:.2}",
+                if p.routed_cb_gpu_nanos > 0 {
+                    ""
+                } else {
+                    "+routed"
+                },
+                per_call(p.cb1_gpu_nanos),
+                per_call(p.routed_cb_gpu_nanos),
+                per_call(p.final_cb_gpu_nanos)
+            );
+        }
+        if p.expert_requests > 0 {
+            eprintln!(
+                "  expert cache: {} requests, {} hits ({:.1}%), {} misses",
+                p.expert_requests,
+                p.expert_hits,
+                100.0 * p.expert_hits as f64 / p.expert_requests as f64,
+                p.expert_requests - p.expert_hits
+            );
+        }
+        // Bytes, not wall clock: a THIRD axis alongside the `gpu busy` rows,
+        // deliberately outside the named-bucket sum above. This is what says
+        // whether `expert io` above was a page-cache memcpy or real disk I/O,
+        // which is a question the ms/token figure cannot answer on its own.
+        if p.expert_io_bytes_requested > 0 {
+            let mib_per_token =
+                |bytes: u64| bytes as f64 / (1024.0 * 1024.0) / p.calls.max(1) as f64;
+            // An unmeasured run must not read as a proven-warm one: without a
+            // sample there is no physical number to print at all.
+            let physical = if p.expert_io_samples > 0 {
+                format!(
+                    "{:.1} MiB/token, {:.2}x amplification",
+                    mib_per_token(p.expert_io_bytes_physical),
+                    p.expert_io_bytes_physical as f64 / p.expert_io_bytes_requested as f64
+                )
             } else {
-                "+routed"
-            },
-            per_call(p.cb1_gpu_nanos),
-            per_call(p.routed_cb_gpu_nanos),
-            per_call(p.final_cb_gpu_nanos)
-        );
-    }
-    if p.expert_requests > 0 {
-        eprintln!(
-            "  expert cache: {} requests, {} hits ({:.1}%), {} misses",
-            p.expert_requests,
-            p.expert_hits,
-            100.0 * p.expert_hits as f64 / p.expert_requests as f64,
-            p.expert_requests - p.expert_hits
-        );
-    }
-    // Bytes, not wall clock: a THIRD axis alongside the `gpu busy` rows,
-    // deliberately outside the named-bucket sum above. This is what says
-    // whether `expert io` above was a page-cache memcpy or real disk I/O,
-    // which is a question the ms/token figure cannot answer on its own.
-    if p.expert_io_bytes_requested > 0 {
-        let mib_per_token = |bytes: u64| bytes as f64 / (1024.0 * 1024.0) / p.calls.max(1) as f64;
-        // An unmeasured run must not read as a proven-warm one: without a
-        // sample there is no physical number to print at all.
-        let physical = if p.expert_io_samples > 0 {
-            format!(
-                "{:.1} MiB/token, {:.2}x amplification",
-                mib_per_token(p.expert_io_bytes_physical),
-                p.expert_io_bytes_physical as f64 / p.expert_io_bytes_requested as f64
-            )
-        } else {
-            "n/a (set TURBOSPARK_EXPERT_DISK_IO=1)".to_string()
-        };
-        eprintln!(
-            "  expert bytes: requested {:.1} MiB/token, physical {}",
-            mib_per_token(p.expert_io_bytes_requested),
-            physical
-        );
+                "n/a (set TURBOSPARK_EXPERT_DISK_IO=1)".to_string()
+            };
+            eprintln!(
+                "  expert bytes: requested {:.1} MiB/token, physical {}",
+                mib_per_token(p.expert_io_bytes_requested),
+                physical
+            );
+        }
     }
     // One level below the buffer buckets above: which dispatch inside a
     // buffer owns its time. Off unless TURBOSPARK_DISPATCH_PROFILE=1, which
