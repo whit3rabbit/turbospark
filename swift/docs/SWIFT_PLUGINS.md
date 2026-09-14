@@ -113,7 +113,10 @@ non-ASCII, or the reserved `inline`/`builtin`), `owner`,
 `MarketplaceSource` / `MarketplaceGit` pair: `github`, `git`, and
 `directory` install; a bare `./relative` path installs from the
 marketplace checkout; `url` can list but cannot install relative entries
-(it never materializes a checkout) and says so.
+(it never materializes a checkout) and says so. Entry paths and
+`metadata.pluginRoot` are resolved through symlinks and must remain inside
+the materialized checkout. Only a locally configured `directory`
+marketplace may install an entry whose source is another local directory.
 
 Installs land in the versioned cache with the version resolved manifest >
 entry > git sha12 > `"unknown"`, and are recorded in the v2 ledger

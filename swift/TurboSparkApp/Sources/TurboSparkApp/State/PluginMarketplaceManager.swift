@@ -196,6 +196,7 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
         entry: PluginManifestParser.MarketplaceEntry,
         marketplaceName: String,
         checkoutDirectory: URL?,
+        marketplaceSource: MarketplaceSource,
         scope: String,
         projectRootURL: URL? = nil
     ) async throws -> InstallOutcome {
@@ -236,7 +237,9 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
             if let pluginRoot = manifest?.pluginRoot {
                 base = checkoutDirectory.appendingPathComponent(pluginRoot)
             }
-            let sourceDir = base.appendingPathComponent(relative)
+            let sourceDir = try Self.confinedSource(
+                base.appendingPathComponent(relative), within: checkoutDirectory,
+                pluginName: entry.name)
             guard FileManager.default.fileExists(atPath: sourceDir.path) else {
                 throw PluginLoadError(
                     pluginName: entry.name,
@@ -263,10 +266,19 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
                 let temp = staging.appendingPathComponent("clone")
                 try await MarketplaceGit.cloneOrPull(
                     url: url, targetDir: temp, ref: ref, sparsePaths: sparse)
-                let sourceDir = path.map { temp.appendingPathComponent($0) } ?? temp
+                let sourceDir = try path.map {
+                    try Self.confinedSource(
+                        temp.appendingPathComponent($0), within: temp,
+                        pluginName: entry.name)
+                } ?? temp
                 try Self.copyContents(of: sourceDir, to: stagedRoot)
                 gitDirForSha = temp
             case .directory(let path):
+                guard case .directory = marketplaceSource else {
+                    throw PluginLoadError(
+                        pluginName: entry.name,
+                        reason: "Remote marketplaces cannot install a local directory source")
+                }
                 try Self.copyContents(
                     of: URL(fileURLWithPath: path, isDirectory: true), to: stagedRoot)
                 gitDirForSha = nil
@@ -450,6 +462,20 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
             }
             try fm.copyItem(at: sourceItem, to: destinationItem)
         }
+    }
+
+    /// Resolves traversal and symlinks before accepting a path selected by
+    /// marketplace metadata. The checkout directory itself is a valid source.
+    static func confinedSource(_ source: URL, within checkout: URL, pluginName: String) throws -> URL {
+        let root = checkout.standardizedFileURL.resolvingSymlinksInPath()
+        let resolved = source.standardizedFileURL.resolvingSymlinksInPath()
+        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        guard resolved.path == root.path || resolved.path.hasPrefix(prefix) else {
+            throw PluginLoadError(
+                pluginName: pluginName,
+                reason: "Plugin source must remain inside the marketplace checkout")
+        }
+        return resolved
     }
 
     /// The checked-out commit, for the sha12 version fallback. Nil when the

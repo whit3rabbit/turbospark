@@ -332,6 +332,7 @@ struct PluginMarketplaceSheet: View {
         }
         guard let marketplaceName = selectedMarketplaceName else { return }
         let targetCheckout = checkoutDirectory
+        guard let marketplaceSource = marketplaces[marketplaceName] else { return }
         isLoading = true
         Task {
             defer { isLoading = false }
@@ -339,6 +340,7 @@ struct PluginMarketplaceSheet: View {
                 entry: entry,
                 marketplaceName: marketplaceName,
                 checkoutDirectory: targetCheckout,
+                marketplaceSource: marketplaceSource,
                 scope: scope)
             if outcome != nil {
                 refreshInstalledIDs()
