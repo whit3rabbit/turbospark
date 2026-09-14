@@ -238,6 +238,12 @@ fn parse_qwen4_extensions(
             "ngram_size {ngram_size} and heads_per_ngram {heads_per_ngram} give {heads} hash heads"
         )));
     }
+    if ple.ple_embed_dim < 1 {
+        return Err(Gemma4Error::Config(format!(
+            "ple_embed_dim {} is not positive",
+            ple.ple_embed_dim
+        )));
+    }
     if ple.ple_embed_dim % heads != 0 {
         return Err(Gemma4Error::Config(format!(
             "ple_embed_dim {} is not divisible by {heads} hash heads",

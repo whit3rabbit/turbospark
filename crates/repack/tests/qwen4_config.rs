@@ -394,6 +394,11 @@ fn an_inconsistent_ple_or_indexer_block_is_refused() {
     root["text_config"]["ple_embed_dim"] = serde_json::json!(2561);
     parse_qwen4_exp_config(&root.to_string()).expect_err("indivisible embed dim refused");
 
+    let mut root: serde_json::Value =
+        serde_json::from_str(&full_config_json()).expect("valid json");
+    root["text_config"]["ple_embed_dim"] = serde_json::json!(0);
+    parse_qwen4_exp_config(&root.to_string()).expect_err("zero embed dim refused");
+
     // The budget must be a whole number of blocks, or the derived block top-k
     // does not describe the budget the checkpoint declares.
     let mut root: serde_json::Value =

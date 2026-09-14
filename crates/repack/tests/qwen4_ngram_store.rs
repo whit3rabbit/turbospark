@@ -60,8 +60,8 @@ fn plane_byte(gid: u64, plane: u8) -> u8 {
 }
 
 fn shard_planes(shard: u64, spec: &NgramTableSpec) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let w = spec.weight_bytes() as usize;
-    let c = spec.companion_bytes() as usize;
+    let w = spec.weight_bytes().expect("valid spec") as usize;
+    let c = spec.companion_bytes().expect("valid spec") as usize;
     let mut weight = Vec::new();
     let mut scales = Vec::new();
     let mut biases = Vec::new();
@@ -103,7 +103,7 @@ fn write_table(dir: &std::path::Path) -> NgramTableSpec {
         total += s;
     }
     assert!(
-        (total as u64) < s.rows(),
+        (total as u64) < s.rows().expect("valid spec"),
         "the fixture's heads must underfill its table, as the real one's do"
     );
     w.finish(vec![1, 3, 5], sizes, offsets).expect("finish");
@@ -119,7 +119,7 @@ fn the_written_table_reads_back_at_every_row() {
         .expect("header loads")
         .expect("a table was written");
     assert_eq!(layout.rows, ROWS_PER_SHARD * SHARDS);
-    assert_eq!(layout.record_bytes, s.record_bytes());
+    assert_eq!(layout.record_bytes, s.record_bytes().expect("valid spec"));
 
     let blob = std::fs::read(
         dir.join(model_io::NGRAM_TABLE_DIR)
@@ -283,6 +283,21 @@ fn an_unwritable_shape_is_refused_before_anything_is_created() {
         panic!("3-bit rows have no dequantizer here");
     };
     assert!(format!("{err}").contains("dequantizer"), "{err}");
+
+    let mut s = spec();
+    s.head_dim = 1 << 62;
+    let Err(err) = NgramTableWriter::create(&dir, s) else {
+        panic!("overflowing row dimensions must be refused");
+    };
+    assert!(format!("{err}").contains("whole number of bytes"), "{err}");
+
+    let mut s = spec();
+    s.rows_per_shard = u64::MAX;
+    s.shards = 2;
+    let Err(err) = NgramTableWriter::create(&dir, s) else {
+        panic!("overflowing table row count must be refused");
+    };
+    assert!(format!("{err}").contains("overflow"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

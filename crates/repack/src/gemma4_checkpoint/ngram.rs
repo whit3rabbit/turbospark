@@ -59,27 +59,50 @@ pub struct NgramTableSpec {
 }
 
 impl NgramTableSpec {
+    fn checked_layout(&self) -> Result<(u64, u64, u64, u64), Gemma4Error> {
+        let overflow = || Gemma4Error::ShapeMismatch {
+            tensor: "ngram_table".to_string(),
+            detail: "table dimensions overflow the install format".to_string(),
+        };
+        let weight = self
+            .head_dim
+            .checked_mul(self.bits)
+            .and_then(|bits| bits.checked_div(8))
+            .ok_or_else(overflow)?;
+        let companion = self
+            .head_dim
+            .checked_div(self.group_size)
+            .and_then(|groups| groups.checked_mul(2))
+            .ok_or_else(overflow)?;
+        let record = companion
+            .checked_mul(2)
+            .and_then(|bytes| weight.checked_add(bytes))
+            .ok_or_else(overflow)?;
+        let rows = self
+            .rows_per_shard
+            .checked_mul(self.shards)
+            .ok_or_else(overflow)?;
+        Ok((weight, companion, record, rows))
+    }
+
     /// Packed-weight bytes in one row.
-    pub fn weight_bytes(&self) -> u64 {
-        self.head_dim * self.bits / 8
+    pub fn weight_bytes(&self) -> Result<u64, Gemma4Error> {
+        self.checked_layout().map(|layout| layout.0)
     }
 
     /// Scale (and, separately, bias) bytes in one row: one BF16 per group.
-    pub fn companion_bytes(&self) -> u64 {
-        if self.group_size == 0 {
-            return 0;
-        }
-        self.head_dim / self.group_size * 2
+    pub fn companion_bytes(&self) -> Result<u64, Gemma4Error> {
+        self.checked_layout().map(|layout| layout.1)
     }
 
     /// Bytes in one interleaved record.
-    pub fn record_bytes(&self) -> u64 {
-        self.weight_bytes() + 2 * self.companion_bytes()
+    pub fn record_bytes(&self) -> Result<u64, Gemma4Error> {
+        self.checked_layout().map(|layout| layout.2)
     }
 
     /// Total rows.
-    pub fn rows(&self) -> u64 {
-        self.rows_per_shard * self.shards
+    pub fn rows(&self) -> Result<u64, Gemma4Error> {
+        self.checked_layout().map(|layout| layout.3)
     }
 
     /// Refuses a shape this writer cannot express, before it writes anything.
@@ -106,7 +129,7 @@ impl NgramTableSpec {
         }
         // A row's packed run must be a whole number of bytes, or the record
         // boundary falls mid-byte and every row after the first is shifted.
-        if self.head_dim * self.bits % 8 != 0 {
+        if self.head_dim.checked_mul(self.bits).map(|bits| bits % 8) != Some(0) {
             return bad(format!(
                 "{} values at {} bits is not a whole number of bytes",
                 self.head_dim, self.bits
@@ -115,6 +138,7 @@ impl NgramTableSpec {
         if self.rows_per_shard == 0 || self.shards == 0 {
             return bad("the table is empty".to_string());
         }
+        self.checked_layout()?;
         Ok(())
     }
 }
@@ -178,15 +202,33 @@ impl NgramTableWriter {
                 ),
             });
         }
-        let rows = self.spec.rows_per_shard as usize;
-        let w = self.spec.weight_bytes() as usize;
-        let c = self.spec.companion_bytes() as usize;
+        let rows =
+            usize::try_from(self.spec.rows_per_shard).map_err(|_| Gemma4Error::ShapeMismatch {
+                tensor: "ngram_table".to_string(),
+                detail: "rows per shard do not fit this platform".to_string(),
+            })?;
+        let w =
+            usize::try_from(self.spec.weight_bytes()?).map_err(|_| Gemma4Error::ShapeMismatch {
+                tensor: "ngram_table".to_string(),
+                detail: "weight row width does not fit this platform".to_string(),
+            })?;
+        let c = usize::try_from(self.spec.companion_bytes()?).map_err(|_| {
+            Gemma4Error::ShapeMismatch {
+                tensor: "ngram_table".to_string(),
+                detail: "companion row width does not fit this platform".to_string(),
+            }
+        })?;
         for (plane, name, stride) in [
             (weight, "weight", w),
             (scales, "scales", c),
             (biases, "biases", c),
         ] {
-            let want = rows * stride;
+            let want = rows
+                .checked_mul(stride)
+                .ok_or_else(|| Gemma4Error::ShapeMismatch {
+                    tensor: format!("ngram_table shard {shard} {name}"),
+                    detail: "plane byte length overflows this platform".to_string(),
+                })?;
             if plane.len() != want {
                 return Err(Gemma4Error::ShapeMismatch {
                     tensor: format!("ngram_table shard {shard} {name}"),
@@ -195,7 +237,19 @@ impl NgramTableWriter {
             }
         }
 
-        let mut record = vec![0u8; self.spec.record_bytes() as usize];
+        let record_bytes =
+            usize::try_from(self.spec.record_bytes()?).map_err(|_| Gemma4Error::ShapeMismatch {
+                tensor: "ngram_table".to_string(),
+                detail: "record width does not fit this platform".to_string(),
+            })?;
+        let mut record = Vec::new();
+        record
+            .try_reserve_exact(record_bytes)
+            .map_err(|e| Gemma4Error::ShapeMismatch {
+                tensor: "ngram_table".to_string(),
+                detail: format!("cannot allocate {record_bytes}-byte row record: {e}"),
+            })?;
+        record.resize(record_bytes, 0);
         for r in 0..rows {
             record[..w].copy_from_slice(&weight[r * w..(r + 1) * w]);
             record[w..w + c].copy_from_slice(&scales[r * c..(r + 1) * c]);
@@ -243,10 +297,10 @@ impl NgramTableWriter {
             "headDim": self.spec.head_dim,
             "groupSize": self.spec.group_size,
             "bits": self.spec.bits,
-            "recordBytes": self.spec.record_bytes(),
-            "weightBytes": self.spec.weight_bytes(),
-            "scaleBytes": self.spec.companion_bytes(),
-            "biasBytes": self.spec.companion_bytes(),
+            "recordBytes": self.spec.record_bytes()?,
+            "weightBytes": self.spec.weight_bytes()?,
+            "scaleBytes": self.spec.companion_bytes()?,
+            "biasBytes": self.spec.companion_bytes()?,
             // The source's companions are BF16, and this is recorded rather
             // than assumed because FP16 is the same width: a wrong reading
             // passes every length check and decodes the scales as values
@@ -374,28 +428,123 @@ pub fn write_ngram_table(
 
     let spec = NgramTableSpec {
         rows_per_shard,
-        shards: plan.shards.len() as u64,
-        head_dim: arch.ple.head_dim() as u64,
+        shards: u64::try_from(plan.shards.len()).map_err(|_| Gemma4Error::ShapeMismatch {
+            tensor: "ngram_table".to_string(),
+            detail: "shard count does not fit the install format".to_string(),
+        })?,
+        head_dim: u64::try_from(arch.ple.head_dim()).map_err(|_| {
+            Gemma4Error::Config(format!(
+                "PLE head dimension {} is not positive",
+                arch.ple.head_dim()
+            ))
+        })?,
         group_size: NGRAM_GROUP_SIZE,
         bits: NGRAM_BITS,
-        layer_index: layer_index as u64,
+        layer_index: u64::try_from(layer_index).map_err(|_| {
+            Gemma4Error::Config(format!("PLE layer index {layer_index} is negative"))
+        })?,
     };
 
     let mut writer = NgramTableWriter::create(dir, spec)?;
     for (&shard, roles) in &plan.shards {
-        let weight = shards.read(ngram_tensor_name(roles, shard, "weight")?)?;
-        let scales = shards.read(ngram_tensor_name(roles, shard, "scales")?)?;
-        let biases = shards.read(ngram_tensor_name(roles, shard, "biases")?)?;
-        writer.write_shard(shard as u64, &weight, &scales, &biases)?;
+        let weight_name = ngram_tensor_name(roles, shard, "weight")?;
+        let scale_name = ngram_tensor_name(roles, shard, "scales")?;
+        let bias_name = ngram_tensor_name(roles, shard, "biases")?;
+        validate_plane_metadata(
+            shards,
+            weight_name,
+            "U32",
+            rows_per_shard,
+            spec.weight_bytes()?,
+            4,
+        )?;
+        validate_plane_metadata(
+            shards,
+            scale_name,
+            "BF16",
+            rows_per_shard,
+            spec.companion_bytes()?,
+            2,
+        )?;
+        validate_plane_metadata(
+            shards,
+            bias_name,
+            "BF16",
+            rows_per_shard,
+            spec.companion_bytes()?,
+            2,
+        )?;
+        let weight = shards.read(weight_name)?;
+        let scales = shards.read(scale_name)?;
+        let biases = shards.read(bias_name)?;
+        writer.write_shard(
+            u64::try_from(shard).map_err(|_| Gemma4Error::ShapeMismatch {
+                tensor: format!("ngram_table shard {shard}"),
+                detail: "shard index does not fit the install format".to_string(),
+            })?,
+            &weight,
+            &scales,
+            &biases,
+        )?;
         progress(&format!("n-gram shard {shard} of {} written", spec.shards));
     }
 
     let multipliers = read_i64_buffer(shards, plan, "layer_multipliers")?;
     let head_vocab_sizes = read_i64_buffer(shards, plan, "ngram_heads_vocab_sizes")?;
     let head_offsets = read_i64_buffer(shards, plan, "ngram_heads_offsets")?;
-    let rows = spec.rows();
+    let rows = spec.rows()?;
     writer.finish(multipliers, head_vocab_sizes, head_offsets)?;
     progress(&format!("n-gram table written ({rows} rows)"));
+    Ok(())
+}
+
+fn validate_plane_metadata(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    dtype: &str,
+    rows: u64,
+    row_bytes: u64,
+    element_bytes: u64,
+) -> Result<(), Gemma4Error> {
+    let info = shards.info(name)?;
+    if info.dtype != dtype {
+        return Err(Gemma4Error::UnsupportedDtype {
+            tensor: name.to_string(),
+            dtype: format!("{} in n-gram table (expected {dtype})", info.dtype),
+        });
+    }
+    let cols = row_bytes
+        .checked_div(element_bytes)
+        .ok_or_else(|| Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: "element width is zero".to_string(),
+        })?;
+    if info.shape.as_slice() != [rows, cols] {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("shape {:?}, expected [{rows}, {cols}]", info.shape),
+        });
+    }
+    let expected = rows
+        .checked_mul(row_bytes)
+        .ok_or_else(|| Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: "tensor byte length overflows the install format".to_string(),
+        })?;
+    let actual = info
+        .data_offsets
+        .1
+        .checked_sub(info.data_offsets.0)
+        .ok_or_else(|| Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: "tensor data range is inverted".to_string(),
+        })?;
+    if actual != expected {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("data range is {actual} bytes, expected {expected}"),
+        });
+    }
     Ok(())
 }
 
