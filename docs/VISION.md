@@ -437,10 +437,10 @@ TURBOSPARK_VISION_DUMP_DIR=/tmp/vision-dump \
 shapes, so pairing the install with the wrong checkpoint's weights compares
 two different models and fails nothing loudly.
 
-`vision_tower.*` is NOT contiguous in this checkpoint: the fetch spans
-min..max offset and pulls 4,885 MiB for 879 MiB of tensors, where Bonsai's
-span is 879 for 879. That over-fetches rather than missing data, which is
-correct and costs disk.
+`vision_tower.*` is NOT contiguous in this checkpoint: the original fetcher
+pulled a 4,885 MiB min..max span for 879 MiB of tensors, where Bonsai's span
+was 879 for 879. The fetcher now validates the remote metadata and streams
+each tensor separately, avoiding that historical over-fetch.
 
 ## The install
 
