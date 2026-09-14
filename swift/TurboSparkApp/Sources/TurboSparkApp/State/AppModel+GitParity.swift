@@ -6,6 +6,8 @@ import Foundation
 /// generates, and all of it works while a turn is running, like every other
 /// local command.
 extension AppModel {
+    static let gitDiffLineLimit = 10_000
+
     /// Which view the git sheet is showing. One sheet for the three commands
     /// (qwen-code's GitDialog is the same container with `diff | log | prs`
     /// views), so switching commands mid-flight keeps the chrome.
@@ -65,7 +67,7 @@ extension AppModel {
                 executable: "/usr/bin/git",
                 arguments: ["diff", "HEAD"], workingDirectory: root)
             let stat = result.exitCode == 0 ? result.stdout : ""
-            let body = full.exitCode == 0 ? full.stdout : ""
+            let body = full.exitCode == 0 ? Self.limitDiffLines(full.stdout) : ""
             if result.exitCode != 0 || full.exitCode != 0 {
                 gitInfoError = (result.stderr.isEmpty ? full.stderr : result.stderr)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -176,85 +178,36 @@ extension AppModel {
         }
     }
 
+    /// Bounds the number of SwiftUI rows a hostile or unusually noisy diff
+    /// can create. ProcessExecutor independently caps the bytes captured from
+    /// git; this second bound protects rendering when those bytes are mostly
+    /// very short lines.
+    static func limitDiffLines(_ text: String, maxLines: Int = gitDiffLineLimit) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard lines.count > maxLines else { return text }
+        return lines.prefix(maxLines).joined(separator: "\n")
+            + "\n... (diff truncated at \(maxLines) lines)"
+    }
+
     // MARK: - Process helper
 
-    /// One bounded git/gh invocation. The worktree model's own runner is
-    /// private to its file, and this needs `gh` beside `git`, so this is the
-    /// same shape: 15-second cap, stdout/stderr captured, no shell.
+    /// One bounded git/gh invocation through the app-wide capped executor.
+    /// Its truncation marker is intentionally retained for the git sheet.
     static func runProcess(
         executable: String, arguments: [String], workingDirectory: String
     ) async -> (exitCode: Int32, stdout: String, stderr: String) {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = arguments
-            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
-            process.standardOutput = stdout
-            process.standardError = stderr
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: (exitCode: -1, stdout: "", stderr: "\(error.localizedDescription)"))
-                return
-            }
-            let capture = ProcessCapture()
-            let readGroup = DispatchGroup()
-            let readQueue = DispatchQueue.global(qos: .userInitiated)
-            for (isStdout, pipe) in [(true, stdout), (false, stderr)] {
-                readGroup.enter()
-                readQueue.async {
-                    // readDataToEndOfFile blocks this queue thread until the
-                    // child closes its end, which is what we want; the two
-                    // reads run on different threads so neither can starve.
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    capture.lock.lock()
-                    if isStdout { capture.stdout = data }
-                    else { capture.stderr = data }
-                    capture.lock.unlock()
-                    readGroup.leave()
-                }
-            }
-            let timer = DispatchSource.makeTimerSource(queue: .global())
-            // The event handler holds the process weakly so the
-            // termination handler can hold the timer strongly without a
-            // cycle: process -> handler -> timer -> (weak) process.
-            timer.schedule(deadline: .now() + 15)
-            timer.setEventHandler { [weak process] in
-                guard let process, process.isRunning else { return }
-                capture.lock.lock()
-                capture.timedOut = true
-                capture.lock.unlock()
-                process.terminate()
-            }
-            timer.resume()
-            process.terminationHandler = { [timer, capture] terminatedProcess in
-                timer.cancel()
-                readGroup.notify(queue: .global()) {
-                    capture.lock.lock()
-                    let out = String(data: capture.stdout, encoding: .utf8) ?? ""
-                    let err = String(data: capture.stderr, encoding: .utf8) ?? ""
-                    let didTimeOut = capture.timedOut
-                    capture.lock.unlock()
-                    let message = didTimeOut
-                        ? (err.isEmpty ? "Timed out after 15 seconds." : err)
-                        : err
-                    continuation.resume(
-                        returning: (terminatedProcess.terminationStatus, out, message))
-                }
-            }
+        do {
+            let result = try await ProcessExecutor.run(
+                executableURL: URL(fileURLWithPath: executable),
+                arguments: arguments,
+                currentDirectoryURL: URL(fileURLWithPath: workingDirectory, isDirectory: true),
+                timeoutSeconds: 15)
+            let error = result.timedOut && result.stderr.isEmpty
+                ? "Timed out after 15 seconds."
+                : result.stderr
+            return (result.exitCode, result.stdout, error)
+        } catch {
+            return (-1, "", error.localizedDescription)
         }
     }
-}
-
-/// The pipes' contents and the timeout flag of one `runProcess` call,
-/// shared across the read closures. A box because captured local `var`s
-/// across concurrently-executing closures are a Swift 6 error; the lock is
-/// the real guard.
-private final class ProcessCapture: @unchecked Sendable {
-    let lock = NSLock()
-    var stdout = Data()
-    var stderr = Data()
-    var timedOut = false
 }

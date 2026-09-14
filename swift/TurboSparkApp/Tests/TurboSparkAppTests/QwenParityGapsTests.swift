@@ -94,6 +94,25 @@ final class QwenParityGapsTests: XCTestCase {
         XCTAssertTrue(AppModel.parsePullRequests("not json").isEmpty)
     }
 
+    func testGitProcessOutputUsesSharedByteCap() async {
+        let result = await AppModel.runProcess(
+            executable: "/bin/sh",
+            arguments: ["-c", "yes x | head -c 2000000"],
+            workingDirectory: NSTemporaryDirectory())
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertLessThan(result.stdout.utf8.count, 1_000_100)
+        XCTAssertTrue(result.stdout.contains("output truncated at 1000000 bytes"))
+    }
+
+    func testDiffBodyIsCappedByLineCount() {
+        let body = (0...AppModel.gitDiffLineLimit).map(String.init).joined(separator: "\n")
+        let limited = AppModel.limitDiffLines(body)
+
+        XCTAssertTrue(limited.hasSuffix("diff truncated at 10000 lines)"))
+        XCTAssertEqual(limited.filter { $0 == "\n" }.count, AppModel.gitDiffLineLimit)
+    }
+
     // MARK: - Bang commands
 
     func testBangCommandPredicate() {
