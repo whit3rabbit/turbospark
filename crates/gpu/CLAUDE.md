@@ -615,3 +615,20 @@ cargo test -p turbospark-gpu
     checked multiplication for buffer lengths and strides, and validate every
     copy view against its actual buffer before dispatch. A regression test must
     exercise a wrapping dimension, not only ordinary capacity limits.
+
+15. **A CPU-VS-GPU PARITY TEST IS SELF-RELATIVE WHEN THE SPEC READING ITSELF
+    FLIPS, AND ONLY AN EXTERNAL ANCHOR CAN DECIDE.** The QSA scorer pinned
+    `qsa_score_blocks_fp16` against `compute::score_blocks`, and #79 moved the
+    ReLU placement on BOTH sides in the same commit -- after which the parity
+    pair is green under either ordering and can never again see the divergence
+    it was appealed to. What decided it was outside the pair: the recorded spec
+    pseudocode (`docs/QWEN4_PHASE0.md`'s `relu(q @ pooled^T).sum(over the 4
+    heads)`, where `q @ pooled^T` is a per-head-per-block score matrix, so the
+    elementwise relu precedes the head sum) and the indexer lineage's published
+    convention (per-head ReLU'd scores, summed). Whenever a change moves both
+    sides of a parity test, name the external anchor in the commit and beside
+    the test, and state what the parity test can no longer prove -- otherwise
+    the next reader inherits a green pair that looks like evidence and is not.
+    The old code's own comment had misread its citation in exactly this way:
+    it quoted the matrix parenthesization and then summed before clamping,
+    which is the transpose of what the formula says.
