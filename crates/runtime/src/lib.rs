@@ -111,6 +111,7 @@ pub use raw_completion::{
     run_raw_completion_chunked_cancellable, CancelFlag, RawDecodeProgress, RawDecodeResult,
     StopReason,
 };
+#[cfg(target_os = "macos")]
 pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };

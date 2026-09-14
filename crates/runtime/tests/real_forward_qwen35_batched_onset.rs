@@ -1,3 +1,5 @@
+#![cfg(target_os = "macos")]
+
 //! Can a SYNTHETIC dense `qwen3_5` install see the batched verify's
 //! divergence from a sequential decode?
 //!
