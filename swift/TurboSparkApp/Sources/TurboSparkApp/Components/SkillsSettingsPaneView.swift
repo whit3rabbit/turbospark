@@ -140,7 +140,7 @@ public struct SkillsSettingsPaneView: View {
                     selectedSkillID = nil
                 }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: { skill in
             Text("Are you sure you want to delete '\(skill.name)' from disk? This action cannot be undone.", bundle: .module)
         }
@@ -179,7 +179,7 @@ public struct SkillsSettingsPaneView: View {
             Button {
                 isImportingSkill = true
             } label: {
-                Label("Import...", systemImage: "square.and.arrow.down")
+                Label { Text("Import...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
             }
             .buttonStyle(.bordered)
             .help("Import skills from Claude, Cursor, Antigravity, or OpenCode")
@@ -187,7 +187,7 @@ public struct SkillsSettingsPaneView: View {
             Button {
                 isCreatingSkill = true
             } label: {
-                Label("New Skill", systemImage: "plus")
+                Label { Text("New Skill", bundle: .module) } icon: { Image(systemName: "plus") }
             }
             .buttonStyle(.borderedProminent)
             .fixedSize()
@@ -255,7 +255,7 @@ public struct SkillsSettingsPaneView: View {
                 // not a missing line, and is not claimed until it exists.
 
                 if !skill.referenceFiles.isEmpty {
-                    Text("\(skill.referenceFiles.count) files", bundle: .module)
+                    Text(verbatim: "\(skill.referenceFiles.count) files")
                         .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
                 }
@@ -343,10 +343,12 @@ public struct SkillsSettingsPaneView: View {
                             // had no way to re-enable it; the only toggle was
                             // in the composer's plus menu.
                             if scopedProject == nil && !isPluginSkill(skill) {
-                            Toggle("Enabled", isOn: Binding(
+                            Toggle(isOn: Binding(
                                 get: { skill.isEnabled },
                                 set: { _ in model.toggleSkillEnabled(skill) }
-                            ))
+                            )) {
+                                Text("Enabled", bundle: .module)
+                            }
             .settingsControl("Enabled", pane: .skills, timing: .nextTurn)
                             .toggleStyle(.switch)
                             .controlSize(.small)
@@ -361,7 +363,7 @@ public struct SkillsSettingsPaneView: View {
                             Button {
                                 isEditingSkill = true
                             } label: {
-                                Label("Edit", systemImage: "pencil")
+                                Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
                             }
                             .buttonStyle(.bordered)
 
@@ -378,7 +380,7 @@ public struct SkillsSettingsPaneView: View {
                             Button {
                                 NSWorkspace.shared.activateFileViewerSelecting([skill.sourceURL])
                             } label: {
-                                Label("Reveal", systemImage: "folder")
+                                Label { Text("Reveal", bundle: .module) } icon: { Image(systemName: "folder") }
                             }
                             .buttonStyle(.bordered)
 
@@ -475,7 +477,7 @@ public struct SkillsSettingsPaneView: View {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(skill.content, forType: .string)
                         } label: {
-                            Label("Copy", systemImage: "doc.on.doc")
+                            Label { Text("Copy", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
                                 .themedFont(.small)
                         }
                         .buttonStyle(.borderless)
@@ -534,7 +536,7 @@ public struct SkillsSettingsPaneView: View {
                 Button {
                     isCreatingSkill = true
                 } label: {
-                    Label("Create First Skill", systemImage: "plus")
+                    Label { Text("Create First Skill", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
                 .buttonStyle(.borderedProminent)
                 .fixedSize()
@@ -542,7 +544,7 @@ public struct SkillsSettingsPaneView: View {
                 Button {
                     isImportingSkill = true
                 } label: {
-                    Label("Import from Agents...", systemImage: "square.and.arrow.down")
+                    Label { Text("Import from Agents...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
                 }
                 .buttonStyle(.bordered)
             }

@@ -62,7 +62,7 @@ struct FilesSectionView: View {
                     if isExtracting {
                         ProgressView().controlSize(.small)
                     } else {
-                        Label("Add files", systemImage: "plus")
+                        Label { Text("Add files", bundle: .module) } icon: { Image(systemName: "plus") }
                             .themedFont(.tiny, weight: .medium)
                     }
                 }
@@ -126,7 +126,7 @@ struct FilesSectionView: View {
             Text(text)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            Button("Dismiss") { importError = nil }
+            Button { importError = nil } label: { Text("Dismiss", bundle: .module) }
                 .buttonStyle(.plain)
                 .foregroundStyle(.appSecondary)
         }
@@ -278,25 +278,35 @@ private struct FileRowView: View {
 
     private var actionMenu: some View {
         Menu {
-            Button("Preview", systemImage: "eye") {
+            Button {
                 model.showPreview(attachmentID: attachment.id)
+            } label: {
+                Label { Text("Preview", bundle: .module) } icon: { Image(systemName: "eye") }
             }
-            Button("Go to chat", systemImage: "bubble.left") {
+            Button {
                 model.selectChat(id: reference.chatID)
                 model.activeSection = .chat
+            } label: {
+                Label { Text("Go to chat", bundle: .module) } icon: { Image(systemName: "bubble.left") }
             }
             if attachment.sourceExists {
                 Divider()
-                Button("Reveal in Finder", systemImage: "folder") {
+                Button {
                     model.revealAttachmentInFinder(attachment)
+                } label: {
+                    Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "folder") }
                 }
-                Button("Open with default app", systemImage: "arrow.up.forward.app") {
+                Button {
                     model.openAttachmentExternally(attachment)
+                } label: {
+                    Label { Text("Open with default app", bundle: .module) } icon: { Image(systemName: "arrow.up.forward.app") }
                 }
             }
             Divider()
-            Button("Detach", systemImage: "trash", role: .destructive) {
+            Button(role: .destructive) {
                 model.removeAttachment(reference: reference)
+            } label: {
+                Label { Text("Detach", bundle: .module) } icon: { Image(systemName: "trash") }
             }
             .disabled(model.isRunning)
         } label: {

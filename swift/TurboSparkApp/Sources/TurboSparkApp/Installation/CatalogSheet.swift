@@ -39,7 +39,7 @@ struct CatalogSheet: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button("Done") { dismiss() }
+            Button { dismiss() } label: { Text("Done", bundle: .module) }
                 .keyboardShortcut(.defaultAction)
                 .accessibilityLabel("Done")
                 .accessibilityHint("Closes the catalog sheet")
@@ -68,9 +68,9 @@ struct CatalogSheet: View {
                 Text(model.installStageText ?? "Installing...")
                     .themedFont(.base, weight: .medium)
                 Spacer()
-                Button("Cancel") {
+                Button {
                     model.cancelInstall()
-                }
+                } label: { Text("Cancel", bundle: .module) }
                 .controlSize(.small)
                 .accessibilityLabel("Cancel installation")
                 .accessibilityHint("Stops the in-progress model installation")
@@ -128,9 +128,9 @@ struct CatalogSheet: View {
                                 .themedFont(.small, weight: .semibold)
                                 .foregroundStyle(.appAccent)
                         }
-                        Button("Delete", role: .destructive) {
+                        Button(role: .destructive) {
                             model.deleteModel(item)
-                        }
+                        } label: { Text("Delete", bundle: .module) }
                         .controlSize(.small)
                         .disabled(model.isInstallingModel || !model.canDeleteModel)
                         .help("Delete model from disk")
@@ -185,9 +185,9 @@ struct CatalogSheet: View {
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
                     } else {
-                        Button("Install") {
+                        Button {
                             model.installModel(alias: entry.alias)
-                        }
+                        } label: { Text("Install", bundle: .module) }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                         .disabled(model.isInstallingModel || model.isRunning)
@@ -212,9 +212,9 @@ struct CatalogSheet: View {
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Local alias")
 
-                Button("Install Custom Repo") {
+                Button {
                     model.installRepo(repo: customRepo, alias: customAlias)
-                }
+                } label: { Text("Install Custom Repo", bundle: .module) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(customRepo.isEmpty || customAlias.isEmpty || model.isInstallingModel)
@@ -228,17 +228,17 @@ struct CatalogSheet: View {
 
     private var footer: some View {
         HStack {
-            Button("Choose Local Folder...") {
+            Button {
                 ModelLocationPicker.choose(for: model)
-            }
+            } label: { Text("Choose Local Folder...", bundle: .module) }
             .help("Select an existing model directory")
             .accessibilityHint("Opens a folder picker for an already-installed model")
 
             Spacer()
 
-            Button("Refresh") {
+            Button {
                 model.refreshModels()
-            }
+            } label: { Text("Refresh", bundle: .module) }
             .help("Reload model catalog")
             .accessibilityHint("Reloads the model catalog from disk")
         }

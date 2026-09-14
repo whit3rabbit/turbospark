@@ -58,7 +58,7 @@ struct SteeringPresetEditorSheet: View {
     }
 
     private var identitySection: some View {
-        Section("Identity") {
+        Section(header: Text("Identity", bundle: .module)) {
             TextField("Name", text: $draft.name)
                 .help("What this direction encodes. Only you know: nothing here inspects it.")
             TextField("Notes", text: $draft.notes, axis: .vertical)
@@ -67,24 +67,33 @@ struct SteeringPresetEditorSheet: View {
     }
 
     private var vectorSection: some View {
-        Section("Control vector") {
+        Section(header: Text("Control vector", bundle: .module)) {
             HStack {
                 TextField("Path to a .gguf control vector", text: $draft.vectorPath)
                     .truncationMode(.head)
-                Button("Choose...") { pickFile() }
+                Button { pickFile() } label: { Text("Choose...", bundle: .module) }
             }
             .onChange(of: draft.vectorPath) { _, _ in readVector() }
 
             if let info = vectorInfo {
                 // What the FILE says, so a mismatch is visible as two numbers
                 // rather than as a failed load minutes later.
-                LabeledContent("Width", value: "\(info.hidden)")
-                LabeledContent(
-                    "Blocks",
-                    value: coverageText(info)
-                )
+                LabeledContent {
+                    Text(verbatim: "\(info.hidden)")
+                } label: {
+                    Text("Width", bundle: .module)
+                }
+                LabeledContent {
+                    Text(coverageText(info))
+                } label: {
+                    Text("Blocks", bundle: .module)
+                }
                 if let declared = info.declaredArch {
-                    LabeledContent("Declared for", value: declared)
+                    LabeledContent {
+                        Text(declared)
+                    } label: {
+                        Text("Declared for", bundle: .module)
+                    }
                         .help(
                             "Advisory only: nothing validates against this, which is exactly "
                                 + "why it is worth reading.")
@@ -108,12 +117,12 @@ struct SteeringPresetEditorSheet: View {
     }
 
     private var editSection: some View {
-        Section("Edit") {
-            Picker("Mode", selection: $draft.mode) {
+        Section(header: Text("Edit", bundle: .module)) {
+            Picker(selection: $draft.mode) {
                 ForEach(AppSteeringModeOption.allCases) { mode in
                     Text(mode.menuLabel).tag(mode)
                 }
-            }
+            } label: { Text("Mode", bundle: .module) }
             HStack {
                 Text("Strength", bundle: .module)
                 Slider(value: $draft.scale, in: -2...2, step: 0.05)
@@ -149,11 +158,11 @@ struct SteeringPresetEditorSheet: View {
     private var footer: some View {
         HStack {
             Spacer()
-            Button("Cancel") { dismiss() }
-            Button("Save") {
+            Button { dismiss() } label: { Text("Cancel", bundle: .module) }
+            Button {
                 onSave(draft)
                 dismiss()
-            }
+            } label: { Text("Save", bundle: .module) }
             .keyboardShortcut(.defaultAction)
             .disabled(draft.vectorPath.trimmingCharacters(in: .whitespaces).isEmpty)
         }

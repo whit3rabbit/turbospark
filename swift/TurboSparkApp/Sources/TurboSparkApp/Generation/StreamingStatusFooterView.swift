@@ -28,7 +28,7 @@ public struct StreamingStatusFooterView: View {
                 }
 
                 if model.liveTokenCount > 0 {
-                    Text("\(model.liveTokenCount) tokens", bundle: .module)
+                    Text(verbatim: "\(model.liveTokenCount) tokens")
                         .themedFont(.tiny, weight: .regular)
                         .foregroundStyle(.appSecondary)
                     dotSeparator

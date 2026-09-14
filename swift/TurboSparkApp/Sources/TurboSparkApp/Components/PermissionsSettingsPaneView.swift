@@ -53,7 +53,7 @@ public struct PermissionsSettingsPaneView: View {
                     isRefreshing = false
                 }
             } label: {
-                Label("Refresh Status", systemImage: isRefreshing ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath")
+                Label { Text("Refresh Status", bundle: .module) } icon: { Image(systemName: isRefreshing ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath") }
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
@@ -244,7 +244,7 @@ public struct PermissionsSettingsPaneView: View {
                                     .themedFont(.small)
                             }
                             .buttonStyle(.borderless)
-                            .help("Reveal in Finder")
+                            .help(Text("Reveal in Finder", bundle: .module))
 
                             Button {
                                 permissionsManager.removeCustomFolder(id: customFolder.id)
@@ -351,7 +351,7 @@ public struct PermissionsSettingsPaneView: View {
     private var commandGateSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Command Classifier Veto", systemImage: "terminal.fill")
+                Label { Text("Command Classifier Veto", bundle: .module) } icon: { Image(systemName: "terminal.fill") }
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Toggle("", isOn: $commandVetoEnabled)

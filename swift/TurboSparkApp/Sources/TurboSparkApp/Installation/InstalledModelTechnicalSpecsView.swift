@@ -9,7 +9,7 @@ struct InstalledModelTechnicalSpecsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Technical Specifications", systemImage: "info.circle")
+            Label { Text("Technical Specifications", bundle: .module) } icon: { Image(systemName: "info.circle") }
                 .themedFont(.small, weight: .semibold)
 
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {

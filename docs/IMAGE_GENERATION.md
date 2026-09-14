@@ -365,10 +365,12 @@ The following records implementation status and the remaining evidence work:
    scale, and bias layout, and maps the component payload without copying a
    whole tensor for a row read. Real-install stage ownership remains to be
    measured.
-3. **Packed parity gate.** The opt-in test now compares conditioning, all nine
-   latent updates, final latents, and VAE decoded output against the IG1
-   fixtures. It has not passed on a complete pinned packed install in this
-   checkout.
+3. **Packed quality and parity gate.** The opt-in test compares packed
+   conditioning and the nine latent updates against the frozen INT4 emulation
+   envelopes, then isolates VAE implementation parity by decoding the frozen
+   higher-precision final latent. The packed end-to-end decode is also checked
+   for finite output; PNG quality remains a separate gate. It has not passed
+   on a complete pinned packed install in this checkout.
 4. **Explicit image install route.** `turbospark-model pull-image` packages a
    pinned local Diffusers export and records it as an image install, not as a
    text `Mlx` row. A network-backed catalog source plan and rot-guard remain
@@ -383,6 +385,11 @@ The following records implementation status and the remaining evidence work:
    total latency, nine forwards, peak `phys_footprint`, Metal buffer
    allocations, idle retained buffers, process page-ins, and swap deltas.
    Quiet cold and warm runs against a complete install remain required.
+   The pinned local export currently packs to 11 files and 6,906,461,695
+   bytes. Its packed conditioning error is 0.081541 against the 0.084 IG0
+   INT4 envelope, but the first nine-step native denoise run did not complete
+   within roughly twelve minutes, so the quality, cancellation, and resource
+   gates remain open.
 
 The original implementation requirements are preserved below as the
 acceptance contract:
@@ -396,10 +403,12 @@ acceptance contract:
    and bias layout, and bind resident or bounded staging buffers without
    copying an entire tensor for a row read. Keep stage ownership explicit:
    text encoder, transformer, and VAE must not all remain resident together.
-3. **Packed parity contract.** Compare the packed native backend with the
-   existing CPU/reference fixtures at conditioning, each transformer update,
-   final latents, and decoded output. Use the fixed 1024-by-1024, batch-one,
-   nine-step, guidance-zero, fixed-seed contract. Explain the first divergent
+3. **Packed comparison contract.** Compare packed native conditioning and
+   transformer updates with the frozen INT4 quality envelope, and compare the
+   protected VAE on the frozen higher-precision latent with the IG1 decoded
+   fixture. Check the actual packed end-to-end decode separately through the
+   PNG quality oracle. Use the fixed 1024-by-1024, batch-one, nine-step,
+   guidance-zero, fixed-seed contract. Explain the first divergent
    intermediate and mutation-check every assertion.
 4. **Real install contract.** Extend `crates/catalog` and
    `turbospark-model` with an explicit image install plan for the pinned

@@ -132,7 +132,7 @@ struct ModelManagerView: View {
                 Button {
                     model.activeSection = .modelHub
                 } label: {
-                    Label("Discover Models in Hub", systemImage: "shippingbox.fill")
+                    Label { Text("Discover Models in Hub", bundle: .module) } icon: { Image(systemName: "shippingbox.fill") }
                         .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)

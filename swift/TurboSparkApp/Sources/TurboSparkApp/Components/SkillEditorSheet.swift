@@ -32,9 +32,9 @@ public struct SkillEditorSheet: View {
                 Text(skillToEdit == nil ? "Create New Skill" : "Edit Skill: \(name)")
                     .themedFont(.base, weight: .semibold)
                 Spacer()
-                Button("Cancel") {
+                Button {
                     dismiss()
-                }
+                } label: { Text("Cancel", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 20)
@@ -60,10 +60,10 @@ public struct SkillEditorSheet: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Scope", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            Picker("Scope", selection: $isProjectScope) {
+                            Picker(selection: $isProjectScope) {
                                 Text("User Scope (~/.turbospark/skills)", bundle: .module).tag(false)
                                 Text("Project Scope (.turbospark/skills)", bundle: .module).tag(true)
-                            }
+                            } label: { Text("Scope", bundle: .module) }
                             .pickerStyle(.segmented)
                             .disabled(capturedProjectPath == nil && !isProjectScope)
                         }
@@ -132,9 +132,9 @@ public struct SkillEditorSheet: View {
             // Footer
             HStack {
                 Spacer()
-                Button("Save Skill") {
+                Button {
                     saveAction()
-                }
+                } label: { Text("Save Skill", bundle: .module) }
                 .buttonStyle(.borderedProminent)
                 .tint(TurboSparkTheme.accentColor)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

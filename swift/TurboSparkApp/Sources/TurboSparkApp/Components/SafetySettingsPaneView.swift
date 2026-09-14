@@ -49,25 +49,12 @@ public struct SafetySettingsPaneView: View {
     }
 
     private var explanationSection: some View {
-        Section("What this is") {
+        Section(header: Text("What this is", bundle: .module)) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(
-                    "Directional steering applies a rank-1 edit to the model's residual stream "
-                        + "at every layer, while it generates. Nothing is written to the model "
-                        + "files and the edit is reversible between two turns."
-                )
-                Text(
-                    "TurboSpark ships no directions. A direction is a .gguf control vector in "
-                        + "llama.cpp layout that you extract or supply yourself, and this engine "
-                        + "has no opinion about what one encodes: the same code path serves "
-                        + "concept steering, style vectors and refusal-direction work."
-                )
+                Text("Directional steering applies a rank-1 edit to the model's residual stream at every layer, while it generates. Nothing is written to the model files and the edit is reversible between two turns.", bundle: .module)
+                Text("TurboSpark ships no directions. A direction is a .gguf control vector in llama.cpp layout that you extract or supply yourself, and this engine has no opinion about what one encodes: the same code path serves concept steering, style vectors and refusal-direction work.", bundle: .module)
                 .foregroundStyle(.appSecondary)
-                Text(
-                    "Extract one with scripts/extract_direction.py, or use a published set. "
-                        + "docs/OBLITERATION.md has the measurements, including what happens at "
-                        + "full strength."
-                )
+                Text("Extract one with scripts/extract_direction.py, or use a published set. docs/OBLITERATION.md has the measurements, including what happens at full strength.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             }
@@ -76,19 +63,21 @@ public struct SafetySettingsPaneView: View {
     }
 
     private var activationSection: some View {
-        Section("Activation") {
-            Toggle("Apply steering when a model loads", isOn: steeringBinding)
+        Section(header: Text("Activation", bundle: .module)) {
+            Toggle(isOn: steeringBinding) {
+                Text("Apply steering when a model loads", bundle: .module)
+            }
             .settingsControl("Apply steering when a model loads", pane: .safety, timing: .nextTurn)
                 .disabled(model.steeringDisabledReason != nil)
                 .help(model.steeringDisabledReason ?? "Applied at the next model load.")
 
-            Picker("Active direction", selection: presetBinding) {
+            Picker(selection: presetBinding) {
                 Text("None", bundle: .module)
                     .settingsControl("None", pane: .safety, timing: .nextTurn).tag(UUID?.none)
                 ForEach(model.steeringPresets) { preset in
                     Text(preset.displayName).tag(UUID?.some(preset.id))
                 }
-            }
+            } label: { Text("Active direction", bundle: .module) }
             .settingsControl("Active direction", pane: .safety, timing: .nextTurn)
             .disabled(model.steeringPresets.isEmpty)
 
@@ -110,7 +99,7 @@ public struct SafetySettingsPaneView: View {
                     )
                     .themedFont(.small)
                     Spacer()
-                    Button("Reload model") { model.reloadForSteering() }
+                    Button { model.reloadForSteering() } label: { Text("Reload model", bundle: .module) }
                         .disabled(model.selected == nil || model.generating || model.opening)
                 }
             }
@@ -119,7 +108,7 @@ public struct SafetySettingsPaneView: View {
     }
 
     private var presetsSection: some View {
-        Section("Directions") {
+        Section(header: Text("Directions", bundle: .module)) {
             if model.steeringPresets.isEmpty {
                 Text("No directions registered.", bundle: .module)
                     .foregroundStyle(.appSecondary)
@@ -143,7 +132,7 @@ public struct SafetySettingsPaneView: View {
                 editingPreset = nil
                 showingEditor = true
             } label: {
-                Label("Add a direction", systemImage: "plus")
+                Label { Text("Add a direction", bundle: .module) } icon: { Image(systemName: "plus") }
             }
         }
             .settingsControl("Directions", pane: .safety, timing: .nextTurn)
@@ -152,18 +141,28 @@ public struct SafetySettingsPaneView: View {
     /// What the LOADED session reports, read back rather than restated. The
     /// engine's own summary line is the authority on what is running.
     private var statusSection: some View {
-        Section("Loaded model") {
+        Section(header: Text("Loaded model", bundle: .module)) {
             if model.session == nil {
                 Text("No model loaded.", bundle: .module)
                     .settingsControl("No model loaded.", pane: .safety, timing: .nextTurn).foregroundStyle(.appSecondary)
             } else if let summary = model.activeSteeringSummary {
-                LabeledContent("Steering", value: summary)
+                LabeledContent {
+                    Text(summary)
+                } label: {
+                    Text("Steering", bundle: .module)
+                }
             } else if model.steeringFamilySupported == false {
-                LabeledContent(
-                    "Steering",
-                    value: model.info?.steering.reason ?? "Not supported by this model's family")
+                LabeledContent {
+                    Text(model.info?.steering.reason ?? "Not supported by this model's family")
+                } label: {
+                    Text("Steering", bundle: .module)
+                }
             } else {
-                LabeledContent("Steering", value: "Off")
+                LabeledContent {
+                    Text("Off", bundle: .module)
+                } label: {
+                    Text("Steering", bundle: .module)
+                }
             }
         }
     }
@@ -198,8 +197,8 @@ struct SteeringPresetRow: View {
             HStack {
                 Text(preset.displayName).fontWeight(.medium)
                 Spacer()
-                Button("Edit", action: onEdit).buttonStyle(.link)
-                Button("Delete", action: onDelete).buttonStyle(.link)
+                Button(action: onEdit) { Text("Edit", bundle: .module) }.buttonStyle(.link)
+                Button(action: onDelete) { Text("Delete", bundle: .module) }.buttonStyle(.link)
             }
             Text(detailLine)
                 .themedFont(.small)

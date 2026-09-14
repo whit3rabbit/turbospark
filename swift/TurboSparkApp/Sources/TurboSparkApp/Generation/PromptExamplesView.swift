@@ -82,13 +82,13 @@ struct PromptExamplesView: View {
                 }
             }
         } label: {
-            Label("More", systemImage: "ellipsis")
+            Label { Text("More", bundle: .module) } icon: { Image(systemName: "ellipsis") }
                 .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(.appSecondary)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("More prompt examples")
+        .help(Text("More prompt examples", bundle: .module))
         .accessibilityLabel("More prompt examples")
     }
 

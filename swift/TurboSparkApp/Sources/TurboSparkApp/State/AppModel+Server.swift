@@ -45,6 +45,50 @@ public struct ServerStatusRows: Equatable {
     }
 }
 
+/// The steering state the server pane can read from an attached session.
+public enum ServerModelSteeringStatus: Equatable {
+    case active(summary: String)
+    case off
+    case unsupported(reason: String)
+
+    public init(info: SessionInfo.Steering) {
+        if info.active {
+            self = .active(summary: info.summary ?? "Steering active")
+        } else if info.supported {
+            self = .off
+        } else {
+            self = .unsupported(
+                reason: info.reason ?? "This model's family does not support steering")
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case let .active(summary): return summary
+        case .off: return "Steering Off (supported)"
+        case let .unsupported(reason): return "Steering unavailable: \(reason)"
+        }
+    }
+
+    public var systemImageName: String {
+        switch self {
+        case .active: return "dial.medium.fill"
+        case .off: return "dial.medium"
+        case .unsupported: return "exclamationmark.triangle"
+        }
+    }
+
+    public var isActive: Bool {
+        if case .active = self { return true }
+        return false
+    }
+
+    public var isUnsupported: Bool {
+        if case .unsupported = self { return true }
+        return false
+    }
+}
+
 /// One model the server is serving, as the pane's table draws it.
 public struct ServerModelRow: Identifiable, Equatable {
     /// The id clients address it by, and the key `detach` takes.
@@ -60,7 +104,8 @@ public struct ServerModelRow: Identifiable, Equatable {
     /// holds its own session.
     public let isChatSession: Bool
     public let requestsServed: Int
-    /// What this model is steering with, or `nil` when it is not.
+    /// The session's resolved steering state, or `nil` when this app did not
+    /// open the model and therefore has no session report to read.
     ///
     /// **READ BACK OFF THE SESSION, AND READ-ONLY HERE.** Steering resolves
     /// once at OPEN, and this server serves models that were already opened
@@ -69,7 +114,7 @@ public struct ServerModelRow: Identifiable, Equatable {
     /// (tens of seconds, and a dropped KV cache) to take effect. Showing it
     /// is what lets an operator tell two served models apart when one is
     /// edited and the other is not.
-    public let steeringSummary: String?
+    public let steeringStatus: ServerModelSteeringStatus?
 }
 
 extension AppModel {
@@ -294,8 +339,8 @@ extension AppModel {
                 expertCacheSlots: attached?.info.expertCacheSlots ?? 0,
                 isChatSession: attached != nil && attached === session,
                 requestsServed: served[id] ?? 0,
-                steeringSummary: attached.flatMap { session in
-                    session.info.steering.active ? session.info.steering.summary : nil
+                steeringStatus: attached.map { session in
+                    ServerModelSteeringStatus(info: session.info.steering)
                 })
         }
     }

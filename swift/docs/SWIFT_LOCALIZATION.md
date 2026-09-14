@@ -34,7 +34,7 @@ catalog or the app builds against the previous output.
 
 ## The catalog
 
-`Localizable.xcstrings` carries 672 keys in 21 languages: en, es, fr, de,
+`Localizable.xcstrings` carries 1,083 keys in 21 languages: en, es, fr, de,
 it, pt-BR, ru, ja, ko, zh-Hans, zh-Hant, ar, he, hi, nl, pl, tr, uk, sv,
 vi, id. RTL support (ar, he) comes from `AppLanguage.isRTL` feeding
 `.environment(\.layoutDirection)`. The key IS the English source string

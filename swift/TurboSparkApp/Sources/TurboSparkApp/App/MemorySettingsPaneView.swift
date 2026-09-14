@@ -22,21 +22,17 @@ struct MemorySettingsPaneView: View {
     }
 
     private var enableSection: some View {
-        Section("Memory") {
-            Toggle("Let the model remember across conversations", isOn: Binding(
+        Section(header: Text("Memory", bundle: .module)) {
+            Toggle(isOn: Binding(
                 get: { model.memoryEnabled },
                 set: { newValue in
                     model.memoryEnabled = newValue
                     model.persistSettingsDebounced()
-                }))
+                })) {
+                Text("Let the model remember across conversations", bundle: .module)
+            }
             .settingsControl("Let the model remember across conversations", pane: .memory, timing: .nextTurn)
-            Text(
-                "With a project attached, the model gets a persistent memory directory and a "
-                    + "`memory` tool: it saves durable facts about you and the project as it "
-                    + "learns them, and an index of what it remembers is always in its context. "
-                    + "Memories live on disk, one folder per project. Type `#` followed by text "
-                    + "to save one yourself, or /memory to open the folder."
-            )
+            Text("With a project attached, the model gets a persistent memory directory and a `memory` tool: it saves durable facts about you and the project as it learns them, and an index of what it remembers is always in its context. Memories live on disk, one folder per project. Type `#` followed by text to save one yourself, or /memory to open the folder.", bundle: .module)
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
         }
@@ -59,7 +55,7 @@ struct MemorySettingsPaneView: View {
     }
 
     private var locationSection: some View {
-        Section("Storage") {
+        Section(header: Text("Storage", bundle: .module)) {
             if let directory = selectedMemoryDirectory {
                 HStack {
                     Text(directory.path)
@@ -68,9 +64,9 @@ struct MemorySettingsPaneView: View {
                         .lineLimit(1)
                         .truncationMode(.head)
                     Spacer()
-                    Button("Open Folder") {
+                    Button {
                         NSWorkspace.shared.open(directory)
-                    }
+                    } label: { Text("Open Folder", bundle: .module) }
                 }
             } else {
                 HStack {
@@ -78,9 +74,9 @@ struct MemorySettingsPaneView: View {
                         .font(theme.ui(.small))
                         .foregroundStyle(.appSecondary)
                     Spacer()
-                    Button("Open Folder") {
+                    Button {
                         NSWorkspace.shared.open(MemoryStore.defaultBase())
-                    }
+                    } label: { Text("Open Folder", bundle: .module) }
                 }
             }
         }
@@ -88,7 +84,7 @@ struct MemorySettingsPaneView: View {
     }
 
     private var contentsSection: some View {
-        Section("What This Project Remembers") {
+        Section(header: Text("What This Project Remembers", bundle: .module)) {
             if let root = selectedProjectRoot {
                 let entries = MemoryStore.parseIndex(
                     MemoryStore.shared.loadIndex(forProjectRoot: root))

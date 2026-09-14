@@ -86,9 +86,9 @@ public struct PluginSettingsPaneView: View {
                 }
             }
             if plugin.origin == .local {
-                Button("Unregister folder", role: .destructive) { model.removeLocalPluginFolder(plugin, scope: scopedProject.map(PluginInstallScope.project) ?? .user) }
+                Button(role: .destructive) { model.removeLocalPluginFolder(plugin, scope: scopedProject.map(PluginInstallScope.project) ?? .user) } label: { Text("Unregister folder", bundle: .module) }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: { plugin in
             Text("Removes only the selected installation. Other projects keep their installation. Shared files remain until the last installation is removed.", bundle: .module)
         }
@@ -101,12 +101,12 @@ public struct PluginSettingsPaneView: View {
             Button {
                 isShowingMarketplace = true
             } label: {
-                Label("Browse Marketplace", systemImage: "cart")
+                Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "cart") }
             }
             Button {
                 addLocalFolder()
             } label: {
-                Label("Add Local Folder", systemImage: "folder.badge.plus")
+                Label { Text("Add Local Folder", bundle: .module) } icon: { Image(systemName: "folder.badge.plus") }
             }
             Spacer()
             Button {
@@ -114,7 +114,7 @@ public struct PluginSettingsPaneView: View {
                 AppHookStore.shared.refresh(
                     projectDirectory: model.selectedProject?.rootDirectoryPath)
             } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Label { Text("Refresh", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
             }
             .help("Re-scan both plugin roots")
         }
@@ -220,7 +220,7 @@ public struct PluginSettingsPaneView: View {
                             pluginToRemove = plugin
                             isConfirmingRemove = true
                         } label: {
-                            Label("Uninstall", systemImage: "trash")
+                            Label { Text("Uninstall", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
                     }
                 }
@@ -372,8 +372,8 @@ public struct PluginSettingsPaneView: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
             HStack {
-                Button("Browse Marketplace") { isShowingMarketplace = true }
-                Button("Add Local Folder") { addLocalFolder() }
+                Button { isShowingMarketplace = true } label: { Text("Browse Marketplace", bundle: .module) }
+                Button { addLocalFolder() } label: { Text("Add Local Folder", bundle: .module) }
             }
             .padding(.top, 4)
         }
@@ -392,7 +392,7 @@ private struct PluginListRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(plugin.name)
                     .themedFont(.base, weight: .medium)
-                Text("\(plugin.originKey) - \(plugin.version)", bundle: .module)
+                Text(verbatim: "\(plugin.originKey) - \(plugin.version)")
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
@@ -411,7 +411,7 @@ private struct ContributionCount: View {
 
     var body: some View {
         VStack(spacing: 2) {
-            Text("\(count)", bundle: .module)
+            Text(verbatim: "\(count)")
                 .themedFont(.title3, weight: .semibold)
             Text(label)
                 .themedFont(.tiny)

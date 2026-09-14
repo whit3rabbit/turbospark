@@ -144,12 +144,12 @@ public struct WorktreeFileListView: View {
     private func statPills(adds: Int, dels: Int) -> some View {
         HStack(spacing: 4) {
             if adds > 0 {
-                Text("+\(adds)", bundle: .module)
+                Text(verbatim: "+\(adds)")
                     .themedFont(.tiny, weight: .medium).monospacedDigit()
                     .foregroundStyle(.green)
             }
             if dels > 0 {
-                Text("-\(dels)", bundle: .module)
+                Text(verbatim: "-\(dels)")
                     .themedFont(.tiny, weight: .medium).monospacedDigit()
                     .foregroundStyle(.red)
             }
@@ -269,12 +269,12 @@ struct WorktreeTreeNodeRow: View {
     private func statPills(adds: Int, dels: Int) -> some View {
         HStack(spacing: 4) {
             if adds > 0 {
-                Text("+\(adds)", bundle: .module)
+                Text(verbatim: "+\(adds)")
                     .themedFont(.tiny, weight: .medium).monospacedDigit()
                     .foregroundStyle(.green)
             }
             if dels > 0 {
-                Text("-\(dels)", bundle: .module)
+                Text(verbatim: "-\(dels)")
                     .themedFont(.tiny, weight: .medium).monospacedDigit()
                     .foregroundStyle(.red)
             }

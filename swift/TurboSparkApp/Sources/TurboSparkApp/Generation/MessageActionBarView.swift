@@ -118,7 +118,7 @@ struct MessageShareButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Share message")
+        .help(Text("Share message", bundle: .module))
         .accessibilityLabel("Share message")
     }
 }
@@ -215,7 +215,7 @@ struct MessageCopyButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Copy message text")
+        .help(Text("Copy message text", bundle: .module))
         .accessibilityLabel(isCopied ? "Copied" : "Copy message")
         .accessibilityHint("Copies this message to the clipboard")
         .task(id: isCopied) {

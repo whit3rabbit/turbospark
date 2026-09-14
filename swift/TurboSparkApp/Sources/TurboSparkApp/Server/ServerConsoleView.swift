@@ -76,17 +76,19 @@ struct ServerConsoleView: View {
                 .frame(width: 160)
                 .labelsHidden()
 
-            Toggle("Errors only", isOn: $showErrorsOnly)
+            Toggle(isOn: $showErrorsOnly) {
+                Text("Errors only", bundle: .module)
+            }
                 .toggleStyle(.checkbox)
                 .themedFont(.tiny)
 
             if model.serverMetrics.servingModels.count > 1 {
-                Picker("Model", selection: $modelFilter) {
+                Picker(selection: $modelFilter) {
                     Text("All models", bundle: .module).tag(String?.none)
                     ForEach(model.serverMetrics.servingModels, id: \.self) { name in
                         Text(name).tag(String?.some(name))
                     }
-                }
+                } label: { Text("Model", bundle: .module) }
                 .pickerStyle(.menu)
                 .controlSize(.small)
                 .labelsHidden()
@@ -165,13 +167,13 @@ struct ServerConsoleView: View {
                         .help("Streamed")
                 }
                 if let tokens = record.newTokens, tokens > 0 {
-                    Text("\(tokens) tok", bundle: .module)
+                    Text(verbatim: "\(tokens) tok")
                         .themedFont(.tiny)
                         .monospacedDigit()
                         .foregroundStyle(.appSecondary)
                 }
                 if let duration = record.durationMs {
-                    Text("\(duration) ms", bundle: .module)
+                    Text(verbatim: "\(duration) ms")
                         .themedFont(.tiny)
                         .monospacedDigit()
                         .foregroundStyle(.appSecondary)
@@ -200,23 +202,23 @@ struct ServerConsoleView: View {
             }
             .contextMenu {
                 if let err = record.errorMessage, !err.isEmpty {
-                    Button("Copy Error Message") {
+                    Button {
                         copyText(err)
                         model.showToast("Copied error message", style: .info)
-                    }
+                    } label: { Text("Copy Error Message", bundle: .module) }
                 }
-                Button("Copy Request Log Line") {
+                Button {
                     copyRecordSummary(record)
                     model.showToast("Copied request summary", style: .info)
-                }
-                Button("Copy Request as JSON") {
+                } label: { Text("Copy Request Log Line", bundle: .module) }
+                Button {
                     copyRecordAsJSON(record)
                     model.showToast("Copied request as JSON", style: .info)
-                }
-                Button("Copy Path") {
+                } label: { Text("Copy Request as JSON", bundle: .module) }
+                Button {
                     copyText(record.path)
                     model.showToast("Copied path", style: .info)
-                }
+                } label: { Text("Copy Path", bundle: .module) }
             }
 
             if expanded.contains(record.id) {

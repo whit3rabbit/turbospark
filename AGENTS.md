@@ -112,6 +112,34 @@ reference perplexity read 255,409 against a frozen 6.2536, with the whole
 workspace suite green (`crates/runtime/CLAUDE.md` Gotcha 11). Run the gates
 per FAMILY the change touches, not once for the workspace.
 
+**NEW FAMILY SUPPORT IS A CROSS-LAYER CHANGE.** A family is not supported when
+Rust parses it alone. When adding a `ModelFamily`, or making an existing family
+reachable by a new checkpoint, trace both the enum variant and its canonical
+persisted string through every consumer before calling the work complete:
+
+- `crates/model-io`: `as_str`, `parse`, `ALL`, architecture/config mappings,
+  and family tables.
+- `crates/runtime` and `crates/ffi`: decode-flow dispatch, capability
+  predicates and refusal reasons, session-info fields, and wire/ABI tests.
+- `swift/`: pre-open family detection and feature badges, loaded-session
+  `info` gating, Safety & Steering and Model Settings controls, chat/footer
+  status, server model rows/settings, and family visual or alias matching. A
+  family that is true in Rust but absent from a Swift allowlist is incomplete
+  support.
+- Catalog, install, CLI, server, documentation, and tests, including
+  `docs/MODEL_FAMILY.md` and `docs/NEW_MODEL.md`. For directional steering or
+  obliteration, also update the steering capability predicate, Swift status
+  surfaces, and server-model reporting described in `docs/OBLITERATION.md`.
+
+Use `st -n` for the exact enum variant and canonical string across
+`crates/`, `swift/`, `docs/`, and tests, then inspect every hit. Do not rely on
+compiler errors to find duplicated string allowlists. Add coverage for the
+Rust supported/unsupported result, Swift pre-open detection, loaded-session
+capability reporting, and server `supported`, `off`, and `active` states where
+the feature has a UI surface. A new checkpoint that reuses an existing family
+must instead verify the resolver, catalog row, and Swift descriptor without
+inventing a second family string.
+
 **A COMPILE ERROR IN A CRATE YOU DID NOT TOUCH IS PROBABLY NOT YOURS.** This
 tree is routinely worked by more than one session at once, and the failure
 arrives as a normal-looking build break minutes after your own suite went
@@ -1990,6 +2018,7 @@ When working on code inside a specific crate, refer to that crate's `CLAUDE.md` 
 - [`crates/core/CLAUDE.md`](crates/core/CLAUDE.md): Shared primitives (`TokenId`, `LogitValue`), runtime configuration, allowed sets, chunk sizing.
 - [`crates/ffi/CLAUDE.md`](crates/ffi/CLAUDE.md): the C ABI for native GUI hosts, its ownership and threading contract, and the Swift package over it.
 - [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md): macOS Metal context, pipeline caches, MSL shaders, KV cache, zero-copy weights, profiling flags.
+- [`crates/image/CLAUDE.md`](crates/image/CLAUDE.md): the Z-Image-Turbo pipeline, packed component installs, the CPU reference and Metal image backends, and the opt-in parity gates.
 - [`crates/invocation/CLAUDE.md`](crates/invocation/CLAUDE.md): Pure CLI argument parser, `InvocationRequest`, 5-place rule for adding new flags.
 - [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md): Manifest validation, architecture baselines, packed expert layout, mmap resident weight index.
 - [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md): Safetensors header parsing, ranged HTTP downloads, `.gturbo` writer, synthetic model builders.

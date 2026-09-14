@@ -11,27 +11,27 @@ struct PersonalitySettingsSection: View {
     @State private var showingAddSheet = false
 
     var body: some View {
-        Section("Personality") {
-            Picker("Personality", selection: selectedPersonalityBinding) {
+        Section(header: Text("Personality", bundle: .module)) {
+            Picker(selection: selectedPersonalityBinding) {
                 Text(verbatim: "None").tag(UUID?.none)
                 ForEach(model.personalities) { personality in
                     Text(personality.name).tag(Optional(personality.id))
                 }
-            }
+            } label: { Text("Personality", bundle: .module) }
 
             if let personality = model.selectedPersonality {
                 Text(personality.instructions)
                     .themedCode(.small)
                     .foregroundStyle(.appSecondary)
 
-                Button("Remove Selected", role: .destructive) {
+                Button(role: .destructive) {
                     model.deletePersonality(personality.id)
-                }
+                } label: { Text("Remove Selected", bundle: .module) }
             }
 
-            Button("Add Personality") {
+            Button {
                 showingAddSheet = true
-            }
+            } label: { Text("Add Personality", bundle: .module) }
         }
         .settingsControl("Personality", pane: .engine, timing: .nextTurn)
         .sheet(isPresented: $showingAddSheet) {
@@ -68,7 +68,7 @@ private struct PersonalityEditorSheet: View {
                 Text(verbatim: "Add Personality")
                     .themedFont(.base, weight: .semibold)
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                     .keyboardShortcut(.cancelAction)
             }
             .padding()
@@ -90,10 +90,10 @@ private struct PersonalityEditorSheet: View {
 
             HStack {
                 Spacer()
-                Button("Save") {
+                Button {
                     onSave(name, instructions)
                     dismiss()
-                }
+                } label: { Text("Save", bundle: .module) }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSave)
             }

@@ -36,7 +36,7 @@ struct ChatSidebarFooterView: View {
         HStack(spacing: 8) {
             // User Avatar & Name Menu
             Menu {
-                Section("Active Profile") {
+                Section(header: Text("Active Profile", bundle: .module)) {
                     Label(profileDisplayName, systemImage: "person.circle.fill")
                     if UserProfileStore.isDefault {
                         Text("Default Machine Profile", bundle: .module)
@@ -47,27 +47,27 @@ struct ChatSidebarFooterView: View {
 
                 Divider()
 
-                Section("Appearance") {
-                    Picker("Theme", selection: $appearanceManager.appearance) {
+                Section(header: Text("Appearance", bundle: .module)) {
+                    Picker(selection: $appearanceManager.appearance) {
                         ForEach(AppAppearance.allCases) { option in
                             Label(option.label, systemImage: option.systemImage)
                                 .tag(option)
                         }
-                    }
+                    } label: { Text("Theme", bundle: .module) }
 
-                    Picker("Text Size", selection: $appearanceManager.textSize) {
+                    Picker(selection: $appearanceManager.textSize) {
                         ForEach(AppTextSize.allCases) { size in
                             Text(size.label)
                                 .tag(size)
                         }
-                    }
+                    } label: { Text("Text Size", bundle: .module) }
 
-                    Picker("Language", selection: $languageRawValue) {
+                    Picker(selection: $languageRawValue) {
                         ForEach(AppLanguage.allCases) { language in
                             Text(language.label)
                                 .tag(language.rawValue)
                         }
-                    }
+                    } label: { Text("Language", bundle: .module) }
                 }
 
                 Divider()
@@ -176,15 +176,12 @@ struct ChatSidebarFooterView: View {
             "End temporary chat?", isPresented: $confirmingEndGhost,
             titleVisibility: .visible
         ) {
-            Button("Discard Temporary Chat", role: .destructive) {
+            Button(role: .destructive) {
                 model.endGhostChat()
-            }
-            Button("Cancel", role: .cancel) {}
+            } label: { Text("Discard Temporary Chat", bundle: .module) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: {
-            Text(
-                "This conversation exists only in memory and cannot be recovered "
-                    + "once discarded."
-            )
+            Text("This conversation exists only in memory and cannot be recovered once discarded.", bundle: .module)
         }
     }
 

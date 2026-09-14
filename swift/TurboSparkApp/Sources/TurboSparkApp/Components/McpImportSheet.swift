@@ -89,7 +89,7 @@ public struct McpImportSheet: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button("Close") { onDismiss() }
+            Button { onDismiss() } label: { Text("Close", bundle: .module) }
                 .buttonStyle(.plain)
                 .foregroundStyle(.appSecondary)
         }
@@ -101,10 +101,10 @@ public struct McpImportSheet: View {
         HStack(spacing: 10) {
             Text("Install Into:", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-            Picker("Scope", selection: $installToProjectScope) {
+            Picker(selection: $installToProjectScope) {
                 Text("All Projects (Global)", bundle: .module).tag(false)
                 Text("This Project Only", bundle: .module).tag(true)
-            }
+            } label: { Text("Scope", bundle: .module) }
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
             .disabled(project == nil)
@@ -122,7 +122,7 @@ public struct McpImportSheet: View {
 
     private var footer: some View {
         HStack {
-            Button("Done") { onDismiss() }
+            Button { onDismiss() } label: { Text("Done", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
             Spacer()
             Button {
@@ -131,7 +131,7 @@ public struct McpImportSheet: View {
                 if isFetching {
                     ProgressView().scaleEffect(0.6).frame(width: 16, height: 16)
                 } else {
-                    Label("Fetch Catalog", systemImage: "arrow.down.circle")
+                    Label { Text("Fetch Catalog", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
                 }
             }
             .buttonStyle(.borderedProminent)
@@ -168,7 +168,7 @@ public struct McpImportSheet: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
-                Text("\(manifest.servers.count) servers", bundle: .module)
+                Text(verbatim: "\(manifest.servers.count) servers")
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
@@ -253,13 +253,13 @@ public struct McpImportSheet: View {
     ) -> some View {
         Group {
             if installedNames.contains(entry.id) {
-                Label("Added", systemImage: "checkmark.circle.fill")
+                Label { Text("Added", bundle: .module) } icon: { Image(systemName: "checkmark.circle.fill") }
                     .themedFont(.small)
                     .foregroundStyle(.green)
             } else {
-                Button("Install") {
+                Button {
                     install(entry, marketplaceName: marketplaceName)
-                }
+                } label: { Text("Install", bundle: .module) }
                 .buttonStyle(.bordered)
             }
         }

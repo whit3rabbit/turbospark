@@ -22,7 +22,7 @@ struct InspectorEssentialsSection: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Section("Essentials") {
+        Section(header: Text("Essentials", bundle: .module)) {
             ThinkingLevelControl(model: model)
             ContextLadderPicker(model: model)
         }
@@ -66,14 +66,14 @@ private struct ThinkingLevelControl: View {
             }
 
             if model.reasoningPickerEnabled {
-                Picker("Thinking level", selection: Binding(
+                Picker(selection: Binding(
                     get: { model.reasoning },
                     set: { model.setReasoning($0) }
                 )) {
                     ForEach(model.availableReasoningLevels) { level in
                         Text(model.reasoningLabel(for: level)).tag(level)
                     }
-                }
+                } label: { Text("Thinking level", bundle: .module) }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .accessibilityLabel("Thinking level")
@@ -205,7 +205,7 @@ private struct ContextLadderPicker: View {
     }
 
     private var customSizeRow: some View {
-        LabeledContent("Custom Size") {
+        LabeledContent {
             HStack(spacing: 8) {
                 Slider(
                     value: Binding(
@@ -221,10 +221,12 @@ private struct ContextLadderPicker: View {
                 )
                 .accessibilityLabel("Custom context size")
                 .accessibilityValue("\(model.maxContextTokens) tokens")
-                Text("\(model.maxContextTokens.formatted())", bundle: .module)
+                Text(verbatim: "\(model.maxContextTokens.formatted())")
                     .themedFont(.small).monospacedDigit()
                     .frame(width: 55, alignment: .trailing)
             }
+        } label: {
+            Text("Custom Size", bundle: .module)
         }
     }
 
@@ -345,7 +347,7 @@ private struct ContextSelectionButton: View {
             Text("Auto (\(model.resolvedContextTokens.formatted()))", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
         } else if isCustom {
-            Text("Custom \u{00B7} \(model.maxContextTokens.formatted())", bundle: .module)
+            Text(verbatim: "Custom \u{00B7} \(model.maxContextTokens.formatted())")
                 .font(theme.ui(.small, weight: .semibold))
                 .monospacedDigit()
         } else {

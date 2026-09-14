@@ -52,6 +52,9 @@ final class CompactionTests: XCTestCase {
         -> AppModel
     {
         let model = AppModel()
+        model.defaultSystemPrompt = ""
+        model.selectedSystemPromptID = nil
+        model.selectedPersonalityID = nil
         var chat = AppChat(title: "compacting")
         chat.messages = messages
         chat.contextSummary = summary

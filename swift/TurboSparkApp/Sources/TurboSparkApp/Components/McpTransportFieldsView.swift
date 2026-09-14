@@ -48,7 +48,7 @@ struct McpStdioTransportFields: View {
             HStack(spacing: 6) {
                 TextField("Defaults to the project root", text: $cwdText)
                     .textFieldStyle(.roundedBorder)
-                Button("Choose...") { chooseWorkingDirectory() }
+                Button { chooseWorkingDirectory() } label: { Text("Choose...", bundle: .module) }
                     .buttonStyle(.bordered)
                     .help("Pick the directory this server is launched in")
             }
@@ -64,10 +64,7 @@ struct McpStdioTransportFields: View {
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             monospacedEditor(text: $envPassthroughText, height: 50)
-            Text(
-                "Forwards these variables from this app's own environment. "
-                + "PATH, HOME, LANG and TMPDIR are always forwarded; nothing else is, "
-                + "so a server never receives a credential it was not named.")
+            Text("Forwards these variables from this app's own environment. PATH, HOME, LANG and TMPDIR are always forwarded; nothing else is, so a server never receives a credential it was not named.", bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
         }
@@ -169,10 +166,7 @@ struct McpRemoteTransportFields: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.small)
                 .foregroundStyle(.orange)
-            Text(
-                "Remote MCP transport is not implemented in this build. A server "
-                + "saved here can be configured but every tool call against it will "
-                + "fail. Use a local subprocess for now.")
+            Text("Remote MCP transport is not implemented in this build. A server saved here can be configured but every tool call against it will fail. Use a local subprocess for now.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
         }

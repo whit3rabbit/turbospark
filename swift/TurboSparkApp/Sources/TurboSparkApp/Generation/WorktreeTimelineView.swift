@@ -143,7 +143,7 @@ public struct WorktreeTimelineView: View {
                 if worktree.isLoadingCommitFiles {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Text("\(worktree.selectedCommitFiles.count) files", bundle: .module)
+                    Text(verbatim: "\(worktree.selectedCommitFiles.count) files")
                         .themedFont(.tiny).monospacedDigit()
                         .foregroundStyle(.tertiary)
                 }
@@ -207,12 +207,12 @@ public struct WorktreeTimelineView: View {
                 if file.additions > 0 || file.deletions > 0 {
                     HStack(spacing: 3) {
                         if file.additions > 0 {
-                            Text("+\(file.additions)", bundle: .module)
+                            Text(verbatim: "+\(file.additions)")
                                 .themedFont(.tiny).monospacedDigit()
                                 .foregroundStyle(.green)
                         }
                         if file.deletions > 0 {
-                            Text("-\(file.deletions)", bundle: .module)
+                            Text(verbatim: "-\(file.deletions)")
                                 .themedFont(.tiny).monospacedDigit()
                                 .foregroundStyle(.red)
                         }

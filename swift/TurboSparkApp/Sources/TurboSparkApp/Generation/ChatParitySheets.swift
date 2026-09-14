@@ -91,15 +91,15 @@ struct TasksStatusSheet: View {
                 }
                 Spacer()
                 if run.status == "running" {
-                    Button("Stop") {
+                    Button {
                         onStop(run.id)
-                    }
+                    } label: { Text("Stop", bundle: .module) }
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.red.opacity(0.8))
                 } else if run.isRecordedComplete {
-                    Button("Dismiss") {
+                    Button {
                         onDismiss(run.id)
-                    }
+                    } label: { Text("Dismiss", bundle: .module) }
                     .buttonStyle(.plain)
                 }
                 Text(run.status)
@@ -124,9 +124,9 @@ struct TasksStatusSheet: View {
                     .foregroundStyle(.tertiary)
             }
             Spacer()
-            Button("Kill") {
+            Button {
                 model.killBackgroundShell(id: shell.id)
-            }
+            } label: { Text("Kill", bundle: .module) }
             .buttonStyle(.plain)
             .foregroundStyle(Color.red.opacity(0.8))
         }
@@ -211,9 +211,7 @@ struct RewindSheet: View {
     var body: some View {
         sheetFrame(title: "Rewind Conversation", iconName: "arrow.counterclockwise", dismiss: dismiss) {
             VStack(alignment: .leading, spacing: 12) {
-                Text(
-                    "Pick a prompt to rewind to. Everything after it is dropped from "
-                        + "this conversation; files on disk are not touched.")
+                Text("Pick a prompt to rewind to. Everything after it is dropped from this conversation; files on disk are not touched.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                 let targets = model.rewindTargets
@@ -249,9 +247,9 @@ struct RewindSheet: View {
                 }
                 HStack {
                     Spacer()
-                    Button("Cancel") { dismiss() }
+                    Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                         .keyboardShortcut(.cancelAction)
-                    Button("Rewind", action: rewind)
+                    Button(action: rewind) { Text("Rewind", bundle: .module) }
                         .keyboardShortcut(.defaultAction)
                         .disabled(selectedTargetID == nil)
                 }
@@ -303,7 +301,7 @@ struct RecapSheet: View {
                     }
                     .buttonStyle(.plain)
                     Spacer()
-                    Button("Close") { dismiss() }
+                    Button { dismiss() } label: { Text("Close", bundle: .module) }
                         .keyboardShortcut(.defaultAction)
                 }
             }
@@ -337,7 +335,7 @@ private func sheetFrame<Content: View>(
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
-            .help("Close")
+            .help(Text("Close", bundle: .module))
             .accessibilityLabel("Close \(title)")
         }
         .padding(.horizontal, 20)

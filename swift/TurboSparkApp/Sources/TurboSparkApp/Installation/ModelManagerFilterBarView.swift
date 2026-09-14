@@ -33,17 +33,17 @@ struct ModelManagerFilterBarView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .help("Show Favorites Only")
+                .help(Text("Show Favorites Only", bundle: .module))
                 .accessibilityLabel("Filter favorites")
                 .accessibilityValue(showFavoritesOnly ? "Favorites only" : "All models")
                 .accessibilityAddTraits(showFavoritesOnly ? [.isButton, .isSelected] : .isButton)
 
                 Menu {
-                    Picker("Architecture", selection: $architectureFilter) {
+                    Picker(selection: $architectureFilter) {
                         ForEach(ModelManagerView.ArchitectureFilter.allCases) { filter in
                             Text(filter.rawValue).tag(filter)
                         }
-                    }
+                    } label: { Text("Architecture", bundle: .module) }
                 } label: {
                     HStack(spacing: 4) {
                         Text(architectureFilter.rawValue)
@@ -58,16 +58,16 @@ struct ModelManagerFilterBarView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Filter by architecture")
+                .help(Text("Filter by architecture", bundle: .module))
                 .accessibilityLabel("Filter by architecture")
                 .accessibilityValue(architectureFilter.rawValue)
 
                 Menu {
-                    Picker("Drafter", selection: $drafterFilter) {
+                    Picker(selection: $drafterFilter) {
                         ForEach(ModelManagerView.DrafterFilter.allCases) { filter in
                             Text(filter.rawValue).tag(filter)
                         }
-                    }
+                    } label: { Text("Drafter", bundle: .module) }
                 } label: {
                     HStack(spacing: 4) {
                         Text(drafterFilter.rawValue)
@@ -82,16 +82,16 @@ struct ModelManagerFilterBarView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Filter by drafter")
+                .help(Text("Filter by drafter", bundle: .module))
                 .accessibilityLabel("Filter by drafter")
                 .accessibilityValue(drafterFilter.rawValue)
 
                 Menu {
-                    Picker("Source", selection: $sourceFilter) {
+                    Picker(selection: $sourceFilter) {
                         ForEach(ModelManagerView.SourceFilter.allCases) { filter in
                             Text(filter.rawValue).tag(filter)
                         }
-                    }
+                    } label: { Text("Source", bundle: .module) }
                 } label: {
                     HStack(spacing: 4) {
                         Text(sourceFilter.rawValue)
@@ -106,26 +106,26 @@ struct ModelManagerFilterBarView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Filter by source")
+                .help(Text("Filter by source", bundle: .module))
                 .accessibilityLabel("Filter by source")
                 .accessibilityValue(sourceFilter.rawValue)
 
                 Spacer(minLength: 4)
 
                 Menu {
-                    Section("Sort By") {
-                        Picker("Sort", selection: $sortOption) {
+                    Section(header: Text("Sort By", bundle: .module)) {
+                        Picker(selection: $sortOption) {
                             ForEach(ModelManagerView.SortOption.allCases) { opt in
                                 Text(opt.rawValue).tag(opt)
                             }
-                        }
+                        } label: { Text("Sort", bundle: .module) }
                     }
-                    Section("Group By") {
-                        Picker("Group", selection: $groupOption) {
+                    Section(header: Text("Group By", bundle: .module)) {
+                        Picker(selection: $groupOption) {
                             ForEach(ModelManagerView.GroupOption.allCases) { grp in
                                 Text(grp.rawValue).tag(grp)
                             }
-                        }
+                        } label: { Text("Group", bundle: .module) }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -141,7 +141,7 @@ struct ModelManagerFilterBarView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Sort and group models")
+                .help(Text("Sort and group models", bundle: .module))
                 .accessibilityLabel("Sort and group models")
                 .accessibilityValue("\(sortOption.rawValue), \(groupOption.rawValue)")
             }
@@ -212,7 +212,7 @@ struct ModelManagerFilterBarView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
-                .help("Clear search")
+                .help(Text("Clear search", bundle: .module))
                 .accessibilityLabel("Clear search")
             }
         }

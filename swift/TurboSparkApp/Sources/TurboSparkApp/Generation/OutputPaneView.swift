@@ -25,51 +25,51 @@ struct OutputPaneView: View {
             }
         }
         .contextMenu {
-            Button("Copy response") {
+            Button {
                 copyResponse()
-            }
+            } label: { Text("Copy response", bundle: .module) }
             .disabled(model.outputResponsePlainText.isEmpty)
 
-            Button("Copy conversation") {
+            Button {
                 copy(model.outputConversationPlainText)
-            }
+            } label: { Text("Copy conversation", bundle: .module) }
             .disabled(model.outputConversationPlainText.isEmpty)
 
             Divider()
 
-            Button("Session Stats...") {
+            Button {
                 model.showSessionStats = true
-            }
-            Button("Export Conversation...") {
+            } label: { Text("Session Stats...", bundle: .module) }
+            Button {
                 model.exportSelectedChat(format: .markdown)
-            }
-            Button("Help...") {
+            } label: { Text("Export Conversation...", bundle: .module) }
+            Button {
                 model.showHelpSheet = true
-            }
+            } label: { Text("Help...", bundle: .module) }
 
             Divider()
 
-            Button("Background Tasks...") {
+            Button {
                 model.showTasksSheet = true
-            }
-            Button("Context Usage...") {
+            } label: { Text("Background Tasks...", bundle: .module) }
+            Button {
                 model.showContextSheet = true
-            }
+            } label: { Text("Context Usage...", bundle: .module) }
 
             Divider()
 
             if model.collapsedTurnAnchors.isEmpty {
-                Button("Collapse finished turns") {
+                Button {
                     model.collapseAllTurns()
-                }
+                } label: { Text("Collapse finished turns", bundle: .module) }
                 .disabled(!model.canCollapseTurns)
             } else {
-                Button("Expand collapsed turns") {
+                Button {
                     model.collapsedTurnAnchors.removeAll()
-                }
+                } label: { Text("Expand collapsed turns", bundle: .module) }
             }
 
-            Button("Clear chat history") { model.clearOutput() }
+            Button { model.clearOutput() } label: { Text("Clear chat history", bundle: .module) }
                 .disabled(model.isRunning || !model.hasOutputTranscript)
         }
         .sheet(isPresented: $model.showSessionStats) {
@@ -107,10 +107,10 @@ struct OutputPaneView: View {
             "Delete this chat?",
             isPresented: $model.confirmDeleteChat
         ) {
-            Button("Delete", role: .destructive) {
+            Button(role: .destructive) {
                 model.deleteChat(id: model.selectedChatID)
-            }
-            Button("Cancel", role: .cancel) {}
+            } label: { Text("Delete", bundle: .module) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: {
             Text("The conversation '\(model.selectedChat.title)' will be removed. This cannot be undone.", bundle: .module)
         }
@@ -314,7 +314,7 @@ private struct ChatTranscriptView: View {
                         _ = model.collapsedTurnAnchors.insert(turn.anchorID!)
                     }
                 } label: {
-                    Label("Collapse turn", systemImage: "rectangle.compress.vertical")
+                    Label { Text("Collapse turn", bundle: .module) } icon: { Image(systemName: "rectangle.compress.vertical") }
                         .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
                 }

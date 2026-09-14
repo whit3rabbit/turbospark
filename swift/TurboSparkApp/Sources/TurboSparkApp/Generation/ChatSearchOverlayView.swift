@@ -95,7 +95,7 @@ struct ChatSearchOverlayView: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help("Clear search")
+                .help(Text("Clear search", bundle: .module))
                 .accessibilityLabel("Clear search")
             }
         }
@@ -188,14 +188,14 @@ struct ChatSearchOverlayView: View {
     /// cursor.
     private var hiddenShortcutButtons: some View {
         VStack {
-            Button("Previous Result") { moveSelection(-1) }
+            Button { moveSelection(-1) } label: { Text("Previous Result", bundle: .module) }
                 .keyboardShortcut(.upArrow, modifiers: [])
-            Button("Next Result") { moveSelection(1) }
+            Button { moveSelection(1) } label: { Text("Next Result", bundle: .module) }
                 .keyboardShortcut(.downArrow, modifiers: [])
-            Button("Open Selected") { openSelected() }
+            Button { openSelected() } label: { Text("Open Selected", bundle: .module) }
                 .keyboardShortcut(.defaultAction)
                 .disabled(hits.isEmpty)
-            Button("Close Search") { isPresented = false }
+            Button { isPresented = false } label: { Text("Close Search", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
         }
         .opacity(0)

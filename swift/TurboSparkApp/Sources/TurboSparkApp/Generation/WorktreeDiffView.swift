@@ -91,12 +91,12 @@ public struct WorktreeDiffView: View {
             if file.additions > 0 || file.deletions > 0 {
                 HStack(spacing: 4) {
                     if file.additions > 0 {
-                        Text("+\(file.additions)", bundle: .module)
+                        Text(verbatim: "+\(file.additions)")
                             .themedFont(.tiny, weight: .semibold).monospacedDigit()
                             .foregroundStyle(.green)
                     }
                     if file.deletions > 0 {
-                        Text("-\(file.deletions)", bundle: .module)
+                        Text(verbatim: "-\(file.deletions)")
                             .themedFont(.tiny, weight: .semibold).monospacedDigit()
                             .foregroundStyle(.red)
                     }

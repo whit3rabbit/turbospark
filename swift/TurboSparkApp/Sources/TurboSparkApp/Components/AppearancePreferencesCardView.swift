@@ -134,7 +134,7 @@ public struct AppearancePreferencesCardView: View {
                     Stepper("", value: $manager.uiFontSize, in: 11...28, step: 1)
                         .labelsHidden()
 
-                    Text("\(Int(manager.uiFontSize))", bundle: .module)
+                    Text(verbatim: "\(Int(manager.uiFontSize))")
                         .font(theme.ui(.callout, weight: .medium).monospacedDigit())
                         .frame(width: 28, alignment: .center)
 
@@ -184,7 +184,7 @@ public struct AppearancePreferencesCardView: View {
                     Stepper("", value: $manager.codeFontSize, in: 10...24, step: 1)
                         .labelsHidden()
 
-                    Text("\(Int(manager.codeFontSize))", bundle: .module)
+                    Text(verbatim: "\(Int(manager.codeFontSize))")
                         .font(theme.ui(.callout, weight: .medium).monospacedDigit())
                         .frame(width: 28, alignment: .center)
 

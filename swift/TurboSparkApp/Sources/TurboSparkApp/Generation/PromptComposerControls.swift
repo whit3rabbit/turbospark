@@ -10,14 +10,14 @@ struct PromptTipsButton: View {
         Button {
             showingTips.toggle()
         } label: {
-            Label("Prompt tips", systemImage: "questionmark.circle")
+            Label { Text("Prompt tips", bundle: .module) } icon: { Image(systemName: "questionmark.circle") }
                 .labelStyle(.iconOnly)
                 .frame(width: iconButtonSize, height: iconButtonSize)
                 .contentShape(Circle())
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.appSecondary)
-        .help("Prompt tips")
+        .help(Text("Prompt tips", bundle: .module))
         .accessibilityLabel("Prompt tips")
         .accessibilityHint("Shows a popover with prompt writing guidance")
         .popover(isPresented: $showingTips,

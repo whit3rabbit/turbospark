@@ -343,11 +343,12 @@ final class LocalizationParityTests: XCTestCase {
     /// spelled that way and one spelled with the character itself are the SAME
     /// key; comparing raw source text would report a false gap for one of them.
     private static func leadingLiteral(_ body: String) -> (key: String, interpolated: Bool)? {
-        guard body.hasPrefix("\"") else { return nil }
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("\"") else { return nil }
         var raw: [Character] = []
         var escape = false
         var closed = false
-        for character in body.dropFirst() {
+        for character in trimmed.dropFirst() {
             if escape {
                 raw.append(character)
                 escape = false

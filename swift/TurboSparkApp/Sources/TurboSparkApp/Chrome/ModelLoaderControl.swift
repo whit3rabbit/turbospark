@@ -110,19 +110,19 @@ struct ModelLoaderControl: View {
             Button {
                 model.activeSection = .modelManager
             } label: {
-                Label("Manage installed models...", systemImage: "internaldrive")
+                Label { Text("Manage installed models…", bundle: .module) } icon: { Image(systemName: "internaldrive") }
             }
 
             Button {
                 model.activeSection = .modelHub
             } label: {
-                Label("Discover new models...", systemImage: "shippingbox")
+                Label { Text("Discover new models…", bundle: .module) } icon: { Image(systemName: "shippingbox") }
             }
 
             Button {
                 ModelLocationPicker.choose(for: model)
             } label: {
-                Label("Open model folder...", systemImage: "folder")
+                Label { Text("Open model folder…", bundle: .module) } icon: { Image(systemName: "folder") }
             }
 
             if model.canReloadModel {
@@ -130,7 +130,7 @@ struct ModelLoaderControl: View {
                 Button {
                     model.reloadModel()
                 } label: {
-                    Label("Reload model", systemImage: "arrow.clockwise")
+                    Label { Text("Reload model", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                 }
             }
         } label: {
@@ -226,7 +226,7 @@ struct ModelLoaderControl: View {
         if model.installed.isEmpty {
             Text("No models installed yet", bundle: .module)
         } else {
-            Section("Installed") {
+            Section(header: Text("Installed", bundle: .module)) {
                 ForEach(model.installed) { item in
                     Button {
                         model.openChatWithModel(item)
@@ -246,7 +246,7 @@ struct ModelLoaderControl: View {
 
     private var reasoningPicker: some View {
         Menu {
-            Section("Reasoning Effort") {
+            Section(header: Text("Reasoning Effort", bundle: .module)) {
                 ForEach(model.availableReasoningLevels) { level in
                     let title = model.reasoningLabel(for: level)
                         + " - " + model.reasoningDescription(for: level)
@@ -304,7 +304,7 @@ struct ModelLoaderControl: View {
         Button {
             model.loadModel()
         } label: {
-            Label("Load", systemImage: "play.fill")
+            Label { Text("Load", bundle: .module) } icon: { Image(systemName: "play.fill") }
                 .font(theme.ui(.tiny, weight: .semibold))
                 .labelStyle(.titleAndIcon)
                 .imageScale(.small)
@@ -341,7 +341,7 @@ struct ModelLoaderControl: View {
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.94))
         .disabled(!model.canUnloadModel)
-        .help("Eject the loaded model and free its memory")
+        .help(Text("Eject the loaded model and free its memory", bundle: .module))
         .accessibilityLabel("Eject model")
         .accessibilityHint("Unloads the model and frees its memory. Loading it again takes several seconds.")
     }

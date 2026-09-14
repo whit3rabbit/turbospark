@@ -110,7 +110,7 @@ public struct ProjectMcpSettingsSheet: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button("Close") { onDismiss() }
+            Button { onDismiss() } label: { Text("Close", bundle: .module) }
                 .buttonStyle(.plain)
                 .foregroundStyle(.appSecondary)
         }
@@ -150,7 +150,7 @@ public struct ProjectMcpSettingsSheet: View {
                     editingServer = nil
                     showingEditorSheet = true
                 } label: {
-                    Label("Add Server", systemImage: "plus")
+                    Label { Text("Add Server", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
                 .buttonStyle(.bordered)
             }
@@ -273,7 +273,7 @@ public struct ProjectMcpSettingsSheet: View {
     private var footer: some View {
         HStack {
             Spacer()
-            Button("Done") { onDismiss() }
+            Button { onDismiss() } label: { Text("Done", bundle: .module) }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
         }

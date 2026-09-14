@@ -98,7 +98,7 @@ public struct ThemeCodePreviewView: View {
         valueColor: Color? = nil
     ) -> some View {
         HStack(spacing: 8) {
-            Text("\(number)", bundle: .module)
+            Text(verbatim: "\(number)")
                 .frame(width: 14, alignment: .trailing)
                 .foregroundStyle(Color.secondary.opacity(0.6))
                 .font(codeFont)
@@ -138,7 +138,7 @@ public struct ThemeCodePreviewView: View {
                 .frame(width: 3)
 
             HStack(spacing: 6) {
-                Text("\(number)", bundle: .module)
+                Text(verbatim: "\(number)")
                     .frame(width: 14, alignment: .trailing)
                     .foregroundStyle(Color.secondary.opacity(0.7))
 

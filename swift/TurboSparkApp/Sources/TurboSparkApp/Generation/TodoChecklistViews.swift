@@ -183,7 +183,7 @@ struct TaskChecklistPanelView: View {
                 TodoItemRow(item: item)
             }
             if display.foldedCompleted > 0 {
-                Text("+\(display.foldedCompleted) completed", bundle: .module)
+                Text(verbatim: "+\(display.foldedCompleted) completed")
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
                     .padding(.leading, 20)

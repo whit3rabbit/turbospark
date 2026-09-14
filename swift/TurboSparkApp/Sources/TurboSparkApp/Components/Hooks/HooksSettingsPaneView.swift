@@ -126,11 +126,11 @@ public struct HooksSettingsPaneView: View {
                     Text("Manage lifecycle hooks from config and enabled plugins.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
-                    Button("Learn more") {
+                    Button {
                         if let url = URL(string: "https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks") {
                             NSWorkspace.shared.open(url)
                         }
-                    }
+                    } label: { Text("Learn more", bundle: .module) }
                     .themedFont(.small)
                     .buttonStyle(.link)
                     .help("Open Hooks Documentation: https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks")
@@ -173,7 +173,7 @@ public struct HooksSettingsPaneView: View {
             Button {
                 showingAddHookSheet = true
             } label: {
-                Label("Add Hook", systemImage: "plus")
+                Label { Text("Add Hook", bundle: .module) } icon: { Image(systemName: "plus") }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
@@ -340,7 +340,7 @@ public struct HooksSettingsPaneView: View {
                 Button {
                     showingAddHookSheet = true
                 } label: {
-                    Label("Add Hook", systemImage: "plus")
+                    Label { Text("Add Hook", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
                 .buttonStyle(.bordered)
             } else {

@@ -70,10 +70,10 @@ struct ChatSidebarView: View {
             presenting: chatBeingRenamed
         ) { chat in
             TextField("Chat name", text: $renameText)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") {
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+            Button {
                 model.renameChat(id: chat.id, title: renameText)
-            }
+            } label: { Text("Rename", bundle: .module) }
             .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         } message: { _ in
             Text("Choose a name that identifies this chat.", bundle: .module)
@@ -83,10 +83,10 @@ struct ChatSidebarView: View {
             isPresented: deletionAlertPresented,
             presenting: chatPendingDeletion
         ) { chat in
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+            Button(role: .destructive) {
                 model.deleteChat(id: chat.id)
-            }
+            } label: { Text("Delete", bundle: .module) }
         } message: { chat in
             Text("\"\(chat.title)\" and its conversation history will be removed.", bundle: .module)
         }

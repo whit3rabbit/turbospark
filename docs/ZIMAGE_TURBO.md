@@ -297,10 +297,13 @@ cancellation seams, a macOS-only native Metal backend, image-specific MSL
 operators, and an explicit `turbospark-model pull-image` route that records
 image installs separately from text rows. `turbospark image generate` selects
 native Metal by default on macOS; `--backend reference` is explicit. The
-packed parity, metadata, quality, and resource gates are present as opt-in
-tests, but no complete packed install has passed them in this checkout. IG2
-therefore remains open. Keep the CPU backend as the diagnostic oracle, not as
-an unrecorded fallback. See
+packed comparison, metadata, quality, and resource gates are present as
+opt-in tests. A pinned local export now packs successfully to 11 files and
+6,906,461,695 bytes. Its native conditioning error is 0.081541 against the
+frozen 0.084 INT4 quality envelope, but the nine-step native denoise did not
+complete within roughly twelve minutes, so no complete packed install has
+passed the real gates. IG2 therefore remains open. Keep the CPU backend as
+the diagnostic oracle, not as an unrecorded fallback. See
 [IMAGE_GENERATION.md](IMAGE_GENERATION.md#ig2-handoff-checklist) for the
 file-level checklist and stop conditions.
 

@@ -227,7 +227,8 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// boundary the edit would sit on is a different shape and has not been
     /// decided. Requesting steering on either is refused at open BY NAME.
     private static let steeringFamilies: Set<String> = [
-        "gemma4", "qwen36", "qwen35", "llama", "qwen3moe", "gptOss", "museGlimmer",
+        "gemma4", "qwen36", "qwen35", "llama", "qwen3moe", "qwen3", "qwen2",
+        "minimax_m2", "gptOss", "museGlimmer", "spark2_5",
     ]
 
     /// - Parameter sessionInfo: the OPEN session's own report, when this

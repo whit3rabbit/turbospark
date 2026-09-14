@@ -13,11 +13,11 @@ struct ModelHubFilterBarView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Picker("View", selection: $filter.tab) {
+            Picker(selection: $filter.tab) {
                 ForEach(ModelHubFilter.Tab.allCases) { tab in
                     Text(tab.rawValue).tag(tab)
                 }
-            }
+            } label: { Text("View", bundle: .module) }
             .pickerStyle(.segmented)
             .controlSize(.small)
             .frame(width: 260)
@@ -49,7 +49,7 @@ struct ModelHubFilterBarView: View {
                         Button {
                             filter.clearNarrowing()
                         } label: {
-                            Label("Clear", systemImage: "xmark")
+                            Label { Text("Clear", bundle: .module) } icon: { Image(systemName: "xmark") }
                                 .themedFont(.tiny, weight: .medium)
                                 .labelStyle(.titleOnly)
                                 .padding(.horizontal, 8)

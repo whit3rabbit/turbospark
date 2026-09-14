@@ -89,9 +89,9 @@ public struct SkillImportSheet: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button("Close") {
+            Button {
                 dismiss()
-            }
+            } label: { Text("Close", bundle: .module) }
             .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20)
@@ -101,11 +101,11 @@ public struct SkillImportSheet: View {
 
     private var modeSelectorBar: some View {
         HStack {
-            Picker("Mode", selection: $mode) {
+            Picker(selection: $mode) {
                 ForEach(ImportMode.allCases) { m in
                     Text(m.rawValue).tag(m)
                 }
-            }
+            } label: { Text("Mode", bundle: .module) }
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
 
@@ -113,10 +113,10 @@ public struct SkillImportSheet: View {
 
             Text("Target Scope:", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-            Picker("Scope", selection: $importToProjectScope) {
+            Picker(selection: $importToProjectScope) {
                 Text("User Scope (~/.turbospark/skills)", bundle: .module).tag(false)
                 Text("Project Scope (.turbospark/skills)", bundle: .module).tag(true)
-            }
+            } label: { Text("Scope", bundle: .module) }
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
             .disabled(project == nil && !importToProjectScope)
@@ -147,9 +147,9 @@ public struct SkillImportSheet: View {
                     .themedFont(.base)
                     .foregroundStyle(.appSecondary)
 
-                Button("Choose Custom Folder...") {
+                Button {
                     selectCustomFolder()
-                }
+                } label: { Text("Choose Custom Folder...", bundle: .module) }
                 .buttonStyle(.bordered)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -191,17 +191,17 @@ public struct SkillImportSheet: View {
                     .frame(height: 1)
 
                 HStack {
-                    Button("Select All") {
+                    Button {
                         for i in candidates.indices { candidates[i].isSelected = true }
-                    }
+                    } label: { Text("Select All", bundle: .module) }
                     .buttonStyle(.plain)
                     .themedFont(.small)
 
                     Text(verbatim: "|").foregroundStyle(.tertiary)
 
-                    Button("Deselect All") {
+                    Button {
                         for i in candidates.indices { candidates[i].isSelected = false }
-                    }
+                    } label: { Text("Deselect All", bundle: .module) }
                     .buttonStyle(.plain)
                     .themedFont(.small)
 
@@ -276,7 +276,7 @@ public struct SkillImportSheet: View {
                             }
                         }
                         Spacer()
-                        Text("\(manifest.skills.count) skills available", bundle: .module)
+                        Text(verbatim: "\(manifest.skills.count) skills available")
                             .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
                     }

@@ -85,9 +85,9 @@ public struct AppearanceSettingsPaneView: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button("Reset to Defaults...") {
+            Button {
                 showsResetConfirmation = true
-            }
+            } label: { Text("Reset to Defaults...", bundle: .module) }
         }
         .padding(16)
         .background(.appSurface.opacity(0.7))
@@ -101,10 +101,10 @@ public struct AppearanceSettingsPaneView: View {
             isPresented: $showsResetConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Reset to Defaults", role: .destructive) {
+            Button(role: .destructive) {
                 manager.resetToDefaults()
-            }
-            Button("Cancel", role: .cancel) {}
+            } label: { Text("Reset to Defaults", bundle: .module) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: {
             resetDescription
         }

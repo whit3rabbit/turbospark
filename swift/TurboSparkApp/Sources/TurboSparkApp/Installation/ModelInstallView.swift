@@ -66,12 +66,12 @@ struct ModelInstallView: View {
 
             Spacer()
 
-            Button("Scan LM Studio") {
+            Button {
                 model.enableLMStudioDetection = true
                 model.persistSettings()
                 model.refreshModels()
                 model.showToast("Scanned LM Studio models folder", style: .success)
-            }
+            } label: { Text("Scan LM Studio", bundle: .module) }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
         }
@@ -112,11 +112,11 @@ struct ModelInstallView: View {
                         .foregroundStyle(.appSecondary)
                 }
                 Spacer()
-                Picker("Filter", selection: $selectedFilter) {
+                Picker(selection: $selectedFilter) {
                     ForEach(RecommendationFilter.allCases) { f in
                         Text(f.rawValue).tag(f)
                     }
-                }
+                } label: { Text("Filter", bundle: .module) }
                 .pickerStyle(.segmented)
                 .frame(width: 240)
                 .accessibilityLabel("Recommendations filter")
@@ -152,7 +152,7 @@ struct ModelInstallView: View {
                 model.refreshModels()
                 loadRecommendations()
             } label: {
-                Label("Rescan Storage", systemImage: "arrow.clockwise")
+                Label { Text("Rescan Storage", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
             }
             .buttonStyle(.bordered)
             .help("Rescan storage for local models")
@@ -161,7 +161,7 @@ struct ModelInstallView: View {
             Button {
                 ModelLocationPicker.choose(for: model)
             } label: {
-                Label("Choose Existing Model Folder...", systemImage: "folder")
+                Label { Text("Choose Existing Model Folder...", bundle: .module) } icon: { Image(systemName: "folder") }
             }
             .buttonStyle(.bordered)
             .help("Select an existing model directory")
@@ -172,7 +172,7 @@ struct ModelInstallView: View {
             Button {
                 model.openModelHub()
             } label: {
-                Label("Browse Full Model Hub", systemImage: "square.grid.2x2")
+                Label { Text("Browse Full Model Hub", bundle: .module) } icon: { Image(systemName: "square.grid.2x2") }
             }
             .buttonStyle(.bordered)
             .help("Open the model catalog")

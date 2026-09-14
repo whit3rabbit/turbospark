@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The composer's control row: mode toggle and attachments on the leading
-/// edge, compact model/reasoning/guardrails status and the send action on
-/// the trailing edge.
+/// edge, compact model/reasoning/steering status and the send action on the
+/// trailing edge.
 ///
 /// One `HStack` with a real `Spacer` between a leading `FlowLayout` and a
 /// trailing cluster, exactly the shape `FlowLayout` documents itself for
@@ -62,6 +62,8 @@ struct PromptComposerFooter: View {
 
     private var trailing: some View {
         HStack(spacing: 6) {
+            SteeringPillControl(model: model)
+
             // First, not last: `clearAction` below is conditional on the
             // draft, and the ring should not change position with it.
             ContextUsageRingView(model: model)
@@ -88,7 +90,7 @@ struct PromptComposerFooter: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Clear prompt")
+            .help(Text("Clear prompt", bundle: .module))
             .accessibilityLabel("Clear prompt")
             .accessibilityHint("Empties the prompt editor")
         }

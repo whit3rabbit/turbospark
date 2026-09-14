@@ -90,13 +90,13 @@ struct ProjectSettingsSheet: View {
         }
         .sheet(isPresented: $showingSkills) {
             VStack {
-                Button("Done") { showingSkills = false }
+                Button { showingSkills = false } label: { Text("Done", bundle: .module) }
                 SkillsSettingsPaneView(model: model, projectID: editingProject?.id)
             }.frame(minWidth: 780, minHeight: 580)
         }
         .sheet(isPresented: $showingPlugins) {
             VStack {
-                Button("Done") { showingPlugins = false }
+                Button { showingPlugins = false } label: { Text("Done", bundle: .module) }
                 PluginSettingsPaneView(model: model, projectID: editingProject?.id)
             }.frame(minWidth: 780, minHeight: 580)
         }
@@ -122,7 +122,7 @@ struct ProjectSettingsSheet: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button("Close") { onDismiss() }
+            Button { onDismiss() } label: { Text("Close", bundle: .module) }
                 .buttonStyle(.plain)
                 .foregroundStyle(.appSecondary)
         }
@@ -169,9 +169,9 @@ struct ProjectSettingsSheet: View {
                                 .allowsHitTesting(false)
                         }
                         .accessibilityLabel("Codebase root directory path")
-                    Button("Choose...") {
+                    Button {
                         selectFolder()
-                    }
+                    } label: { Text("Choose...", bundle: .module) }
                     .buttonStyle(.bordered)
                     .help("Choose codebase root folder")
                     .accessibilityLabel("Choose codebase root folder")
@@ -187,11 +187,11 @@ struct ProjectSettingsSheet: View {
                 .themedFont(.small, weight: .semibold)
                 .accessibilityAddTraits(.isHeader)
 
-            Picker("Agent Profile", selection: $agentType) {
+            Picker(selection: $agentType) {
                 ForEach(AppAgentType.allCases) { type in
                     Label(type.label, systemImage: type.systemImage).tag(type)
                 }
-            }
+            } label: { Text("Agent Profile", bundle: .module) }
             .pickerStyle(.menu)
             .accessibilityLabel("Agent profile")
 
@@ -208,7 +208,7 @@ struct ProjectSettingsSheet: View {
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                     Spacer()
-                    Text("\(Int(maxAutonomousSteps)) steps", bundle: .module)
+                    Text(verbatim: "\(Int(maxAutonomousSteps)) steps")
                         .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.appSecondary)
                 }
@@ -218,7 +218,9 @@ struct ProjectSettingsSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Toggle("Bounded execution state", isOn: $skillStateEnabled)
+                Toggle(isOn: $skillStateEnabled) {
+                Text("Bounded execution state", bundle: .module)
+            }
                     .accessibilityHint(
                         "Carry a compact state between steps instead of the full transcript")
                 Text(
@@ -258,7 +260,7 @@ struct ProjectSettingsSheet: View {
                     Button {
                         showingMcpSheet = true
                     } label: {
-                        Label("Manage MCPs...", systemImage: "server.rack")
+                        Label { Text("Manage MCPs...", bundle: .module) } icon: { Image(systemName: "server.rack") }
                     }
                     .buttonStyle(.bordered)
                     .help("Manage MCP servers for this project")
@@ -338,9 +340,9 @@ struct ProjectSettingsSheet: View {
                         }
 
                         if hasSyntextIndex {
-                            Button("Remove Index", role: .destructive) {
+                            Button(role: .destructive) {
                                 deleteProjectIndex(rootURL: rootURL)
-                            }
+                            } label: { Text("Remove Index", bundle: .module) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             .accessibilityLabel("Remove project codebase index")
@@ -357,15 +359,15 @@ struct ProjectSettingsSheet: View {
     private var footer: some View {
         HStack {
             if let editing = editingProject {
-                Button("Delete Project", role: .destructive) {
+                Button(role: .destructive) {
                     model.deleteProject(id: editing.id)
                     onDismiss()
-                }
+                } label: { Text("Delete Project", bundle: .module) }
                 .buttonStyle(.plain)
                 .foregroundStyle(.red)
             }
             Spacer()
-            Button("Cancel") { onDismiss() }
+            Button { onDismiss() } label: { Text("Cancel", bundle: .module) }
                 .buttonStyle(.plain)
             Button(editingProject == nil ? "Create Project" : "Save Changes") {
                 save()

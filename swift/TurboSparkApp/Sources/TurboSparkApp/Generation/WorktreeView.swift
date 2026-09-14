@@ -131,12 +131,12 @@ struct WorktreeView: View {
             if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                 HStack(spacing: 4) {
                     if worktree.totalAdditions > 0 {
-                        Text("+\(worktree.totalAdditions)", bundle: .module)
+                        Text(verbatim: "+\(worktree.totalAdditions)")
                             .themedFont(.tiny, weight: .semibold).monospacedDigit()
                             .foregroundStyle(.green)
                     }
                     if worktree.totalDeletions > 0 {
-                        Text("-\(worktree.totalDeletions)", bundle: .module)
+                        Text(verbatim: "-\(worktree.totalDeletions)")
                             .themedFont(.tiny, weight: .semibold).monospacedDigit()
                             .foregroundStyle(.red)
                     }
@@ -204,7 +204,7 @@ struct WorktreeView: View {
 
     private var branchMenu: some View {
         Menu {
-            Section("Comparison Target") {
+            Section(header: Text("Comparison Target", bundle: .module)) {
                 Button {
                     worktree.setComparisonMode(.againstBranch(worktree.currentBranch))
                 } label: {
@@ -229,7 +229,7 @@ struct WorktreeView: View {
             }
 
             if !worktree.availableBranches.isEmpty {
-                Section("Switch Branch") {
+                Section(header: Text("Switch Branch", bundle: .module)) {
                     ForEach(worktree.availableBranches, id: \.self) { branch in
                         if branch != worktree.currentBranch {
                             Button {
@@ -241,7 +241,7 @@ struct WorktreeView: View {
                     }
                 }
 
-                Menu("Compare against...") {
+                Menu {
                     ForEach(worktree.availableBranches, id: \.self) { branch in
                         Button {
                             worktree.setComparisonMode(.againstBranch(branch))
@@ -254,18 +254,22 @@ struct WorktreeView: View {
                             }
                         }
                     }
+                } label: {
+                    Text("Compare against...", bundle: .module)
                 }
             }
 
             if !worktree.recentCommits.isEmpty {
-                Menu("Commits >") {
+                Menu {
                     ForEach(worktree.recentCommits) { commit in
                         Button {
                             worktree.setComparisonMode(.commit(hash: commit.hash, summary: commit.summary))
                         } label: {
-                            Text("\(commit.shortHash): \(commit.summary)", bundle: .module)
+                            Text(verbatim: "\(commit.shortHash): \(commit.summary)")
                         }
                     }
+                } label: {
+                    Text("Commits >", bundle: .module)
                 }
             }
         } label: {

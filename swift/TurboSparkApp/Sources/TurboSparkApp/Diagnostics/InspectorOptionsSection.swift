@@ -4,8 +4,8 @@ import TurboSpark
 
 extension InspectorView {
     var modelSection: some View {
-        Section("Model") {
-            Picker("Model", selection: Binding(
+        Section(header: Text("Model", bundle: .module)) {
+            Picker(selection: Binding(
                 get: { model.selected?.alias ?? "" },
                 set: { alias in
                     guard let m = model.installed.first(where: { $0.alias == alias }) else { return }
@@ -20,7 +20,7 @@ extension InspectorView {
                     Label("\(m.alias) (\(visuals.family))", systemImage: visuals.iconSystemName)
                         .tag(m.alias)
                 }
-            }
+            } label: { Text("Model", bundle: .module) }
 
             LabeledContent {
                 HStack(spacing: 6) {
@@ -34,11 +34,11 @@ extension InspectorView {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(model.modelPathText, forType: .string)
                     } label: {
-                        Label("Copy model path", systemImage: "doc.on.doc")
+                        Label { Text("Copy model path", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
                             .labelStyle(.iconOnly)
                     }
                     .buttonStyle(.borderless)
-                    .help("Copy model path")
+                    .help(Text("Copy model path", bundle: .module))
                     .accessibilityLabel("Copy model path")
                     .accessibilityHint("Copies the on-disk model path to the clipboard")
                 }
@@ -47,20 +47,20 @@ extension InspectorView {
                     .themedFont(.small)
             }
 
-            Button("Choose Model Folder…") {
+            Button {
                 ModelLocationPicker.choose(for: model)
-            }
+            } label: { Text("Choose Model Folder…", bundle: .module) }
             .disabled(model.opening || model.isRunning)
             .accessibilityHint("Opens a folder picker to choose a model directory")
 
             if model.canUnloadModel {
                 HStack {
-                    Button("Reload Model", action: model.reloadModel)
+                    Button(action: model.reloadModel) { Text("Reload Model", bundle: .module) }
                     Spacer()
-                    Button("Unload Model", action: model.unloadModel)
+                    Button(action: model.unloadModel) { Text("Unload Model", bundle: .module) }
                 }
             } else if model.canLoadModel {
-                Button("Load Model", action: model.loadModel)
+                Button(action: model.loadModel) { Text("Load Model", bundle: .module) }
             }
 
             if let selected = model.selected {
@@ -94,59 +94,61 @@ extension InspectorView {
     }
 
     var memoryAndPowerSection: some View {
-        Section("Open & Architecture Options") {
+        Section(header: Text("Open & Architecture Options", bundle: .module)) {
             // The context window lives in InspectorEssentialsSection's
             // `ContextLadderPicker`, the one place that sets it.
-            LabeledContent("Cache Slots") {
-                Picker("Slots", selection: $model.runtimeOptions.expertCacheSlots) {
+            LabeledContent {
+                Picker(selection: $model.runtimeOptions.expertCacheSlots) {
                     ForEach(AppRuntimeOptions.allowedSlotCounts, id: \.self) { slots in
                         Text(AppRuntimeOptions.slotsLabel(for: slots)).tag(slots)
                     }
-                }
+                } label: { Text("Slots", bundle: .module) }
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .fixedSize()
                 // .labelsHidden() strips the visible label, so VoiceOver would
                 // hear "menu, 16" with no idea what 16 means.
                 .accessibilityLabel("Cache slots")
+            } label: {
+                Text("Cache Slots", bundle: .module)
             }
 
-            LabeledContent("Power Profile") {
-                Picker("Power", selection: $model.runtimeOptions.powerProfile) {
+            LabeledContent {
+                Picker(selection: $model.runtimeOptions.powerProfile) {
                     ForEach(AppPowerProfileOption.allCases) { profile in
                         Text(profile.menuLabel).tag(profile)
                     }
-                }
+                } label: { Text("Power", bundle: .module) }
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .fixedSize()
                 .accessibilityLabel("Power profile")
-            }
+            } label: { Text("Power Profile", bundle: .module) }
 
-            LabeledContent("Speculation") {
-                Picker("Speculation", selection: $model.runtimeOptions.speculation) {
+            LabeledContent {
+                Picker(selection: $model.runtimeOptions.speculation) {
                     ForEach(AppSpeculationOption.allCases) { spec in
                         Text(spec.menuLabel).tag(spec)
                     }
-                }
+                } label: { Text("Speculation", bundle: .module) }
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .fixedSize()
                 .accessibilityLabel("Speculation")
-            }
+            } label: { Text("Speculation", bundle: .module) }
 
             if model.runtimeOptions.speculation != .off {
-                LabeledContent("Drafter") {
-                    Picker("Drafter", selection: $model.runtimeOptions.speculativeDrafter) {
+                LabeledContent {
+                    Picker(selection: $model.runtimeOptions.speculativeDrafter) {
                         ForEach(AppSpeculativeDrafterOption.allCases) { drafter in
                             Text(drafter.menuLabel).tag(drafter)
                         }
-                    }
+                    } label: { Text("Drafter", bundle: .module) }
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .fixedSize()
                     .accessibilityLabel("Speculation drafter")
-                }
+                } label: { Text("Drafter", bundle: .module) }
             }
 
             // `.labelsHidden()` is load-bearing, not cosmetic: on macOS a
@@ -154,7 +156,7 @@ extension InspectorView {
             // so "Uncapped" was drawn beside the field and clipped to "Un-"
             // by the inspector's width. Every other control in this section
             // already hides its label for the same reason.
-            LabeledContent("Rate Cap") {
+            LabeledContent {
                 HStack(spacing: 6) {
                     TextField("Uncapped", value: $model.runtimeOptions.maxTokensPerSec, format: .number)
                         .labelsHidden()
@@ -171,13 +173,15 @@ extension InspectorView {
                         .accessibilityHidden(true)
                 }
                 .fixedSize()
+            } label: {
+                Text("Rate Cap", bundle: .module)
             }
             .help("Tokens per second ceiling. 0 leaves generation uncapped.")
 
             if model.canReloadModel {
-                Button("Apply Options & Reload") {
+                Button {
                     model.reloadModel()
-                }
+                } label: { Text("Apply Options & Reload", bundle: .module) }
                 .controlSize(.small)
             }
         }
@@ -194,7 +198,7 @@ extension InspectorView {
     /// "Custom" preset, so a configuration made before presets existed keeps
     /// working.
     var steeringSection: some View {
-        Section("Directional Steering") {
+        Section(header: Text("Directional Steering", bundle: .module)) {
             // A family that does not dispatch the edit REFUSES a vector at
             // open, so the knobs below can only produce a failed load there.
             // Disabled with the engine's own reason rather than hidden
@@ -215,11 +219,11 @@ extension InspectorView {
             // to work and does not.
             if model.steeringNeedsReload {
                 HStack {
-                    Label("Not applied to the loaded model", systemImage: "arrow.clockwise")
+                    Label { Text("Not applied to the loaded model", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                         .themedFont(.small)
                         .foregroundStyle(Color.orange)
                     Spacer()
-                    Button("Reload") { model.reloadForSteering() }
+                    Button { model.reloadForSteering() } label: { Text("Reload", bundle: .module) }
                         .themedFont(.small)
                         .disabled(model.selected == nil || model.generating || model.opening)
                 }
@@ -235,19 +239,19 @@ extension InspectorView {
             .accessibilityHint("Path to a GGUF control vector file. Leave blank to disable directional steering.")
 
             if let path = model.runtimeOptions.steeringPath, !path.isEmpty {
-                LabeledContent("Mode") {
-                    Picker("Steering Mode", selection: $model.runtimeOptions.steeringMode) {
+                LabeledContent {
+                    Picker(selection: $model.runtimeOptions.steeringMode) {
                         ForEach(AppSteeringModeOption.allCases) { mode in
                             Text(mode.menuLabel).tag(mode)
                         }
-                    }
+                    } label: { Text("Steering Mode", bundle: .module) }
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .fixedSize()
                     .accessibilityLabel("Steering mode")
-                }
+                } label: { Text("Mode", bundle: .module) }
 
-                LabeledContent("Scale") {
+                LabeledContent {
                     HStack(spacing: 8) {
                         Slider(value: $model.runtimeOptions.steeringScale, in: 0...3, step: 0.1)
                             .accessibilityLabel("Steering scale")
@@ -256,18 +260,22 @@ extension InspectorView {
                             .monospacedDigit()
                             .frame(width: 32, alignment: .trailing)
                     }
+                } label: {
+                    Text("Scale", bundle: .module)
                 }
 
-                LabeledContent("Layers (Start:End)") {
+                LabeledContent {
                     TextField("e.g. 10:30 (all if blank)", text: $model.runtimeOptions.steeringLayers)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 120)
                         .accessibilityLabel("Steering layers")
                         .accessibilityHint("Comma-separated start:end layer range; blank means all layers")
+                } label: {
+                    Text("Layers (Start:End)", bundle: .module)
                 }
 
                 if model.runtimeOptions.steeringMode == .clamp {
-                    LabeledContent("Clamp Target") {
+                    LabeledContent {
                         // No `in:` range on the Stepper: unlike `steeringScale`
                         // (0...3, documented, already a slider), this is a raw,
                         // control-vector-dependent activation value with no
@@ -280,10 +288,12 @@ extension InspectorView {
                             Stepper("Clamp target", value: $model.runtimeOptions.steeringTarget, step: 0.1)
                                 .labelsHidden()
                         }
+                    } label: {
+                        Text("Clamp Target", bundle: .module)
                     }
                 }
 
-                LabeledContent("Activation Gate") {
+                LabeledContent {
                     HStack(spacing: 4) {
                         TextField("Gate threshold", value: $model.runtimeOptions.steeringGate, format: .number)
                             .textFieldStyle(.roundedBorder)
@@ -291,6 +301,8 @@ extension InspectorView {
                         Stepper("Activation gate", value: $model.runtimeOptions.steeringGate, step: 0.1)
                             .labelsHidden()
                     }
+                } label: {
+                    Text("Activation Gate", bundle: .module)
                 }
             }
         }

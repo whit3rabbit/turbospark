@@ -130,12 +130,12 @@ struct TopBarView: View {
                 if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                     HStack(spacing: 2) {
                         if worktree.totalAdditions > 0 {
-                            Text("+\(worktree.totalAdditions)", bundle: .module)
+                            Text(verbatim: "+\(worktree.totalAdditions)")
                                 .themedFont(.tiny, weight: .semibold).monospacedDigit()
                                 .foregroundStyle(.green)
                         }
                         if worktree.totalDeletions > 0 {
-                            Text("-\(worktree.totalDeletions)", bundle: .module)
+                            Text(verbatim: "-\(worktree.totalDeletions)")
                                 .themedFont(.tiny, weight: .semibold).monospacedDigit()
                                 .foregroundStyle(.red)
                         }

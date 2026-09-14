@@ -73,7 +73,7 @@ struct FanReadoutView: View {
     private var controls: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Fans", systemImage: "fanblades")
+                Label { Text("Fans", bundle: .module) } icon: { Image(systemName: "fanblades") }
                     .font(theme.ui(.callout, weight: .semibold))
                 Spacer()
                 if fans.isBusy {
@@ -85,10 +85,10 @@ struct FanReadoutView: View {
             if let status = fans.status {
                 ForEach(status.fans) { fan in
                     HStack {
-                        Text("Fan \(fan.index)", bundle: .module)
+                        Text(verbatim: "Fan \(fan.index)")
                             .foregroundStyle(.appSecondary)
                         Spacer()
-                        Text("\(fan.actualRPM.formatted()) RPM", bundle: .module)
+                        Text(verbatim: "\(fan.actualRPM.formatted()) RPM")
                             .monospacedDigit()
                             .foregroundStyle(.appText)
                         Text(fan.isHeld ? "held" : "auto")
@@ -110,13 +110,13 @@ struct FanReadoutView: View {
             Divider()
 
             HStack(spacing: 8) {
-                Button("Pin Max") {
+                Button {
                     Task { await fans.pinMax() }
-                }
+                } label: { Text("Pin Max", bundle: .module) }
                 .disabled(fans.isBusy)
-                Button("Restore Auto") {
+                Button {
                     Task { await fans.restoreAuto() }
-                }
+                } label: { Text("Restore Auto", bundle: .module) }
                 .disabled(fans.isBusy)
             }
             .font(theme.ui(.tiny))
@@ -142,10 +142,7 @@ struct FanReadoutView: View {
                     .foregroundStyle(.red)
             }
 
-            Text(
-                "A pinned hold outlives this app: quitting restores Apple's curve unless "
-                    + "the toggle above is on. Fans can always be released with `thermalforge auto`."
-            )
+            Text("A pinned hold outlives this app: quitting restores Apple's curve unless the toggle above is on. Fans can always be released with `thermalforge auto`.", bundle: .module)
             .font(theme.ui(.tiny))
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)

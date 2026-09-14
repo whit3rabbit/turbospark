@@ -8,13 +8,13 @@ struct SystemPromptSettingsSection: View {
     @State private var editingPrompt: AppSystemPrompt?
 
     var body: some View {
-        Section("System Prompt") {
-            Picker("Load Prompt", selection: selectedPromptBinding) {
+        Section(header: Text("System Prompt", bundle: .module)) {
+            Picker(selection: selectedPromptBinding) {
                 Text(verbatim: "None").tag(UUID?.none)
                 ForEach(model.systemPrompts) { prompt in
                     Text(prompt.name).tag(Optional(prompt.id))
                 }
-            }
+            } label: { Text("Load Prompt", bundle: .module) }
 
             if let prompt = model.selectedSystemPrompt {
                 Text(prompt.instructions)
@@ -22,18 +22,18 @@ struct SystemPromptSettingsSection: View {
                     .foregroundStyle(.appSecondary)
 
                 HStack {
-                    Button("Edit Selected") {
+                    Button {
                         editingPrompt = prompt
-                    }
-                    Button("Delete Selected", role: .destructive) {
+                    } label: { Text("Edit Selected", bundle: .module) }
+                    Button(role: .destructive) {
                         model.deleteSystemPrompt(prompt.id)
-                    }
+                    } label: { Text("Delete Selected", bundle: .module) }
                 }
             }
 
-            Button("Add Prompt") {
+            Button {
                 showingAddSheet = true
-            }
+            } label: { Text("Add Prompt", bundle: .module) }
         }
         .settingsControl("System Prompt", pane: .engine, timing: .nextTurn)
         .sheet(isPresented: $showingAddSheet) {
@@ -87,7 +87,7 @@ private struct SystemPromptEditorSheet: View {
                 Text(verbatim: title)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                     .keyboardShortcut(.cancelAction)
             }
             .padding()
@@ -109,10 +109,10 @@ private struct SystemPromptEditorSheet: View {
 
             HStack {
                 Spacer()
-                Button("Save Prompt") {
+                Button {
                     onSave(name, instructions)
                     dismiss()
-                }
+                } label: { Text("Save Prompt", bundle: .module) }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSave)
             }

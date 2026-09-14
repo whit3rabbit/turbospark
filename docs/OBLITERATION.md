@@ -176,12 +176,14 @@ the raw fields as the expert surface and what is set there becomes an implicit
   already-open sessions, so steering is a property of the load rather than of
   the server.
 
-**Wired today (seven of eight families)**: the qwen flow (both halves,
-per-token and batched-verify), `families/llama/` (Mixtral, `qwen3moe`, and
-the dense Mistral / Llama 2/3.x half), `families/gemma4/` (sequential decode
-and its chunked prefill driver), `families/gptoss/` (its one call site, the
-routed-MoE tail's raw residual add), and `families/museglimmer/` (its one
-call site, the FFN-half sandwich tail's residual add). Both `gpt-oss` and
+**Wired today (eleven of thirteen families)**: the qwen flow (`qwen36` and
+`qwen35`, both halves, per-token and batched-verify), `families/llama/`
+(Mixtral, `qwen3moe`, `qwen3`, `qwen2`, `minimax_m2`, and the dense Mistral /
+Llama 2/3.x half), `families/gemma4/` (sequential decode and its chunked
+prefill driver), `families/gptoss/` (its one call site, the routed-MoE tail's
+raw residual add), `families/museglimmer/` (its one call site, the FFN-half
+sandwich tail's residual add), and `families/spark/` (its one call site, the
+dense FFN residual add). Both `gpt-oss` and
 `museglimmer` are now measured on real installs (below, both since
 2026-08-25): clean null controls and clean memory oracles on both, though
 the probe's single-position divergence check does not clear its floor at
@@ -189,10 +191,11 @@ the prompts tried on either -- for `museglimmer` an unverified borrowed
 floor, for `gpt-oss` an EXACT mechanism (the position it measures is
 Harmony's near-fixed `<|channel|>` token), with the edit visible in
 generated text past that token on both.
-Requesting `--steering` against the one remaining unwired family
-(DeepSeek-V4-Flash, whose compressed-attention kernels are unported, so
-there is no decode flow at all to hook) is refused at open BY NAME rather
-than silently loaded and ignored -- see Open, below.
+Requesting `--steering` against either remaining unwired family is refused at
+open BY NAME rather than silently loaded and ignored -- see Open, below.
+DeepSeek-V4-Flash has no decode flow to hook because its compressed-attention
+kernels are unported. `qwen4exp` has a different multi-stream gated-inject
+boundary that still needs a family-specific steering design.
 
 ## The decision: runtime, not repack-time
 

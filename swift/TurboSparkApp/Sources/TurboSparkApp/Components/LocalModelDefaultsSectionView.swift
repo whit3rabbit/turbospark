@@ -101,11 +101,7 @@ public struct LocalModelDefaultsSectionView: View {
                 // Says what it constrains AND what it does not. The setting is
                 // named for AutoFit because it is scoped to it: an explicitly
                 // chosen context length is never refused for being small.
-                Text(
-                    "Require AutoFit to provide at least this many tokens of context. "
-                        + "Models that cannot meet this minimum will fail to load. "
-                        + "An explicitly chosen context length is not affected."
-                )
+                Text("Require AutoFit to provide at least this many tokens of context. Models that cannot meet this minimum will fail to load. An explicitly chosen context length is not affected.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
 
@@ -130,12 +126,7 @@ public struct LocalModelDefaultsSectionView: View {
                 .themedFont(.base, weight: .semibold)
 
             VStack(alignment: .leading, spacing: 12) {
-                Text(
-                    "Loading models beyond system resource limits may cause instability. "
-                        + "Guardrails hold memory back for the rest of the machine. "
-                        + "Relaxed is the default and is what every published memory "
-                        + "figure for this engine was measured under."
-                )
+                Text("Loading models beyond system resource limits may cause instability. Guardrails hold memory back for the rest of the machine. Relaxed is the default and is what every published memory figure for this engine was measured under.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
 
@@ -198,11 +189,7 @@ public struct LocalModelDefaultsSectionView: View {
             // engine ALLOCATES, not the size of the file on disk. A large
             // model streaming its experts is what this engine is for, and a
             // cap read against the install would refuse models that run fine.
-            Text(
-                "Caps what the engine allocates (expert cache plus KV), not the size of "
-                    + "the model on disk. Models larger than this can still run by "
-                    + "streaming from storage."
-            )
+            Text("Caps what the engine allocates (expert cache plus KV), not the size of the model on disk. Models larger than this can still run by streaming from storage.", bundle: .module)
             .themedFont(.small)
             .foregroundStyle(.appSecondary)
 

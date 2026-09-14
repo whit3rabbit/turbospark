@@ -43,7 +43,7 @@ public struct WorktreeCommitListView: View {
                 Spacer()
 
                 if !worktree.recentCommits.isEmpty {
-                    Text("\(worktree.recentCommits.count)", bundle: .module)
+                    Text(verbatim: "\(worktree.recentCommits.count)")
                         .themedFont(.tiny).monospacedDigit()
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 6)

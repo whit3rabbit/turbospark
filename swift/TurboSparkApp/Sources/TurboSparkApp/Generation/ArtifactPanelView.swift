@@ -138,10 +138,10 @@ struct ArtifactPanelView: View {
 
             Spacer(minLength: 4)
 
-            Picker("View", selection: $viewMode) {
+            Picker(selection: $viewMode) {
                 Text("Preview", bundle: .module).tag(ViewMode.preview)
                 Text("Source", bundle: .module).tag(ViewMode.source)
-            }
+            } label: { Text("View", bundle: .module) }
             .pickerStyle(.segmented)
             .controlSize(.mini)
             .fixedSize()
@@ -250,7 +250,7 @@ struct ArtifactPanelView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.appSecondary)
-            .help("Dismiss")
+            .help(Text("Dismiss", bundle: .module))
             .accessibilityLabel("Dismiss network banner")
         }
         .padding(.horizontal, 12)
@@ -391,7 +391,7 @@ struct ArtifactPanelView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.appSecondary)
-                .help("Close")
+                .help(Text("Close", bundle: .module))
                 .accessibilityLabel("Close maximized preview")
             }
             .padding(.horizontal, 12)

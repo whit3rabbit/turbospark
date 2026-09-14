@@ -16,7 +16,7 @@ struct AgentModeHintsSectionView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Agent Mode Classifier Hints", systemImage: "brain.head.profile")
+                Label { Text("Agent Mode Classifier Hints", bundle: .module) } icon: { Image(systemName: "brain.head.profile") }
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Text("Used when the tool approval mode is \"Agent (classifier)\"", bundle: .module)

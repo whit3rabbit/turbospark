@@ -17,9 +17,9 @@ struct ProjectRulesSectionView: View {
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if !rootDirectoryPath.isEmpty {
-                    Button("Check Project Instructions") {
+                    Button {
                         onAutoDetect()
-                    }
+                    } label: { Text("Check Project Instructions", bundle: .module) }
                     .themedFont(.small)
                     .buttonStyle(.borderless)
                     .help("Check the live AGENTS.md, CLAUDE.md, and CONTEXT.md files for this project")
@@ -31,11 +31,11 @@ struct ProjectRulesSectionView: View {
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                 Spacer()
-                Picker("Conflict Preference", selection: $rulePreference) {
+                Picker(selection: $rulePreference) {
                     ForEach(AppRulePreference.allCases) { pref in
                         Text(pref.label).tag(pref)
                     }
-                }
+                } label: { Text("Conflict Preference", bundle: .module) }
                 .pickerStyle(.menu)
                 .frame(width: 180)
                 .accessibilityLabel("Rules conflict preference")

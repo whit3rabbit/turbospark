@@ -160,7 +160,9 @@ public struct HookEditorSheet: View {
                     }
 
                     // Async Toggle
-                    Toggle("Run in background asynchronously (non-blocking)", isOn: $isAsync)
+                    Toggle(isOn: $isAsync) {
+                Text("Run in background asynchronously (non-blocking)", bundle: .module)
+            }
                         .themedFont(.small)
                         .padding(.top, 4)
                 }
@@ -171,16 +173,16 @@ public struct HookEditorSheet: View {
 
             // Footer
             HStack {
-                Button("Cancel") {
+                Button {
                     onDismiss()
-                }
+                } label: { Text("Cancel", bundle: .module) }
                 .controlSize(.regular)
 
                 Spacer()
 
-                Button("Save Hook") {
+                Button {
                     save()
-                }
+                } label: { Text("Save Hook", bundle: .module) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
                 .disabled(command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

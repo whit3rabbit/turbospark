@@ -138,6 +138,41 @@ final class ToolAndServerDetailTests: XCTestCase {
         XCTAssertTrue(other.path.hasSuffix("gemma4.gturbo"), "Precondition: the suffix DOES match.")
     }
 
+    func testServerModelSteeringStatusReportsActiveSupportedAndUnsupported() throws {
+        let active = try steeringInfo(
+            active: true, supported: true, summary: "add 0.3 on layers 1-32")
+        XCTAssertEqual(
+            ServerModelSteeringStatus(info: active),
+            .active(summary: "add 0.3 on layers 1-32"))
+
+        let supportedOff = try steeringInfo(active: false, supported: true)
+        XCTAssertEqual(ServerModelSteeringStatus(info: supportedOff), .off)
+        XCTAssertEqual(ServerModelSteeringStatus(info: supportedOff).label, "Steering Off (supported)")
+
+        let unsupported = try steeringInfo(
+            active: false, supported: false, reason: "steering is not wired for family Qwen4Exp")
+        XCTAssertEqual(
+            ServerModelSteeringStatus(info: unsupported),
+            .unsupported(reason: "steering is not wired for family Qwen4Exp"))
+        XCTAssertTrue(ServerModelSteeringStatus(info: unsupported).isUnsupported)
+    }
+
+    private func steeringInfo(
+        active: Bool,
+        supported: Bool,
+        reason: String? = nil,
+        summary: String? = nil
+    ) throws -> SessionInfo.Steering {
+        let activeText = active ? "true" : "false"
+        let supportedText = supported ? "true" : "false"
+        let reasonText = reason.map { "\"\($0)\"" } ?? "null"
+        let summaryText = summary.map { "\"\($0)\"" } ?? "null"
+        let json = "{ \"active\": \(activeText), \"supported\": \(supportedText),"
+            + " \"reason\": \(reasonText), \"mode\": null, \"scale\": null,"
+            + " \"summary\": \(summaryText) }"
+        return try JSONDecoder().decode(SessionInfo.Steering.self, from: Data(json.utf8))
+    }
+
     // MARK: - G15: an unbalanced brace does not disable the scanner
 
     func testAStrayClosingBraceDoesNotHideALaterObject() {

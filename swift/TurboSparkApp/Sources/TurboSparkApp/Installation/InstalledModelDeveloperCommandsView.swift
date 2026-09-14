@@ -17,7 +17,7 @@ struct InstalledModelDeveloperCommandsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Terminal / CLI Commands", systemImage: "terminal")
+            Label { Text("Terminal / CLI Commands", bundle: .module) } icon: { Image(systemName: "terminal") }
                 .themedFont(.small, weight: .semibold)
 
             cliSnippet(

@@ -83,7 +83,7 @@ struct ModelHubView: View {
             Button {
                 showingProbeSheet = true
             } label: {
-                Label("Probe HF Repo", systemImage: "sparkle.magnifyingglass")
+                Label { Text("Probe HF Repo", bundle: .module) } icon: { Image(systemName: "sparkle.magnifyingglass") }
                     .themedFont(.tiny, weight: .medium)
                     .frame(height: 22)
                     .padding(.horizontal, 9)
@@ -192,7 +192,7 @@ struct ModelHubView: View {
                         .foregroundStyle(.appSecondary)
                 }
                 if let ram = model.telemetry?.physicalMemoryBytes {
-                    Text("(\(MetricFormat.memory(ram)))")
+                    Text(verbatim: "(\(MetricFormat.memory(ram)))")
                         .themedFont(.micro)
                         .foregroundStyle(.tertiary)
                 }
@@ -246,7 +246,7 @@ struct ModelHubView: View {
                 .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
             if filter.isNarrowed {
-                Button("Clear filters") { filter.clearNarrowing() }
+                Button { filter.clearNarrowing() } label: { Text("Clear filters", bundle: .module) }
                     .buttonStyle(.link)
                     .themedFont(.small)
             }

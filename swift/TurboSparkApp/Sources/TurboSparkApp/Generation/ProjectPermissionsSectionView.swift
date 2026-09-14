@@ -41,11 +41,13 @@ struct ProjectPermissionsSectionView: View {
                     .themedFont(.small, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Menu("Presets") {
-                    Button("Auto (Recommended)") { applyPreset(.auto) }
-                    Button("Always Ask") { applyPreset(.alwaysAsk) }
-                    Button("Permissive (Allow All)") { applyPreset(.permissive) }
-                    Button("Read Only") { applyPreset(.readOnly) }
+                Menu {
+                    Button { applyPreset(.auto) } label: { Text("Auto (Recommended)", bundle: .module) }
+                    Button { applyPreset(.alwaysAsk) } label: { Text("Always Ask", bundle: .module) }
+                    Button { applyPreset(.permissive) } label: { Text("Permissive (Allow All)", bundle: .module) }
+                    Button { applyPreset(.readOnly) } label: { Text("Read Only", bundle: .module) }
+                } label: {
+                    Text("Presets", bundle: .module)
                 }
                 .menuStyle(.borderlessButton)
                 .themedFont(.small)
@@ -59,11 +61,11 @@ struct ProjectPermissionsSectionView: View {
                     .themedFont(.small, weight: .medium)
                     .foregroundStyle(.appSecondary)
 
-                Picker("Execution Mode", selection: $permissionMode) {
+                Picker(selection: $permissionMode) {
                     ForEach(AppPermissionMode.allCases) { mode in
                         Label(mode.shortLabel, systemImage: mode.systemImage).tag(mode)
                     }
-                }
+                } label: { Text("Execution Mode", bundle: .module) }
                 .pickerStyle(.menu)
                 .accessibilityLabel("Permission execution mode")
 

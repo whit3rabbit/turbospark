@@ -68,7 +68,7 @@ public struct ModelsSettingsPaneView: View {
     private var turboSparkStorageSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("TurboSpark Models Storage", systemImage: "cylinder.split.1x2")
+                Label { Text("TurboSpark Models Storage", bundle: .module) } icon: { Image(systemName: "cylinder.split.1x2") }
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Text("Install Destination", bundle: .module)
@@ -91,7 +91,7 @@ public struct ModelsSettingsPaneView: View {
                     Button {
                         ModelStorageManager.revealInFinder(path: turboSparkStorePath)
                     } label: {
-                        Label("Reveal in Finder", systemImage: "arrow.up.right.square")
+                        Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "arrow.up.right.square") }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -116,7 +116,7 @@ public struct ModelsSettingsPaneView: View {
     private var lmStudioIntegrationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("LM Studio Library Integration", systemImage: "arrow.triangle.2.circlepath")
+                Label { Text("LM Studio Library Integration", bundle: .module) } icon: { Image(systemName: "arrow.triangle.2.circlepath") }
                 .settingsControl("LM Studio Library Integration", pane: .models, timing: .immediate)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
@@ -164,21 +164,21 @@ public struct ModelsSettingsPaneView: View {
                             Image(systemName: "arrow.up.right.square")
                         }
                         .buttonStyle(.plain)
-                        .help("Reveal in Finder")
+                        .help(Text("Reveal in Finder", bundle: .module))
                     }
 
-                    Button("Select Folder...") {
+                    Button {
                         selectLmStudioFolder()
-                    }
+                    } label: { Text("Select Folder...", bundle: .module) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
                     if !model.lmStudioDirectory.isEmpty {
-                        Button("Default") {
+                        Button {
                             model.lmStudioDirectory = ""
                             model.persistSettings()
                             model.refreshModels()
-                        }
+                        } label: { Text("Default", bundle: .module) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .help("Reset to default ~/.lmstudio/models")
@@ -220,7 +220,7 @@ public struct ModelsSettingsPaneView: View {
                         rescanLmStudioCount()
                         model.showToast("Rescanned local and LM Studio models", style: .info)
                     } label: {
-                        Label("Rescan Now", systemImage: "arrow.clockwise")
+                        Label { Text("Rescan Now", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)

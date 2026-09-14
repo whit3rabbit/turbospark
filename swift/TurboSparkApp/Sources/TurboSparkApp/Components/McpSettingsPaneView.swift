@@ -114,7 +114,7 @@ public struct McpSettingsPaneView: View {
             Button {
                 showingImportSheet = true
             } label: {
-                Label("Browse Marketplace", systemImage: "square.grid.2x2")
+                Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "square.grid.2x2") }
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
@@ -126,7 +126,7 @@ public struct McpSettingsPaneView: View {
                 editingServer = nil
                 showingEditorSheet = true
             } label: {
-                Label("Add Server", systemImage: "plus")
+                Label { Text("Add Server", bundle: .module) } icon: { Image(systemName: "plus") }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
@@ -197,7 +197,7 @@ public struct McpSettingsPaneView: View {
                             .foregroundStyle(.appText)
 
                         if !server.discoveredTools.isEmpty {
-                            Text("\(server.discoveredTools.count) tools", bundle: .module)
+                            Text(verbatim: "\(server.discoveredTools.count) tools")
                                 .themedFont(.tiny, weight: .medium)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -250,16 +250,22 @@ public struct McpSettingsPaneView: View {
                     .controlSize(.small)
 
                     Menu {
-                        Button("Edit Server", systemImage: "pencil") {
+                        Button {
                             editingServer = server
                             showingEditorSheet = true
+                        } label: {
+                            Label { Text("Edit Server", bundle: .module) } icon: { Image(systemName: "pencil") }
                         }
-                        Button("Re-query Tools", systemImage: "arrow.clockwise") {
+                        Button {
                             Task { await testServer(server) }
+                        } label: {
+                            Label { Text("Re-query Tools", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                         }
                         Divider()
-                        Button("Delete Server", systemImage: "trash", role: .destructive) {
+                        Button(role: .destructive) {
                             model.deleteGlobalMcpServer(id: server.id)
+                        } label: {
+                            Label { Text("Delete Server", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -346,7 +352,7 @@ public struct McpSettingsPaneView: View {
                 editingServer = nil
                 showingEditorSheet = true
             } label: {
-                Label("Add MCP Server", systemImage: "plus")
+                Label { Text("Add MCP Server", bundle: .module) } icon: { Image(systemName: "plus") }
             }
             .buttonStyle(.borderedProminent)
             .padding(.top, 4)

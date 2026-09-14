@@ -27,7 +27,7 @@ struct ChatSidebarProjectsSectionView: View {
                     projectBeingEdited = nil
                     showingProjectSettingsSheet = true
                 } label: {
-                    Label("Add Project", systemImage: "plus")
+                    Label { Text("Add Project", bundle: .module) } icon: { Image(systemName: "plus") }
                         .labelStyle(.iconOnly)
                         .font(theme.ui(.tiny))
                         .foregroundStyle(.appSecondary)
@@ -65,7 +65,7 @@ struct ChatSidebarProjectsSectionView: View {
                     .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(.appText)
                 Spacer()
-                Text("\(model.chats.count)", bundle: .module)
+                Text(verbatim: "\(model.chats.count)")
                     .font(theme.ui(.tiny))
                     .foregroundStyle(.appSecondary)
                     .accessibilityLabel("\(model.chats.count) chats")
@@ -136,29 +136,39 @@ struct ChatSidebarProjectsSectionView: View {
             }
 
             Menu {
-                Button("New Chat", systemImage: "plus") {
+                Button {
                     model.createChat(projectID: project.id)
+                } label: {
+                    Label { Text("New Chat", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
                 Divider()
-                Button("Project Settings", systemImage: "gearshape") {
+                Button {
                     projectBeingEdited = project
                     showingProjectSettingsSheet = true
+                } label: {
+                    Label { Text("Project Settings", bundle: .module) } icon: { Image(systemName: "gearshape") }
                 }
-                Button("Manage MCP Servers...", systemImage: "server.rack") {
+                Button {
                     projectForMcpSettings = project
+                } label: {
+                    Label { Text("Manage MCP Servers...", bundle: .module) } icon: { Image(systemName: "server.rack") }
                 }
                 if let path = project.rootDirectoryPath {
-                    Button("Reveal in Finder", systemImage: "folder") {
+                    Button {
                         let url = URL(fileURLWithPath: path)
                         NSWorkspace.shared.activateFileViewerSelecting([url])
+                    } label: {
+                        Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "folder") }
                     }
                 }
                 Divider()
-                Button("Delete Project", systemImage: "trash", role: .destructive) {
+                Button(role: .destructive) {
                     model.deleteProject(id: project.id)
+                } label: {
+                    Label { Text("Delete Project", bundle: .module) } icon: { Image(systemName: "trash") }
                 }
             } label: {
-                Label("Project actions", systemImage: "ellipsis")
+                Label { Text("Project actions", bundle: .module) } icon: { Image(systemName: "ellipsis") }
                     .labelStyle(.iconOnly)
                     .frame(width: projectActionSize, height: projectActionSize)
                     .contentShape(Circle())

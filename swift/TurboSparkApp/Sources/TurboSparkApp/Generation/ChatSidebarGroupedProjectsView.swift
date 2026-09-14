@@ -32,7 +32,7 @@ struct ChatSidebarGroupedProjectsView: View {
                         projectBeingEdited = nil
                         showingProjectSettingsSheet = true
                     } label: {
-                        Label("Add Project", systemImage: "folder.badge.plus")
+                        Label { Text("Add Project", bundle: .module) } icon: { Image(systemName: "folder.badge.plus") }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(10)
                     }
@@ -210,29 +210,39 @@ struct ChatSidebarGroupedProjectsView: View {
                 .accessibilityLabel("New task in \(project.name)")
 
                 Menu {
-                    Button("New Task", systemImage: "plus") {
+                    Button {
                         model.createChat(projectID: project.id)
+                    } label: {
+                        Label { Text("New Task", bundle: .module) } icon: { Image(systemName: "plus") }
                     }
                     Divider()
-                    Button("Project Settings", systemImage: "gearshape") {
+                    Button {
                         projectBeingEdited = project
                         showingProjectSettingsSheet = true
+                    } label: {
+                        Label { Text("Project Settings", bundle: .module) } icon: { Image(systemName: "gearshape") }
                     }
-                    Button("Manage MCP Servers...", systemImage: "server.rack") {
+                    Button {
                         projectForMcpSettings = project
+                    } label: {
+                        Label { Text("Manage MCP Servers...", bundle: .module) } icon: { Image(systemName: "server.rack") }
                     }
                     if let path = project.rootDirectoryPath {
-                        Button("Reveal in Finder", systemImage: "folder") {
+                        Button {
                             let url = URL(fileURLWithPath: path)
                             NSWorkspace.shared.activateFileViewerSelecting([url])
+                        } label: {
+                            Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "folder") }
                         }
                     }
                     Divider()
-                    Button("Delete Project", systemImage: "trash", role: .destructive) {
+                    Button(role: .destructive) {
                         model.deleteProject(id: project.id)
+                    } label: {
+                        Label { Text("Delete Project", bundle: .module) } icon: { Image(systemName: "trash") }
                     }
                 } label: {
-                    Label("Project actions", systemImage: "ellipsis")
+                    Label { Text("Project actions", bundle: .module) } icon: { Image(systemName: "ellipsis") }
                         .labelStyle(.iconOnly)
                         .frame(width: actionButtonSize, height: actionButtonSize)
                         .contentShape(Circle())
@@ -305,16 +315,20 @@ struct ChatSidebarGroupedProjectsView: View {
 
             if showsActions {
                 Menu {
-                    Button("Rename", systemImage: "pencil") {
+                    Button {
                         renameText = chat.title
                         chatBeingRenamed = chat
+                    } label: {
+                        Label { Text("Rename", bundle: .module) } icon: { Image(systemName: "pencil") }
                     }
                     Divider()
-                    Button("Delete", systemImage: "trash", role: .destructive) {
+                    Button(role: .destructive) {
                         chatPendingDeletion = chat
+                    } label: {
+                        Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                     }
                 } label: {
-                    Label("Task actions", systemImage: "ellipsis")
+                    Label { Text("Task actions", bundle: .module) } icon: { Image(systemName: "ellipsis") }
                         .labelStyle(.iconOnly)
                         .frame(width: actionButtonSize, height: actionButtonSize)
                         .contentShape(Circle())
@@ -341,18 +355,18 @@ struct ChatSidebarGroupedProjectsView: View {
             hoveredChatID = hovering ? chat.id : nil
         }
         .contextMenu {
-            Button("Rename") {
+            Button {
                 renameText = chat.title
                 chatBeingRenamed = chat
-            }
+            } label: { Text("Rename", bundle: .module) }
             .disabled(model.isRunning)
             Button(chat.systemPrompt == nil ? "Set System Prompt" : "Edit System Prompt") {
                 chatForSystemPrompt = chat
             }
             .disabled(model.isRunning)
-            Button("Delete", role: .destructive) {
+            Button(role: .destructive) {
                 chatPendingDeletion = chat
-            }
+            } label: { Text("Delete", bundle: .module) }
             .disabled(model.isRunning)
         }
     }
@@ -422,10 +436,10 @@ struct ChatSidebarGroupedProjectsView: View {
             Text("No projects match filter", bundle: .module)
                 .font(theme.ui(.tiny, weight: .medium))
                 .foregroundStyle(.appSecondary)
-            Button("Add Project") {
+            Button {
                 projectBeingEdited = nil
                 showingProjectSettingsSheet = true
-            }
+            } label: { Text("Add Project", bundle: .module) }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .padding(.top, 4)

@@ -33,7 +33,7 @@ struct PluginMarketplaceSheet: View {
                 Text("Plugin Marketplaces", bundle: .module)
                     .font(theme.ui(.title3, weight: .semibold))
                 Spacer()
-                Button("Done") { dismiss() }
+                Button { dismiss() } label: { Text("Done", bundle: .module) }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -143,7 +143,7 @@ struct PluginMarketplaceSheet: View {
                 TextField("/path/to/marketplace", text: $newDirectoryPath)
                     .textFieldStyle(.roundedBorder)
             }
-            Button("Add") { addMarketplace() }
+            Button { addMarketplace() } label: { Text("Add", bundle: .module) }
                 .disabled(newMarketplaceName.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }
@@ -197,10 +197,10 @@ struct PluginMarketplaceSheet: View {
                     .font(theme.ui(.base, weight: .semibold))
                 Spacer()
                 if let name = selectedMarketplaceName {
-                    Button("Refresh") {
+                    Button {
                         Task { await loadSelected(force: true) }
-                    }
-                    Button("Remove", role: .destructive) {
+                    } label: { Text("Refresh", bundle: .module) }
+                    Button(role: .destructive) {
                         do { try model.removeMarketplace(name: name, kind: .plugins, projectID: projectID) }
                         catch {
                             model.showToast(error.localizedDescription, style: .error)
@@ -210,7 +210,7 @@ struct PluginMarketplaceSheet: View {
                         selectedMarketplaceName = marketplaces.keys.sorted().first
                         entries = []
                         Task { await loadSelected() }
-                    }
+                    } label: { Text("Remove", bundle: .module) }
                 }
             }
             .padding(.horizontal, 16)
@@ -273,7 +273,7 @@ struct PluginMarketplaceSheet: View {
             }
             Spacer()
             if installed {
-                Label("Installed", systemImage: "checkmark.circle.fill")
+                Label { Text("Installed", bundle: .module) } icon: { Image(systemName: "checkmark.circle.fill") }
                     .foregroundStyle(.green)
                     .font(theme.ui(.small))
                 Button(role: .destructive) {

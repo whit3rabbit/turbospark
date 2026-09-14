@@ -25,7 +25,7 @@ struct SessionStatsSheet: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help("Close")
+                .help(Text("Close", bundle: .module))
                 .accessibilityLabel("Close session stats")
             }
             .padding(.horizontal, 20)
@@ -147,7 +147,7 @@ struct HelpSheetView: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help("Close")
+                .help(Text("Close", bundle: .module))
                 .accessibilityLabel("Close help")
             }
             .padding(.horizontal, 20)

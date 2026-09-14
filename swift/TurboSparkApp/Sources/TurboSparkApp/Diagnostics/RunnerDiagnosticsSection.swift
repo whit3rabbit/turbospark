@@ -5,7 +5,7 @@ struct RunnerDiagnosticsSection: View {
     let diagnostics: AppDiagnostics?
 
     var body: some View {
-        Section("Last run") {
+        Section(header: Text("Last run", bundle: .module)) {
             if let diagnostics {
                 groupLabel("Result")
                 DiagnosticRow("Prompt tokens", "\(diagnostics.promptTokens)")

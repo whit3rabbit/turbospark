@@ -74,15 +74,21 @@ struct ProjectMcpServerRowView: View {
                     .controlSize(.small)
 
                     Menu {
-                        Button("Edit Server", systemImage: "pencil") {
+                        Button {
                             onEdit()
+                        } label: {
+                            Label { Text("Edit Server", bundle: .module) } icon: { Image(systemName: "pencil") }
                         }
-                        Button("Re-query Tools", systemImage: "arrow.clockwise") {
+                        Button {
                             onTest()
+                        } label: {
+                            Label { Text("Re-query Tools", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                         }
                         Divider()
-                        Button("Delete Server", systemImage: "trash", role: .destructive) {
+                        Button(role: .destructive) {
                             onDelete()
+                        } label: {
+                            Label { Text("Delete Server", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
                     } label: {
                         Image(systemName: "ellipsis")

@@ -45,7 +45,7 @@ struct ModelManagerHeaderView: View {
                 model.refreshModels()
                 model.showToast("Refreshed model libraries", style: .info)
             } label: {
-                Label("Rescan", systemImage: "arrow.clockwise")
+                Label { Text("Rescan", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                     .themedFont(.tiny, weight: .medium)
                     .frame(height: 22)
                     .padding(.horizontal, 8)

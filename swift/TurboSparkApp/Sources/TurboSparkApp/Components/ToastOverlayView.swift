@@ -61,7 +61,7 @@ public struct ToastOverlayView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Dismiss notification")
+            .help(Text("Dismiss notification", bundle: .module))
             .accessibilityLabel("Dismiss notification")
             .accessibilityHint("Dismisses the current status message")
         }

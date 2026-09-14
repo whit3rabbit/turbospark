@@ -17,7 +17,7 @@ struct InstalledModelActionBarView: View {
         HStack(spacing: 10) {
             if isCurrentlyLoaded {
                 Button(action: onUnload) {
-                    Label("Unload", systemImage: "eject.fill")
+                    Label { Text("Unload", bundle: .module) } icon: { Image(systemName: "eject.fill") }
                         .themedFont(.small, weight: .medium)
                         .frame(height: 28)
                         .padding(.horizontal, 12)
@@ -29,7 +29,7 @@ struct InstalledModelActionBarView: View {
                 .help("Eject model and release unified memory")
             } else {
                 Button(action: onLoad) {
-                    Label("Load Model", systemImage: "bolt.fill")
+                    Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
                         .themedFont(.small, weight: .medium)
                         .frame(height: 28)
                         .padding(.horizontal, 12)
@@ -41,7 +41,7 @@ struct InstalledModelActionBarView: View {
             }
 
             Button(action: onStartChat) {
-                Label("Start Chat", systemImage: "bubble.left.and.bubble.right.fill")
+                Label { Text("Start Chat", bundle: .module) } icon: { Image(systemName: "bubble.left.and.bubble.right.fill") }
                     .themedFont(.small, weight: .medium)
                     .frame(height: 28)
                     .padding(.horizontal, 12)
@@ -54,7 +54,7 @@ struct InstalledModelActionBarView: View {
             Button {
                 ModelStorageManager.revealInFinder(path: installedModel.path)
             } label: {
-                Label("Reveal", systemImage: "folder")
+                Label { Text("Reveal", bundle: .module) } icon: { Image(systemName: "folder") }
                     .themedFont(.small, weight: .medium)
                     .frame(height: 28)
                     .padding(.horizontal, 10)
@@ -70,7 +70,7 @@ struct InstalledModelActionBarView: View {
             Spacer()
 
             Button(role: .destructive, action: onDelete) {
-                Label("Delete", systemImage: "trash")
+                Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                     .themedFont(.small, weight: .medium)
                     .frame(height: 28)
                     .padding(.horizontal, 10)

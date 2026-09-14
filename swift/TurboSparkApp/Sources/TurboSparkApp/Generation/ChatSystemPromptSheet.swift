@@ -66,7 +66,7 @@ public struct ChatSystemPromptSheet: View {
 
     private var header: some View {
         HStack {
-            Label("Chat System Prompt", systemImage: "text.bubble")
+            Label { Text("Chat System Prompt", bundle: .module) } icon: { Image(systemName: "text.bubble") }
                 .themedFont(.base, weight: .semibold)
             Spacer()
         }
@@ -78,17 +78,17 @@ public struct ChatSystemPromptSheet: View {
             // Clearing is the way BACK to the default, so it needs its own
             // control: a user who has typed a prompt cannot otherwise tell
             // that emptying the editor and saving is what restores it.
-            Button("Use Default") {
+            Button {
                 text = ""
-            }
+            } label: { Text("Use Default", bundle: .module) }
             .disabled(text.isEmpty)
             Spacer()
-            Button("Cancel") { onDismiss() }
+            Button { onDismiss() } label: { Text("Cancel", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
-            Button("Save") {
+            Button {
                 model.setChatSystemPrompt(id: chatID, prompt: text)
                 onDismiss()
-            }
+            } label: { Text("Save", bundle: .module) }
             .keyboardShortcut(.defaultAction)
         }
         .padding(16)

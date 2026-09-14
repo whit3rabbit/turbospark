@@ -385,7 +385,7 @@ struct TurboSparkApp: App {
                 Button {
                     ModelLocationPicker.choose(for: model)
                 } label: {
-                    Text("Choose Model Folder...", bundle: .module)
+                    Text("Choose Model Folder…", bundle: .module)
                 }
                 .disabled(model.isRunning || model.isInstallingModel)
 

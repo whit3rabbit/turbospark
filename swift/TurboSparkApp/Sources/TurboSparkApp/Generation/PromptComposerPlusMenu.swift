@@ -69,7 +69,7 @@ struct PromptComposerPlusMenu: View {
             Button {
                 onAttachFiles()
             } label: {
-                Label("Add Files or Photos...", systemImage: "paperclip")
+                Label { Text("Add Files or Photos...", bundle: .module) } icon: { Image(systemName: "paperclip") }
             }
             .keyboardShortcut("u", modifiers: .command)
 
@@ -86,7 +86,7 @@ struct PromptComposerPlusMenu: View {
             Button {
                 importGitOrUrlContext()
             } label: {
-                Label("Import GitHub Issue or URL", systemImage: "link.badge.plus")
+                Label { Text("Import GitHub Issue or URL", bundle: .module) } icon: { Image(systemName: "link.badge.plus") }
             }
         }
     }
@@ -121,7 +121,7 @@ struct PromptComposerPlusMenu: View {
                     }
                 }
             } label: {
-                Label("Slash Commands", systemImage: "command")
+                Label { Text("Slash Commands", bundle: .module) } icon: { Image(systemName: "command") }
             }
         }
     }
@@ -151,16 +151,16 @@ struct PromptComposerPlusMenu: View {
                 Button {
                     onAddMcpServer()
                 } label: {
-                    Label("Add MCP Server...", systemImage: "plus")
+                    Label { Text("Add MCP Server...", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
 
                 Button {
                     model.openSettings(tab: .mcp)
                 } label: {
-                    Label("Manage MCP Servers...", systemImage: "server.rack")
+                    Label { Text("Manage MCP Servers...", bundle: .module) } icon: { Image(systemName: "server.rack") }
                 }
             } label: {
-                Label("Connectors (MCP)", systemImage: "point.3.filled.connected.trianglepath.dotted")
+                Label { Text("Connectors (MCP)", bundle: .module) } icon: { Image(systemName: "point.3.filled.connected.trianglepath.dotted") }
             }
         }
     }
@@ -203,16 +203,16 @@ struct PromptComposerPlusMenu: View {
                 Button {
                     onCreateSkill()
                 } label: {
-                    Label("Create New Skill...", systemImage: "plus")
+                    Label { Text("Create New Skill...", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
 
                 Button {
                     model.openSettings(tab: .skills)
                 } label: {
-                    Label("Manage Skills...", systemImage: "gearshape")
+                    Label { Text("Manage Skills...", bundle: .module) } icon: { Image(systemName: "gearshape") }
                 }
             } label: {
-                Label("Plugins and Skills", systemImage: "puzzlepiece.extension")
+                Label { Text("Plugins and Skills", bundle: .module) } icon: { Image(systemName: "puzzlepiece.extension") }
             }
         }
     }
@@ -224,10 +224,7 @@ struct PromptComposerPlusMenu: View {
                 Button {
                     model.chooseProjectForTask(id: nil)
                 } label: {
-                    Label(
-                        "All Chats (No Project)",
-                        systemImage: model.selectedProjectID == nil ? "checkmark" : ""
-                    )
+                    Label { Text("All Chats (No Project)", bundle: .module) } icon: { Image(systemName: model.selectedProjectID == nil ? "checkmark" : "") }
                 }
 
                 if !model.projects.isEmpty {
@@ -249,16 +246,16 @@ struct PromptComposerPlusMenu: View {
                 Button {
                     onNewProject()
                 } label: {
-                    Label("New Project...", systemImage: "plus")
+                    Label { Text("New Project...", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
 
                 Button {
                     model.openSettings(tab: .permissions)
                 } label: {
-                    Label("Files and Permissions...", systemImage: "folder.badge.gearshape")
+                    Label { Text("Files and Permissions...", bundle: .module) } icon: { Image(systemName: "folder.badge.gearshape") }
                 }
             } label: {
-                Label("Projects", systemImage: "folder")
+                Label { Text("Projects", bundle: .module) } icon: { Image(systemName: "folder") }
             }
         }
     }

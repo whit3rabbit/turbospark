@@ -20,7 +20,7 @@ struct ContextLadderView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label("Memory by context window", systemImage: "arrow.left.and.right")
+                Label { Text("Memory by context window", bundle: .module) } icon: { Image(systemName: "arrow.left.and.right") }
                     .themedFont(.small, weight: .semibold)
                     .foregroundStyle(.appSecondary)
                 Spacer()

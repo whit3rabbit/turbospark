@@ -37,7 +37,7 @@ struct EngineSettingsPaneView: View {
     }
 
     private var generationDefaultsSection: some View {
-        Section("Generation Defaults") {
+        Section(header: Text("Generation Defaults", bundle: .module)) {
             HStack {
                 Text("Temperature", bundle: .module)
                     .settingsControl("Temperature", pane: .engine, timing: .nextTurn)
@@ -81,7 +81,7 @@ struct EngineSettingsPaneView: View {
     /// in sync by construction; a separate computed property like every
     /// sibling section for the type-checker reason spelled out above `body`.
     private var advancedGenerationSection: some View {
-        Section("Advanced Generation") {
+        Section(header: Text("Advanced Generation", bundle: .module)) {
             HStack {
                 Text("Context Window", bundle: .module)
                     .settingsControl("Context Window", pane: .engine, timing: .modelReload)
@@ -191,11 +191,11 @@ struct EngineSettingsPaneView: View {
                     .foregroundStyle(.appSecondary)
             }
 
-            Picker("Power Profile", selection: $model.runtimeOptions.powerProfile) {
+            Picker(selection: $model.runtimeOptions.powerProfile) {
                 ForEach(AppPowerProfileOption.allCases) { profile in
                     Text(profile.menuLabel).tag(profile)
                 }
-            }
+            } label: { Text("Power Profile", bundle: .module) }
             .settingsControl("Power Profile", pane: .engine, timing: .modelReload)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.powerProfile) { _, _ in
@@ -219,11 +219,11 @@ struct EngineSettingsPaneView: View {
                     .frame(width: 44, alignment: .leading)
             }
 
-            Picker("Memory Load Guard", selection: $model.runtimeOptions.loadGuard) {
+            Picker(selection: $model.runtimeOptions.loadGuard) {
                 ForEach(AppLoadGuardOption.allCases) { tier in
                     Text(tier.menuLabel).tag(tier)
                 }
-            }
+            } label: { Text("Memory Load Guard", bundle: .module) }
             .settingsControl("Memory Load Guard", pane: .engine, timing: .modelReload)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.loadGuard) { _, _ in
@@ -241,7 +241,7 @@ struct EngineSettingsPaneView: View {
     }
 
     private var coolingSection: some View {
-        Section("Cooling & Fan Control") {
+        Section(header: Text("Cooling & Fan Control", bundle: .module)) {
             if fans.isAvailable {
                 Toggle(isOn: Binding(
                     get: { fans.keepFansPinnedOnQuit },
@@ -255,10 +255,7 @@ struct EngineSettingsPaneView: View {
                     .settingsControl("Keep fans pinned when TurboSpark quits", pane: .engine, timing: .immediate)
                 }
 
-                Text(
-                    "ThermalForge is active. Fan speed can be monitored and pinned to maximum "
-                        + "from the status bar fan readout."
-                )
+                Text("ThermalForge is active. Fan speed can be monitored and pinned to maximum from the status bar fan readout.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             } else {
@@ -266,10 +263,7 @@ struct EngineSettingsPaneView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("ThermalForge Not Installed", bundle: .module)
                             .themedFont(.base, weight: .medium)
-                        Text(
-                            "Fan speed cannot be controlled without ThermalForge installed. "
-                                + "Install ThermalForge to monitor and pin fan speeds for sustained performance."
-                        )
+                        Text("Fan speed cannot be controlled without ThermalForge installed. Install ThermalForge to monitor and pin fan speeds for sustained performance.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                     }
@@ -288,8 +282,8 @@ struct EngineSettingsPaneView: View {
     }
 
     private var reasoningEffortSection: some View {
-        Section("Thinking & Reasoning Effort") {
-            Picker("Default Reasoning Level", selection: Binding(
+        Section(header: Text("Thinking & Reasoning Effort", bundle: .module)) {
+            Picker(selection: Binding(
                 get: { model.reasoning },
                 set: { model.setReasoning($0) }
             )) {
@@ -302,7 +296,7 @@ struct EngineSettingsPaneView: View {
                         : model.availableReasoningLevels) { level in
                     Text(model.reasoningLabel(for: level)).tag(level)
                 }
-            }
+            } label: { Text("Default Reasoning Level", bundle: .module) }
             .settingsControl("Default Reasoning Level", pane: .engine, timing: .nextTurn)
             .pickerStyle(.menu)
 
@@ -313,12 +307,12 @@ struct EngineSettingsPaneView: View {
     }
 
     private var guardrailsSection: some View {
-        Section("Forge Tool-Call Guardrails") {
-            Picker("Guardrails Mode", selection: $model.guardrailsMode) {
+        Section(header: Text("Forge Tool-Call Guardrails", bundle: .module)) {
+            Picker(selection: $model.guardrailsMode) {
                 ForEach(AppGuardrailsMode.allCases) { mode in
                     Text(mode.label).tag(mode)
                 }
-            }
+            } label: { Text("Guardrails Mode", bundle: .module) }
             .settingsControl("Guardrails Mode", pane: .engine, timing: .nextTurn)
             .pickerStyle(.menu)
             .onChange(of: model.guardrailsMode) { _, _ in
@@ -332,12 +326,12 @@ struct EngineSettingsPaneView: View {
     }
 
     private var speculationSection: some View {
-        Section("Speculative Decoding") {
-            Picker("Speculation Mode", selection: $model.runtimeOptions.speculation) {
+        Section(header: Text("Speculative Decoding", bundle: .module)) {
+            Picker(selection: $model.runtimeOptions.speculation) {
                 ForEach(AppSpeculationOption.allCases) { opt in
                     Text(opt.menuLabel).tag(opt)
                 }
-            }
+            } label: { Text("Speculation Mode", bundle: .module) }
             .settingsControl("Speculation Mode", pane: .engine, timing: .modelReload)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.speculation) { _, _ in
@@ -345,11 +339,11 @@ struct EngineSettingsPaneView: View {
             }
 
             if model.runtimeOptions.speculation != .off {
-                Picker("Speculative Drafter", selection: $model.runtimeOptions.speculativeDrafter) {
+                Picker(selection: $model.runtimeOptions.speculativeDrafter) {
                     ForEach(AppSpeculativeDrafterOption.allCases) { drafter in
                         Text(drafter.menuLabel).tag(drafter)
                     }
-                }
+                } label: { Text("Speculative Drafter", bundle: .module) }
             .settingsControl("Speculative Drafter", pane: .engine, timing: .modelReload)
                 .pickerStyle(.menu)
                 .onChange(of: model.runtimeOptions.speculativeDrafter) { _, _ in
@@ -369,12 +363,12 @@ struct EngineSettingsPaneView: View {
     /// the RESOLVED value (`"off"`, `"4"`, `"3.5 (K3/V4)"`, ...), reported
     /// once at open, so this row can only ever say what actually happened.
     private var kvBitsSection: some View {
-        Section("TurboQuant KV-Cache Quantization") {
-            Picker("KV-Cache Width", selection: $model.runtimeOptions.kvBits) {
+        Section(header: Text("TurboQuant KV-Cache Quantization", bundle: .module)) {
+            Picker(selection: $model.runtimeOptions.kvBits) {
                 ForEach(AppKvBitsOption.allCases) { opt in
                     Text(opt.menuLabel).tag(opt)
                 }
-            }
+            } label: { Text("KV-Cache Width", bundle: .module) }
             .settingsControl("KV-Cache Width", pane: .engine, timing: .modelReload)
             .pickerStyle(.menu)
             .onChange(of: model.runtimeOptions.kvBits) { _, _ in
@@ -391,32 +385,29 @@ struct EngineSettingsPaneView: View {
                 }
             }
 
-            Text(
-                "Quantizes the attention KV cache to shrink its memory footprint at longer "
-                    + "contexts, at a small, width-dependent quality cost (docs/TRUBOQUANT.md). "
-                    + "Auto asks for 4-bit -- the width with the smallest measured quality "
-                    + "impact -- only on checkpoints whose head dimension and layer layout "
-                    + "support it, and stays off on every other install. Takes effect on the "
-                    + "next model load."
-            )
+            Text("Quantizes the attention KV cache to shrink its memory footprint at longer contexts, at a small, width-dependent quality cost (docs/TRUBOQUANT.md). Auto asks for 4-bit -- the width with the smallest measured quality impact -- only on checkpoints whose head dimension and layer layout support it, and stays off on every other install. Takes effect on the next model load.", bundle: .module)
             .themedFont(.tiny)
             .foregroundStyle(.appSecondary)
         }
     }
 
     private var inProcessServerSection: some View {
-        Section("In-Process Server") {
-            LabeledContent("Server Start Prompt") {
+        Section(header: Text("In-Process Server", bundle: .module)) {
+            LabeledContent {
                 Text(model.selectedSystemPrompt?.name ?? "None")
                     .themedCode(.small)
                     .foregroundStyle(.appSecondary)
+            } label: {
+                Text("Server Start Prompt", bundle: .module)
             }
 
             HStack {
-                Toggle("Enable server", isOn: Binding(
+                Toggle(isOn: Binding(
                     get: { model.server != nil },
                     set: { $0 ? model.startServer() : model.stopServer() }
-                ))
+                )) {
+                Text("Enable server", bundle: .module)
+            }
             .settingsControl("Enable server", pane: .engine, timing: .immediate)
                 .disabled(model.session == nil || model.serverBusy)
 
@@ -458,14 +449,7 @@ struct EngineSettingsPaneView: View {
             .settingsControl("API key (optional)", pane: .engine, timing: .action)
                 .disabled(model.server != nil)
 
-            Text(
-                "Serves the currently loaded model over OpenAI- and Anthropic-compatible "
-                    + "HTTP endpoints on loopback, sharing the same engine this app's chat "
-                    + "uses -- not a second copy of the model. Loading a different model, "
-                    + "or unloading, stops the server. Loopback keeps it off the network "
-                    + "and NOT off this machine: without an API key, any process running "
-                    + "here can reach it."
-            )
+            Text("Serves the currently loaded model over OpenAI- and Anthropic-compatible HTTP endpoints on loopback, sharing the same engine this app's chat uses -- not a second copy of the model. Loading a different model, or unloading, stops the server. Loopback keeps it off the network and NOT off this machine: without an API key, any process running here can reach it.", bundle: .module)
             .themedFont(.small)
             .foregroundStyle(.appSecondary)
         }

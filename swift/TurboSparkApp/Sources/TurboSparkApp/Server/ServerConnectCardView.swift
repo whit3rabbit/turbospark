@@ -65,7 +65,7 @@ struct ServerConnectCardView: View {
                         }
                         .buttonStyle(.borderless)
                         .padding(8)
-                        .help("Copy code snippet to clipboard")
+                        .help(Text("Copy code snippet to clipboard", bundle: .module))
                         .accessibilityLabel("Copy code snippet")
                         .accessibilityValue(copiedID == snippet.id ? "Copied" : "")
                     }

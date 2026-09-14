@@ -23,14 +23,14 @@ struct ServerLoadedModelsView: View {
                     // The cheap path, and worth its own button: the chat
                     // model is already mapped, so serving it costs nothing
                     // where a second install costs its whole footprint.
-                    Button("Serve loaded model") { model.attachChatSession() }
+                    Button { model.attachChatSession() } label: { Text("Serve loaded model", bundle: .module) }
                         .buttonStyle(.link)
                         .themedFont(.tiny)
                 }
                 Button {
                     showingPicker = true
                 } label: {
-                    Label("Load Model", systemImage: "plus")
+                    Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -89,23 +89,24 @@ struct ServerLoadedModelsView: View {
                 Text(detailLine(row))
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
-                // READ-ONLY, and only when this model is steering. Steering
-                // resolves at OPEN and this server serves already-open
-                // sessions, so it is a property of the model's load rather
-                // than of the server -- an editable control here would
-                // silently re-open the model to take effect. Showing it is
-                // what lets an operator tell two served models apart when
-                // one carries an edit and the other does not.
-                if let summary = row.steeringSummary {
-                    Label(summary, systemImage: "dial.medium.fill")
+                // READ-ONLY. Steering resolves at OPEN and this server serves
+                // already-open sessions, so it is a property of the model's
+                // load rather than of the server. Showing every known state
+                // lets an operator distinguish active, supported-but-off,
+                // and unsupported models without implying that this pane can
+                // change an already-open session.
+                if let status = row.steeringStatus {
+                    Label(status.label, systemImage: status.systemImageName)
                         .themedFont(.tiny)
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(
+                            status.isActive || status.isUnsupported
+                                ? Color.orange : Color.secondary)
                 }
             }
 
             Spacer(minLength: 8)
 
-            Text("\(row.requestsServed) req", bundle: .module)
+            Text(verbatim: "\(row.requestsServed) req")
                 .themedFont(.tiny)
                 .monospacedDigit()
                 .foregroundStyle(.appSecondary)
@@ -122,7 +123,7 @@ struct ServerLoadedModelsView: View {
             Button {
                 model.detachModelFromServer(id: row.id)
             } label: {
-                Label("Eject", systemImage: "eject")
+                Label { Text("Eject", bundle: .module) } icon: { Image(systemName: "eject") }
                     .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
@@ -235,7 +236,7 @@ private struct ServerModelPickerSheet: View {
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
                 Spacer()
-                Button("Done") { dismiss() }
+                Button { dismiss() } label: { Text("Done", bundle: .module) }
                     .keyboardShortcut(.defaultAction)
             }
             .padding(12)

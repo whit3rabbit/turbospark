@@ -34,7 +34,7 @@ struct GenerationSamplingSection: View {
     @State private var newPresetName: String = ""
 
     var body: some View {
-        Section("Generation Sampling") {
+        Section(header: Text("Generation Sampling", bundle: .module)) {
             scopePicker
             if model.selectedChat.samplingOverride != nil {
                 removeOverrideRow
@@ -46,21 +46,21 @@ struct GenerationSamplingSection: View {
             // checkpoint's own and arrive with the session, so there is
             // nothing to offer until one is open. APP-WIDE, unlike every
             // row below: the scope picker covers sampling only.
-            LabeledContent("Thinking") {
-                Picker("Thinking", selection: Binding(
+            LabeledContent {
+                Picker(selection: Binding(
                     get: { model.reasoning },
                     set: { model.setReasoning($0) }
                 )) {
                     ForEach(model.availableReasoningLevels) { level in
                         Text(model.reasoningLabel(for: level)).tag(level)
                     }
-                }
+                } label: { Text("Thinking", bundle: .module) }
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .fixedSize()
                 .disabled(!model.reasoningPickerEnabled)
                 .accessibilityLabel("Thinking effort")
-            }
+            } label: { Text("Thinking", bundle: .module) }
 
             if model.session == nil {
                 Text("Load a model to see the reasoning levels its chat template accepts.", bundle: .module)
@@ -72,16 +72,16 @@ struct GenerationSamplingSection: View {
                     .foregroundStyle(.appSecondary)
             }
 
-            LabeledContent("Max New Tokens") {
+            LabeledContent {
                 Stepper(value: scopeSettings.maxNewTokens, in: 64...16384, step: 128) {
-                    Text("\(settings.maxNewTokens)", bundle: .module).monospacedDigit()
+                    Text(verbatim: "\(settings.maxNewTokens)").monospacedDigit()
                 }
                 .fixedSize()
                 .accessibilityLabel("Max new tokens")
                 .accessibilityValue("\(settings.maxNewTokens)")
-            }
+            } label: { Text("Max New Tokens", bundle: .module) }
 
-            LabeledContent("Temperature") {
+            LabeledContent {
                 HStack(spacing: 8) {
                     Slider(value: scopeSettings.temperature, in: 0...2, step: 0.05)
                         .accessibilityLabel("Temperature")
@@ -90,25 +90,31 @@ struct GenerationSamplingSection: View {
                         .monospacedDigit()
                         .frame(width: 36, alignment: .trailing)
                 }
-            }
+            } label: { Text("Temperature", bundle: .module) }
 
-            Toggle("Top-K", isOn: scopeSettings.topKEnabled)
+            Toggle(isOn: scopeSettings.topKEnabled) {
+                Text("Top-K", bundle: .module)
+            }
                 .toggleStyle(.switch)
             if settings.topKEnabled {
-                LabeledContent("K value") {
+                LabeledContent {
                     Stepper(value: scopeSettings.topK, in: 1...256, step: 1) {
-                        Text("\(settings.topK)", bundle: .module).monospacedDigit()
+                        Text(verbatim: "\(settings.topK)").monospacedDigit()
                     }
                     .fixedSize()
                     .accessibilityLabel("Top-K value")
                     .accessibilityValue("\(settings.topK)")
+                } label: {
+                    Text("K value", bundle: .module)
                 }
             }
 
-            Toggle("Top-P", isOn: scopeSettings.topPEnabled)
+            Toggle(isOn: scopeSettings.topPEnabled) {
+                Text("Top-P", bundle: .module)
+            }
                 .toggleStyle(.switch)
             if settings.topPEnabled {
-                LabeledContent("P value") {
+                LabeledContent {
                     HStack(spacing: 8) {
                         Slider(value: scopeSettings.topP, in: 0.01...1, step: 0.01)
                             .accessibilityLabel("Top-P value")
@@ -117,13 +123,17 @@ struct GenerationSamplingSection: View {
                             .monospacedDigit()
                             .frame(width: 36, alignment: .trailing)
                     }
+                } label: {
+                    Text("P value", bundle: .module)
                 }
             }
 
-            Toggle("Repetition Penalty", isOn: scopeSettings.repetitionPenaltyEnabled)
+            Toggle(isOn: scopeSettings.repetitionPenaltyEnabled) {
+                Text("Repetition Penalty", bundle: .module)
+            }
                 .toggleStyle(.switch)
             if settings.repetitionPenaltyEnabled {
-                LabeledContent("Penalty") {
+                LabeledContent {
                     HStack(spacing: 8) {
                         Slider(value: scopeSettings.repetitionPenalty, in: 1.0...2.0, step: 0.05)
                             .accessibilityLabel("Repetition penalty")
@@ -132,29 +142,35 @@ struct GenerationSamplingSection: View {
                             .monospacedDigit()
                             .frame(width: 36, alignment: .trailing)
                     }
+                } label: {
+                    Text("Penalty", bundle: .module)
                 }
             }
 
-            Toggle("Deterministic Seed", isOn: scopeSettings.seedEnabled)
+            Toggle(isOn: scopeSettings.seedEnabled) {
+                Text("Deterministic Seed", bundle: .module)
+            }
                 .toggleStyle(.switch)
             if settings.seedEnabled {
-                LabeledContent("Seed value") {
+                LabeledContent {
                     TextField("Seed", value: scopeSettings.seed, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 100)
                         .accessibilityLabel("Seed value")
                         .accessibilityValue("\(settings.seed)")
+                } label: {
+                    Text("Seed value", bundle: .module)
                 }
             }
 
-            LabeledContent("Stop Sequences") {
+            LabeledContent {
                 TextField("Comma separated strings", text: scopeSettings.stopSequences)
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .themedFont(.small)
                     .accessibilityLabel("Stop sequences")
                     .accessibilityHint("Comma-separated strings that stop generation when produced")
-            }
+            } label: { Text("Stop Sequences", bundle: .module) }
 
             Divider()
             presetsArea
@@ -167,17 +183,17 @@ struct GenerationSamplingSection: View {
     // MARK: - Scope
 
     private var scopePicker: some View {
-        LabeledContent("Edits apply to") {
-            Picker("Edits apply to", selection: $scope) {
+        LabeledContent {
+            Picker(selection: $scope) {
                 Text("App defaults", bundle: .module).tag(Scope.appDefaults)
                 Text("This chat", bundle: .module).tag(Scope.thisChat)
-            }
+            } label: { Text("Edits apply to", bundle: .module) }
             .pickerStyle(.menu)
             .labelsHidden()
             .fixedSize()
             .accessibilityLabel("Sampling edit scope")
             .accessibilityHint("Whether the sampling controls below edit the app-wide defaults or this conversation only")
-        }
+        } label: { Text("Edits apply to", bundle: .module) }
     }
 
     /// Shown while the selected chat carries an override, from either scope:
@@ -185,10 +201,10 @@ struct GenerationSamplingSection: View {
     /// system-prompt sheet's "Use Default".
     private var removeOverrideRow: some View {
         LabeledContent {
-            Button("Remove Override", role: .destructive) {
+            Button(role: .destructive) {
                 model.removeChatSamplingOverride(id: model.selectedChatID)
                 scope = .appDefaults
-            }
+            } label: { Text("Remove Override", bundle: .module) }
             .buttonStyle(.bordered)
             .accessibilityLabel("Remove this chat's sampling override")
         } label: {
@@ -240,9 +256,9 @@ struct GenerationSamplingSection: View {
                 ForEach(model.samplingPresets) { preset in
                     LabeledContent {
                         HStack(spacing: 6) {
-                            Button("Apply") {
+                            Button {
                                 applyPreset(preset)
-                            }
+                            } label: { Text("Apply", bundle: .module) }
                             .buttonStyle(.bordered)
                             .accessibilityLabel("Apply sampling preset \(preset.name)")
 
@@ -262,9 +278,9 @@ struct GenerationSamplingSection: View {
                         Text(preset.name)
                     }
                     .contextMenu {
-                        Button("Delete Preset", role: .destructive) {
+                        Button(role: .destructive) {
                             model.deleteSamplingPreset(preset.id)
-                        }
+                        } label: { Text("Delete Preset", bundle: .module) }
                     }
                 }
             }
@@ -274,7 +290,7 @@ struct GenerationSamplingSection: View {
                     .textFieldStyle(.roundedBorder)
                     .themedFont(.small)
                     .accessibilityLabel("New sampling preset name")
-                Button("Save Preset", action: savePreset)
+                Button(action: savePreset) { Text("Save Preset", bundle: .module) }
                     .buttonStyle(.bordered)
                     .disabled(presetName.isEmpty)
                     .accessibilityLabel("Save current sampling as a preset")

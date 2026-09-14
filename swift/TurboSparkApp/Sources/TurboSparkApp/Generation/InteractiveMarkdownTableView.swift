@@ -131,20 +131,20 @@ struct InteractiveMarkdownTableView: View {
                     bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
-                Button("Clear") { selectedRowIndices.removeAll() }
+                Button { selectedRowIndices.removeAll() } label: { Text("Clear", bundle: .module) }
                     .buttonStyle(.plain)
                     .themedFont(.tiny)
             }
             Menu {
-                Button("Copy selection as TSV") {
+                Button {
                     copyTSV(selectedOnly: true)
-                }
+                } label: { Text("Copy selection as TSV", bundle: .module) }
                 .disabled(selectedRowIndices.isEmpty)
-                Button("Copy table as TSV") { copyTSV(selectedOnly: false) }
-                Button("Copy table as CSV") { copyCSV() }
-                Button("Copy table as Markdown") { copyMarkdown() }
+                Button { copyTSV(selectedOnly: false) } label: { Text("Copy table as TSV", bundle: .module) }
+                Button { copyCSV() } label: { Text("Copy table as CSV", bundle: .module) }
+                Button { copyMarkdown() } label: { Text("Copy table as Markdown", bundle: .module) }
                 Divider()
-                Button("Export as CSV...") { exportCSV() }
+                Button { exportCSV() } label: { Text("Export as CSV...", bundle: .module) }
             } label: {
                 Label(isCopied ? "Copied" : "Copy", systemImage: isCopied ? "checkmark" : "doc.on.doc")
                     .themedFont(.tiny, weight: .medium)

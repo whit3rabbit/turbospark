@@ -38,7 +38,7 @@ struct GitInfoSheet: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help("Close")
+                .help(Text("Close", bundle: .module))
                 .accessibilityLabel("Close git view")
             }
             .padding(.horizontal, 20)
@@ -145,7 +145,7 @@ struct GitInfoSheet: View {
                             Text(commit.summary)
                                 .themedFont(.small, weight: .medium)
                                 .lineLimit(2)
-                            Text("\(commit.author) - \(commit.relativeDate)", bundle: .module)
+                            Text(verbatim: "\(commit.author) - \(commit.relativeDate)")
                                 .themedFont(.tiny)
                                 .foregroundStyle(.appSecondary)
                         }
@@ -183,7 +183,7 @@ struct GitInfoSheet: View {
                 ForEach(model.gitPullRequests) { pr in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         prStateIcon(pr.state)
-                        Text("#\(pr.number)", bundle: .module)
+                        Text(verbatim: "#\(pr.number)")
                             .themedCode(.tiny, weight: .semibold)
                             .foregroundStyle(.appAccent)
                         VStack(alignment: .leading, spacing: 1) {

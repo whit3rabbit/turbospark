@@ -8,7 +8,7 @@ struct PromptModelSelectorPill: View {
 
     var body: some View {
         Menu {
-            Section("Installed Models") {
+            Section(header: Text("Installed Models", bundle: .module)) {
                 if model.installed.isEmpty {
                     Text("No models installed", bundle: .module)
                 } else {
@@ -31,13 +31,13 @@ struct PromptModelSelectorPill: View {
             Button {
                 model.activeSection = .modelManager
             } label: {
-                Label("Manage models...", systemImage: "internaldrive")
+                Label { Text("Manage models...", bundle: .module) } icon: { Image(systemName: "internaldrive") }
             }
 
             Button {
                 model.activeSection = .modelHub
             } label: {
-                Label("Discover models...", systemImage: "shippingbox")
+                Label { Text("Discover models...", bundle: .module) } icon: { Image(systemName: "shippingbox") }
             }
         } label: {
             HStack(spacing: 3) {
@@ -83,12 +83,12 @@ struct PromptProjectContextPill: View {
                     if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                         HStack(spacing: 2) {
                             if worktree.totalAdditions > 0 {
-                                Text("+\(worktree.totalAdditions)", bundle: .module)
+                                Text(verbatim: "+\(worktree.totalAdditions)")
                                     .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.green)
                             }
                             if worktree.totalDeletions > 0 {
-                                Text("-\(worktree.totalDeletions)", bundle: .module)
+                                Text(verbatim: "-\(worktree.totalDeletions)")
                                     .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.red)
                             }
@@ -117,7 +117,7 @@ struct PromptReasoningPillControl: View {
         let isThinkingActive = model.reasoning != .off
 
         Menu {
-            Section("Thinking / Reasoning Effort") {
+            Section(header: Text("Thinking / Reasoning Effort", bundle: .module)) {
                 ForEach(model.availableReasoningLevels) { level in
                     let title = model.reasoningLabel(for: level)
                         + " - " + model.reasoningDescription(for: level)
@@ -138,7 +138,7 @@ struct PromptReasoningPillControl: View {
             Button {
                 model.openSettings(tab: .engine)
             } label: {
-                Label("Engine settings...", systemImage: "gearshape")
+                Label { Text("Engine settings...", bundle: .module) } icon: { Image(systemName: "gearshape") }
             }
         } label: {
             HStack(spacing: 3) {

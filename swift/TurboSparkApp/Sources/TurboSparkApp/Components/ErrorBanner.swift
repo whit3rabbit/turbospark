@@ -23,14 +23,14 @@ struct ErrorBanner: View {
                 Button {
                     model.error = nil
                 } label: {
-                    Label("Dismiss error", systemImage: "xmark")
+                    Label { Text("Dismiss error", bundle: .module) } icon: { Image(systemName: "xmark") }
                         .labelStyle(.iconOnly)
                         .themedFont(.small, weight: .semibold)
                         .frame(width: 28, height: 28)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Dismiss error")
+                .help(Text("Dismiss error", bundle: .module))
                 .accessibilityLabel("Dismiss error")
                 .accessibilityHint("Removes the error message")
             }

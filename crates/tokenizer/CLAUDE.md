@@ -396,3 +396,19 @@ cargo test -p turbospark-tokenizer
     writer, then keep a regression for both an output flood and a nested-loop
     workload. Do not rely on the output cap alone, because a loop can burn CPU
     without producing many bytes.
+
+15. **THE JINJA COMPAT SHIM SCANS BYTES OF PROSE, SO IT OWES TWO PROPERTIES.**
+    `jinja_compat.rs::parenthesize_conditional_kwargs` walks the template as
+    bytes, and templates are mostly multibyte prose (Spark 2.5's ships a
+    `{#- 0826版本 -#}` comment and fullwidth-bar markers). The scan must only
+    ever slice at `{` block boundaries -- `{` is ASCII, so `i` stays on a
+    char boundary and whole-span copies are safe; a rewrite that advances by
+    "one character" computed from a byte turns every non-ASCII byte it
+    touches into mojibake, and that regression is invisible on ASCII
+    fixtures. Second, the pass must stay LAZY: it exists for one template
+    shape (a conditional keyword argument minijinja rejects), so it returns
+    `Cow::Borrowed` and allocates nothing for every template that needs no
+    rewrite. Making the scan eagerly copy every render taxes all of them for
+    the sake of one, and nothing but a benchmark will notice. Keep both
+    regressions: a multibyte template asserting the shim is byte-preserving,
+    and a no-rewrite template asserting the borrowed path.

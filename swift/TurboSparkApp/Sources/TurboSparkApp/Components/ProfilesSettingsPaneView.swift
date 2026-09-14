@@ -39,9 +39,9 @@ struct ProfilesSettingsPaneView: View {
                 }
                 deleteTarget = nil
             }
-            Button("Cancel", role: .cancel) {
+            Button(role: .cancel) {
                 deleteTarget = nil
-            }
+            } label: { Text("Cancel", bundle: .module) }
         } message: {
             Text("This removes the user's settings, chat history, projects, agents, global MCP servers and marketplaces, skills, plugins, custom tools, hooks, memory, and model favorites. The folder moves to the Trash, but restoring it does not bring the profile back; it is only for recovering files by hand. Shared and untouched: downloaded models, the install registry, the Keychain server API key, and the UI language.", bundle: .module)
         }
@@ -52,15 +52,15 @@ struct ProfilesSettingsPaneView: View {
                 set: { if !$0 { switchTarget = nil } }),
             titleVisibility: .visible
         ) {
-            Button("Switch and Relaunch") {
+            Button {
                 if let target = switchTarget {
                     model.switchToProfile(target)
                 }
                 switchTarget = nil
-            }
-            Button("Cancel", role: .cancel) {
+            } label: { Text("Switch and Relaunch", bundle: .module) }
+            Button(role: .cancel) {
                 switchTarget = nil
-            }
+            } label: { Text("Cancel", bundle: .module) }
         } message: {
             Text("The app saves everything and relaunches as this user. Each user has separate settings, chat history, skills, MCP servers, agents, and plugins; work stays with the user who created it.", bundle: .module)
         }
@@ -71,7 +71,7 @@ struct ProfilesSettingsPaneView: View {
     // budget, the reason `AppSettingsView.engineSettingsTab` is split too.)
 
     private var usersSection: some View {
-        Section("Users on this Mac") {
+        Section(header: Text("Users on this Mac", bundle: .module)) {
             defaultProfileRow
             ForEach(model.profiles) { profile in
                 additionalProfileRow(profile)
@@ -141,9 +141,9 @@ struct ProfilesSettingsPaneView: View {
             .accessibilityLabel("\(name)\(isCurrent ? ", current profile" : "")")
             Spacer()
             if !isCurrent {
-                Button("Switch") {
+                Button {
                     switchTarget = profile ?? UserProfileStore.defaultProfile
-                }
+                } label: { Text("Switch", bundle: .module) }
                 .disabled(!model.canSwitchProfile)
                 .help("Saves everything and relaunches the app as this user")
             }
@@ -167,23 +167,23 @@ struct ProfilesSettingsPaneView: View {
     /// ellipsis menu so neither surface can drift from the other.
     @ViewBuilder
     private func profileActions(_ profile: UserProfile) -> some View {
-        Button("Rename...") {
+        Button {
             renameTarget = profile
             renameText = profile.name
-        }
+        } label: { Text("Rename...", bundle: .module) }
         if profile.id != model.currentProfile.id {
-            Button("Delete...", role: .destructive) {
+            Button(role: .destructive) {
                 deleteTarget = profile
-            }
+            } label: { Text("Delete...", bundle: .module) }
         }
     }
 
     private var addSection: some View {
-        Section("Add a User") {
+        Section(header: Text("Add a User", bundle: .module)) {
             HStack {
                 TextField("Profile name", text: $newProfileName)
                     .onSubmit(addProfile)
-                Button("Add Profile", action: addProfile)
+                Button(action: addProfile) { Text("Add Profile", bundle: .module) }
                     .disabled(newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             Text("New users start empty: their own settings, chats, skills, and MCP servers, isolated from the Default user and the shared ~/.turbospark folders.", bundle: .module)
@@ -203,16 +203,12 @@ struct ProfilesSettingsPaneView: View {
     private var notesSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 6) {
-                Text(
-                    "Each profile is a folder under Application Support. Switching saves all "
-                        + "work and relaunches the app; the Default user keeps using the shared "
-                        + "~/.turbospark folders, and every other profile is self-contained. "
-                        + "Downloaded models are shared by all users.")
+                Text("Each profile is a folder under Application Support. Switching saves all work and relaunches the app; the Default user keeps using the shared ~/.turbospark folders, and every other profile is self-contained. Downloaded models are shared by all users.", bundle: .module)
                     .font(theme.ui(.small))
                     .foregroundStyle(.appSecondary)
-                Button("Reveal Profiles Folder in Finder") {
+                Button {
                     model.revealProfilesInFinder()
-                }
+                } label: { Text("Reveal Profiles Folder in Finder", bundle: .module) }
             }
         }
     }
@@ -228,14 +224,14 @@ struct ProfilesSettingsPaneView: View {
                 .textFieldStyle(.roundedBorder)
             HStack {
                 Spacer()
-                Button("Cancel") {
+                Button {
                     renameTarget = nil
-                }
+                } label: { Text("Cancel", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
-                Button("Rename") {
+                Button {
                     model.renameProfile(profile, to: renameText)
                     renameTarget = nil
-                }
+                } label: { Text("Rename", bundle: .module) }
                 .keyboardShortcut(.defaultAction)
                 .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }

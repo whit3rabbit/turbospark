@@ -78,23 +78,23 @@ struct ProjectMcpApprovalSheet: View {
                 .foregroundStyle(.appSecondary)
 
             HStack(spacing: 10) {
-                Button("Approve All Future") {
+                Button {
                     model.approvePendingMcpServer(id: approval.id, approveAllFuture: true)
-                }
+                } label: { Text("Approve All Future", bundle: .module) }
                 .buttonStyle(.bordered)
                 .help("Approve this server and every server this project declares in the future without prompting")
 
-                Button("Reject") {
+                Button {
                     model.rejectPendingMcpServer(id: approval.id)
-                }
+                } label: { Text("Reject", bundle: .module) }
                 .buttonStyle(.bordered)
                 .help("Never import or run this server, and do not ask again")
 
                 Spacer()
 
-                Button("Approve") {
+                Button {
                     model.approvePendingMcpServer(id: approval.id)
-                }
+                } label: { Text("Approve", bundle: .module) }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
             }

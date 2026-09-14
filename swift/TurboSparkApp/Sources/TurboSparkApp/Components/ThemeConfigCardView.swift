@@ -205,7 +205,7 @@ public struct ThemeConfigCardView: View {
             Slider(value: $config.contrast, in: 0...100, step: 1)
                 .frame(width: 160)
 
-            Text("\(Int(config.contrast))%", bundle: .module)
+            Text(verbatim: "\(Int(config.contrast))%")
                 .font(theme.ui(.small).monospacedDigit())
                 .foregroundStyle(.appSecondary)
                 .frame(width: 36, alignment: .trailing)

@@ -182,11 +182,11 @@ public struct AgentsSettingsPaneView: View {
 
     private var headerControlBar: some View {
         HStack(spacing: 12) {
-            Picker("Scope", selection: $scopeFilter) {
+            Picker(selection: $scopeFilter) {
                 ForEach(AgentScopeFilter.allCases) { filter in
                     Text(filter.rawValue).tag(filter)
                 }
-            }
+            } label: { Text("Scope", bundle: .module) }
             .settingsControl("Scope", pane: .agents, timing: .nextTurn)
             .pickerStyle(.segmented)
             .frame(width: 320)
@@ -207,7 +207,7 @@ public struct AgentsSettingsPaneView: View {
             Button {
                 model.reloadAgents()
             } label: {
-                Label("Reload", systemImage: "arrow.clockwise")
+                Label { Text("Reload", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
             }
             .buttonStyle(.bordered)
             .help("Rescan agents on disk")
@@ -216,7 +216,7 @@ public struct AgentsSettingsPaneView: View {
                 agentToEdit = nil
                 showingEditorSheet = true
             } label: {
-                Label("New Agent", systemImage: "plus")
+                Label { Text("New Agent", bundle: .module) } icon: { Image(systemName: "plus") }
             }
             .buttonStyle(.borderedProminent)
             .help("Create a new agent definition file")
@@ -290,23 +290,25 @@ public struct AgentsSettingsPaneView: View {
                                 agentToEdit = agent
                                 showingEditorSheet = true
                             } label: {
-                                Label("Edit", systemImage: "pencil")
+                                Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
                             }
                             .buttonStyle(.bordered)
 
                             Button(role: .destructive) {
                                 agentToDelete = agent
                             } label: {
-                                Label("Delete", systemImage: "trash")
+                                Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                             }
                             .buttonStyle(.bordered)
                         }
                     }
 
-                    Toggle("Enabled", isOn: Binding(
+                    Toggle(isOn: Binding(
                         get: { agent.isEnabled },
                         set: { _ in model.toggleAgentEnabled(agent) }
-                    ))
+                    )) {
+                        Text("Enabled", bundle: .module)
+                    }
             .settingsControl("Enabled", pane: .agents, timing: .nextTurn)
                     .toggleStyle(.switch)
                 }
@@ -322,13 +324,13 @@ public struct AgentsSettingsPaneView: View {
                         GridRow {
                             Text("Agent Identifier:", bundle: .module)
                                 .foregroundStyle(.appSecondary)
-                            Text("`\(agent.name)`", bundle: .module)
+                            Text(verbatim: "`\(agent.name)`")
                                 .themedCode(.base)
                         }
                         GridRow {
                             Text("Max Turns:", bundle: .module)
                                 .foregroundStyle(.appSecondary)
-                            Text("\(agent.maxTurns)", bundle: .module)
+                            Text(verbatim: "\(agent.maxTurns)")
                         }
                         // No "Model Override" row: `agent.model` is parsed
                         // and read by nothing, a subagent runs on whatever is
@@ -391,7 +393,7 @@ public struct AgentsSettingsPaneView: View {
                         Text("You can invoke this subagent in chat or via slash command with clean context isolation:", bundle: .module)
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
-                        Text("`/\(agent.name) <task description>`", bundle: .module)
+                        Text(verbatim: "`/\(agent.name) <task description>`")
                             .themedCode(.small)
                             .padding(8)
                             .background(RoundedRectangle(cornerRadius: 6).fill(.appElevated))

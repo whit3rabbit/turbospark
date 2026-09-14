@@ -2,6 +2,10 @@ import XCTest
 @testable import TurboSparkApp
 
 final class WebFetchTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        AppToolRegistry.webToolsEnabledProvider = nil
+    }
 
     // MARK: - HTML to Markdown Conversion
 

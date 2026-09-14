@@ -215,9 +215,9 @@ public struct HfAuthTokenCardView: View {
                     .font(theme.ui(.small, weight: .medium))
                 Spacer()
                 if !savedMirrorEndpoint.isEmpty && savedMirrorEndpoint != "https://huggingface.co" {
-                    Button("Reset to Default") {
+                    Button {
                         resetMirrorEndpoint()
-                    }
+                    } label: { Text("Reset to Default", bundle: .module) }
                     .buttonStyle(.plain)
                     .font(theme.ui(.tiny))
                     .foregroundStyle(.appSecondary)
@@ -237,9 +237,9 @@ public struct HfAuthTokenCardView: View {
                             .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                     )
 
-                Button("Save Mirror") {
+                Button {
                     saveMirrorEndpoint()
-                }
+                } label: { Text("Save Mirror", bundle: .module) }
                 .buttonStyle(.bordered)
                 .disabled(mirrorEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines) == savedMirrorEndpoint)
                 .appPointerCursor()
@@ -253,17 +253,17 @@ public struct HfAuthTokenCardView: View {
     // MARK: - Actions
     private var footerActionsRow: some View {
         HStack {
-            Button("Save Token") {
+            Button {
                 saveToken()
-            }
+            } label: { Text("Save Token", bundle: .module) }
             .buttonStyle(.borderedProminent)
             .disabled(tokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !isDirty || isValidating)
             .appPointerCursor()
 
             if savedToken != nil {
-                Button("Remove Token", role: .destructive) {
+                Button(role: .destructive) {
                     clearToken()
-                }
+                } label: { Text("Remove Token", bundle: .module) }
                 .buttonStyle(.bordered)
                 .appPointerCursor()
             }

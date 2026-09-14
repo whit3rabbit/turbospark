@@ -54,9 +54,9 @@ public struct ServerMenuBarView: View {
                 model.showToast("Copied daemon address", style: .info)
             }
             if let logPath = daemon.logPath {
-                Button("Reveal Daemon Log") {
+                Button {
                     ModelStorageManager.revealInFinder(path: logPath)
-                }
+                } label: { Text("Reveal Daemon Log", bundle: .module) }
             }
         } else {
             let portStr = model.serverPinnedPort == 0 ? "automatic" : "\(model.serverPinnedPort)"
@@ -67,29 +67,29 @@ public struct ServerMenuBarView: View {
     @ViewBuilder
     private var serverControlSection: some View {
         if isRunning {
-            Button("Stop Server") {
+            Button {
                 model.stopServer()
-            }
+            } label: { Text("Stop Server", bundle: .module) }
             .disabled(model.serverBusy)
         } else if let daemon = daemonStatus, daemon.running {
             Button("Stop Background Daemon (PID \(daemon.pid.map(String.init) ?? "?"))") {
                 stopDaemon()
             }
-            Button("Restart Background Daemon") {
+            Button {
                 restartDaemon()
-            }
-            Button("Start In-App Server") {
+            } label: { Text("Restart Background Daemon", bundle: .module) }
+            Button {
                 model.startServer()
-            }
+            } label: { Text("Start In-App Server", bundle: .module) }
             .disabled(model.serverBusy)
         } else {
-            Button("Start Server") {
+            Button {
                 model.startServer()
-            }
+            } label: { Text("Start Server", bundle: .module) }
             .disabled(model.serverBusy)
-            Button("Start Background Daemon") {
+            Button {
                 startDaemon()
-            }
+            } label: { Text("Start Background Daemon", bundle: .module) }
         }
     }
 
@@ -150,7 +150,7 @@ public struct ServerMenuBarView: View {
 
     @ViewBuilder
     private var statsSubmenu: some View {
-        Menu("Serving Stats") {
+        Menu {
             let metrics = model.serverMetrics
             Text("Total Tokens Processed: \(formatNumber(metrics.totalTokensProcessed))", bundle: .module)
             Text("Requests Served: \(metrics.totalRequests)", bundle: .module)
@@ -171,12 +171,14 @@ public struct ServerMenuBarView: View {
             if isRunning, let info = model.serverInfo {
                 Text("Uptime: \(uptimeText(info.uptimeSeconds))", bundle: .module)
             }
+        } label: {
+            Text("Serving Stats", bundle: .module)
         }
     }
 
     @ViewBuilder
     private var agentsSubmenu: some View {
-        Menu("Coding Agents") {
+        Menu {
             let port = model.serverPinnedPort == 0 ? (info?.port ?? 8080) : model.serverPinnedPort
             let host = info?.host ?? "127.0.0.1"
             // The key the running server will actually accept, or the same
@@ -218,12 +220,14 @@ public struct ServerMenuBarView: View {
                 copyToClipboard("turbospark start claude")
                 model.showToast("Copied turbospark start claude", style: .info)
             }
+        } label: {
+            Text("Coding Agents", bundle: .module)
         }
     }
 
     @ViewBuilder
     private var endpointsSubmenu: some View {
-        Menu("API Endpoints") {
+        Menu {
             let base = info?.baseURL?.absoluteString
                 ?? "http://127.0.0.1:\(model.serverPinnedPort == 0 ? 8080 : model.serverPinnedPort)"
 
@@ -279,17 +283,19 @@ public struct ServerMenuBarView: View {
                 copyToClipboard("\(base)/health")
                 model.showToast("Copied /health endpoint", style: .info)
             }
+        } label: {
+            Text("API Endpoints", bundle: .module)
         }
     }
 
     @ViewBuilder
     private var modelsSubmenu: some View {
-        Menu("Model") {
+        Menu {
             if model.installed.isEmpty {
                 Text("No models installed", bundle: .module)
-                Button("Discover Models...") {
+                Button {
                     model.showMainWindow(navigatingTo: .modelHub)
-                }
+                } label: { Text("Discover Models...", bundle: .module) }
             } else {
                 ForEach(model.installed) { installedModel in
                     let isAttached = isModelAttached(installedModel)
@@ -307,37 +313,39 @@ public struct ServerMenuBarView: View {
                     }
                 }
             }
+        } label: {
+            Text("Model", bundle: .module)
         }
     }
 
     @ViewBuilder
     private var navigationSection: some View {
-        Button("Admin Panel") {
+        Button {
             model.showMainWindow(navigatingTo: .server)
-        }
+        } label: { Text("Admin Panel", bundle: .module) }
 
-        Button("Chat with TurboSpark") {
+        Button {
             model.showMainWindow(navigatingTo: .chat)
-        }
+        } label: { Text("Chat with TurboSpark", bundle: .module) }
     }
 
     @ViewBuilder
     private var appManagementSection: some View {
-        Button("Preferences...") {
+        Button {
             model.openSettings(tab: .general)
-        }
+        } label: { Text("Preferences...", bundle: .module) }
         .keyboardShortcut(",", modifiers: .command)
 
-        Button("About TurboSpark") {
+        Button {
             NSApp.activate(ignoringOtherApps: true)
             NSApp.orderFrontStandardAboutPanel(nil)
-        }
+        } label: { Text("About TurboSpark", bundle: .module) }
 
         Divider()
 
-        Button("Quit TurboSpark") {
+        Button {
             NSApp.terminate(nil)
-        }
+        } label: { Text("Quit TurboSpark", bundle: .module) }
         .keyboardShortcut("q", modifiers: .command)
     }
 

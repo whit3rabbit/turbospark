@@ -93,6 +93,39 @@ final class ModelManagerTests: XCTestCase {
         XCTAssertTrue(desc.isSteeringReady)
     }
 
+    func testModelFeatureDescriptorSteeringCoversEverySupportedFamily() {
+        let supportedFamilies = [
+            "gemma4", "qwen36", "qwen35", "llama", "qwen3moe", "qwen3", "qwen2",
+            "minimax_m2", "gptOss", "museGlimmer", "spark2_5",
+        ]
+
+        for family in supportedFamilies {
+            let model = InstalledModel(
+                alias: "steering-\(family)",
+                repo: "test/\(family)",
+                path: "/path/to/\(family)",
+                family: family
+            )
+            XCTAssertTrue(
+                ModelFeatureDescriptor.resolve(installedModel: model).isSteeringReady,
+                "Swift pre-open detection missed supported family \(family)")
+        }
+    }
+
+    func testModelFeatureDescriptorDoesNotClaimUnsupportedSteeringFamilies() {
+        for family in ["deepseekV4Flash", "qwen4exp"] {
+            let model = InstalledModel(
+                alias: "unsupported-\(family)",
+                repo: "test/\(family)",
+                path: "/path/to/\(family)",
+                family: family
+            )
+            XCTAssertFalse(
+                ModelFeatureDescriptor.resolve(installedModel: model).isSteeringReady,
+                "Swift pre-open detection incorrectly enabled \(family)")
+        }
+    }
+
     func testModelFeatureDescriptorSources() {
         let lmStudio = InstalledModel(
             alias: "llama3-lmstudio",

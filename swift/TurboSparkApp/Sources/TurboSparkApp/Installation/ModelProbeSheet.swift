@@ -28,9 +28,9 @@ struct ModelProbeSheet: View {
             footer
         }
         .frame(minWidth: 560, minHeight: 500)
-        .alert("Install anyway?", isPresented: $showsConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Install") { performInstall() }
+        .alert(Text("Install anyway?", bundle: .module), isPresented: $showsConfirm) {
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+            Button { performInstall() } label: { Text("Install", bundle: .module) }
         } message: {
             Text(decision.reason ?? "")
         }
@@ -76,7 +76,7 @@ struct ModelProbeSheet: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button("Done") { dismiss() }
+            Button { dismiss() } label: { Text("Done", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Done")
                 .accessibilityHint("Closes the probe sheet")
@@ -111,9 +111,9 @@ struct ModelProbeSheet: View {
                                 Text("This repository may require Hugging Face authentication.", bundle: .module)
                                     .themedFont(.tiny)
                                     .foregroundStyle(.appSecondary)
-                                Button("Open Settings") {
+                                Button {
                                     model.openSettings(tab: .general)
-                                }
+                                } label: { Text("Open Settings", bundle: .module) }
                                 .buttonStyle(.link)
                                 .themedFont(.tiny)
                             }
@@ -135,7 +135,7 @@ struct ModelProbeSheet: View {
 
     private var formFields: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LabeledContent("Repository") {
+            LabeledContent {
                 TextField("e.g. mlx-community/Qwen3.6-35B-A3B-4bit", text: $repo)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Hugging Face repository to probe")
@@ -144,14 +144,18 @@ struct ModelProbeSheet: View {
                         if clean != repo { repo = clean }
                     }
                     .onSubmit { listVariants() }
+            } label: {
+                Text("Repository", bundle: .module)
             }
-            LabeledContent("Local Alias") {
+            LabeledContent {
                 TextField("e.g. my-qwen-model", text: $alias)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Local model alias")
+            } label: {
+                Text("Local Alias", bundle: .module)
             }
             quantizationField
-            LabeledContent("Sidecar Repo (optional)") {
+            LabeledContent {
                 VStack(alignment: .leading, spacing: 4) {
                     TextField("e.g. original-org/model-tokenizer", text: $sidecarRepo)
                         .textFieldStyle(.roundedBorder)
@@ -174,6 +178,8 @@ struct ModelProbeSheet: View {
                         .padding(.top, 2)
                     }
                 }
+            } label: {
+                Text("Sidecar Repo (optional)", bundle: .module)
             }
         }
     }
@@ -185,7 +191,7 @@ struct ModelProbeSheet: View {
     /// repository is free to name a file something else.
     @ViewBuilder
     private var quantizationField: some View {
-        LabeledContent("Quantization") {
+        LabeledContent {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     if let listed = variants, !listed.variants.isEmpty {
@@ -235,7 +241,7 @@ struct ModelProbeSheet: View {
                         .foregroundStyle(.appSecondary)
                 }
             }
-        }
+        } label: { Text("Quantization", bundle: .module) }
     }
 
     private func variantLabel(_ v: RepoVariant) -> String {
@@ -259,14 +265,14 @@ struct ModelProbeSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Button("Run Probe") { runProbe() }
+                Button { runProbe() } label: { Text("Run Probe", bundle: .module) }
                     .disabled(repo.isEmpty || isProbing)
                     .help("Fetch repository headers and inspect model compatibility")
                     .accessibilityHint("Fetches checkpoint headers without downloading the model")
 
                 Spacer()
 
-                Button("Install Model") { requestInstall() }
+                Button { requestInstall() } label: { Text("Install Model", bundle: .module) }
                     .buttonStyle(.borderedProminent)
                     .disabled(
                         repo.isEmpty || alias.isEmpty || isProbing || model.isInstallingModel

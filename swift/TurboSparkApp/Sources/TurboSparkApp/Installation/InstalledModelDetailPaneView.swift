@@ -128,10 +128,10 @@ struct InstalledModelDetailPaneView: View {
             isPresented: $showingDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete Model", role: .destructive) {
+            Button(role: .destructive) {
                 model.deleteModel(installedModel)
-            }
-            Button("Cancel", role: .cancel) {}
+            } label: { Text("Delete Model", bundle: .module) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: {
             Text("This will permanently remove the model files (\(MetricFormat.storage(installedModel.installBytes))) from disk at:\n\(installedModel.path)", bundle: .module)
         }

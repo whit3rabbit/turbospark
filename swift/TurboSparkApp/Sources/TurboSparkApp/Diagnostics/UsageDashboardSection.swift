@@ -21,26 +21,32 @@ private struct UsageDashboardSectionView: View {
 
     var body: some View {
         let totals = model.usageTotals
-        Section("Token Usage (recorded)") {
+        Section(header: Text("Token Usage (recorded)", bundle: .module)) {
             if totals.turns == 0 {
                 Text("No recorded usage yet. Tokens are counted from the model's own per-turn totals as turns complete.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             } else {
-                LabeledContent("Turns") {
+                LabeledContent {
                     Text(totals.turns.formatted())
                         .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Turns", bundle: .module)
                 }
-                LabeledContent("Prompt tokens") {
+                LabeledContent {
                     Text(totals.promptTokens.formatted())
                         .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Prompt tokens", bundle: .module)
                 }
-                LabeledContent("Output tokens") {
+                LabeledContent {
                     Text(totals.outputTokens.formatted())
                         .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Output tokens", bundle: .module)
                 }
 
                 heatmap(totals: totals)

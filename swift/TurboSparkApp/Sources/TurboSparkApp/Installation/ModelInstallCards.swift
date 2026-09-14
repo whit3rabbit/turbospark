@@ -165,7 +165,7 @@ struct ActiveInstallCard: View {
                         .themedFont(.base, weight: .semibold)
                 }
                 Spacer()
-                Button("Cancel", action: model.cancelInstall)
+                Button(action: model.cancelInstall) { Text("Cancel", bundle: .module) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .help("Cancel model download")

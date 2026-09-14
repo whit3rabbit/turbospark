@@ -14,14 +14,11 @@ struct ExcludedScanPathsSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Excluded from scan", systemImage: "eye.slash")
+            Label { Text("Excluded from scan", bundle: .module) } icon: { Image(systemName: "eye.slash") }
                 .themedFont(.base, weight: .semibold)
 
             if orgStore.excludedScanPaths.isEmpty {
-                Text(
-                    "Models you remove from TurboSpark without deleting their files are listed "
-                        + "here, so they can be restored."
-                )
+                Text("Models you remove from TurboSpark without deleting their files are listed here, so they can be restored.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             } else {
@@ -34,10 +31,10 @@ struct ExcludedScanPathsSectionView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer()
-                        Button("Restore") {
+                        Button {
                             orgStore.restoreToScan(path: path)
                             model.refreshModels()
-                        }
+                        } label: { Text("Restore", bundle: .module) }
                         .controlSize(.small)
                         .help("Include this path in model scans again")
                         .accessibilityHint("Puts this model back in the installed list")

@@ -74,10 +74,10 @@ public struct AgentEditorSheet: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Scope", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            Picker("Scope", selection: $isProjectScope) {
+                            Picker(selection: $isProjectScope) {
                                 Text("User Scope (~/.turbospark/agents)", bundle: .module).tag(false)
                                 Text("Project Scope (.turbospark/agents)", bundle: .module).tag(true)
-                            }
+                            } label: { Text("Scope", bundle: .module) }
                             .pickerStyle(.segmented)
                             .disabled(agentToEdit != nil || model.selectedProject == nil)
                             if isProjectScope && model.selectedProject == nil && agentToEdit == nil {

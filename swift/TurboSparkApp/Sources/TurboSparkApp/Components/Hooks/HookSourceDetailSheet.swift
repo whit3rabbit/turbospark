@@ -42,7 +42,7 @@ public struct HookSourceDetailSheet: View {
                         Button {
                             showingOptionsSheet = true
                         } label: {
-                            Label("Options", systemImage: "slider.horizontal.3")
+                            Label { Text("Options", bundle: .module) } icon: { Image(systemName: "slider.horizontal.3") }
                         }
                         .controlSize(.small)
                     }
@@ -100,7 +100,7 @@ public struct HookSourceDetailSheet: View {
                 VStack(spacing: 12) {
                     Text("Source group not found.", bundle: .module)
                         .foregroundStyle(.appSecondary)
-                    Button("Close") { dismiss() }
+                    Button { dismiss() } label: { Text("Close", bundle: .module) }
                 }
                 .padding(40)
             }
@@ -150,7 +150,7 @@ public struct HookSourceDetailSheet: View {
                         Button {
                             hookStore.trustAllInGroup(group.id)
                         } label: {
-                            Label("Trust All in Group", systemImage: "checkmark.shield.fill")
+                            Label { Text("Trust All in Group", bundle: .module) } icon: { Image(systemName: "checkmark.shield.fill") }
                                 .themedFont(.small, weight: .semibold)
                         }
                         .buttonStyle(.borderedProminent)
@@ -368,14 +368,14 @@ public struct HookSourceDetailSheet: View {
                         Spacer()
 
                         if hook.sourceType == .custom {
-                            Button("Edit...") {
+                            Button {
                                 editingHook = hook
-                            }
+                            } label: { Text("Edit...", bundle: .module) }
                             .controlSize(.small)
 
-                            Button("Delete", role: .destructive) {
+                            Button(role: .destructive) {
                                 hookStore.deleteCustomHook(id: hook.id)
-                            }
+                            } label: { Text("Delete", bundle: .module) }
                             .controlSize(.small)
                         }
                     }

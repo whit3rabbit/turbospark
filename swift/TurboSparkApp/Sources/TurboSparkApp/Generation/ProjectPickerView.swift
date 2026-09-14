@@ -92,13 +92,13 @@ struct ProjectPickerView: View {
                 isPresented = false
                 onNewProject()
             } label: {
-                Label("New Project...", systemImage: "plus")
+                Label { Text("New Project...", bundle: .module) } icon: { Image(systemName: "plus") }
             }
             Button {
                 model.chooseProjectForTask(id: nil)
                 isPresented = false
             } label: {
-                Label("All Chats (No Project)", systemImage: "xmark")
+                Label { Text("All Chats (No Project)", bundle: .module) } icon: { Image(systemName: "xmark") }
             }
         }
         .buttonStyle(.plain)

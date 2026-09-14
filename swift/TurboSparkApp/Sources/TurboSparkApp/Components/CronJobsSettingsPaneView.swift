@@ -36,11 +36,11 @@ struct CronJobsSettingsPaneView: View {
             isPresented: deletionAlertPresented,
             presenting: jobPendingDeletion
         ) { job in
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+            Button(role: .destructive) {
                 _ = CronScheduler.shared.delete(id: job.id)
                 revision += 1
-            }
+            } label: { Text("Delete", bundle: .module) }
         } message: { job in
             Text("The schedule \"\(job.cron)\" will stop firing.", bundle: .module)
         }
@@ -84,7 +84,7 @@ struct CronJobsSettingsPaneView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.plain)
-                .help("Refresh")
+                .help(Text("Refresh", bundle: .module))
                 .accessibilityLabel("Refresh scheduled tasks")
             }
 

@@ -18,7 +18,7 @@ struct CustomModelFoldersSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Additional Model Folders", systemImage: "folder.badge.plus")
+                Label { Text("Additional Model Folders", bundle: .module) } icon: { Image(systemName: "folder.badge.plus") }
                 .settingsControl("Additional Model Folders", pane: .models, timing: .action)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
@@ -72,7 +72,7 @@ struct CustomModelFoldersSectionView: View {
                                 Image(systemName: "arrow.up.right.square")
                             }
                             .buttonStyle(.plain)
-                            .help("Reveal in Finder")
+                            .help(Text("Reveal in Finder", bundle: .module))
 
                             Button {
                                 removeCustomFolder(dir)

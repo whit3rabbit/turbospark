@@ -40,7 +40,7 @@ public struct WorktreeWorktreeListView: View {
 
             Spacer()
 
-            Text("\(worktree.worktrees.count) worktrees", bundle: .module)
+            Text(verbatim: "\(worktree.worktrees.count) worktrees")
                 .themedFont(.tiny).monospacedDigit()
                 .foregroundStyle(.appSecondary)
         }

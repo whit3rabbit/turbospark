@@ -67,12 +67,12 @@ struct ModelDetailPaneView: View {
             isPresented: $showingDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Delete Model", role: .destructive) {
+            Button(role: .destructive) {
                 if let inst = installedModel ?? model.installed.first(where: { $0.alias == entry.alias }) {
                     model.deleteModel(inst)
                 }
-            }
-            Button("Cancel", role: .cancel) {}
+            } label: { Text("Delete Model", bundle: .module) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: {
             Text("This will remove the downloaded model files from disk.", bundle: .module)
         }
@@ -170,7 +170,7 @@ struct ModelDetailPaneView: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(entry.alias, forType: .string)
         } label: {
-            Label("Copy Alias", systemImage: "doc.on.doc")
+            Label { Text("Copy Alias", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
                 .themedFont(.small)
         }
         .buttonStyle(.bordered)
@@ -255,23 +255,23 @@ struct ModelDetailPaneView: View {
     private var actionButtons: some View {
         HStack(spacing: 10) {
             if isDownloadingThis {
-                Button("Cancel Download", role: .cancel) {
+                Button(role: .cancel) {
                     model.cancelInstall()
-                }
+                } label: { Text("Cancel Download", bundle: .module) }
                 .controlSize(.regular)
             } else if isActive {
                 Button {
                     model.activeSection = .chat
                 } label: {
-                    Label("Active in Chat", systemImage: "bubble.left.and.bubble.right.fill")
+                    Label { Text("Active in Chat", bundle: .module) } icon: { Image(systemName: "bubble.left.and.bubble.right.fill") }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
                 .accessibilityHint("Opens the chat view with this model loaded")
 
-                Button("Unload") {
+                Button {
                     model.unloadModel()
-                }
+                } label: { Text("Unload", bundle: .module) }
                 .controlSize(.regular)
                 // state#85: `ModelLoaderControl` already read this predicate
                 // and the two detail panes did not.
@@ -283,7 +283,7 @@ struct ModelDetailPaneView: View {
                         model.openChatWithModel(inst)
                     }
                 } label: {
-                    Label("Load & Chat", systemImage: "play.fill")
+                    Label { Text("Load & Chat", bundle: .module) } icon: { Image(systemName: "play.fill") }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
@@ -308,15 +308,15 @@ struct ModelDetailPaneView: View {
                         model.installModel(alias: entry.alias)
                     }
                 } label: {
-                    Label("Download & Install", systemImage: "arrow.down.circle.fill")
+                    Label { Text("Download & Install", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
                 .disabled(model.isInstallingModel || model.isRunning || installDecision.isBlocked)
                 .accessibilityHint("Downloads and installs \(entry.alias)")
-                .alert("Install anyway?", isPresented: $showsInstallConfirm) {
-                    Button("Cancel", role: .cancel) {}
-                    Button("Install") { model.installModel(alias: entry.alias) }
+                .alert(Text("Install anyway?", bundle: .module), isPresented: $showsInstallConfirm) {
+                    Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+                    Button { model.installModel(alias: entry.alias) } label: { Text("Install", bundle: .module) }
                 } message: {
                     Text(installDecision.reason ?? "")
                 }

@@ -32,7 +32,7 @@ struct ProjectMcpDetectionSectionView: View {
                             .scaleEffect(0.6)
                             .frame(width: 16, height: 16)
                     } else {
-                        Label("Scan Folder", systemImage: "arrow.clockwise")
+                        Label { Text("Scan Folder", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                     }
                 }
                 .buttonStyle(.bordered)
@@ -113,9 +113,9 @@ struct ProjectMcpDetectionSectionView: View {
                                 .background(Color.secondary.opacity(0.12))
                                 .clipShape(Capsule())
                         } else {
-                            Button("Import") {
+                            Button {
                                 onImportSingle(server)
-                            }
+                            } label: { Text("Import", bundle: .module) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                         }

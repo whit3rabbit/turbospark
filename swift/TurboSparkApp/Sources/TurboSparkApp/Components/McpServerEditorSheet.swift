@@ -87,7 +87,7 @@ public struct McpServerEditorSheet: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button("Close") { onDismiss() }
+            Button { onDismiss() } label: { Text("Close", bundle: .module) }
                 .buttonStyle(.plain)
                 .foregroundStyle(.appSecondary)
         }
@@ -123,10 +123,10 @@ public struct McpServerEditorSheet: View {
             Text("Transport Type", bundle: .module)
                 .themedFont(.small, weight: .semibold)
 
-            Picker("Transport", selection: $transportType) {
+            Picker(selection: $transportType) {
                 Text("Local Subprocess (Stdio)", bundle: .module).tag("stdio")
                 Text("Remote Endpoint (SSE)", bundle: .module).tag("sse")
-            }
+            } label: { Text("Transport", bundle: .module) }
             .pickerStyle(.segmented)
         }
     }
@@ -152,8 +152,12 @@ public struct McpServerEditorSheet: View {
             Text("Execution Settings", bundle: .module)
                 .themedFont(.small, weight: .semibold)
 
-            Toggle("Enable Server", isOn: $isEnabled)
-            Toggle("Auto-Approve Tools (skip interactive prompt)", isOn: $autoApprove)
+            Toggle(isOn: $isEnabled) {
+                Text("Enable Server", bundle: .module)
+            }
+            Toggle(isOn: $autoApprove) {
+                Text("Auto-Approve Tools (skip interactive prompt)", bundle: .module)
+            }
         }
     }
 
@@ -171,7 +175,7 @@ public struct McpServerEditorSheet: View {
                             .scaleEffect(0.6)
                             .frame(width: 16, height: 16)
                     } else {
-                        Label("Test Connection", systemImage: "bolt.fill")
+                        Label { Text("Test Connection", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
                     }
                 }
                 .buttonStyle(.bordered)
@@ -219,7 +223,7 @@ public struct McpServerEditorSheet: View {
 
     private var footer: some View {
         HStack {
-            Button("Cancel") { onDismiss() }
+            Button { onDismiss() } label: { Text("Cancel", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
             if let validationMessage {
                 Text(validationMessage)
@@ -228,9 +232,9 @@ public struct McpServerEditorSheet: View {
                     .lineLimit(2)
             }
             Spacer()
-            Button("Save Server") {
+            Button {
                 saveServer()
-            }
+            } label: { Text("Save Server", bundle: .module) }
             .buttonStyle(.borderedProminent)
             .disabled(validationMessage != nil)
             .keyboardShortcut(.defaultAction)

@@ -17,11 +17,11 @@ struct McpCatalogSourceFormView: View {
             Text("Catalog Source", bundle: .module)
                 .themedFont(.small, weight: .semibold)
 
-            Picker("Source", selection: $sourceKind) {
+            Picker(selection: $sourceKind) {
                 ForEach(McpImportSheet.SourceKind.allCases) { kind in
                     Text(kind.rawValue).tag(kind)
                 }
-            }
+            } label: { Text("Source", bundle: .module) }
             .pickerStyle(.segmented)
 
             sourceField
@@ -41,7 +41,7 @@ struct McpCatalogSourceFormView: View {
                 TextField(placeholder, text: $sourceText)
                     .textFieldStyle(.roundedBorder)
                 if sourceKind == .directory {
-                    Button("Choose...") { chooseFolder() }
+                    Button { chooseFolder() } label: { Text("Choose...", bundle: .module) }
                         .buttonStyle(.bordered)
                 }
             }

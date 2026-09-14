@@ -128,6 +128,9 @@ final class TurnProjectAndHistoryTests: XCTestCase {
     /// no image and no tool activity is not a turn.
     func testATrulyEmptyMessageIsStillDropped() {
         let model = AppModel()
+        model.defaultSystemPrompt = ""
+        model.selectedSystemPromptID = nil
+        model.selectedPersonalityID = nil
         var chat = AppChat(title: "empty")
         chat.messages = [
             AppChatMessage(role: .user, content: "hello"),

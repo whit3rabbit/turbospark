@@ -225,13 +225,13 @@ struct ToolCallCardView: View {
                 headerLabelView
 
                 if let additions = summary.additions {
-                    Text("+\(additions)", bundle: .module)
+                    Text(verbatim: "+\(additions)")
                         .font(theme.code(.small, weight: .bold))
                         .foregroundStyle(diffAdditionColor)
                 }
 
                 if let deletions = summary.deletions {
-                    Text("-\(deletions)", bundle: .module)
+                    Text(verbatim: "-\(deletions)")
                         .font(theme.code(.small, weight: .bold))
                         .foregroundStyle(diffDeletionColor)
                 }
@@ -319,7 +319,7 @@ struct ToolCallCardView: View {
     private var headerLabelView: some View {
         let isCancelled = call.status == .denied
         if let cmd = terminalCommand {
-            Text("$ \(cmd)", bundle: .module)
+            Text(verbatim: "$ \(cmd)")
                 .font(theme.code(.small, weight: .semibold))
                 .foregroundStyle(isCancelled ? .secondary : .primary)
                 .strikethrough(isCancelled, color: .secondary)
@@ -329,7 +329,7 @@ struct ToolCallCardView: View {
                 Text("Search:", bundle: .module)
                     .themedFont(.base, weight: .medium)
                     .foregroundStyle(.appSecondary)
-                Text("\"\(query)\"", bundle: .module)
+                Text(verbatim: "\"\(query)\"")
                     .font(theme.code(.small, weight: .semibold))
                     .foregroundStyle(.appText)
             }
@@ -375,7 +375,7 @@ struct ToolCallCardView: View {
                     .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
             }
             ForEach(risk.reasons, id: \.self) { reason in
-                Text("- \(reason)", bundle: .module)
+                Text(verbatim: "- \(reason)")
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
@@ -648,7 +648,7 @@ struct ToolCallCardView: View {
                     .foregroundStyle(.appText)
                 Spacer()
                 let lineCount = ToolCallDiffFormatter.countLines(content)
-                Text("\(lineCount) lines", bundle: .module)
+                Text(verbatim: "\(lineCount) lines")
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
@@ -774,7 +774,7 @@ struct ToolCallCardView: View {
                 .foregroundStyle(.appText)
 
             if let start, let end, !start.isEmpty, !end.isEmpty {
-                Text("Lines \(start)-\(end)", bundle: .module)
+                Text(verbatim: "Lines \(start)-\(end)")
                     .themedFont(.tiny, weight: .medium)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -847,7 +847,7 @@ struct ToolCallCardView: View {
             if !otherArgs.isEmpty {
                 ForEach(otherArgs.sorted(by: { $0.key < $1.key }), id: \.key) { key, val in
                     HStack(alignment: .top, spacing: 6) {
-                        Text("\(key):", bundle: .module)
+                        Text(verbatim: "\(key):")
                             .font(theme.code(.small, weight: .medium))
                             .foregroundStyle(.appSecondary)
                         Text(val)
@@ -892,7 +892,7 @@ struct ToolCallCardView: View {
             if !otherArgs.isEmpty {
                 ForEach(otherArgs.sorted(by: { $0.key < $1.key }), id: \.key) { key, val in
                     HStack(alignment: .top, spacing: 6) {
-                        Text("\(key):", bundle: .module)
+                        Text(verbatim: "\(key):")
                             .font(theme.code(.small, weight: .medium))
                             .foregroundStyle(.appSecondary)
                         Text(val)
@@ -938,7 +938,7 @@ struct ToolCallCardView: View {
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(call.arguments.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                     HStack(alignment: .top, spacing: 6) {
-                        Text("\(key):", bundle: .module)
+                        Text(verbatim: "\(key):")
                             .font(theme.code(.small, weight: .medium))
                             .foregroundStyle(.appSecondary)
                         Text(value)
@@ -992,7 +992,7 @@ struct ToolCallCardView: View {
                 Button {
                     model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
                 } label: {
-                    Label("Approve Once", systemImage: "checkmark")
+                    Label { Text("Approve Once", bundle: .module) } icon: { Image(systemName: "checkmark") }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(isHighRisk ? Color.orange : TurboSparkTheme.accentColor)
@@ -1004,7 +1004,7 @@ struct ToolCallCardView: View {
                         model.suspendAgentModeForSession()
                         model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
                     } label: {
-                        Label("Suspend Agent Mode", systemImage: "pause.circle")
+                        Label { Text("Suspend Agent Mode", bundle: .module) } icon: { Image(systemName: "pause.circle") }
                     }
                     .buttonStyle(.bordered)
                     .help("Approve once and stop using the classifier for the rest of this session")
@@ -1019,16 +1019,16 @@ struct ToolCallCardView: View {
                     // "this tool" and "this server" mean exactly what the
                     // evaluation will compare.
                     Menu {
-                        Button("Always Allow This Tool") {
+                        Button {
                             model.addMcpPermissionRule(serverName: target.server, toolName: target.tool, allow: true)
                             model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
-                        }
-                        Button("Always Allow This Server") {
+                        } label: { Text("Always Allow This Tool", bundle: .module) }
+                        Button {
                             model.addMcpPermissionRule(serverName: target.server, toolName: nil, allow: true)
                             model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
-                        }
+                        } label: { Text("Always Allow This Server", bundle: .module) }
                     } label: {
-                        Label("Always Allow", systemImage: "checkmark.seal")
+                        Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.seal") }
                     }
                     .buttonStyle(.bordered)
                     .help("Persist an allow rule for this MCP tool or server in project settings")
@@ -1037,16 +1037,16 @@ struct ToolCallCardView: View {
                     Button {
                         model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
                     } label: {
-                        Label("Always Allow", systemImage: "checkmark.circle")
+                        Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                     }
                     .buttonStyle(.bordered)
                     .help("Always allow this tool and command in this session")
                     .accessibilityLabel("Always allow \(call.name) in this session")
                 }
 
-                Button("Deny", role: .cancel) {
+                Button(role: .cancel) {
                     model.denyPendingToolCall(id: call.id)
-                }
+                } label: { Text("Deny", bundle: .module) }
                 .buttonStyle(.bordered)
                 .help("Deny this tool call execution")
                 .accessibilityLabel("Deny \(call.name)")

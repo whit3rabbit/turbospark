@@ -13,7 +13,7 @@ struct InstalledModelMemoryFitCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Unified Memory & Working Set", systemImage: "memorychip")
+                Label { Text("Unified Memory & Working Set", bundle: .module) } icon: { Image(systemName: "memorychip") }
                     .themedFont(.small, weight: .semibold)
                 Spacer()
                 if let fit {

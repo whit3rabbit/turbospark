@@ -66,9 +66,9 @@ public struct HookOptionsConfigSheet: View {
             // Footer
             HStack {
                 Spacer()
-                Button("Done") {
+                Button {
                     dismiss()
-                }
+                } label: { Text("Done", bundle: .module) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
             }
@@ -93,7 +93,7 @@ public struct HookOptionsConfigSheet: View {
                         .foregroundStyle(.red)
                 }
                 Spacer()
-                Text("$\(spec.key.uppercased())", bundle: .module)
+                Text(verbatim: "$\(spec.key.uppercased())")
                     .themedCode(.tiny)
                     .foregroundStyle(.appSecondary)
                     .padding(.horizontal, 6)
@@ -162,14 +162,14 @@ public struct HookOptionsConfigSheet: View {
                     )
                     .textFieldStyle(.roundedBorder)
 
-                    Button("Browse...") {
+                    Button {
                         choosePath(isDirectory: spec.type == .directory) { chosen in
                             if let chosen {
                                 values[spec.key] = chosen
                                 hookStore.updateOptionValue(sourceID: group.id, key: spec.key, value: chosen)
                             }
                         }
-                    }
+                    } label: { Text("Browse...", bundle: .module) }
                     .controlSize(.small)
                 }
             }

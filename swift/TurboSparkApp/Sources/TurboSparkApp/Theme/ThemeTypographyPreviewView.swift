@@ -55,7 +55,7 @@ public struct ThemeTypographyPreviewView: View {
                         .foregroundStyle(accentColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
 
-                    Text("\(Int(manager.uiFontSize))px", bundle: .module)
+                    Text(verbatim: "\(Int(manager.uiFontSize))px")
                         .font(uiFont)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)

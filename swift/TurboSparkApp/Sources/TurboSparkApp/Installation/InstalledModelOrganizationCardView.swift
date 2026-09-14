@@ -12,7 +12,7 @@ struct InstalledModelOrganizationCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Organization & Notes", systemImage: "tag")
+            Label { Text("Organization & Notes", bundle: .module) } icon: { Image(systemName: "tag") }
                 .themedFont(.small, weight: .semibold)
 
             // Tags section
@@ -51,9 +51,9 @@ struct InstalledModelOrganizationCardView: View {
                                 .onSubmit {
                                     addTagAction()
                                 }
-                            Button("Add") {
+                            Button {
                                 addTagAction()
-                            }
+                            } label: { Text("Add", bundle: .module) }
                             .themedFont(.tiny)
                             .buttonStyle(.plain)
                             .disabled(newTagText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -66,7 +66,7 @@ struct InstalledModelOrganizationCardView: View {
                         Button {
                             isAddingTag = true
                         } label: {
-                            Label("Add Tag", systemImage: "plus")
+                            Label { Text("Add Tag", bundle: .module) } icon: { Image(systemName: "plus") }
                                 .themedFont(.tiny, weight: .medium)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)

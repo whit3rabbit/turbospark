@@ -69,18 +69,18 @@ struct ChatSidebarChatRowView: View {
             Button(chat.isPinned ? "Unpin" : "Pin") {
                 model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
             }
-            Button("Rename") {
+            Button {
                 renameText = chat.title
                 chatBeingRenamed = chat
-            }
+            } label: { Text("Rename", bundle: .module) }
             .disabled(model.isRunning || chat.isGhost)
             Button(chat.systemPrompt == nil ? "Set System Prompt" : "Edit System Prompt") {
                 chatForSystemPrompt = chat
             }
             .disabled(model.isRunning)
-            Button("Duplicate") {
+            Button {
                 _ = model.duplicateChat(id: chat.id)
-            }
+            } label: { Text("Duplicate", bundle: .module) }
             .disabled(model.isRunning || chat.isGhost)
             Button(chat.isArchived ? "Unarchive" : "Archive") {
                 model.setChatArchived(id: chat.id, archived: !chat.isArchived)
@@ -94,9 +94,9 @@ struct ChatSidebarChatRowView: View {
                 model.toggleSplitPane(chatID: chat.id)
             }
             .disabled(chat.isGhost || model.isRunning || chat.id == model.selectedChatID)
-            Button("Delete", role: .destructive) {
+            Button(role: .destructive) {
                 chatPendingDeletion = chat
-            }
+            } label: { Text("Delete", bundle: .module) }
             .disabled(model.isRunning)
         }
     }
@@ -187,24 +187,34 @@ struct ChatSidebarChatRowView: View {
 
     private func actionsMenu(showsActions: Bool) -> some View {
         Menu {
-            Button(chat.isPinned ? "Unpin" : "Pin", systemImage: chat.isPinned ? "pin.slash" : "pin") {
+            Button {
                 model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
+            } label: {
+                if chat.isPinned {
+                    Label { Text("Unpin", bundle: .module) } icon: { Image(systemName: "pin.slash") }
+                } else {
+                    Label { Text("Pin", bundle: .module) } icon: { Image(systemName: "pin") }
+                }
             }
             // A ghost chat's title is a fixed "Temporary Chat"
             // (`AppModel+Submission.swift` skips auto-titling it for exactly
             // this reason); Rename is disabled here so that promise holds
             // for a manual override too.
-            Button("Rename", systemImage: "pencil") {
+            Button {
                 renameText = chat.title
                 chatBeingRenamed = chat
+            } label: {
+                Label { Text("Rename", bundle: .module) } icon: { Image(systemName: "pencil") }
             }
             .disabled(chat.isGhost)
             Divider()
-            Button("Delete", systemImage: "trash", role: .destructive) {
+            Button(role: .destructive) {
                 chatPendingDeletion = chat
+            } label: {
+                Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
             }
         } label: {
-            Label("Chat actions", systemImage: "ellipsis")
+            Label { Text("Chat actions", bundle: .module) } icon: { Image(systemName: "ellipsis") }
                 .labelStyle(.iconOnly)
                 .frame(width: actionButtonSize, height: actionButtonSize)
                 .contentShape(Circle())

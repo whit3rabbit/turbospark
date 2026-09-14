@@ -93,7 +93,7 @@ struct MessageEditComposerView: View {
                 .focused($isFocused)
 
             HStack(spacing: 8) {
-                Button("Cancel") { onCancel() }
+                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
                     .keyboardShortcut(.cancelAction)
                 Button(saveLabel) { onSave(text) }
                     .keyboardShortcut(.defaultAction)
@@ -154,9 +154,9 @@ struct BranchEditSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { onCancel() }
+                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
                     .keyboardShortcut(.cancelAction)
-                Button("Create branch & rerun") { onCreate(text) }
+                Button { onCreate(text) } label: { Text("Create branch & rerun", bundle: .module) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(trimmedText.isEmpty)
