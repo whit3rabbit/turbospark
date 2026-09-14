@@ -329,7 +329,7 @@ impl MfTokenizer {
             // left for the model to choose, which is what the checkpoint's own
             // generation prompt does.
             ChatDialect::Harmony => format!(
-                "{HARMONY_START_MARK}user{HARMONY_MESSAGE_MARK}{content}{HARMONY_END_MARK}                 {HARMONY_START_MARK}assistant"
+                "{HARMONY_START_MARK}user{HARMONY_MESSAGE_MARK}{content}{HARMONY_END_MARK}{HARMONY_START_MARK}assistant"
             ),
             // Writable for Harmony's reason: a continuation is one user turn
             // plus the opening of an assistant one, with no system preamble
