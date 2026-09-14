@@ -397,9 +397,9 @@ public final class TurboSparkServer: @unchecked Sendable {
         stopLocked()
     }
 
-    /// Signals the server to stop and waits through its bounded grace period
-    /// until the background thread exits. Idempotent and safe from any thread;
-    /// a second call (or a call after `deinit` would have run anyway) is a no-op.
+    /// Signals the server to stop and blocks until its background thread has
+    /// actually exited. Idempotent and safe from any thread; a second call
+    /// (or a call after `deinit` would have run anyway) is a no-op.
     public func stop() {
         stopLocked()
     }

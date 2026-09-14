@@ -58,7 +58,7 @@ axum = { version = "0.7", features = ["json"] }
 # build can reach), so it goes here beside `catalog` and `model_io` rather
 # than in the macOS block, and the crate that consumes it is gated instead.
 turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"] }
 
 # The session only exists where the engine does. Everything else in this
 # crate -- the error slot, the string helpers, the catalog and probe surface

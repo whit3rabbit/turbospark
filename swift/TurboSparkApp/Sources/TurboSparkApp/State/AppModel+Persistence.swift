@@ -472,6 +472,11 @@ public final class AppShutdownCoordinator {
 extension AppModel {
     /// Everything that must happen before the process exits, in order.
     public func shutdown() {
+        // First, so the engine stops answering requests for a model that is
+        // about to be released (`swift/CLAUDE.md` Gotcha 26).
+        stopServer()
+        stopServerPolling()
+
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,
         // which is exactly the case where the flush below matters most.
         cancel()
@@ -499,11 +504,5 @@ extension AppModel {
         // them, so the last keystroke and the last setting reach disk.
         persistChats()
         persistSettings()
-
-        // State is durable before this crosses the C ABI. Server shutdown is
-        // bounded there, but persistence must not depend on network clients
-        // completing within its grace period.
-        stopServer()
-        stopServerPolling()
     }
 }
