@@ -337,6 +337,7 @@
           "vocab.json"
         ]
       },
+      "include_vision": true,
       "download_bytes": 16054541349,
       "install_bytes": 16081522176,
       "status": "verified",

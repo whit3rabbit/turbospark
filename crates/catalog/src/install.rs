@@ -54,6 +54,8 @@ pub struct InstallPlan {
     /// list; for a probe it is the intersection of what the repo HAS with
     /// what this port can use.
     pub sidecar_files: Vec<String>,
+    /// Include the checkpoint's vision tower in this combined model install.
+    pub include_vision: bool,
     pub install_bytes: u64,
     /// The catalog status, or `unlisted`.
     pub status: String,
@@ -94,6 +96,7 @@ impl InstallPlan {
             kind: entry.source.kind,
             sidecars: RepoRef::new(entry.sidecar_repo(), entry.sidecar_revision()),
             sidecar_files: entry.sidecars.files.clone(),
+            include_vision: entry.include_vision,
             install_bytes: entry.install_bytes,
             status: entry.status.as_str().to_string(),
             mtp: entry
@@ -117,6 +120,7 @@ impl InstallPlan {
             kind: report.kind,
             sidecars,
             sidecar_files: report.sidecars_present.clone(),
+            include_vision: false,
             // No catalog estimate exists, so use the download size as a
             // stand-in. It is the right order of magnitude either way: the
             // walk copies quantized bytes through rather than re-quantizing.
@@ -145,6 +149,7 @@ impl InstallPlan {
             file: None,
             kind: SourceKind::Mlx,
             sidecar_files: VISION_SIDECAR_FILES.iter().map(|s| s.to_string()).collect(),
+            include_vision: false,
             install_bytes: 0,
             status: "unlisted".to_string(),
             mtp: None,
@@ -567,6 +572,7 @@ mod vision_gate_tests {
                 revision: None,
                 files: VISION_SIDECAR_FILES.iter().map(|s| s.to_string()).collect(),
             },
+            include_vision: false,
             download_bytes: 900_000_000,
             install_bytes: 900_000_000,
             status: Status::Runs,

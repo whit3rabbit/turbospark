@@ -110,7 +110,7 @@ pub(crate) fn stream_mlx(
     let family = repack::config_json_family(&config)
         .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?;
 
-    let arch = match family {
+    let mut arch = match family {
         ModelFamily::Gemma4 => repack::parse_gemma4_config(&config_text).map_err(|e| e.to_string()),
         ModelFamily::QwenGdnMoe => {
             repack::parse_qwen_gdn_moe_config(&config_text).map_err(|e| e.to_string())
@@ -129,6 +129,7 @@ pub(crate) fn stream_mlx(
         }
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
+    enable_requested_vision(plan, family, &mut arch, &config_text)?;
     let quant = repack::parse_gemma4_quantization(&config_text)
         .map_err(|e| format!("parsing the quantization block: {e}"))?;
 
@@ -284,6 +285,41 @@ pub(crate) fn stream_mlx(
         progress,
     );
     Ok(arch)
+}
+
+/// Apply a catalog row's explicit combined-vision intent to the architecture
+/// passed to the streamed writer. The trunk parsers deliberately return a
+/// text-only architecture, so this cannot be inferred from `config.json`.
+fn enable_requested_vision(
+    plan: &InstallPlan,
+    family: ModelFamily,
+    arch: &mut ArchConfig,
+    config_text: &str,
+) -> Result<(), String> {
+    if !plan.include_vision {
+        return Ok(());
+    }
+    if family != ModelFamily::QwenGdnDense {
+        return Err(format!(
+            "{}: combined vision ingestion is only wired for qwen35 dense models",
+            plan.alias
+        ));
+    }
+    let vision = repack::parse_vision_config(config_text).map_err(|e| e.to_string())?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{}: catalog row requests vision, but config.json declares no vision_config",
+            plan.alias
+        ));
+    }
+    if vision.out_hidden_size != arch.hidden_size {
+        return Err(format!(
+            "{}: vision output width {} does not match trunk hidden size {}",
+            plan.alias, vision.out_hidden_size, arch.hidden_size
+        ));
+    }
+    arch.vision = vision;
+    Ok(())
 }
 
 /// The multi-token-prediction head's shard(s), read from a repository
@@ -615,7 +651,35 @@ pub(crate) fn shard_names(plan: &InstallPlan, client: &Client) -> Result<Vec<Str
 
 #[cfg(test)]
 mod tests {
-    use super::shard_names_for_prefixes;
+    use super::{enable_requested_vision, shard_names_for_prefixes};
+    use crate::{Catalog, InstallPlan};
+    use model_io::ModelFamily;
+
+    #[test]
+    fn the_vision_catalog_row_enables_the_combined_tower() {
+        let catalog = Catalog::embedded().unwrap();
+        let entry = catalog.get("qwen38-27b-vision").unwrap();
+        let plan = InstallPlan::from_entry(entry);
+        assert!(plan.include_vision);
+
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        assert!(!arch.vision.is_active());
+        let config = serde_json::json!({
+            "text_config": {"rope_parameters": {"mrope_section": [11, 11, 10]}},
+            "vision_config": {
+                "depth": 27, "hidden_size": 1152, "intermediate_size": 4304,
+                "num_heads": 16, "patch_size": 16, "temporal_patch_size": 2,
+                "in_channels": 3, "spatial_merge_size": 2,
+                "num_position_embeddings": 2304, "out_hidden_size": 5120
+            },
+            "vision_start_token_id": 1, "vision_end_token_id": 2,
+            "image_token_id": 3, "video_token_id": 4
+        })
+        .to_string();
+        enable_requested_vision(&plan, ModelFamily::QwenGdnDense, &mut arch, &config).unwrap();
+        assert!(arch.vision.is_active());
+        assert_eq!(arch.vision.depth, 27);
+    }
 
     /// The pure half of [`super::fetch_prefixed_shards`]: given an index, find
     /// the shard(s) carrying at least one tensor under any of the prefixes,
