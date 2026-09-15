@@ -457,27 +457,38 @@ fn map_drafter(drafter: invocation::SpeculativeDrafter) -> runtime::SpeculativeD
 /// engine and report it as the steered one -- the argument `MtpState::build`
 /// makes for an explicitly-requested drafter, on an axis that changes the
 /// TOKENS rather than the throughput.
+///
+/// Vectors resolve in the order the paths were supplied, and each carries the
+/// per-vector knobs at its own index (`invocation::steering_knob` is the
+/// pairing rule and its last-value extension).
 fn resolve_steering(request: &InvocationRequest) -> Result<runtime::SteeringPolicy, String> {
-    let Some(path) = request.steering.as_deref() else {
+    if request.steering.is_empty() {
         return Ok(runtime::SteeringPolicy::off());
-    };
-    let mut set = repack::control_vector::load_control_vector(std::path::Path::new(path))
-        .map_err(|e| format!("--steering {path}: {e}"))?;
-    if let Some((start, end)) = request.steering_layers {
-        set.restrict_to_range(start as usize, end as usize);
     }
-    Ok(runtime::SteeringPolicy {
+    let mut vectors = Vec::with_capacity(request.steering.len());
+    for (i, path) in request.steering.iter().enumerate() {
+        let mut set = repack::control_vector::load_control_vector(std::path::Path::new(path))
+            .map_err(|e| format!("--steering {path}: {e}"))?;
+        if let Some((start, end)) = invocation::steering_knob(&request.steering_layers, i) {
+            set.restrict_to_range(start as usize, end as usize);
+        }
         // The flag wins over the file's declared mode, and the file's wins
         // over the default: a vector built for one edit should apply that
-        // edit unless someone says otherwise.
-        mode: request
-            .steering_mode
+        // edit unless someone says otherwise. Read before the set is moved
+        // into the vector.
+        let mode = invocation::steering_knob(&request.steering_mode, i)
             .or(set.declared_mode)
-            .unwrap_or_default(),
-        alpha: request.steering_scale.unwrap_or(1.0),
+            .unwrap_or_default();
+        vectors.push(runtime::SteeringVector {
+            set,
+            mode,
+            alpha: invocation::steering_knob(&request.steering_scale, i).unwrap_or(1.0),
+        });
+    }
+    Ok(runtime::SteeringPolicy {
+        vectors,
         target: request.steering_target,
         gate_threshold: request.steering_gate,
-        set: Some(set),
     })
 }
 

@@ -1214,3 +1214,124 @@ fn perturbing_the_k_range_moves_only_k() {
         "the perturbed k element did not reach k_dest"
     );
 }
+
+/// MULTI-DIRECTION COMPOSITION: two steering dispatches against one row, the
+/// second reading what the first left behind, must be bit-identical to the
+/// same two dispatches applied sequentially to separate buffers, and each
+/// dispatch's coefficient must land in ITS OWN slot.
+///
+/// This is the semantics `runtime::encode_steering`'s per-vector loop
+/// implements: N vectors at one layer is N dispatches IN ORDER, and vector
+/// k's reported coefficient is measured against the stream vector k-1
+/// edited. Nothing here can prove the loop is correct -- but if the kernel
+/// could not compose this way, or leaked one vector's measurement into the
+/// other's slot, no downstream assertion would say so.
+#[test]
+fn two_steer_dispatches_compose_and_measure_in_distinct_slots() {
+    use foundation::SteeringMode;
+    use turbospark_gpu::SteerParams;
+
+    let mut context = MetalContext::new().expect("Metal device");
+    let d1: Vec<f16> = (0..STEER_D)
+        .map(|i| f16::from_f32(((i as f32) * 0.37).sin() * 1.5))
+        .collect();
+    let d2: Vec<f16> = (0..STEER_D)
+        .map(|i| f16::from_f32(((i as f32) * 0.23).cos() * 1.0))
+        .collect();
+    let row = steer_row();
+    let inv1 = turbospark_compute::inv_norm(&as_f32(&d1));
+    let inv2 = turbospark_compute::inv_norm(&as_f32(&d2));
+    let params = |alpha: f32, inv_norm: f32| SteerParams {
+        d_len: STEER_D as u32,
+        rows: 1,
+        row_stride: STEER_D as u32,
+        mode: SteeringMode::Ablate,
+        alpha,
+        inv_norm,
+        target: 0.0,
+        gate_threshold: 0.0,
+    };
+
+    // THE COMPOSED RUN: one x buffer, two dispatches, two coeff slots.
+    let x_buf = context.new_buffer_with_data(&to_le(&row));
+    let d1_buf = context.new_buffer_with_data(&to_le(&d1));
+    let d2_buf = context.new_buffer_with_data(&to_le(&d2));
+    let coeff_buf = context.new_output_buffer(8);
+
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_steer_direction(
+        &mut context,
+        &pass,
+        (&x_buf, 0),
+        (&d1_buf, 0),
+        (&coeff_buf, 0),
+        &params(0.4, inv1),
+    )
+    .expect("encode vector 0");
+    turbospark_gpu::encode_steer_direction(
+        &mut context,
+        &pass,
+        (&x_buf, 0),
+        (&d2_buf, 0),
+        // Vector 1's slot sits one float in, mirroring the per-(layer,
+        // vector) block stride the runtime's coefficient layout gives each
+        // vector: one vector's writes cannot reach the other's slot.
+        (&coeff_buf, 4),
+        &params(0.8, inv2),
+    )
+    .expect("encode vector 1");
+    pass.commit_and_wait();
+
+    let composed = read_halfs(&x_buf, STEER_D);
+    let composed_coeffs = turbospark_gpu::read_f32_buffer(&coeff_buf, 2);
+
+    // THE SEQUENTIAL RUN: the same two edits, one buffer each.
+    let xa = context.new_buffer_with_data(&to_le(&row));
+    let ca = context.new_output_buffer(4);
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_steer_direction(
+        &mut context,
+        &pass,
+        (&xa, 0),
+        (&d1_buf, 0),
+        (&ca, 0),
+        &params(0.4, inv1),
+    )
+    .expect("encode sequential vector 0");
+    pass.commit_and_wait();
+
+    let xb = context.new_buffer_with_data(&to_le(&read_halfs(&xa, STEER_D)));
+    let cb = context.new_output_buffer(4);
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_steer_direction(
+        &mut context,
+        &pass,
+        (&xb, 0),
+        (&d2_buf, 0),
+        (&cb, 0),
+        &params(0.8, inv2),
+    )
+    .expect("encode sequential vector 1");
+    pass.commit_and_wait();
+
+    let sequential = read_halfs(&xb, STEER_D);
+    for i in 0..STEER_D {
+        assert_eq!(
+            composed[i].to_bits(),
+            sequential[i].to_bits(),
+            "element {i}: composing two dispatches on one buffer diverged from \
+             applying them sequentially"
+        );
+    }
+    assert_eq!(
+        composed_coeffs[0],
+        turbospark_gpu::read_f32_buffer(&ca, 1)[0],
+        "vector 0's slot must hold vector 0's measurement"
+    );
+    assert_eq!(
+        composed_coeffs[1],
+        turbospark_gpu::read_f32_buffer(&cb, 1)[0],
+        "vector 1's slot must hold vector 1's measurement, not a spill from \
+         vector 0's block"
+    );
+}

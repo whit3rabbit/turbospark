@@ -102,13 +102,7 @@ fn only_layer(hidden: usize, layers: usize, keep: usize) -> SteeringSet {
 }
 
 fn policy(set: SteeringSet, alpha: f32) -> SteeringPolicy {
-    SteeringPolicy {
-        set: Some(set),
-        mode: foundation::SteeringMode::Ablate,
-        alpha,
-        target: 0.0,
-        gate_threshold: 0.0,
-    }
+    SteeringPolicy::single(set, foundation::SteeringMode::Ablate, alpha, 0.0, 0.0)
 }
 
 fn open_steered(

@@ -478,12 +478,13 @@ fn a_batched_projection_that_straddles_the_ring_wrap_still_matches_sequential() 
 
 #[test]
 fn a_shared_expert_with_no_batched_kernel_is_refused_by_name() {
-    // AGENTS.md Gotcha 35 at the dispatch: `encode_gemm_any` is
-    // INT4-affine only, and a sequential fallback here would be
-    // numerically identical -- so a caller who asked for the batched
-    // engine would measure the unbatched one and report it as batched.
-    // The DEFAULT fixture writes its shared MLP at eight bits, so it is
-    // exactly the install that has to be refused rather than looped.
+    // AGENTS.md Gotcha 35 at the dispatch: `encode_gemm_any` covers the
+    // INT4-affine and 1-/2-bit affine batched kernels, and a sequential
+    // fallback for anything else would be numerically identical -- so a
+    // caller who asked for the batched engine would measure the unbatched
+    // one and report it as batched. The DEFAULT fixture writes its shared
+    // MLP at eight bits, so it is exactly the install that has to be
+    // refused rather than looped.
     let dir = temp_dir();
     let arch = build_install(&dir, 16);
     let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)

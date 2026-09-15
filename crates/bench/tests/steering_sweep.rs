@@ -292,13 +292,7 @@ fn the_alpha_sweep_shows_where_steering_becomes_damage() {
             if let Some((start, end)) = band.range {
                 banded.restrict_to_range(start, end);
             }
-            let policy = runtime::SteeringPolicy {
-                set: Some(banded),
-                mode,
-                alpha,
-                target: 0.0,
-                gate_threshold: 0.0,
-            };
+            let policy = runtime::SteeringPolicy::single(banded, mode, alpha, 0.0, 0.0);
             let (mut runner, tokenizer) =
                 match open_model_runner_steered(&dir, PROTOCOL_EXPERT_CACHE_SLOTS, policy) {
                     Ok(pair) => pair,

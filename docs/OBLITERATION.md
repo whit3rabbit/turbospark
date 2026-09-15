@@ -1683,6 +1683,70 @@ museGlimmer's identical note above: 400 tokens is well under what
 Harmony's reasoning-then-answer structure needs to reach `EndOfTurn` on an
 ordinary question for this family.
 
+## Several directions at once (2026-09-15)
+
+The runtime applies N direction vectors in one policy. Each carries its own
+mode, alpha and layer band; the clamp target and the gate threshold stay
+shared. `--steering` is repeatable and the per-vector knobs pair with it by
+position (`docs/CLI.md` has the command-line grammar and its pairing rule).
+
+### Semantics, and why they are what they are
+
+**Vectors apply in order at each steered layer, and composition is
+sequential by construction.** `encode_steering` issues one kernel dispatch
+per covering vector; vector k's dispatch reads the row vector k-1 left
+behind, and vector k's reported coefficient is measured against that edited
+stream. There is no fused multi-direction kernel to keep parity with -- N
+dispatches of the one existing kernel IS the definition -- and the
+`two_steer_dispatches_compose_and_measure_in_distinct_slots` test in
+`crates/gpu/tests/utility_and_pass.rs` pins it: two dispatches against one
+buffer are bit-identical to the same two applied sequentially to separate
+buffers, and each dispatch's coefficient lands in its own slot.
+
+**Per-vector alpha and mode are load-bearing, not ergonomics.** This page's
+own central measured fact is that usable alpha is a property of the
+DIRECTION (ocean 0.4 against register 0.8 on the same install, with the
+derived-ceiling attempt refuted and inverted across directions), so one
+shared scalar would tune neither vector. The target and gate stay shared
+because both are evaluated against the same stream the vectors edit in
+sequence.
+
+**The per-(layer, vector) coefficient layout is arithmetic-pinned, because
+nothing downstream can see it break.** The coefficient buffer is
+`num_layers * vector_count * MAX_STEER_ROWS` floats, each (layer, vector)
+pair owning a block; the readback is per-slot `None` where that vector does
+not cover the layer. A layer the second vector does not cover must report
+`[Some, None]`, never `[Some, Some(first vector's number)]` -- the
+readback indexes by SLOT, and the
+`two_vectors_keep_their_own_params_and_distinct_offsets` test reddens when
+a slot's identity is taken from position-in-entries instead (the first
+implementation read exactly that bug, live).
+
+### Gates
+
+- The multi-vector null control, one level up from the alpha-0 arm:
+  a zero-alpha second vector must be BIT-IDENTICAL to the single-vector run
+  (`a_zero_alpha_second_vector_is_bit_identical_to_the_single_vector_edit`,
+  real install, `GREEDY_TOKENS` deep).
+- The Add-mode composition arm: a second vector at half strength must MOVE
+  the distribution (`a_second_add_vector_composes_into_a_stronger_edit`),
+  gated on Add because a second copy of the same direction under `ablate`
+  is a near-no-op by construction.
+- Three mutation-checked unit tests pin the packing, the coeff partition
+  and the refusal shapes in `crates/runtime/src/steering_tests.rs`; the
+  parser pins repeatability, the positional pairing, the orphan refusal and
+  the surplus refusal in `crates/invocation`.
+
+### What is NOT here
+
+A second REAL direction for one install: the probe's composition arms run
+against one real vector plus a zero-alpha or half-alpha copy of it, which
+proves the plumbing and the arithmetic but says nothing about steering with
+two semantically distinct directions at once. That needs a second extracted
+direction (the contrastive-capture pipeline in `docs/CLI.md`), and the
+per-direction alpha sweep before anyone reads a two-vector turn as anything
+but two single-vector edits composed.
+
 ## Open, and stated as open
 
 - ~~**llama.cpp interop of the layer indexing is UNVERIFIED**~~ --

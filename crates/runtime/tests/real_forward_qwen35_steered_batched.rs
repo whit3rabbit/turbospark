@@ -29,8 +29,10 @@ use turbospark_runtime::{LogitProducer, RealForwardRunner, SteeringPolicy};
 
 const VOCAB: i64 = 128;
 const LAYERS: i64 = 4;
-/// INT4: `encode_gemm_any` is INT4-only, so the 1-bit and 2-bit widths this
-/// builder also serves cannot reach the batched pass at all.
+/// INT4. `encode_gemm_any` now also carries 1-bit (15) and 2-bit (16)
+/// batched arms (ROADMAP P3.3), so 4 is a choice among supported widths
+/// rather than the only one; the fixture stays at the width it has always
+/// exercised.
 const BITS: u32 = 4;
 const BATCH: usize = 3;
 
@@ -90,16 +92,13 @@ fn direction_set(hidden: usize, layers: usize) -> SteeringSet {
 /// asks -- which is how this file's first run went (64 against the fixture's
 /// 128).
 fn policy(arch: &model_io::ArchConfig, alpha: f32) -> SteeringPolicy {
-    SteeringPolicy {
-        set: Some(direction_set(
-            arch.hidden_size as usize,
-            arch.num_layers as usize,
-        )),
-        mode: foundation::SteeringMode::Ablate,
+    SteeringPolicy::single(
+        direction_set(arch.hidden_size as usize, arch.num_layers as usize),
+        foundation::SteeringMode::Ablate,
         alpha,
-        target: 0.0,
-        gate_threshold: 0.0,
-    }
+        0.0,
+        0.0,
+    )
 }
 
 fn arch_of(dir: &std::path::Path) -> model_io::ArchConfig {

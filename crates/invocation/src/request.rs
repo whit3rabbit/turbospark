@@ -496,18 +496,31 @@ pub struct InvocationRequest {
     pub speculation: Speculation,
     /// Which drafter that policy drives; see [`SpeculativeDrafter`].
     pub speculative_drafter: SpeculativeDrafter,
-    /// Path to a control vector to steer with, if any. An opaque string:
-    /// this crate is pure and reads no file, so resolving and parsing it is
-    /// the front end's job (`docs/OBLITERATION.md`).
-    pub steering: Option<String>,
-    /// Which edit to apply. `None` defers to whatever the vector file
-    /// declares, and to `Ablate` if it declares nothing.
-    pub steering_mode: Option<SteeringMode>,
-    /// Strength. `None` means 1.0.
-    pub steering_scale: Option<f32>,
-    /// Inclusive, 0-based layer range to restrict the vector to.
-    pub steering_layers: Option<(u32, u32)>,
-    /// What `SteeringMode::Clamp` pins the coefficient to.
+    /// Paths to control vectors to steer with, in application order. Opaque
+    /// strings: this crate is pure and reads no file, so resolving and
+    /// parsing them is the front end's job (`docs/OBLITERATION.md`).
+    ///
+    /// REPEATABLE, and the per-vector knobs (`steering_mode`, `steering_scale`,
+    /// `steering_layers`) pair with these by position: the i-th occurrence of
+    /// a knob configures the i-th path. A knob list SHORTER than this one
+    /// extends by its last value (one `--steering-scale 0.4` steers every
+    /// vector at 0.4, which is also exactly the pre-multi-vector spelling), and
+    /// a knob occurrence with no path at all is refused by the parser -- a
+    /// parameter that steers nothing is a run that measures the unsteered
+    /// engine while believing otherwise.
+    pub steering: Vec<String>,
+    /// Which edit each vector applies. Positional against `steering`; see the
+    /// pairing rule there. An absent entry defers to whatever that vector's
+    /// file declares, and to `Ablate` if it declares nothing.
+    pub steering_mode: Vec<SteeringMode>,
+    /// Per-vector strength, positional against `steering`. An absent entry
+    /// means 1.0.
+    pub steering_scale: Vec<f32>,
+    /// Inclusive, 0-based layer range per vector, positional against
+    /// `steering`.
+    pub steering_layers: Vec<(u32, u32)>,
+    /// What `SteeringMode::Clamp` pins the coefficient to. Shared by every
+    /// vector: all vectors measure their coefficient on the same stream.
     pub steering_target: f32,
     /// Coefficient magnitude below which the edit does not fire.
     pub steering_gate: f32,
@@ -537,4 +550,18 @@ pub struct InvocationRequest {
     pub kv_bits: KvBits,
     /// Whether incidental output is suppressed.
     pub quiet: bool,
+}
+
+/// The i-th per-vector steering knob for the i-th `--steering` path.
+///
+/// THE ONE DEFINITION of the positional pairing rule, because `crates/cli`
+/// and `crates/server` resolve it independently and a disagreement between
+/// them would make the same command line steer two different models. The
+/// rule: index `i` when supplied, else the LAST supplied value, else `None`
+/// (and the caller applies its own default). The last-value extension is
+/// what keeps every pre-multi-vector invocation spelling working unchanged:
+/// one `--steering` with one `--steering-scale 0.4` in any order resolves
+/// that 0.4 onto that one vector, exactly as it always did.
+pub fn steering_knob<T: Copy>(knobs: &[T], index: usize) -> Option<T> {
+    knobs.get(index).copied().or_else(|| knobs.last().copied())
 }

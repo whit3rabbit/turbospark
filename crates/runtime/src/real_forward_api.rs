@@ -477,13 +477,13 @@ impl RealForwardRunner {
         self.steering.as_ref().map(|s| s.summary())
     }
 
-    /// The pre-edit coefficient each steered layer reported on the last
-    /// forward pass, `None` per layer where nothing is steered.
+    /// The pre-edit coefficient each steered (layer, vector) reported on the
+    /// last forward pass, `None` where that vector does not cover the layer.
     ///
     /// This is the measurement the edit produces for free: how much of the
     /// direction the residual stream carried at each layer. See
     /// `docs/OBLITERATION.md`.
-    pub fn steering_coefficients(&self) -> Option<Vec<Option<f32>>> {
+    pub fn steering_coefficients(&self) -> Option<Vec<Vec<Option<f32>>>> {
         self.steering.as_ref().map(|s| s.coefficients())
     }
 

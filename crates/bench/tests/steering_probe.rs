@@ -384,13 +384,7 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
         mode.as_str(),
     );
 
-    let policy = |alpha: f32| runtime::SteeringPolicy {
-        set: Some(set.clone()),
-        mode,
-        alpha,
-        target: 0.0,
-        gate_threshold: 0.0,
-    };
+    let policy = |alpha: f32| runtime::SteeringPolicy::single(set.clone(), mode, alpha, 0.0, 0.0);
 
     // ONE prompt for every arm. The comparison is arithmetic, so what the
     // prompt says does not matter -- but it has to be the SAME text in all
@@ -526,12 +520,21 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
     // which is a different question.
     match runner.steering_coefficients() {
         Some(coeffs) => {
-            let present: Vec<(usize, f32)> = coeffs
+            // One entry per (layer, vector) that is actually steered. The
+            // readback is per-vector now that a policy can carry several, and
+            // this probe loads one, so the inner list holds a single `Some`
+            // per covered layer.
+            let present: Vec<(usize, usize, f32)> = coeffs
                 .iter()
                 .enumerate()
-                .filter_map(|(l, c)| c.map(|v| (l, v)))
+                .flat_map(|(l, per_vector)| {
+                    per_vector
+                        .iter()
+                        .enumerate()
+                        .filter_map(move |(k, c)| c.map(|v| (l, k, v)))
+                })
                 .collect();
-            let finite = present.iter().filter(|(_, c)| c.is_finite()).count();
+            let finite = present.iter().filter(|(_, _, c)| c.is_finite()).count();
             assert_eq!(
                 finite,
                 present.len(),
@@ -539,10 +542,11 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
                  measurement itself going bad rather than the model"
             );
             let mag = |f: fn(f64, f64) -> f64, init: f64| {
-                present.iter().map(|(_, c)| c.abs() as f64).fold(init, f)
+                present.iter().map(|(_, _, c)| c.abs() as f64).fold(init, f)
             };
             println!(
-                "arm 3, coefficient trace at the last prompt token: {} steered layers, \
+                "arm 3, coefficient trace at the last prompt token: {} steered \
+                 (layer, vector) pairs, \
                  |c| min {:.4} max {:.4}",
                 present.len(),
                 mag(f64::min, f64::INFINITY),
@@ -550,11 +554,11 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
             );
             // Printed sparsely: sixty-four rows is a wall, and what a reader
             // needs is the SHAPE -- which layers carry the direction.
-            for (l, c) in present.iter().step_by(present.len().div_ceil(8).max(1)) {
-                println!("    layer {l:>3}  c = {c:+.4}");
+            for (l, k, c) in present.iter().step_by(present.len().div_ceil(8).max(1)) {
+                println!("    layer {l:>3} vector {k}  c = {c:+.4}");
             }
             assert!(
-                present.iter().any(|(_, c)| c.abs() > 0.0),
+                present.iter().any(|(_, _, c)| c.abs() > 0.0),
                 "every steered layer reported a coefficient of exactly zero. Either the \
                  direction is all zeros -- which `inv_norm` turns into an inert edit with \
                  no error anywhere -- or the readback is not wired to the kernel that \
@@ -780,5 +784,193 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
         } else {
             ""
         }
+    );
+}
+
+// --- multi-direction arms (ROADMAP P3.2) -----------------------------------
+//
+// The runtime now applies N vectors per steered layer as N in-order
+// dispatches. Two real-model assertions cover the composition:
+//
+// 1. A zero-alpha SECOND vector must be BIT-IDENTICAL to the single-vector
+//    run, `GREEDY_TOKENS` deep. This is the multi-vector path's null
+//    control, and it is the same argument arm 1 makes one level up: 0.0 is
+//    the exact identity in every mode, so N dispatches where one is a no-op
+//    differing at all from N-1 means the loop is writing something the
+//    second vector did not ask for -- a shared coefficient slot, a reused
+//    direction offset, an off-by-one in the packing.
+// 2. In ADD mode, a second vector at half strength must MOVE the
+//    distribution relative to the single vector (any bit differs), because
+//    `x + a*d + (a/2)*d'` is not `x + a*d` for any a. Gated on Add: under
+//    Ablate a second copy of the SAME direction is a near-no-op by
+//    construction -- the first dispatch already removed the projection --
+//    so "differs" would be the wrong assertion there, and no other mode
+//    composes linearly enough to pin one.
+
+#[test]
+#[ignore = "needs a real install via TURBOSPARK_PROBE_INSTALL_DIR and a vector via TURBOSPARK_STEERING_VECTOR"]
+fn a_zero_alpha_second_vector_is_bit_identical_to_the_single_vector_edit() {
+    let dir = std::path::PathBuf::from(
+        std::env::var_os("TURBOSPARK_PROBE_INSTALL_DIR").expect("TURBOSPARK_PROBE_INSTALL_DIR"),
+    );
+    let vector = std::path::PathBuf::from(
+        std::env::var_os("TURBOSPARK_STEERING_VECTOR").expect("TURBOSPARK_STEERING_VECTOR"),
+    );
+    let prompt_text = std::env::var("TURBOSPARK_STEERING_PROMPT")
+        .unwrap_or_else(|_| DEFAULT_STEERING_PROMPT.to_string());
+    let prompt_text = prompt_text.as_str();
+    let alpha: f32 = std::env::var("TURBOSPARK_STEERING_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.3);
+    assert!(alpha.is_finite() && alpha != 0.0);
+
+    let set = repack::control_vector::load_control_vector(&vector)
+        .unwrap_or_else(|e| panic!("{}: {e:?}", vector.display()));
+    let mode = set.declared_mode.unwrap_or_default();
+
+    let single = runtime::SteeringPolicy::single(set.clone(), mode, alpha, 0.0, 0.0);
+    let multi = runtime::SteeringPolicy {
+        vectors: vec![
+            runtime::SteeringVector {
+                set: set.clone(),
+                mode,
+                alpha,
+            },
+            runtime::SteeringVector {
+                set,
+                mode,
+                alpha: 0.0,
+            },
+        ],
+        target: 0.0,
+        gate_threshold: 0.0,
+    };
+
+    let (single_logits, multi_logits, line) = {
+        let (mut runner, tokenizer) =
+            open_model_runner_steered(&dir, PROTOCOL_EXPERT_CACHE_SLOTS, single)
+                .unwrap_or_else(|e| panic!("install opens with one vector: {e}"));
+        let prompt = ids_for(&tokenizer, prompt_text);
+        let logits = walk(&mut runner, &prompt);
+        let (mut runner, _tokenizer) =
+            open_model_runner_steered(&dir, PROTOCOL_EXPERT_CACHE_SLOTS, multi)
+                .unwrap_or_else(|e| panic!("install opens with two vectors: {e}"));
+        let prompt = ids_for(&_tokenizer, prompt_text);
+        let multi = walk(&mut runner, &prompt);
+        (logits, multi, runner.steering_line())
+    };
+
+    require_finite("zero-alpha second vector", &multi_logits);
+    let differing = bits(&single_logits)
+        .iter()
+        .zip(bits(&multi_logits).iter())
+        .filter(|(a, b)| a != b)
+        .count();
+    println!(
+        "multi-vector null control -- {line:?}; {differing}/{} logits differ from the \
+         single-vector run",
+        single_logits.len()
+    );
+    assert_eq!(
+        differing, 0,
+        "a zero-alpha second vector must be BIT-IDENTICAL to the single-vector run and \
+         {differing} logits differ. The second dispatch is the identity in every mode, so \
+         the multi-vector loop is writing something its parameters do not ask for: a \
+         shared coefficient slot, a reused direction offset, or a packing off-by-one."
+    );
+}
+
+#[test]
+#[ignore = "needs a real install via TURBOSPARK_PROBE_INSTALL_DIR and a vector via TURBOSPARK_STEERING_VECTOR; the composed arm runs in ADD mode only"]
+fn a_second_add_vector_composes_into_a_stronger_edit() {
+    let dir = std::path::PathBuf::from(
+        std::env::var_os("TURBOSPARK_PROBE_INSTALL_DIR").expect("TURBOSPARK_PROBE_INSTALL_DIR"),
+    );
+    let vector = std::path::PathBuf::from(
+        std::env::var_os("TURBOSPARK_STEERING_VECTOR").expect("TURBOSPARK_STEERING_VECTOR"),
+    );
+    let prompt_text = std::env::var("TURBOSPARK_STEERING_PROMPT")
+        .unwrap_or_else(|_| DEFAULT_STEERING_PROMPT.to_string());
+    let prompt_text = prompt_text.as_str();
+    let alpha: f32 = std::env::var("TURBOSPARK_STEERING_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.3);
+    assert!(alpha.is_finite() && alpha > 0.0);
+
+    let set = repack::control_vector::load_control_vector(&vector)
+        .unwrap_or_else(|e| panic!("{}: {e:?}", vector.display()));
+    // The same resolution the main probe's arms use: the env override wins,
+    // else the file's declaration. Reading only the declared mode here would
+    // leave the arm permanently skipped on a file that declares `ablate`.
+    let mode = match std::env::var("TURBOSPARK_STEERING_MODE") {
+        Ok(raw) => foundation::SteeringMode::parse(raw.trim()).unwrap_or_else(|| {
+            panic!(
+                "TURBOSPARK_STEERING_MODE={raw:?} is not a steering mode. \
+                 Accepted: ablate, add, clamp, renorm."
+            )
+        }),
+        Err(_) => set.declared_mode.unwrap_or_default(),
+    };
+    if mode != foundation::SteeringMode::Add {
+        println!(
+            "skipped: the composed arm pins ADD mode composition and the resolved mode is \
+             {}; run it with TURBOSPARK_STEERING_MODE=add",
+            mode.as_str()
+        );
+        return;
+    }
+
+    let single = runtime::SteeringPolicy::single(set.clone(), mode, alpha, 0.0, 0.0);
+    let multi = runtime::SteeringPolicy {
+        vectors: vec![
+            runtime::SteeringVector {
+                set: set.clone(),
+                mode,
+                alpha,
+            },
+            runtime::SteeringVector {
+                set,
+                mode,
+                alpha: alpha / 2.0,
+            },
+        ],
+        target: 0.0,
+        gate_threshold: 0.0,
+    };
+
+    let (single_logits, multi_logits) = {
+        let (mut runner, tokenizer) =
+            open_model_runner_steered(&dir, PROTOCOL_EXPERT_CACHE_SLOTS, single)
+                .unwrap_or_else(|e| panic!("install opens with one vector: {e}"));
+        let prompt = ids_for(&tokenizer, prompt_text);
+        let logits = walk(&mut runner, &prompt);
+        let (mut runner, tokenizer) =
+            open_model_runner_steered(&dir, PROTOCOL_EXPERT_CACHE_SLOTS, multi)
+                .unwrap_or_else(|e| panic!("install opens with two vectors: {e}"));
+        let prompt = ids_for(&tokenizer, prompt_text);
+        let multi = walk(&mut runner, &prompt);
+        (logits, multi)
+    };
+
+    require_finite("composed add", &multi_logits);
+    let differing = bits(&single_logits)
+        .iter()
+        .zip(bits(&multi_logits).iter())
+        .filter(|(a, b)| a != b)
+        .count();
+    println!(
+        "composed add: {differing}/{} logits differ between add@{alpha} and \
+         add@{alpha} then add@{:.1}",
+        single_logits.len(),
+        alpha / 2.0
+    );
+    assert!(
+        differing > 0,
+        "a second ADD vector at half strength changed NO logit bit against the single \
+         vector. In add mode the edits are not equal: x + a*d + (a/2)*d != x + a*d. An \
+         identical result means the second dispatch never fired or its edit landed in a \
+         different buffer than the one the head reads."
     );
 }

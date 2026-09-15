@@ -295,6 +295,9 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     .map_err(|e| e.to_string())?;
 
     // Steering policy is loaded before open, following CLI and server pattern.
+    // The FFI wire shape carries ONE vector; the runtime's policy is a list,
+    // so a single-vector open constructs `single` rather than hand-rolling a
+    // one-element list it would then have to keep in step with.
     let steering_policy = if let Some(path_str) = options.steering.as_deref() {
         let path = Path::new(path_str);
         let mut set = repack::control_vector::load_control_vector(path)
@@ -305,13 +308,13 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         let mode = requested_steering_mode
             .or(set.declared_mode)
             .unwrap_or_default();
-        runtime::SteeringPolicy {
-            set: Some(set),
+        runtime::SteeringPolicy::single(
+            set,
             mode,
-            alpha: requested_steering_scale,
-            target: requested_steering_target,
-            gate_threshold: requested_steering_gate,
-        }
+            requested_steering_scale,
+            requested_steering_target,
+            requested_steering_gate,
+        )
     } else {
         runtime::SteeringPolicy::off()
     };
@@ -487,14 +490,13 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             active: runner.steering_line().is_some(),
             supported: runner.steering_supported(),
             reason: runner.steering_unsupported_reason(),
-            mode: runner
-                .steering_line()
-                .is_some()
-                .then(|| steering_policy.mode.as_str().to_string()),
-            scale: runner
-                .steering_line()
-                .is_some()
-                .then_some(steering_policy.alpha as f64),
+            // The wire shape carries one mode and one scale, so a
+            // multi-vector run reports vector 0's here and the full list on
+            // `summary` (SteeringPolicy::primary's documented contract).
+            mode: steering_policy
+                .primary()
+                .map(|v| v.mode.as_str().to_string()),
+            scale: steering_policy.primary().map(|v| v.alpha as f64),
             summary: runner.steering_line(),
         },
         tool_calling: crate::wire::ToolCallingInfo {

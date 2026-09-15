@@ -97,18 +97,18 @@ fn open_steered(dir: &std::path::Path, block: usize, alpha: f32) -> RealForwardR
             mtp: MtpDraftPolicy::Off,
             dflash: DflashDraftPolicy::Fixed(block),
         },
-        turbospark_runtime::SteeringPolicy {
-            set: Some(model_io::SteeringSet {
+        turbospark_runtime::SteeringPolicy::single(
+            model_io::SteeringSet {
                 layers,
                 hidden,
                 declared_mode: None,
                 declared_arch: None,
-            }),
-            mode: foundation::SteeringMode::Ablate,
+            },
+            foundation::SteeringMode::Ablate,
             alpha,
-            target: 0.0,
-            gate_threshold: 0.0,
-        },
+            0.0,
+            0.0,
+        ),
     )
     .expect("the dflash install opens steered with the drafter on")
 }

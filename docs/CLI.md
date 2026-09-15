@@ -175,14 +175,18 @@ than one, is a parse error.
 
 Six flags, all requiring `--steering` itself; see the dedicated
 [Steering (obliteration)](#steering-obliteration) section below for the full
-picture.
+picture. `--steering` and the three per-vector knobs among these are
+REPEATABLE, paired positionally: the i-th `--steering-mode`/`--steering-scale`/
+`--steering-layers` configures the i-th `--steering` vector. A knob list
+shorter than the vector list extends by its last value, so one scale steers
+every vector; more knob values than vectors is a parse error.
 
 | Flag | Takes | Default |
 | --- | --- | --- |
-| `--steering` | path to a `.gguf` control vector | none (off) |
-| `--steering-mode` | `ablate\|add\|clamp\|renorm` | `ablate`, or whatever the file declares |
-| `--steering-scale` | float | `1.0` |
-| `--steering-layers` | `START:END` | every layer the vector covers |
+| `--steering` | path to a `.gguf` control vector; repeatable | none (off) |
+| `--steering-mode` | `ablate\|add\|clamp\|renorm`; repeatable | `ablate`, or whatever the file declares |
+| `--steering-scale` | float; repeatable | `1.0` |
+| `--steering-layers` | `START:END`; repeatable | every layer the vector covers |
 | `--steering-target` | float | `0.0` |
 | `--steering-gate` | float | `0.0` |
 
@@ -461,12 +465,42 @@ direction:
 
 | Flag | Takes | Default | Notes |
 | --- | --- | --- | --- |
-| `--steering` | path to a `.gguf` control vector (llama.cpp layout) | none (off) | every flag below is a parse error without this one |
-| `--steering-mode` | `ablate\|add\|clamp\|renorm` | `ablate`, or whatever the file declares | |
-| `--steering-scale` | float | `1.0` | `0.0` is the exact identity in every mode; large values on `add`/`clamp` can overflow the FP16 residual stream |
-| `--steering-layers` | `START:END`, inclusive, 0-based | every layer the vector covers | |
-| `--steering-target` | float | `0.0` | the coefficient `clamp` pins to; ignored by `ablate`/`add` |
+| `--steering` | path to a `.gguf` control vector (llama.cpp layout); repeatable | none (off) | every flag below is a parse error without this one |
+| `--steering-mode` | `ablate\|add\|clamp\|renorm`; repeatable | `ablate`, or whatever the file declares | per vector |
+| `--steering-scale` | float; repeatable | `1.0` | `0.0` is the exact identity in every mode; large values on `add`/`clamp` can overflow the FP16 residual stream; per vector |
+| `--steering-layers` | `START:END`, inclusive, 0-based; repeatable | every layer the vector covers | per vector |
+| `--steering-target` | float | `0.0` | the coefficient `clamp` pins to; shared by every vector |
 | `--steering-gate` | float | `0.0` (always fires) | only steer where the direction's own coefficient reaches this magnitude |
+
+### Several vectors at once
+
+`--steering` is repeatable, and each vector carries its own mode, scale and
+layer band, paired by position:
+
+```sh
+turbospark-check --model ~/models/gptoss-20b.gturbo \
+  --messages-file /tmp/p.json \
+  --steering /tmp/steer/ocean.gguf  --steering-scale 0.4 --steering-layers 20:30 \
+  --steering /tmp/steer/register.gguf --steering-scale 0.8 --steering-layers 40:50
+```
+
+Rules, in one place (`invocation::steering_knob` is the definition, and the
+server resolves the same command line through the same rule):
+
+- Vectors apply IN the order given. At each steered layer, vector 0's
+  dispatch edits the row, then vector 1's dispatch reads that edited row --
+  composition is sequential by construction, and each vector's reported
+  coefficient is measured against the stream the previous vector left.
+- Per-vector usable strengths differ (that is the page's central measured
+  fact), which is why alpha and mode are per-vector while `--steering-target`
+  and `--steering-gate` stay shared.
+- A knob list shorter than the vector list extends by its LAST value
+  (`--steering a --steering b --steering-scale 0.4` steers both at 0.4 --
+  also exactly what every pre-multi-vector invocation resolves to).
+- More knob values than vectors is refused: the extras can never reach a
+  vector, so they are a typo, not a configuration.
+- A zero-alpha vector is the exact identity, which makes it the plumbing
+  probe: N dispatches where one is a no-op must be bit-identical to N-1.
 
 ### Choosing how to steer
 

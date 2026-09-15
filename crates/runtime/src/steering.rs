@@ -6,24 +6,44 @@
 //!
 //! # The split, and why it is where it is
 //!
-//! [`SteeringPolicy`] is what a RUN asks for: a direction set plus the four
-//! scalars that shape the edit. The set is the expensive half and is loaded
-//! once, before open, by the front end -- the same shape `resolve_drafter`
-//! uses to read a resident index before handing `open` a decision, and for the
-//! same reason: `crates/runtime` cannot reach `crates/repack`, which owns the
-//! GGUF parser (AGENTS.md Gotcha 8).
+//! [`SteeringPolicy`] is what a RUN asks for: N direction vectors, each with
+//! its own mode and alpha, plus the two scalars shared by every vector. Each
+//! vector's set is the expensive half and is loaded once, before open, by the
+//! front end -- the same shape `resolve_drafter` uses to read a resident
+//! index before handing `open` a decision, and for the same reason:
+//! `crates/runtime` cannot reach `crates/repack`, which owns the GGUF parser
+//! (AGENTS.md Gotcha 8).
 //!
 //! [`SteeringState`] is what open BUILDS from that: one FP16 buffer holding
-//! every direction, one FP32 buffer for the coefficients, and a per-layer
-//! table of offsets. A layer the set does not cover has no entry and costs no
-//! dispatch -- not a dispatch that computes nothing, none at all. On a
-//! 64-layer model steered at three layers that is 3 extra dispatches per
-//! token rather than 64.
+//! every vector's directions, one FP32 buffer for the coefficients, and a
+//! per-layer table of per-vector dispatch parameters. A layer no vector
+//! covers has no entry and costs no dispatch -- not a dispatch that computes
+//! nothing, none at all. On a 64-layer model steered at three layers that is
+//! 3 extra dispatches per token rather than 64.
+//!
+//! # Multi-vector semantics
+//!
+//! Vectors are applied IN ORDER at each steered layer: vector 0's dispatch
+//! reads and edits the row, then vector 1's dispatch reads the EDITED row.
+//! Composition is therefore sequential by construction -- `encode_steering`
+//! literally issues one kernel dispatch per covering vector -- and the
+//! reported coefficient of vector k is measured against the stream vector k-1
+//! left behind, which is the honest measurement of the edit that actually
+//! fired. There is no fused multi-direction kernel to keep parity with; two
+//! dispatches of the one existing kernel IS the definition.
+//!
+//! Per-vector mode and alpha ride with the vector because the measured facts
+//! in `docs/OBLITERATION.md` make a shared scalar wrong: usable alpha is a
+//! property of the DIRECTION (ocean 0.4 against register 0.8 on the same
+//! install), so one knob for two vectors would tune neither. The clamp
+//! target and the gate threshold stay shared: the target pins a coefficient
+//! that all vectors measure on the same stream, and the gate is evaluated
+//! inside each dispatch against that dispatch's own coefficient.
 //!
 //! # Off allocates nothing
 //!
-//! [`SteeringPolicy::off`] returns before touching the set, so an engine with
-//! steering off is identical in bytes and in footprint to the one that
+//! [`SteeringPolicy::off`] returns before touching any vector, so an engine
+//! with steering off is identical in bytes and in footprint to the one that
 //! shipped before this module existed. That is what lets `qwen38`'s frozen
 //! quality-gate row and memory-oracle ceiling stand rather than needing new
 //! ones, and it is the same guarantee `MtpState::build` gives for `Off`.
@@ -33,18 +53,34 @@ use model_io::{ArchConfig, SteeringSet};
 
 use crate::real_forward_types::RealForwardError;
 
+/// One direction set plus the per-vector parameters that shape its edit.
+///
+/// The set comes from one control-vector file; `mode` and `alpha` are the
+/// run's choices for it. A caller's explicit mode wins over the file's
+/// declared one, and the file's wins over the default -- that precedence is
+/// applied by whoever loads the file, because only it has both in hand.
+#[derive(Debug, Clone)]
+pub struct SteeringVector {
+    /// The loaded direction set.
+    pub set: SteeringSet,
+    /// Which edit this vector applies.
+    pub mode: SteeringMode,
+    /// Strength. `0.0` is the exact identity in every mode, which is what
+    /// makes a zero-alpha vector the plumbing probe for the multi-vector
+    /// path: N dispatches where one is a no-op must be bit-identical to the
+    /// single dispatch.
+    pub alpha: f32,
+}
+
 /// What a run asks for. [`Self::off`] is the default and allocates nothing.
 #[derive(Debug, Clone, Default)]
 pub struct SteeringPolicy {
-    /// The loaded direction set. `None` is off.
-    pub set: Option<SteeringSet>,
-    /// Which edit to apply.
-    pub mode: SteeringMode,
-    /// Strength. `0.0` is the exact identity in every mode.
-    pub alpha: f32,
-    /// The coefficient [`SteeringMode::Clamp`] pins to; ignored otherwise.
+    /// The loaded vectors, in application order. Empty is off.
+    pub vectors: Vec<SteeringVector>,
+    /// The coefficient [`SteeringMode::Clamp`] pins to; ignored otherwise,
+    /// and shared by every vector.
     pub target: f32,
-    /// Coefficient magnitude below which the edit does not fire; non-positive
+    /// Coefficient magnitude below which an edit does not fire; non-positive
     /// fires always. Evaluated INSIDE the kernel -- a host-side gate would
     /// cost a command-buffer synchronization per layer per token.
     pub gate_threshold: f32,
@@ -54,28 +90,66 @@ impl SteeringPolicy {
     /// Steering off.
     pub fn off() -> Self {
         Self {
-            set: None,
-            mode: SteeringMode::Ablate,
-            alpha: 0.0,
+            vectors: Vec::new(),
             target: 0.0,
             gate_threshold: 0.0,
         }
     }
 
+    /// One vector, in the shape every pre-multi-vector caller constructed by
+    /// hand. Kept as a constructor so the single-vector sites read as
+    /// single-vector intent rather than as a one-element list they have to
+    /// see through.
+    pub fn single(
+        set: SteeringSet,
+        mode: SteeringMode,
+        alpha: f32,
+        target: f32,
+        gate_threshold: f32,
+    ) -> Self {
+        Self {
+            vectors: vec![SteeringVector { set, mode, alpha }],
+            target,
+            gate_threshold,
+        }
+    }
+
     /// Whether this policy would actually edit anything.
     pub fn is_active(&self) -> bool {
-        self.set.is_some()
+        !self.vectors.is_empty()
+    }
+
+    /// The first vector, for readers that report single-vector facts.
+    ///
+    /// The FFI capability block is the reason this exists rather than every
+    /// caller indexing `[0]`: its wire shape carries one mode and one scale,
+    /// and until that shape grows an array the honest report for a
+    /// multi-vector run is vector 0's, with the full list on the summary
+    /// line.
+    pub fn primary(&self) -> Option<&SteeringVector> {
+        self.vectors.first()
+    }
+
+    /// How many vectors this policy applies.
+    pub(crate) fn vector_count(&self) -> usize {
+        self.vectors.len().max(1)
     }
 }
 
-/// One layer's resolved dispatch parameters.
+/// One vector's dispatch parameters at one layer.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct LayerSteer {
-    /// Byte offset of this layer's direction in [`SteeringState::directions`].
+    /// Byte offset of this vector's direction for this layer in
+    /// [`SteeringState::directions`].
     pub(crate) offset: u64,
     /// `1 / ||d||` computed from the FP16 values the kernel will actually
     /// read. See [`SteeringState::build`] on why not the file's own.
     pub(crate) inv_norm: f32,
+    /// This vector's edit, carried per layer because the kernel reads it
+    /// from the per-dispatch params rather than from any shared state.
+    pub(crate) mode: SteeringMode,
+    /// This vector's strength, for the same reason.
+    pub(crate) alpha: f32,
 }
 
 /// The widest dispatch the coefficient buffer has room for.
@@ -86,11 +160,12 @@ pub(crate) struct LayerSteer {
 /// dispatches M at once, and at the LAST layer those M writes would run off
 /// the end of the buffer entirely.
 ///
-/// So the buffer is `num_layers * MAX_STEER_ROWS` and each layer owns a
-/// block. The batched driver REFUSES a wider block by name rather than
-/// truncating it: a row left unsteered inside a steered block is a token
-/// drawn from a different model than its neighbours, which is fluent, wrong,
-/// and invisible in every downstream number.
+/// So the buffer is `num_layers * vector_count * MAX_STEER_ROWS` and each
+/// (layer, vector) pair owns a block. The batched driver REFUSES a wider
+/// block by name rather than truncating it: a row left unsteered inside a
+/// steered block is a token drawn from a different model than its
+/// neighbours, which is fluent, wrong, and invisible in every downstream
+/// number.
 ///
 /// **It is the batched INT4 GEMM's own cap rather than an independent number,
 /// and that is what makes the refusal a BACKSTOP that cannot currently
@@ -105,16 +180,22 @@ pub const MAX_STEER_ROWS: usize = gpu::MAX_BATCH_ROWS;
 
 /// The GPU-side steering state, built at open.
 pub(crate) struct SteeringState {
-    /// Every covered layer's direction, FP16, packed back to back.
+    /// Every vector's covered directions, FP16, packed back to back in
+    /// (vector, coverage) order.
     pub(crate) directions: gpu::MetalBuffer,
-    /// `MAX_STEER_ROWS` FP32 pre-edit coefficients per layer, rewritten
-    /// every pass. A per-token pass writes row 0 of each block and leaves
-    /// the rest of it alone.
+    /// `vector_count * MAX_STEER_ROWS` FP32 pre-edit coefficients per layer,
+    /// rewritten every pass. A per-token pass writes row 0 of each covered
+    /// vector's block and leaves the rest of it alone.
     pub(crate) coeff: gpu::MetalBuffer,
-    /// Per model layer, `None` where this set steers nothing.
-    pub(crate) layers: Vec<Option<LayerSteer>>,
-    pub(crate) mode: SteeringMode,
-    pub(crate) alpha: f32,
+    /// Per model layer, one slot per vector in application order, `None`
+    /// where that vector does not cover the layer. The inner length is
+    /// always the policy's vector count, so a slot's INDEX is the vector it
+    /// belongs to -- a readback or dispatch that iterates with `enumerate`
+    /// cannot attribute one vector's coefficient to another.
+    pub(crate) layers: Vec<Vec<Option<LayerSteer>>>,
+    /// The vector stride between two layers' coefficient blocks. Held rather
+    /// than recomputed so the allocation and the offsets cannot disagree.
+    pub(crate) coeff_stride: usize,
     pub(crate) target: f32,
     pub(crate) gate_threshold: f32,
 }
@@ -132,132 +213,202 @@ impl SteeringState {
         policy: &SteeringPolicy,
     ) -> Result<Option<Self>, RealForwardError> {
         // Returns BEFORE touching anything, so `off` allocates nothing.
-        let Some(set) = policy.set.as_ref() else {
+        if policy.vectors.is_empty() {
             return Ok(None);
-        };
-        if !policy.alpha.is_finite()
-            || !policy.target.is_finite()
-            || !policy.gate_threshold.is_finite()
-        {
+        }
+        if !policy.target.is_finite() || !policy.gate_threshold.is_finite() {
             return Err(RealForwardError::Unsupported(
-                "steering parameters must be finite; a non-finite alpha, target or gate \
+                "steering parameters must be finite; a non-finite target or gate \
                  puts a NaN into the residual stream, which reads as a PERFECT score on \
                  every rank instrument downstream"
                     .to_string(),
             ));
         }
-        set.validate(arch)
-            .map_err(|e| RealForwardError::Unsupported(format!("steering set: {e:?}")))?;
-
-        let hidden = arch.hidden_size as usize;
-        let num_layers = arch.num_layers as usize;
-        let covered = set.covered_layers();
-
-        // One buffer, directions packed in COVERAGE order rather than at
-        // `layer * hidden`, so a set steering three layers of sixty-four
-        // allocates three rows and not sixty-four.
-        let mut packed: Vec<u8> = Vec::with_capacity(covered * hidden * 2);
-        let mut layers: Vec<Option<LayerSteer>> = vec![None; num_layers];
-        for (layer, slot) in layers.iter_mut().enumerate() {
-            let Some(dir) = set.layer(layer) else {
-                continue;
-            };
-            let offset = packed.len() as u64;
-
-            // THE INV_NORM IS RECOMPUTED FROM THE ROUNDED VALUES, not taken
-            // from the file's f32 ones. The kernel reads FP16 and reports
-            // `c_hat = (d . x) * inv_norm`, so an `inv_norm` derived from a
-            // different `d` than the one multiplied would make the reported
-            // coefficient disagree with the edit that was applied -- by a
-            // small amount, in a number whose whole job is to be the
-            // measurement. Consistency is worth more here than the third
-            // decimal place.
-            let mut sum_sq = 0.0f32;
-            for v in &dir.values {
-                let h = half::f16::from_f32(*v);
-                packed.extend_from_slice(&h.to_bits().to_le_bytes());
-                let r = h.to_f32();
-                sum_sq += r * r;
-            }
-            let inv_norm = if sum_sq > 0.0 && sum_sq.is_finite() {
-                1.0 / sum_sq.sqrt()
-            } else {
+        for (k, vector) in policy.vectors.iter().enumerate() {
+            if !vector.alpha.is_finite() {
                 return Err(RealForwardError::Unsupported(format!(
-                    "steering direction for layer {layer} has zero norm; steering direction must be non-zero"
+                    "steering vector {k}'s alpha must be finite; a non-finite alpha \
+                     puts a NaN into the residual stream, which reads as a PERFECT \
+                     score on every rank instrument downstream"
                 )));
-            };
-            *slot = Some(LayerSteer { offset, inv_norm });
+            }
+            vector.set.validate(arch).map_err(|e| {
+                RealForwardError::Unsupported(format!("steering vector {k}: {e:?}"))
+            })?;
+        }
+
+        let num_layers = arch.num_layers as usize;
+        let stride = policy.vector_count();
+
+        // One buffer, directions packed in (vector, coverage) order rather
+        // than at `layer * hidden`, so a vector steering three layers of
+        // sixty-four allocates three rows and not sixty-four.
+        let mut packed: Vec<u8> = Vec::new();
+        let mut layers: Vec<Vec<Option<LayerSteer>>> = vec![vec![None; stride]; num_layers];
+        for (k, vector) in policy.vectors.iter().enumerate() {
+            for (layer, slot) in layers.iter_mut().enumerate() {
+                let Some(dir) = vector.set.layer(layer) else {
+                    continue;
+                };
+                let offset = packed.len() as u64;
+
+                // THE INV_NORM IS RECOMPUTED FROM THE ROUNDED VALUES, not taken
+                // from the file's f32 ones. The kernel reads FP16 and reports
+                // `c_hat = (d . x) * inv_norm`, so an `inv_norm` derived from a
+                // different `d` than the one multiplied would make the reported
+                // coefficient disagree with the edit that was applied -- by a
+                // small amount, in a number whose whole job is to be the
+                // measurement. Consistency is worth more here than the third
+                // decimal place.
+                let mut sum_sq = 0.0f32;
+                for v in &dir.values {
+                    let h = half::f16::from_f32(*v);
+                    packed.extend_from_slice(&h.to_bits().to_le_bytes());
+                    let r = h.to_f32();
+                    sum_sq += r * r;
+                }
+                let inv_norm = if sum_sq > 0.0 && sum_sq.is_finite() {
+                    1.0 / sum_sq.sqrt()
+                } else {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "steering vector {k}'s direction for layer {layer} has zero norm; \
+                         steering direction must be non-zero"
+                    )));
+                };
+                slot[k] = Some(LayerSteer {
+                    offset,
+                    inv_norm,
+                    mode: vector.mode,
+                    alpha: vector.alpha,
+                });
+            }
         }
 
         Ok(Some(Self {
             directions: context.new_buffer_with_data(&packed),
-            coeff: context.new_output_buffer(Self::coeff_bytes(num_layers)),
+            coeff: context.new_output_buffer(Self::coeff_bytes(num_layers, stride)),
             layers,
-            mode: policy.mode,
-            alpha: policy.alpha,
+            coeff_stride: stride,
             target: policy.target,
             gate_threshold: policy.gate_threshold,
         }))
     }
 
-    /// This layer's dispatch parameters, or `None` if it is not steered.
-    pub(crate) fn layer(&self, layer: usize) -> Option<LayerSteer> {
-        self.layers.get(layer).copied().flatten()
+    /// This layer's per-vector dispatch slots, indexed by vector. `None`
+    /// where that vector does not cover the layer.
+    pub(crate) fn layer(&self, layer: usize) -> &[Option<LayerSteer>] {
+        self.layers.get(layer).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
-    /// How many layers this state edits.
+    /// How many layers any vector edits.
     pub(crate) fn covered_layers(&self) -> usize {
-        self.layers.iter().filter(|l| l.is_some()).count()
+        self.layers
+            .iter()
+            .filter(|v| v.iter().any(|s| s.is_some()))
+            .count()
     }
 
-    /// Bytes the coefficient buffer needs for `num_layers` layers.
+    /// Bytes the coefficient buffer needs for `num_layers` layers and
+    /// `vectors` vectors.
     ///
     /// Paired with [`Self::coeff_offset`] so the allocation and the write
     /// offsets are two views of one layout rather than two expressions that
     /// have to be kept in step by hand.
-    pub(crate) fn coeff_bytes(num_layers: usize) -> u64 {
-        (num_layers.max(1) * MAX_STEER_ROWS * 4) as u64
+    pub(crate) fn coeff_bytes(num_layers: usize, vectors: usize) -> u64 {
+        (num_layers.max(1) * vectors.max(1) * MAX_STEER_ROWS * 4) as u64
     }
 
-    /// Byte offset of this layer's coefficient block.
+    /// Byte offset of vector `k`'s coefficient block at `layer`.
     ///
     /// Both dispatch sites go through this rather than computing it, so the
     /// per-token and batched passes cannot disagree about the stride -- which
     /// they would silently, since a wrong stride still writes finite floats
     /// into a valid buffer and only the reported trace would be wrong.
-    pub(crate) fn coeff_offset(layer: usize) -> u64 {
-        (layer * MAX_STEER_ROWS * 4) as u64
+    pub(crate) fn coeff_offset(layer: usize, k: usize, vectors: usize) -> u64 {
+        ((layer * vectors.max(1)) + k) as u64 * (MAX_STEER_ROWS as u64) * 4
     }
 
-    /// The pre-edit coefficient each steered layer reported on the last pass.
+    /// The pre-edit coefficient each steered (layer, vector) reported on the
+    /// last pass.
     ///
-    /// Row 0 of each layer's block: the single row of a per-token pass, and
-    /// the FIRST row of a batched one. `None` for a layer that is not
-    /// steered, so a caller cannot mistake an unwritten slot for a measured
-    /// zero.
-    pub(crate) fn coefficients(&self) -> Vec<Option<f32>> {
-        let raw = gpu::read_f32_buffer(&self.coeff, self.layers.len() * MAX_STEER_ROWS);
+    /// Outer index is the layer, inner index the vector, `None` where that
+    /// vector does not cover the layer. Row 0 of each block: the single row
+    /// of a per-token pass, and the FIRST row of a batched one.
+    pub(crate) fn coefficients(&self) -> Vec<Vec<Option<f32>>> {
+        let raw = gpu::read_f32_buffer(
+            &self.coeff,
+            self.layers.len() * self.coeff_stride * MAX_STEER_ROWS,
+        );
         self.layers
             .iter()
             .enumerate()
-            .map(|(l, slot)| slot.map(|_| raw[l * MAX_STEER_ROWS]))
+            .map(|(l, slots)| {
+                slots
+                    .iter()
+                    .enumerate()
+                    .map(|(k, entry)| {
+                        entry.map(|_| raw[(l * self.coeff_stride + k) * MAX_STEER_ROWS])
+                    })
+                    .collect()
+            })
             .collect()
     }
 
     /// A one-line description for the startup line.
+    ///
+    /// One vector keeps the exact line every release before multi-vector
+    /// steering printed, because that line is rendered by the Swift
+    /// capability surface and parsed by eyes that have read it for months.
     pub(crate) fn summary(&self) -> String {
-        format!(
-            "steering: {} at alpha {} over {} of {} layers{}",
-            self.mode.as_str(),
-            self.alpha,
-            self.covered_layers(),
-            self.layers.len(),
-            if self.gate_threshold > 0.0 {
-                format!(", gated at |c| >= {}", self.gate_threshold)
-            } else {
-                String::new()
-            }
-        )
+        let gate = if self.gate_threshold > 0.0 {
+            format!(", gated at |c| >= {}", self.gate_threshold)
+        } else {
+            String::new()
+        };
+        if self.coeff_stride == 1 {
+            let e = self
+                .layers
+                .iter()
+                .find(|v| v.iter().any(|s| s.is_some()))
+                .and_then(|v| v.iter().flatten().next())
+                .expect("one steered layer was found above");
+            format!(
+                "steering: {} at alpha {} over {} of {} layers{}",
+                e.mode.as_str(),
+                e.alpha,
+                self.covered_layers(),
+                self.layers.len(),
+                gate
+            )
+        } else {
+            // ONE clause per VECTOR with its coverage, never per (layer,
+            // vector) pair: the first real run printed 46 clauses for what
+            // was two vectors over 23 layers, and a startup line nobody
+            // reads past the first screen is a startup line that hides a
+            // misconfigured steer.
+            let by_vector: Vec<String> = (0..self.coeff_stride)
+                .map(|k| {
+                    let mut entry = None;
+                    let mut layers = 0usize;
+                    for slots in &self.layers {
+                        if let Some(e) = slots[k].as_ref() {
+                            entry = Some(e);
+                            layers += 1;
+                        }
+                    }
+                    let e = entry.expect("a vector in an active policy covers a layer");
+                    format!("{}@{} ({} layers)", e.mode.as_str(), e.alpha, layers)
+                })
+                .collect();
+            format!(
+                "steering: {} vectors over {} of {} layers: {}{}",
+                self.coeff_stride,
+                self.covered_layers(),
+                self.layers.len(),
+                by_vector.join(" then "),
+                gate
+            )
+        }
     }
 }
 
@@ -354,7 +505,8 @@ pub fn steering_unsupported_reason(family: model_io::ModelFamily) -> Option<Stri
     ))
 }
 
-/// Apply this layer's directional-steering edit, if one is configured for it.
+/// Apply this layer's directional-steering edits, one dispatch per covering
+/// vector in application order.
 ///
 /// **ONE function serves every dispatch site, and that is the whole design.**
 /// It lived in `families/qwen/produce.rs` while the qwen flow was the only
@@ -373,10 +525,12 @@ pub fn steering_unsupported_reason(family: model_io::ModelFamily) -> Option<Stri
 /// there the same edit. Steering at a different boundary than the capture
 /// would be a different edit than the one measured.
 ///
-/// Zero dispatches when steering is off, and zero for a layer the direction
-/// set does not cover: the per-layer table holds `None` there rather than a
-/// zero vector, so a set steering three of sixty-four layers costs three
-/// dispatches per token and not sixty-four.
+/// Zero dispatches when steering is off, and zero for a layer no vector
+/// covers: the per-layer table holds an empty vec there rather than zero
+/// vectors, so a set steering three of sixty-four layers costs three
+/// dispatches per token and not sixty-four. Multiple covering vectors issue
+/// one dispatch each, IN ORDER, each reading the row the previous one left
+/// -- see the module docs on why that ordering IS the semantics.
 ///
 /// `rows` is 1 on a per-token path and the block size on a batched verify.
 /// `x_off` is the byte offset of the first steered row inside `scratch.x`;
@@ -411,29 +565,36 @@ pub(crate) fn encode_steering(
              unsteered model"
         )));
     }
-    let Some(l) = s.layer(layer) else {
-        return Ok(());
-    };
-    gpu::encode_steer_direction(
-        context,
-        pass,
-        (&scratch.x, x_off),
-        (&s.directions, l.offset),
-        // A block of FP32 slots per layer, so the coefficients of a whole
-        // pass survive to be read back together after the commit.
-        (&s.coeff, SteeringState::coeff_offset(layer)),
-        &gpu::SteerParams {
-            d_len: hidden as u32,
-            rows: rows as u32,
-            row_stride: hidden as u32,
-            mode: s.mode,
-            alpha: s.alpha,
-            inv_norm: l.inv_norm,
-            target: s.target,
-            gate_threshold: s.gate_threshold,
-        },
-    )
-    .map_err(RealForwardError::Gpu)
+    for (k, slot) in s.layer(layer).iter().enumerate() {
+        let Some(entry) = slot else {
+            continue;
+        };
+        gpu::encode_steer_direction(
+            context,
+            pass,
+            (&scratch.x, x_off),
+            (&s.directions, entry.offset),
+            // A block of FP32 slots per (layer, vector), so the coefficients
+            // of a whole pass survive to be read back together after the
+            // commit.
+            (
+                &s.coeff,
+                SteeringState::coeff_offset(layer, k, s.coeff_stride),
+            ),
+            &gpu::SteerParams {
+                d_len: hidden as u32,
+                rows: rows as u32,
+                row_stride: hidden as u32,
+                mode: entry.mode,
+                alpha: entry.alpha,
+                inv_norm: entry.inv_norm,
+                target: s.target,
+                gate_threshold: s.gate_threshold,
+            },
+        )
+        .map_err(RealForwardError::Gpu)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

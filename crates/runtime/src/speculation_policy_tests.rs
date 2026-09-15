@@ -249,8 +249,8 @@ const NO_HEAD: &str = "this install carries no multi-token-prediction head \
                        (mtp.fc.weight is not in the resident index); the mlx conversion \
                        drops mtp.*, so stream an install that adds the official \
                        checkpoint's last shard (docs/MTP.md)";
-const NOT_INT4: &str = "the batched verify is INT4-only and this install's \
-                        ...q_proj.weight is dtype 16";
+const NOT_BATCHED_DTYPE: &str = "the batched verify covers INT4-affine (4) and the \
+    1-bit (15) / 2-bit (16) affine pair, and this install's ...q_proj.weight is dtype 5";
 // The MoE one is a `fn` rather than a `const` so it can INTERPOLATE
 // `MOE_SPECULATION_BLOCKER_MARKER` instead of repeating its text. That is the
 // whole reason the marker exists: the previous shared substring was
@@ -355,7 +355,11 @@ fn a_named_block_fails_hard_when_it_cannot_be_served() {
 fn auto_warns_and_continues_where_a_named_block_fails() {
     let cases = [
         (Some(NO_HEAD.to_string()), true, SpeculativeDrafter::Mtp),
-        (Some(NOT_INT4.to_string()), true, SpeculativeDrafter::Mtp),
+        (
+            Some(NOT_BATCHED_DTYPE.to_string()),
+            true,
+            SpeculativeDrafter::Mtp,
+        ),
         (Some(moe()), false, SpeculativeDrafter::Mtp),
         // Sampled + BLOCK drafter: auto declines with the same reason a
         // named block fails on. The sampled + MTP case moved OUT of this
@@ -397,7 +401,7 @@ fn off_is_silent_even_where_speculation_would_have_worked() {
         (None, true),
         (Some(NO_HEAD.to_string()), true),
         (None, false),
-        (Some(NOT_INT4.to_string()), false),
+        (Some(NOT_BATCHED_DTYPE.to_string()), false),
     ] {
         let plan = resolve_speculation(
             Speculation::Off,

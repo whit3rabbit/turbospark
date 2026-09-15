@@ -201,32 +201,36 @@ pub const OPTIONS: &[OptionDecl] = &[
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "path to a control vector (.gguf, llama.cpp layout) to steer with \
-                     (default none; see docs/OBLITERATION.md)",
+        usage_hint: "path to a control vector (.gguf, llama.cpp layout) to steer with; \
+                     repeatable to apply several vectors in order (default none; see \
+                     docs/OBLITERATION.md)",
     },
     OptionDecl {
         flag: "--steering-mode",
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "steering edit: ablate, add, clamp, renorm (default ablate, or \
-                     whatever the vector file declares)",
+        usage_hint: "steering edit: ablate, add, clamp, renorm; repeatable, paired \
+                     positionally with --steering (default ablate, or whatever each \
+                     vector file declares)",
     },
     OptionDecl {
         flag: "--steering-scale",
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "steering strength (default 1.0; 0.0 is the exact identity, and \
-                     large values on add/clamp can overflow the FP16 residual stream)",
+        usage_hint: "steering strength; repeatable, paired positionally with --steering \
+                     (default 1.0; 0.0 is the exact identity, and large values on \
+                     add/clamp can overflow the FP16 residual stream)",
     },
     OptionDecl {
         flag: "--steering-layers",
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "layer range to steer, START:END inclusive, 0-based (default every \
-                     layer the vector covers)",
+        usage_hint: "layer range to steer, START:END inclusive, 0-based; repeatable, \
+                     paired positionally with --steering (default every layer each \
+                     vector covers)",
     },
     OptionDecl {
         flag: "--steering-target",

@@ -34,8 +34,10 @@ use turbospark_runtime::{LogitProducer, RealForwardRunner};
 
 const VOCAB: i64 = 128;
 const LAYERS: i64 = 4;
-/// INT4. `encode_gemm_any` is INT4-only, so the 1-bit and 2-bit widths this
-/// builder also serves cannot reach the batched pass at all.
+/// INT4. `encode_gemm_any` now also carries 1-bit (15) and 2-bit (16)
+/// batched arms (ROADMAP P3.3), so 4 is a choice among supported widths
+/// rather than the only one; the onset measurement this file exists for was
+/// taken at this width and stays at it.
 const BITS: u32 = 4;
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {

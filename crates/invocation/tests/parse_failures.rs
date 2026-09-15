@@ -355,3 +355,46 @@ fn an_invocation_with_no_steering_flags_at_all_still_parses() {
         ParseOutcome::Success(_)
     ));
 }
+
+/// With the positional pairing rule, MORE knob values than `--steering`
+/// paths can never reach a vector -- the surplus is a typo the command line
+/// carries, not a configuration, so it is refused on the same argument the
+/// orphan check uses. (A SHORTER list is legal and extends by its last
+/// value; that is `steering_knob`'s documented rule, not an error.)
+#[test]
+fn more_knob_values_than_steering_paths_are_refused() {
+    expect_invalid_value(
+        parse(&tok(&[
+            "--model",
+            "m.bin",
+            "--prompt",
+            "hi",
+            "--steering",
+            "/tmp/a.gguf",
+            "--steering",
+            "/tmp/b.gguf",
+            "--steering-scale",
+            "0.4",
+            "--steering-scale",
+            "0.8",
+            "--steering-scale",
+            "1.2",
+        ])),
+        "--steering-scale",
+    );
+    expect_invalid_value(
+        parse(&tok(&[
+            "--model",
+            "m.bin",
+            "--prompt",
+            "hi",
+            "--steering",
+            "/tmp/a.gguf",
+            "--steering-mode",
+            "add",
+            "--steering-mode",
+            "renorm",
+        ])),
+        "--steering-mode",
+    );
+}

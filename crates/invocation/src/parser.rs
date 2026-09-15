@@ -70,10 +70,16 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut expert_cache_slots = ExpertCacheSlots::default();
     let mut speculation = Speculation::default();
     let mut speculative_drafter = SpeculativeDrafter::default();
-    let mut steering: Option<String> = None;
-    let mut steering_mode: Option<SteeringMode> = None;
-    let mut steering_scale: Option<f32> = None;
-    let mut steering_layers: Option<(u32, u32)> = None;
+    // Repeatable and ORDER-PRESERVING: the i-th occurrence of each knob
+    // configures the i-th `--steering` path (`steering_knob` is the rule's
+    // one definition). `--steering` itself is the switch; the knobs are
+    // collected alongside it and the whole-invocation checks below refuse
+    // both orphans (a knob with no path) and surplus (more knob values than
+    // paths).
+    let mut steering: Vec<String> = Vec::new();
+    let mut steering_mode: Vec<SteeringMode> = Vec::new();
+    let mut steering_scale: Vec<f32> = Vec::new();
+    let mut steering_layers: Vec<(u32, u32)> = Vec::new();
     let mut steering_target: f32 = 0.0;
     let mut steering_gate: f32 = 0.0;
     // Tracked because both default to 0.0 and both are legal AT 0.0, so the
@@ -234,16 +240,16 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                     }
                 }
             }
-            "--steering" => steering = Some(value.to_string()),
+            "--steering" => steering.push(value.to_string()),
             "--steering-mode" => match SteeringMode::parse(value) {
-                Some(m) => steering_mode = Some(m),
+                Some(m) => steering_mode.push(m),
                 None => return invalid("--steering-mode", value),
             },
             // Rejected rather than clamped, and NON-FINITE is rejected too: a
             // NaN alpha puts a NaN into the residual stream, and NaN reads as
             // a PERFECT score on every rank instrument downstream.
             "--steering-scale" => match value.parse::<f32>() {
-                Ok(v) if v.is_finite() => steering_scale = Some(v),
+                Ok(v) if v.is_finite() => steering_scale.push(v),
                 _ => return invalid("--steering-scale", value),
             },
             "--steering-target" => match value.parse::<f32>() {
@@ -264,7 +270,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             // here rather than silently steering nothing: a run that asked to
             // steer and quietly did not would measure the unsteered engine.
             "--steering-layers" => match parse_layer_range(value) {
-                Some(r) => steering_layers = Some(r),
+                Some(r) => steering_layers.push(r),
                 None => return invalid("--steering-layers", value),
             },
             "--power-profile" => match PowerProfile::parse(value) {
@@ -367,16 +373,22 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     // six flags mean nothing on their own and the sixth is what turns the
     // feature on.
     //
+    // MORE KNOB VALUES THAN PATHS is refused on the same argument, extended:
+    // with the positional pairing rule, a third `--steering-scale` against
+    // two paths can never reach a vector, so it is a typo the command line
+    // carries rather than a configuration. (A SHORTER knob list is legal and
+    // extends by its last value -- `steering_knob`'s documented rule.)
+    //
     // Reported against the first offending flag in a FIXED order rather than
     // all of them, matching the mutually-exclusive checks above: a caller
     // fixes one flag per run either way, and one name keeps the payload a
     // sentence.
-    if steering.is_none() {
-        let orphan = if steering_mode.is_some() {
+    let orphan = if steering.is_empty() {
+        if !steering_mode.is_empty() {
             Some("--steering-mode")
-        } else if steering_scale.is_some() {
+        } else if !steering_scale.is_empty() {
             Some("--steering-scale")
-        } else if steering_layers.is_some() {
+        } else if !steering_layers.is_empty() {
             Some("--steering-layers")
         } else if steering_target_explicit {
             Some("--steering-target")
@@ -384,15 +396,28 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             Some("--steering-gate")
         } else {
             None
-        };
-        if let Some(option) = orphan {
-            return ParseOutcome::Failure(ParseFailure::InvalidValue {
-                option,
-                value: "a steering parameter needs --steering; without a direction set the \
-                        run decodes unsteered and the parameter does nothing"
-                    .to_string(),
-            });
         }
+    } else if steering_mode.len() > steering.len() {
+        Some("--steering-mode")
+    } else if steering_scale.len() > steering.len() {
+        Some("--steering-scale")
+    } else if steering_layers.len() > steering.len() {
+        Some("--steering-layers")
+    } else {
+        None
+    };
+    if let Some(option) = orphan {
+        let value = if steering.is_empty() {
+            "a steering parameter needs --steering; without a direction set the \
+             run decodes unsteered and the parameter does nothing"
+        } else {
+            "more per-vector steering values than --steering paths; the extras can \
+             never reach a vector"
+        };
+        return ParseOutcome::Failure(ParseFailure::InvalidValue {
+            option,
+            value: value.to_string(),
+        });
     }
 
     ParseOutcome::Success(InvocationRequest {

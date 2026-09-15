@@ -780,9 +780,9 @@ fn a_rewound_head_and_a_rolled_back_trunk_redraft_the_same_logits() {
 /// capacity-sized stride lands slot 1 on bytes nobody recorded, and it is
 /// the `after` digest, never the draft, that moves.
 ///
-/// INT4, like the batched-parity test below: the batched GEMM exists at 4
-/// bits alone, so the verify this round is built on cannot run on the 1-bit
-/// fixture the rest of this file uses.
+/// INT4, like the batched-parity test below: that test pins the digest of a
+/// batched verify round, so it stays on the width the parity suites pin
+/// hardest rather than following this file's 1-bit fixture.
 #[test]
 fn the_draft_after_a_retaining_rollback_matches_the_reverify_shape() {
     ask_for_drafts();
@@ -1006,35 +1006,19 @@ fn a_batched_pass_is_bit_identical_to_the_same_tokens_run_sequentially() {
     );
 }
 
-/// The refusal that keeps the measurement honest (AGENTS.md Gotcha 35 one
-/// layer down).
-///
-/// A sequential fallback here would be NUMERICALLY IDENTICAL, so it would
-/// pass the parity case above and the end-to-end losslessness gate too --
-/// and a "batched" verify would then measure the sequential engine and
-/// report its cost as the batched one. The 1-bit and 2-bit checkpoints of
-/// this same architecture have no batched kernel, so this is a live case and
-/// not a hypothetical.
-#[test]
-fn a_sub_4_bit_install_is_refused_by_the_batched_path_rather_than_looped() {
-    ask_for_drafts();
-    let dir = temp_dir("batched-refuse-1bit");
-    build_with_head(&dir);
-    let mut runner = open(&dir);
-    let vocab = VOCAB as usize;
-    let tokens = [5i32, 9];
-
-    runner.reset();
-    let mut batched = vec![f16::from_f32(0.0); tokens.len() * vocab];
-    let err = runner
-        .produce_batched(&tokens, 0, &mut batched)
-        .expect_err("a 1-bit install has no batched kernel");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("BATCHED") && msg.contains("INT4-affine"),
-        "the refusal must name the dtype and say it is not looped, got: {msg}"
-    );
-}
+// The refusal that kept the measurement honest here (AGENTS.md Gotcha 35
+// one layer down) is stated in full below.
+//
+// A sequential fallback for a dtype without a batched kernel would be
+// NUMERICALLY IDENTICAL, so it would pass every parity and losslessness
+// gate and a "batched" verify would measure the sequential engine. THE LIVE
+// GUARD FOR THAT REFUSAL IS `a_shared_expert_with_no_batched_kernel_is_
+// refused_by_name` in `real_forward_gemma4_chunked.rs` (an INT8 tensor
+// against the same dispatch function): ROADMAP P3.3 gave the 1-bit and
+// 2-bit affine pair batched kernels, and the dense fixture builder here
+// serves exactly 1/2/4 bits -- every width the dispatch now covers -- so
+// no refused width is buildable in THIS file to keep a twin of that guard
+// in.
 
 /// A block wider than the scratch is an error rather than an overrun, and a
 /// block wider than the kernel's register file is an error here rather than
@@ -1161,41 +1145,45 @@ fn the_env_mapping_treats_unset_as_auto_and_zero_as_off() {
 /// that into an answer available at open.
 ///
 /// This is also the honest statement of what is and is not blocked: the same
-/// install DECODES perfectly well below, which is the whole point. Only the
-/// batched verify is INT4-only.
+/// install DECODES perfectly well below, which is the whole point.
+///
+/// **ROADMAP P3.3 LIFTED THIS ARM FOR THE AFFINE PAIR.** The batched GEMM
+/// covers 1-bit (15) and 2-bit (16) alongside INT4, each held bit-exact
+/// against its GEMV by the gpu crate's parity tests, so a 1-bit install
+/// WITH a head is no longer blocked at all -- and this test, which used to
+/// pin the refusal, now pins the lift: no blocker, and a batched forward
+/// that runs.
 #[test]
-fn a_sub_4_bit_install_with_a_head_reports_why_it_cannot_speculate() {
+fn a_sub_4_bit_install_with_a_head_is_no_longer_blocked_from_speculating() {
     ask_for_drafts();
     let dir = temp_dir("sub4bit-head");
     build_with_head(&dir);
-    let runner = open(&dir);
+    let mut runner = open(&dir);
 
     assert!(
         runner.mtp_draft_depth() > 0,
         "the fixture is built with a head; without one this test proves nothing"
     );
-    let blocker = runner
-        .speculation_blocker()
-        .expect("a 1-bit install cannot run the batched verify");
     assert!(
-        blocker.contains("INT4-only"),
-        "the reason must name the real blocker rather than the head, got: {blocker}"
-    );
-    // And NOT the head, which this install has. The pair is what says the
-    // ordering in `speculation_blocker` is doing work rather than the fixture
-    // happening to have one obstacle.
-    assert!(
-        !blocker.contains("last shard"),
-        "an install that HAS a head must not be sent after one: {blocker}"
+        runner.speculation_blocker().is_none(),
+        "a 1-bit install with a head carries no speculation blocker: the batched          verify dispatches the 1-bit batched kernel"
     );
 
-    // And the model still decodes. The blocker is about speculation alone.
-    let mut runner = runner;
+    // The model still decodes.
     let mut logits = vec![half::f16::from_f32(0.0); VOCAB as usize];
     runner
         .produce(1, 0, &mut logits)
         .expect("a 1-bit install decodes normally");
     assert!(logits.iter().all(|v| v.to_f32().is_finite()));
+
+    // And the batched forward RUNS on the 1-bit weights now, which is the
+    // whole lift: every output finite, no refusal.
+    let tokens = [1i32, 2];
+    let mut batched = vec![half::f16::from_f32(0.0); tokens.len() * VOCAB as usize];
+    runner
+        .produce_batched(&tokens, 1, &mut batched)
+        .expect("the batched verify dispatches the 1-bit batched kernel");
+    assert!(batched.iter().all(|v| v.to_f32().is_finite()));
 }
 
 /// **THE NO-HEAD ARM, AND THE POINTER IT HAS TO CARRY.**
@@ -1266,13 +1254,15 @@ fn a_dense_int4_install_without_a_head_is_told_which_artifact_would_fix_it() {
 /// to the vision-blind refusal, and `produce_batched` refuses by name
 /// (ROADMAP P1 item 2).
 ///
-/// The BEFORE state is the discriminating half: this fixture is 1-bit, so
-/// the pre-attach blocker is the INT4 arm. If the attach did not reach the
-/// blocker -- if `arch.vision` were read from a snapshot taken at open
-/// rather than from the field `attach_vision_sidecar` mutates -- the reason
-/// would stay INT4 and this test reddens. No install that exists combines a
-/// tower and a drafter, so this synthetic pair is the only fixture that can
-/// hold the combination's contract at all.
+/// The BEFORE state is the discriminating half: this fixture is 1-bit WITH
+/// a head, and since ROADMAP P3.3 lifted the affine pair into the batched
+/// verify, that is an UNBLOCKED install -- the pre-attach blocker is `None`.
+/// If the attach did not reach the blocker -- if `arch.vision` were read
+/// from a snapshot taken at open rather than from the field
+/// `attach_vision_sidecar` mutates -- the post-attach reason would stay
+/// `None` and this test reddens. No install that exists combines a tower
+/// and a drafter, so this synthetic pair is the only fixture that can hold
+/// the combination's contract at all.
 #[test]
 fn attaching_a_vision_sidecar_flips_the_engine_blocker_and_refuses_the_batched_verify() {
     let dir = temp_dir("sidecar-blocker");
@@ -1287,13 +1277,11 @@ fn attaching_a_vision_sidecar_flips_the_engine_blocker_and_refuses_the_batched_v
     );
 
     let mut runner = open(&dir);
-    let before = runner
-        .speculation_blocker()
-        .expect("the 1-bit fixture's blocker is the INT4 one");
+    let before = runner.speculation_blocker();
     assert!(
-        before.contains("INT4-only"),
-        "fixture setup: the pre-attach reason must be INT4 or the flip below is \
-         not discriminating: {before}"
+        before.is_none(),
+        "fixture setup: a 1-bit install with a head must be unblocked pre-attach, or \
+         the flip below is not discriminating: {before:?}"
     );
 
     runner

@@ -406,10 +406,10 @@ fn an_out_of_range_or_misspelled_speculation_block_is_refused() {
 #[test]
 fn steering_defaults_to_off_and_reads_no_file() {
     let req = expect_success(parse(&tok(&["--model", "m.bin", "--prompt", "hi"])));
-    assert_eq!(req.steering, None);
-    assert_eq!(req.steering_mode, None);
-    assert_eq!(req.steering_scale, None);
-    assert_eq!(req.steering_layers, None);
+    assert!(req.steering.is_empty());
+    assert!(req.steering_mode.is_empty());
+    assert!(req.steering_scale.is_empty());
+    assert!(req.steering_layers.is_empty());
     assert_eq!(req.steering_target, 0.0);
     assert_eq!(req.steering_gate, 0.0);
 }
@@ -434,13 +434,13 @@ fn steering_flags_round_trip() {
         "--steering-gate",
         "0.1",
     ])));
-    assert_eq!(req.steering.as_deref(), Some("/tmp/d.gguf"));
+    assert_eq!(req.steering, vec!["/tmp/d.gguf".to_string()]);
     assert_eq!(
         req.steering_mode,
-        Some(turbospark_invocation::SteeringMode::Clamp)
+        vec![turbospark_invocation::SteeringMode::Clamp]
     );
-    assert_eq!(req.steering_scale, Some(0.75));
-    assert_eq!(req.steering_layers, Some((30, 40)));
+    assert_eq!(req.steering_scale, vec![0.75]);
+    assert_eq!(req.steering_layers, vec![(30, 40)]);
     assert_eq!(req.steering_target, 2.5);
     assert_eq!(req.steering_gate, 0.1);
 }
@@ -458,7 +458,7 @@ fn a_steering_path_is_not_validated_by_the_parser() {
         "--steering",
         "/does/not/exist.gguf",
     ])));
-    assert_eq!(req.steering.as_deref(), Some("/does/not/exist.gguf"));
+    assert_eq!(req.steering, vec!["/does/not/exist.gguf".to_string()]);
 }
 
 /// Each mode must parse, or a flag silently narrows to a subset of the edits
@@ -488,7 +488,7 @@ fn every_steering_mode_parses() {
             "--steering-mode",
             name,
         ])));
-        assert_eq!(req.steering_mode, Some(want), "mode {name}");
+        assert_eq!(req.steering_mode, vec![want], "mode {name}");
     }
 }
 
@@ -507,7 +507,7 @@ fn a_single_layer_range_is_accepted() {
         "--steering-layers",
         "31:31",
     ])));
-    assert_eq!(req.steering_layers, Some((31, 31)));
+    assert_eq!(req.steering_layers, vec![(31, 31)]);
 }
 
 /// `--image` accumulates IN ORDER (ROADMAP M-V7).
@@ -586,4 +586,88 @@ fn the_literal_value_auto_is_read_as_a_path_not_a_keyword() {
         "auto",
     ])));
     assert_eq!(req.vision_sidecar.as_deref(), Some("auto"));
+}
+
+// --- multi-direction steering: repeatability and positional pairing --------
+
+/// Two vectors with two of each per-vector knob resolve positionally: the
+/// i-th knob occurrence configures the i-th path, in the order the paths
+/// were supplied. This is the contract `runtime::SteeringState::build` and
+/// the server's own resolver both consume, so the parser is where the
+/// ordering is pinned.
+#[test]
+fn steering_flags_are_repeatable_and_pair_positionally() {
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m.bin",
+        "--prompt",
+        "hi",
+        "--steering",
+        "/tmp/first.gguf",
+        "--steering-scale",
+        "0.4",
+        "--steering",
+        "/tmp/second.gguf",
+        "--steering-scale",
+        "0.8",
+        "--steering-mode",
+        "add",
+        "--steering-mode",
+        "renorm",
+        "--steering-layers",
+        "10:12",
+        "--steering-layers",
+        "40:44",
+    ])));
+    assert_eq!(
+        req.steering,
+        vec![
+            "/tmp/first.gguf".to_string(),
+            "/tmp/second.gguf".to_string()
+        ]
+    );
+    assert_eq!(req.steering_scale, vec![0.4, 0.8]);
+    assert_eq!(
+        req.steering_mode,
+        vec![
+            turbospark_invocation::SteeringMode::Add,
+            turbospark_invocation::SteeringMode::Renorm,
+        ]
+    );
+    assert_eq!(req.steering_layers, vec![(10, 12), (40, 44)]);
+}
+
+/// One knob value against several paths extends by its last value: a single
+/// `--steering-scale` steers EVERY vector at that strength. This is also
+/// exactly what any pre-multi-vector invocation spelling resolves to, which
+/// is why the rule is "last value" and not "first" or "error".
+#[test]
+fn a_shorter_knob_list_extends_by_its_last_value() {
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m.bin",
+        "--prompt",
+        "hi",
+        "--steering-scale",
+        "0.3",
+        "--steering",
+        "/tmp/a.gguf",
+        "--steering",
+        "/tmp/b.gguf",
+    ])));
+    assert_eq!(req.steering.len(), 2);
+    assert_eq!(req.steering_scale, vec![0.3]);
+}
+
+/// `steering_knob` is the pairing rule's one definition; both front ends
+/// call it, so pinning it here pins both.
+#[test]
+fn steering_knob_pairs_by_index_and_extends_by_last() {
+    use turbospark_invocation::steering_knob;
+    let knobs = [10.0f32, 20.0, 30.0];
+    assert_eq!(steering_knob(&knobs, 0), Some(10.0));
+    assert_eq!(steering_knob(&knobs, 2), Some(30.0));
+    // Index past the end extends by the LAST value, never wraps.
+    assert_eq!(steering_knob(&knobs, 5), Some(30.0));
+    assert_eq!(steering_knob::<f32>(&[], 0), None);
 }
