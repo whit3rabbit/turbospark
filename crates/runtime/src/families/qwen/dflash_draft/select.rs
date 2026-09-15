@@ -3,7 +3,7 @@ use model_io::ResidentIndex;
 
 use crate::families::qwen::dflash::DFLASH_TOP_K;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
-use crate::real_forward_utils::{entry, norm_view};
+use crate::real_forward_utils::norm_view;
 
 const PREDECESSOR_CODEBOOK: &str = "dflash.candidate_selector.predecessor_codebook";
 const SUCCESSOR_CODEBOOK: &str = "dflash.candidate_selector.successor_codebook";
@@ -95,7 +95,6 @@ fn codebook_view<'a>(
     rows: usize,
     rank: usize,
 ) -> Result<CodebookView<'a>, RealForwardError> {
-    let e = entry(index, name)?;
     let elements = rows.checked_mul(rank).ok_or_else(|| {
         RealForwardError::Unsupported(format!("{name} element count overflows usize"))
     })?;

@@ -194,6 +194,10 @@ mod cancel_tests {
             reuse_trunk_from: None,
             vision_only: false,
             vision_file: None,
+            // A cancelled-at-entry walk reads no weights, so the tower
+            // question never comes up; every other hand-built plan in
+            // `crates/catalog` defaults this false too.
+            include_vision: false,
         };
         let flag = CancelFlag::new();
         flag.cancel();
