@@ -176,16 +176,28 @@ void image_rms_norm(
     device const uchar *weight [[buffer(1)]],
     device float *output [[buffer(2)]],
     constant NormParams &p [[buffer(3)]],
-    uint gid [[thread_position_in_grid]]) {
-    const uint row = gid / p.dim;
-    const uint col = gid - row * p.dim;
+    uint tid [[thread_position_in_threadgroup]],
+    uint row [[threadgroup_position_in_grid]]) {
     if (row >= p.rows) return;
     device const float *x = input + uint64_t(row) * p.dim;
     float sum = 0.0f;
-    for (uint i = 0; i < p.dim; ++i) sum = fma(x[i], x[i], sum);
+    const uint chunk = (p.dim + 255) / 256;
+    const uint start = tid * chunk;
+    const uint end = min(start + chunk, p.dim);
+    for (uint i = start; i < end; ++i) sum = fma(x[i], x[i], sum);
+    threadgroup float partials[256];
+    partials[tid] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 128; stride > 0; stride >>= 1) {
+        if (tid < stride) partials[tid] += partials[tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    sum = partials[0];
     const float inv = rsqrt(sum / float(p.dim) + p.eps);
-    const float scale = stored_value(weight, col, p.weight_storage);
-    output[gid] = x[col] * inv * scale;
+    for (uint col = tid; col < p.dim; col += 256) {
+        const float scale = stored_value(weight, col, p.weight_storage);
+        output[uint64_t(row) * p.dim + col] = x[col] * inv * scale;
+    }
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]
@@ -246,27 +258,41 @@ void image_rope_adjacent(
     device const uchar *weight [[buffer(2)]],
     device const float *freqs [[buffer(3)]],
     constant RopeParams &p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]) {
-    const uint total = p.rows * p.heads * p.dim;
-    if (gid >= total) return;
+    uint tid [[thread_position_in_threadgroup]],
+    uint head_row [[threadgroup_position_in_grid]]) {
+    const uint total_rows = p.rows * p.heads;
+    if (head_row >= total_rows) return;
     const uint pair_dim = p.dim >> 1;
-    const uint col = gid % p.dim;
-    const uint token = gid / (p.heads * p.dim);
-    const uint pair = col >> 1;
-    const uint row_base = (gid / p.dim) * p.dim;
+    const uint token = head_row / p.heads;
+    const uint row_base = head_row * p.dim;
+    device const float *x = input + row_base;
     float rms = 0.0f;
-    for (uint i = 0; i < p.dim; ++i) {
-        const float v = input[row_base + i];
-        rms = fma(v, v, rms);
+    const uint chunk = (p.dim + 255) / 256;
+    const uint start = tid * chunk;
+    const uint end = min(start + chunk, p.dim);
+    for (uint i = start; i < end; ++i) rms = fma(x[i], x[i], rms);
+    threadgroup float partials[256];
+    partials[tid] = rms;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 128; stride > 0; stride >>= 1) {
+        if (tid < stride) partials[tid] += partials[tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
     }
+    rms = partials[0];
     const float inv = rsqrt(rms / float(p.dim) + p.eps);
-    const float value = input[gid] * inv * stored_value(weight, col, p.weight_storage);
-    const float partner = input[row_base + ((col & 1) == 0 ? col + 1 : col - 1)] * inv
-        * stored_value(weight, ((col & 1) == 0 ? col + 1 : col - 1), p.weight_storage);
-    device const float *frequency = freqs + uint64_t(token) * pair_dim * 2 + uint64_t(pair) * 2;
-    const float c = frequency[0];
-    const float s = frequency[1];
-    output[gid] = ((col & 1) == 0) ? value * c - partner * s : partner * c + value * s;
+    for (uint col = tid; col < p.dim; col += 256) {
+        const uint pair = col >> 1;
+        const float value = x[col] * inv * stored_value(weight, col, p.weight_storage);
+        const uint partner_col = (col & 1) == 0 ? col + 1 : col - 1;
+        const float partner = x[partner_col] * inv
+            * stored_value(weight, partner_col, p.weight_storage);
+        device const float *frequency =
+            freqs + uint64_t(token) * pair_dim * 2 + uint64_t(pair) * 2;
+        const float c = frequency[0];
+        const float s = frequency[1];
+        output[uint64_t(row_base) + col] =
+            ((col & 1) == 0) ? value * c - partner * s : partner * c + value * s;
+    }
 }
 
 // Four queries for one head share each key vector. The old elementwise kernel

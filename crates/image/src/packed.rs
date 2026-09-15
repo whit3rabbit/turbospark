@@ -635,7 +635,19 @@ fn can_quantize(name: &str, shape: &[usize]) -> bool {
         && shape[0] > 0
         && shape[1] % PACKED_GROUP_SIZE == 0
         && name.ends_with(".weight")
+        // Keep the packer aligned with the frozen IG0 emulation. Input and
+        // output projections, caption/image embedders, modulation, and other
+        // control tensors remain higher precision even when their shape fits
+        // the generic group-64 storage format.
+        && is_quality_quantized_projection(name)
         && !is_protected_tensor(name)
+}
+
+fn is_quality_quantized_projection(name: &str) -> bool {
+    name.contains(".self_attn.")
+        || name.contains(".mlp.")
+        || name.contains(".attention.to_")
+        || name.contains(".feed_forward.w")
 }
 
 fn is_protected_tensor(name: &str) -> bool {
@@ -672,7 +684,7 @@ mod tests {
             payload.extend_from_slice(&value.to_le_bytes());
         }
         let header = serde_json::json!({
-            "linear.weight": {
+            "layers.0.attention.to_q.weight": {
                 "dtype": "F32",
                 "shape": [2, 64],
                 "data_offsets": [0, 512]
@@ -693,7 +705,7 @@ mod tests {
             source.join("model.safetensors.index.json"),
             serde_json::to_vec(&serde_json::json!({
                 "weight_map": {
-                    "linear.weight": "shard.safetensors",
+                    "layers.0.attention.to_q.weight": "shard.safetensors",
                     "norm.weight": "shard.safetensors"
                 }
             }))
@@ -708,7 +720,7 @@ mod tests {
 
         let store = PackedTensorStore::open(&output).expect("open packed component");
         let quantized = store
-            .load_tensor("linear.weight")
+            .load_tensor("layers.0.attention.to_q.weight")
             .expect("load int4 tensor");
         assert_eq!(quantized.len(), linear.len());
         assert!(quantized
@@ -720,11 +732,38 @@ mod tests {
             norm
         );
         assert_eq!(
-            store.load_row("linear.weight", 1).expect("load packed row"),
+            store
+                .load_row("layers.0.attention.to_q.weight", 1)
+                .expect("load packed row"),
             quantized[64..].to_vec()
         );
 
         fs::remove_dir_all(root).expect("remove test directory");
+    }
+
+    #[test]
+    fn quantizes_only_the_frozen_quality_projection_families() {
+        let shape = [3840, 3840];
+        for name in [
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.layers.0.mlp.down_proj.weight",
+            "layers.0.attention.to_q.weight",
+            "layers.0.feed_forward.w1.weight",
+        ] {
+            assert!(can_quantize(name, &shape), "expected {name} to quantize");
+        }
+        for name in [
+            "all_x_embedder.2-1.weight",
+            "cap_embedder.1.weight",
+            "all_final_layer.2-1.linear.weight",
+            "layers.0.attention_norm1.weight",
+            "t_embedder.mlp.0.weight",
+        ] {
+            assert!(
+                !can_quantize(name, &shape),
+                "expected {name} to stay precise"
+            );
+        }
     }
 
     #[test]

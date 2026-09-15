@@ -1199,18 +1199,29 @@ impl MetalImageBackend {
                         next_image.extend_from_slice(&pad);
                     }
                 }
-                next_image.extend_from_slice(&refined_caption_values);
-                unified = metal_ops::upload(&self.context, &next_image);
+
+                // The noise refiner sees only image tokens. It must use the
+                // next scheduler timestep, then the refined caption is
+                // appended for the main transformer sequence.
+                let next_timestep =
+                    self.time_embedding(&component, scheduler.normalized_time(step + 1) * 1000.0)?;
+                let mut next_image = metal_ops::upload(&self.context, &next_image);
                 for index in 0..2 {
-                    unified = self.transformer_block(
+                    next_image = self.transformer_block(
                         &component,
-                        unified,
+                        next_image,
                         &format!("noise_refiner.{index}"),
-                        image_padded_len + cap_padded_len,
-                        &unified_freqs,
-                        Some(&timestep),
+                        image_padded_len,
+                        &image_freqs,
+                        Some(&next_timestep),
                     )?;
                 }
+                let next_image = metal_ops::read(&next_image);
+                let mut next_unified =
+                    Vec::with_capacity((image_padded_len + cap_padded_len) * Z_IMAGE_DIM);
+                next_unified.extend_from_slice(&next_image);
+                next_unified.extend_from_slice(&refined_caption_values);
+                unified = metal_ops::upload(&self.context, &next_unified);
             }
         }
 

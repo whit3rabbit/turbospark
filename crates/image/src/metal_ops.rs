@@ -281,9 +281,7 @@ pub(crate) fn rms_norm(
     params.extend_from_slice(&eps.to_le_bytes());
     let shader = pipeline(context, "image_rms_norm")?;
     let pass = context.begin_pass_labeled("image-rms-norm");
-    dispatch(
-        context,
-        &pass,
+    pass.encode_threadgroups_3d(
         &shader,
         &[
             (&input.buffer, 0, 0),
@@ -291,7 +289,8 @@ pub(crate) fn rms_norm(
             (&output.buffer, 2, 0),
         ],
         &[(&params, 3)],
-        output.len,
+        (rows as u64, 1, 1),
+        (THREADS, 1, 1),
     );
     let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
@@ -362,9 +361,7 @@ pub(crate) fn adjacent_rope(
     params.extend_from_slice(&eps.to_le_bytes());
     let shader = pipeline(context, "image_rope_adjacent")?;
     let pass = context.begin_pass_labeled("image-adjacent-rope");
-    dispatch(
-        context,
-        &pass,
+    pass.encode_threadgroups_3d(
         &shader,
         &[
             (&input.buffer, 0, 0),
@@ -373,7 +370,8 @@ pub(crate) fn adjacent_rope(
             (freqs, 3, 0),
         ],
         &[(&params, 4)],
-        output.len,
+        ((rows * heads) as u64, 1, 1),
+        (THREADS, 1, 1),
     );
     let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
@@ -1032,6 +1030,44 @@ mod tests {
             );
             assert_close(&read(&actual), &expected, 2e-5);
         }
+
+        // The production DiT uses 30 heads of width 128. Keep a small exact
+        // shape case here because the grouped kernel's SIMD and query-slot
+        // mapping changes at the four-SIMD-group head width.
+        let q_rows = 8;
+        let kv_rows = 8;
+        let q_heads = 30;
+        let kv_heads = 30;
+        let head_dim = 128;
+        let q: Vec<f32> = (0..q_rows * q_heads * head_dim)
+            .map(|index| ((index * 13 % 71) as f32 - 35.0) / 53.0)
+            .collect();
+        let k: Vec<f32> = (0..kv_rows * kv_heads * head_dim)
+            .map(|index| ((index * 7 % 61) as f32 - 30.0) / 47.0)
+            .collect();
+        let v: Vec<f32> = (0..kv_rows * kv_heads * head_dim)
+            .map(|index| ((index * 19 % 83) as f32 - 41.0) / 67.0)
+            .collect();
+        let q_gpu = upload(&context, &q);
+        let k_gpu = upload(&context, &k);
+        let v_gpu = upload(&context, &v);
+        let actual = attention(
+            &mut context,
+            &q_gpu,
+            &k_gpu,
+            &v_gpu,
+            q_rows,
+            kv_rows,
+            q_heads,
+            kv_heads,
+            head_dim,
+            false,
+        )
+        .expect("production-shape grouped attention");
+        let expected = cpu_attention(
+            &q, &k, &v, q_rows, kv_rows, q_heads, kv_heads, head_dim, false,
+        );
+        assert_close(&read(&actual), &expected, 2e-5);
     }
 
     #[allow(clippy::too_many_arguments)]

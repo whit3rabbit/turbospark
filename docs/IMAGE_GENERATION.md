@@ -387,13 +387,27 @@ The following records implementation status and the remaining evidence work:
    total latency, nine forwards, peak `phys_footprint`, Metal buffer
    allocations, idle retained buffers, process page-ins, and swap deltas.
    Quiet cold and warm runs against a complete install remain required.
-   The pinned local export currently packs to 11 files and 6,906,461,695
+   The original pinned local export packs to 11 files and 6,906,461,695
    bytes. Its packed conditioning error is 0.081541 against the 0.084 IG0
-   INT4 envelope. The grouped Metal attention kernel passes the focused GQA
-   and causal-mask parity test, but the first full nine-step native denoise
-   run still did not complete within roughly six minutes after the change
-   (the earlier elementwise kernel exceeded twelve minutes), so the quality,
-   cancellation, and resource gates remain open.
+   INT4 envelope. A second pack using the corrected IG0 projection policy
+   reported 11 files and 6,944,955,456 bytes; conditioning also completed,
+   but it did not improve the denoise result. The grouped Metal attention
+   kernel passes the focused GQA and causal-mask parity test. The two real
+   native nine-step runs both fail at the first rollout check, after the long
+   device run: the original artifact ran 4,618.35 seconds and measured
+   relative L2 1.4135604 against the 0.923 envelope; the corrected-policy
+   artifact ran 4,711.53 seconds and measured 1.4136423. These are quality
+   failures, not successful parity runs. Cancellation, PNG quality, and the
+   resource oracle remain unclosed.
+
+   The next diagnostic boundary is now known. A precise layer-29 mini-component
+   probe found RMSNorm, projections, attention, modulation, SiLU, and FFN
+   operations internally consistent at roughly 1e-6 relative L2, while the
+   full block remained about 0.600 against the BF16 MPS fixture. The probe is
+   not a production gate because it uses F32-expanded weights and was removed
+   after use. Continue from the end-to-end packed rollout and compare the
+   first divergent denoise intermediate against the IG0 BF16 capture; do not
+   widen the 0.923 envelope without new reference evidence.
 
 The original implementation requirements are preserved below as the
 acceptance contract:
@@ -445,11 +459,13 @@ acceptance contract:
   submission inside the existing autorelease pool. The caption-refiner result
   is also reused between denoise steps.
 - The full packed native parity gate was rerun against the pinned local
-  install after these changes. It produced no first callback within roughly
-  twelve minutes and was stopped without a numerical result. This is not a
-  quality, cancellation, or memory pass. The next optimization target is to
-  reduce the remaining operation-level command-buffer boundaries, likely by
-  batching or fusing transformer-block work, then rerun the same gate.
+  install after these changes. The original artifact ran 4,618.35 seconds and
+  failed at rollout step 1 with relative L2 1.4135604, above the frozen 0.923
+  envelope. The corrected-policy artifact ran 4,711.53 seconds and failed at
+  the same check with 1.4136423. This is an end-to-end quality failure, not a
+  cancellation or memory pass. The next target is the first divergent denoise
+  intermediate, followed by the cancellation, PNG, and quiet-machine resource
+  gates after quality is explained and fixed.
 
 Prerequisites for this work are the pinned Z-Image-Turbo export at the
 revision recorded in the manifest example, a Metal-capable macOS machine with
