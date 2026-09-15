@@ -192,6 +192,30 @@ CHECKPOINTS = {
             "and mlx's CPU backend runs that one at 15.4 s/position)"
         ),
     },
+    # Qwen 3.8 27B: the SECOND dense checkpoint of `qwen_gdn_dense_27b()`
+    # (the first is Bonsai-27B), and the row behind ROADMAP P4.1's qwen38
+    # clause. Unlike `qwen36` above, this one has been through forward passes:
+    # `~/models/qwen38-27b.gturbo` backs the family's frozen quality and
+    # memory rows, and `logit_dump.rs` gained the
+    # `TURBOSPARK_QWEN38_INSTALL_DIR` arm for it.
+    #
+    # Widths counted off the cached snapshot's safetensors headers (2026-09-15),
+    # not copied: 498 `.scales` companions, ALL of them text, zero on the
+    # vision tensors, and `config.json` declares a single global
+    # `{group_size: 64, bits: 4, mode: affine}` with NO per-layer overrides --
+    # so the count is uniform at (4, 64) rather than the mixed pair `qwen36`
+    # carries. That uniformity is what `assert_reference_matches` will demand.
+    "qwen38": {
+        "repo": "mlx-community/Qwen3.8-27B-4bit",
+        "revision": "3e6447f082e89cc7f0bc6e5441afd38dfce760ff",
+        "widths": {(4, 64): 498},
+        # NOT measured; the same expectation as `qwen36`'s, for the same
+        # reason -- mlx's CPU backend is the unaffordable arm at this size.
+        "backend_floor_note": (
+            "not measured (27B dense; expect mlx's CPU backend to be "
+            "unaffordable at this size, as on Bonsai and Ternary above)"
+        ),
+    },
     # Ornith-1.5-35B-A3B, the MoE half, and the first MIXED-width entry.
     # 432 modules at 4 bits plus the 80 eight-bit ones named above; 512 in
     # total, which is the header's `.scales` count.

@@ -1,0 +1,52 @@
+{
+  "rows": 573,
+  "mlx_build": "0.32.2 (/Users/whit3rabbit/.cache/uv/archive-v0/uLCQn7ikSA_mLrY7/lib/python3.12/site-packages/mlx/core.cpython-312-darwin.so)",
+  "reference_quantization": {
+    "QuantizedEmbedding(bits=4,group=64)": 1,
+    "QuantizedLinear(bits=4,group=64)": 497
+  },
+  "kl_vs_mlx": {
+    "forward": {
+      "mean": 0.0007877307252789654,
+      "median": 0.000520346881619392,
+      "p99": 0.006743732616558622,
+      "max": 0.02157200946306162
+    },
+    "reverse": {
+      "mean": 0.0007556356993993799,
+      "median": 0.0005218006625299792,
+      "p99": 0.006641578748434958,
+      "max": 0.013366373222390988
+    },
+    "top1_agreement": 0.987783595113438
+  },
+  "kl_mlx_self": {
+    "forward": {
+      "mean": 0.0010964389737342353,
+      "median": 0.0006422778721640677,
+      "p99": 0.005997227512678763,
+      "max": 0.04038291424366819
+    },
+    "reverse": {
+      "mean": 0.0011265840479039722,
+      "median": 0.0006572001758272587,
+      "p99": 0.0059946683164267996,
+      "max": 0.041623477721286606
+    },
+    "top1_agreement": 0.9895287958115183
+  },
+  "backend_floor": "not measured (27B dense; expect mlx's CPU backend to be unaffordable at this size, as on Bonsai and Ternary above)",
+  "perplexity": {
+    "turbospark": 4.943203377132147,
+    "mlx_cached": 4.940618841589998,
+    "mlx_batched": 4.94064418840313
+  },
+  "max_abs_logit": {
+    "turbospark": 40.875,
+    "mlx_cached": 40.75
+  },
+  "reference": "mlx-community/Qwen3.8-27B-4bit@3e6447f0",
+  "install": "/Users/whit3rabbit/models/qwen38-27b.gturbo",
+  "cache_state": "warm (one discarded walk of the same sequence)",
+  "prompt_len": 62
+}
