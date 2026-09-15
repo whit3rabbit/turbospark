@@ -109,6 +109,11 @@ public struct ResolvedAppTheme: Equatable, Sendable {
         isHighContrast ? 0.85 : max(0.3, (contrast / 100.0) * 0.85)
     }
 
+    /// Removes translucency from structural surfaces when macOS requests it.
+    public func surfaceOpacity(_ requestedOpacity: Double) -> Double {
+        reduceTransparency ? 1.0 : requestedOpacity
+    }
+
     /// Background color specifically for the prompt composer textbox.
     public var composerBackground: Color {
         TurboSparkTheme.composerBackgroundColor(isDark: isDark, background: background)

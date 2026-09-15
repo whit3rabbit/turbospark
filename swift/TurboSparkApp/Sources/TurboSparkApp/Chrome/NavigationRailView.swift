@@ -44,7 +44,8 @@ struct NavigationRailView: View {
         .padding(.bottom, 8)
         .frame(width: AppChromeLayout.navigationRailWidth)
         .frame(maxHeight: .infinity)
-        .background(TurboSparkTheme.railBackgroundColor)
+        .background(TurboSparkTheme.railBackgroundColor(
+            isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
         .animation(TSMotion.select, value: model.activeSection)
     }
 

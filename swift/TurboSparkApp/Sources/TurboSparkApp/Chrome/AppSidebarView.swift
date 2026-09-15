@@ -33,6 +33,7 @@ import SwiftUI
 /// owns the footer, which is also why the `AppLanguage` binding lives here.
 @MainActor
 struct AppSidebarView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let isExpanded: Bool
 
@@ -51,8 +52,10 @@ struct AppSidebarView: View {
         .frame(maxHeight: .infinity)
         .background(
             isExpanded
-                ? TurboSparkTheme.sidebarBackgroundColor
-                : TurboSparkTheme.railBackgroundColor)
+                ? TurboSparkTheme.sidebarBackgroundColor(
+                    isDark: theme.isDark, reduceTransparency: theme.reduceTransparency)
+                : TurboSparkTheme.railBackgroundColor(
+                    isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
         .clipped()
     }
 
