@@ -16,7 +16,8 @@ public struct ServerOptions: Encodable, Sendable {
     /// 0 (the default) asks the OS for an ephemeral port; read the port
     /// ACTUALLY bound back from `TurboSparkServer.info()`.
     public var port: UInt16
-    /// Literal IPv4/IPv6 bind address. Nil keeps loopback; network binds require a key.
+    /// Loopback or Tailscale IPv4 bind address. Nil keeps loopback;
+    /// Tailscale requires a key.
     public var host: String?
     /// Optional bounded raw HTTP previews, retained only for this server lifetime.
     public var captureText: Bool
@@ -133,8 +134,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
 
     /// `http://host:port`, the address a client should actually call.
     ///
-    /// Bracket IPv6 literals and use local loopback for wildcard bindings.
-    /// `host` still reports the actual bind address for network diagnostics.
+    /// Bracket IPv6 loopback literals.
     public var baseURL: URL? {
         let clientHost = host == "0.0.0.0" ? "127.0.0.1" : (host == "::" ? "::1" : host)
         let literal = clientHost.contains(":") ? "[\(clientHost)]" : clientHost

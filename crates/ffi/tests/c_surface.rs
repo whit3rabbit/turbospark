@@ -1059,6 +1059,20 @@ fn server_options_accept_an_api_key_and_report_it_enabled() {
     unsafe { ts_server_stop(server) };
 }
 
+#[test]
+fn server_options_reject_plaintext_wildcard_bind_even_with_an_api_key() {
+    let session = endless_session(fixture(), "h", 4);
+    let opts = c(r#"{"host":"0.0.0.0","apiKey":"sk-test"}"#);
+    let mut server: *mut Server = ptr::null_mut();
+    let code = unsafe { ts_server_start(&session, opts.as_ptr(), &mut server) };
+    assert_eq!(code, abi::TS_ERR_OPEN);
+    assert!(server.is_null());
+    assert_eq!(
+        last_error(),
+        "Host must be loopback or a Tailscale IPv4 address in 100.64.0.0/10"
+    );
+}
+
 /// **THE HOST IS AN OBSERVATION, AND THIS IS WHAT MAKES IT ONE.**
 /// `server.rs` binds a `127.0.0.1` literal and reads the result back out of
 /// `local_addr`; nothing else in this workspace can tell whether the reported

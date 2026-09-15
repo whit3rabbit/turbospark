@@ -107,8 +107,9 @@ pub struct Server {
 
 impl Server {
     /// Spawns a background thread that binds `port` (0 for an OS-assigned
-    /// one) on loopback and serves it. Blocks until the socket is actually
-    /// bound (or binding fails), never until the first request is served.
+    /// one) on loopback or a Tailscale IPv4 address and serves it. Blocks
+    /// until the socket is actually bound (or binding fails), never until
+    /// the first request is served.
     ///
     /// Starts with NOTHING attached. `ts_server_start` calls
     /// [`Self::attach`] straight after when it was handed a session, which
@@ -129,8 +130,20 @@ impl Server {
             .parse()
             .map_err(|_| "Host must be a literal IPv4 or IPv6 address".to_string())?;
         let api_key = api_key.filter(|key| !key.trim().is_empty());
-        if !host.is_loopback() && api_key.is_none() {
-            return Err("An API key is required for a non-loopback address".into());
+        let tailnet = match host {
+            std::net::IpAddr::V4(ip) => {
+                let octets = ip.octets();
+                octets[0] == 100 && (64..=127).contains(&octets[1])
+            }
+            std::net::IpAddr::V6(_) => false,
+        };
+        if !host.is_loopback() && !tailnet {
+            return Err(
+                "Host must be loopback or a Tailscale IPv4 address in 100.64.0.0/10".into(),
+            );
+        }
+        if tailnet && api_key.is_none() {
+            return Err("An API key is required for a Tailscale address".into());
         }
         let traffic = Arc::new(crate::server_transport::Traffic::new(capture_text));
         let auth_enabled = api_key.is_some();
