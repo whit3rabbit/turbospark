@@ -919,6 +919,13 @@ keeps resolving.
     proves `switch` is recognized) so normal switch rejections do not trigger
     legacy fallback, and format legacy branch checkout without `--`.
 
+79. **HONOR REDUCE TRANSPARENCY ON STRUCTURAL SURFACES.**
+    The system `accessibilityReduceTransparency` preference must be reflected
+    into all structural surfaces (page, surface, elevated, sidebar, rail) by
+    suppressing translucency and forcing full opacity (1.0) via `surfaceOpacity`
+    on `ResolvedAppTheme` and passing `reduceTransparency` to background
+    accessors. Text, border, and accent colors retain their requested alpha.
+
 
 
 ## The `state#N` ledger
