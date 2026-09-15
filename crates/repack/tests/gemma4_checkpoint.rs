@@ -927,9 +927,21 @@ fn streamed_install_matches_in_memory_install() {
     write_gemma4_install(&dir_mem, &arch, "streamed-vs-mem", &header, &source, &quant)
         .expect("in-memory install");
     let dir_str = temp_dir();
+    let sidecars = [
+        ("tokenizer.json", b"tokenizer".as_slice()),
+        ("tokenizer_config.json", b"tokenizer config".as_slice()),
+        ("chat_template.jinja", b"chat template".as_slice()),
+    ];
+    for (file, contents) in sidecars {
+        std::fs::write(dir_str.join(file), contents).expect(file);
+    }
     let shards = Gemma4Shards::single(&header, &source);
     write_gemma4_install_streamed(&dir_str, &arch, "streamed-vs-mem", &shards, &quant, |_| {})
         .expect("streamed install");
+
+    for (file, contents) in sidecars {
+        assert_eq!(std::fs::read(dir_str.join(file)).expect(file), contents);
+    }
 
     for file in [
         "model_weights.bin",
