@@ -378,7 +378,11 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     reddened and the three HTTP round trips stayed GREEN, because this
     platform happily answers a request addressed to `0.0.0.0`. A URL that
     connects is not evidence that the address reported is one a caller should
-    copy.
+    copy. Plaintext binds are restricted to loopback and Tailscale IPv4
+    (`100.64.0.0/10`), requiring an API key for Tailscale and refusing
+    wildcard (`0.0.0.0`) or LAN addresses explicitly
+    (`server_options_reject_plaintext_wildcard_bind_even_with_an_api_key`).
+
 
 14. **A SERVER SERVES A SET OF MODELS THAT CHANGES WHILE IT RUNS, AND
     DETACHING IS WHAT RELEASES ONE.** Added 2026-08-30, extending Gotcha 13
