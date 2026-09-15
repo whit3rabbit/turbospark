@@ -896,6 +896,14 @@ keeps resolving.
     time, before reading or writing state, while keeping explicitly user-authored
     quick-save behavior on its separate path.
 
+76. **NESTED BATCH TOOLS REQUIRE PER-CHILD PERMISSION AND HOOK GATING.**
+    Treating the outer `batch` tool call as approved cannot authorize its
+    nested children. Each child tool call must evaluate `PreToolUse` hooks,
+    permission rules, `PermissionRequest` hooks, and lifecycle events
+    independently, derive outer risk from the highest child risk, and deny
+    invocation from subagent runners.
+
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments
