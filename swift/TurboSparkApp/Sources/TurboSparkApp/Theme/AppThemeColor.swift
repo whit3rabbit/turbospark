@@ -32,7 +32,12 @@ public struct AppThemeColor: ShapeStyle {
         case .border: color = theme.border
         case .accent: color = theme.accent
         }
-        return color.opacity(alpha)
+        switch role {
+        case .page, .surface, .elevated:
+            return color.opacity(theme.surfaceOpacity(alpha))
+        case .text, .secondary, .border, .accent:
+            return color.opacity(alpha)
+        }
     }
 }
 
