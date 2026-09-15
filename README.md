@@ -13,7 +13,11 @@
 
 </div>
 
-`turbospark` is a behavior-compatible **Rust port** of [Mference](https://github.com/NeelM0906/Mference/tree/main), a Swift LLM inference engine for Apple Silicon, built to the design and philosophy published in [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare). It is the only pure Rust inference engine for Apple Silicon Metal, pairing high-performance Rust internals with native Swift bindings (`crates/ffi` + SwiftPM) for its macOS chat app (`swift/TurboSparkApp`).
+`turbospark` is a behavior-compatible **Rust** backend and a desktop app written in **Swift**, 
+
+It is the only pure Rust inference engine for Apple Silicon Metal, pairing high-performance Rust internals with native Swift bindings (`crates/ffi` + SwiftPM) for its macOS chat app (`swift/TurboSparkApp`).
+
+Heavily inspired by: [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) and [Mference](https://github.com/NeelM0906/Mference/tree/main).
 
 ### What Makes TurboSpark Special
 What makes `turbospark` unique is its architecture based on the philosophy of [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) and [Mference](https://github.com/NeelM0906/Mference/tree/main): instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights on demand directly from high-speed SSD storage into a lean working-memory slot cache. This enables Macs with limited unified memory (8 GB, 16 GB, 24 GB, or 36 GB) to load and run large Mixture-of-Experts (MoE) models like **Gemma 4 26B-A4B** and **Qwen 3.6 35B-A3B** locally in as little as **~1.6 GiB to 2.2 GiB of peak RAM** without exhausting system memory.
