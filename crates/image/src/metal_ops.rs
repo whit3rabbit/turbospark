@@ -827,6 +827,7 @@ pub(crate) fn silu(
     Ok(with_ready(output, ready))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn vae_attention(
     context: &mut MetalContext,
     component: &Component,

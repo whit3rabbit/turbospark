@@ -348,3 +348,12 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
     `CatalogEntry::validate` enforces this requirement so combined vision
     installs do not ship without the preprocessing sidecar needed for image
     intake.
+
+18. **STALE SIDECARS MUST BE PRUNED AFTER FETCHING CURRENT SIDECARS.**
+    Install retries or re-plans in an existing destination directory could leave
+    behind sidecars from a prior or failed plan (e.g. `chat_template.jinja`).
+    Because staged repacking preserves existing top-level files, `fetch_sidecars`
+    prunes any top-level regular files that are neither part of the current plan's
+    `sidecar_files` nor generated install payloads (`manifest.json`,
+    `model_weights.bin`).
+

@@ -165,3 +165,12 @@ cargo test -p turbospark-image --test metal_parity -- --ignored --nocapture
    activation-only passes (such as attention or elementwise ops) do not
    borrow from `Component` and commit via `commit_deferred`, while
    weight-backed passes register their pass via `commit_component_deferred`.
+
+10. **IMAGE METAL SHADER ABI CONTRACT.**
+    `image_linear_tiled` expects a six-field `LinearParams` (rows, in_dim,
+    out_dim, row_stride, storage, bias_storage) and binds the resident weight
+    buffer at index 0 and activations at index 1. Because linear operations
+    access resident component memory, passes must be committed using
+    `commit_component_deferred` so component mmap drops wait for the kernel to
+    complete.
+

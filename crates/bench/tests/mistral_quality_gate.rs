@@ -27,13 +27,25 @@
 mod quality_common;
 
 /// Per-chip rows for the dense Mistral 7B install, MOST SPECIFIC SUBSTRING
-/// FIRST. Empty until the first run on this machine freezes them, which is
-/// `quality_common`'s documented first-run mode: the gate asserts
-/// determinism (two fresh processes agreeing), prints the measured
-/// perplexity and digests, and refuses to assert against a row that does
-/// not exist yet -- the digests are a property of the device's reduce
-/// order, so there is nothing to write ahead of a run.
-const BASELINES: &[quality_common::ChipQuality] = &[];
+/// FIRST. Frozen 2026-09-15 from the first gate run on this machine
+/// (release, 16 slots, `mistral7b-dense.gturbo`), after the determinism
+/// arm had asserted two fresh processes agree: the gate's own output was
+/// transcribed into this row, then this file was re-run to ASSERT it.
+///
+/// 9.3971 against `qwen38`'s 4.9432 and Ternary's 6.8350 is a model
+/// difference, not a quality finding: Mistral 7B is a much smaller, older
+/// dense model scored on the frozen protocol's Gemma-shaped corpus, and
+/// the row is a sentinel against this install's own past. The constrained
+/// arm's digest was byte-identical at first run (dense model, no expert
+/// cache, so the arms differ only in order), which is the assertion that
+/// matters there.
+const BASELINES: &[quality_common::ChipQuality] = &[quality_common::ChipQuality {
+    brand_substr: "Apple M4 Max",
+    perplexity: 9.3971,
+    greedy_digest: "522026e684c711fdffc33a0e915e88b985d1a83e68c219bd15d83cac608b88b7",
+    sampled_digest: "2a98d7607d9fe6bf60d0f25141e3ff4e3d89888544b2d6a9333743ec86f2c5cd",
+    source: "this port, 2026-09-15, Apple M4 Max, 16 slots",
+}];
 
 fn install_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("TURBOSPARK_MISTRAL_INSTALL_DIR").map(std::path::PathBuf::from)
