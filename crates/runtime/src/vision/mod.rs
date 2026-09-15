@@ -595,7 +595,11 @@ impl VisionTower {
                         .mapped_layer
                         .as_ref()
                         .expect("mapped_buffer implies mapped_layer");
-                    let base = mapping.expert_offset(n);
+                    let base = mapping.expert_offset(n).map_err(|e| {
+                        RealForwardError::Unsupported(format!(
+                            "vision block {n} mapped offset: {e}"
+                        ))
+                    })?;
                     block::encode_block(
                         context,
                         &pass,
