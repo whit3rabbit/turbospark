@@ -258,12 +258,19 @@ pub(crate) fn linear(
         len: rows * out_dim,
         ready: None,
     };
-    let params = u32_bytes(&[rows as u32, in_dim as u32, out_dim as u32, weight.storage]);
+    let params = u32_bytes(&[
+        rows as u32,
+        in_dim as u32,
+        out_dim as u32,
+        weight.row_stride,
+        weight.storage,
+        bias.map_or(0, |value| value.storage),
+    ]);
     let shader = pipeline(context, "image_linear_tiled")?;
     let pass = context.begin_pass_labeled("image-linear");
     let mut buffers = vec![
-        (&input.buffer, 0, 0),
-        (component.resident.buffer(), 1, weight.offset),
+        (component.resident.buffer(), 0, weight.offset),
+        (&input.buffer, 1, 0),
         (&output.buffer, 2, 0),
     ];
     if let Some(bias) = bias {
