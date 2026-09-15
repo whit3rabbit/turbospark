@@ -148,11 +148,12 @@ impl RealForwardRunner {
                         "packed expert layout has no routed layers".to_string(),
                     ));
                 }
-                let mut blob_encoders = Vec::new();
+                let mut blob_encoders: Vec<(&'static str, &'static str)> = Vec::new();
                 for layer in &layouts {
                     let encoder = layer.phase1.source_function();
                     if !blob_encoders.iter().any(|&(source, function)| {
-                        std::ptr::eq(source, encoder.0) && function == encoder.1
+                        (std::ptr::eq(source, encoder.0) || source == encoder.0)
+                            && function == encoder.1
                     }) {
                         blob_encoders.push(encoder);
                     }

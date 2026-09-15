@@ -632,3 +632,13 @@ cargo test -p turbospark-gpu
     The old code's own comment had misread its citation in exactly this way:
     it quoted the matrix parenthesization and then summed before clamping,
     which is the transpose of what the formula says.
+
+16. **ROUTED ARGUMENT BUFFERS MUST BE ALLOCATED FOR THEIR ENCODERS.**
+    `RoutedBlobsBuffer` holds pointers to streamed expert blobs. When a model's
+    layers use different shader libraries (e.g. affine vs GGUF), the buffer
+    must be allocated via `new_for_encoders` with the full list of candidate
+    `(source, function)` encoders and the matching `use_silu` flag so it is sized
+    to the maximum `encoded_length()` across all encoders. `bind_for` verifies
+    that the requested encoder and activation specialization were provisioned
+    and returns `GpuError::ArgumentBufferMismatch` rather than writing into an
+    incompatible buffer.

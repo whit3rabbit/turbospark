@@ -220,7 +220,8 @@ impl RoutedBlobsBuffer {
             .encoders
             .iter()
             .any(|&(allocated_source, allocated_function)| {
-                std::ptr::eq(allocated_source, source) && allocated_function == function
+                (std::ptr::eq(allocated_source, source) || allocated_source == source)
+                    && allocated_function == function
             });
         if !has_encoder || self.use_silu != use_silu {
             return Err(GpuError::ArgumentBufferMismatch(format!(
