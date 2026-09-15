@@ -70,14 +70,17 @@ pub fn write_gemma4_install_streamed(
     mut progress: impl FnMut(&str),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let staging = sibling_work_dir(dir, "staging")?;
-    let result = write_gemma4_install_streamed_in_place(
-        &staging,
-        arch,
-        model_id,
-        shards,
-        quant,
-        &mut progress,
-    );
+    let result = (|| {
+        preserve_sidecars(dir, &staging)?;
+        write_gemma4_install_streamed_in_place(
+            &staging,
+            arch,
+            model_id,
+            shards,
+            quant,
+            &mut progress,
+        )
+    })();
     if let Err(error) = result {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(error);
@@ -300,6 +303,40 @@ fn write_gemma4_install_streamed_in_place(
 }
 
 static WORK_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn preserve_sidecars(dir: &Path, staging: &Path) -> Result<(), crate::WriterError> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(dir).map_err(|error| crate::WriterError::Io {
+        path: dir.display().to_string(),
+        detail: error.to_string(),
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| crate::WriterError::Io {
+            path: dir.display().to_string(),
+            detail: error.to_string(),
+        })?;
+        let file_type = entry.file_type().map_err(|error| crate::WriterError::Io {
+            path: entry.path().display().to_string(),
+            detail: error.to_string(),
+        })?;
+        if !file_type.is_file()
+            || matches!(
+                entry.file_name().to_str(),
+                Some("manifest.json" | "model_weights.bin")
+            )
+        {
+            continue;
+        }
+        let destination = staging.join(entry.file_name());
+        std::fs::copy(entry.path(), &destination).map_err(|error| crate::WriterError::Io {
+            path: destination.display().to_string(),
+            detail: error.to_string(),
+        })?;
+    }
+    Ok(())
+}
 
 fn sibling_work_dir(dir: &Path, kind: &str) -> Result<PathBuf, crate::WriterError> {
     let parent = dir.parent().unwrap_or_else(|| Path::new("."));
