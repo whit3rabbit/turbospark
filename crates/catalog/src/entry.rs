@@ -364,6 +364,19 @@ impl CatalogEntry {
                 self.alias
             ));
         }
+        if self.include_vision
+            && !self
+                .sidecars
+                .files
+                .iter()
+                .any(|f| f == "preprocessor_config.json")
+        {
+            return Err(format!(
+                "{}: include_vision needs sidecars.files to include \
+                 preprocessor_config.json",
+                self.alias
+            ));
+        }
         // A GGUF's tokenizer cannot come from the GGUF, so a row that leaves
         // this defaulted is claiming something impossible.
         if self.source.kind == SourceKind::Gguf && self.sidecars.repo.is_none() {
@@ -549,6 +562,20 @@ mod entry_kind_tests {
         let missing = model_entry(EntryKind::Model, &["preprocessor_config.json"]);
         let err = missing.validate().unwrap_err();
         assert!(err.contains("tokenizer.json"), "{err}");
+    }
+
+    #[test]
+    fn a_combined_vision_model_requires_preprocessor_config() {
+        let mut missing = model_entry(EntryKind::Model, &["tokenizer.json"]);
+        missing.include_vision = true;
+        let err = missing.validate().unwrap_err();
+        assert!(err.contains("preprocessor_config.json"), "{err}");
+
+        missing
+            .sidecars
+            .files
+            .push("preprocessor_config.json".to_string());
+        assert!(missing.validate().is_ok(), "{:?}", missing.validate());
     }
 
     #[test]
