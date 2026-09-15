@@ -5,7 +5,7 @@
 //! per-row interleaved INT4 format. The only shared GPU contracts here are
 //! `MetalContext`, `PassEncoder`, and the zero-copy resident buffer wrapper.
 
-use std::sync::Arc;
+use std::{cell::RefCell, sync::Arc};
 
 use gpu::{MetalContext, PassEncoder, ResidentGpuWeights};
 use metal::{Buffer, ComputePipelineState, FunctionConstantValues};
@@ -30,6 +30,7 @@ pub(crate) struct GpuTensor {
 pub(crate) struct Component {
     pub(crate) store: crate::PackedTensorStore,
     pub(crate) resident: ResidentGpuWeights,
+    latest_pass: RefCell<Option<Arc<gpu::CommittedPass>>>,
 }
 
 impl Component {
@@ -52,7 +53,11 @@ impl Component {
             })?;
         let resident = ResidentGpuWeights::wrap(context.device(), mapped)
             .map_err(|e| format!("failed to wrap image payload in Metal: {e}"))?;
-        Ok(Self { store, resident })
+        Ok(Self {
+            store,
+            resident,
+            latest_pass: RefCell::new(None),
+        })
     }
 
     pub(crate) fn weight(&self, name: &str, expected_shape: &[usize]) -> Result<WeightRef, String> {
@@ -89,6 +94,18 @@ impl Component {
             storage,
             row_stride,
         })
+    }
+}
+
+impl Drop for Component {
+    fn drop(&mut self) {
+        // The resident Metal buffer aliases the mmap. Waiting for the latest
+        // pass also completes every earlier pass on this component's queue.
+        // This barrier is required on cancellation and error unwinding, where
+        // no output tensor reaches the normal read barrier.
+        if let Some(pass) = self.latest_pass.get_mut().take() {
+            pass.wait_ref();
+        }
     }
 }
 
@@ -134,9 +151,13 @@ pub(crate) fn read(tensor: &GpuTensor) -> Vec<f32> {
 
 // Image generation submits hundreds of small command buffers. Keep the
 // readiness handle on each output so same-queue work can continue without a
-// CPU wait, while every CPU read still waits for the producing pass.
-fn commit_deferred(pass: PassEncoder) -> Arc<gpu::CommittedPass> {
-    Arc::new(gpu::autorelease_pool(|| pass.commit()))
+// CPU wait, while every CPU read still waits for the producing pass. Record
+// the latest pass on the component so its mmap cannot be released before an
+// early-return teardown drains all resident-backed work.
+fn commit_deferred(pass: PassEncoder, component: &Component) -> Arc<gpu::CommittedPass> {
+    let ready = Arc::new(gpu::autorelease_pool(|| pass.commit()));
+    *component.latest_pass.borrow_mut() = Some(Arc::clone(&ready));
+    ready
 }
 
 fn with_ready(mut output: GpuTensor, ready: Arc<gpu::CommittedPass>) -> GpuTensor {
@@ -208,7 +229,7 @@ pub(crate) fn lookup(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -256,7 +277,7 @@ pub(crate) fn linear(
         buffers.push((component.resident.buffer(), 3, bias.offset));
     }
     dispatch_tiled(&pass, &shader, &buffers, &[(&params, 4)], rows, out_dim);
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -292,7 +313,7 @@ pub(crate) fn rms_norm(
         (rows as u64, 1, 1),
         (THREADS, 1, 1),
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -333,7 +354,7 @@ pub(crate) fn rope(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -373,7 +394,7 @@ pub(crate) fn adjacent_rope(
         ((rows * heads) as u64, 1, 1),
         (THREADS, 1, 1),
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -437,7 +458,7 @@ pub(crate) fn attention(
         (threadgroups as u64, 1, 1),
         ((head_dim * 4) as u64, 1, 1),
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -469,7 +490,7 @@ pub(crate) fn add(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -501,7 +522,7 @@ pub(crate) fn silu_mul(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -535,7 +556,7 @@ pub(crate) fn scale_rows(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -571,7 +592,7 @@ pub(crate) fn gate_add(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -607,7 +628,7 @@ pub(crate) fn layer_norm(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -641,7 +662,7 @@ pub(crate) fn scheduler_step(
         &[(&params, 3), (&count, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -697,7 +718,7 @@ pub(crate) fn conv2d(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -746,12 +767,13 @@ pub(crate) fn group_norm(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
 pub(crate) fn upsample(
     context: &mut MetalContext,
+    component: &Component,
     input: &GpuTensor,
     channels: usize,
     height: usize,
@@ -776,11 +798,15 @@ pub(crate) fn upsample(
         &[(&params, 2)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
-pub(crate) fn silu(context: &mut MetalContext, input: &GpuTensor) -> Result<GpuTensor, String> {
+pub(crate) fn silu(
+    context: &mut MetalContext,
+    component: &Component,
+    input: &GpuTensor,
+) -> Result<GpuTensor, String> {
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
@@ -797,12 +823,13 @@ pub(crate) fn silu(context: &mut MetalContext, input: &GpuTensor) -> Result<GpuT
         &[(&params, 2)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
 pub(crate) fn vae_attention(
     context: &mut MetalContext,
+    component: &Component,
     q: &GpuTensor,
     k: &GpuTensor,
     v: &GpuTensor,
@@ -835,7 +862,7 @@ pub(crate) fn vae_attention(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass);
+    let ready = commit_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 

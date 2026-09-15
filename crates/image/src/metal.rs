@@ -636,7 +636,7 @@ impl MetalImageBackend {
             crate::vae::GROUP_NORM_GROUPS,
             crate::vae::GROUP_NORM_EPS,
         )?;
-        let activated = metal_ops::silu(&mut self.context, &normalized)?;
+        let activated = metal_ops::silu(&mut self.context, component, &normalized)?;
         let conv1 = metal_ops::conv2d(
             &mut self.context,
             component,
@@ -663,7 +663,7 @@ impl MetalImageBackend {
             crate::vae::GROUP_NORM_GROUPS,
             crate::vae::GROUP_NORM_EPS,
         )?;
-        let activated = metal_ops::silu(&mut self.context, &normalized)?;
+        let activated = metal_ops::silu(&mut self.context, component, &normalized)?;
         let conv2 = metal_ops::conv2d(
             &mut self.context,
             component,
@@ -794,8 +794,16 @@ impl MetalImageBackend {
             1,
             0,
         )?;
-        let attended =
-            metal_ops::vae_attention(&mut self.context, &q, &k, &v, channels, height, width)?;
+        let attended = metal_ops::vae_attention(
+            &mut self.context,
+            component,
+            &q,
+            &k,
+            &v,
+            channels,
+            height,
+            width,
+        )?;
         let out = metal_ops::conv2d(
             &mut self.context,
             component,
@@ -1314,6 +1322,7 @@ impl MetalImageBackend {
             if has_upsampler {
                 current = metal_ops::upsample(
                     &mut self.context,
+                    &component,
                     &current,
                     out_channels,
                     cur_height,
@@ -1355,7 +1364,7 @@ impl MetalImageBackend {
             crate::vae::GROUP_NORM_GROUPS,
             crate::vae::GROUP_NORM_EPS,
         )?;
-        let activated = metal_ops::silu(&mut self.context, &normalized)?;
+        let activated = metal_ops::silu(&mut self.context, &component, &normalized)?;
         let output = metal_ops::conv2d(
             &mut self.context,
             &component,
