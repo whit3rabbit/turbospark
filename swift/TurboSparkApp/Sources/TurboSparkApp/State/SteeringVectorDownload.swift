@@ -98,6 +98,81 @@ enum SteeringVectorDownloadError: LocalizedError {
 enum SteeringVectorDownloader {
     static let maxBytes = 32 * 1024 * 1024
 
+    final class BoundedDownloadDelegate: NSObject, URLSessionDataDelegate,
+        @unchecked Sendable
+    {
+        private let file: FileHandle
+        private let maxBytes: Int
+        private let completion: (Result<Void, Error>) -> Void
+        private var receivedBytes = 0
+        private var finished = false
+
+        init(file: FileHandle, maxBytes: Int, completion: @escaping (Result<Void, Error>) -> Void) {
+            self.file = file
+            self.maxBytes = maxBytes
+            self.completion = completion
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            dataTask: URLSessionDataTask,
+            didReceive response: URLResponse,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+        ) {
+            guard let http = response as? HTTPURLResponse else {
+                finish(.failure(SteeringVectorDownloadError.invalidResponse))
+                completionHandler(.cancel)
+                return
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                finish(.failure(SteeringVectorDownloadError.httpStatus(http.statusCode)))
+                completionHandler(.cancel)
+                return
+            }
+            if response.expectedContentLength > Int64(maxBytes) {
+                finish(.failure(SteeringVectorDownloadError.tooLarge))
+                completionHandler(.cancel)
+                return
+            }
+            completionHandler(.allow)
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            guard !finished else { return }
+            guard data.count <= maxBytes - receivedBytes else {
+                finish(.failure(SteeringVectorDownloadError.tooLarge))
+                dataTask.cancel()
+                return
+            }
+            do {
+                try file.write(contentsOf: data)
+                receivedBytes += data.count
+            } catch {
+                finish(.failure(error))
+                dataTask.cancel()
+            }
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            didCompleteWithError error: Error?
+        ) {
+            if let error {
+                finish(.failure(error))
+            } else {
+                finish(.success(()))
+            }
+        }
+
+        private func finish(_ result: Result<Void, Error>) {
+            guard !finished else { return }
+            finished = true
+            try? file.close()
+            completion(result)
+        }
+    }
+
     static func managedPath(for source: SteeringVectorSource) -> URL {
         let digest = SHA256.hash(data: Data(source.identity.utf8))
             .prefix(8)
@@ -131,23 +206,19 @@ enum SteeringVectorDownloader {
             // repository through its response status below.
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw SteeringVectorDownloadError.invalidResponse
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw SteeringVectorDownloadError.httpStatus(http.statusCode)
-        }
-        if let contentLength = http.value(forHTTPHeaderField: "Content-Length").flatMap(Int.init),
-           contentLength > maxBytes {
-            throw SteeringVectorDownloadError.tooLarge
-        }
-        guard data.count <= maxBytes else { throw SteeringVectorDownloadError.tooLarge }
-
         let directory = AppStorageRoot.subdirectory("steering-vectors")
         let temporary = directory.appendingPathComponent("." + UUID().uuidString + ".partial")
-        try data.write(to: temporary, options: .atomic)
         defer { try? FileManager.default.removeItem(at: temporary) }
+        _ = FileManager.default.createFile(atPath: temporary.path, contents: nil)
+        let file = try FileHandle(forWritingTo: temporary)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let delegate = BoundedDownloadDelegate(
+                file: file,
+                maxBytes: maxBytes,
+                completion: { continuation.resume(with: $0) })
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            session.dataTask(with: request).resume()
+        }
 
         let info: ControlVectorInfo
         do {
