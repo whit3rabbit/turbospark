@@ -448,15 +448,16 @@ pub(crate) fn encode_gemv_any(
 /// step looping per token, which is exactly the split
 /// `docs/MTP_SPECULATIVE.md`'s composite assumes.
 ///
-/// **EVERY DTYPE BUT INT4-AFFINE IS REFUSED BY NAME, NEVER LOOPED.** A
-/// fallback of `batch` sequential GEMVs is numerically identical, so it
-/// would pass every parity and losslessness test there is -- while making a
-/// "batched" verify measure the SEQUENTIAL engine and report its cost as the
-/// batched one. That is AGENTS.md Gotcha 35's failure (a measurement tool
-/// must not inherit a silent default) one layer down, and it would corrupt
-/// the only number step 4 exists to produce. The refusal is not a temporary
-/// gap either: the 1-bit and 2-bit checkpoints of this same architecture and
-/// every GGUF block type have no batched kernel at all.
+/// **EVERY DTYPE WITHOUT A BATCHED KERNEL IS REFUSED BY NAME, NEVER
+/// LOOPED.** A fallback of `batch` sequential GEMVs is numerically
+/// identical, so it would pass every parity and losslessness test there is
+/// -- while making a "batched" verify measure the SEQUENTIAL engine and
+/// report its cost as the batched one. That is AGENTS.md Gotcha 35's
+/// failure (a measurement tool must not inherit a silent default) one
+/// layer down, and it would corrupt the only number step 4 exists to
+/// produce. The affine sub-byte pair joined INT4 (ROADMAP P3.3): both
+/// kernels are bit-exact against their GEMVs at every batch width, which is
+/// the gate that admits them. Every GGUF block type still has none.
 ///
 /// The batch bound is an `Err` here and an `assert!` inside
 /// `encode_dequant_int4_gemm_resident`. Exceeding `MAX_BATCH_ROWS` is a
@@ -476,6 +477,7 @@ pub(crate) fn encode_gemm_any(
     y: (&gpu::MetalBuffer, u64),
     batch: usize,
 ) -> Result<(), RealForwardError> {
+    let base = index.header.index_size;
     if !(1..=gpu::MAX_BATCH_ROWS).contains(&batch) {
         return Err(RealForwardError::Unsupported(format!(
             "tensor {name}: batch {batch} outside 1..={} (the batched INT4 kernel's \
@@ -497,10 +499,45 @@ pub(crate) fn encode_gemm_any(
             gpu::encode_dequant_int4_gemm_resident(context, pass, &w, x, y, batch)
                 .map_err(RealForwardError::Gpu)
         }
+        // The sub-byte affine pair (ROADMAP P3.3), mirroring
+        // `encode_gemv_any`'s arms beside them: the companions are FP16 and
+        // the group size is the checkpoint's, so it is DERIVED from the
+        // entry rather than named, and both batched kernels are held
+        // bit-exact against their GEMVs by the parity tests rather than
+        // asserted here.
+        DTYPE_INT1_AFFINE => {
+            let group_size = affine_group_size(e, name, rows, cols, 1)?;
+            let w = gpu::Int1ResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                scales_offset: weights.gpu_offset(e.scale_offset - base),
+                biases_offset: weights.gpu_offset(e.bias_offset - base),
+                rows,
+                cols,
+                group_size,
+            };
+            gpu::encode_dequant_int1_gemm_resident(context, pass, &w, x, y, batch)
+                .map_err(RealForwardError::Gpu)
+        }
+        DTYPE_INT2_AFFINE => {
+            let group_size = affine_group_size(e, name, rows, cols, 2)?;
+            let w = gpu::Int2ResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                scales_offset: weights.gpu_offset(e.scale_offset - base),
+                biases_offset: weights.gpu_offset(e.bias_offset - base),
+                rows,
+                cols,
+                group_size,
+            };
+            gpu::encode_dequant_int2_gemm_resident(context, pass, &w, x, y, batch)
+                .map_err(RealForwardError::Gpu)
+        }
         other => Err(RealForwardError::Unsupported(format!(
-            "tensor {name}: dtype {other} has no BATCHED kernel; only INT4-affine (4) \
-             does. Refused rather than looped: a sequential fallback here is \
-             numerically identical and would silently measure the unbatched engine"
+            "tensor {name}: dtype {other} has no BATCHED kernel; INT4-affine (4), \
+             1-bit affine (15) and 2-bit affine (16) do. Refused rather than looped: \
+             a sequential fallback here is numerically identical and would silently \
+             measure the unbatched engine"
         ))),
     }
 }

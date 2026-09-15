@@ -188,3 +188,122 @@ kernel void dequant_int1_gemv_symmetric_simd(
         y[row] = half(acc);
     }
 }
+
+// ============================================================================
+// dequant_int1_gemm_simd - the GEMV above with B right-hand sides instead of
+// one, so the speculative verify pass can run B drafted tokens through one
+// 1-bit matrix in ONE dispatch. PORT-LOCAL, like everything in this file:
+// there is no upstream kernel to mirror.
+//
+// The idea is `dequant_int4_batch.metal`'s, and it pays MORE here: at one bit
+// the weight bytes are eight times smaller than the FP16 activations they
+// feed, so B separate GEMV dispatches re-read the whole matrix B times for
+// the sake of B token activations that would fit in registers together.
+// Each packed byte is read once and multiplied into B accumulators.
+//
+// IT IS BIT-IDENTICAL TO B CALLS OF `dequant_int1_gemv_simd`, and the
+// structure is what makes that true rather than an assertion about it: the
+// row mapping (one SIMD group per output row, `row = tg * 8 + sg`), the
+// lane-strided byte walk (`j = lane; j < row_bytes; j += 32`), the per-byte
+// group resolution, the affine factoring order (`fma(s, dot)` then
+// `fma(b, sum)` into one FP32 accumulator per byte) and the 32-lane
+// `simd_sum` partition are the GEMV's own, unchanged. Only the inner loop
+// is new, and it replicates the GEMV's per-byte arithmetic once per right-
+// hand side in the same element order. `dequant_1bit_gemm_parity.rs` holds
+// every batch width 1..16 to that contract against the actual GEMV.
+//
+// B IS BAKED as a function constant, for the reason the INT4 batch kernel's
+// header records: baked B lets the `for (bi < B)` loop unroll and bounds the
+// live accumulator set to the batch in flight, on a kernel whose register
+// file is the binding constraint. The key MUST carry the baked values
+// (crate Gotcha 1): an axis missing from `pipeline`'s key is served whichever
+// shape compiled first, and a wrong baked B here produces finite, plausible,
+// quietly wrong rows.
+//
+// NO R AXIS. The INT4 kernel's row-block constant exists because a measured
+// sweep found R=2/4 wins on its shapes; nothing has measured R for this one,
+// and a shape nobody measured is not a shape to bake. One row per SIMD
+// group is the GEMV's mapping and the parity test's baseline. Measure first.
+// ============================================================================
+
+constant constexpr uint kMaxBatchRows1BitGemm = 16;
+
+constant uint FC_GEMM1_M      [[function_constant(100)]];
+constant uint FC_GEMM1_N      [[function_constant(101)]];
+constant uint FC_GEMM1_B      [[function_constant(102)]];
+constant bool FC_GEMM1_USE_FC [[function_constant(103)]];
+
+kernel void dequant_int1_gemm_simd(
+    device const uint8_t* W      [[buffer(0)]],
+    device const half*    scales [[buffer(1)]],
+    device const half*    biases [[buffer(2)]],
+    device const half*    x      [[buffer(3)]],
+    device half*          y      [[buffer(4)]],
+    constant uint&        M      [[buffer(5)]],
+    constant uint&        N      [[buffer(6)]],
+    constant uint&        G      [[buffer(7)]],
+    constant uint&        B      [[buffer(8)]],
+    uint                  tg_idx [[threadgroup_position_in_grid]],
+    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
+    uint                  lane   [[thread_index_in_simdgroup]]
+) {
+    const uint m_dim = (is_function_constant_defined(FC_GEMM1_USE_FC) && FC_GEMM1_USE_FC &&
+                        is_function_constant_defined(FC_GEMM1_M)) ? FC_GEMM1_M : M;
+    const uint n_dim = (is_function_constant_defined(FC_GEMM1_USE_FC) && FC_GEMM1_USE_FC &&
+                        is_function_constant_defined(FC_GEMM1_N)) ? FC_GEMM1_N : N;
+    const uint b_dim = (is_function_constant_defined(FC_GEMM1_USE_FC) && FC_GEMM1_USE_FC &&
+                        is_function_constant_defined(FC_GEMM1_B)) ? FC_GEMM1_B : B;
+
+    const uint row = tg_idx * kRowsPerTG1Bit + sg_idx;
+    if (row >= m_dim) return;
+
+    const uint row_bytes       = n_dim / 8u;
+    const uint n_groups        = n_dim / G;
+    const uint bytes_per_group = G / 8u;
+    device const uint8_t* W_row = W      + uint(row) * row_bytes;
+    device const half*    s_row = scales + uint(row) * n_groups;
+    device const half*    b_row = biases + uint(row) * n_groups;
+
+    // Declared at the cap because MSL needs a compile-time bound; the baked
+    // `b_dim` stops every loop at the batch in flight so the optimizer drops
+    // the rest. THAT COLLAPSE IS UNMEASURED HERE -- the INT4 kernel's header
+    // records that no static instrument on this device can see register
+    // pressure, and the same caveat applies until a c(M) sweep says otherwise.
+    float acc[kMaxBatchRows1BitGemm];
+    for (uint bi = 0; bi < b_dim; ++bi) {
+        acc[bi] = 0.0f;
+    }
+
+    for (uint j = lane; j < row_bytes; j += kLanesPerRow1Bit) {
+        const uint  g = j / bytes_per_group;
+        const float s = float(s_row[g]);
+        const float b = float(b_row[g]);
+        const uint  byte = uint(W_row[j]);
+        const uint  elem = j * 8u;
+        #pragma clang loop unroll_count(4)
+        for (uint bi = 0; bi < b_dim; ++bi) {
+            device const half* x_b = x + bi * n_dim;
+            float dot = 0.0f;
+            float sum = 0.0f;
+            for (uint k = 0; k < 8u; ++k) {
+                const float xv = float(x_b[elem + k]);
+                // LSB-first, exactly the GEMV's order: the bit order within
+                // the byte is load-bearing (see this file's header), and so
+                // is the accumulation order, because the parity contract is
+                // bit-exactness with the GEMV rather than equality up to
+                // rounding.
+                dot = fma(float((byte >> k) & 1u), xv, dot);
+                sum += xv;
+            }
+            acc[bi] = fma(s, dot, acc[bi]);
+            acc[bi] = fma(b, sum, acc[bi]);
+        }
+    }
+
+    for (uint bi = 0; bi < b_dim; ++bi) {
+        const float total = simd_sum(acc[bi]);
+        if (lane == 0) {
+            y[bi * m_dim + row] = half(total);
+        }
+    }
+}

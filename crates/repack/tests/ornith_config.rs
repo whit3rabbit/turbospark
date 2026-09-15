@@ -378,7 +378,7 @@ fn the_mlx_4bit_conversion_parses_to_the_same_baseline_and_a_supported_shape() {
     );
 
     let quant = parse_gemma4_quantization(&mlx4_config_json()).expect("quantization parses");
-    assert_eq!(quant.default_bits, 4, "the batched verify is INT4-only");
+    assert_eq!(quant.default_bits, 4, "the routed pair quantizes at 4 bits");
     assert_eq!(quant.group_size, 64);
     assert!(
         is_supported_affine_shape(quant.default_bits, quant.group_size),

@@ -47,8 +47,10 @@ mod attention_tq;
 mod bytes;
 #[cfg(target_os = "macos")]
 mod context;
+mod dequant_1bit_gemm_batch;
 #[cfg(target_os = "macos")]
 mod dequant_1bit_gemv;
+mod dequant_2bit_gemm_batch;
 #[cfg(target_os = "macos")]
 mod dequant_2bit_gemv;
 #[cfg(target_os = "macos")]
@@ -143,11 +145,15 @@ pub use context::{
     write_buffer_bytes, CommittedPass, GpuError, MetalContext, PassEncoder,
 };
 #[cfg(target_os = "macos")]
+pub use dequant_1bit_gemm_batch::{dequant_int1_gemm_resident, encode_dequant_int1_gemm_resident};
+#[cfg(target_os = "macos")]
 pub use dequant_1bit_gemv::{
     dequant_int1_gemv, dequant_int1_gemv_resident, dequant_int1_gemv_symmetric,
     encode_dequant_int1_gemv_resident, encode_embed_lookup_int1, int1_row_bytes, Int1AffineRowGpu,
     Int1ResidentMatrix, Int1SymmetricRowGpu,
 };
+#[cfg(target_os = "macos")]
+pub use dequant_2bit_gemm_batch::{dequant_int2_gemm_resident, encode_dequant_int2_gemm_resident};
 #[cfg(target_os = "macos")]
 pub use dequant_2bit_gemv::{
     dequant_int2_gemv, dequant_int2_gemv_resident, encode_dequant_int2_gemv_resident,

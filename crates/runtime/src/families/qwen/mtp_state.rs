@@ -162,11 +162,14 @@ impl MtpState {
         self.kv.reset();
     }
 
-    /// The dtype tag [`crate::real_forward_dispatch::encode_gemm_any`] accepts.
-    /// A LITERAL, mirroring that function's own arm for the reason its comment
-    /// gives: spelling it as a named constant there becomes a catch-all
-    /// binding rather than a comparison.
-    const BATCHED_GEMM_DTYPE: u8 = 4;
+    /// The dtype tags [`crate::real_forward_dispatch::encode_gemm_any`]
+    /// accepts. LITERALS, mirroring that function's own arms for the reason
+    /// its comment gives: a named constant in a match there becomes a
+    /// catch-all binding rather than a comparison. 4 is INT4-affine; 15 and
+    /// 16 are the 1-bit and 2-bit affine pair, whose batched kernels landed
+    /// with ROADMAP P3.3 and are held bit-exact against their GEMVs by the
+    /// gpu crate's parity tests.
+    const BATCHED_GEMM_DTYPES: [u8; 3] = [4, 15, 16];
 
     /// Why a speculative round could not run on this install, or `None` if it
     /// can. Checked at OPEN, so a caller learns before generating rather than
@@ -263,10 +266,10 @@ impl MtpState {
                 "cannot tell whether the batched verify can run: {probe} is not in \
                  the resident index"
             )),
-            Some(e) if e.dtype != Self::BATCHED_GEMM_DTYPE => Some(format!(
-                "the batched verify is INT4-only and this install's {probe} is dtype {} \
-                 (the 1-bit and 2-bit checkpoints of this architecture have no batched \
-                 kernel); the model decodes normally, only speculation is unavailable",
+            Some(e) if !Self::BATCHED_GEMM_DTYPES.contains(&e.dtype) => Some(format!(
+                "the batched verify covers INT4-affine (4) and the 1-bit (15) / 2-bit \
+                 (16) affine pair, and this install's {probe} is dtype {}; the model \
+                 decodes normally, only speculation is unavailable",
                 e.dtype
             )),
             Some(_) => {

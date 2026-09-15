@@ -343,8 +343,9 @@ pub fn dflash_speculation_blocker(
         None => Some(format!(
             "cannot tell whether the verify can run: {probe} is missing"
         )),
-        Some(e) if e.dtype != 4 => Some(format!(
-            "the batched verify is INT4-only and this install's {probe} is dtype {}",
+        Some(e) if ![4, 15, 16].contains(&e.dtype) => Some(format!(
+            "the batched verify covers INT4-affine (4) and the 1-bit (15) / 2-bit (16) \
+             affine pair, and this install's {probe} is dtype {}",
             e.dtype
         )),
         Some(_) => {
