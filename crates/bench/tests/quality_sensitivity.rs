@@ -40,7 +40,8 @@ mod quality_common;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::path::{Component, Path, PathBuf};
 
 /// Damage one 4 KiB page in every `DAMAGE_PAGE_STRIDE`.
 ///
@@ -149,15 +150,81 @@ fn damage_experts(install: &Path) -> (usize, u64) {
     .expect("packed_experts/layout.json should describe the damage ranges");
     let mut files = 0usize;
     let mut pages = 0u64;
+    let install = install
+        .canonicalize()
+        .expect("the cloned install directory should resolve");
+    let expert_dir = install
+        .join("packed_experts")
+        .canonicalize()
+        .expect("the cloned packed_experts directory should resolve");
+    assert_eq!(
+        expert_dir.parent(),
+        Some(install.as_path()),
+        "packed_experts must resolve directly beneath the cloned install"
+    );
 
     for layer in &layout.layers {
-        let path = install.join("packed_experts").join(&layer.file);
+        let mut components = Path::new(&layer.file).components();
+        assert!(
+            matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
+            "expert blob path must be a basename: {}",
+            layer.file
+        );
+        let path = expert_dir
+            .join(&layer.file)
+            .canonicalize()
+            .expect("expert blob should resolve in the clone");
+        assert_eq!(
+            path.parent(),
+            Some(expert_dir.as_path()),
+            "expert blob must resolve directly beneath the cloned packed_experts directory"
+        );
+        let metadata = path.metadata().expect("blob metadata");
+        assert!(metadata.is_file(), "expert blob should be a regular file");
+        let len = metadata.len();
         let mut weight_ranges = Vec::new();
         for expert in &layer.experts {
+            assert!(
+                expert.size <= layer.expert_stride,
+                "expert {} exceeds its declared stride in {}",
+                expert.expert,
+                layer.file
+            );
+            let expert_end = expert
+                .offset
+                .checked_add(expert.size)
+                .expect("expert range should not overflow");
+            assert!(
+                expert_end <= len,
+                "expert {} exceeds the bounds of {}",
+                expert.expert,
+                layer.file
+            );
             for (role, tensor) in &expert.sub_tensors {
                 if matches!(role.as_str(), "gate" | "up" | "down") && tensor.dtype == "u32" {
-                    let start = expert.offset + tensor.offset;
-                    weight_ranges.push(start..start + tensor.size);
+                    let tensor_end = tensor
+                        .offset
+                        .checked_add(tensor.size)
+                        .expect("tensor range should not overflow");
+                    assert!(
+                        tensor_end <= expert.size,
+                        "{role} tensor exceeds expert {} in {}",
+                        expert.expert,
+                        layer.file
+                    );
+                    let start = expert
+                        .offset
+                        .checked_add(tensor.offset)
+                        .expect("tensor file offset should not overflow");
+                    let end = start
+                        .checked_add(tensor.size)
+                        .expect("tensor file range should not overflow");
+                    assert!(
+                        end <= len,
+                        "{role} tensor exceeds the bounds of {}",
+                        layer.file
+                    );
+                    weight_ranges.push(start..end);
                 }
             }
         }
@@ -170,9 +237,17 @@ fn damage_experts(install: &Path) -> (usize, u64) {
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(&path)
             .expect("expert blob should be writable in the clone");
-        let len = file.metadata().expect("blob metadata").len();
+        let opened_metadata = file.metadata().expect("opened blob metadata");
+        assert!(
+            opened_metadata.is_file()
+                && opened_metadata.len() == len
+                && opened_metadata.dev() == metadata.dev()
+                && opened_metadata.ino() == metadata.ino(),
+            "expert blob changed while it was being validated"
+        );
         let mut page = vec![0u8; PAGE_BYTES];
         let mut offset = 0u64;
         while offset + PAGE_BYTES as u64 <= len {
