@@ -910,6 +910,15 @@ keeps resolving.
     headers in `didReceive response:` and cancel the task immediately when
     streamed chunks exceed the byte limit, writing chunks incrementally to disk.
 
+78. **PRESERVE UNCOMMITTED EDITS ON FAILED GIT SWITCH.**
+    A failed `git switch` must not fall back to `git checkout -- <branch>`
+    because `-- <name>` treats the operand as a pathspec and can silently
+    overwrite or discard uncommitted modifications in tracked files.
+    Reject option-like branch names (prefixed with `-`) early with an
+    invalid-branch error, probe `git switch -h` capability (exit code 129
+    proves `switch` is recognized) so normal switch rejections do not trigger
+    legacy fallback, and format legacy branch checkout without `--`.
+
 
 
 ## The `state#N` ledger
