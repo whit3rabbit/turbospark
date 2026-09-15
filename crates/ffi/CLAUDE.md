@@ -348,6 +348,14 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     it alone rather than reason about a feature this session's `generate/`
     never exercises either.
 
+    **Server shutdown is bounded by a 1-second backstop.** Axum's graceful
+    shutdown waits for active requests to finish, and `FfiChatModel` cancels
+    in-flight generation via `stopping`. A stalled client connection (such as
+    a paused HTTP request body) cannot observe that flag; dropping the server
+    task after `SHUTDOWN_GRACE_PERIOD` ensures `ts_server_stop` never blocks
+    indefinitely (`ts_server_stop_is_bounded_when_a_request_body_stalls`).
+
+
     **`ServerInfo` REPORTS THE BOUND HOST AS WELL AS THE BOUND PORT, AND THE
     SECOND FIELD EXISTS BECAUSE THE FIRST ONE'S DISCIPLINE WAS ONLY HALF
     APPLIED.** Added 2026-08-30. `Server::start` binds `format!("127.0.0.1:
