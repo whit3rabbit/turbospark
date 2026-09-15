@@ -159,10 +159,12 @@ extension AppModel {
 
     /// The global prompt an isolated subagent inherits. A per-chat prompt is
     /// deliberately excluded because a subagent has a fresh context, while a
-    /// selected personality is app-wide like the default system prompt.
+    /// selected personality and global SOUL are app-wide like the default
+    /// system prompt.
     public var appWideSystemPrompt: String {
         [
             defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            resolvedSoulPrompt,
             resolvedPersonalityPrompt
         ]
         .filter { !$0.isEmpty }
@@ -210,6 +212,7 @@ extension AppModel {
     /// and `buildSystemPrompt` stays the one place that knows the ORDER.
     public enum SystemPromptSection {
         case userPrompt
+        case soul
         case personality
         case agentPrompt
         case workspace
@@ -242,6 +245,11 @@ extension AppModel {
         }
 
         let personalityPrompt = resolvedPersonalityPrompt
+        let soulPrompt = resolvedSoulPrompt
+        if !soulPrompt.isEmpty {
+            sections.append((.soul, soulPrompt))
+        }
+
         if !personalityPrompt.isEmpty {
             sections.append((.personality, personalityPrompt))
         }
@@ -326,7 +334,7 @@ extension AppModel {
     /// Constructs the comprehensive system prompt: the user's own prompt, then
     /// agent instructions, project rules, tool definitions and skills.
     ///
-    /// **`userPrompt` IS THE ONLY SECTION THAT SURVIVES A NIL PROJECT**, and
+    /// **`userPrompt` and global identity sections survive a nil project**, and
     /// that split is the whole point of the guard below rather than an
     /// accident of ordering. Everything after it is project-derived, and one
     /// of those sections is the TOOL VOCABULARY: emitting it without a project

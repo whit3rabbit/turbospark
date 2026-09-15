@@ -714,6 +714,10 @@ public enum AppToolRegistry {
             case "readmcpresource", "read_mcp_resource", "read_resource":
                 output = try await McpResourceExecutor.readResource(arguments: call.arguments, project: project, rootURL: rootURL)
 
+            case "tool_search", "tool_describe", "tool_call":
+                output = try await ToolSearchExecutor.execute(
+                    call: call, project: project, chatID: chatID)
+
             case "call_mcp_tool", "callmcptool", "mcp_tool":
                 guard let serverName = call.arguments["server"]
                     ?? call.arguments["server_name"]
@@ -786,7 +790,7 @@ public enum AppToolRegistry {
         }
     }
 
-    private static func executeMcpCall(
+    static func executeMcpCall(
         serverName: String,
         toolName: String,
         arguments: [String: String],

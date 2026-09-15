@@ -160,6 +160,7 @@ extension AppToolRegistry {
         "enterworktree", "enter_worktree",
         "exitworktree", "exit_worktree",
         "memory", "remember",
+        "tool_search", "tool_describe", "tool_call",
         "call_mcp_tool", "callmcptool", "mcp_tool",
         "listmcpresources", "list_mcp_resources", "list_resources",
         "readmcpresource", "read_mcp_resource", "read_resource"
@@ -189,6 +190,7 @@ extension AppToolRegistry {
         "enterworktree", "enter_worktree",
         "exitworktree", "exit_worktree",
         "memory", "remember",
+        "tool_call",
         "call_mcp_tool", "callmcptool", "mcp_tool",
         "listmcpresources", "list_mcp_resources", "list_resources",
         "readmcpresource", "read_mcp_resource", "read_resource"

@@ -773,6 +773,16 @@ Unlike single-purpose scripting agents, TurboSpark tools run directly in-process
 1. **Custom JSON Tools**: Located in `.turbospark/tools/*.json` or `~/.turbospark/tools/*.json`. Declares parameter schemas and maps to execution commands with argument injection via `TOOL_ARG_<KEY>` environment variables.
 2. **Model Context Protocol (MCP)**: Supports stdio and SSE servers declared in `.mcp.json`. Exposes server tools as `mcp__<server>__<tool>` and resource tools via `call_mcp_tool`, `list_mcp_resources`, and `read_mcp_resource`.
 
+Dynamic MCP tools use progressive disclosure when the full discovered catalog
+would be large. `tool_search` accepts a JSON string array of independent
+queries and returns ranked names with compact summaries. `tool_describe`
+accepts exact names and returns their full input schemas. `tool_call` accepts
+one exact name plus a JSON object of arguments and re-runs the target MCP
+hooks and permission checks. The bridge catalog is rebuilt from enabled,
+non-denied servers on each request. Wrapped calls that need interactive
+approval return a refusal directing the model to issue the direct MCP call in
+the main conversation, where the approval card is available.
+
 ---
 
 ## Tool Permission and Gating Matrix
@@ -807,6 +817,9 @@ The table below summarizes tool permissions across TurboSpark's four operating m
 | `agent` | `.task` | No | Evaluated | Deny | Ask | Capped Depth | Allow |
 | `memory` | `.fileWrite` | Yes | Yes | Allow | Allow | Allow | Allow |
 | `croncreate` | `.automation` | No | No | Deny | Ask | Deny | Allow |
+| `tool_search` | `.fileRead` | No | Yes | Allow | Allow | Allow | Allow |
+| `tool_describe` | `.fileRead` | No | Yes | Allow | Allow | Allow | Allow |
+| `tool_call` | `.mcp` | Yes | Evaluated | Deny | Ask | Inner MCP gate | Allow |
 | `mcp__*` | `.mcp` | Yes | Evaluated | Deny | Ask | Auto-Approve rule | Allow |
 
 ---

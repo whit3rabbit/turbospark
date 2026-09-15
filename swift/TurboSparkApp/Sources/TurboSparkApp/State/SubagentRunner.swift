@@ -138,24 +138,17 @@ public enum SubagentRunner {
         }
 
         // 4. Discovered MCP tools, under the agent's own allow-list too. The
-        // main loop advertises these through `systemPromptAddendum`; a
-        // subagent without them would propose `mcp__` calls the parent
-        // demonstrably has, or never use servers the project enabled.
+        // full schemas stay deferred, matching the main prompt. The
+        // available-tool list below still retains the direct definitions for
+        // guardrail validation and exact-name compatibility.
         if let project {
             let servers = AppToolCatalogMcp.visibleServers(
                 global: GlobalMcpFileStore.load().servers, project: project)
-            let mcpDefinitions = AppToolCatalogMcp.toolDefinitions(
+            let deferred = ToolSearchCatalog.descriptors(
                 servers: servers, permissions: project.permissions)
-                .filter { agent.isToolAllowed($0.function.name) }
-            if !mcpDefinitions.isEmpty {
-                var lines: [String] = [
-                    "## MCP Server Tools",
-                    "Tools discovered from connected MCP servers. Call them by their full `mcp__<server>__<tool>` name; each entry lists its arguments:",
-                ]
-                for tool in mcpDefinitions {
-                    lines.append("- `\(tool.function.name)`: \(tool.function.description)")
-                }
-                sections.append(lines.joined(separator: "\n"))
+                .filter { agent.isToolAllowed($0.name) }
+            if !deferred.isEmpty {
+                sections.append(ToolSearchCatalog.promptListing(descriptors: deferred))
             }
         }
 

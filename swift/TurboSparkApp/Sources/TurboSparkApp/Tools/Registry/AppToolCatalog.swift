@@ -25,6 +25,9 @@ public enum AppToolCatalog {
     /// MCP server integration tools.
     public static let mcpTools: [OpenAITool] = McpToolDefinitions.all
 
+    /// Progressive-disclosure tools for dynamic MCP servers.
+    public static let toolSearchTools: [OpenAITool] = ToolSearchToolDefinitions.all
+
     /// Interactive questions, plan mode, findings, skills, and feedback tools.
     public static let planningInteractiveTools: [OpenAITool] = PlanningInteractiveToolDefinitions.all + SkillToolDefinitions.all
 
@@ -61,6 +64,7 @@ public enum AppToolCatalog {
         tools.append(contentsOf: planningInteractiveTools)
         tools.append(contentsOf: memoryTools)
         tools.append(contentsOf: automationTools)
+        tools.append(contentsOf: toolSearchTools)
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: nil).map { $0.openAITool }
         tools.append(contentsOf: custom)
         return tools.filter { AppToolRegistry.isImplemented($0.function.name) }
@@ -114,6 +118,10 @@ public enum AppToolCatalog {
 
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).map { $0.openAITool }
         list.append(contentsOf: custom)
+        let missingToolSearchTools = toolSearchTools.filter { searchTool in
+            !list.contains { existingTool in existingTool.function.name == searchTool.function.name }
+        }
+        list.append(contentsOf: missingToolSearchTools)
         if !webToolsEnabled {
             list.removeAll { category(for: $0.function.name, projectURL: projectURL) == .web }
         }
@@ -149,8 +157,10 @@ public enum AppToolCatalog {
             return .web
         case "batch", "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
-        case "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource":
+        case "tool_call", "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource":
             return .mcp
+        case "tool_search", "tool_describe":
+            return .fileRead
         case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file", "recall_tool_output":
             return .fileRead
         default:
@@ -282,16 +292,10 @@ public enum AppToolCatalog {
             contextTokens: contextTokens,
             availableAgents: availableAgents,
             webToolsEnabled: webToolsEnabled)
-        let definitions = AppToolCatalogMcp.toolDefinitions(servers: mcpServers, permissions: project?.permissions)
-        guard !definitions.isEmpty else { return base }
-        var lines: [String] = [
-            "",
-            "## MCP Server Tools",
-            "Tools discovered from connected MCP servers. Call them by their full `mcp__<server>__<tool>` name; each entry lists its arguments:",
-        ]
-        for tool in definitions {
-            lines.append("- `\(tool.function.name)`: \(tool.function.description)")
-        }
-        return base + "\n" + lines.joined(separator: "\n")
+        let deferred = ToolSearchCatalog.descriptors(
+            servers: mcpServers, permissions: project?.permissions)
+        guard !deferred.isEmpty else { return base }
+        return base + ToolSearchCatalog.promptListing(
+            descriptors: deferred, contextTokens: contextTokens)
     }
 }

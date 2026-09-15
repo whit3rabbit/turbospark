@@ -546,18 +546,33 @@ quarantine-protected nor test-redirected (Gotcha 43).
 
 Three layers sit between a discovered MCP tool and a model's use of it.
 Each exists because the turn path has NO `tools` array: the model reads its
-vocabulary from the system prompt and emits `<tool_call>` blocks, so
-whatever the prompt does not name, the model cannot call reliably.
+vocabulary from the system prompt and emits `<tool_call>` blocks. Dynamic MCP
+tools therefore use progressive disclosure: the bridge tools are eager, while
+the dynamic catalog exposes names and short descriptions first, then loads a
+full schema only when requested.
 
-### Advertisement (`AppToolCatalogMcp`)
+### Advertisement and progressive disclosure (`AppToolCatalogMcp`, `ToolSearchCatalog`)
 
-`AppToolCatalogMcp.toolDefinitions` turns the cache into one advertised
-entry per discovered tool, named `mcp__<server>__<tool>` -- the exact
-spelling `AppToolRegistry.execute` and `AppToolPermissionEngine` resolve.
-`AppToolCatalog.systemPromptAddendum(for:mcpServers:project:)` appends the
-lines, and `SubagentRunner.buildSystemPrompt` appends the same section so a
-subagent sees what the parent sees. The `.coder` and `.general` agent types
-now include the static MCP tool group.
+`AppToolCatalogMcp.toolDefinitions` still owns the complete direct MCP
+definitions for callers that need exact schemas. The normal system prompt
+uses `ToolSearchCatalog.promptListing` instead: it advertises `tool_search`,
+`tool_describe`, and `tool_call`, followed by a bounded name and description
+manifest. `tool_search` accepts multiple independent queries, `tool_describe`
+returns the raw JSON schemas for exact names, and `tool_call` invokes one
+deferred MCP tool. The catalog is rebuilt from the current enabled servers and
+cache on each bridge request, so disabling a server or denying a tool is
+visible immediately.
+
+The main conversation is the only path that can surface an interactive
+approval card. A wrapped `tool_call` re-runs the MCP hooks and permission
+checks, but returns an approval-required refusal when the call needs a card;
+the model must issue the direct MCP call in the main conversation instead.
+Subagents get only their allowlisted deferred names, and the wrapper checks
+the nested name against that allowlist before execution.
+
+The `.coder` and `.general` agent types include the static MCP tool group for
+compatibility with existing direct calls. Dynamic MCP tools use the deferred
+listing in both the main and subagent prompts.
 
 - Tools come from `McpToolCatalogCache`, never inline: discovery spawns the
   server and pays a full JSON-RPC handshake (seconds), and a turn must not

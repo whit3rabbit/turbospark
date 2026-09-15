@@ -44,6 +44,13 @@ extension SubagentRunner {
             return errorObservation(
                 "Tool '\(call.name)' is disallowed for agent profile '\(agent.name)'.")
         }
+        if call.name.lowercased() == "tool_call",
+           let deferredName = call.arguments["name"],
+           !agent.isToolAllowed(deferredName)
+        {
+            return errorObservation(
+                "Tool '\(deferredName)' is disallowed for agent profile '\(agent.name)'.")
+        }
         // **THE NESTING BOUND IS ENFORCED WHERE THE CALL IS SEEN, NOT WHERE
         // THE RUN STARTS** (state#47). `run`'s own guard catches a run that
         // was started too deep; this catches the call that would start it,
