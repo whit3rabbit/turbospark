@@ -341,3 +341,10 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
     ambiguous-alias case -- a resolution order nobody chose is still a
     resolution order, and it gets discovered the first time two installs
     disagree about who owns a name.
+
+17. **COMBINED VISION MODELS REQUIRE PREPROCESSOR CONFIG IN SIDECARS.**
+    When a catalog row enables vision directly (`include_vision: true`),
+    `sidecars.files` must explicitly include `preprocessor_config.json`.
+    `CatalogEntry::validate` enforces this requirement so combined vision
+    installs do not ship without the preprocessing sidecar needed for image
+    intake.
