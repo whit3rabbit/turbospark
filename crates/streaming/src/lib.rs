@@ -10,6 +10,7 @@ mod aligned_slot;
 mod disk_io;
 mod error;
 mod expert_cache;
+mod linux_uring;
 mod mapped_experts;
 mod pread_streamer;
 mod rdadvice;
@@ -23,6 +24,7 @@ pub use expert_cache::{
     coalesced_adjacent_advice_ranges, ExpertCache, ExpertCachePlan, ExpertCachePolicy,
     ExpertIoAdviceResult,
 };
+pub use linux_uring::{dio_aligned, dio_round_up, Mode as LinuxIoMode, DIO_ALIGNMENT};
 pub use mapped_experts::MappedExpertLayer;
 pub use pread_streamer::PreadExpertStreamer;
 pub use rdadvice::{call as rdadvice_call, clipped_byte_count, RdAdviceCallResult};

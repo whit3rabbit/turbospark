@@ -59,8 +59,37 @@ pub fn call(fd: std::os::unix::io::RawFd, offset: u64, byte_count: u64) -> RdAdv
     }
 }
 
-/// Issues an `F_RDADVISE` readahead hint for a file descriptor range on macOS (no-op elsewhere).
-#[cfg(not(target_os = "macos"))]
+/// Issues a `posix_fadvise(WILLNEED)` readahead hint on Linux, the
+/// platform's analogue of the Darwin arm above (ROADMAP P3.5). WILLNEED is
+/// a non-blocking hint, which is what the caller wants -- the read itself
+/// happens on the chunk plan's schedule, and DONTNEED would fight the
+/// mapped-residency mode for the page cache.
+#[cfg(target_os = "linux")]
+pub fn call(fd: i32, offset: u64, byte_count: u64) -> RdAdviceCallResult {
+    let clipped_count = clipped_byte_count(byte_count);
+    // SAFETY: `fd` is a valid, caller-owned descriptor; the remaining
+    // arguments are plain integers and the call retains nothing.
+    let succeeded = unsafe {
+        libc::posix_fadvise(
+            fd,
+            offset as libc::off_t,
+            clipped_count as libc::off_t,
+            libc::POSIX_FADV_WILLNEED,
+        ) == 0
+    };
+    RdAdviceCallResult {
+        requested_bytes: clipped_count,
+        succeeded,
+        // fadvise has no timed sibling here; the macOS arm's timing exists
+        // because F_RDADVISE is on the hot miss path and its cost was
+        // questioned. Measure before adding one on this side.
+        elapsed_nanos: 0,
+    }
+}
+
+/// No-op off macOS AND off Linux (Windows and friends): documented rather
+/// than silent, matching the crate header's rule.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn call(_fd: i32, _offset: u64, byte_count: u64) -> RdAdviceCallResult {
     let clipped_count = clipped_byte_count(byte_count);
     RdAdviceCallResult {

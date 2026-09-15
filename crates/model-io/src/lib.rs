@@ -11,6 +11,7 @@
 mod arch_baselines;
 mod arch_config;
 mod arch_validation;
+mod cgroup;
 mod context_policy;
 pub mod encoder_config;
 mod error;
@@ -38,6 +39,9 @@ pub use arch_baselines::{
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
+};
+pub use cgroup::{
+    parse_limit as parse_cgroup_limit, probe_self as probe_cgroup_memory, CgroupMemoryLimit,
 };
 pub use context_policy::{
     committed_breakdown, committed_breakdown_with_residency, committed_bytes, gdn_state_bytes,
