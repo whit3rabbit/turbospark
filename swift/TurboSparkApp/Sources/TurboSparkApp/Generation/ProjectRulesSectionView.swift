@@ -22,7 +22,7 @@ struct ProjectRulesSectionView: View {
                     } label: { Text("Check Project Instructions", bundle: .module) }
                     .themedFont(.small)
                     .buttonStyle(.borderless)
-                    .help("Check the live AGENTS.md, CLAUDE.md, and CONTEXT.md files for this project")
+                    .help("Check the live AGENTS.md, CLAUDE.md, CONTEXT.md, and SOUL.md files for this project")
                 }
             }
 

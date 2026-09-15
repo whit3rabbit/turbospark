@@ -151716,6 +151716,372 @@
           }
         }
       }
+    },
+    "Global personality and communication guidance for the agent.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Global personality and communication guidance for the agent."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Personalidad global y orientación de comunicación para el agente."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Personnalité globale et conseils de communication pour l’agent."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Globale Persönlichkeit und Kommunikationshinweise für den Agenten."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Personalità globale e indicazioni sulla comunicazione per l’agente."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Personalidade global e orientação de comunicação para o agente."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Общие указания по характеру и общению агента."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントのグローバルな人格とコミュニケーション指針。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트의 전역 성격 및 커뮤니케이션 지침입니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理的全局个性和沟通指导。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理程式的全域個性與溝通指引。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إرشادات الشخصية والتواصل العامة للوكيل."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הנחיות אישיות ותקשורת גלובליות לסוכן."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एजेंट के लिए वैश्विक व्यक्तित्व और संचार मार्गदर्शन।"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Globale persoonlijkheids- en communicatiebegeleiding voor de agent."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Globalna osobowość i wskazówki komunikacyjne dla agenta."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajan için küresel kişilik ve iletişim yönergeleri."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Загальні вказівки щодо характеру та спілкування агента."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Global personlighet och kommunikationsvägledning för agenten."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hướng dẫn về tính cách và giao tiếp toàn cục cho tác nhân."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panduan kepribadian dan komunikasi global untuk agen."
+          }
+        }
+      }
+    },
+    "Create Hermes SOUL.md": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create Hermes SOUL.md"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Crear SOUL.md de Hermes"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Créer le SOUL.md de Hermes"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hermes-SOUL.md erstellen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Crea SOUL.md di Hermes"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Criar SOUL.md do Hermes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Создать SOUL.md Hermes"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hermes SOUL.mdを作成"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hermes SOUL.md 생성"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "创建 Hermes SOUL.md"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建立 Hermes SOUL.md"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إنشاء SOUL.md لـ Hermes"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "צור SOUL.md של Hermes"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hermes SOUL.md बनाएँ"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hermes SOUL.md maken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utwórz SOUL.md Hermes"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hermes SOUL.md oluştur"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Створити SOUL.md Hermes"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skapa Hermes SOUL.md"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tạo SOUL.md Hermes"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buat SOUL.md Hermes"
+          }
+        }
+      }
+    },
+    "Detected SOUL.md files": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Detected SOUL.md files" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Archivos SOUL.md detectados" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Fichiers SOUL.md détectés" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Erkannte SOUL.md-Dateien" } },
+        "it": { "stringUnit": { "state": "translated", "value": "File SOUL.md rilevati" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Arquivos SOUL.md detectados" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Обнаруженные файлы SOUL.md" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "検出された SOUL.md ファイル" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "감지된 SOUL.md 파일" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "已检测到的 SOUL.md 文件" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "偵測到的 SOUL.md 檔案" } },
+        "ar": { "stringUnit": { "state": "translated", "value": "ملفات SOUL.md المكتشفة" } },
+        "he": { "stringUnit": { "state": "translated", "value": "קובצי SOUL.md שזוהו" } },
+        "hi": { "stringUnit": { "state": "translated", "value": "पहचानी गई SOUL.md फ़ाइलें" } },
+        "nl": { "stringUnit": { "state": "translated", "value": "Gedetecteerde SOUL.md-bestanden" } },
+        "pl": { "stringUnit": { "state": "translated", "value": "Wykryte pliki SOUL.md" } },
+        "tr": { "stringUnit": { "state": "translated", "value": "Algılanan SOUL.md dosyaları" } },
+        "uk": { "stringUnit": { "state": "translated", "value": "Виявлені файли SOUL.md" } },
+        "sv": { "stringUnit": { "state": "translated", "value": "Identifierade SOUL.md-filer" } },
+        "vi": { "stringUnit": { "state": "translated", "value": "Các tệp SOUL.md đã phát hiện" } },
+        "id": { "stringUnit": { "state": "translated", "value": "File SOUL.md yang terdeteksi" } }
+      }
+    },
+    "Import Hermes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Import Hermes" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Importar Hermes" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Importer Hermes" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Hermes importieren" } },
+        "it": { "stringUnit": { "state": "translated", "value": "Importa Hermes" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Importar Hermes" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Импортировать Hermes" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "Hermes を読み込む" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Hermes 가져오기" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "导入 Hermes" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "匯入 Hermes" } },
+        "ar": { "stringUnit": { "state": "translated", "value": "استيراد Hermes" } },
+        "he": { "stringUnit": { "state": "translated", "value": "ייבוא Hermes" } },
+        "hi": { "stringUnit": { "state": "translated", "value": "Hermes आयात करें" } },
+        "nl": { "stringUnit": { "state": "translated", "value": "Hermes importeren" } },
+        "pl": { "stringUnit": { "state": "translated", "value": "Importuj Hermes" } },
+        "tr": { "stringUnit": { "state": "translated", "value": "Hermes'i içe aktar" } },
+        "uk": { "stringUnit": { "state": "translated", "value": "Імпортувати Hermes" } },
+        "sv": { "stringUnit": { "state": "translated", "value": "Importera Hermes" } },
+        "vi": { "stringUnit": { "state": "translated", "value": "Nhập Hermes" } },
+        "id": { "stringUnit": { "state": "translated", "value": "Impor Hermes" } }
+      }
+    },
+    "Import OpenClaw": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Import OpenClaw" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Importar OpenClaw" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Importer OpenClaw" } },
+        "de": { "stringUnit": { "state": "translated", "value": "OpenClaw importieren" } },
+        "it": { "stringUnit": { "state": "translated", "value": "Importa OpenClaw" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Importar OpenClaw" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Импортировать OpenClaw" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "OpenClaw を読み込む" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "OpenClaw 가져오기" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "导入 OpenClaw" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "匯入 OpenClaw" } },
+        "ar": { "stringUnit": { "state": "translated", "value": "استيراد OpenClaw" } },
+        "he": { "stringUnit": { "state": "translated", "value": "ייבוא OpenClaw" } },
+        "hi": { "stringUnit": { "state": "translated", "value": "OpenClaw आयात करें" } },
+        "nl": { "stringUnit": { "state": "translated", "value": "OpenClaw importeren" } },
+        "pl": { "stringUnit": { "state": "translated", "value": "Importuj OpenClaw" } },
+        "tr": { "stringUnit": { "state": "translated", "value": "OpenClaw'u içe aktar" } },
+        "uk": { "stringUnit": { "state": "translated", "value": "Імпортувати OpenClaw" } },
+        "sv": { "stringUnit": { "state": "translated", "value": "Importera OpenClaw" } },
+        "vi": { "stringUnit": { "state": "translated", "value": "Nhập OpenClaw" } },
+        "id": { "stringUnit": { "state": "translated", "value": "Impor OpenClaw" } }
+      }
+    },
+    "Load File...": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Load File..." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Cargar archivo..." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Charger un fichier..." } },
+        "de": { "stringUnit": { "state": "translated", "value": "Datei laden..." } },
+        "it": { "stringUnit": { "state": "translated", "value": "Carica file..." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Carregar arquivo..." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Загрузить файл..." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ファイルを読み込む..." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "파일 불러오기..." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "加载文件..." } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "載入檔案..." } },
+        "ar": { "stringUnit": { "state": "translated", "value": "تحميل ملف..." } },
+        "he": { "stringUnit": { "state": "translated", "value": "טען קובץ..." } },
+        "hi": { "stringUnit": { "state": "translated", "value": "फ़ाइल लोड करें..." } },
+        "nl": { "stringUnit": { "state": "translated", "value": "Bestand laden..." } },
+        "pl": { "stringUnit": { "state": "translated", "value": "Wczytaj plik..." } },
+        "tr": { "stringUnit": { "state": "translated", "value": "Dosya yükle..." } },
+        "uk": { "stringUnit": { "state": "translated", "value": "Завантажити файл..." } },
+        "sv": { "stringUnit": { "state": "translated", "value": "Läs in fil..." } },
+        "vi": { "stringUnit": { "state": "translated", "value": "Tải tệp..." } },
+        "id": { "stringUnit": { "state": "translated", "value": "Muat file..." } }
+      }
     }
   },
   "version": "1.0"

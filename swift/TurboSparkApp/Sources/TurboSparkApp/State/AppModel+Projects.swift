@@ -289,7 +289,7 @@ extension AppModel {
         }
     }
 
-    /// Scans a local codebase directory for AGENTS.md, CLAUDE.md, or rules files according to preference.
+    /// Scans a local codebase directory for project instruction and context files.
     public func detectProjectRules(
         directoryPath: String,
         preference: AppRulePreference = .agentsFirst

@@ -164,6 +164,14 @@ broken."
 
 ## 2. Persisted settings, field by field
 
+`MacAppSettings.soulPrompt` is the blank-by-default, per-profile fallback for
+external `SOUL.md` files. `AppModel+Soul.swift` resolves the external Hermes
+file on every prompt access, so live Hermes edits take effect without a
+settings reload. The Engine Settings SOUL section edits the active source,
+detects Hermes and OpenClaw files for copy-only import, and always offers a
+file picker for other harnesses or workspace locations. Create Hermes refuses
+to overwrite an existing file.
+
 Every `MacAppSettings` field was traced from `AppModel+Persistence.swift`'s
 `loadSettings()` to a consumer outside the store and outside the pane that
 edits it. The 47 fields not listed below all reach one: the sampling

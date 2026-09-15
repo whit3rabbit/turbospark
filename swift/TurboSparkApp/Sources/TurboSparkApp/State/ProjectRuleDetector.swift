@@ -94,12 +94,12 @@ public struct ProjectLiveInstructions: Equatable, Sendable {
     }
 }
 
-/// Utility for scanning, detecting, and resolving AGENTS.md and CLAUDE.md files in project directories.
+/// Utility for scanning, detecting, and resolving project context files.
 public enum ProjectRuleDetector {
     /// Resolves the repository instruction files for one prompt assembly.
     ///
     /// `AGENTS.md` and `CLAUDE.md` retain the project's selected conflict
-    /// preference. `CONTEXT.md` is complementary background, so it is
+    /// preference. `CONTEXT.md` and `SOUL.md` are complementary context, so they are
     /// appended whenever present rather than competing with either rule file.
     /// Every contributing file remains contained in the project root, even
     /// when it is a symlink.
@@ -136,6 +136,24 @@ public enum ProjectRuleDetector {
                 content += separator + contextHeader + String(context.prefix(availableForContext))
                 files.append("CONTEXT.md")
                 containsSymlink = containsSymlink || isSymlink(at: contextURL, fileManager: fileManager)
+            }
+        }
+
+        let remainingAfterContext = maxCharacters - content.count
+        let soulURL = rootURL.appendingPathComponent("SOUL.md")
+        if remainingAfterContext > 0,
+           fileExistsOrSymlink(at: soulURL, fileManager: fileManager),
+           let soul = (readText(at: soulURL, containedIn: rootURL))?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !soul.isEmpty {
+            let separator = content.isEmpty ? "" : "\n\n"
+            let soulHeader = "# SOUL.md\n"
+            let availableForSoul = max(
+                0,
+                remainingAfterContext - separator.count - soulHeader.count)
+            if availableForSoul > 0 {
+                content += separator + soulHeader + String(soul.prefix(availableForSoul))
+                files.append("SOUL.md")
+                containsSymlink = containsSymlink || isSymlink(at: soulURL, fileManager: fileManager)
             }
         }
 

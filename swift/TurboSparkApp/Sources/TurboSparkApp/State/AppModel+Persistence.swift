@@ -55,6 +55,7 @@ extension AppModel {
         self.personalities = settings.personalities
         self.selectedPersonalityID = UUID(uuidString: settings.activePersonalityID)
             .flatMap { id in settings.personalities.contains(where: { $0.id == id }) ? id : nil }
+        self.soulPrompt = settings.soulPrompt
         self.pluginEnableState = settings.enabledPlugins
         self.runtimeOptions.powerProfile = AppPowerProfileOption(rawValue: settings.powerProfile) ?? .auto
         self.runtimeOptions.loadGuard = AppLoadGuardOption(rawValue: settings.loadGuard) ?? .relaxed
@@ -201,6 +202,7 @@ extension AppModel {
             activeSystemPromptID: selectedSystemPromptID?.uuidString ?? "",
             personalities: personalities,
             activePersonalityID: selectedPersonalityID?.uuidString ?? "",
+            soulPrompt: soulPrompt,
             enabledPlugins: pluginEnableState,
             showMenuBarItem: showMenuBarItem,
             keepFansPinnedOnQuit: keepFansPinnedOnQuit,

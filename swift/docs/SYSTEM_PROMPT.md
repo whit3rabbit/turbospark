@@ -24,6 +24,25 @@ the starter library and selects `TurboSpark Agent`.
 The in-process server reads that mirror when it starts. Restart it after
 loading, editing, or deleting its selected prompt.
 
+## Global SOUL.md
+
+Engine Settings also exposes a global `SOUL.md` section. TurboSpark resolves
+`HERMES_HOME/SOUL.md`, falling back to `~/.hermes/SOUL.md`, before the
+per-profile `soulPrompt` setting. An existing Hermes file wins even when it is
+empty, while a missing file uses the native setting, which is blank by
+default. Saving an active Hermes file updates it atomically. Import copies it
+into the native fallback; Create Hermes writes only when the file is absent.
+The section detects an existing OpenClaw workspace file at
+`~/.openclaw/workspace/SOUL.md`, honoring `OPENCLAW_HOME`,
+`OPENCLAW_STATE_DIR`, and `OPENCLAW_WORKSPACE_DIR`, and offers a separate
+import action for each detected harness. Load File is always available for a
+workspace or framework that uses a different location. All imports copy into
+the native fallback and never overwrite the source file.
+
+Nonblank global SOUL content is its own system-prompt section and is included
+in `appWideSystemPrompt`, so isolated and background subagents inherit it.
+The existing Personality library remains a separate section and storage path.
+
 ## Main-turn assembly
 
 `AppModel.buildSystemPromptSections` is the only builder for the main turn.
@@ -33,16 +52,18 @@ part of the contract:
 | Order | Section | Source | When included |
 | --- | --- | --- | --- |
 | 1 | User prompt | The chat's nonblank `systemPrompt`, otherwise the selected app-wide prompt | When nonempty |
-| 2 | Personality | Selected app-wide `AppPersonality` | When selected and its instructions are nonempty |
-| 3 | Agent role | Project agent type | With a project |
-| 4 | Workspace | Project root path | With a nonempty project root |
-| 5 | Environment | TurboSpark macOS and tool-use harness | With a project |
-| 6 | Project rules | Live `AGENTS.md` or `CLAUDE.md`, `CONTEXT.md`, and manual project guidance | With nonempty instructions |
-| 7 | Memory | Project memory prompt | When memory is enabled and the project has a root |
-| 8 | Tools and skills | Project-scoped tool catalog and enabled agents | With a project |
-| 9 | MCP servers | Visible project and global MCP servers | When one or more servers are active |
+| 2 | SOUL | Global Hermes `SOUL.md`, otherwise the native profile fallback | When nonblank |
+| 3 | Personality | Selected app-wide `AppPersonality` | When selected and its instructions are nonempty |
+| 4 | Agent role | Project agent type | With a project |
+| 5 | Workspace | Project root path | With a nonempty project root |
+| 6 | Environment | TurboSpark macOS and tool-use harness | With a project |
+| 7 | Project rules | Live `AGENTS.md` or `CLAUDE.md`, `CONTEXT.md`, `SOUL.md`, and manual project guidance | With nonempty instructions |
+| 8 | Memory | Project memory prompt | When memory is enabled and the project has a root |
+| 9 | Tools and skills | Project-scoped tool catalog and enabled agents | With a project |
+| 10 | MCP servers | Visible project and global MCP servers | When one or more servers are active |
 
-A projectless Chat-mode turn can contain the first two sections only. It is not
+A projectless Chat-mode turn can contain the user prompt plus app-wide identity
+sections only. It is not
 offered tools, skills, memory, workspace data, or project rules. Tool parsing
 has the same independent project gate, so a model cannot execute a call it was
 not offered.
@@ -55,8 +76,11 @@ section.
 
 Repository instructions are wrapped as untrusted project content. They provide
 context and conventions, but core system instructions, tool-safety limits, and
-user directions take precedence. `PERSONALITY.md` documents the optional style
-section that precedes these project-derived sections.
+user directions take precedence. `SOUL.md` at a project root is supplemental
+project context, loaded after the selected rules and `CONTEXT.md`, inside the
+same untrusted wrapper. The global SOUL section is app-wide identity and is not
+part of that wrapper. `PERSONALITY.md` documents the optional style section
+that precedes these project-derived sections.
 
 The environment section is trusted app harness text, not repository content. It
 states macOS, the listed-tool boundary, inspect-edit-verify behavior, the
@@ -71,7 +95,7 @@ the joined content is nonempty. When every section is empty, it creates no
 system message.
 
 `buildEstimateParts` calls the same section builder. It uses the joined text
-for the exact token measurement and groups user prompt, personality, agent
+for the exact token measurement and groups user prompt, SOUL, personality, agent
 role, workspace, environment, and project rules into the System prompt context
 row. A selected personality therefore consumes visible, priced context rather
 than becoming an uncounted addendum.
@@ -84,7 +108,7 @@ system section. See `SWIFT_TURN_PIPELINE.md`.
 
 `SubagentRunner.buildSystemPrompt` is a second assembler because it runs
 without an `AppModel`. The caller passes `appWideSystemPrompt`, which contains
-the selected app-wide prompt and selected personality but never a per-chat
+the selected app-wide prompt, global SOUL, and selected personality but never a per-chat
 prompt. The subagent then adds its role, workspace, shared environment block,
 project context, memory, allowed tools, and allowed MCP tools in its own
 isolated history.

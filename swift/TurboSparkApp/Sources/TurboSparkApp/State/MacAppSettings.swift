@@ -183,6 +183,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// mirrors `activeSteeringPresetID` and leaves malformed hand edits
     /// harmless at decode time.
     public var activePersonalityID: String
+    /// TurboSpark's per-profile SOUL fallback, used only when Hermes' global
+    /// SOUL.md does not exist. Empty is the intentional default.
+    public var soulPrompt: String
     /// User-scope plugin enable state, keyed `<plugin>@<origin>`
     /// (`swift/docs/SWIFT_PLUGINS.md`). Absent means enabled: an installed plugin
     /// that nothing disabled runs. Claude Code's own setting is consulted
@@ -272,6 +275,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         activeSystemPromptID: String = AppSystemPrompt.builtIns[0].id.uuidString,
         personalities: [AppPersonality] = AppPersonality.builtIns,
         activePersonalityID: String = "",
+        soulPrompt: String = "",
         enabledPlugins: [String: Bool] = [:],
         showMenuBarItem: Bool = true,
         keepFansPinnedOnQuit: Bool = false,
@@ -359,6 +363,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         }
         self.personalities = personalities
         self.activePersonalityID = activePersonalityID
+        self.soulPrompt = soulPrompt
         self.enabledPlugins = enabledPlugins
         self.showMenuBarItem = showMenuBarItem
         self.keepFansPinnedOnQuit = keepFansPinnedOnQuit
@@ -486,6 +491,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             : AppPersonality.builtIns
         self.activePersonalityID = c.decodeLenient(
             String.self, forKey: .activePersonalityID, fallback: "")
+        self.soulPrompt = c.decodeLenient(
+            String.self, forKey: .soulPrompt, fallback: "")
         self.enabledPlugins = c.decodeLenient(
             [String: Bool].self, forKey: .enabledPlugins, fallback: [:])
         self.showMenuBarItem = c.decodeLenient(

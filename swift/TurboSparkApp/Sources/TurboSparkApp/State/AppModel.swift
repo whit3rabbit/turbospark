@@ -611,6 +611,8 @@ public final class AppModel: ObservableObject {
 
     /// `nil` means no personality is added to a turn's system prompt.
     @Published public var selectedPersonalityID: UUID? = nil
+    /// Per-profile SOUL content used only when Hermes' SOUL.md is absent.
+    @Published public var soulPrompt: String = ""
     /// Path to activation steering vectors file.
     @Published public var steeringPath: String? = nil
     /// Named steering directions the operator registered. Empty until one is

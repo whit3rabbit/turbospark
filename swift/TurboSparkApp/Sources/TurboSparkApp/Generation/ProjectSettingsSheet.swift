@@ -515,7 +515,7 @@ struct ProjectSettingsSheet: View {
             let files = result.detectedFiles.joined(separator: ", ")
             rulesAutoDetectedMessage = "Detected \(files). These files are applied live to every project turn."
         } else {
-            rulesAutoDetectedMessage = "No AGENTS.md, CLAUDE.md, or CONTEXT.md found in folder."
+            rulesAutoDetectedMessage = "No AGENTS.md, CLAUDE.md, CONTEXT.md, or SOUL.md found in folder."
         }
     }
 

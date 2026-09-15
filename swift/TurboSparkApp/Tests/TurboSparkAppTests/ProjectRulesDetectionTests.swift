@@ -195,6 +195,67 @@ final class ProjectRulesDetectionTests: XCTestCase {
         XCTAssertEqual(result?.content, "Repository rules\n\n# CONTEXT.md\nArchitecture background")
     }
 
+    func testLiveInstructionsDetectsProjectOnlySoul() throws {
+        try "Project identity".write(
+            to: tempDirectoryURL.appendingPathComponent("SOUL.md"),
+            atomically: true,
+            encoding: .utf8)
+
+        let result = ProjectRuleDetector.liveInstructions(
+            in: tempDirectoryURL.path, preference: .agentsFirst)
+
+        XCTAssertEqual(result?.detectedFiles, ["SOUL.md"])
+        XCTAssertEqual(result?.content, "# SOUL.md\nProject identity")
+    }
+
+    func testLiveInstructionsOrderRulesContextAndSoul() throws {
+        try "Repository rules".write(
+            to: tempDirectoryURL.appendingPathComponent("AGENTS.md"),
+            atomically: true,
+            encoding: .utf8)
+        try "Architecture background".write(
+            to: tempDirectoryURL.appendingPathComponent("CONTEXT.md"),
+            atomically: true,
+            encoding: .utf8)
+        try "Project identity".write(
+            to: tempDirectoryURL.appendingPathComponent("SOUL.md"),
+            atomically: true,
+            encoding: .utf8)
+
+        let result = ProjectRuleDetector.liveInstructions(
+            in: tempDirectoryURL.path, preference: .agentsFirst)
+
+        XCTAssertEqual(result?.detectedFiles, ["AGENTS.md", "CONTEXT.md", "SOUL.md"])
+        XCTAssertEqual(
+            result?.content,
+            "Repository rules\n\n# CONTEXT.md\nArchitecture background\n\n# SOUL.md\nProject identity")
+    }
+
+    func testLiveInstructionsBoundsProjectSoulContent() throws {
+        try String(repeating: "A", count: 100).write(
+            to: tempDirectoryURL.appendingPathComponent("SOUL.md"),
+            atomically: true,
+            encoding: .utf8)
+
+        let result = ProjectRuleDetector.liveInstructions(
+            in: tempDirectoryURL.path, preference: .agentsFirst, maxCharacters: 18)
+
+        XCTAssertEqual(result?.content.count, 18)
+        XCTAssertEqual(result?.content, "# SOUL.md\nAAAAAAAA")
+    }
+
+    func testLiveInstructionsRefusesProjectSoulSymlinkOutsideRoot() throws {
+        let outside = tempDirectoryURL.deletingLastPathComponent()
+            .appendingPathComponent("outside-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try "PRIVATE PROJECT SOUL".write(to: outside, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: tempDirectoryURL.appendingPathComponent("SOUL.md"),
+            withDestinationURL: outside)
+
+        XCTAssertNil(ProjectRuleDetector.liveInstructions(in: tempDirectoryURL.path))
+    }
+
     func testLiveInstructionsBoundTheCombinedRulesAndContext() throws {
         let agentsURL = tempDirectoryURL.appendingPathComponent("AGENTS.md")
         let contextURL = tempDirectoryURL.appendingPathComponent("CONTEXT.md")
@@ -227,6 +288,23 @@ final class ProjectRulesDetectionTests: XCTestCase {
         XCTAssertTrue(refreshedPrompt.contains("Use spaces."))
         XCTAssertFalse(refreshedPrompt.contains("Use tabs."))
         XCTAssertTrue(refreshedPrompt.contains("Keep API names stable."))
+    }
+
+    @MainActor
+    func testSystemPromptIncludesAndRefreshesProjectSoulInsideUntrustedContext() throws {
+        let soulURL = tempDirectoryURL.appendingPathComponent("SOUL.md")
+        try "Project soul one".write(to: soulURL, atomically: true, encoding: .utf8)
+        let project = AppProject(name: "Project Soul", rootDirectoryPath: tempDirectoryURL.path)
+        let model = AppModel()
+
+        let firstPrompt = model.buildSystemPrompt(for: project)
+        XCTAssertTrue(firstPrompt.contains("# SOUL.md\nProject soul one"))
+        XCTAssertTrue(firstPrompt.contains("<untrusted_project_instructions>"))
+
+        try "Project soul two".write(to: soulURL, atomically: true, encoding: .utf8)
+        let refreshedPrompt = model.buildSystemPrompt(for: project)
+        XCTAssertTrue(refreshedPrompt.contains("Project soul two"))
+        XCTAssertFalse(refreshedPrompt.contains("Project soul one"))
     }
 
     @MainActor
