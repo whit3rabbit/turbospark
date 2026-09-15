@@ -374,6 +374,37 @@ fn fetch_sidecars(
         std::fs::write(dir.join(name), bytes)
             .map_err(|e| format!("writing {}: {e}", dir.join(name).display()))?;
     }
+    remove_stale_sidecars(plan, dir)?;
+    Ok(())
+}
+
+/// Remove top-level files that are neither generated install payloads nor
+/// sidecars fetched for this exact plan. A failed pull can leave sidecars in
+/// the destination, and the staged repack writer preserves the files it finds
+/// there. Pruning only after every current sidecar has downloaded keeps a
+/// retry from publishing files supplied by an earlier or unrelated plan.
+fn remove_stale_sidecars(plan: &InstallPlan, dir: &Path) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| format!("reading sidecars in {}: {e}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("reading sidecars in {}: {e}", dir.display()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("reading {}: {e}", entry.path().display()))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let generated = matches!(name.to_str(), Some("manifest.json" | "model_weights.bin"));
+        let current = plan
+            .sidecar_files
+            .iter()
+            .any(|sidecar| name == std::ffi::OsStr::new(sidecar));
+        if !generated && !current {
+            std::fs::remove_file(entry.path())
+                .map_err(|e| format!("removing stale sidecar {}: {e}", entry.path().display()))?;
+        }
+    }
     Ok(())
 }
 
@@ -617,6 +648,36 @@ mod vision_gate_tests {
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn retry_prunes_sidecars_not_fetched_for_the_current_plan() {
+        let dir =
+            std::env::temp_dir().join(format!("turbospark-sidecar-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+
+        let plan = InstallPlan::from_entry(&vision_row());
+        std::fs::write(dir.join("preprocessor_config.json"), b"current").unwrap();
+        std::fs::write(dir.join("config.json"), b"current").unwrap();
+        std::fs::write(dir.join("chat_template.jinja"), b"stale").unwrap();
+        std::fs::write(dir.join("manifest.json"), b"generated").unwrap();
+        std::fs::create_dir(dir.join("packed_experts")).unwrap();
+
+        remove_stale_sidecars(&plan, &dir).unwrap();
+
+        assert!(!dir.join("chat_template.jinja").exists());
+        assert_eq!(
+            std::fs::read(dir.join("preprocessor_config.json")).unwrap(),
+            b"current"
+        );
+        assert_eq!(std::fs::read(dir.join("config.json")).unwrap(), b"current");
+        assert_eq!(
+            std::fs::read(dir.join("manifest.json")).unwrap(),
+            b"generated"
+        );
+        assert!(dir.join("packed_experts").is_dir());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// **THE GATE BYPASS, MUTATION-CHECKED.** `gate()` must never reach the
