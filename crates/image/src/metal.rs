@@ -34,6 +34,52 @@ const VAE_COMPONENT: &str = "components/vae_decoder";
 const IMAGE_CANCELLED: &str = "image generation cancelled";
 const ROPE_THETA: f32 = 1_000_000.0;
 const TRANSFORMER_EPS: f32 = 1e-5;
+const FIRST_STEP_MAIN_TRACE_BLOCKS: [usize; 7] = [0, 15, 16, 20, 24, 28, 29];
+
+/// A bounded diagnostic boundary in the first packed denoising step.
+///
+/// These values are read only when the opt-in trace API is used. Normal image
+/// generation keeps the existing asynchronous path and does not copy them
+/// back to the CPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFirstStepBoundary {
+    Patchification,
+    NoiseRefiner,
+    MainTransformerBlock(usize),
+    MainTransformer,
+    Velocity,
+    SchedulerLatent,
+}
+
+/// CPU copies of the first packed denoising step's stage boundaries.
+///
+/// The fields intentionally use flat row-major storage matching the existing
+/// fixture readers. The trace is diagnostic evidence, not a production data
+/// path, so it is kept behind the explicit `denoise_first_step_trace` call.
+#[derive(Debug)]
+pub struct ImageFirstStepTrace {
+    pub conditioning: Vec<f32>,
+    pub patchification: Vec<f32>,
+    pub noise_refiner: Vec<f32>,
+    pub main_transformer: Vec<f32>,
+    pub main_transformer_checkpoints: Vec<(usize, Vec<f32>)>,
+    pub velocity: Vec<f32>,
+    pub scheduler_latent: Vec<f32>,
+}
+
+/// Diagnostic knobs for one native denoise pass.
+///
+/// Production generation uses native seeded noise and reads nothing back.
+/// The packed parity gates seed the captured reference noise, and the
+/// first-step trace observes the stage boundaries.
+type BoundaryObserver<'a> = &'a mut dyn FnMut(ImageFirstStepBoundary, &[f32]);
+
+struct DenoiseOptions<'a> {
+    initial_noise: Option<&'a [f32]>,
+    stop_after_first_step: bool,
+    on_step: &'a mut dyn FnMut(usize, &[f32]),
+    trace: Option<BoundaryObserver<'a>>,
+}
 
 /// Native Metal implementation of [`ImageBackend`].
 ///
@@ -739,9 +785,15 @@ impl MetalImageBackend {
         let projection =
             |name: &str| -> Result<(metal_ops::WeightRef, metal_ops::WeightRef), String> {
                 Ok((
+                    // The Diffusers attention projections are nn.Linear
+                    // modules, so the packer records them as 2-D [out, in]
+                    // tensors. The 1x1 conv kernel indexes a weight as
+                    // oc * in_channels + ic, which is the same row-major
+                    // layout, and the CPU reference applies the same bytes as
+                    // a Linear.
                     component.weight(
                         &format!("decoder.mid_block.attentions.0.{name}.weight"),
-                        &[channels, channels, 1, 1],
+                        &[channels, channels],
                     )?,
                     component.weight(
                         &format!("decoder.mid_block.attentions.0.{name}.bias"),
@@ -801,7 +853,7 @@ impl MetalImageBackend {
             component,
             component.weight(
                 "decoder.mid_block.attentions.0.to_out.0.weight",
-                &[channels, channels, 1, 1],
+                &[channels, channels],
             )?,
             Some(component.weight("decoder.mid_block.attentions.0.to_out.0.bias", &[channels])?),
             &attended,
@@ -816,10 +868,12 @@ impl MetalImageBackend {
         metal_ops::add(&mut self.context, &x, &out)
     }
 
-    /// Run native denoising while retaining each of the nine scheduler
-    /// outputs for the packed parity gate. The production `ImageBackend`
+    /// Run native denoising from this backend's own seeded noise while
+    /// retaining each scheduler output. The production `ImageBackend`
     /// call uses the same path with a no-op observer, so this cannot create a
-    /// second implementation of the update order.
+    /// second implementation of the update order. Parity gates against the
+    /// captured fixtures need [`MetalImageBackend::denoise_steps_from_noise`]
+    /// instead.
     pub fn denoise_steps(
         &mut self,
         conditioning: &[f32],
@@ -827,21 +881,132 @@ impl MetalImageBackend {
         scheduler: &FlowMatchEulerScheduler,
         cancellation: &CancellationToken,
     ) -> Result<Vec<Vec<f32>>, String> {
+        self.denoise_steps_impl(conditioning, request, scheduler, cancellation, None)
+    }
+
+    /// Run native denoising from a caller-supplied initial latent while
+    /// retaining each scheduler output. The packed quality envelope is a
+    /// matched-noise bound against the captured reference rollout: this
+    /// backend's native seeded noise is an independent realization and reads
+    /// about sqrt(2) relative L2 against the captured `initial_noise` array
+    /// before any weight is touched. Parity gates against those fixtures must
+    /// pass the captured array here; production generation keeps
+    /// [`MetalImageBackend::denoise_steps`].
+    pub fn denoise_steps_from_noise(
+        &mut self,
+        conditioning: &[f32],
+        request: &ImageRequest,
+        scheduler: &FlowMatchEulerScheduler,
+        cancellation: &CancellationToken,
+        initial_noise: &[f32],
+    ) -> Result<Vec<Vec<f32>>, String> {
+        self.denoise_steps_impl(
+            conditioning,
+            request,
+            scheduler,
+            cancellation,
+            Some(initial_noise),
+        )
+    }
+
+    fn denoise_steps_impl(
+        &mut self,
+        conditioning: &[f32],
+        request: &ImageRequest,
+        scheduler: &FlowMatchEulerScheduler,
+        cancellation: &CancellationToken,
+        initial_noise: Option<&[f32]>,
+    ) -> Result<Vec<Vec<f32>>, String> {
         if scheduler.timesteps.len() != request.scheduler_steps as usize
             || scheduler.sigmas.len() != request.scheduler_steps as usize + 1
         {
             return Err("native image scheduler shape does not match the request".to_string());
         }
         let mut steps = Vec::with_capacity(request.scheduler_steps as usize);
+        let mut collect = |_: usize, latent: &[f32]| steps.push(latent.to_vec());
         self.denoise_impl(
             conditioning,
             request,
             scheduler,
             cancellation,
-            &mut |_, latent| steps.push(latent.to_vec()),
+            DenoiseOptions {
+                initial_noise,
+                stop_after_first_step: false,
+                on_step: &mut collect,
+                trace: None,
+            },
             &mut |_, _| {},
         )?;
         Ok(steps)
+    }
+
+    /// Capture the first packed denoising step at the boundaries needed to
+    /// localize a rollout divergence. This reads back only one step and never
+    /// changes the production `ImageBackend` path.
+    ///
+    /// `initial_noise` seeds the rollout from a caller-supplied latent. The
+    /// frozen reference fixtures were captured from the reference pipeline's
+    /// own noise, and this backend's native seeded noise is an independent
+    /// realization, so a like-for-like boundary comparison must pass the
+    /// captured `initial_noise` array. `None` keeps the native seeded noise.
+    pub fn denoise_first_step_trace(
+        &mut self,
+        conditioning: &[f32],
+        request: &ImageRequest,
+        scheduler: &FlowMatchEulerScheduler,
+        cancellation: &CancellationToken,
+        initial_noise: Option<&[f32]>,
+    ) -> Result<ImageFirstStepTrace, String> {
+        if scheduler.timesteps.len() != request.scheduler_steps as usize
+            || scheduler.sigmas.len() != request.scheduler_steps as usize + 1
+        {
+            return Err("native image scheduler shape does not match the request".to_string());
+        }
+        let mut trace = ImageFirstStepTrace {
+            conditioning: conditioning.to_vec(),
+            patchification: Vec::new(),
+            noise_refiner: Vec::new(),
+            main_transformer: Vec::new(),
+            main_transformer_checkpoints: Vec::new(),
+            velocity: Vec::new(),
+            scheduler_latent: Vec::new(),
+        };
+        let mut observe = |boundary: ImageFirstStepBoundary, values: &[f32]| match boundary {
+            ImageFirstStepBoundary::Patchification => trace.patchification = values.to_vec(),
+            ImageFirstStepBoundary::NoiseRefiner => trace.noise_refiner = values.to_vec(),
+            ImageFirstStepBoundary::MainTransformerBlock(index) => {
+                trace
+                    .main_transformer_checkpoints
+                    .push((index, values.to_vec()));
+            }
+            ImageFirstStepBoundary::MainTransformer => trace.main_transformer = values.to_vec(),
+            ImageFirstStepBoundary::Velocity => trace.velocity = values.to_vec(),
+            ImageFirstStepBoundary::SchedulerLatent => trace.scheduler_latent = values.to_vec(),
+        };
+        let mut on_step = |_: usize, _: &[f32]| {};
+        self.denoise_impl(
+            conditioning,
+            request,
+            scheduler,
+            cancellation,
+            DenoiseOptions {
+                initial_noise,
+                stop_after_first_step: true,
+                on_step: &mut on_step,
+                trace: Some(&mut observe),
+            },
+            &mut |_, _| {},
+        )?;
+        if trace.patchification.is_empty()
+            || trace.noise_refiner.is_empty()
+            || trace.main_transformer.is_empty()
+            || trace.main_transformer_checkpoints.len() != FIRST_STEP_MAIN_TRACE_BLOCKS.len()
+            || trace.velocity.is_empty()
+            || trace.scheduler_latent.is_empty()
+        {
+            return Err("native first-step trace did not observe every boundary".to_string());
+        }
+        Ok(trace)
     }
 
     fn final_velocity(
@@ -983,7 +1148,12 @@ impl ImageBackend for MetalImageBackend {
             request,
             scheduler,
             cancellation,
-            &mut step_observer,
+            DenoiseOptions {
+                initial_noise: None,
+                stop_after_first_step: false,
+                on_step: &mut step_observer,
+                trace: None,
+            },
             progress,
         )
     }
@@ -1007,7 +1177,7 @@ impl MetalImageBackend {
         request: &ImageRequest,
         scheduler: &FlowMatchEulerScheduler,
         cancellation: &CancellationToken,
-        on_step: &mut dyn FnMut(usize, &[f32]),
+        mut options: DenoiseOptions<'_>,
         progress: &mut dyn FnMut(u32, u32),
     ) -> Result<Vec<f32>, String> {
         if conditioning.is_empty() || conditioning.len() % Z_IMAGE_CAP_DIM != 0 {
@@ -1017,7 +1187,18 @@ impl MetalImageBackend {
         let cap_len = conditioning.len() / Z_IMAGE_CAP_DIM;
         let cap_padded_len = round_up(cap_len, SEQ_MULTI_OF)?;
         let latent_count = LATENT_CHANNELS * 128 * 128;
-        let mut latent = seeded_noise(request.seed, latent_count);
+        let mut latent = match options.initial_noise {
+            Some(noise) => {
+                if noise.len() != latent_count {
+                    return Err(format!(
+                        "supplied initial noise carries {} values, expected {latent_count}",
+                        noise.len()
+                    ));
+                }
+                noise.to_vec()
+            }
+            None => seeded_noise(request.seed, latent_count),
+        };
         let (patches, _, token_size) = patchify_image(
             &latent,
             LATENT_CHANNELS,
@@ -1027,6 +1208,9 @@ impl MetalImageBackend {
             DEFAULT_PATCH_SIZE,
             DEFAULT_F_PATCH_SIZE,
         )?;
+        if let Some(observer) = options.trace.as_deref_mut() {
+            observer(ImageFirstStepBoundary::Patchification, &patches);
+        }
         let image_len = token_size.0 * token_size.1 * token_size.2;
         let image_padded_len = round_up(image_len, SEQ_MULTI_OF)?;
         let image_patch_buffer = metal_ops::upload(&self.context, &patches);
@@ -1112,6 +1296,12 @@ impl MetalImageBackend {
                 Some(&timestep),
             )?;
         }
+        if let Some(observer) = options.trace.as_deref_mut() {
+            observer(
+                ImageFirstStepBoundary::NoiseRefiner,
+                &metal_ops::read(&image),
+            );
+        }
         let mut caption = caption;
         for index in 0..2 {
             caption = self.transformer_block(
@@ -1152,6 +1342,15 @@ impl MetalImageBackend {
                     &unified_freqs,
                     Some(&timestep),
                 )?;
+                if step == 0 && FIRST_STEP_MAIN_TRACE_BLOCKS.contains(&index) {
+                    if let Some(observer) = options.trace.as_deref_mut() {
+                        let values = metal_ops::read(&unified);
+                        observer(ImageFirstStepBoundary::MainTransformerBlock(index), &values);
+                        if index == 29 {
+                            observer(ImageFirstStepBoundary::MainTransformer, &values);
+                        }
+                    }
+                }
             }
             let velocity = self.final_velocity(
                 &component,
@@ -1161,6 +1360,14 @@ impl MetalImageBackend {
                 token_size,
                 &timestep,
             )?;
+            if step == 0 {
+                if let Some(observer) = options.trace.as_deref_mut() {
+                    observer(
+                        ImageFirstStepBoundary::Velocity,
+                        &metal_ops::read(&velocity),
+                    );
+                }
+            }
             let sample = metal_ops::upload(&self.context, &latent);
             let next = metal_ops::scheduler_step(
                 &mut self.context,
@@ -1169,8 +1376,16 @@ impl MetalImageBackend {
                 scheduler.sigmas[step + 1] - scheduler.sigmas[step],
             )?;
             latent = metal_ops::read(&next);
-            on_step(step, &latent);
+            if step == 0 {
+                if let Some(observer) = options.trace.as_deref_mut() {
+                    observer(ImageFirstStepBoundary::SchedulerLatent, &latent);
+                }
+            }
+            (options.on_step)(step, &latent);
             progress((step + 1) as u32, request.scheduler_steps);
+            if options.stop_after_first_step {
+                return Ok(latent);
+            }
             if step + 1 < request.scheduler_steps as usize {
                 let (next_patches, _, _) = patchify_image(
                     &latent,

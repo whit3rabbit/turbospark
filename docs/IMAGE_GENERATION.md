@@ -370,7 +370,9 @@ The following records implementation status and the remaining evidence work:
 3. **Packed quality and parity gate.** The opt-in test compares packed
    conditioning and the nine latent updates against the frozen INT4 emulation
    envelopes, then isolates VAE implementation parity by decoding the frozen
-   higher-precision final latent. The packed end-to-end decode is also checked
+   higher-precision final latent. The rollout seeds from the captured
+   `initial_noise` fixture because the envelopes are matched-noise bounds
+   against the reference capture. The packed end-to-end decode is also checked
    for finite output; PNG quality remains a separate gate. It has not passed
    on a complete pinned packed install in this checkout.
 4. **Explicit image install route.** `turbospark-model pull-image` packages a
@@ -408,6 +410,62 @@ The following records implementation status and the remaining evidence work:
    after use. Continue from the end-to-end packed rollout and compare the
    first divergent denoise intermediate against the IG0 BF16 capture; do not
    widen the 0.923 envelope without new reference evidence.
+
+   The bounded first-step diagnostic is now available as
+   `packed_native_first_step_trace_localizes_divergent_boundary`. It reads only
+   the first native step and reports conditioning, patchification,
+   noise-refiner output, final main-transformer state, velocity, and scheduler
+   latent errors. Run it with:
+
+   ```sh
+   TURBOSPARK_IMAGE_INSTALL_DIR=/path/to/pinned.image.gturbo \
+   TURBOSPARK_IMAGE_TRACE_DIR=/path/to/fresh/lighting-trace \
+     cargo test -p turbospark-image --test metal_parity \
+     packed_native_first_step_trace_localizes_divergent_boundary -- \
+     --ignored --nocapture
+   ```
+
+   To add matching reference arrays, run the `encode` and `denoise` stages of
+   `scripts/z_image_capture.py` into that fresh run directory. The denoise
+   manifest then declares the bounded trace arrays and validates their shapes
+   against the conditioning predecessor. The patchification fixture is
+   optional until that capture is refreshed; the existing block and latent
+   fixtures still localize the first packed boundary.
+
+   **The 1.414 rollout failure is a noise-realization mismatch, not packed
+   drift.** The frozen fixtures were captured from the reference pipeline's
+   torch CPU `randn(seed 42)`, while `MetalImageBackend` rolls out from its
+   own `seeded_noise` xorshift and Box-Muller generator. The two fields are
+   independent draws: measured directly, the native noise reads relative L2
+   1.4132 against the captured `initial_noise` array with correlation
+   -0.0014, and two uncorrelated unit-scale fields sit at sqrt(2) = 1.4142.
+   Both complete nine-step runs failed at 1.4135604 and 1.4136423, within
+   0.03 percent of that floor, and the noise-independent conditioning
+   boundary passed at 0.0815. Any implementation, however correct, reads
+   about 1.414 against these fixtures. The packed parity and trace gates now
+   seed the denoiser from the captured `initial_noise` fixture through
+   `denoise_steps_from_noise` and the trace's `initial_noise` parameter, so
+   the frozen 0.923 envelope measures what it was frozen to measure. The
+   envelope is unchanged. Production generation keeps the native noise; any
+   unit-scale Gaussian is a valid draw, and the PNG metadata records the
+   generator provenance. The first matched-noise trace on the pinned install
+   (`docs/verification/z-image-ig2-noise-trace.json`) then reads conditioning
+   0.0815, noise-refiner 0.0644, main-transformer intermediate 1.0856,
+   velocity 0.6029, and first scheduler latent 0.0395, so the packed first
+   step sits well inside the 0.923 envelope; the two intermediate readings
+   have no frozen analogue because IG0 froze only conditioning and final
+   latents. The first complete matched-noise gate run (4,778.46 seconds)
+   passed every denoise check and reached the VAE for the first time, where
+   it exposed a load-time defect: the packed VAE records the mid-block
+   attention projections as 2-D Diffusers `nn.Linear` weights while the
+   Metal path expected `[512, 512, 1, 1]`. The 1x1 conv kernel indexes a
+   weight as `oc * in_channels + ic`, byte-identical to the Linear layout
+   the CPU reference applies, so the Metal shape expectations now match the
+   packed 2-D form, and a cross-check of the whole VAE index confirms those
+   four are the only 2-D decoder tensors. The focused
+   `packed_native_vae_decodes_the_frozen_latent` gate decodes the frozen
+   latent alone so VAE issues no longer require a nine-step denoise in
+   front of them.
 
 The original implementation requirements are preserved below as the
 acceptance contract:

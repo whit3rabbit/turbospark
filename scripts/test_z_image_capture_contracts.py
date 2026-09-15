@@ -120,6 +120,38 @@ class CaptureContractTests(unittest.TestCase):
             self.assertEqual(arrays["timesteps"]["shape"], [actual_forwards])
             self.assertEqual(arrays["sigmas"]["shape"], [actual_forwards + 1])
 
+            trace = manifest.get("first_step_trace")
+            if trace is not None:
+                self.assertEqual(
+                    trace,
+                    {
+                        "conditioning": "conditioning",
+                        "patchification": "patches",
+                        "noise_refiner": "noise_refiner_output",
+                        "main_transformer": "main_transformer_output",
+                        "velocity": "velocity",
+                        "scheduler_latent": "latent_00",
+                    },
+                )
+                patch_count = (settings["height"] // 16) * (settings["width"] // 16)
+                encode = self._load(encode_file)
+                cap_len = encode["arrays"]["conditioning"]["shape"][0]
+                cap_padded_len = (cap_len + 31) // 32 * 32
+                self.assertEqual(arrays["patches"]["shape"], [patch_count, 64])
+                self.assertEqual(
+                    arrays["noise_refiner_output"]["shape"], [1, patch_count, 3840]
+                )
+                self.assertEqual(
+                    arrays["main_transformer_output"]["shape"],
+                    [1, patch_count + cap_padded_len, 3840],
+                )
+                self.assertIn(
+                    arrays["velocity"]["shape"],
+                    [latent_shape, [16, 1, settings["height"] // 8, settings["width"] // 8]],
+                )
+                for name in ("patches", "noise_refiner_output", "main_transformer_output", "velocity"):
+                    self.assertEqual(arrays[name]["dtype"], "float32")
+
     def test_decode_manifests(self):
         for case_dir in self.cases:
             path = case_dir / "decode.json"

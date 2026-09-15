@@ -1,0 +1,46 @@
+{
+  "scope": "IG2 packed native noise-realization diagnosis and matched-noise first-step trace",
+  "date": "2026-09-15",
+  "install": "target/ig2/z-image-turbo.image.gturbo, pinned local pack, sourceRevision f332072aa78be7aecdf3ee76d5c247082da564a6",
+  "noise_realization": {
+    "fixture": "target/ig0/runs/lighting/initial_noise.npy, torch CPU randn seed 42",
+    "native": "MetalImageBackend seeded_noise(42), xorshift state and Box-Muller",
+    "relative_l2": 1.413187,
+    "correlation": -0.0014,
+    "uncorrelated_floor_sqrt2": 1.414214,
+    "recorded_gate_failures": {
+      "original_artifact_2026-09-14": 1.4135604,
+      "corrected_policy_artifact_2026-09-14": 1.4136423
+    },
+    "reading": "both complete nine-step gate failures sit within 0.03 percent of the uncorrelated-noise floor, so the frozen 0.923 envelope was unobservable through mismatched noise rather than violated by packed drift"
+  },
+  "matched_noise_first_step_trace": {
+    "test": "packed_native_first_step_trace_localizes_divergent_boundary",
+    "elapsed_seconds": 1207.63,
+    "boundaries_relative_l2": {
+      "conditioning": 0.0815407634,
+      "noise_refiner": 0.0644479543,
+      "main_transformer": 1.0856483,
+      "velocity": 0.602933049,
+      "scheduler_latent": 0.0395193174
+    },
+    "patchification_reference": "unavailable until the z_image_capture.py denoise stage is refreshed; the native patchification was finite only",
+    "reading": "conditioning is within its frozen 0.084 envelope, the noise refiner tracks the reference at 0.064, and the first scheduler latent lands at 0.0395 against the 0.923 rollout envelope. The main-transformer intermediate reads 1.0856 and the velocity 0.6029; neither has a frozen analogue because the IG0 emulation froze only conditioning and final latents, and the small first-step size damps the velocity error into the 0.0395 latent reading."
+  },
+  "ig0_envelope_regime": {
+    "source": "docs/verification/z-image-ig0-real.json comparisons",
+    "conditioning_relative_l2": {
+      "composition": 0.0827,
+      "detail": 0.0808,
+      "lighting": 0.0811,
+      "typography": 0.0829
+    },
+    "final_latents_relative_l2": {
+      "composition": 0.4421,
+      "detail": 0.6138,
+      "lighting": 0.4575,
+      "typography": 0.9214
+    },
+    "note": "the 0.923 envelope is the worst of the four prompts rounded up to the next 0.001, and the emulation compared a BF16 arm against an INT4 arm that each carried its own quantized conditioning, the same regime the native packed run is in"
+  }
+}

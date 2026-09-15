@@ -84,6 +84,38 @@ def denoise(args, evidence):
     model.to(args.device)
     pipe = pipeline(args.model)
     pipe.transformer = model
+
+    def save_once(name, value):
+        if name not in evidence.data["arrays"]:
+            evidence.save(name, value)
+
+    # The first invocation is the bounded diagnostic surface for IG2. These
+    # hooks preserve the reference execution and copy only the tensors needed
+    # to locate the first packed divergence.
+    original_patchify_and_embed = model.patchify_and_embed
+
+    def patchify_and_embed_trace(all_image, all_cap_feats, patch_size, f_patch_size):
+        result = original_patchify_and_embed(all_image, all_cap_feats, patch_size, f_patch_size)
+        save_once("patches", result[0][0])
+        return result
+
+    model.patchify_and_embed = patchify_and_embed_trace
+
+    def noise_refiner_hook(_, __, output):
+        save_once("noise_refiner_output", output)
+
+    def main_transformer_hook(_, __, output):
+        save_once("main_transformer_output", output)
+
+    def velocity_hook(_, __, output):
+        sample = output.sample if hasattr(output, "sample") else output[0]
+        if isinstance(sample, list):
+            sample = sample[0]
+        save_once("velocity", sample)
+
+    model.noise_refiner[-1].register_forward_hook(noise_refiner_hook)
+    model.layers[-1].register_forward_hook(main_transformer_hook)
+    model.register_forward_hook(velocity_hook)
     noise = torch.randn((1, 16, args.height // 8, args.width // 8),
                         generator=torch.Generator("cpu").manual_seed(args.seed), dtype=torch.float32)
     evidence.save("initial_noise", noise)
@@ -91,8 +123,8 @@ def denoise(args, evidence):
     def forward_hook(_, inputs, output):
         calls.append(1)
     model.register_forward_hook(forward_hook)
-    # Capture only the first invocation per representative block to bound fixture size.
-    for index in (0, len(model.layers) // 2, len(model.layers) - 1):
+    # Capture only the first invocation per selected block to keep the diagnostic bounded.
+    for index in (0, 15, 16, 20, 24, 28, len(model.layers) - 1):
         name = f"block_{index:02}"
         def hook(_, inputs, output, name=name):
             if name + "_output" not in evidence.data["arrays"]:
@@ -117,6 +149,14 @@ def denoise(args, evidence):
     evidence.save("final_latents", result)
     evidence.save("timesteps", pipe.scheduler.timesteps)
     evidence.save("sigmas", pipe.scheduler.sigmas)
+    evidence.data["first_step_trace"] = {
+        "conditioning": "conditioning",
+        "patchification": "patches",
+        "noise_refiner": "noise_refiner_output",
+        "main_transformer": "main_transformer_output",
+        "velocity": "velocity",
+        "scheduler_latent": "latent_00",
+    }
     evidence.data.update(actual_forwards=len(calls), scheduler_updates=len(updates))
 
 

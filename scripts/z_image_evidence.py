@@ -135,6 +135,39 @@ def validate_capture(path):
                 raise ValueError("invalid latent shape/dtype")
         if x["arrays"]["timesteps"]["shape"] != [x["actual_forwards"]] or x["arrays"]["sigmas"]["shape"] != [x["actual_forwards"] + 1]:
             raise ValueError("invalid schedule shape")
+        trace = x.get("first_step_trace")
+        if trace is not None:
+            expected_trace = {
+                "conditioning": "conditioning",
+                "patchification": "patches",
+                "noise_refiner": "noise_refiner_output",
+                "main_transformer": "main_transformer_output",
+                "velocity": "velocity",
+                "scheduler_latent": "latent_00",
+            }
+            if trace != expected_trace:
+                raise ValueError("invalid first-step trace declaration")
+            patch_count = (s["height"] // 16) * (s["width"] // 16)
+            encode = json.loads((path.parent / "encode.json").read_text())
+            cap_len = encode["arrays"]["conditioning"]["shape"][0]
+            cap_padded_len = (cap_len + 31) // 32 * 32
+            trace_shapes = {
+                "patches": [patch_count, 64],
+                "noise_refiner_output": [1, patch_count, 3840],
+                "main_transformer_output": [1, patch_count + cap_padded_len, 3840],
+                "velocity": [[1, 16, s["height"] // 8, s["width"] // 8],
+                             [16, 1, s["height"] // 8, s["width"] // 8]],
+            }
+            for name, expected in trace_shapes.items():
+                if name not in x["arrays"]:
+                    raise ValueError(f"missing first-step trace array: {name}")
+                actual = x["arrays"][name]["shape"]
+                if name == "velocity":
+                    valid = actual in expected
+                else:
+                    valid = actual == expected
+                if not valid or x["arrays"][name]["dtype"] != "float32":
+                    raise ValueError(f"invalid first-step trace shape: {name}")
     if x["stage"] == "decode":
         if x["arrays"]["decoded_pixels"]["shape"] != [1, 3, x["settings"]["height"], x["settings"]["width"]]:
             raise ValueError("invalid decoded pixel shape")

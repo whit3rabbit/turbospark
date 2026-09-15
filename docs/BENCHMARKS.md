@@ -1773,6 +1773,64 @@ which is the compute-bound reading the Qwen3.8 pair first supported; the
 2-bit GEMV is simply doing more per byte than either neighbour (four
 elements a byte against eight, and no `+/-1` shortcut).
 
+### Cross-engine: MLX on the same bytes, `qwen38` dense
+
+ROADMAP P4.1's qwen38 clause, closed 2026-09-15. The family's external check
+had been community throughput readings only (`docs/BENCHMARKS.md`'s "external
+reference points" paragraph); this is its first distribution-level comparison
+against another engine, and it became runnable the day `~/models/qwen38-27b.gturbo`
+was re-streamed, because the reference snapshot
+(`mlx-community/Qwen3.8-27B-4bit`@`3e6447f0`) was already in the HF cache.
+
+`scripts/kld_mlx_affine.py` replays this port's own id sequence through
+`mlx-lm==0.32.2` (upstream, out of a `uv run` ephemeral env -- no fork
+needed at 4 bits). 573 positions, warm cache, one machine. The reference is
+asserted to be running the PACKED weights, counted rather than spot-checked:
+497 `QuantizedLinear` plus 1 `QuantizedEmbedding`, all at
+`bits=4, group_size=64`, equal to the checkpoint header's 498 `.scales`
+tensors -- the guard the ternary row describes, doing its job on this
+checkpoint's uniform-width quantization (no per-layer 8-bit overrides, read
+off `config.json` before the row was written).
+
+| Comparison | Mean KL | Median | p99 | Max | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MLX batched vs cached, both Metal (shape floor) | 0.00110 | 0.000642 | 0.0060 | 0.0404 | 98.95% |
+| **this port vs MLX, same bytes, both Metal, both cached** | **0.000788** | **0.000520** | **0.0067** | **0.0216** | **98.78%** |
+| MLX Metal vs MLX CPU (backend floor) | not measured | | | | |
+
+| Reading | Perplexity |
+| --- | ---: |
+| **this port, 4-bit install** | **4.9432** |
+| MLX, same bytes, Metal, cached | 4.9406 |
+| MLX, same bytes, Metal, batched | 4.9406 |
+
+**The headline is 0.72x the reference engine's own shape floor** -- the first
+row here whose port-vs-reference number sits BELOW the batched-vs-cached
+floor measured beside it, and by a margin (28%) larger than the floor's own
+run-to-run noise. Read that with the same caveat every row on this page
+carries, upside down: a number below the floor does not say this port is
+more exact than MLX against truth, it says the two engines' cached decodes
+disagree with each other less than either's cached decode disagrees with its
+own batched one on this dense GDN architecture -- where, as on Bonsai and
+Ternary, the floor is small in absolute terms (1e-3 nats against the MoE
+families' 3e-3 to 1e-2) because there is no routed-expert term to reorder.
+Top-1 agreement 98.78% sits in the dense-family band (99.65-100.0% for the
+other four dense rows) rather than the MoE one (91-98.25%).
+
+The perplexity pair also closes a loop: the port's 4.9432 is the FROZEN
+quality-gate row reproduced to the last digit by a freshly re-streamed
+install (the walk's byte-reproducibility SHA did its job), against MLX's
+4.9406 -- 0.05% apart, the same closeness the ternary pair shows at 0.007%,
+on a checkpoint whose reference is a THIRD-party quantization of a THIRD
+party's release rather than either engine's own conversion. Max |logit|
+40.875 against 40.75 is the float16 dump width, exactly the ternary row's
+note.
+
+Evidence: `docs/verification/` carries the run's JSON beside the dump
+(`kld_mlx_affine-qwen38.json` in the dump directory it was run against);
+the CHECKPOINTS row is `qwen38` in `scripts/kld_mlx_affine.py`, and
+`logit_dump.rs` gained the `TURBOSPARK_QWEN38_INSTALL_DIR` arm for it.
+
 ### Ornith-1.5: three installs of two checkpoints
 
 Not a parity claim. Swift has no `qwen3_5` support at all, so every number

@@ -53,8 +53,20 @@ fn packed_native_matches_quality_envelope_and_vae_parity() {
     let request = request();
     let mut scheduler = FlowMatchEulerScheduler::default();
     scheduler.set_timesteps(IMAGE_STEPS as usize);
+    // The 0.923 envelope is a matched-noise bound from the IG0 INT4
+    // emulation, so the rollout must start from the captured initial noise.
+    // The backend's native seeded noise is an independent realization and
+    // reads about sqrt(2) relative L2 against these fixtures before any
+    // weight is touched.
+    let expected_initial = read_fixture("initial_noise.npy");
     let steps = backend
-        .denoise_steps(&conditioning, &request, &scheduler, &cancellation)
+        .denoise_steps_from_noise(
+            &conditioning,
+            &request,
+            &scheduler,
+            &cancellation,
+            &expected_initial,
+        )
         .expect("native nine-step denoise");
     assert_eq!(steps.len(), 9, "native denoise must perform nine updates");
     for (step, latent) in steps.iter().enumerate() {
@@ -115,6 +127,154 @@ fn packed_native_matches_quality_envelope_and_vae_parity() {
         decoded.iter().all(|value| value.is_finite()),
         "native packed decoded pixels must be finite"
     );
+}
+
+#[test]
+#[ignore = "opt-in bounded packed first-step divergence trace"]
+fn packed_native_first_step_trace_localizes_divergent_boundary() {
+    let root = image_install();
+    let mut backend = MetalImageBackend::open(&root).expect("open packed Metal image install");
+    let cancellation = CancellationToken::new();
+    let conditioning = backend
+        .encode_conditioning(PROMPT, 512, &cancellation, &mut |_, _| {})
+        .expect("native conditioning");
+    let mut scheduler = FlowMatchEulerScheduler::default();
+    scheduler.set_timesteps(IMAGE_STEPS as usize);
+    // The trace rolls out from the captured reference noise. This backend's
+    // native seeded noise is an independent realization that already reads
+    // about sqrt(2) relative L2 against the captured initial_noise array, so
+    // seeding it here is the difference between measuring packed drift and
+    // measuring two different noise draws.
+    let expected_initial = read_fixture("initial_noise.npy");
+    let trace = backend
+        .denoise_first_step_trace(
+            &conditioning,
+            &request(),
+            &scheduler,
+            &cancellation,
+            Some(&expected_initial),
+        )
+        .expect("native first-step trace");
+
+    let expected_conditioning = read_fixture("conditioning.npy");
+    let expected_block_input = read_fixture("block_00_input.npy");
+    let expected_main = read_fixture("block_29_output.npy");
+    let expected_main_checkpoints = [
+        (0, read_fixture("block_00_output.npy")),
+        (15, read_fixture("block_15_output.npy")),
+        (16, read_fixture("block_16_output.npy")),
+        (20, read_fixture("block_20_output.npy")),
+        (24, read_fixture("block_24_output.npy")),
+        (28, read_fixture("block_28_output.npy")),
+        (29, expected_main.clone()),
+    ];
+    let expected_latent = read_fixture("latent_00.npy");
+    let dt = scheduler.sigmas[1] - scheduler.sigmas[0];
+    let expected_velocity: Vec<f32> = expected_latent
+        .iter()
+        .zip(&expected_initial)
+        .map(|(next, current)| (next - current) / dt)
+        .collect();
+
+    assert_eq!(trace.conditioning.len(), expected_conditioning.len());
+    assert_eq!(trace.noise_refiner.len(), 4096 * 3840);
+    assert_eq!(trace.main_transformer.len(), expected_main.len());
+    assert_eq!(trace.velocity.len(), expected_velocity.len());
+    assert_eq!(trace.scheduler_latent.len(), expected_latent.len());
+
+    let noise_refiner_expected = &expected_block_input[..trace.noise_refiner.len()];
+    assert!(trace.patchification.iter().all(|value| value.is_finite()));
+    let rows = [
+        (
+            "conditioning",
+            relative_l2(&trace.conditioning, &expected_conditioning),
+        ),
+        (
+            "noise_refiner",
+            relative_l2(&trace.noise_refiner, noise_refiner_expected),
+        ),
+        (
+            "main_transformer",
+            relative_l2(&trace.main_transformer, &expected_main),
+        ),
+        ("velocity", relative_l2(&trace.velocity, &expected_velocity)),
+        (
+            "scheduler_latent",
+            relative_l2(&trace.scheduler_latent, &expected_latent),
+        ),
+    ];
+    for (boundary, error) in rows {
+        assert!(error.is_finite(), "{boundary} trace error is not finite");
+        eprintln!("first-step trace boundary={boundary} relative-L2={error:.8e}");
+    }
+    for (index, expected) in expected_main_checkpoints {
+        let actual = trace
+            .main_transformer_checkpoints
+            .iter()
+            .find(|(checkpoint, _)| *checkpoint == index)
+            .map(|(_, values)| values)
+            .expect("native first-step trace missing main-transformer checkpoint");
+        assert_eq!(actual.len(), expected.len());
+        let error = relative_l2(actual, &expected);
+        assert!(
+            error.is_finite(),
+            "main block {index} trace error is not finite"
+        );
+        eprintln!(
+            "first-step trace boundary=main_transformer.block_{index:02} relative-L2={error:.8e}"
+        );
+    }
+    eprintln!(
+        "first-step trace seeded from the captured initial_noise fixture; conditioning_within_frozen_envelope={}",
+        rows[0].1 <= PACKED_CONDITIONING_REL_L2_LIMIT
+    );
+    let patches_path = fixture_path("patches.npy");
+    if patches_path.exists() {
+        let expected_patches = turbospark_image::fixtures::read_npy_file_f32(&patches_path)
+            .expect("read captured patchification fixture");
+        assert_eq!(trace.patchification.len(), expected_patches.data.len());
+        eprintln!(
+            "first-step trace boundary=patchification relative-L2={:.8e}",
+            relative_l2(&trace.patchification, &expected_patches.data)
+        );
+    } else {
+        eprintln!(
+            "first-step trace boundary=patchification reference=unavailable; rerun z_image_capture.py denoise"
+        );
+    }
+}
+
+#[test]
+#[ignore = "opt-in packed Metal VAE decode parity against the frozen latent"]
+fn packed_native_vae_decodes_the_frozen_latent() {
+    let root = image_install();
+    let mut backend = MetalImageBackend::open(&root).expect("open packed Metal image install");
+    let cancellation = CancellationToken::new();
+    // Decode the frozen higher-precision final latent so this isolates the
+    // packed VAE implementation from the packed denoiser's quantization
+    // drift, exactly like the VAE section of the complete quality gate but
+    // without the nine-step denoise in front of it.
+    let expected_final = read_fixture("final_latents.npy");
+    let expected_pixels = read_fixture("decoded_pixels.npy");
+    let vae_decoded = backend
+        .decode(
+            &expected_final,
+            IMAGE_WIDTH,
+            IMAGE_HEIGHT,
+            &cancellation,
+            &mut |_, _| {},
+        )
+        .expect("native packed VAE decode");
+    assert_eq!(vae_decoded.len(), expected_pixels.len());
+    let max_abs = vae_decoded
+        .iter()
+        .zip(&expected_pixels)
+        .map(|(actual, expected)| (actual - expected).abs())
+        .fold(0.0f32, f32::max);
+    let rel_l2 = relative_l2(&vae_decoded, &expected_pixels);
+    assert!(max_abs <= VAE_MAX_ABS_LIMIT, "VAE max abs error {max_abs}");
+    assert!(rel_l2 <= VAE_REL_L2_LIMIT, "VAE relative L2 error {rel_l2}");
+    eprintln!("packed VAE decode of the frozen latent: max_abs={max_abs} rel_l2={rel_l2}");
 }
 
 #[test]
@@ -261,10 +421,17 @@ fn image_install() -> PathBuf {
         })
 }
 
+fn fixture_path(name: &str) -> PathBuf {
+    let root = std::env::var_os("TURBOSPARK_IMAGE_TRACE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/ig0/runs/lighting")
+        });
+    root.join(name)
+}
+
 fn read_fixture(name: &str) -> Vec<f32> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/ig0/runs/lighting")
-        .join(name);
+    let path = fixture_path(name);
     turbospark_image::fixtures::read_npy_file_f32(&path)
         .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
         .data
