@@ -3,145 +3,148 @@
 [![crates.io](https://img.shields.io/crates/v/turbospark-cli.svg)](https://crates.io/crates/turbospark-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/whit3rabbit/turbospark/blob/main/LICENSE)
 
-The command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark), a Rust LLM inference engine for Apple Silicon. `turbospark-model` finds, inspects, and installs models. `turbospark-check` runs them. `turbospark` is a unified front end over both, plus the server and the benchmark harness.
+Command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark), a native Rust LLM and diffusion inference engine for Apple Silicon.
+- `turbospark-model`: Finds, inspects, and installs models.
+- `turbospark-check`: Generates text and runs interactive chat.
+- `turbospark-image`: Generates native diffusion images via Z-Image-Turbo.
+- `turbospark`: Unified front end over all subcommands, the HTTP server, and external coding agents.
 
-Generation is macOS-only and needs a Metal device. On other platforms the binaries build and parse arguments, and `turbospark-check` stops after printing the resolved request.
+Generation is macOS-only and requires a Metal-capable Apple Silicon device. On other platforms, the binaries parse arguments and validate configuration.
 
-## Install
+## Installation
 
 ```sh
+# Install from crates.io
 cargo install turbospark-cli
-```
 
-Homebrew gets you the same binaries plus the server:
-
-```sh
+# Or install via Homebrew cask (includes CLI tools, server, and GUI app)
 brew install --cask whit3rabbit/tap/turbospark
 ```
 
 ## Quickstart
 
-Pull a small model and talk to it. Nothing here needs a path:
-
 ```sh
+# 1. Pull a tested model into ~/.turbospark/models
 turbospark-model pull tinyllama
+
+# 2. Start an interactive terminal chat session
 turbospark-check --model tinyllama --chat
 ```
 
-`--model` takes a catalog alias or a directory. An existing directory always wins, so a bare name can never quietly serve a different model than the one you typed.
+`--model` accepts either a curated catalog alias (e.g. `tinyllama`, `gemma4`) or a direct path to a `.gturbo` directory.
 
-## turbospark-model
+---
 
-The catalog and download surface. `pull` streams a checkpoint a layer at a time, so a 27 GB source never lands on disk whole.
+## The Binaries
+
+### 1. `turbospark-model`
+
+Catalog discovery, remote Hugging Face inspection, and streaming install:
 
 ```sh
-turbospark-model list                    # the curated catalog
-turbospark-model info gemma4             # one row in detail
-turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF   # will this repo run here?
-turbospark-model pull gemma4             # install it
-turbospark-model path gemma4             # where it went
-turbospark-model rm gemma4               # remove it
+turbospark-model list                         # Browse curated catalog
+turbospark-model info gemma4                  # Inspect catalog entry details
+turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF # Probe remote HF repo (reads KB, no download)
+turbospark-model pull gemma4                  # Stream and repack directly into ~/.turbospark/models
+turbospark-model recommend --context 8192     # Rank models that fit system memory
+turbospark-model path gemma4                  # Print resolved filesystem path
+turbospark-model rm gemma4                    # Delete local install
+turbospark-model auth                         # Check or set Hugging Face access token
 ```
 
-`probe` reads headers rather than weights, so it answers in seconds and a few KB: which architecture the file claims, whether every block type has a kernel, and whether the expert cache arithmetic leaves it able to fit. It exits 0 only if the model would actually run.
+### 2. `turbospark-check`
 
-## turbospark-check
-
-Three ways in. Use `--messages-file` or `--chat` on any instruction-tuned model, because a raw `--prompt` skips the chat template and the output babbles:
+Inference runner with streaming output and full sampling controls:
 
 ```sh
-# A raw prompt, no template applied
-turbospark-check --model gemma4 --prompt "Hello"
+# Raw prompt (no chat template applied)
+turbospark-check --model gemma4 --prompt "Explain quantum decoherence in one sentence."
 
-# A JSON conversation, rendered through the model's own chat template
+# Formatted conversation using the model's native chat template
 turbospark-check --model gemma4 --messages-file ./messages.json
 
-# Interactive REPL, trimming old turns to fit the context window
+# Interactive REPL trimming history to fit the context window
 turbospark-check --model gemma4 --chat
+
+# Directional steering edit (ablate, add, clamp, renorm)
+turbospark-check --model gemma4 --chat --steer layer=12:mode=renorm:scale=1.5:vector=steering.bin
 ```
 
-## turbospark
+### 3. `turbospark-image`
 
-A unified front end that execs whichever peer binary a command needs (find it beside the executable, or on `PATH`):
+Native diffusion image generation:
 
 ```sh
-turbospark run gemma4                    # turbospark-check --model gemma4 --chat
-turbospark run gemma4 "hello"            # turbospark-check --model gemma4 --prompt "hello"
-turbospark serve                         # turbospark-server
-turbospark start                         # launch a background server daemon
-turbospark stop / restart / status       # manage that daemon
-turbospark start claude                  # point Claude Code at the local server
-turbospark list / pull / info / rm / probe / recommend / path / auth
-                                          # turbospark-model
-turbospark bench                         # turbospark-bench
+turbospark-image --model ~/models/z-image-turbo \
+  --prompt "A cinematic photo of an astronaut on Mars during sunset" \
+  --output mars.png --steps 9
 ```
 
-`start <agent>` connects an external coding agent (`claude`, `codex`, `opencode`, `hermes`, `openclaw`, `dsh`) to the local server through `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`. The Claude connector passes a `--settings` overlay, rather than only inherited environment variables, so its current local port wins over a stale user setting. It enables gateway discovery and defers unknown-model context enforcement to the gateway; pass `--model claude-turbospark-<canonical-model-id>` to select an attached backend before startup. `start` with anything else launches the background daemon that `stop`, `restart`, and `status` manage.
+### 4. `turbospark` (Unified Front End)
 
-## Memory versus speed: `--expert-cache-slots`
+Front end routing commands to peer binaries:
 
-Routed experts stream from disk, and a decoded token blocks on the ones that miss the per-layer cache. That makes the slot count the one knob trading RAM for throughput directly. Measured on the real Gemma 4 install (`docs/DECODE_BUDGET.md`):
+```sh
+turbospark run gemma4                         # Alias for turbospark-check --chat
+turbospark run gemma4 "hello"                 # Alias for turbospark-check --prompt
+turbospark image --prompt "mars"              # Alias for turbospark-image
+turbospark serve                              # Launches turbospark-server
+turbospark start                              # Starts background server daemon
+turbospark stop / restart / status            # Manages daemon lifecycle
+turbospark start claude                       # Configures Claude Code to use local server
+turbospark list / pull / info / probe / auth   # Subcommands routed to turbospark-model
+turbospark bench                              # Runs turbospark-bench
+```
+
+The `start <agent>` subcommand connects external coding agents (`claude`, `codex`, `opencode`, `hermes`, `openclaw`, `dsh`) directly to the local server via `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
+
+---
+
+## Memory vs Throughput: `--expert-cache-slots`
+
+MoE expert weights stream from NVMe storage on demand. Setting the cache slot count trades RAM for decode throughput:
 
 | slots | peak RAM | decode |
 |---|---|---|
 | 16 | ~2.1 GB | ~44 tok/s |
 | 32 | ~3.7 GB | ~51 tok/s |
 
-GPU busy time is identical in both rows. The whole difference is how long the GPU sits idle waiting on the read.
+- **Default is `auto`**: Automatically computes the largest slot count fitting a quarter of remaining system memory after base weights and a 4 GiB reserve.
+- **Pinning for Benchmarks**: Specify `--expert-cache-slots 16` to pin reproducible memory ceilings.
 
-Read those numbers narrowly. They are one model on one machine, an M4 Max with 36 GB, and the ratio transfers to other hardware far better than the absolute figures do.
+---
 
-**The default is `auto`.** It picks the largest count fitting a quarter of the memory left after the install's own weights and a 4 GiB reserve. It never resolves below 16, so a machine without headroom behaves exactly as it did before the flag learned to size itself.
+## Key Modules
 
-The resolved count is printed at startup, and is worth recording beside any timing:
+- `main.rs`: Entry point for `turbospark-check`.
+- `generate/`: Non-interactive text generation and streaming detokenization loop.
+- `chat.rs`: Interactive terminal REPL integrating `turbospark-window-fit`.
+- `agent.rs`: External coding agent environment setup and configuration overlays.
+- `daemon.rs`: Server background daemon process management.
+- `bin/turbospark.rs`: Unified front-end command dispatcher.
+- `bin/model.rs` & `bin/model_cmd/`: Subcommands for `turbospark-model`.
+- `bin/image.rs`: Entry point for `turbospark-image`.
 
-```sh
-turbospark-check --model gemma4 --prompt "hi"
-# expert cache: 32 slots per layer (auto)
-
-turbospark-check --model gemma4 --prompt "hi" --expert-cache-slots 16
-# expert cache: 16 slots per layer
-```
-
-Pin `16` to reproduce a published benchmark, or to hold the memory ceiling on a shared machine. Allowed values are `auto`, 8, 16, 24, 32, 48, 64, 96, and 128. A count above the model's own expert count is capped rather than allocated.
-
-Changing it cannot change what the model writes. Routed slots dispatch in the router's ranking, so output is byte-identical at every slot count.
-
-## Key modules
-
-- `main.rs`: process entry point. Reads `argv`, triggers parsing, prints the resolved request, and routes execution.
-- `generate/`: non-interactive text and chat-template generation driver.
-- `chat.rs`: the REPL, using `fit_conversation_window` to keep history inside the context bound.
-- `bin/model.rs` and `bin/model_cmd/`: `turbospark-model`'s argument parse and its nine subcommands. Nothing there decides anything, `turbospark-catalog` does.
-- `bin/turbospark.rs`, `agent.rs`, `daemon.rs`: the unified `turbospark` front end, its coding-agent connectors, and its background server daemon.
-
-## Development
+## Development & Test Commands
 
 ```sh
+# Run CLI test suite
 cargo test -p turbospark-cli
+
+# Run real-model generation test (macOS, release mode)
+cargo test -p turbospark-cli --test real_generation --release -- --ignored --nocapture
 ```
 
-Changes to decode, the KV cache, the output head, or a Metal encode loop need both real-model smokes. Greedy alone is not enough, see the first gotcha below:
+## Tests
 
-```sh
-cargo build --release -p turbospark-cli
-printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood damage."}]' > /tmp/p.json
+- `tests/model_cli.rs`: Tests `turbospark-model` subcommands, alias resolution, and probing.
+- `tests/real_generation.rs`: End-to-end inference tests verifying greedy and sampled generation.
+- `tests/image_cli.rs`: CLI tests for `turbospark-image` argument validation and output paths.
+- `tests/turbospark_cli.rs`: Tests unified front-end command routing.
+- `tests/mference_check.rs`: Backward-compatibility tests for legacy CLI flags.
 
-# 1. Greedy, catches broken math
-./target/release/turbospark-check --model ~/models/gemma4.gturbo \
-  --messages-file /tmp/p.json --max-new 400 --seed 1 --temperature 0.0001 --top-k 1
+## Crate Gotchas
 
-# 2. Sampled at the CLI defaults, catches distribution bugs greedy cannot see
-./target/release/turbospark-check --model ~/models/gemma4.gturbo \
-  --messages-file /tmp/p.json --max-new 400 --seed 20260721
-```
-
-## Gotchas
-
-1. **Greedy is not a weaker test, it is a different one.** `argmax` is invariant under every monotone transform of the distribution, so a broken distribution can stay byte-identical to correct under greedy and fail completely under sampling. Always check sampled coherence too.
-2. **A raw `--prompt` on an instruction-tuned model babbles.** That is the chat template missing, not a decode bug. `--messages-file` and `--chat` apply it.
-3. **`--expert-cache-slots` defaults to `auto`, so two machines print different slot counts and different tok/s for the same command.** That is the flag working, not drift. Pin `16` before comparing against a published timing, and read the startup line rather than assuming a count.
-
-## License
-
-MIT. See [LICENSE](https://github.com/whit3rabbit/turbospark/blob/main/LICENSE).
+1. **Greedy vs Sampled Verification**: Greedy `argmax` selection is invariant under any monotone transformation of the logit distribution. A mathematical bug that ruins sampling distributions can still appear correct under greedy generation. Always verify both greedy and sampled outputs when testing numerics.
+2. **Raw Prompt Babbling**: Invoking `--prompt` directly bypasses the checkpoint's Jinja chat template, which causes instruction-tuned models to hallucinate or babble. Use `--messages-file` or `--chat` for instruction models.
+3. **Auto Expert Slots**: Because `--expert-cache-slots` defaults to `auto`, machines with different RAM sizes will report different slot counts and throughputs. Pin the slot count when comparing benchmarks.

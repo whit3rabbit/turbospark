@@ -1,49 +1,62 @@
 # turbospark-ffi
 
-The C ABI a native GUI host drives the engine through, plus the SwiftPM package (`swift/TurboSpark`) that wraps it and the SwiftUI chat app (`swift/TurboSparkApp`) that verifies the stack end to end. Compiles to a `staticlib` and is published against a single hand-written header, `include/turbospark.h`: an opaque session handle, options and results as JSON so a new knob is never an ABI break, a per-token streaming callback, and cancel-from-any-thread.
+C ABI static library (`libturbospark_ffi.a`) and canonical C header (`include/turbospark.h`) enabling native GUI hosts and Swift packages (`swift/TurboSpark`) to drive the inference engine in-process with zero IPC overhead.
 
-Downstream Swift code links this crate's `staticlib` directly; nothing in this workspace depends on it as an `rlib` except its own tests, which exercise the same `extern "C"` function bodies the header declares.
+Downstream Swift code links this crate's `staticlib` directly; nothing in this workspace depends on it as an `rlib` except its own internal test suite.
+
+## Purpose & Role
+
+`turbospark-ffi` exposes the complete feature set of the Rust inference engine across a stable, foreign-function interface (FFI). It provides opaque session handles, exchanges complex configuration and results via camelCase JSON wire shapes, exposes token-by-token push callbacks, enables thread-safe generation cancellation from any thread, and embeds the local HTTP server and model catalog manager directly into host applications.
 
 ## Safety
 
-Contains `unsafe` throughout: it IS the ABI layer, so every entry point takes raw pointers. It joins `model-io` and `streaming` as the third crate in the workspace that cannot `#![forbid(unsafe_code)]`. Every `extern "C"` body in `api/` is a call to `abi::guard`, `abi::guard_result`, or `abi::guard_value` and nothing else, because a panic unwinding across the boundary is undefined behaviour and this workspace cannot build with `panic = "abort"`.
+- Contains `unsafe` code throughout: this is the FFI boundary, where raw pointers and foreign memory cross into Rust.
+- **Panic Boundary Guarding**: Rust panics cannot safely unwind across an `extern "C"` boundary. Every entry point in `api/` wraps its implementation body in `abi::guard`, `abi::guard_result`, or `abi::guard_value`. Any panic or error is caught and converted into a thread-local error message and an integer status code (`TS_STATUS_OK`, `TS_STATUS_ERROR`).
 
 ## Key Modules
 
-- `abi.rs`: status codes, the per-thread error slot, and the `guard`/`guard_result`/`guard_value` wrappers every entry point is built from.
-- `strings.rs`: borrowing `const char *` arguments in, handing owned `char **` allocations out through `ts_string_free`.
-- `wire.rs`: the JSON option and result shapes exchanged across the boundary (camelCase, except the two catalog types passed through unchanged from `crates/catalog`).
-- `session.rs`: the opaque `Session` handle over a shared `SessionCore`, and the `Engine` enum (`Real` on macOS, `Scripted` for platform-independent testing).
-- `open.rs` (macOS only): opens an install into a `SessionCore`, mirroring `crates/cli`'s `open_session`.
-- `generate/`: one turn end to end -- prompt rendering, decode, streaming, result reporting, tool-call and vision plumbing.
-- `models/`: the portable catalog, probe, and install surface (browsing, recommending, installing a model, all of which work even on a platform that cannot then run one).
-- `server.rs`, `server_model.rs`, `server_registry.rs`: an in-process HTTP server built around this crate's already-open `SessionCore`, sharing `turbospark-server`'s router and `ChatModel` trait rather than opening a second model.
-- `telemetry.rs`: phase counters and peak physical footprint.
-- `testing.rs`: `session_for_testing`, the scripted-engine harness used by this crate's own tests and nothing else.
-- `vision.rs` (macOS only): image data URL decoding and vision token preparation for `ts_generate`'s image content parts.
-- `api/`: the `extern "C"` entry points themselves, organized by domain (`core`, `session`, `generate`, `models`, `server`, `daemon`, `embedding`).
+- `abi.rs`: Status code enums, thread-local error slot, and `guard` safety wrappers.
+- `strings.rs`: Safe borrowing of incoming `const char *` arguments and allocation of owned output strings managed via `ts_string_free`.
+- `wire.rs`: Strongly-typed serialization structures for camelCase JSON request and response payloads.
+- `session.rs`: Opaque `Session` handle managing `SessionCore` and execution engine selection (`Engine::Real` on macOS, `Engine::Scripted` on other platforms).
+- `open.rs`: macOS session loader opening `.gturbo` model directories and configuring `RealForwardRunner`.
+- `generate/`: Complete generation pipeline driving prompt rendering, streaming callbacks, tool call emission, and result summaries.
+- `models/`: Portable catalog browsing, model recommendation, and stream-install surface.
+- `server.rs`, `server_model.rs`, `server_registry.rs`, `server_transport.rs`: In-process HTTP server engine sharing the open `SessionCore` without loading a second model instance.
+- `telemetry.rs`: Hardware performance counters, phase durations, and peak physical footprint telemetry.
+- `vision.rs`: Multimodal image data URL parsing and patch token preparation.
+- `testing.rs`: Scripted mock engine harness for deterministic FFI testing.
+- `api/`: C entry points organized by domain:
+  - `core.rs`: Versioning, error string inspection, and memory deallocation.
+  - `session.rs`: Session open, close, and model info queries.
+  - `generate.rs`: Token generation, streaming callbacks, and generation cancellation.
+  - `models.rs`: Catalog querying, probe, download, and installation.
+  - `server.rs`: In-process HTTP server start, stop, and status.
+  - `daemon.rs`: External daemon process lifecycle controls.
+  - `embedding.rs`: Text embedding generation via Post-LN encoder models.
 
 ## Development & Test Commands
 
 ```sh
-# This crate's own tests, through the rlib face (no header, no Swift).
+# Run this crate's own tests through the Rust rlib interface
 cargo test -p turbospark-ffi
 
-# Build the staticlib and stage it plus the header for SwiftPM.
+# Build the staticlib and stage it plus include/turbospark.h for SwiftPM
 make swift-lib
 
-# The only thing that can check the hand-written header against the real
-# ABI: swift-lib builds first, then swift/TurboSpark/Tests links the
-# staticlib and calls through turbospark.h.
+# Run SwiftPM tests linking libturbospark_ffi.a against turbospark.h
 make swift-test
 
-# The same, plus the end-to-end arm against a real install.
+# Run end-to-end Swift integration tests against a real model install
 make swift-test-real MODEL=~/models/gemma4.gturbo
-
-# The SwiftUI chat app that exercises this crate as a real GUI host.
-make swift-app
 ```
+
+## Tests
+
+- `tests/c_surface.rs`: Comprehensive integration test exercising every declared `extern "C"` function, verifying pointer safety, error slot clearing, and JSON serialization.
 
 ## Crate Gotchas
 
-See `CLAUDE.md` for the full list; the one to read first is Gotcha 2: `tests/c_surface.rs` reaches the same function bodies `turbospark.h` declares through the `rlib`, so it can pass against a header that gets a signature wrong entirely. Only `make swift-test` links the `staticlib` and can catch that class of drift.
+1. **Staticlib vs Rlib Verification**: `tests/c_surface.rs` reaches function bodies through the Rust `rlib`, so it can pass even if the C header signature drifts. The authoritative check for ABI drift is `make swift-test`, which compiles Swift code directly against `include/turbospark.h` and links the static archive.
+2. **String Allocation & Ownership**: All strings returned across the FFI by pointer (`char **`) are allocated on the Rust heap using `CString`. Callers MUST free them by passing the pointer to `ts_string_free` to prevent memory leaks in host processes.
+3. **Thread-Safe Cancellation**: Calling `ts_cancel` sets an atomic cancellation token on the session. It can be invoked safely from any thread or asynchronous task while `ts_generate` is actively decoding tokens on another thread.

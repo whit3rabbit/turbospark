@@ -1,6 +1,6 @@
 # turbospark-repack
 
-Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer/`), synthetic model generators (`synthetic_model/`), Hugging Face Llama repacker (`hf_checkpoint.rs`), Gemma 4 / Qwen 3.6 checkpoint repackers (`gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
+Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer/`), synthetic test model generators (`synthetic_model/`), directional steering vector repacker (`control_vector.rs`), Hugging Face checkpoint converters (`hf_checkpoint.rs`, `gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
 
 Downstream workspace crates import this package via the `repack` alias:
 
@@ -9,35 +9,56 @@ Downstream workspace crates import this package via the `repack` alias:
 repack = { package = "turbospark-repack", path = "../repack" }
 ```
 
+## Purpose & Role
+
+`turbospark-repack` transforms raw Hugging Face Safetensors or GGUF model checkpoints into the engine's optimized `.gturbo` on-disk format. It downloads weights via byte-range requests without downloading entire multi-gigabyte files upfront, quantizes float weights into INT4/INT8 affine formats, separates resident trunk weights from streamable MoE expert blobs, and writes cryptographic manifests and install receipts.
+
 ## Safety
 
-- `#![forbid(unsafe_code)]` is enforced in this crate.
+- `#![forbid(unsafe_code)]` is enforced in `lib.rs`.
+- Zero unsafe pointer arithmetic or unverified buffer conversions.
 
 ## Key Modules
 
-- `safetensors_header.rs`: Pure safetensors JSON header parser.
-- `ranged_download/`: Ranged HTTP download engine (`RangeSource`).
-- `repack.rs`: Quantization repack algorithms converting FP32/BF16 weights to INT4/INT8.
-- `gturbo_writer/`: Writes `.gturbo` directory tree and manifest/layout JSON.
-- `resident_writer.rs`: Writes `model_weights.bin` resident tensor blob and binary index.
-- `synthetic_model/` / `synthetic_real.rs` / `synthetic_qwen/`: Synthetic test model generators.
-- `gemma4_checkpoint/`: Gemma 4 and Qwen 3.6 checkpoint converters and streamed expert pipeline builders.
-- `gguf_checkpoint/`: GGUF repack walk, F32 transcoding, and V-head conventions.
-- `qwen36_config.rs`: Qwen 3.6 `config.json` to `ArchConfig` converter (`parse_qwen_gdn_moe_config`).
-- `install_verifier.rs`: Validates repacked install directory structure and receipts.
+- `safetensors_header.rs`: Pure JSON parser for Safetensors file headers without loading weight payloads into memory.
+- `ranged_download/`: High-performance HTTP range-request client (`RangeSource`) for streaming weight chunks directly into repack pipelines.
+- `repack.rs`: Quantization repack kernels converting FP32 and BF16 tensors into INT4 and INT8 affine blocks with group scaling.
+- `gturbo_writer/`: Constructs the `.gturbo` directory hierarchy and serializes `manifest.json` and layout files.
+- `resident_writer.rs` & `resident_reader.rs`: Serializes and verifies `model_weights.bin` resident tensor blobs and their binary index.
+- `arch_registry.rs`: Multi-family architecture registry mapping raw checkpoint metadata to supported internal families.
+- `control_vector.rs`: Repacks directional steering vectors and obliteration matrices into `.gturbo` format.
+- `gemma4_checkpoint/`: Checkpoint pipeline for Gemma 4 and Qwen 3.6 Safetensors checkpoints.
+- `gguf_checkpoint/`: GGUF repacker handling GGUF tensor walks, F32 transcoding, and V-head conventions.
+- `gguf_config/`, `gguf_header/`, `gguf_names/`, `gguf_set.rs`: GGUF metadata extraction, tensor name mapping, and split multi-file GGUF sets.
+- `qwen2_config.rs`, `qwen36_config.rs`, `museglimmer_config.rs`: Architecture-specific JSON config parsers.
+- `manifest_peek.rs`: Inspects install metadata without full directory traversals.
+- `trained_context.rs`: Extracts and bounds trained context lengths from config keys.
+- `synthetic_model/`, `synthetic_real.rs`, `synthetic_qwen/`, `synthetic_spark.rs`, `synthetic_llama.rs`, `synthetic_muse.rs`, `synthetic_gguf/`: Deterministic synthetic test model generators for offline integration testing.
+- `install_verifier.rs`: Validates repacked install directories against checksums and receipts.
 
 ## Development & Test Commands
 
 ```sh
-# Run fast unit tests for turbospark-repack
+# Run fast offline unit and synthetic model tests
 cargo test -p turbospark-repack
 
-# Run network checkpoint integration tests (ignored by default, downloads large files)
+# Run network checkpoint integration tests (ignored by default, downloads real weights)
 cargo test -p turbospark-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --ignored --nocapture
 ```
 
+## Tests
+
+This crate contains 70 integration test files in `tests/`:
+- Checkpoint conversion: `gemma4_checkpoint.rs`, `gguf_checkpoint.rs`, `hf_checkpoint.rs`, `mtp_graft.rs`.
+- GGUF parsing and normalization: `gguf_header.rs`, `gguf_config.rs`, `gguf_names.rs`, `gguf_set.rs`, `gguf_llama_rope_patch.rs`, `gguf_qwen_convention_patch.rs`.
+- Architecture config tests: `arch_registry.rs`, `qwen35_config.rs`, `qwen36_config.rs`, `qwen4_config.rs`, `museglimmer_config.rs`, `ornith_config.rs`.
+- Steering and control vectors: `control_vector_file.rs`.
+- Synthetic model verification: `synthetic_model.rs`, `synthetic_qwen.rs`, `synthetic_qwen35.rs`, `synthetic_qwen35_vision.rs`, `synthetic_muse.rs`.
+- Network download and transcode gates (opt-in): `gguf_checkpoint_network.rs`, `gemma4_checkpoint_network.rs`, `minimax_network.rs`, `ternary_checkpoint_network.rs`.
+
 ## Crate Gotchas
 
-1. **Synthetic Weight Meaning**: Synthetic models generated by `build_synthetic_gemma4_install` use deterministic pseudo-random numbers rather than trained weights. Generated output is structurally valid but semantically meaningless.
-2. **Unconditional Manifest Fields**: `build_manifest_json` writes all family-extension fields unconditionally to satisfy structural manifest validation across model families.
+1. **Deterministic Synthetic Weights**: Synthetic models generated by `build_synthetic_gemma4_install` and siblings use deterministic pseudorandom generators rather than trained weights. Generated outputs are structurally and numerically valid for pipeline execution, but produce random text.
+2. **Tokenizer Sidecar Preservation**: When repacking and writing `.gturbo` installations, tokenizer files (`tokenizer.json`, `tokenizer_config.json`, `chat_template.jinja`, `preprocessor_config.json`) must be copied intact; stripping or renaming sidecars prevents dialect resolution at runtime.
+3. **Unconditional Manifest Fields**: `build_manifest_json` writes all family-extension fields unconditionally so that downstream `model-io` parsers can structurally validate manifests across all supported architectures.

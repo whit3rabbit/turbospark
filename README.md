@@ -13,9 +13,11 @@
 
 </div>
 
-`turbospark` is a behavior-compatible **Rust** backend and a desktop app written in **Swift**, 
+`turbospark` is a behavior-compatible **Rust** backend with a Swift wrapper and a desktop app written in **Swift** for native macOS.
 
-It is the only pure Rust inference engine for Apple Silicon Metal, pairing high-performance Rust internals with native Swift bindings (`crates/ffi` + SwiftPM) for its macOS chat app (`swift/TurboSparkApp`).
+It is designed for MacOS and MLX so it is not compatible with other platforms. It is also not compatible with other backends like PyTorch.
+
+It allows you to run large MoE models with a small amount of memory. You just need to download the app and model. You can also run rust CLI and serve the model yourself. 
 
 Heavily inspired by: [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) and [Mference](https://github.com/NeelM0906/Mference/tree/main).
 
@@ -25,6 +27,7 @@ What makes `turbospark` unique is its architecture based on the philosophy of [t
 The port is tested against the original rather than assumed compatible. Decode throughput lands within 1% of the Swift engine on the same install, every family carries a memory oracle asserting a peak-footprint ceiling, every family but the dense `llama` one carries a frozen quality gate (teacher-forced perplexity plus output digests), and the numerics are cross-checked against `mlx-lm`, `llama.cpp`, and MLX on identical bytes. What the suite proves is in [`docs/TESTING.md`](docs/TESTING.md), and the frozen numbers are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 ### Looking for More Polished Alternatives?
+
 If you are looking for more polished, general-purpose local LLM runners, GUI desktop applications, or MLX/Python serving frameworks, consider these established alternatives in the ecosystem:
 
 - [Ollama](https://ollama.com/) - Popular CLI, background service, and API for running local models.

@@ -1,6 +1,6 @@
 # turbospark-compute
 
-CPU reference kernels and compute strategy marker type (`ComputeStrategy`). These reference implementations serve as the numerical ground truth against which `crates/gpu` Metal kernels are validated.
+CPU reference mathematical kernels and compute strategy marker type (`ComputeStrategy`). These reference implementations serve as the numerical ground truth against which `crates/gpu` Metal kernels and real hardware dispatches are validated for parity.
 
 Downstream workspace crates import this package via the `compute` alias:
 
@@ -9,46 +9,61 @@ Downstream workspace crates import this package via the `compute` alias:
 compute = { package = "turbospark-compute", path = "../compute" }
 ```
 
+## Purpose & Role
+
+`turbospark-compute` implements portable, unvectorized or reference-vectorized CPU mathematical kernels for all supported model layers, quantization formats, and attention mechanisms. Parity test suites across `crates/gpu` compare GPU buffer outputs directly against the functions defined in this crate.
+
 ## Safety
 
-- `#![forbid(unsafe_code)]` is enforced in this crate.
+- `#![forbid(unsafe_code)]` is enforced in `lib.rs`.
+- No device-specific or platform-locked assembly.
 
 ## Key Modules
 
-- `attention.rs`: CPU reference causal attention algorithm, plus sink-attention support (`causal_attention_with_sinks`).
-- `encoder.rs`: FP32 reference for BERT/XLM-RoBERTa-style encoder models (BGE, Snowflake Arctic Embed): embeddings lookup, a Post-LN encoder block, CLS pooling, and cosine similarity.
-- `gdn.rs`: `GdnReference`, the reference model of Qwen 3.6 gated-DeltaNet linear attention chain (conv + SiLU, per-head q/k norm, FP32 delta recurrence, gated output norm).
-- `hyper_connection.rs`: `qwen4_exp`'s hyper-connection mix and scatter (port-local).
-- `gating.rs`: Qwen 3.6 gating references (`sigmoid_gate_mul`, `sigmoid_scalar_mul`, `split_q_gate`).
-- `kv_quant.rs`: TurboQuant KV-cache codec reference (per-row norm, Randomized Hadamard Transform, Lloyd-Max codebook quantization), ported from mlx-vlm.
-- `kv_quant_attention.rs`: CPU reference for causal attention over TurboQuant-quantized K/V rows.
-- `moe.rs`: CPU reference MoE FFN implementation (`run_ffn`) used to bridge gated FFN activations.
-- `ple.rs`: `qwen4_exp`'s PLE (per-layer n-gram embedding) gate, n-gram table dequantization, and the dilated depthwise causal conv step (port-local).
-- `qsa_indexer.rs`: `qwen4_exp`'s QSA block indexer: block pooling, scoring, and top-k block selection (port-local).
-- `quant.rs`: INT4 and INT8 affine quantization, dequantization, and GEMV math.
-- `quant_1bit.rs` / `quant_2bit.rs`: the affine 1-bit and 2-bit (ternary) reference formats, measured against real MLX-quantized checkpoints.
-- `quant_gguf/`: GGUF block-quant reference (Q8_0, Q4_K, Q5_K, Q6_K) plus Pearson correlation.
-- `quant_gguf_iq.rs`: GGUF IQ-codebook reference (IQ4_NL, IQ4_XS, IQ3_XXS).
-- `quant_gguf_iq_tables.rs`: generated IQ codebooks, dumped from libggml.
-- `quant_gguf_mxfp4.rs`: GGUF MXFP4 reference (`gpt-oss`).
-- `rms_norm.rs`: CPU RMSNorm reference calculation.
-- `rope.rs`: CPU rotary positional embedding calculation, plus YaRN frequency-table construction.
-- `sampling.rs`: host-side sampling helper logic (logit soft-cap softmax).
-- `steering.rs`: directional steering of a residual stream row (ablate/add/clamp/renorm), port-local.
-- `tolerance.rs`: Relative error metric (`RelError`) tolerance table and comparison utilities.
-- `vision.rs`: FP32 reference kernels for the `qwen3_5` vision tower (LayerNorm, both GELUs, 2-D RoPE, bidirectional attention), port-local.
-- `wht.rs`: Walsh-Hadamard Transform reference implementation.
+- `attention.rs`: CPU reference causal attention, sliding window attention, and sink token attention (`causal_attention_with_sinks`).
+- `encoder.rs`: FP32 reference for BERT and XLM-RoBERTa encoder architectures (BGE, Snowflake Arctic Embed): embedding lookup, Post-LN encoder block, CLS pooling, and cosine similarity.
+- `gdn.rs`: `GdnReference`, reference implementation of Qwen 3.6 gated-DeltaNet linear attention chain (causal conv + SiLU, per-head q/k RMSNorm, FP32 delta recurrence, gated output norm).
+- `gating.rs`: Activation gating operations (`sigmoid_gate_mul`, `sigmoid_scalar_mul`, `split_q_gate`).
+- `hyper_connection.rs`: Multi-residual connection mixing and scatter operations used in deep model architectures.
+- `kv_quant.rs`: TurboQuant KV-cache codec reference (per-row norm, Randomized Hadamard Transform, Lloyd-Max codebook quantization).
+- `kv_quant_attention.rs`: CPU reference causal attention over TurboQuant-compressed K/V cache rows.
+- `moe.rs`: Reference mixture-of-experts feed-forward network execution (`run_ffn`).
+- `ple.rs`: Per-layer n-gram embedding (PLE) table lookup, dequantization, and dilated depthwise causal convolution.
+- `qsa_indexer.rs`: QSA block indexer: block pooling, scoring, and top-k block selection.
+- `quant.rs`: INT4 and INT8 affine block quantization, dequantization, and GEMV arithmetic.
+- `quant_1bit.rs` & `quant_2bit.rs`: 1-bit and 2-bit (ternary) affine quantization formats matching MLX reference conventions.
+- `quant_gguf/`: GGUF quantization block decoders (Q8_0, Q4_K, Q5_K, Q6_K) and Pearson correlation metrics.
+- `quant_gguf_iq.rs`: GGUF importance-quantized codebook reference (IQ4_NL, IQ4_XS, IQ3_XXS).
+- `quant_gguf_iq_tables.rs` & `quant_gguf_iq_lowbit_tables.rs`: Precomputed IQ codebook lookup tables.
+- `quant_gguf_mxfp4.rs`: GGUF MXFP4 microscopic floating-point quantization reference.
+- `rms_norm.rs`: Reference Root Mean Square Normalization with optional learned weight scaling.
+- `rope.rs`: Rotary positional embeddings (RoPE), proportional NeoX RoPE, and YaRN frequency table generation.
+- `sampling.rs`: Host-side logit shaping and logit soft-capping utilities.
+- `steering.rs`: Directional steering operations on residual streams (`Ablate`, `Add`, `Clamp`, `Renorm`).
+- `tolerance.rs`: NaN-sticky relative error metrics (`RelError`, `bounded_rel_error`, `worst()`) and tolerance comparisons.
+- `vision.rs`: Vision tower reference kernels (LayerNorm, QuickGELU, NewGELU, 2D RoPE, bidirectional attention).
+- `wht.rs`: Fast Walsh-Hadamard Transform reference.
 
 ## Development & Test Commands
 
 ```sh
-# Run tests for turbospark-compute
+# Run all tests for turbospark-compute
 cargo test -p turbospark-compute
 ```
 
+## Tests
+
+- `tests/kernels.rs`: Validates attention, RMSNorm, RoPE, and standard activation math.
+- `tests/kv_quant.rs`: Verifies TurboQuant compression error bounds and Hadamard transforms.
+- `tests/quant_1bit.rs` & `tests/quant_2bit.rs`: Validates 1-bit and 2-bit dequantization and GEMV math.
+- `tests/quant_gguf.rs`, `tests/quant_gguf_iq.rs`, `tests/quant_gguf_mxfp4.rs`: Validates GGUF and IQ codebook unpacking against reference fixtures.
+- `tests/encoder_reference.rs`: Validates Post-LN transformer encoder math and CLS pooling.
+- `tests/vision_reference.rs`: Validates vision patch embedding and 2D spatial RoPE.
+- `tests/smoke.rs`: Quick sanity checks across foundational math routines.
+
 ## Crate Gotchas
 
-1. **BF16 vs FP16**: `crates/compute` uses hand-rolled bit-shift helpers for BF16 (`bf16_to_f32`/`f32_to_bf16`) by leveraging BF16 as the upper 16 bits of FP32. FP16 (binary16) storage elsewhere uses the `half` crate. `f32_to_bf16` quiets a NaN input explicitly rather than letting the round-half-to-even add carry its mantissa bits into the exponent field: without that guard, a probed `0x7F800001` narrows to `+inf` and `0x7FFFFFFF` to `-0.0`.
-2. **GDN FP16 Rounding Points**: `gdn.rs` rounds to FP16 at four explicit points (`conv_out`, normed q/k slices, raw conv tail rows, and output `y`) to match hardware behavior while keeping recurrence FP32.
-3. **Numerical Ground Truth**: Algorithms in this crate prioritize mathematical reference exactness over maximum CPU vectorization.
-4. **The tolerance helpers are NaN-sticky, and that is load-bearing.** `tolerance.rs`'s `max_abs_diff`, `rel_error` and `bounded_rel_error` fold with a `worst()` helper rather than a bare `f32::max`, because `f32::max(NaN, x)` returns `x`: an all-NaN GPU parity output would otherwise fold down to `0.0` and pass `err < tol` as a perfect result (AGENTS.md Gotcha 59, one level down at the instrument every `crates/gpu` parity test reads through). 14 parity files had no `is_finite` guard anywhere before this was fixed. `+inf` needs no such guard; it already propagates through `f32::max`.
+1. **BF16 Conversion NaN Quieting**: `f32_to_bf16` explicitly quiets signaling NaNs rather than allowing round-to-nearest additions to overflow the mantissa into the exponent.
+2. **GDN FP16 Rounding Points**: `gdn.rs` rounds to FP16 at four precise points (`conv_out`, normed q/k slices, conv tail rows, output `y`) to reproduce hardware numerics while maintaining FP32 state recurrence.
+3. **NaN-Sticky Tolerance Checks**: `tolerance.rs` uses a custom `worst()` fold instead of `f32::max` so that NaN values cannot be masked by `f32::max(NaN, x) == x`.
+4. **Precision Over Speed**: Algorithms in this crate prioritize reference correctness over vectorization.

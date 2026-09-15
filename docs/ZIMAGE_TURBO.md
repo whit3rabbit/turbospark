@@ -231,6 +231,36 @@ The optional raw-pixel VAE arrays were not present, so only the real decode and
 geometry contract was exercised for that conditional comparison. That is an
 open evidence limitation, not a reason to claim a failed VAE implementation.
 
+### Current packed first-step trace
+
+On 2026-09-15, a fresh pinned Diffusers download was verified and packed into
+an 11-file `.image.gturbo` install. The matched-noise diagnostic
+`packed_native_first_step_trace_localizes_divergent_boundary` passed after
+576.69 seconds and kept the frozen conditioning envelope intact:
+
+| Boundary | Relative L2 |
+| --- | ---: |
+| Conditioning | 0.0815408 |
+| Patchification | 0.0016627 |
+| Noise refiner | 0.0509079 |
+| Main transformer, block 0 | 0.0688876 |
+| Main transformer, block 15 | 0.0762979 |
+| Main transformer, block 16 | 0.0878091 |
+| Main transformer, block 20 | 0.1795987 |
+| Main transformer, block 24 | 0.4174181 |
+| Main transformer, block 28 | 0.9539717 |
+| Main transformer, block 29 | 1.0846142 |
+| Velocity | 0.5992641 |
+| Scheduler latent | 0.0392788 |
+
+This rules out patchification and the noise-refiner sequence as the first major
+source of drift. The error is small through block 16, then accumulates across
+the later main-transformer blocks and crosses the frozen `0.923` rollout
+envelope by block 28. It does not yet distinguish packed INT4 error from
+BF16-versus-F32 accumulation or a repeated layout/dispatch error. The next
+probe must compare the packed and F32/BF16 paths inside the block recurrence;
+the quality envelope remains frozen.
+
 ## The phase model
 
 The phases are intentionally ordered. A later phase cannot repair a missing

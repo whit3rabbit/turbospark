@@ -414,8 +414,8 @@ The following records implementation status and the remaining evidence work:
    The bounded first-step diagnostic is now available as
    `packed_native_first_step_trace_localizes_divergent_boundary`. It reads only
    the first native step and reports conditioning, patchification,
-   noise-refiner output, final main-transformer state, velocity, and scheduler
-   latent errors. Run it with:
+   noise-refiner output, selected main-transformer block states, velocity, and
+   scheduler latent errors. Run it with:
 
    ```sh
    TURBOSPARK_IMAGE_INSTALL_DIR=/path/to/pinned.image.gturbo \
@@ -431,6 +431,15 @@ The following records implementation status and the remaining evidence work:
    against the conditioning predecessor. The patchification fixture is
    optional until that capture is refreshed; the existing block and latent
    fixtures still localize the first packed boundary.
+
+   The current matched-noise run passes the conditioning boundary at `0.0815`
+   and reports main-transformer block errors of `0.0689` at block 0, `0.0763`
+   at block 15, `0.0878` at block 16, `0.1796` at block 20, `0.4174` at block
+   24, `0.9540` at block 28, and `1.0846` at block 29. This is progressive
+   accumulation in the later main-transformer recurrence, not an isolated
+   block-0 failure. The packed path is therefore still unresolved between
+   INT4 execution, BF16-versus-F32 behavior, and a repeated layout or dispatch
+   error. Keep the `0.923` envelope unchanged while narrowing that boundary.
 
    **The 1.414 rollout failure is a noise-realization mismatch, not packed
    drift.** The frozen fixtures were captured from the reference pipeline's

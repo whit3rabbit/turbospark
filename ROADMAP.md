@@ -82,13 +82,8 @@ High-leverage engine improvements, memory policy unifications, and front-end wir
   - `crates/runtime/src/speculation_policy.rs`
   - `docs/SPECULATIVE_DECODING.md`
 
-#### 5. Server Request Queue & Fairness (Option 1)
-- **Objective**: Implement request FIFO queue with streaming-aware fairness and cancellation handling in `turbospark-server`.
-- **Why Open**: Currently single-runner concurrency relies on mutex serialization and session-pool KV reuse; request queueing provides fairness under high client concurrency.
-- **Files to Touch / Create**:
-  - `crates/server/src/queue.rs` [NEW]
-  - `crates/server/src/server.rs`
-  - `crates/server/src/chat.rs`
+#### 5. Server Request Queue & Fairness (Option 1) [complete]
+- **Status**: LANDED in `crates/server/src/queue.rs` (this entry's file list was stale: the other two paths do not exist). Admission is a one-permit tokio semaphore with arrival-order fairness and a cancel check after the grant; the wait is async, so a queued request holds no blocking thread. `RealChatModel` constructs one gate per RUNNER, the acquisition points are a closed non-nested set (`queue.rs`'s header enumerates them), and `tests/generation_queue.rs` pins the ordering. This entry's routing half is what made P3.6's pool a registry-level change rather than a queue one.
 
 ---
 
@@ -248,6 +243,7 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
     - **Memory strategy (2026-09-13)**: The design keeps one heavyweight stage resident at a time, maps the packed payload without expanding every matrix into a separate host copy, dequantizes INT4 linear weights during Metal operations, and releases text and transformer state before the next stage. The native wrappers are still correctness-first and create many operation-level command buffers and temporary buffers, so no native memory claim is frozen yet. The next memory pass is pooled scratch and activation reuse, fewer command-buffer boundaries, safe BF16/FP16 storage for non-INT4 tensors, explicit component release, and cold/warm measurement against the IG0 ceilings.
     - **Progress (2026-09-14)**: The tiled linear Metal launch now matches the shader's 32-column threadgroup stride, and the focused packed linear parity test passes on real Metal. Image operations now defer command-buffer waits until CPU read seams while retaining the producing pass for output lifetime; the caption-refiner result is reused between denoise steps. The noise-refiner path now runs only on image tokens at the next scheduler timestep before the caption is reattached. The original pinned packed nine-step gate ran 4,618.35 seconds and failed at rollout step 1 with relative L2 1.4135604, above the 0.923 envelope. A corrected-policy packed artifact ran 4,711.53 seconds and failed at the same check with 1.4136423. Conditioning completed, and the production-shape grouped-attention test passes, so this is an end-to-end quality blocker rather than a compile or conditioning blocker. The next owner must capture the first divergent denoise intermediate, preserve the frozen envelope, and rerun the full gate only after that boundary is explained.
     - **Progress (2026-09-15)**: Added an opt-in first-step Metal trace that stops after scheduler update one and reports the conditioning, patchification, noise-refiner, final main-transformer, velocity, and scheduler-latent boundaries. The reference capture now records matching bounded arrays with manifest shape checks. The 1.414 rollout blocker is then explained WITHOUT touching the kernel: the frozen fixtures were captured from torch CPU `randn(seed 42)` while the native backend rolls out from its own xorshift and Box-Muller `seeded_noise`, and those two fields are independent draws. Measured directly, native noise reads relative L2 1.4132 against the captured `initial_noise` array at correlation -0.0014, where two uncorrelated unit-scale fields sit at sqrt(2) = 1.4142; both complete gate runs failed at 1.4135604 and 1.4136423, within 0.03 percent of that floor, and the noise-independent conditioning boundary passed at 0.0815. So any implementation, however correct, reads about 1.414 against these fixtures. The packed parity and trace gates now seed the denoiser from the captured `initial_noise` fixture (`denoise_steps_from_noise` and the trace's `initial_noise` parameter), keeping the frozen 0.923 envelope and leaving production generation on native noise. The first matched-noise trace on the pinned install (`z-image-ig2-noise-trace.json`, 1,207.63 seconds) then reads conditioning 0.0815, noise-refiner 0.0644, main-transformer intermediate 1.0856, velocity 0.6029, and first scheduler latent 0.0395 against the 0.923 envelope, so the packed first step is well inside the envelope and the two intermediate readings stand as new evidence without a frozen analogue, because IG0 froze only conditioning and final latents. The first complete matched-noise gate run (4,778.46 seconds) then PASSED every denoise check the old noise mismatch had masked, conditioning through all nine latents and the final latent, and reached the VAE for the first time, where it exposed a real load-time defect: the packed VAE records the four mid-block attention projections as 2-D Diffusers `nn.Linear` weights, `[512, 512]`, while the Metal path demanded `[512, 512, 1, 1]`. The 1x1 conv kernel indexes a weight as `oc * in_channels + ic`, byte-identical to the Linear layout the CPU reference already applies, so the fix is the Metal shape expectation alone; a cross-check of the whole VAE index against the Metal path confirms those four are the only 2-D decoder tensors. A focused opt-in VAE decode gate (`packed_native_vae_decodes_the_frozen_latent`) was added so VAE issues iterate in one decode instead of one denoise plus one decode.
+    - **Progress (2026-09-15, main-transformer checkpoint trace)**: A fresh verified pinned source download and packed install reran `packed_native_first_step_trace_localizes_divergent_boundary` in 576.69 seconds. Conditioning remained within the frozen envelope at 0.0815408, patchification was 0.0016627, and noise-refiner output was 0.0509079. Selected main-transformer checkpoints read 0.0688876 at block 0, 0.0762979 at block 15, 0.0878091 at block 16, 0.1795987 at block 20, 0.4174181 at block 24, 0.9539717 at block 28, and 1.0846142 at block 29; velocity was 0.5992641 and scheduler latent was 0.0392788. The first major issue is progressive accumulation in the later main-transformer recurrence, crossing the frozen 0.923 envelope by block 28. This does not yet distinguish packed INT4 drift, BF16-versus-F32 accumulation, or a repeated layout/dispatch error. The next owner must compare those paths inside the recurrence before changing kernels or tolerances.
     - **Progress (2026-09-15, continued)**: Two findings postdate the entry above. First, the rerun that exercises the new VAE gate hung: observed at 10:33-10:41 with the test thread parked in `MTLCommandBuffer.waitUntilCompleted` inside `MetalImageBackend::decode_impl`'s first `metal_ops::read`, process CPU frozen at 4:11 total while `IOAccelerator` reports 100 percent device utilization, which is a spinning kernel on the GPU rather than slow work. This is the first production-shape native VAE decode ever executed (the earlier gate failed at the shape check before encoding), so the wedged kernel is a real decode-path blocker and any machine sharing the GPU is stalled until the process is killed. Second, the no-INT4 escalation arm is not runnable on this machine: `z-image-turbo-precise.image.gturbo` (31 GB, zero quantized tensors) aborts at open, because `metal_ops::Component::open` maps the whole payload and wraps it in a single `newBufferWithBytesNoCopy`, which exceeds this 36 GB machine's wired limit; Metal returns null and the metal crate's null assertion aborts before `Component::open`'s `map_err` can produce the intended error string. A graceful over-limit refusal is missing (one pre-check on payload length against the wired limit would turn the abort into the designed error), and the main-transformer 1.086 boundary therefore remains unclassified between INT4 drift and structural error.
     - **Current gate status (2026-09-13)**:
       1. **Native Metal backend**: implemented behind `crates/image/src/runtime.rs`'s `ImageBackend` trait. Shared GPU context, pass, and resident-buffer contracts are reused only where their layouts and lifetimes match; image-specific linear, attention, scheduler, transformer, and VAE operations use dedicated MSL and wrappers.
@@ -255,7 +251,7 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
       3. **Real install and catalog path**: local `turbospark-model pull-image` records a separate image install and does not create a text `Mlx` row. Remote Hugging Face image installation and a catalog rot guard remain open.
       4. **Production CLI selection**: native macOS selection, explicit CPU reference mode, validation, overwrite protection, output publication, and unsupported-platform paths are implemented. Complete real-install missing-component, cancellation, and no-device evidence remains open.
       5. **Resource and quality closure**: the packed PNG, quality, and resource-oracle tests exist and record latency, nine forwards, peak `phys_footprint`, allocations, retained buffers, physical reads, and swap. Quality failed before VAE and PNG checks could run, so cancellation, PNG, and quiet-machine resource evidence remain unrun.
-    - **Next-LLM execution order**: first run the bounded first-step trace SEEDED FROM THE CAPTURED NOISE, and read which of the noise-refiner, main-transformer, velocity, and scheduler-latent boundaries first leaves the envelope now that the noise mismatch is removed. Second, if a boundary still fails, make the smallest scoped fix for the packed path it names and rerun the focused boundary test. Third, rerun the complete quality/VAE gate through `denoise_steps_from_noise`, then the cancellation and PNG gates, and finally the quiet-machine resource oracle. Stop and record a new evidence boundary if any complete run fails before the next check; do not loosen tolerances or start IG4 from an unresolved packed quality failure.
+    - **Next-LLM execution order**: first compare the packed recurrence against F32/BF16 reference behavior at the later main-transformer checkpoints, with special attention to blocks 16 through 29 and the repeated projection, normalization/RoPE, attention, modulation, and residual paths. Second, make the smallest scoped fix only if that comparison identifies a concrete packed boundary, then rerun the checkpoint trace without widening the 0.923 envelope. Third, rerun the complete quality/VAE gate through `denoise_steps_from_noise`, then the cancellation and PNG gates, and finally the quiet-machine resource oracle. Stop and record a new evidence boundary if any complete run fails before the next check; do not start IG4 from an unresolved packed quality failure.
     - **IG2 closure rule**: keep IG2 unchecked until all five items above pass on one pinned real install. The local packer, native backend, CPU reference, metadata, progress, cancellation seams, and synthetic or opt-in tests are implementation groundwork, not production evidence until the real packed gates pass. Do not start IG4 app/Swift work from this partial state.
   - [ ] **IG3**: Prove bounded lifetimes and measured memory; add sequential block streaming only where the target budget requires it. Required before advertising that budget or starting app integration.
   - [ ] **IG4**: Expose the same runtime through Swift; add chat image mode, job serialization, preview/save/regeneration, and profile-scoped artifact persistence.
@@ -277,30 +273,16 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 System architecture extensions, platform ports, and developer tooling.
 
 #### 1. Remote Plugin Marketplace & Registry Indexing (`TurboSparkApp`)
-- **Objective**: Wire network discovery and remote repository manifest fetching in `PluginMarketplaceManager` beyond local directories.
-- **Why Open**: Local plugin management and manifest enable cascades are complete; remote registry indexing allows community plugin discovery.
-- **Files to Touch**:
-  - `swift/TurboSparkApp/Sources/TurboSparkApp/Plugins/PluginMarketplaceManager.swift`
-  - `swift/TurboSparkApp/Sources/TurboSparkApp/Plugins/PluginManifest.swift`
-  - `swift/docs/SWIFT_PLUGINS.md`
+- **Status (corrected 2026-09-15)**: The objective as written LANDED already, and this entry's paths were stale twice over. `PluginMarketplaceManager.swift` lives in `swift/TurboSparkApp/Sources/TurboSparkApp/State/` (there is no `Plugins/` directory and no `PluginManifest.swift`; the manifest types are in `State/PluginManifestParser.swift`), and its `fetchMarketplace(name:source:)` already covers all four `MarketplaceSource` cases: https via URLSession, `.github`/`.git` via `MarketplaceGit` clone-or-pull, and local directories. Install, versioned caching and the v2 ledger are done and tested.
+- **Why Still Open**: only the DESCOPED remainder, `swift/docs/SWIFT_PLUGINS.md`'s out-of-scope list: a shipped/builtin registry of community marketplaces (registry INDEXING), auto-update, and dependency closure. Deferred with the rest of the Swift work until the active `State/` session commits.
 
-#### 2. Multi-Direction Steering & Automated Alpha Calibration
-- **Objective**: Support simultaneous application of multiple steering vectors with per-vector scales and layer masks; implement automated alpha calibration to detect semantic steering collapse thresholds.
-- **Why Open**: Single-direction steering is shipped; multi-direction and automated tuning improve developer ergonomics.
-- **Files to Touch / Create**:
-  - `crates/runtime/src/steering.rs`
-  - `crates/runtime/tests/activation_capture.rs` [NEW]
-  - `crates/invocation/src/options.rs`
-  - `docs/OBLITERATION.md`
+#### 2. Multi-Direction Steering & Automated Alpha Calibration [multi-direction landed 2026-09-15]
+- **Status**: N vectors per policy LANDED. `runtime::SteeringPolicy` carries `Vec<SteeringVector>` (per-vector mode, alpha; band applied at load); the FFI/Swift wire stays single-vector (`primary()`) with the full list on the summary line. Application is K in-order dispatches of the existing kernel at each steered layer -- composition is sequential by construction, and the coeff buffer is per-(layer, vector). CLI/server: repeatable `--steering` with positionally-paired `--steering-mode/--steering-scale/--steering-layers` (`invocation::steering_knob` is the rule; shorter knob lists extend by their last value; more is refused). Gates: 13 runtime unit tests + a gpu composition test (two dispatches on one buffer bit-identical to sequential) + the multi-vector null control on real gptoss (a zero-alpha second vector is bit-identical over a 24-token walk) + the Add-composition arm (200,560/201,088 logits move). Both gemma4 smokes clean. `docs/OBLITERATION.md` has the section; the parse surface is mutation-checked.
+- **Still Open**: automated alpha CALIBRATION as a command (`steering_sweep.rs` is the instrument; it needs a multi-vector mode), `activation_capture.rs` (the contrastive-capture fixture pipeline), a second REAL direction for one install (the composition arms ran one real vector plus scaled copies), and the Swift preset surface (deferred with Swift).
 
-#### 3. Batched Sub-Byte GEMMs for Bonsai / Ternary Speculation
-- **Objective**: Implement batched INT1 and INT2 GEMM kernels to unblock speculative verification for Bonsai-27B and Ternary-Bonsai.
-- **Why Open**: Decode GEMVs exist; batched GEMMs are required for speculative verification.
-- **Files to Touch / Create**:
-  - `crates/gpu/src/shaders/gemv_int1.metal`
-  - `crates/gpu/src/shaders/gemv_int2.metal`
-  - `crates/gpu/src/gemv_int1.rs`
-  - `crates/gpu/src/gemv_int2.rs`
+#### 3. Batched Sub-Byte GEMMs for Bonsai / Ternary Speculation [landed 2026-09-15]
+- **Status**: LANDED, and this entry's paths were stale (the kernels live in `shaders/dequant_1bit.metal` / `dequant_2bit.metal` beside their GEMVs, dispatched by `dequant_{1,2}bit_gemm_batch.rs`). `dequant_int{1,2}_gemm_simd` batch B right-hand sides inside one dispatch with the GEMV's row mapping, byte-walk order and affine factoring unchanged, so B rows are BIT-IDENTICAL to B GEMV calls at every width 1..16 -- the parity tests (`crates/gpu/tests/dequant_{1,2}bit_gemm_parity.rs`) assert that against the real GEMVs, plus a CPU-reference tolerance arm, plus a two-widths-one-context case that reddens a pipeline-cache key missing the baked B. Field order, bit order and x-stride mutations each redden only the parity suites. `encode_gemm_any` dispatches 4/15/16 and refuses the rest by name; `speculation_blocker` (both the MTP and the DFlash2 copy) now probes the set {4, 15, 16}, and the 1-bit-with-head fixture asserts NO blocker and a running `produce_batched`. INT8 is the surviving refused-width fixture (`real_forward_gemma4_chunked.rs`).
+- **Honest boundary**: end-to-end speculation on Bonsai/Ternary still needs a DRAFTER artifact (mlx conversions drop `mtp.*`; no DFlash2 state in those installs), so the real-model int2 batched arm runs through `produce_batched` only where a drafter exists. The 1-bit synthetic verify gate covers the kernel end to end on Metal; a real ternary `produce_batched` arm stays gated on a drafter (the probe refuses a headless install at open, by design).
 
 #### 4. DeepSeek-V4-Flash Metal Kernels & Feasibility (Scaffolded)
 - **Objective**: Port CSA/HCA attention, unrolled mHC Sinkhorn, and sub-3bit GEMV Metal kernels (`dsv4.metal`), assessing 106.9 GB peak RSS memory feasibility.
@@ -311,18 +293,12 @@ System architecture extensions, platform ports, and developer tooling.
   - `crates/runtime/src/families/dsv4/` [NEW]
 
 #### 5. Linux Backend (Portable Architecture)
-- **Objective**: Implement `io_uring` + `O_DIRECT` streaming I/O layer paired with portable CPU/Vulkan compute backend and cgroup memory limit support on Linux.
-- **Why Open**: Current runtime and streaming layers are Metal and macOS unified memory optimized.
-- **Files to Touch / Create**:
-  - `crates/streaming/src/linux_uring.rs` [NEW]
-  - `crates/compute/src/vulkan/` [NEW]
+- **Status (slice landed 2026-09-15, compile-gated)**: `crates/streaming/src/linux_uring.rs` [NEW] carries the `io_uring`+`O_DIRECT` read source behind `TURBOSPARK_LINUX_IO=auto|pread|uring` with **auto = pread until a Linux session proves the uring path** (no Linux machine here; the accepted gate is the cross-target `cargo check`, and the portable selector/alignment parts are unit-tested on any machine). `rdadvice.rs` gained the `posix_fadvise(WILLNEED)` Linux arm, and `crates/model-io/src/cgroup.rs` [NEW] is the cgroup-v2 `memory.max`/`memory.high` probe (pure, tested anywhere) that the runtime's Linux `physical_memory()` arm should call.
+- **Still Open**: a Linux session to RUN the uring path and flip the default; the runtime-side cfg arm consuming the cgroup probe; and the Vulkan compute backend, which remains a multi-session project -- `crates/compute`'s `ComputeStrategy` is an empty marker struct, so a dispatch trait must be designed first. Budget a Phase-0 fact-finding pass under `docs/NEW_MODEL.md`'s discipline before writing kernels.
 
-#### 6. Server Multi-Runner Pool (Option 2)
-- **Objective**: Support N active `RealForwardRunner` instances for concurrent request serving where VRAM/RAM permits.
-- **Why Open**: Multiplexed session state (Option 3) is complete; full multi-runner pool allows parallel batch compute on high-memory hardware.
-- **Files to Touch**:
-  - `crates/server/src/session_pool.rs`
-  - `crates/server/src/server.rs`
+#### 6. Server Multi-Runner Pool (Option 2) [landed 2026-09-15]
+- **Status**: LANDED as `--pool-size N` on `turbospark-server` plus a `PoolRegistry` (`crates/server/src/registry.rs` -- this entry's old paths never existed; the session pool lives in `crates/runtime`). N independent opens of ONE install sit behind one public id; each member carries its own KV, session pool and one-permit `GenerationQueue`, and `resolve` routes each request to the LEAST-QUEUED member with a round-robin tiebreak, so the fan-out lives at the registry level where the queue and the generation are one self-consistent handle. `/v1/models` reports ONE row. Every member pays the load guard on its own, so a member that does not fit refuses at startup with the subtraction. Tests: identical-identity acceptance (the exact mirror of `StaticRegistry`'s duplicate refusal), pool-of-one refused, context-mismatch refused, one-row reporting, idle round-robin spread by `Arc` identity, and the unknown-name fallback.
+- **Still Open**: repeatable `--model` routing N DISTINCT installs through the existing `StaticRegistry` (the registry supports it; only the binary's single-value flag does not), a concurrency real-model arm, and metrics (the gates' `queued()` counters are already read).
 
 ---
 
@@ -331,25 +307,19 @@ System architecture extensions, platform ports, and developer tooling.
 Verification sweeps, cross-engine KL proofs, and power captures.
 
 #### 1. Cross-Engine KL Verification (`qwen38`, `qwen36`)
-- **Objective**: Add `qwen38` and `qwen36` to `scripts/kld_mlx_affine.py` test suite against upstream MLX reference outputs.
-- **Why Open**: Verification script exists, but table entries for these models need to be frozen.
-- **Files to Touch / Run**:
-  - `scripts/kld_mlx_affine.py`
-  - `docs/BENCHMARKS.md`
+- **qwen38 DONE (2026-09-15)**: `logit_dump.rs` gained the `TURBOSPARK_QWEN38_INSTALL_DIR` arm, `kld_mlx_affine.py` gained the `qwen38` CHECKPOINTS row (498 modules, uniform 4/64, reference already in the HF cache), and the run froze `docs/BENCHMARKS.md`'s row: forward KL mean **0.000788 nats at 98.78% top-1, 0.72x MLX's own cached-vs-batched floor** (0.00110) -- the first row here below the reference's floor. Port perplexity 4.9432 reproduced the frozen quality row to the last digit on the freshly re-streamed install. Evidence: `docs/verification/kld_mlx_affine-qwen38.json`.
+- **qwen36 still blocked on TWO downloads, nothing else**: the CHECKPOINTS row is fully pinned (NEVER RUN), and `logit_dump.rs` already accepts `TURBOSPARK_QWEN36_INSTALL_DIR`. Missing: `~/models/qwen36.gturbo` (re-stream via `crates/repack/tests/qwen36_checkpoint_network.rs`, ~19 GB) and the HF reference `mlx-community/Qwen3.6-35B-A3B-4bit` (not in the cache, ~18 GB). Do not copy qwen38's numbers across: this checkpoint is MoE, and the MoE floors are 30-300x larger.
 
 #### 2. Missing Quality & Memory Oracle Baseline Rows
-- **Objective**: Freeze quality gate and memory oracle rows for `bonsai27b`, dense `llama` (Mistral 7B / TinyLlama), and `qwen38` external follow-ups.
-- **Why Open**: Requires downloading reference checkpoints and running frozen protocol sweeps.
-- **Files to Touch / Run**:
-  - `crates/bench/tests/`
-  - `docs/BENCHMARKS.md`
+- **Mistral quality row DONE (2026-09-15)**: `crates/bench/tests/mistral_quality_gate.rs` [NEW] froze on the first run (perplexity **9.3971**, greedy `522026e6...`, sampled `2a98d760...`, two fresh processes agreeing, constrained-arm digest byte-identical) and was re-run to ASSERT the row. The family's memory row has been frozen since 2026-09-10; this completes dense Mistral's gate pair.
+- **qwen38 clause = P4.1's qwen38 row, DONE** (same work, closed once).
+- **Still blocked on downloads, not code**: `bonsai27b` has neither oracle nor gate files nor an install (`~/models/bonsai27b.gturbo` missing; the HF cache holds only the 1.7B/4B siblings) -- the qwen38 gate files are the template, and the qwen35 flow is the reason bonsai shipped with neither. TinyLlama has neither install nor files and needs the same two-file treatment on the llama flow. Until an install lands, write nothing: a gate file whose frozen row was never run is the thing `quality_common`'s first-run mode exists to prevent.
 
 #### 3. Power Profile Sweep Across Remaining Catalog Rows
-- **Objective**: Capture baseline power and J/tok for `qwen3_5` 27B variants, `ornith9b`, and `ornith35b`.
-- **Why Open**: Requires re-pulling Ornith checkpoints to disk before executing `scripts/power.sh`.
-- **Files to Touch / Run**:
-  - `scripts/power.sh`
-  - `docs/POWER_BASELINE.md`
+- **Readiness (2026-09-15)**: `ternary27b.gturbo` is on disk and its row is runnable NOW. `qwen38-27b.gturbo` was re-streamed 2026-09-15 (its row became runnable the same day; the artifact table's disappearance of the install is what had closed it). `ornith9b` and `ornith35b` remain MISSING FROM DISK and block their rows. None of these captures has run.
+- **Preflight, per `docs/POWER_BASELINE.md` and AGENTS.md Gotchas 22/28/43**: AC power (`pmset -g ps`), a quiet machine (the capture must not be driven from a busy desktop session; `power.sh`'s contamination-floor line warns above 2,000 mW and per-arm spread over 10%), `COOLING=max` for a saturating install, and two pairs per case. Capture sequence for one install:
+  `LABEL=ac MODEL=~/models/ternary27b.gturbo scripts/power.sh 2` (sudo, ~12 min), then the same for `qwen38-27b.gturbo` after the Ornith re-pulls for theirs. Rows land in `docs/POWER_BASELINE.md` beside the uncooled baseline.
+- **Still Open**: the ornith re-pulls (8.9 GB + 18 GB), the rate-cap sweep (`ARMS=default,30,20,15,10` under `COOLING=max` on gemma4) still owed from the 2026-09-10 entry, and the ornith35b-vs-qwen36 same-session J/tok A/B.
 
 ---
 
@@ -357,50 +327,38 @@ Verification sweeps, cross-engine KL proofs, and power captures.
 
 Disk space is a key constraint for downloading large checkpoints and running cross-engine KL reference dumps.
 
-Re-derived from `ls ~/models` and `ls ~/.turbospark/models` on 2026-09-09, with 32 GiB free on the data volume against a 29 GB `target/`. Re-run both before trusting any row: `CLAUDE.local.md` records this list drifting badly between reconciles.
+Re-derived from `ls ~/models` and `ls ~/.turbospark/models` on **2026-09-15** (207 GiB free before the qwen38 re-stream). Re-run both before trusting any row: this list has drifted badly between reconciles -- the 2026-09-09 snapshot below listed six installs that were gone from disk two weeks later, which silently invalidated the qwen38 steering baseline, the qwen3moe gates and every museglimmer reference.
 
 | Path in `~/models/` | Size | Status / Associated Targets |
 |---|---|---|
 | `gemma4.gturbo` | 13G | PINNED: smoke, memory oracle, sensitivity proof, mapped residency |
-| `ternary27b.gturbo` | 7.1G | `ternary_{quality_gate,memory_oracle}` |
-| `qwen38-27b.gturbo` | 14G | `qwen38_{quality_gate,memory_oracle}`, steering baseline |
-| `qwen38-27b-mtp.gturbo` | 14G | MTP speculative validation. Second copy sits at `~/.turbospark/models/qwen38-27b-mtp.gturbo` |
+| `qwen38-27b.gturbo` | 14G | RE-STREAMED 2026-09-15 (pinned index SHA verified). Backs `qwen38_{quality_gate,memory_oracle}`, the qwen38 KL row (P4.1, closed), steering probes, power row |
+| `ternary27b.gturbo` | 7.1G | `ternary_{quality_gate,memory_oracle}`; power row runnable now (P4.3) |
+| `gptoss-20b.gturbo` | 11G | `gptoss_{quality_gate,memory_oracle}`, steering probes (the multi-direction arms ran here), mapped residency |
+| `mistral7b-dense.gturbo` | 4.1G | `mistral_memory_oracle`; quality gate frozen 2026-09-15 (P4.2) |
+| `qwen3-06b-regression.gturbo` | 604 MiB | Dense Qwen3 Q8_0 regression gates |
+| `qwen38-27b-mtp.gturbo` | 14G | MTP speculative validation |
 | `qwen38-27b-dflash2.gturbo` | 15G | DFlash2 block drafter validation |
-| `qwen38-gguf.gturbo` | 15G | Qwen 3.8 27B via GGUF intake |
-| `steering-vectors/` | ~3M | `ocean` and `register` legacy vectors for regression tests |
-| `gguf-ref/`, `qwen38-mtp-ref/`, `skill-state-probe/` | -- | Reference and probe sidecars |
 | `qwen38-27b-vision.gturbo` | 15G | Combined vision trunk + tower install |
-| `vision-probe-qwen38/` | 4.8G | `mlx-community/Qwen3.8-27B-4bit` tower (revision `3e6447f0`) |
-| `vision-probe/` | 879M | `prism-ml/Bonsai-27B-mlx-1bit` tower |
-
-Additions verified on 2026-09-10 (the older inventory above remains a dated snapshot):
-
-| Path in `~/models/` | Size | Status / Associated Targets |
-|---|---|---|
-| `minimax-m2-q4km.gturbo` | 128.9 GiB | Installed; memory/EOS checks pass, low-temperature smoke blocks release |
-| `qwen3-06b-regression.gturbo` | 604 MiB resident | Dense Qwen3 Q8_0 memory and frozen quality gates |
-| `qwen3moe-gguf.gturbo` | 17.3 GiB | Qwen3 MoE smokes and existing memory/quality gates pass |
-| `mistral7b-dense.gturbo` | 4.07 GiB resident | Mistral smokes and existing memory oracle pass |
-
-Storage preflights retained at least 20 GiB headroom. Only disposable compiler caches were reclaimed; no models were deleted. Exact install bytes and fingerprints live in [the MiniMax record](docs/MINIMAX_M2_PHASE0.md).
-
-Store models in `~/.turbospark/models/`:
+| `steering-vectors/` | ~3M | `ocean-gptoss`, `ocean-museglimmer`, legacy layer-base-0 fixtures for the regression tests and bench probes |
+| `gguf-ref/`, `qwen38-mtp-ref/`, `skill-state-probe/`, `vision-probe/`, `vision-probe-qwen38/` | -- | Reference and probe sidecars |
 
 | Path in `~/.turbospark/models/` | Size | Status / Associated Targets |
 |---|---|---|
-| `qwen4-reap288.gturbo` | 68G | Qwen3.8-Flash-Next REAP-288 (`top_k_experts=10`). Backs `qwen4exp_{quality_gate,memory_oracle}` |
-| `qwen3moe.gturbo` | 17G | `llama` flow's `Qwen3Moe` half. `qwen3moe_{quality_gate,memory_oracle}` |
-| `gptoss-20b.gturbo` | 11G | `gptoss_{quality_gate,memory_oracle}`, steering validation, mapped residency |
-| `qwen38-27b-mtp.gturbo` | 14G | Duplicate of `~/models/qwen38-27b-mtp.gturbo` |
-| `spark25.gturbo` | 2.4G | Spark-X2.5-4B via GGUF intake. Backs `spark_{quality_gate,memory_oracle}`, both frozen 2026-09-08. The smallest real install here |
-| `qwen38-vision-tower.gturbo-vision` | 879M | Standalone vision sidecar, the `--vision-sidecar` attach path |
+| `spark25.gturbo` | 2.4G | `spark_{quality_gate,memory_oracle}`, both frozen 2026-09-08. The only store install |
 
-**Missing from disk** (require re-pull before dependent benchmark/oracle tasks can run):
-- `museglimmer-30b.gturbo` (15G)
-- `ornith9b.gturbo` (8.9G)
-- `ornith35b.gturbo` (18G)
-- `ornith35b-gguf.gturbo` (34G)
-- `llama3-8b-instruct.gturbo`
+**Missing from disk** (re-pull before the dependent item can run):
+- `museglimmer-30b.gturbo` (15G) -- museGlimmer steering probe + gates
+- `ornith9b.gturbo` (8.9G) -- P4.3 power row, `ornith9b` oracle/gates
+- `ornith35b.gturbo` (18G) -- P4.3 power row
+- `ornith35b-gguf.gturbo` (34G) -- P2 cross-engine rows
+- `qwen36.gturbo` (~19G) + the `mlx-community/Qwen3.6-35B-A3B-4bit` HF reference (~18G, not cached) -- P4.1's qwen36 clause, the two-download blocker
+- `bonsai27b.gturbo` (~13G) -- P4.2 bonsai oracle/gate files (HF cache has only the 1.7B/4B siblings)
+- `qwen3moe.gturbo` (17G) / `qwen3moe-gguf.gturbo` -- `qwen3moe` gates
+- `qwen4-reap288.gturbo` (68G) -- `qwen4exp` gates
+- `minimax-m2-q4km.gturbo` (129G) -- release gates (the repetition blocker stands)
+
+Storage preflights should retain at least 20 GiB headroom. Only disposable compiler caches are reclaimable; no models were deleted in this reconcile.
 
 ---
 
