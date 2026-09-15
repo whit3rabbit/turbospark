@@ -1,5 +1,12 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server [--model <install-dir|alias>] [--embedding-model <install-dir|alias>] [--model-dir PATH] [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--memory-guard TIER] [--memory-guard-gb N] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--max-concurrent-requests N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--hf-endpoint URL] [--paged-ssd-cache-dir PATH] [--hot-cache-max-size SIZE] [--mcp-config PATH] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F] [--vision-sidecar PATH|auto] [--kv-bits off|2|3|3.5|4]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --embedding-model    path to an embedding model (.safetensors directory) or alias\n                       to serve for /v1/embeddings alongside generation\n  --model-dir          directory containing .gturbo models (omlx compatibility)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,\n                       relaxed (default), balanced, strict, or a byte ceiling on\n                       what the engine ALLOCATES. relaxed is what shipped before\n                       this flag and what every published memory figure was\n                       measured under; see docs/LOAD_GUARD.md\n  --memory-guard       alias for --load-guard: safe (balanced), balanced, strict,\n                       relaxed, off (omlx compatibility)\n  --memory-guard-gb    set custom memory guard ceiling in gigabytes (omlx compatibility)\n  --min-auto-context   refuse to open when --max-context auto resolves below this\n                       many tokens (default 0, no floor). Says nothing about an\n                       explicit --max-context\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet requires\n                       --api-key or $TURBOSPARK_API_KEY)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default off). When explicitly enabled, a request\n                       continues from the previous request's KV cache wherever\n                       the prompts agree, instead of re-prefilling the whole\n                       transcript. Enable only when every request belongs to one\n                       trusted client: the shared cache is not partitioned by API\n                       key or client, so reuse can expose prefix matches through\n                       response timing. It also raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on,\n                       since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --max-concurrent-requests alias for --session-slots (omlx compatibility). This runner\n                       is serial (one generation at a time, crates/server/CLAUDE.md\n                       Gotcha 1), so this does NOT raise how many requests run at\n                       once -- it commits real KV/recurrent memory per extra slot\n                       so a request from a DIFFERENT conversation can be served\n                       without discarding this one's reusable state\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --system             default system prompt for requests that carry no system\n                       or developer message of their own. Repeatable; repeats\n                       join with a newline. A request that sends its own system\n                       message is left exactly as it arrived\n  --system-file        read the same default system prompt from a file, for a\n                       prompt too long to sit on a command line. Mutually\n                       exclusive with --system\n  --api-key            require this key on every request except GET /health,\n                       as `Authorization: Bearer <key>` or `x-api-key: <key>`.\n                       Falls back to $TURBOSPARK_API_KEY when absent (keeps\n                       the key out of `ps`); with neither, the server has no\n                       auth at all, same as before this flag existed\n  --hf-endpoint        Hugging Face mirror endpoint (e.g. https://hf-mirror.com)\n  --paged-ssd-cache-dir tiered KV SSD cache directory (omlx compatibility; accepted, not honoured)\n  --hot-cache-max-size in-memory hot cache size (e.g. 20%) (omlx compatibility; accepted, not honoured)\n  --mcp-config         path to MCP tools configuration file (omlx compatibility; accepted, not honoured)\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --vision-sidecar     path to a standalone vision-tower sidecar install to attach to a\n                       text-only trunk, or auto to resolve one from the installed store\n                       by the trunk's own family and hidden size (default: none; the\n                       trunk's own tower, if any, is used)\n  --kv-bits            TurboQuant KV-cache quantization: off, 2, 3, 3.5, or 4\n                       (default off). An unsupported head_dim or family\n                       REFUSES the flag at open rather than falling back to\n                       FP16. See docs/TRUBOQUANT.md\n  --help               print this text and exit\n  --version            print the version and exit";
+pub const USAGE: &str = "usage: turbospark-server [--model <install-dir|alias>] [--embedding-model <install-dir|alias>] [--model-dir PATH] [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--memory-guard TIER] [--memory-guard-gb N] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--max-concurrent-requests N] [--pool-size N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--hf-endpoint URL] [--paged-ssd-cache-dir PATH] [--hot-cache-max-size SIZE] [--mcp-config PATH] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F] [--vision-sidecar PATH|auto] [--kv-bits off|2|3|3.5|4]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --embedding-model    path to an embedding model (.safetensors directory) or alias\n                       to serve for /v1/embeddings alongside generation\n  --model-dir          directory containing .gturbo models (omlx compatibility)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,\n                       relaxed (default), balanced, strict, or a byte ceiling on\n                       what the engine ALLOCATES. relaxed is what shipped before\n                       this flag and what every published memory figure was\n                       measured under; see docs/LOAD_GUARD.md\n  --memory-guard       alias for --load-guard: safe (balanced), balanced, strict,\n                       relaxed, off (omlx compatibility)\n  --memory-guard-gb    set custom memory guard ceiling in gigabytes (omlx compatibility)\n  --min-auto-context   refuse to open when --max-context auto resolves below this\n                       many tokens (default 0, no floor). Says nothing about an\n                       explicit --max-context\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet requires\n                       --api-key or $TURBOSPARK_API_KEY)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default off). When explicitly enabled, a request\n                       continues from the previous request's KV cache wherever\n                       the prompts agree, instead of re-prefilling the whole\n                       transcript. Enable only when every request belongs to one\n                       trusted client: the shared cache is not partitioned by API\n                       key or client, so reuse can expose prefix matches through\n                       response timing. It also raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on,\n                       since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --pool-size          how many independent runners to open of --model's ONE install
+                       (default 1, i.e. one runner per process as always). N > 1
+                       serves N CONCURRENT generations of one model: each member
+                       has its own KV, session pool and admission gate, and
+                       requests route to the least-busy member. Every member pays
+                       real memory and the load guard on its own, so a member
+                       that does not fit refuses at startup. See ROADMAP P3.6
+  --max-concurrent-requests alias for --session-slots (omlx compatibility). This runner\n                       is serial (one generation at a time, crates/server/CLAUDE.md\n                       Gotcha 1), so this does NOT raise how many requests run at\n                       once -- it commits real KV/recurrent memory per extra slot\n                       so a request from a DIFFERENT conversation can be served\n                       without discarding this one's reusable state\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --system             default system prompt for requests that carry no system\n                       or developer message of their own. Repeatable; repeats\n                       join with a newline. A request that sends its own system\n                       message is left exactly as it arrived\n  --system-file        read the same default system prompt from a file, for a\n                       prompt too long to sit on a command line. Mutually\n                       exclusive with --system\n  --api-key            require this key on every request except GET /health,\n                       as `Authorization: Bearer <key>` or `x-api-key: <key>`.\n                       Falls back to $TURBOSPARK_API_KEY when absent (keeps\n                       the key out of `ps`); with neither, the server has no\n                       auth at all, same as before this flag existed\n  --hf-endpoint        Hugging Face mirror endpoint (e.g. https://hf-mirror.com)\n  --paged-ssd-cache-dir tiered KV SSD cache directory (omlx compatibility; accepted, not honoured)\n  --hot-cache-max-size in-memory hot cache size (e.g. 20%) (omlx compatibility; accepted, not honoured)\n  --mcp-config         path to MCP tools configuration file (omlx compatibility; accepted, not honoured)\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. Repeatable to\n                       apply several vectors in order. See docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: each vector file's\n                       declared mode, or ablate). Repeatable, paired positionally\n                       with --steering\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity). Repeatable, paired positionally with --steering\n  --steering-layers    START:END, inclusive and 0-based (default every layer each\n                       vector covers). Repeatable, paired positionally with --steering\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --vision-sidecar     path to a standalone vision-tower sidecar install to attach to a\n                       text-only trunk, or auto to resolve one from the installed store\n                       by the trunk's own family and hidden size (default: none; the\n                       trunk's own tower, if any, is used)\n  --kv-bits            TurboQuant KV-cache quantization: off, 2, 3, 3.5, or 4\n                       (default off). An unsupported head_dim or family\n                       REFUSES the flag at open rather than falling back to\n                       FP16. See docs/TRUBOQUANT.md\n  --help               print this text and exit\n  --version            print the version and exit";
 
 pub use crate::bind::BindMode;
 
@@ -7,6 +14,14 @@ pub use crate::bind::BindMode;
 #[derive(Debug)]
 pub struct ModelArgs {
     pub model: String,
+    /// How many independent runners to open of `--model`'s ONE install
+    /// (ROADMAP P3.6). 1 is every pre-flag behaviour; N > 1 opens N
+    /// `RealChatModel`s behind one public id, each with its own KV, session
+    /// pool and generation gate, so N requests generate concurrently. Each
+    /// open pays the load guard on its own, so the members that do not fit
+    /// are refused at startup with the subtraction rather than swapped
+    /// later.
+    pub pool_size: u32,
     pub embedding_model: Option<String>,
     pub model_dir: Option<std::path::PathBuf>,
     pub port: u16,
@@ -126,6 +141,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         guardrails: turbospark_server::GuardrailConfig::default(),
         prefix_reuse: false,
         session_slots: 1,
+        pool_size: 1,
         steering: runtime::SteeringPolicy::off(),
         reasoning: tokenizer::ReasoningEffort::Off,
         default_system: None,
@@ -138,21 +154,27 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         hot_cache_max_size: None,
         mcp_config: None,
     };
-    // Held aside because `--steering-layers` may be given BEFORE or AFTER
-    // `--steering`, and the restriction has to survive either order: the
-    // range is applied when the set arrives and again here if it already has.
-    let mut steering_layers: Option<(usize, usize)> = None;
+    // Held aside so the per-vector resolution after the loop sees every path
+    // and every knob regardless of flag order: `--steering-layers` may come
+    // before or after its `--steering`, and the i-th knob value pairs with
+    // the i-th path -- index it, else the LAST supplied value, else the
+    // default. `invocation::steering_knob` is that rule's canonical
+    // definition; this crate does not depend on that one, so the rule is
+    // restated here and pinned by `main_tests`' parse cases.
+    let mut steering_paths: Vec<String> = Vec::new();
+    let mut steering_layers: Vec<(usize, usize)> = Vec::new();
     // Repeatable, matching `turbospark-check`'s `--system` grammar: repeats
     // join with a newline. Held aside rather than written straight into
     // `parsed` so the `--system-file` conflict check below can tell "flag
     // absent" from "flag given an empty value".
     let mut system_parts: Vec<String> = Vec::new();
     let mut system_file: Option<String> = None;
-    // Tracked separately so the FILE's declared mode can win where the flag
-    // is absent, and the flag where it is present -- the precedence
-    // `crates/cli`'s `resolve_steering` applies, stated the same way.
-    let mut steering_mode: Option<foundation::SteeringMode> = None;
-    let mut steering_scale: Option<f32> = None;
+    // Tracked separately so each FILE's declared mode can win where the flag
+    // is absent for ITS index, and the flag where it is present -- the
+    // precedence `crates/cli`'s `resolve_steering` applies, stated the same
+    // way.
+    let mut steering_mode: Vec<foundation::SteeringMode> = Vec::new();
+    let mut steering_scale: Vec<f32> = Vec::new();
     // Both of these land DIRECTLY in `parsed.steering` and both are legal at
     // the 0.0 the `off()` default already carries, so the value cannot say
     // whether a caller supplied one. Tracked for the orphan check below.
@@ -179,6 +201,13 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     }
                     Some(n)
                 }
+            }
+            "--pool-size" => {
+                let n = number()?;
+                if n == 0 {
+                    return Err("--pool-size must be at least 1, not 0".to_string());
+                }
+                parsed.pool_size = n;
             }
             "--expert-cache-slots" => {
                 parsed.expert_cache_slots = if value == "auto" {
@@ -259,21 +288,14 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 }
             }
             "--steering" => {
-                let mut set = repack::control_vector::load_control_vector(std::path::Path::new(
-                    value.as_str(),
-                ))
-                .map_err(|e| format!("--steering {value}: {e}"))?;
-                if let Some((start, end)) = steering_layers {
-                    set.restrict_to_range(start, end);
-                }
-                parsed.steering.set = Some(set);
+                steering_paths.push(value.clone());
             }
             // The accepted set is `SteeringMode::parse`'s and the message has
             // to be spelled from it rather than recalled: this read "ablate,
             // add or clamp" for a release after `renorm` landed, so a caller
             // who misspelled the fourth mode was told there were three.
             "--steering-mode" => {
-                steering_mode = Some(foundation::SteeringMode::parse(value.as_str()).ok_or_else(
+                steering_mode.push(foundation::SteeringMode::parse(value.as_str()).ok_or_else(
                     || {
                         format!(
                             "--steering-mode must be one of {}, not {value}",
@@ -283,7 +305,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 )?);
             }
             "--steering-scale" => {
-                steering_scale = Some(match value.parse::<f32>() {
+                steering_scale.push(match value.parse::<f32>() {
                     Ok(v) if v.is_finite() => v,
                     _ => {
                         return Err(format!(
@@ -326,10 +348,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 if end < start {
                     return Err(bad());
                 }
-                steering_layers = Some((start, end));
-                if let Some(set) = parsed.steering.set.as_mut() {
-                    set.restrict_to_range(start, end);
-                }
+                steering_layers.push((start, end));
             }
             "--speculative-drafter" => {
                 parsed.drafter = match value.as_str() {
@@ -546,21 +565,64 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
             ));
         }
     }
-    // Resolved AFTER the loop so flag order does not matter: the flag wins
-    // over the file's declared mode, the file's over the default, and a set
-    // present with no scale means full strength rather than the zero the
-    // `off()` default carries.
-    if parsed.steering.set.is_some() {
-        parsed.steering.mode = steering_mode
-            .or_else(|| {
-                parsed
-                    .steering
-                    .set
-                    .as_ref()
-                    .and_then(|set| set.declared_mode)
-            })
-            .unwrap_or_default();
-        parsed.steering.alpha = steering_scale.unwrap_or(1.0);
+    // Resolved AFTER the loop so flag order does not matter, one vector per
+    // `--steering` path with the knobs at their own indexes (last value
+    // extends -- see the rule comment at the top of the parse loop). The
+    // flag wins over the file's declared mode, the file's over the default,
+    // and a vector with no scale means full strength rather than the zero
+    // the `off()` default carries.
+    if !steering_paths.is_empty() {
+        // MORE KNOB VALUES THAN PATHS is refused, not ignored: with the
+        // positional pairing, an extra value can never reach a vector, so it
+        // is a typo the command line carries. (A SHORTER list is legal and
+        // extends by its last value.) First offender in a fixed order,
+        // matching `crates/invocation`'s arm.
+        let surplus = if steering_mode.len() > steering_paths.len() {
+            Some("--steering-mode")
+        } else if steering_scale.len() > steering_paths.len() {
+            Some("--steering-scale")
+        } else if steering_layers.len() > steering_paths.len() {
+            Some("--steering-layers")
+        } else {
+            None
+        };
+        if let Some(flag) = surplus {
+            return Err(format!(
+                "more {flag} values than --steering paths; the extras can never \
+                 reach a vector"
+            ));
+        }
+        let mut vectors = Vec::with_capacity(steering_paths.len());
+        for (i, path) in steering_paths.iter().enumerate() {
+            let mut set = repack::control_vector::load_control_vector(std::path::Path::new(path))
+                .map_err(|e| format!("--steering {path}: {e}"))?;
+            let range = steering_layers
+                .get(i)
+                .or_else(|| steering_layers.last())
+                .copied();
+            if let Some((start, end)) = range {
+                set.restrict_to_range(start, end);
+            }
+            // The flag wins over the file's declared mode, the file's over
+            // the default. Read the declared mode before `set` moves into
+            // the vector.
+            let declared = set.declared_mode;
+            vectors.push(runtime::SteeringVector {
+                set,
+                mode: steering_mode
+                    .get(i)
+                    .or_else(|| steering_mode.last())
+                    .copied()
+                    .or(declared)
+                    .unwrap_or_default(),
+                alpha: steering_scale
+                    .get(i)
+                    .or_else(|| steering_scale.last())
+                    .copied()
+                    .unwrap_or(1.0),
+            });
+        }
+        parsed.steering.vectors = vectors;
     } else {
         // A STEERING PARAMETER WITHOUT `--steering` IS REFUSED, NOT IGNORED.
         // Without a direction set the process serves every request unsteered,
@@ -574,11 +636,11 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         //
         // First offender in a fixed order, matching `crates/invocation`'s
         // arm, which is the same check on the same six flags.
-        let orphan = if steering_mode.is_some() {
+        let orphan = if !steering_mode.is_empty() {
             Some("--steering-mode")
-        } else if steering_scale.is_some() {
+        } else if !steering_scale.is_empty() {
             Some("--steering-scale")
-        } else if steering_layers.is_some() {
+        } else if !steering_layers.is_empty() {
             Some("--steering-layers")
         } else if steering_target_explicit {
             Some("--steering-target")

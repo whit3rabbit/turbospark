@@ -17,6 +17,7 @@
 //! there IS only one, and refused by name only when the answer is genuinely
 //! ambiguous.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::model::ChatModel;
@@ -149,6 +150,129 @@ impl ModelRegistry for StaticRegistry {
 
     fn rows(&self) -> Vec<ModelRow> {
         self.0.iter().map(|m| model_row(&**m)).collect()
+    }
+}
+
+/// N backends sharing ONE public identity (ROADMAP P3.6, the multi-runner
+/// pool): N opens of the same install, each a fully independent
+/// `RealChatModel` with its own KV, its own session pool and -- the property
+/// that makes the pool CONCURRENT -- its own one-permit
+/// [`crate::queue::GenerationQueue`]. A request is routed to one member and
+/// serializes on that member's gate alone, so N requests can generate at
+/// once where a single runner would queue them.
+///
+/// **THE REGISTRY LEVEL IS WHERE THE FAN-OUT LIVES, and that is forced by
+/// the trait shape, not chosen for tidiness.** A handler resolves one
+/// `Arc<dyn ChatModel>` and later asks THAT handle for its
+/// `generation_queue()` -- the gate and the generation must be the same
+/// runner, or two requests admitted by different gates would still collide
+/// on one runner's mutex. A `ChatModel` wrapper that picked a member
+/// internally could not keep the two in step, because the queue is fetched
+/// separately from every generation call. Routing per REQUEST, here, hands
+/// the handler a single self-consistent backend.
+///
+/// **MEMBERS ARE CHOSEN LEAST-QUEUED-FIRST, ROUND-ROBIN ON TIES**, reading
+/// each gate's `queued()` counter: an idle member is always preferred over
+/// a busy one, and among equally-loaded members the cursor spreads
+/// arrivals so an all-idle pool distributes rather than stampeding member
+/// 0. The counter is advisory at the moment of choice (a member can pick
+/// up work between the read and the routing), which is fine: it is a
+/// balance heuristic riding on top of gates that are CORRECT whatever it
+/// reads.
+///
+/// `rows()` reports ONE row, because the pool IS one model as far as a
+/// client can tell: one id, one advertised context, and `/v1/models` has
+/// nothing to say about how many runners stand behind it.
+pub struct PoolRegistry {
+    members: Vec<Arc<dyn ChatModel>>,
+    /// Round-robin cursor; `fetch_add` makes concurrent resolves spread
+    /// without a lock. Wrapping is fine -- everything reads it modulo the
+    /// member count.
+    next: AtomicUsize,
+}
+
+impl PoolRegistry {
+    /// Every member must advertise THE SAME public identity: the pool is
+    /// one model N times, and a member with its own id or alias would be
+    /// unreachable by name (exact-id match would find whichever member the
+    /// fan-out picked, not the one the name named). Distinct identities are
+    /// what [`StaticRegistry`] is for.
+    pub fn new(members: Vec<Arc<dyn ChatModel>>) -> Result<Self, String> {
+        let Some(first) = members.first() else {
+            return Err("a pool needs at least one member".to_string());
+        };
+        let identity = model_row(&**first);
+        for m in members.iter().skip(1) {
+            let row = model_row(&**m);
+            if row.id != identity.id || row.aliases != identity.aliases {
+                return Err(format!(
+                    "pool members must share one identity: member 0 is {:?} with aliases                      {:?}, but another member is {:?} with {:?}; use distinct --model                      flags (a static registry) for models that route by name",
+                    identity.id, identity.aliases, row.id, row.aliases
+                ));
+            }
+            if row.max_context != identity.max_context {
+                return Err(format!(
+                    "pool members must be opened at one context: member 0 reports {}, \
+                     another reports {}",
+                    identity.max_context, row.max_context
+                ));
+            }
+        }
+        if members.len() == 1 {
+            return Err(
+                "a pool of one is not a pool; open the model without --pool-size".to_string(),
+            );
+        }
+        Ok(Self {
+            members,
+            next: AtomicUsize::new(0),
+        })
+    }
+
+    /// The member a request should run on: the first idle member scanning
+    /// from the round-robin cursor, else the least-queued one in that scan
+    /// order. `queued()` is the gate's waiting-count; a member with no gate
+    /// (scripted backends in tests) reads as permanently idle.
+    fn pick(&self) -> Arc<dyn ChatModel> {
+        let n = self.members.len();
+        let start = self.next.fetch_add(1, Ordering::Relaxed);
+        let mut best = 0usize;
+        let mut best_len = usize::MAX;
+        for i in 0..n {
+            let idx = (start.wrapping_add(i)) % n;
+            let queued = self.members[idx]
+                .generation_queue()
+                .map(|q| q.queued())
+                .unwrap_or(0);
+            if queued < best_len {
+                best_len = queued;
+                best = idx;
+            }
+            if best_len == 0 {
+                break;
+            }
+        }
+        Arc::clone(&self.members[best])
+    }
+}
+
+impl ModelRegistry for PoolRegistry {
+    fn resolve(&self, requested: Option<&str>) -> Resolution {
+        // One identity means the routing policy's three cases collapse into
+        // one answer: a request naming the id, an alias, nothing, or
+        // something else entirely is all "the pool" -- there is nothing the
+        // name could disambiguate.
+        let _ = requested;
+        Resolution::Model(self.pick())
+    }
+
+    fn resolve_embedding(&self, requested: Option<&str>) -> Resolution {
+        let _ = requested;
+        Resolution::Model(self.pick())
+    }
+
+    fn rows(&self) -> Vec<ModelRow> {
+        vec![model_row(&*self.members[0])]
     }
 }
 
@@ -285,11 +409,11 @@ mod tests {
         }
     }
 
-    fn model(id: &str) -> Arc<dyn ChatModel> {
+    pub(crate) fn model(id: &str) -> Arc<dyn ChatModel> {
         model_with_embedding(id, false)
     }
 
-    fn model_with_embedding(id: &str, is_embedding: bool) -> Arc<dyn ChatModel> {
+    pub(crate) fn model_with_embedding(id: &str, is_embedding: bool) -> Arc<dyn ChatModel> {
         let dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
         let tok = tokenizer::MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer");
@@ -556,5 +680,116 @@ mod tests {
     #[test]
     fn distinct_model_ids_construct_fine() {
         assert!(StaticRegistry::new(vec![model("a.gturbo"), model("b.gturbo")]).is_ok());
+    }
+
+    #[cfg(test)]
+    mod pool_tests {
+        use super::*;
+
+        /// N members of one install advertise THE SAME identity, and the pool
+        /// exists precisely so that identity can be duplicated. `StaticRegistry`
+        /// refuses what this accepts, and the pair of refusals is the contract:
+        /// duplicates mean "one model, N runners" here and a routing bug there.
+        #[test]
+        fn a_pool_allows_what_a_static_registry_refuses() {
+            assert!(StaticRegistry::new(vec![model("a.gturbo"), model("a.gturbo")]).is_err());
+            assert!(PoolRegistry::new(vec![model("a.gturbo"), model("a.gturbo")]).is_ok());
+        }
+
+        #[test]
+        fn a_pool_of_one_is_refused() {
+            match PoolRegistry::new(vec![model("a.gturbo")]) {
+                Err(err) => assert!(err.contains("not a pool"), "{err}"),
+                Ok(_) => panic!("a single-member pool is a misconfiguration, not a registry"),
+            }
+        }
+
+        /// Members with DIFFERENT identities are a static registry's job: the
+        /// pool's exact-id match would find whichever member the fan-out
+        /// picked, not the one the name named.
+        #[test]
+        fn members_with_distinct_ids_are_refused() {
+            match PoolRegistry::new(vec![model("a.gturbo"), model("b.gturbo")]) {
+                Err(err) => assert!(err.contains("share one identity"), "{err}"),
+                Ok(_) => panic!("expected a distinct-identity refusal"),
+            }
+        }
+
+        /// The context window is a property of how a member was OPENED, so two
+        /// members of one install opened at different windows would advertise
+        /// one row that describes neither faithfully.
+        #[test]
+        fn members_at_different_contexts_are_refused() {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/ChatMLTokenizer");
+            let tok = tokenizer::MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer");
+            let big = Arc::new(Named {
+                inner: ScriptedChatModel::new(tok, 8192, Vec::new()),
+                id: "a.gturbo".to_string(),
+                is_embedding: false,
+                aliases: None,
+            });
+            match PoolRegistry::new(vec![model("a.gturbo"), big]) {
+                Err(err) => assert!(err.contains("one context"), "{err}"),
+                Ok(_) => panic!("expected a context-mismatch refusal"),
+            }
+        }
+
+        /// `/v1/models` reports ONE row for the pool: one id, one context, N
+        /// runners behind it that a client cannot see and does not need to.
+        #[test]
+        fn rows_report_one_entry_whatever_the_member_count() {
+            let pool = PoolRegistry::new(vec![
+                model("a.gturbo"),
+                model("a.gturbo"),
+                model("a.gturbo"),
+            ])
+            .expect("identical members");
+            let rows = pool.rows();
+            assert_eq!(rows.len(), 1, "the pool is one model to a client");
+            assert_eq!(rows[0].id, "a.gturbo");
+        }
+
+        /// With every member idle, arrivals spread round-robin: N resolves hit
+        /// N distinct members exactly once each. Compared by `Arc` pointer,
+        /// because every member answers to the same id on purpose.
+        #[test]
+        fn idle_members_are_served_round_robin() {
+            let members: Vec<Arc<dyn ChatModel>> =
+                vec![model("a.gturbo"), model("a.gturbo"), model("a.gturbo")];
+            let pool = PoolRegistry::new(members.clone()).expect("identical members");
+
+            let mut seen: Vec<usize> = Vec::new();
+            for _ in 0..members.len() {
+                let Resolution::Model(served) = pool.resolve(Some("a.gturbo")) else {
+                    panic!("expected a member");
+                };
+                let idx = members
+                    .iter()
+                    .position(|m| Arc::ptr_eq(m, &served))
+                    .expect("the served backend is one of the members");
+                seen.push(idx);
+            }
+            seen.sort_unstable();
+            assert_eq!(
+                seen,
+                vec![0, 1, 2],
+                "an all-idle pool must spread arrivals across every member"
+            );
+        }
+
+        /// An unknown name resolves to a member, exactly as a single model
+        /// serves one it does not know: with ONE identity attached there is
+        /// nothing the name could disambiguate, and this is the property Claude
+        /// Code's gateway discovery depends on.
+        #[test]
+        fn a_pool_serves_a_name_it_does_not_know() {
+            let pool = PoolRegistry::new(vec![model("a.gturbo"), model("a.gturbo")])
+                .expect("identical members");
+            match pool.resolve(Some("claude-sonnet-4-6")) {
+                Resolution::Model(_) => {}
+                _ => panic!("the single-identity fallback must carry into the pool"),
+            }
+        }
     }
 }

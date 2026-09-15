@@ -232,10 +232,48 @@ fn open_models_registry(
         (true, None) => {
             let dir = catalog::resolve_model_arg(&parsed.model);
             if !dir.join("manifest.json").exists() && dir.join("config.json").exists() {
+                if parsed.pool_size > 1 {
+                    return Err(
+                        "--pool-size pools a GENERATION model; the resolved --model is an                          embedding model (config.json without manifest.json)"
+                            .to_string(),
+                    );
+                }
                 let emb_model = open_real_encoder_model(&parsed.model)?;
                 Ok(Arc::new(turbospark_server::registry::SingleModel::new(
                     emb_model,
                 )))
+            } else if parsed.pool_size > 1 {
+                // N independent opens of ONE install, behind one public id
+                // (ROADMAP P3.6). Each open pays the load guard on its own,
+                // so a member that does not fit fails HERE with the guard's
+                // own subtraction rather than degrading every request later.
+                let n = parsed.pool_size;
+                eprintln!("opening pool of {n} runners of {} ...", parsed.model);
+                let mut members: Vec<Arc<dyn turbospark_server::ChatModel>> =
+                    Vec::with_capacity(n as usize);
+                for i in 0..n {
+                    if i > 0 {
+                        eprintln!("opening pool member {}/{n} ...", i + 1);
+                    }
+                    let model = open_real_model(parsed).map_err(|e| {
+                        format!(
+                            "--pool-size {n}: member {} of {n} failed to open: {e}",
+                            i + 1
+                        )
+                    })?;
+                    members.push(model);
+                }
+                use turbospark_server::registry::ModelRegistry as _;
+                let registry = turbospark_server::registry::PoolRegistry::new(members)?;
+                let row = &registry.rows()[0];
+                eprintln!(
+                    "pool ready: {} runners behind one id {:?} ({} aliases), requests \
+                     route to the least-busy member",
+                    n,
+                    row.id,
+                    row.aliases.len()
+                );
+                Ok(Arc::new(registry))
             } else {
                 let chat_model = open_real_model(parsed)?;
                 Ok(Arc::new(turbospark_server::registry::SingleModel::new(

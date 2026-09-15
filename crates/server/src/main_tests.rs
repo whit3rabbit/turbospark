@@ -342,9 +342,9 @@ fn a_non_ascii_boundary_in_the_bad_field_does_not_panic() {
 #[test]
 fn steering_defaults_to_off_and_reads_no_file() {
     let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
-    assert!(d.steering.set.is_none());
+    assert!(d.steering.vectors.is_empty());
     assert!(!d.steering.is_active());
-    assert_eq!(d.steering.alpha, 0.0);
+    assert!(d.steering.primary().is_none());
 }
 
 /// A steering PARAMETER without `--steering` is refused rather than ignored.
@@ -441,8 +441,12 @@ fn the_mode_comes_from_the_flag_then_the_file_then_the_default() {
         "--steering",
         declared.to_str().unwrap(),
     ]);
-    assert_eq!(from_file.mode, foundation::SteeringMode::Renorm);
-    assert_eq!(from_file.alpha, 1.0, "a loaded vector means full strength");
+    let file_vector = from_file.primary().expect("a vector was given");
+    assert_eq!(file_vector.mode, foundation::SteeringMode::Renorm);
+    assert_eq!(
+        file_vector.alpha, 1.0,
+        "a loaded vector means full strength"
+    );
 
     let from_flag = p(&[
         "--model",
@@ -452,10 +456,16 @@ fn the_mode_comes_from_the_flag_then_the_file_then_the_default() {
         "--steering-mode",
         "add",
     ]);
-    assert_eq!(from_flag.mode, foundation::SteeringMode::Add);
+    assert_eq!(
+        from_flag.primary().expect("a vector was given").mode,
+        foundation::SteeringMode::Add
+    );
 
     let defaulted = p(&["--model", "/tmp/m", "--steering", bare.to_str().unwrap()]);
-    assert_eq!(defaulted.mode, foundation::SteeringMode::Ablate);
+    assert_eq!(
+        defaulted.primary().expect("a vector was given").mode,
+        foundation::SteeringMode::Ablate
+    );
 }
 
 /// `--steering-layers` must survive BOTH orders, and this loop is the only
@@ -470,7 +480,7 @@ fn a_layer_range_applies_whichever_side_of_the_vector_it_is_given() {
     let path = v.to_str().unwrap();
     let covered = |args: &[&str]| {
         let s = parse(args).unwrap().unwrap().steering;
-        let set = s.set.expect("a vector was given");
+        let set = &s.primary().expect("a vector was given").set;
         (
             set.covered_layers(),
             set.layer(0).is_some(),
