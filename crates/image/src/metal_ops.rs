@@ -154,8 +154,12 @@ pub(crate) fn read(tensor: &GpuTensor) -> Vec<f32> {
 // CPU wait, while every CPU read still waits for the producing pass. Record
 // the latest pass on the component so its mmap cannot be released before an
 // early-return teardown drains all resident-backed work.
-fn commit_deferred(pass: PassEncoder, component: &Component) -> Arc<gpu::CommittedPass> {
-    let ready = Arc::new(gpu::autorelease_pool(|| pass.commit()));
+fn commit_deferred(pass: PassEncoder) -> Arc<gpu::CommittedPass> {
+    Arc::new(gpu::autorelease_pool(|| pass.commit()))
+}
+
+fn commit_component_deferred(pass: PassEncoder, component: &Component) -> Arc<gpu::CommittedPass> {
+    let ready = commit_deferred(pass);
     *component.latest_pass.borrow_mut() = Some(Arc::clone(&ready));
     ready
 }
@@ -229,7 +233,7 @@ pub(crate) fn lookup(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -247,37 +251,26 @@ pub(crate) fn linear(
     out_dim: usize,
 ) -> Result<GpuTensor, String> {
     if input.len != rows * in_dim {
-        return Err(format!(
-            "image linear input has {} values, expected {}",
-            input.len,
-            rows * in_dim
-        ));
+        return Err("image linear input shape does not match rows and in_dim".to_string());
     }
     let output = GpuTensor {
         buffer: context.new_output_buffer((rows * out_dim * 4) as u64),
         len: rows * out_dim,
         ready: None,
     };
-    let params = u32_bytes(&[
-        rows as u32,
-        in_dim as u32,
-        out_dim as u32,
-        weight.row_stride,
-        weight.storage,
-        bias.map_or(0, |value| value.storage),
-    ]);
+    let params = u32_bytes(&[rows as u32, in_dim as u32, out_dim as u32, weight.storage]);
     let shader = pipeline(context, "image_linear_tiled")?;
     let pass = context.begin_pass_labeled("image-linear");
     let mut buffers = vec![
-        (component.resident.buffer(), 0, weight.offset),
-        (&input.buffer, 1, 0),
+        (&input.buffer, 0, 0),
+        (component.resident.buffer(), 1, weight.offset),
         (&output.buffer, 2, 0),
     ];
     if let Some(bias) = bias {
         buffers.push((component.resident.buffer(), 3, bias.offset));
     }
     dispatch_tiled(&pass, &shader, &buffers, &[(&params, 4)], rows, out_dim);
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -313,7 +306,7 @@ pub(crate) fn rms_norm(
         (rows as u64, 1, 1),
         (THREADS, 1, 1),
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -326,20 +319,20 @@ pub(crate) fn rope(
     freqs: &Buffer,
     rows: usize,
     heads: usize,
-    dim: usize,
+    head_dim: usize,
     eps: f32,
 ) -> Result<GpuTensor, String> {
-    if input.len != rows * heads * dim {
-        return Err("image RoPE input shape does not match rows, heads and dim".to_string());
+    if input.len != rows * heads * head_dim {
+        return Err("image RoPE input shape does not match rows, heads, and head_dim".to_string());
     }
     let output = GpuTensor {
         buffer: context.new_output_buffer((input.len * 4) as u64),
         len: input.len,
         ready: None,
     };
-    let mut params = u32_bytes(&[rows as u32, heads as u32, dim as u32, weight.storage]);
+    let mut params = u32_bytes(&[rows as u32, heads as u32, head_dim as u32, weight.storage]);
     params.extend_from_slice(&eps.to_le_bytes());
-    let shader = pipeline(context, "image_rope")?;
+    let shader = pipeline(context, "image_rope_orthogonal")?;
     let pass = context.begin_pass_labeled("image-rope");
     dispatch(
         context,
@@ -354,7 +347,7 @@ pub(crate) fn rope(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -394,7 +387,7 @@ pub(crate) fn adjacent_rope(
         ((rows * heads) as u64, 1, 1),
         (THREADS, 1, 1),
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -458,7 +451,7 @@ pub(crate) fn attention(
         (threadgroups as u64, 1, 1),
         ((head_dim * 4) as u64, 1, 1),
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
 }
 
@@ -490,7 +483,7 @@ pub(crate) fn add(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
 }
 
@@ -522,7 +515,7 @@ pub(crate) fn silu_mul(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
 }
 
@@ -556,7 +549,7 @@ pub(crate) fn scale_rows(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
 }
 
@@ -592,7 +585,7 @@ pub(crate) fn gate_add(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
 }
 
@@ -628,7 +621,7 @@ pub(crate) fn layer_norm(
         &[(&params, 3)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
 }
 
@@ -662,7 +655,7 @@ pub(crate) fn scheduler_step(
         &[(&params, 3), (&count, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
 }
 
@@ -718,7 +711,7 @@ pub(crate) fn conv2d(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -767,7 +760,7 @@ pub(crate) fn group_norm(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -798,7 +791,7 @@ pub(crate) fn upsample(
         &[(&params, 2)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -823,7 +816,7 @@ pub(crate) fn silu(
         &[(&params, 2)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
@@ -862,7 +855,7 @@ pub(crate) fn vae_attention(
         &[(&params, 4)],
         output.len,
     );
-    let ready = commit_deferred(pass, component);
+    let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
 
