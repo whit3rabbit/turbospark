@@ -40,6 +40,15 @@ extension SubagentRunner {
         for call: AppToolCall, agent: AppAgentDefinition, project: AppProject?,
         chatID: UUID? = nil, depth: Int = 0, session: TurboSparkSession? = nil
     ) async -> ChatMessage {
+        // The registry-level batch wrapper cannot evaluate this agent profile
+        // for its embedded names. Refuse it rather than letting one allowed
+        // wrapper bypass a child's disallowedTools entry. A subagent can emit
+        // independent calls normally, and each then traverses this gate.
+        if call.name.lowercased() == "batch" {
+            return errorObservation(
+                "Tool 'batch' is unavailable to subagents because every nested call must be "
+                    + "authorized against the agent profile separately.")
+        }
         if !agent.isToolAllowed(call.name) {
             return errorObservation(
                 "Tool '\(call.name)' is disallowed for agent profile '\(agent.name)'.")
