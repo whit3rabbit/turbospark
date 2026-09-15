@@ -903,6 +903,14 @@ keeps resolving.
     independently, derive outer risk from the highest child risk, and deny
     invocation from subagent runners.
 
+77. **REMOTE DOWNLOADS MUST ENFORCE MAXIMUM SIZE BOUNDS BEFORE BUFFERING.**
+    Using `URLSession.shared.data(for:)` buffers the full HTTP response body
+    into memory before callers can check sizes. Remote artifact downloads (such
+    as steering vectors) must reject oversized advertised `Content-Length`
+    headers in `didReceive response:` and cancel the task immediately when
+    streamed chunks exceed the byte limit, writing chunks incrementally to disk.
+
+
 
 ## The `state#N` ledger
 
