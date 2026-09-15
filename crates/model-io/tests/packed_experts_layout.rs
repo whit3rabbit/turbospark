@@ -95,23 +95,52 @@ fn sub_tensor_ranges_must_fit_the_expert_blob() {
 }
 
 #[test]
-fn bias_layout_requires_aligned_f32_bytes_matching_its_shape() {
+fn bias_layout_requires_aligned_companion_bytes_matching_its_shape() {
+    // The positive contract FIRST, and not invented: this is the shape and
+    // dtype the writer emits and the real gemma4 install carries (bf16
+    // `[2816, 11]` `down_biases`), scaled down to the fixture. A validator
+    // that passes hand-made fixtures while refusing the repo's own writer
+    // output refuses every MoE install at open -- which is exactly what the
+    // F32-flat-row contract this test replaced did, green against its own
+    // fixtures while `real_generation` and the chunked-prefill refusal test
+    // went red on the synthetic installs.
+    for tensor in [
+        r#"{"offset": 0, "size": 4, "dtype": "bf16", "shape": [2]}"#,
+        r#"{"offset": 0, "size": 44, "dtype": "bf16", "shape": [2, 11]}"#,
+        r#"{"offset": 0, "size": 4, "dtype": "f16", "shape": [1, 2]}"#,
+        // gpt-oss's convention: F32 and rank-2, `[width, experts]`.
+        r#"{"offset": 0, "size": 32, "dtype": "f32", "shape": [2, 4]}"#,
+    ] {
+        let dir = tempdir();
+        write_layout(&dir, &one_tensor_layout(tensor));
+        load_packed_experts_layout(&dir, 1024)
+            .unwrap_or_else(|e| panic!("companion bias {tensor} must load: {e}"));
+    }
+
     for (tensor, expected) in [
         (
-            r#"{"offset": 2, "size": 8, "dtype": "f32", "shape": [2]}"#,
+            r#"{"offset": 1, "size": 4, "dtype": "bf16", "shape": [2]}"#,
+            "2-byte aligned",
+        ),
+        (
+            r#"{"offset": 2, "size": 4, "dtype": "f32", "shape": [1]}"#,
             "4-byte aligned",
         ),
         (
-            r#"{"offset": 4, "size": 4, "dtype": "f32", "shape": [2]}"#,
-            "with 8 bytes",
+            r#"{"offset": 0, "size": 6, "dtype": "bf16", "shape": [2]}"#,
+            "found 6 bytes",
         ),
         (
-            r#"{"offset": 4, "size": 8, "dtype": "bf16", "shape": [2]}"#,
-            "must be F32",
+            r#"{"offset": 0, "size": 8, "dtype": "bf16", "shape": [2, 1]}"#,
+            "found 8 bytes",
         ),
         (
-            r#"{"offset": 4, "size": 8, "dtype": "f32", "shape": [1, 2]}"#,
-            "one dimension",
+            r#"{"offset": 0, "size": 0, "dtype": "bf16", "shape": [0]}"#,
+            "at least one element",
+        ),
+        (
+            r#"{"offset": 0, "size": 8, "dtype": "u8", "shape": [8]}"#,
+            "must be F32, BF16 or FP16",
         ),
     ] {
         let dir = tempdir();

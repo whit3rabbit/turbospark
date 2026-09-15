@@ -249,28 +249,58 @@ pub fn load_from(
                     )));
                 }
                 if matches!(role.as_str(), "gate_biases" | "up_biases" | "down_biases") {
-                    let elements = match shape.as_slice() {
-                        [width] => width.as_u64().ok_or_else(|| {
-                            corrupt(&format!("tensor {role} has malformed bias shape"))
-                        })?,
-                        _ => {
-                            return Err(corrupt(&format!(
-                                "tensor {role} bias shape must have one dimension"
-                            )))
-                        }
+                    // A routed bias is written by the writer whose bytes the
+                    // layout describes, and the families disagree by DESIGN:
+                    // the quantized families carry BF16/FP16 companion
+                    // planes shaped like the scales (`[rows, groups]`; the
+                    // real gemma4 install's `down_biases` is bf16
+                    // `[2816, 11]`), while gpt-oss's per-expert biases are
+                    // F32 and rank-2 (`[width, experts]`, accepted by
+                    // `gguf_checkpoint/plan.rs::routed_body_dims` for
+                    // exactly these three roles). What every family shares
+                    // is the arithmetic: the byte size must equal the
+                    // shape's element count times the dtype's width, and
+                    // the offset must be aligned to that width. An F32-
+                    // flat-rows-only contract here refused the repo's own
+                    // writer output on BOTH conventions and every MoE
+                    // install with them. Absence stays legal: experts with
+                    // no bias write no `_biases` role at all.
+                    let width = if dtype.eq_ignore_ascii_case("f32") {
+                        4u64
+                    } else if dtype.eq_ignore_ascii_case("bf16")
+                        || dtype.eq_ignore_ascii_case("f16")
+                    {
+                        2
+                    } else {
+                        return Err(corrupt(&format!(
+                            "tensor {role} bias dtype must be F32, BF16 or FP16, not {dtype}"
+                        )));
                     };
-                    let expected_size = elements.checked_mul(4).ok_or_else(|| {
+                    let mut elements = 1u64;
+                    let mut malformed = false;
+                    for d in shape {
+                        match d.as_u64() {
+                            Some(v) => elements = elements.saturating_mul(v),
+                            None => malformed = true,
+                        }
+                    }
+                    let expected_size = elements.checked_mul(width).ok_or_else(|| {
                         corrupt(&format!("tensor {role} bias byte count overflows u64"))
                     })?;
-                    if !dtype.eq_ignore_ascii_case("f32") || tsize != expected_size {
+                    if malformed || elements == 0 {
                         return Err(corrupt(&format!(
-                            "tensor {role} bias must be F32 with {expected_size} bytes, found \
-                             {dtype} with {tsize} bytes"
+                            "tensor {role} bias shape must name at least one element"
                         )));
                     }
-                    if toff % 4 != 0 {
+                    if tsize != expected_size {
                         return Err(corrupt(&format!(
-                            "tensor {role} bias offset {toff} is not 4-byte aligned"
+                            "tensor {role} bias must be {expected_size} bytes for its {dtype} \
+                             shape, found {tsize} bytes"
+                        )));
+                    }
+                    if toff % width != 0 {
+                        return Err(corrupt(&format!(
+                            "tensor {role} bias offset {toff} is not {width}-byte aligned"
                         )));
                     }
                 }
