@@ -93,6 +93,10 @@ pub fn dio_round_up(len: usize) -> usize {
 }
 
 #[cfg(target_os = "linux")]
+// Dead until a caller selects `Mode::Uring`, which the module header forbids
+// until a Linux run proves the path. The code is the point of the gate, not
+// the wiring.
+#[allow(dead_code)]
 mod sys {
     //! Raw io_uring plumbing. Every constant and layout here is from the
     //! `io_uring(2)` / `io_uring_enter(2)` manuals (kernel headers
@@ -203,7 +207,7 @@ mod sys {
     /// kernel places these at fixed offsets from the ring's mmap bases when
     /// `flags` carries `IORING_OFF_SQ_RING`/`CQ_RING` semantics, which is
     /// the layout every x86_64/aarch64 kernel ships (no hybrid ptr size).
-    struct Ring {
+    pub(crate) struct Ring {
         sq_head: *const AtomicU32,
         sq_tail: *mut AtomicU32,
         sq_array: *mut AtomicU32,
@@ -244,17 +248,17 @@ mod sys {
 
         unsafe fn map(fd: libc::c_int, p: &IoUringParams) -> std::io::Result<Ring> {
             let page = 4096usize;
-            let sq = p.sq_off;
-            let cq = p.cq_off;
+            let sq = &p.sq_off;
+            let cq = &p.cq_off;
             // Ring lengths, straight from the manual so each can be checked
             // against it without unfolding a helper:
             //   sq_ring = sq_off.array + sq_entries * sizeof(u32)
             //   cq_ring = cq_off.cqes + cq_entries * sizeof(cqe)
             //   sqes    = sq_entries * sizeof(sqe)
             let sq_ring_len = sq.array as usize + (p.sq_entries as usize) * 4;
-            let cq_ring_len = cq.cqes as usize
-                + (p.cq_entries as usize) * std::mem::size_of::<libc::io_uring_cqe>();
-            let sqes_len = (p.sq_entries as usize) * std::mem::size_of::<libc::io_uring_sqe>();
+            let cq_ring_len =
+                cq.cqes as usize + (p.cq_entries as usize) * std::mem::size_of::<Cqe>();
+            let sqes_len = (p.sq_entries as usize) * std::mem::size_of::<Sqe>();
 
             let mmap = |len: usize, off: i64| -> std::io::Result<*mut libc::c_void> {
                 let ptr = unsafe {
@@ -291,8 +295,8 @@ mod sys {
                 sq_array: (base + sq.array as usize) as *mut AtomicU32,
                 cq_head: (cq_ring as usize + cq.head as usize) as *mut AtomicU32,
                 cq_tail: (cq_ring as usize + cq.tail as usize) as *const AtomicU32,
-                cqes: (cq_ring as usize + cq.cqes as usize) as *const libc::io_uring_cqe,
-                sqes: sqes as *mut libc::io_uring_sqe,
+                cqes: (cq_ring as usize + cq.cqes as usize) as *const Cqe,
+                sqes: sqes as *mut Sqe,
                 sq_entries: p.sq_entries,
                 ring_fd: fd,
                 mapped,
@@ -371,9 +375,6 @@ mod sys {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub use sys::Ring;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,8 +390,14 @@ mod tests {
         // naming it; refusing the spelling here would make the day the
         // mode is proven a syntax change instead of a default flip.
         assert_eq!(Mode::parse("uring"), Ok(Mode::Uring));
-        assert_eq!(Mode::parse(" io_uring "), Err("TURBOSPARK_LINUX_IO must be auto, pread or uring, not \"io_uring\"".to_string()));
-        assert_eq!(Mode::parse(""), Err("TURBOSPARK_LINUX_IO must be auto, pread or uring, not \"\"".to_string()));
+        assert_eq!(
+            Mode::parse(" io_uring "),
+            Err("TURBOSPARK_LINUX_IO must be auto, pread or uring, not \"io_uring\"".to_string())
+        );
+        assert_eq!(
+            Mode::parse(""),
+            Err("TURBOSPARK_LINUX_IO must be auto, pread or uring, not \"\"".to_string())
+        );
         // And AUTO IS PREAD, which is the property every gate below rides
         // on: nothing reaches the untested kernel path by omission.
         assert_eq!(Mode::from_env_default(), Ok(Mode::Pread));
