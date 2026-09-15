@@ -334,6 +334,7 @@
           "tokenizer_config.json",
           "chat_template.jinja",
           "generation_config.json",
+          "preprocessor_config.json",
           "vocab.json"
         ]
       },

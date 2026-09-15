@@ -157,3 +157,11 @@ cargo test -p turbospark-image --test metal_parity -- --ignored --nocapture
    conventions and the no-secrets-in-argv rules are recorded in
    `crates/cli/CLAUDE.md` Gotchas 16 and 17. Image-specific flags follow
    the same five-place rule as every other CLI flag.
+
+9. **COMPONENT MMAP DROPS MUST DRAIN PENDING WORK BEFORE UNMAPPING.**
+   When a stage finishes and drops its `Component`, any queued Metal command
+   buffers that reference resident memory from the component must be
+   drained (`Component::drop` waits on `latest_pass`). Intermediate
+   activation-only passes (such as attention or elementwise ops) do not
+   borrow from `Component` and commit via `commit_deferred`, while
+   weight-backed passes register their pass via `commit_component_deferred`.

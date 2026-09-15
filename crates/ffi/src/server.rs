@@ -58,12 +58,14 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use turbospark_server::observe::ServerObserver;
 
 use crate::server_registry::{EventRing, LiveRegistry};
 use crate::session::SessionCore;
+
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(1);
 
 /// What `ts_server_start` writes to `*out`, and what `ts_server_stop` frees.
 pub struct Server {
@@ -105,8 +107,9 @@ pub struct Server {
 
 impl Server {
     /// Spawns a background thread that binds `port` (0 for an OS-assigned
-    /// one) on loopback and serves it. Blocks until the socket is actually
-    /// bound (or binding fails), never until the first request is served.
+    /// one) on loopback or a Tailscale IPv4 address and serves it. Blocks
+    /// until the socket is actually bound (or binding fails), never until
+    /// the first request is served.
     ///
     /// Starts with NOTHING attached. `ts_server_start` calls
     /// [`Self::attach`] straight after when it was handed a session, which
@@ -127,8 +130,20 @@ impl Server {
             .parse()
             .map_err(|_| "Host must be a literal IPv4 or IPv6 address".to_string())?;
         let api_key = api_key.filter(|key| !key.trim().is_empty());
-        if !host.is_loopback() && api_key.is_none() {
-            return Err("An API key is required for a non-loopback address".into());
+        let tailnet = match host {
+            std::net::IpAddr::V4(ip) => {
+                let octets = ip.octets();
+                octets[0] == 100 && (64..=127).contains(&octets[1])
+            }
+            std::net::IpAddr::V6(_) => false,
+        };
+        if !host.is_loopback() && !tailnet {
+            return Err(
+                "Host must be loopback or a Tailscale IPv4 address in 100.64.0.0/10".into(),
+            );
+        }
+        if tailnet && api_key.is_none() {
+            return Err("An API key is required for a Tailscale address".into());
         }
         let traffic = Arc::new(crate::server_transport::Traffic::new(capture_text));
         let auth_enabled = api_key.is_some();
@@ -203,11 +218,24 @@ impl Server {
                     // has no caller left to report to by the time it
                     // happens; the thread simply ends, same as a graceful
                     // shutdown does.
-                    let _ = axum::serve(listener, router)
-                        .with_graceful_shutdown(async {
+                    let (grace_started_tx, grace_started_rx) = tokio::sync::oneshot::channel();
+                    let server = std::future::IntoFuture::into_future(
+                        axum::serve(listener, router).with_graceful_shutdown(async {
                             let _ = shutdown_rx.await;
-                        })
-                        .await;
+                            let _ = grace_started_tx.send(());
+                        }),
+                    );
+                    tokio::pin!(server);
+                    tokio::select! {
+                        _ = &mut server => {}
+                        _ = async {
+                            if grace_started_rx.await.is_ok() {
+                                tokio::time::sleep(SHUTDOWN_GRACE_PERIOD).await;
+                            } else {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {}
+                    }
                 });
             })
             .map_err(|e| format!("failed to start the server thread: {e}"))?;
@@ -337,7 +365,8 @@ impl Server {
     }
 
     /// Signals graceful shutdown and blocks until the background thread has
-    /// actually stopped serving. Idempotent: a second call is a no-op.
+    /// stopped serving, forcing it after a bounded grace period. Idempotent:
+    /// a second call is a no-op.
     ///
     /// `stopping` is set BEFORE the shutdown signal is sent, and before the
     /// join below blocks this thread: axum's graceful shutdown waits for
@@ -346,7 +375,9 @@ impl Server {
     /// `ts_server_stop`) for up to that request's whole `max_tokens`. Every
     /// `FfiChatModel` this server attached reads the same flag from its
     /// cancel predicate, so setting it here is what actually ends the
-    /// decode the join is waiting on, not the signal to axum by itself.
+    /// decode the join is waiting on, not the signal to axum by itself. A
+    /// connection stalled before model dispatch cannot observe that flag, so
+    /// the server task is dropped after `SHUTDOWN_GRACE_PERIOD` as a backstop.
     fn stop(&mut self) {
         self.stopping.store(true, Ordering::Release);
         if let Some(tx) = self.shutdown.take() {

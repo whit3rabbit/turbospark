@@ -220,3 +220,22 @@ fn gguf_kernel_pairs_agree_on_the_routed_blobs_argument_buffer_size() {
         "moe_gguf's phase-1 kernels must agree on the RoutedBlobs argument-buffer layout"
     );
 }
+
+#[test]
+fn routed_blobs_refuses_an_encoder_other_than_its_allocator() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let routed = RoutedBlobsBuffer::new(&mut context, false).expect("affine arg buffer");
+    let blob = context
+        .device()
+        .new_buffer(16, metal::MTLResourceOptions::StorageModeShared);
+    let err = routed
+        .bind_for(
+            &mut context,
+            turbospark_gpu::moe_gguf_source(),
+            "moe_phase1_gate_up_act_q8_0",
+            false,
+            &[(&blob, 0)],
+        )
+        .expect_err("a GGUF encoder must not populate an affine argument buffer");
+    assert!(err.to_string().contains("layout mismatch"), "{err}");
+}

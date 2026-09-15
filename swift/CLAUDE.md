@@ -896,6 +896,38 @@ keeps resolving.
     time, before reading or writing state, while keeping explicitly user-authored
     quick-save behavior on its separate path.
 
+76. **NESTED BATCH TOOLS REQUIRE PER-CHILD PERMISSION AND HOOK GATING.**
+    Treating the outer `batch` tool call as approved cannot authorize its
+    nested children. Each child tool call must evaluate `PreToolUse` hooks,
+    permission rules, `PermissionRequest` hooks, and lifecycle events
+    independently, derive outer risk from the highest child risk, and deny
+    invocation from subagent runners.
+
+77. **REMOTE DOWNLOADS MUST ENFORCE MAXIMUM SIZE BOUNDS BEFORE BUFFERING.**
+    Using `URLSession.shared.data(for:)` buffers the full HTTP response body
+    into memory before callers can check sizes. Remote artifact downloads (such
+    as steering vectors) must reject oversized advertised `Content-Length`
+    headers in `didReceive response:` and cancel the task immediately when
+    streamed chunks exceed the byte limit, writing chunks incrementally to disk.
+
+78. **PRESERVE UNCOMMITTED EDITS ON FAILED GIT SWITCH.**
+    A failed `git switch` must not fall back to `git checkout -- <branch>`
+    because `-- <name>` treats the operand as a pathspec and can silently
+    overwrite or discard uncommitted modifications in tracked files.
+    Reject option-like branch names (prefixed with `-`) early with an
+    invalid-branch error, probe `git switch -h` capability (exit code 129
+    proves `switch` is recognized) so normal switch rejections do not trigger
+    legacy fallback, and format legacy branch checkout without `--`.
+
+79. **HONOR REDUCE TRANSPARENCY ON STRUCTURAL SURFACES.**
+    The system `accessibilityReduceTransparency` preference must be reflected
+    into all structural surfaces (page, surface, elevated, sidebar, rail) by
+    suppressing translucency and forcing full opacity (1.0) via `surfaceOpacity`
+    on `ResolvedAppTheme` and passing `reduceTransparency` to background
+    accessors. Text, border, and accent colors retain their requested alpha.
+
+
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments

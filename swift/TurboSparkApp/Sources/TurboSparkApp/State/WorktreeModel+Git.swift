@@ -283,10 +283,20 @@ extension WorktreeModel {
 
     /// Checks out or switches to another local Git branch.
     static func runGitCheckout(rootPath: String, branch: String) async -> (exitCode: Int32, error: String) {
+        guard !branch.hasPrefix("-") else {
+            return (128, "Invalid branch name: \(branch)")
+        }
         let arguments = gitCheckoutArguments(branch: branch)
         let result = await runGitCommand(args: arguments.switchArgs, rootPath: rootPath)
         if result.exitCode == 0 {
             return (0, "")
+        }
+        // Do not turn an ordinary switch refusal (for example, dirty files)
+        // into a different checkout operation. Only use the legacy command
+        // when this Git installation does not recognize `switch`.
+        let switchProbe = await runGitCommand(args: ["switch", "-h"], rootPath: rootPath)
+        if switchProbe.exitCode == 129 {
+            return (result.exitCode, result.stderr)
         }
         let fallback = await runGitCommand(args: arguments.checkoutArgs, rootPath: rootPath)
         return (fallback.exitCode, fallback.stderr)
@@ -296,7 +306,7 @@ extension WorktreeModel {
     nonisolated static func gitCheckoutArguments(branch: String) -> (
         switchArgs: [String], checkoutArgs: [String]
     ) {
-        (["switch", "--", branch], ["checkout", "--", branch])
+        (["switch", "--", branch], ["checkout", branch])
     }
 
     /// Queries registered Git worktrees for this repository.

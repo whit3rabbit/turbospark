@@ -207,6 +207,8 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
 
         XCTAssertFalse(standardTheme.reduceTransparency)
         XCTAssertTrue(opaqueTheme.reduceTransparency)
+        XCTAssertEqual(standardTheme.surfaceOpacity(0.7), 0.7)
+        XCTAssertEqual(opaqueTheme.surfaceOpacity(0.7), 1.0)
     }
 
     func testDynamicTypeScalingInThemeResolution() {
@@ -232,4 +234,3 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
         XCTAssertGreaterThan(largeTheme.codeFontDescriptor.size, standardTheme.codeFontDescriptor.size)
     }
 }
-

@@ -64,17 +64,17 @@ public enum TurboSparkTheme {
         return Color(nsColor: blended)
     }
 
-    public static func sidebarBackgroundColor(isDark: Bool) -> Color {
+    public static func sidebarBackgroundColor(isDark: Bool, reduceTransparency: Bool = false) -> Color {
         let config = AppearanceManager.shared.activeConfig(isDark: isDark)
         let elevated = elevate(pageBackgroundColor(isDark: isDark), isDark: isDark, by: isDark ? 0.05 : 0.035)
-        return config.translucentSidebar ? elevated.opacity(0.94) : elevated
+        return config.translucentSidebar && !reduceTransparency ? elevated.opacity(0.94) : elevated
     }
 
     /// Background of the leftmost icon rail: slightly differentiated from the sidebar.
-    public static func railBackgroundColor(isDark: Bool) -> Color {
+    public static func railBackgroundColor(isDark: Bool, reduceTransparency: Bool = false) -> Color {
         let config = AppearanceManager.shared.activeConfig(isDark: isDark)
         let elevated = elevate(pageBackgroundColor(isDark: isDark), isDark: isDark, by: isDark ? 0.03 : 0.02)
-        return config.translucentSidebar ? elevated.opacity(0.9) : elevated
+        return config.translucentSidebar && !reduceTransparency ? elevated.opacity(0.9) : elevated
     }
 
     /// Background of the flat top bar and bottom status strip: one step

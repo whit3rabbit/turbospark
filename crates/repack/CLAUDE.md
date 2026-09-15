@@ -443,3 +443,11 @@ the failure this head has already had once.
     bias role. Check rank, dimensions, and bias dtype by role before computing
     per-expert bytes or page strides; otherwise a malformed but sizeable tensor
     can produce a blob whose Metal indexing contract is already broken.
+
+23. **PRESERVE TOKENIZER AND TEMPLATE SIDECARS DURING STAGED REPACK PUBLISH.**
+    A staged repack writes files to a temporary staging sibling before renaming
+    it to replace the target directory. If the existing directory already
+    contained sidecar files (such as `tokenizer.json`, `tokenizer_config.json`,
+    or `chat_template.jinja`), the staged writer must preserve those regular
+    files by copying them into staging before atomic rename, while skipping
+    generated targets like `manifest.json` and `model_weights.bin`.

@@ -1296,11 +1296,11 @@ existing per-user settings file. Loading a recipe starts a stopped server and
 attaches its models sequentially. Missing installs are reported. Keys and text
 previews are excluded from recipes.
 
-`ServerOptions.host` accepts a literal IPv4 or IPv6 address. The default stays
-`127.0.0.1`; non-loopback binding requires an API key. Invalid addresses and
-occupied ports fail visibly. These are in-process options, not new CLI flags.
-`ServerInfo.host` reports the bind address; `baseURL` substitutes local loopback
-for wildcard addresses so copied local client URLs remain usable.
+`ServerOptions.host` accepts loopback addresses or a Tailscale IPv4 address in
+`100.64.0.0/10`. The default stays `127.0.0.1`; Tailscale binding also requires
+an API key. LAN, wildcard, invalid, and occupied addresses fail visibly. These
+are in-process options, not new CLI flags. `ServerInfo.host` reports the bind
+address.
 
 `ServerInfo.traffic` reports consumed request-body bytes and emitted response-body
 bytes. It excludes HTTP headers, TCP overhead and traffic from other processes.

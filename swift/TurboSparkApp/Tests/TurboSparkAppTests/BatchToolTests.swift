@@ -84,4 +84,55 @@ final class BatchToolTests: XCTestCase {
         XCTAssertTrue(result.isError)
         XCTAssertTrue(result.output.contains("Batch size exceeds maximum limit of 25"))
     }
+
+    func testBatchCannotBypassDeniedTerminalPermission() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let marker = dir.appendingPathComponent("should-not-exist")
+        let project = AppProject(
+            name: "batch_test", rootDirectoryPath: dir.path,
+            permissions: AppProjectPermissions(
+                mode: .auto, terminal: .deny, automation: .allow))
+        let batchArgs = [
+            "tool_calls": """
+            [{"tool":"run_command","parameters":{"command":"touch should-not-exist"}}]
+            """
+        ]
+
+        let result = await AppToolRegistry.execute(
+            call: AppToolCall(name: "batch", arguments: batchArgs, category: .automation),
+            in: project)
+
+        XCTAssertTrue(result.output.contains("1 failed"))
+        XCTAssertTrue(result.output.contains("Terminal & Shell Execution category is set to Deny"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    func testBatchHighRiskChildNeedsFreshApproval() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let project = AppProject(
+            name: "batch_test", rootDirectoryPath: dir.path,
+            permissions: AppProjectPermissions(
+                mode: .auto, terminal: .allow, automation: .allow))
+        let batchArgs = [
+            "tool_calls": """
+            [{"tool":"run_command","parameters":{"command":"rm -rf should-not-exist"}}]
+            """
+        ]
+
+        let risk = ToolRiskClassifier.assessRisk(name: "batch", arguments: batchArgs)
+        let result = await AppToolRegistry.execute(
+            call: AppToolCall(name: "batch", arguments: batchArgs, category: .automation),
+            in: project)
+
+        XCTAssertEqual(risk.level, .high)
+        XCTAssertEqual(risk.category, .terminal)
+        XCTAssertTrue(result.output.contains("Nested call requires separate approval"))
+        XCTAssertTrue(result.output.contains("1 failed"))
+    }
 }

@@ -13,11 +13,14 @@
 //! with the loader's added-token renumbering for no benefit.
 
 use std::ffi::{CStr, CString};
+use std::io::Write;
+use std::net::TcpStream;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 use foundation::LogitValue;
 use tokenizer::MfTokenizer;
@@ -1016,6 +1019,37 @@ async fn ts_server_stop_actually_stops_serving() {
 }
 
 #[test]
+fn ts_server_stop_is_bounded_when_a_request_body_stalls() {
+    let session = endless_session(fixture(), "h", 4);
+    let server = unsafe { start_server(&session, "{}") };
+    let address = server_base_url(server)
+        .trim_start_matches("http://")
+        .to_string();
+    let mut client = TcpStream::connect(address).unwrap();
+    client
+        .write_all(
+            b"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n\
+              Content-Type: application/json\r\nContent-Length: 1000000\r\n\r\n{",
+        )
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let server_address = server as usize;
+    let stopper = std::thread::spawn(move || {
+        unsafe { ts_server_stop(server_address as *mut Server) };
+        let _ = done_tx.send(());
+    });
+
+    if done_rx.recv_timeout(Duration::from_secs(3)).is_err() {
+        drop(client);
+        stopper.join().unwrap();
+        panic!("ts_server_stop did not force a stalled request to close");
+    }
+    stopper.join().unwrap();
+}
+
+#[test]
 fn server_options_accept_an_api_key_and_report_it_enabled() {
     let session = endless_session(fixture(), "h", 4);
     let server = unsafe { start_server(&session, r#"{"apiKey":"sk-test"}"#) };
@@ -1023,6 +1057,20 @@ fn server_options_accept_an_api_key_and_report_it_enabled() {
     assert_eq!(json["authEnabled"], true);
     assert_eq!(json["modelId"], "<scripted>");
     unsafe { ts_server_stop(server) };
+}
+
+#[test]
+fn server_options_reject_plaintext_wildcard_bind_even_with_an_api_key() {
+    let session = endless_session(fixture(), "h", 4);
+    let opts = c(r#"{"host":"0.0.0.0","apiKey":"sk-test"}"#);
+    let mut server: *mut Server = ptr::null_mut();
+    let code = unsafe { ts_server_start(&session, opts.as_ptr(), &mut server) };
+    assert_eq!(code, abi::TS_ERR_OPEN);
+    assert!(server.is_null());
+    assert_eq!(
+        last_error(),
+        "Host must be loopback or a Tailscale IPv4 address in 100.64.0.0/10"
+    );
 }
 
 /// **THE HOST IS AN OBSERVATION, AND THIS IS WHAT MAKES IT ONE.**
