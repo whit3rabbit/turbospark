@@ -197,10 +197,17 @@ final class WorktreeTests: XCTestCase {
         XCTAssertFalse(worktrees[1].isCurrent)
     }
 
-    func testGitCheckoutTreatsDashPrefixedBranchAsAnOperand() {
-        let arguments = WorktreeModel.gitCheckoutArguments(branch: "--force")
-        XCTAssertEqual(arguments.switchArgs, ["switch", "--", "--force"])
-        XCTAssertEqual(arguments.checkoutArgs, ["checkout", "--", "--force"])
+    func testGitCheckoutUsesBranchSyntaxForLegacyFallback() {
+        let arguments = WorktreeModel.gitCheckoutArguments(branch: "feature")
+        XCTAssertEqual(arguments.switchArgs, ["switch", "--", "feature"])
+        XCTAssertEqual(arguments.checkoutArgs, ["checkout", "feature"])
+    }
+
+    @MainActor
+    func testGitCheckoutRejectsOptionLikeBranchNames() async {
+        let result = await WorktreeModel.runGitCheckout(rootPath: "/", branch: "--force")
+        XCTAssertEqual(result.exitCode, 128)
+        XCTAssertEqual(result.error, "Invalid branch name: --force")
     }
 
     func testParseNameStatusAndNumstat() {
