@@ -236,6 +236,43 @@ final class UserProfileTests: XCTestCase {
         XCTAssertEqual(registry.profiles.first(where: { $0.id == second.id })?.name, "Renamed")
     }
 
+    func testRenamingAProfileToItsOwnNameIsANoOp() throws {
+        // The rename sheet prefills the current name, so confirming without
+        // editing must not toast an error for a change nobody made.
+        var registry = UserProfileRegistry()
+        let profile = UserProfile(name: "First")
+        try UserProfileStore.adding(profile, to: &registry)
+
+        try UserProfileStore.renaming(profile.id, to: "First", in: &registry)
+        XCTAssertEqual(registry.profiles.first?.name, "First")
+        try UserProfileStore.renaming(profile.id, to: "first", in: &registry)
+        XCTAssertEqual(registry.profiles.first?.name, "First")
+    }
+
+    func testTheReservedNameIsRefusedOnAddAndRename() throws {
+        var registry = UserProfileRegistry()
+        let profile = UserProfile(name: "First")
+        try UserProfileStore.adding(profile, to: &registry)
+
+        XCTAssertThrowsError(
+            try UserProfileStore.adding(UserProfile(name: "Default"), to: &registry)
+        ) { error in
+            XCTAssertEqual(error as? UserProfileStore.MutationError, .reservedName)
+        }
+        XCTAssertThrowsError(
+            try UserProfileStore.adding(UserProfile(name: "DEFAULT"), to: &registry)
+        ) { error in
+            XCTAssertEqual(error as? UserProfileStore.MutationError, .reservedName)
+        }
+        XCTAssertThrowsError(
+            try UserProfileStore.renaming(profile.id, to: "default", in: &registry)
+        ) { error in
+            XCTAssertEqual(error as? UserProfileStore.MutationError, .reservedName)
+        }
+        XCTAssertEqual(registry.profiles.count, 1, "refused mutations add nothing")
+        XCTAssertEqual(registry.profiles.first?.name, "First", "refused renames change nothing")
+    }
+
     func testDeletingRefusesTheDefaultAndTheActiveProfile() throws {
         var registry = UserProfileRegistry()
         let profile = UserProfile(name: "Deletable")

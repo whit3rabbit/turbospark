@@ -100,15 +100,63 @@ server API key, and the UI language stay shared. Restoring a trashed
 folder does not re-register the profile; the registry row is gone with the
 save, so the Trash is for recovering files by hand only.
 
+## Backup export and import
+
+Export writes a plain `.zip` (Finder-openable, no app needed to read it):
+the payload plus `turbospark-backup-manifest.json` at the archive root. The
+manifest carries a format version, the profile's identity, the layout, the
+export time and app version, and the sorted contents list, so a backup is
+self-describing and a future restore can refuse what it cannot read.
+
+The payload depends on the user:
+
+- A non-default profile archives the one folder (`layout:
+  profile-folder`); the archive root holds the folder's contents beside the
+  manifest.
+- The Default user spans two roots (`layout: default-two-root`):
+  `app-support/` holds the machine-root stores and `dot-turbospark/` the
+  `~/.turbospark` content, each minus the top-level entries that are
+  machine-level by design: `profiles.json`, `profiles/`, `models/`, and
+  `installed.json`. Each root is copied per top-level entry, so the
+  multi-GB shared model downloads are never even read for copy.
+
+Exporting the profile the current run belongs to first flushes the same
+store writes the quit path ends with (`persistChats` + `persistSettings`),
+so the backup cannot miss the last keystroke; other profiles have no live
+writer. Import is the inverse under the same rules: the archive is listed
+with `zipinfo` and refused before extraction if any entry is absolute,
+starts with `..`, or carries a backslash (zip-slip); the manifest must be
+present, kind-correct, and version-matched; and the payload always restores
+into a NEW identity -- a freshly minted UUID and a user-chosen name -- so a
+Default backup's `"default"` id can never reach the registry and a
+collision with a live profile cannot happen. The two-root layout merges
+into that one folder, `dot-turbospark/` first and `app-support/` second, so
+the first-party stores win file collisions (`tools/` is the one directory
+both roots carry today). The folder is filled before the registry row is
+saved, mirroring delete's trash-first ordering: any failure leaves no row
+pointing at a partial folder.
+
+Profile names may contain emoji; they survive everywhere (registry, UI,
+manifest, and the sanitized suggested file name, which strips path-hostile
+punctuation and control characters and caps at 60 whole graphemes). The
+one name no profile can take is the reserved "Default" (case-insensitive),
+which is what keeps a Default-user backup importable as a distinct row.
+Not part of a backup, ever: the Keychain-stored hook secrets (isolated by
+design), the shared model downloads, and the install registry.
+
 ## Entry points
 
 | File | Holds |
 |---|---|
-| `State/UserProfile.swift` | `UserProfile`, `UserProfileRegistry`, `UserProfileStore` (registry IO, resolution precedence, path math, mutation rules) |
+| `State/UserProfile.swift` | `UserProfile`, `UserProfileRegistry`, `UserProfileStore` (registry IO, resolution precedence, path math, mutation rules, the reserved-name rule) |
 | `State/AppStorageRoot.swift` | `machineRoot` vs profile-aware `directory` |
 | `State/AppModel+Profiles.swift` | the UI-facing half: create/rename/delete/switch, toasts, relaunch |
+| `State/ProfileBackup.swift` | the backup manifest, the name sanitizer, export assembly (staging + `ditto`) |
+| `State/ProfileBackupImport.swift` | the zip-slip validator, manifest validation, restore/merge |
+| `State/AppModel+ProfileBackup.swift` | the backup panels: export, import pick/sheet/name suggestions, flush-before-export, folder-first registry-last |
 | `Components/ProfilesSettingsPaneView.swift` | the Settings pane |
 | `Tests/TurboSparkAppTests/UserProfileTests.swift` | registry semantics, precedence, path math, mutation rules (all against the pure helpers) |
+| `Tests/TurboSparkAppTests/ProfileBackupTests.swift` | export/import round-trips through real temp dirs and the real archive tools, exclusions, sanitization, zip-slip refusals, merge precedence |
 
 ## Out of scope in this version
 
@@ -116,4 +164,8 @@ Passwords or auth of any kind; live switching without a relaunch;
 per-profile copies of downloaded models; a per-profile Keychain server key;
 copying an existing profile's settings at creation (new profiles start
 fresh, which every store already handles as a first run); migrating the
-Default user's `~/.turbospark` content into a folder of its own.
+Default user's `~/.turbospark` content into a folder of its own; live
+progress reporting inside a backup run (the pane disables the buttons and
+toasts the outcome); excluding `.git` directories inside marketplace
+clones from backups (an archive is a faithful copy, so a profile with
+cloned marketplaces produces a large one).

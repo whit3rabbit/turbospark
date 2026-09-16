@@ -159,12 +159,14 @@ extension AppModel {
         exit(0)
     }
 
-    private func profileMutationMessage(_ error: Error) -> String {
+    func profileMutationMessage(_ error: Error) -> String {
         switch error as? UserProfileStore.MutationError {
         case .emptyName:
             return "A profile needs a name."
         case .duplicateName:
             return "A profile with that name already exists."
+        case .reservedName:
+            return "\"Default\" is reserved for the built-in user."
         case .reservedDefault:
             return "The Default profile cannot be deleted."
         case .isActive:

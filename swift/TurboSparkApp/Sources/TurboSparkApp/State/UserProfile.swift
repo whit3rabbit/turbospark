@@ -202,14 +202,25 @@ public enum UserProfileStore {
     public enum MutationError: Error, Equatable {
         case emptyName
         case duplicateName
+        case reservedName
         case reservedDefault
         case isActive
         case notFound
     }
 
+    /// The built-in Default user's name is not available to registry rows: an
+    /// additional profile called "Default" would read as the built-in in
+    /// every picker that shows names. Compared case-insensitively, like the
+    /// duplicate check. A backup of the Default user imports under a
+    /// different name because of this rule.
+    public static func isReservedName(_ name: String) -> Bool {
+        name.caseInsensitiveCompare(defaultProfile.name) == .orderedSame
+    }
+
     public static func adding(_ profile: UserProfile, to registry: inout UserProfileRegistry) throws {
         let trimmed = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw MutationError.emptyName }
+        guard !isReservedName(trimmed) else { throw MutationError.reservedName }
         guard !registry.profiles.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame })
         else { throw MutationError.duplicateName }
         var named = profile
@@ -223,10 +234,16 @@ public enum UserProfileStore {
         guard let index = registry.profiles.firstIndex(where: { $0.id == id }) else {
             throw MutationError.notFound
         }
-        guard registry.profiles[index].name.caseInsensitiveCompare(trimmed) != .orderedSame,
-              !registry.profiles.contains(where: {
-                  $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
-              })
+        // Renaming to the profile's own name is a no-op, not a duplicate:
+        // the rename sheet prefills the current name, so refusing it would
+        // toast an error for a change nobody made.
+        guard registry.profiles[index].name.caseInsensitiveCompare(trimmed) != .orderedSame else {
+            return
+        }
+        guard !isReservedName(trimmed) else { throw MutationError.reservedName }
+        guard !registry.profiles.contains(where: {
+            $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+        })
         else { throw MutationError.duplicateName }
         registry.profiles[index].name = trimmed
     }

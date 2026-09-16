@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// The Profiles settings pane: create, rename, delete, and switch between
-/// the users of this installation. Switching is a save-and-relaunch
+/// The Profiles settings pane: create, rename, delete, switch between, and
+/// back up the users of this installation. Switching is a save-and-relaunch
 /// (`AppModel.switchToProfile`); this pane says so in as many words rather
 /// than surprising someone with an app restart, and both destructive doors
-/// (delete and switch) confirm before acting.
+/// (delete and switch) confirm before acting. Backups run without either
+/// door: export reads the profile's own folder and import restores into a
+/// NEW identity, so neither one can damage the profile this run belongs to.
 struct ProfilesSettingsPaneView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
@@ -14,17 +16,23 @@ struct ProfilesSettingsPaneView: View {
     @State private var renameText: String = ""
     @State private var deleteTarget: UserProfile?
     @State private var switchTarget: UserProfile?
+    @State private var importOffer: AppModel.ProfileBackupImportOffer?
+    @State private var importName: String = ""
 
     var body: some View {
         Form {
             usersSection
             addSection
+            restoreSection
             notesSection
         }
         .formStyle(.grouped)
         .padding(16)
         .sheet(item: $renameTarget) { profile in
             renameSheet(profile)
+        }
+        .sheet(item: $importOffer) { offer in
+            importSheet(offer)
         }
         .confirmationDialog(
             "Delete Profile",
@@ -90,6 +98,9 @@ struct ProfilesSettingsPaneView: View {
             isCurrent: model.isDefaultProfileActive,
             subtitle: "Built in. Shares the ~/.turbospark skills, agents, and tools with other apps.",
             profile: nil)
+            .contextMenu {
+                defaultProfileActions()
+            }
     }
 
     private func additionalProfileRow(_ profile: UserProfile) -> some View {
@@ -104,8 +115,9 @@ struct ProfilesSettingsPaneView: View {
     }
 
     /// One row for either kind of user. `profile` is nil for the built-in
-    /// Default user, which cannot be renamed or deleted and switches through
-    /// the fixed `defaultProfile` row rather than a registry lookup.
+    /// Default user, which cannot be renamed or deleted (it backs up through
+    /// `defaultProfileActions` instead) and switches through the fixed
+    /// `defaultProfile` row rather than a registry lookup.
     private func profileRow(
         name: String,
         isCurrent: Bool,
@@ -147,19 +159,21 @@ struct ProfilesSettingsPaneView: View {
                 .disabled(!model.canSwitchProfile)
                 .help("Saves everything and relaunches the app as this user")
             }
-            if let profile {
-                Menu {
+            Menu {
+                if let profile {
                     profileActions(profile)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(theme.ui(.base))
-                        .foregroundStyle(.appSecondary)
+                } else {
+                    defaultProfileActions()
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .accessibilityLabel("More actions for \(name)")
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(theme.ui(.base))
+                    .foregroundStyle(.appSecondary)
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("More actions for \(name)")
         }
     }
 
@@ -171,11 +185,32 @@ struct ProfilesSettingsPaneView: View {
             renameTarget = profile
             renameText = profile.name
         } label: { Text("Rename...", bundle: .module) }
+        exportBackupAction(profile)
         if profile.id != model.currentProfile.id {
             Button(role: .destructive) {
                 deleteTarget = profile
             } label: { Text("Delete...", bundle: .module) }
         }
+    }
+
+    /// The built-in Default user's actions: it cannot be renamed or deleted,
+    /// but its setup (stores at the machine root plus the ~/.turbospark
+    /// content, minus the shared model downloads) is exactly what a backup
+    /// of it captures.
+    @ViewBuilder
+    private func defaultProfileActions() -> some View {
+        exportBackupAction(UserProfileStore.defaultProfile)
+    }
+
+    /// One shared Export Backup button so every menu surface offers the same
+    /// action for the same profile.
+    private func exportBackupAction(_ profile: UserProfile) -> some View {
+        Button {
+            model.exportProfileBackup(profile)
+        } label: { Text("Export Backup...", bundle: .module) }
+        .disabled(model.profileBackupInFlight)
+        .settingsControl("Export Backup...", pane: .profiles, timing: .immediate)
+        .help("Writes this user's settings, chats, skills, and tools to a .zip backup")
     }
 
     private var addSection: some View {
@@ -200,6 +235,27 @@ struct ProfilesSettingsPaneView: View {
         newProfileName = ""
     }
 
+    private var restoreSection: some View {
+        Section(header: Text("Restore a Backup", bundle: .module)) {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    Task {
+                        if let offer = await model.pickProfileBackupForImport() {
+                            importOffer = offer
+                            importName = offer.suggestedName
+                        }
+                    }
+                } label: { Text("Import Backup...", bundle: .module) }
+                .disabled(model.profileBackupInFlight)
+                .help("Restores a profile backup (.zip) as a new user")
+                Text("A backup comes back as a new user with a fresh identity and a name of its own, even when it was exported from the Default user. Keychain-stored hook secrets are not part of a backup.", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+            }
+        }
+            .settingsControl("Restore a Backup", pane: .profiles, timing: .immediate)
+    }
+
     private var notesSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 6) {
@@ -218,8 +274,8 @@ struct ProfilesSettingsPaneView: View {
     private func renameSheet(_ profile: UserProfile) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Rename Profile", bundle: .module)
-                    .settingsControl("Rename Profile", pane: .profiles, timing: .relaunch)
                 .font(theme.ui(.title3, weight: .semibold))
+                .settingsControl("Rename Profile", pane: .profiles, timing: .immediate)
             TextField("Profile name", text: $renameText)
                 .textFieldStyle(.roundedBorder)
             HStack {
@@ -238,5 +294,41 @@ struct ProfilesSettingsPaneView: View {
         }
         .padding(20)
         .frame(width: 340)
+    }
+
+    // MARK: - Import sheet
+
+    private func importSheet(_ offer: AppModel.ProfileBackupImportOffer) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Import Profile Backup", bundle: .module)
+                .font(theme.ui(.title3, weight: .semibold))
+                .settingsControl("Import Profile Backup", pane: .profiles, timing: .immediate)
+            Text("Backup of \"\(offer.manifest.profileName)\" exported \(offer.manifest.exportedAt.formatted(date: .abbreviated, time: .shortened)) with app version \(offer.manifest.appVersion.isEmpty ? "unknown" : offer.manifest.appVersion); \(offer.manifest.contents.count) items inside.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+            if offer.manifest.isDefault {
+                Text("This is a Default-user backup: it imports as a new named user, not the built-in one.", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+            }
+            TextField("Profile name", text: $importName)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button {
+                    importOffer = nil
+                } label: { Text("Cancel", bundle: .module) }
+                .keyboardShortcut(.cancelAction)
+                Button {
+                    if model.importProfileBackup(offer, named: importName) {
+                        importOffer = nil
+                    }
+                } label: { Text("Import", bundle: .module) }
+                .keyboardShortcut(.defaultAction)
+                .disabled(importName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
     }
 }
