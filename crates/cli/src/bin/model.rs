@@ -34,6 +34,10 @@ COMMANDS:
     pull --repo <REPO>[@REV]    install any repo the probe accepts
     pull-image --source ROOT --alias NAME --model-id ID --model-revision REV
                                 install a pinned local Diffusers image export
+    pull-image --repo REPO@REV --alias NAME
+                                download and install a pinned HF image export
+    pull-image --alias z-image-turbo
+                                install the pinned image-catalog source
     pull-vision <ALIAS>         install a curated vision-tower sidecar
     pull-vision --repo <REPO>[@REV] --alias <NAME>
                                 install any repo's vision tower directly,
@@ -47,6 +51,7 @@ COMMANDS:
 OPTIONS:
     --out <DIR>                 install here instead of the default store
     --source <DIR>              local Diffusers export for `pull-image`
+    --repo <REPO>[@REV]         pinned Hugging Face source for `pull-image`
     --model-id <ID>             source model id for `pull-image`
     --model-revision <REV>      immutable 40-hex source revision for `pull-image`
     --alias <NAME>              name a --repo pull (required for one)
@@ -222,7 +227,7 @@ fn run(args: &[String]) -> Result<(), Error> {
         }
         "pull-image" => {
             options.reject_unused(&["out", "alias", "source", "model-id", "model-revision"])?;
-            model_cmd::pull_image(&store, &positionals, &options)
+            model_cmd::pull_image(&catalog, &store, &client, &positionals, &options)
         }
         "pull-vision" => {
             options.reject_unused(&["out", "alias", "file", "force"])?;

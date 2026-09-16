@@ -28,7 +28,7 @@
 //! 3. **A GGUF row's architecture string is what the row's family implies.**
 //!    Reads the header, which is a few MB off a 20 GB file.
 
-use turbospark_catalog::{Catalog, Client, RepoRef, SourceKind};
+use turbospark_catalog::{Catalog, Client, ImageCatalog, RepoRef, SourceKind};
 
 /// How far a recorded `download_bytes` may sit from the published size before
 /// it is a finding rather than drift.
@@ -186,6 +186,32 @@ fn every_row_still_names_files_that_exist_at_the_size_it_records() {
         findings.is_empty(),
         "the catalog has drifted from what is published:\n  {}",
         findings.join("\n  ")
+    );
+}
+
+#[test]
+#[ignore = "network: verifies the pinned Diffusers image source file set"]
+fn every_image_row_still_names_its_pinned_source_files() {
+    let catalog = ImageCatalog::embedded().expect("image catalog");
+    let client = Client::new();
+    let mut failures = Vec::new();
+    for entry in catalog.entries() {
+        let repo = RepoRef::new(&entry.model_id, &entry.revision);
+        match client.file_list(&repo) {
+            Ok(files) => {
+                for required in &entry.required_files {
+                    if !files.iter().any(|file| file == required) {
+                        failures.push(format!("{}: missing {required}", entry.alias));
+                    }
+                }
+            }
+            Err(error) => failures.push(format!("{}: {error}", entry.alias)),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "image catalog drifted:\n{}",
+        failures.join("\n")
     );
 }
 

@@ -1,12 +1,12 @@
 //! The Hugging Face surface: resolve URLs, the repository file list, and
 //! small-file GETs.
 //!
-//! **This module deliberately does NOT download weights.** Everything here is
-//! KB-scale: a JSON file list, a `config.json`, a tokenizer sidecar. Weight
-//! bytes go through `repack::HttpRangeSource`, which has the chunking, the
-//! retry ladder and the `http1_only()` client setting that the Xet bridge's
-//! per-edge rate cap makes load-bearing (AGENTS.md Gotcha 46). A second
-//! client here that fetched a multi-GB body would quietly lose all three.
+//! Model pulls use ranged reads through `repack::HttpRangeSource`. Image
+//! packing has a different contract: the packer needs complete safetensors
+//! shards in a temporary Diffusers tree before it can emit its own packed
+//! payload. `Client::download_to` is the deliberately narrow full-file arm
+//! for that path, with the same retry ladder and authentication as metadata
+//! calls. It never buffers a weight file in memory.
 //!
 //! Two things worth knowing about the endpoints:
 //!
@@ -307,6 +307,59 @@ impl Client {
             404 => Ok(None),
             other => Err(format!("GET {url}: HTTP {other}")),
         }
+    }
+
+    /// Stream one repository file into an already-selected temporary path.
+    ///
+    /// The image source materializer needs complete safetensors shards before
+    /// its packer can emit the checked image payload. The response body is
+    /// copied in bounded chunks rather than collected as one large allocation.
+    pub fn download_to(&self, url: &str, destination: &std::path::Path) -> Result<u64, String> {
+        let mut response = self.send_retrying(url)?;
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(match status {
+                401 | 403 if !self.has_token() => format!("GET {url}: HTTP {status}. This repository is gated and no HF_TOKEN is set; accept its licence on huggingface.co, then export a token."),
+                401 | 403 => format!("GET {url}: HTTP {status}. HF_TOKEN is set, so either it lacks access to this repository or its licence has not been accepted."),
+                404 => format!(
+                    "GET {url}: HTTP 404. That file is not in this repository at this revision."
+                ),
+                _ => format!("GET {url}: HTTP {status}"),
+            });
+        }
+        let parent = destination
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("creating download directory {}: {e}", parent.display()))?;
+        let partial = destination.with_extension(format!(
+            "{}partial-{}",
+            destination
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| format!("{extension}."))
+                .unwrap_or_default(),
+            std::process::id()
+        ));
+        let mut file = std::fs::File::create(&partial)
+            .map_err(|e| format!("creating download {}: {e}", partial.display()))?;
+        let bytes =
+            std::io::copy(&mut response, &mut file).map_err(|e| format!("reading {url}: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("syncing download {}: {e}", partial.display()))?;
+        drop(file);
+        if destination.exists() {
+            let _ = std::fs::remove_file(&partial);
+            return Err(format!(
+                "refusing to overwrite downloaded file {}",
+                destination.display()
+            ));
+        }
+        std::fs::rename(&partial, destination).map_err(|e| {
+            let _ = std::fs::remove_file(&partial);
+            format!("publishing download {}: {e}", destination.display())
+        })?;
+        Ok(bytes)
     }
 
     /// Every filename in the repository at this revision.

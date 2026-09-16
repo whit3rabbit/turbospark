@@ -8,6 +8,7 @@
 //! tested without a terminal.
 
 mod auth;
+mod image_source;
 mod progress;
 mod render;
 
@@ -218,10 +219,27 @@ pub fn pull(
 /// Package a pinned local Diffusers image export. This deliberately bypasses
 /// the text catalog and its Mlx/GGUF probe: an image install has five
 /// components, a different manifest, and a different runtime capability.
-pub fn pull_image(store: &Store, positionals: &[String], options: &Options) -> Result<(), Error> {
-    if !positionals.is_empty() {
+pub fn pull_image(
+    _catalog: &Catalog,
+    store: &Store,
+    client: &Client,
+    positionals: &[String],
+    options: &Options,
+) -> Result<(), Error> {
+    let explicit_remote_repo = positionals
+        .iter()
+        .find_map(|value| value.strip_prefix("--repo="));
+    if positionals
+        .iter()
+        .any(|value| !value.starts_with("--repo="))
+        || positionals
+            .iter()
+            .filter(|value| value.starts_with("--repo="))
+            .count()
+            > 1
+    {
         return Err(Error::Usage(
-            "pull-image takes --alias <NAME>, not a positional alias".to_string(),
+            "pull-image takes --alias <NAME> and optional --repo <REPO>@<REV>".to_string(),
         ));
     }
     let alias = options
@@ -237,23 +255,87 @@ pub fn pull_image(store: &Store, positionals: &[String], options: &Options) -> R
             "--alias must contain only ASCII letters, digits, '.', '_' or '-'".to_string(),
         ));
     }
-    let source = options
-        .source
-        .as_deref()
-        .ok_or_else(|| Error::Usage("pull-image needs --source <DIR>".to_string()))?;
-    let model_id = options
-        .model_id
-        .as_deref()
-        .ok_or_else(|| Error::Usage("pull-image needs --model-id <ID>".to_string()))?;
-    let model_revision = options
-        .model_revision
-        .as_deref()
-        .ok_or_else(|| Error::Usage("pull-image needs --model-revision <REV>".to_string()))?;
-    if model_revision.len() != 40 || !model_revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(Error::Usage(
-            "--model-revision must be an immutable 40-hex commit revision".to_string(),
-        ));
-    }
+    let catalog_repo = if explicit_remote_repo.is_none() && options.source.is_none() {
+        catalog::ImageCatalog::embedded()
+            .map_err(Error::Failed)?
+            .get(alias)
+            .map(|entry| format!("{}@{}", entry.model_id, entry.revision))
+    } else {
+        None
+    };
+    let remote_repo = explicit_remote_repo.or(catalog_repo.as_deref());
+    let (source, model_id, model_revision, cleanup_source) = if let Some(repo_text) = remote_repo {
+        if options.source.is_some()
+            || options.model_id.is_some()
+            || options.model_revision.is_some()
+        {
+            return Err(Error::Usage(
+                "pull-image --repo or a catalog image cannot be combined with --source, --model-id or --model-revision"
+                    .to_string(),
+            ));
+        }
+        let repo = RepoRef::parse(repo_text).map_err(Error::Usage)?;
+        if repo.revision == "main" {
+            return Err(Error::Usage(
+                "pull-image --repo needs an immutable @<40-hex-commit> revision".to_string(),
+            ));
+        }
+        let output_parent = options
+            .out
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+            .unwrap_or_else(|| {
+                store
+                    .image_install_path(alias)
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+            });
+        std::fs::create_dir_all(&output_parent).map_err(|error| {
+            Error::Failed(format!(
+                "creating image install parent {}: {error}",
+                output_parent.display()
+            ))
+        })?;
+        let source = output_parent.join(format!(".{alias}.image-source-{}", std::process::id()));
+        let downloaded = image_source::materialize(client, &repo, &source).map_err(|error| {
+            let _ = std::fs::remove_dir_all(&source);
+            Error::Failed(error)
+        })?;
+        println!("downloaded {} image source bytes", downloaded);
+        (source.clone(), repo.repo, repo.revision, Some(source))
+    } else {
+        if !positionals.is_empty() {
+            return Err(Error::Usage(
+                "pull-image takes --alias <NAME>, not a positional alias".to_string(),
+            ));
+        }
+        let source = options.source.as_deref().ok_or_else(|| {
+            Error::Usage("pull-image needs --source <DIR> or --repo <REPO>@<REV>".to_string())
+        })?;
+        let model_id = options
+            .model_id
+            .as_deref()
+            .ok_or_else(|| Error::Usage("pull-image needs --model-id <ID>".to_string()))?;
+        let model_revision = options
+            .model_revision
+            .as_deref()
+            .ok_or_else(|| Error::Usage("pull-image needs --model-revision <REV>".to_string()))?;
+        if model_revision.len() != 40
+            || !model_revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Usage(
+                "--model-revision must be an immutable 40-hex commit revision".to_string(),
+            ));
+        }
+        (
+            std::path::PathBuf::from(source),
+            model_id.to_string(),
+            model_revision.to_string(),
+            None,
+        )
+    };
     let output = options
         .out
         .clone()
@@ -268,12 +350,13 @@ pub fn pull_image(store: &Store, positionals: &[String], options: &Options) -> R
         })?;
     }
     let report = image::build_image_install(&image::ImageInstallSpec {
-        source_root: std::path::PathBuf::from(source),
+        source_root: source,
         output_root: output,
-        model_id: model_id.to_string(),
-        model_revision: model_revision.to_string(),
-    })
-    .map_err(Error::Failed)?;
+        model_id: model_id.clone(),
+        model_revision: model_revision.clone(),
+    });
+    let _ = cleanup_source.as_deref().map(std::fs::remove_dir_all);
+    let report = report.map_err(Error::Failed)?;
     let path = report
         .output_root
         .canonicalize()
