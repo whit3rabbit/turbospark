@@ -302,7 +302,8 @@ enum ProfileBackup {
                 throw ProcessError.stagingFailed
             }
             for entry in try topLevelEntries(of: root)
-                .filter({ !defaultExcludedTopLevelNames.contains($0) }) {
+                .filter({ !defaultExcludedTopLevelNames.contains($0) })
+                .filter({ shouldInclude(topLevelName: $0, included: included) }) {
                 try await runDitto(
                     arguments: [
                         root.appendingPathComponent(entry).path,
