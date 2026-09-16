@@ -5,6 +5,7 @@
 mod chatml;
 mod deepseek;
 mod harmony;
+mod mistral;
 mod muse;
 
 use std::collections::HashSet;
@@ -253,6 +254,11 @@ impl<'a> StructuredAssistantDecoder<'a> {
             }
             ChatDialect::MuseGlimmer => return Ok(self.consume_muse(token_id, delta)),
             ChatDialect::Gemma => {}
+            // Mistral's `[TOOL_CALLS]` arm: the marker is a SPECIAL token, so
+            // it keys on the id like the Gemma arm, but the span it opens has
+            // no closing token -- the call body runs to end of turn -- and
+            // that span is closed by `finish`, not here.
+            ChatDialect::Mistral => return self.consume_mistral(token_id, delta),
             // Nothing to decode: this checkpoint has no tool-call or
             // thinking markup, and its channel/tool ids are all
             // `NO_SUCH_TOKEN_ID`. Falling through to the Gemma arm would
@@ -263,7 +269,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
             // ids are all `NO_SUCH_TOKEN_ID` and falling through to the
             // Gemma arm below would compare every token against that
             // sentinel harmlessly but say something untrue about the dialect.
-            ChatDialect::Mistral | ChatDialect::Llama3 => {
+            ChatDialect::Llama3 => {
                 return Ok(if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -448,15 +454,28 @@ impl<'a> StructuredAssistantDecoder<'a> {
     /// Harmony call and `<|call|>` is a stop token, so `run_raw_completion`
     /// breaks out of its loop before the progress callback ever sees it: a
     /// consumer that never calls this gets the reasoning and the content and
-    /// silently drops every call. For the other dialects an open tool span at
-    /// this point is instead the error it looks like -- their terminator is an
-    /// ordinary token that arrived or did not.
+    /// silently drops every call. **MISTRAL JOINS IT FOR A STRUCTURALLY
+    /// IDENTICAL REASON, and worse**: a `[TOOL_CALLS]` span has no closing
+    /// token at all -- the body runs to end of turn, and end of turn is
+    /// `</s>`, a stop token -- so `finish` is the only place the span can be
+    /// closed and parsed. For the REMAINING dialects an open tool span at
+    /// this point is instead the error it looks like -- their terminator is
+    /// an ordinary token that arrived or did not.
     pub fn finish(&mut self) -> Result<Vec<StructuredAssistantEvent>, ToolCallParserError> {
         let released = self.drain();
-        if self.failed || self.tool_tokens.is_some() || self.dsml_text.is_some() {
+        if self.failed || self.dsml_text.is_some() {
             return Err(ToolCallParserError::Malformed);
         }
-        let mut events = self.close_harmony_tool()?;
+        let mut events = match self.tokenizer.dialect {
+            ChatDialect::Harmony => self.close_harmony_tool()?,
+            ChatDialect::Mistral => self.close_mistral_tool()?,
+            _ => {
+                if self.tool_tokens.is_some() {
+                    return Err(ToolCallParserError::Malformed);
+                }
+                Vec::new()
+            }
+        };
         events.extend(released);
         Ok(events)
     }

@@ -60,6 +60,19 @@ type Delta = (i32, String);
 /// own tool markup as a delta stream.
 type Case = (&'static str, Box<dyn Fn(&MfTokenizer) -> Vec<Delta>>);
 
+/// Mistral's markup: the `[TOOL_CALLS]` marker as a special token (empty
+/// delta, root Gotcha 44) followed by the JSON-array body as ordinary text,
+/// and NO closing token -- end of turn closes it, which is the decoder's
+/// `finish`, so this case is the one that exercises that path.
+fn mistral_calls(tok: &MfTokenizer) -> Vec<Delta> {
+    let mut deltas = vec![(tok.tool_call_start_id, String::new())];
+    let body = r#"[{"name": "f", "arguments": {"x": 1}}]"#;
+    for id in tok.encode(body, false) {
+        deltas.push((id, tok.decode(&[id], true)));
+    }
+    deltas
+}
+
 /// Drive a decoder over a delta stream and collect events.
 fn run(tok: &MfTokenizer, deltas: &[Delta]) -> Vec<StructuredAssistantEvent> {
     let allowed: HashSet<String> = ["f".to_string()].into_iter().collect();
@@ -73,6 +86,13 @@ fn run(tok: &MfTokenizer, deltas: &[Delta]) -> Vec<StructuredAssistantEvent> {
             // as good an outcome as content and the collected events stand.
             Err(_) => break,
         }
+    }
+    // The consumers all call this; Mistral's arm emits its call HERE and
+    // nowhere else, so a harness that stopped at the loop would prove
+    // nothing about it. A finish error (a failed span) adds nothing and the
+    // collected events stand, the same verdict the loop's break takes.
+    if let Ok(batch) = decoder.finish() {
+        events.extend(batch);
     }
     events
 }
@@ -148,7 +168,13 @@ fn each_dialects_decoder_emits_a_call_exactly_when_the_predicate_says_native() {
                 as_one_delta(t, &text)
             }),
         ),
-        // The three that answer `Prompted` get EVERY dialect's markup, so a
+        // Mistral brackets nothing: its `[TOOL_CALLS]` marker opens a span
+        // whose body runs to end of turn (`mistral_calls` above).
+        (
+            "ZephyrTokenizer",
+            Box::new(|t: &MfTokenizer| mistral_calls(t)),
+        ),
+        // The two that answer `Prompted` get EVERY dialect's markup, so a
         // zero here is a statement about the decoder rather than about the
         // input being empty.
         (
@@ -157,10 +183,6 @@ fn each_dialects_decoder_emits_a_call_exactly_when_the_predicate_says_native() {
         ),
         (
             "Llama3Tokenizer",
-            Box::new(|t: &MfTokenizer| as_one_delta(t, &every_dialects_markup())),
-        ),
-        (
-            "ZephyrTokenizer",
             Box::new(|t: &MfTokenizer| as_one_delta(t, &every_dialects_markup())),
         ),
     ];

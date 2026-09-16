@@ -432,8 +432,8 @@ fn stream_response(
             match result {
                 // Discarded silently: the client that would read the closing
                 // events is the one already gone.
-                Ok(r) if r.reason == runtime::StopReason::Cancelled => (),
-                Ok(r) => {
+                Ok((r, _)) if r.reason == runtime::StopReason::Cancelled => (),
+                Ok((r, _)) => {
                     send(
                         completion_chunk(
                             id.clone(),

@@ -37,6 +37,7 @@ fn generated(text: &str, calls: Vec<ParsedToolCall>) -> Generated {
         text: text.to_string(),
         reasoning: String::new(),
         calls,
+        released_span_text: String::new(),
         decode: RawDecodeResult {
             reused_prefix_tokens: 0,
             session_slot_evicted: false,

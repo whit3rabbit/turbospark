@@ -462,6 +462,7 @@ async fn run(
                         reasoning: String::new(),
                         calls: Vec::new(),
                         decode: crate::handler::cancelled_before_start(),
+                        released_span_text: String::new(),
                     };
                     let object = if raw {
                         generate_object(&model_name, &g.text, Some(&g))
@@ -554,13 +555,14 @@ async fn run(
                 // this `done: true` object is the one already gone, and building
                 // one to send into a closed channel is both pointless and (per
                 // `send`, above) itself detected as a failed send.
-                Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
-                Ok(decode) => {
+                Ok((decode, _)) if decode.reason == runtime::StopReason::Cancelled => (),
+                Ok((decode, _)) => {
                     let g = Generated {
                         text: String::new(),
                         reasoning: String::new(),
                         calls: Vec::new(),
                         decode,
+                        released_span_text: String::new(),
                     };
                     let object = if raw {
                         generate_object(&model_name, "", Some(&g))

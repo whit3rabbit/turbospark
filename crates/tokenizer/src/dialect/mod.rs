@@ -177,10 +177,17 @@ impl ChatDialect {
             // Harmony's channel recipient plus `<|call|>`, parsed by the
             // harmony arm.
             ChatDialect::Harmony => ToolCallSupport::Native,
+            // `[TOOL_CALLS]` plus a JSON-array body that runs to end of turn,
+            // parsed by `MistralToolCallParser` out of the decoder's `finish`.
+            // Resolved OPTIONALLY: the earliest Mistral tables carry no such
+            // token, and a checkpoint without it keeps this dialect's
+            // passthrough behavior -- a call it cannot emit is also a call it
+            // cannot parse.
+            ChatDialect::Mistral => ToolCallSupport::Native,
             // No tool markup in either table at all: every tool id resolves to
             // `NO_SUCH_TOKEN_ID` and the decoder's arm is a content-only
             // passthrough.
-            ChatDialect::Mistral | ChatDialect::Llama3 => ToolCallSupport::Prompted,
+            ChatDialect::Llama3 => ToolCallSupport::Prompted,
             // **NOT AN OVERSIGHT, AND NOT THE SAME AS THE TWO ABOVE.** This dialect DOES frame tool calls -- `<atem:function_calls>` on a
             // `to=<tool>` message -- and this engine has NO PARSER for that
             // block (`structured_decoder/muse.rs`'s `parse_header`). The

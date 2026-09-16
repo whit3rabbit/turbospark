@@ -211,7 +211,7 @@ pub(crate) fn generate(
             reasoning_text.push_str(&reason);
             emit(TS_EVENT_REASONING, &reason, 0, 0);
         }
-        TurnEvent::Content(answer) => {
+        TurnEvent::Content(answer) | TurnEvent::ReleasedToolSpan(answer) => {
             content.push_str(&answer);
             emit(TS_EVENT_CONTENT, &answer, 0, 0);
         }

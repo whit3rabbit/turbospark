@@ -217,6 +217,7 @@ fn build_response_orders_reasoning_before_message_before_calls() {
             arguments: tokenizer::JsonValue::Null,
             arguments_json: "{}".to_string(),
         }],
+        released_span_text: String::new(),
         decode: runtime::RawDecodeResult {
             prompt_tokens: 3,
             new_tokens: 5,

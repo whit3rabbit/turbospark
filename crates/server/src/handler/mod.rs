@@ -493,8 +493,8 @@ fn stream_response(
                 // would read a finish chunk or an error event is the one
                 // already gone, and sending either into a dropped receiver is
                 // both pointless and (per `send`, above) itself an error.
-                Ok(r) if r.reason == runtime::StopReason::Cancelled => return,
-                Ok(r) => {
+                Ok((r, _)) if r.reason == runtime::StopReason::Cancelled => return,
+                Ok((r, _)) => {
                     send(completion_chunk(
                         id.clone(),
                         created,

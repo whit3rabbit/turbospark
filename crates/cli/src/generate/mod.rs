@@ -372,7 +372,7 @@ pub(crate) fn stream_turn(
         // Reasoning goes to stderr so redirecting stdout captures the
         // ANSWER alone, and only the answer becomes the assistant turn.
         runtime::TurnEvent::Reasoning(reasoning) => eprint!("{reasoning}"),
-        runtime::TurnEvent::Content(answer) => {
+        runtime::TurnEvent::Content(answer) | runtime::TurnEvent::ReleasedToolSpan(answer) => {
             let _ = write!(out, "{answer}");
             let _ = out.flush();
             reply.push_str(&answer);

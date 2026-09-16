@@ -20,6 +20,12 @@ pub(crate) const GEMMA_TURN_MARK: &str = "<turn|>";
 /// the only reliable witness is the sentence pair.
 pub(crate) const MISTRAL_BOS_MARK: &str = "<s>";
 pub(crate) const MISTRAL_EOS_MARK: &str = "</s>";
+/// The one marker Mistral's template teaches for tool calls. OPTIONAL in the
+/// resolver: the first Mistral tables (Mixtral 8x7B-Instruct v0.1) carry only
+/// `<unk>` / `<s>` / `</s>`, and a required id would refuse every early
+/// checkpoint that cannot emit the marker at all. Read off the real
+/// `mistral7b-dense.gturbo` install's table, where it is id 5.
+pub(crate) const MISTRAL_TOOL_CALLS_MARK: &str = "[TOOL_CALLS]";
 pub(crate) const IM_START_MARK: &str = "<|im_start|>";
 /// Harmony's turn frame (ROADMAP M5). `<|start|>` is the witness because it
 /// opens every turn and appears in no other family's table; `<|return|>` is

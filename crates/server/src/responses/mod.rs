@@ -226,8 +226,8 @@ fn stream_response(
             match result {
                 // Discarded silently: the client that would read
                 // `response.completed` is the one already gone.
-                Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
-                Ok(decode) => {
+                Ok((decode, _)) if decode.reason == runtime::StopReason::Cancelled => (),
+                Ok((decode, _)) => {
                     if message_open {
                         close_message_events(&send, &message_item_id, output_index, &text_acc);
                         items.push(message_item(&text_acc, "completed", &message_item_id));

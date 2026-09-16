@@ -232,21 +232,40 @@ pub(crate) fn inspect(
     // K2, and nothing for Longcat, which forge's JSON scan already covers);
     // forge's four strategies keep everything else, so bare JSON and
     // Mistral's `[TOOL_CALLS]` take exactly the path they always did.
-    let rescued =
-        if generated.calls.is_empty() && config.rescue && rescue_candidate(&generated.text) {
-            let local = extra_formats::rescue(&generated.text, &names);
+    //
+    // **A RELEASED SPAN BODY IS ELIGIBLE WITHOUT [`rescue_candidate`]'s
+    // PROTECTION.** The whole-text-JSON rule exists to keep raw prose -- a
+    // warning, a quoted example -- from being reinterpreted as a call. A body
+    // the decoder released after a parse error is not prose: the model
+    // bracketed it in tool-call markup, special tokens the detokenizer
+    // rendered to nothing, so the released text carries no marker for
+    // `rescue_candidate` to find and may carry any amount of ordinary prose
+    // around the call. The bracketing WAS the control-channel signal the
+    // marker list detects, consumed one layer down; the released bodies are
+    // therefore tried first and on their own authority, before the protected
+    // raw-text path.
+    let mut rescued = Vec::new();
+    if generated.calls.is_empty() && config.rescue {
+        let try_rescue = |text: &str, rescued: &mut Vec<ParsedToolCall>| {
+            let local = extra_formats::rescue(text, &names);
             if local.is_empty() {
-                rescue_tool_call(&generated.text, &names)
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, c)| from_forge_call(c, i))
-                    .collect()
+                rescued.extend(
+                    rescue_tool_call(text, &names)
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| from_forge_call(c, i)),
+                );
             } else {
-                local
+                *rescued = local;
             }
-        } else {
-            Vec::new()
         };
+        if !generated.released_span_text.is_empty() {
+            try_rescue(&generated.released_span_text, &mut rescued);
+        }
+        if rescued.is_empty() && rescue_candidate(&generated.text) {
+            try_rescue(&generated.text, &mut rescued);
+        }
+    }
     let calls: &[ParsedToolCall] = if rescued.is_empty() {
         &generated.calls
     } else {
@@ -398,6 +417,7 @@ pub(crate) async fn run_guarded(
                     reasoning: String::new(),
                     calls: Vec::new(),
                     decode: cancelled_before_start(),
+                    released_span_text: String::new(),
                 })
             }
         },

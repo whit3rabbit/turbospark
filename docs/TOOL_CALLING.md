@@ -47,9 +47,9 @@ so drift shows up as one side failing a test the other passes.
 | gpt-oss (Harmony) | `<\|channel\|>commentary to=functions.NAME ... <\|message\|>{json}<\|call\|>` | yes | n/a | n/a | real installed checkpoint |
 | DeepSeek-V4 | `<dsml:tool_calls>` text markers | yes | n/a | n/a | bundled fixture |
 | Muse Glimmer | `<atem:function_calls>` DSL | no parser (body routes to reasoning) | bare JSON only | bare JSON only | real installed checkpoint |
-| Mistral | `[TOOL_CALLS] [{...}]` | no | forge | forge | unit fixtures |
+| Mistral | `[TOOL_CALLS]` special token, then a JSON array of `{name, arguments}` running to end of turn | yes, since 2026-09-15 (`MistralToolCallParser`; span emitted from `finish` because `</s>` is the only terminator and it is a stop token) | forge | forge | real installed `mistral7b-dense.gturbo`; earliest tables carry no marker and keep the passthrough |
 | GLM | name + `<arg_key>K</arg_key>` / `<arg_value>V</arg_value>` pairs | no | `extra_formats` | engine Pattern 1b | published GLM-4.6 `chat_template.jinja` |
-| MiniMax (and the Anthropic invoke shape generally) | `<invoke name="N"><parameter name="K">V</parameter></invoke>` | no | `extra_formats` | engine Pattern 1 (+ parameter extraction) | published MiniMax-M2 `chat_template.jinja` |
+| MiniMax (and the Anthropic invoke shape generally) | `<minimax:tool_call>` wrapper (a NON-special added token in the published M2 table, so it survives detokenization as text) around `<invoke name="N"><parameter name="K">V</parameter></invoke>` | no, and the 2026-09-15 probe of the published tokenizer found two blockers to revisit before building the arm: the wrapper tokens are not special (so a native arm is a text-marker arm like DeepSeek's, not an id-bracket arm), and this port's dialect probe strings (`]~!b[` et al.) do not match the published M2 table's bos (`]!p~[`) -- the dialect may have been built off a different generation's tokenizer | `extra_formats` | engine Pattern 1 (+ parameter extraction) | published MiniMax-M2 `chat_template.jinja` + `tokenizer_config.json` |
 | Kimi K2 | `<\|tool_call_begin\|>functions.NAME:IDX<\|tool_call_argument_begin\|>{json}<\|tool_call_end\|>` | no | `extra_formats` | engine Pattern 1c | Moonshot's `tool_call_guidance.md` + vLLM's `kimi_tool_parser` |
 | Longcat | `<longcat_tool_call>{"name":...,"arguments":{...}}</longcat_tool_call>` | no | forge's JSON scan, ZERO new code | engine Pattern 3b (tag strip) | vLLM's `longcat_tool_parser` (Hermes JSON body) |
 | OpenAI / Hermes-style bare JSON | `{"name": ..., "arguments": {...}}` | no | forge | engine Pattern 4 | unit fixtures |
@@ -95,9 +95,23 @@ vocabulary resolves those tokens under a dialect this engine knows. The
 route is: the native decoder buffers the interior as a tool span, its
 parser refuses the body, the failed span's body is RELEASED as text
 (`StructuredAssistantDecoder::take_failed_span_text`, emitted by
-`TurnSplitter::feed` on the error path -- before that release existed the
-body was dropped and the call was lost twice over, once to the parser and
-once to the rescue), and the rescue parses what is left.
+`TurnSplitter::feed` on the error path as `TurnEvent::ReleasedToolSpan` --
+before that release existed the body was dropped and the call was lost
+twice over, once to the parser and once to the rescue), and the rescue
+parses what is left.
+
+**THE RELEASED BODY BYPASSES THE RAW-TEXT ELIGIBILITY GATE, and that is
+not a loophole.** `inspect`'s bare-JSON rescue refuses raw prose unless the
+whole visible response is one JSON value, because scanning prose for an
+embedded object can erase a warning or a quoted example. A released span
+body is not prose: the model bracketed it in tool-call markup that the
+detokenizer rendered away, so it carries no marker the eligibility gate
+could find and may carry any amount of ordinary prose around the call. The
+server records the released bodies beside the reply (`Generated::
+released_span_text`, fed by the `ReleasedToolSpan` variant) and tries them
+FIRST, on the bracketing's own authority, before the protected raw-text
+path. ChatML is the case that pins this: a bare-JSON body inside a
+`tool_call` span is native-parser-refused, released, and rescued.
 
 This is why the GLM strategy keys on the `<arg_key>`/`<arg_value>` pair
 markup rather than on the `<tool_call>` wrapper the template teaches: the

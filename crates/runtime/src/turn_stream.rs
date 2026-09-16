@@ -47,6 +47,17 @@ pub enum TurnEvent {
     /// not output (Gotcha 44's rule, enforced on the output side where it
     /// belongs).
     Content(String),
+    /// The body of a tool span the decoder RELEASED after a parse error.
+    ///
+    /// The model bracketed this text in tool-call markup, so it is
+    /// control-channel data by construction and not ordinary prose -- but the
+    /// parser could not make a call of it, so it is handed on as text the
+    /// consumer shows rather than dropped. Emitted as its own variant (not
+    /// [`TurnEvent::Content`]) so a downstream rescue layer can tell "markup
+    /// the model wrote and the parser failed on" from "prose that merely
+    /// looks like a call" without re-deriving the difference from the text,
+    /// which the released body's surrounding prose makes impossible.
+    ReleasedToolSpan(String),
     /// Reasoning the model produced on its way to the answer. Never empty.
     Reasoning(String),
     /// A parsed tool call invocation.
@@ -185,7 +196,7 @@ impl<'a> TurnSplitter<'a> {
             Err(_) => {
                 self.degraded = true;
                 if let Some(body) = decoder.take_failed_span_text() {
-                    out(TurnEvent::Content(body));
+                    out(TurnEvent::ReleasedToolSpan(body));
                 }
                 if !text.is_empty() {
                     out(TurnEvent::Content(text));
@@ -217,7 +228,21 @@ impl<'a> TurnSplitter<'a> {
                 out_structured(events, out);
                 Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                // A parse failure at finish costs the CALL, not the text:
+                // release the failed span's body exactly as the feed path
+                // does beside a consume error. Mistral's is the arm that
+                // lands here in practice -- its span's only terminator is
+                // end of turn, so a body the parser refuses surfaces at this
+                // call and nowhere else -- and dropping it would lose the
+                // call twice over, once to the parser and once to the
+                // rescue, which is the exact failure the release exists to
+                // prevent.
+                if let Some(body) = decoder.take_failed_span_text() {
+                    out(TurnEvent::ReleasedToolSpan(body));
+                }
+                Err(e)
+            }
         }
     }
 
@@ -453,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_span_releases_its_body_as_content() {
+    fn a_malformed_span_releases_its_body_as_released_tool_span() {
         // The pre-3.5 Qwen shape: bare JSON inside the `<tool_call>` /
         // `</tool_call>` special-token pair. The XML parser refuses it, the
         // splitter degrades -- and the body itself must reach the stream as
@@ -480,12 +505,14 @@ mod tests {
         );
 
         // No tool call, no failure surfaced, and the body IS the stream's
-        // leading content -- followed by the post-error raw pass-through.
+        // leading content -- carried as `ReleasedToolSpan`, the variant that
+        // says "the model bracketed this and the parser failed" -- followed
+        // by the post-error raw pass-through as ordinary content.
         assert!(s.degraded());
         assert_eq!(
             events,
             vec![
-                TurnEvent::Content(body.to_string()),
+                TurnEvent::ReleasedToolSpan(body.to_string()),
                 TurnEvent::Content(" then ".to_string()),
                 TurnEvent::Content("prose".to_string()),
             ]

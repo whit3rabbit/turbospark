@@ -254,6 +254,7 @@ fn a_generated_tool_call_is_decoded_out_of_the_stream() {
         &mut |piece| pieces.push(piece),
     )
     .expect("generation should succeed");
+    let (result, _) = result;
 
     assert_eq!(result.reason, runtime::StopReason::EndOfTurn);
     let calls: Vec<&tokenizer::ParsedToolCall> = pieces

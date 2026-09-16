@@ -1,12 +1,15 @@
-//! Tool-call parsers for the three supported dialects: Gemma's custom DSL,
-//! Qwen's ChatML `<function=...>` framing, and DeepSeek's DSML markers.
+//! Tool-call parsers for the four supported dialects: Gemma's custom DSL,
+//! Qwen's ChatML `<function=...>` framing, DeepSeek's DSML markers, and
+//! Mistral's `[TOOL_CALLS]` JSON array.
 
 mod deepseek;
 mod gemma;
+mod mistral;
 mod qwen;
 
 pub use deepseek::{DeepseekToolCallParser, DSML_MARK};
 pub use gemma::GemmaToolCallParser;
+pub use mistral::MistralToolCallParser;
 pub use qwen::QwenToolCallParser;
 
 pub fn deepseek_dsml_mark() -> String {

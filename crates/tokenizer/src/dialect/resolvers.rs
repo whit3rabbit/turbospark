@@ -7,8 +7,9 @@ use super::resolve::{
     HARMONY_CHANNEL_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_PAD_MARK,
     HARMONY_RETURN_MARK, IM_END_MARK, IM_START_MARK, LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK,
     LLAMA3_EOS_MARK, LLAMA3_EOT_MARK, LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK,
-    MUSE_BOS_MARK, MUSE_EOM_MARK, MUSE_EOS_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK,
-    MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
+    MISTRAL_TOOL_CALLS_MARK, MUSE_BOS_MARK, MUSE_EOM_MARK, MUSE_EOS_MARK, MUSE_EOT_MARK,
+    MUSE_MESSAGE_MARK, MUSE_PAD_MARK, MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK,
+    SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use super::NO_SUCH_TOKEN_ID;
 use crate::error::TokenizerError;
@@ -156,13 +157,22 @@ pub(crate) fn resolve_harmony(tokenizer: &Tokenizer) -> Result<Resolved, Tokeniz
 pub(crate) fn resolve_mistral(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
     let bos = required_id(tokenizer, MISTRAL_BOS_MARK)?;
     let eos = required_id(tokenizer, MISTRAL_EOS_MARK)?;
+    // `[TOOL_CALLS]` opens a tool-call span. There is NO closing marker and
+    // NO stop role for it: the call body is ordinary text that runs to end of
+    // turn, so the span is closed by the decoder's `finish` -- the same
+    // terminator the decoder is structurally unable to see that Harmony has.
+    // `tool_call_stop_id` must therefore stay the sentinel: putting the
+    // marker there would make the stop ladder end generation at the marker
+    // and cut off the call body it opens.
+    let tool_calls =
+        special_token_id(tokenizer, MISTRAL_TOOL_CALLS_MARK).unwrap_or(NO_SUCH_TOKEN_ID);
     Ok(Resolved {
         bos_id: bos,
         bos_prefix_id: Some(bos),
         eos_id: eos,
         pad_id: eos,
         end_of_turn_id: eos,
-        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_start_id: tool_calls,
         tool_call_end_id: NO_SUCH_TOKEN_ID,
         tool_response_id: NO_SUCH_TOKEN_ID,
         tool_response_end_id: NO_SUCH_TOKEN_ID,

@@ -33,6 +33,13 @@ pub(crate) struct Generated {
     pub reasoning: String,
     pub calls: Vec<ParsedToolCall>,
     pub decode: RawDecodeResult,
+    /// Tool-span bodies the decoder released after a parse error, in release
+    /// order. The model bracketed each of these in tool-call markup before
+    /// the parser failed, so unlike [`Generated::text`] they are
+    /// control-channel data by construction -- which is what lets the
+    /// guardrails' rescue try them without the whole-text-JSON rule that
+    /// keeps raw prose safe from reinterpretation.
+    pub released_span_text: String,
 }
 
 /// The zero-token result a request cancelled BEFORE its generation started
@@ -92,11 +99,12 @@ pub(crate) async fn run_full(
     .await;
 
     match joined {
-        Ok((Ok(decode), text, reasoning, calls)) => Ok(Generated {
+        Ok((Ok((decode, released_span_text)), text, reasoning, calls)) => Ok(Generated {
             text,
             reasoning,
             calls,
             decode,
+            released_span_text,
         }),
         Ok((Err(e), ..)) => Err(GenError::Runtime(e)),
         Err(e) => Err(GenError::Join(e.to_string())),
@@ -133,7 +141,7 @@ pub(crate) fn stream_blocking(
     effort: ReasoningEffort,
     cancel: CancelFlag<'_>,
     on_piece: &mut dyn FnMut(Piece),
-) -> Result<RawDecodeResult, RuntimeError> {
+) -> Result<(RawDecodeResult, String), RuntimeError> {
     // Ids only have to be unique within one assistant turn: a `tool` turn is
     // matched against the tool calls of the message immediately before it,
     // never against an earlier turn's. A counter is enough, and keeps
@@ -149,9 +157,18 @@ pub(crate) fn stream_blocking(
         },
         prompt_ids,
     );
+    let mut released_span_text = String::new();
     let mut emit_piece = |event: TurnEvent| match event {
         TurnEvent::Prefill { .. } => {}
         TurnEvent::Content(delta) => on_piece(Piece::Text(delta)),
+        // Still shown as text -- every consumer sees exactly what it saw
+        // before this variant existed -- but recorded beside it, because the
+        // guardrails' rescue needs to know which part of the reply the model
+        // had bracketed as a tool call before the parser failed.
+        TurnEvent::ReleasedToolSpan(delta) => {
+            released_span_text.push_str(&delta);
+            on_piece(Piece::Text(delta));
+        }
         TurnEvent::Reasoning(delta) => on_piece(Piece::Reasoning(delta)),
         TurnEvent::ToolCall(call) => on_piece(Piece::Tool(call)),
     };
@@ -179,5 +196,5 @@ pub(crate) fn stream_blocking(
     if result.is_ok() {
         let _ = split.finish(&mut emit_piece);
     }
-    result
+    result.map(|decode| (decode, released_span_text))
 }
