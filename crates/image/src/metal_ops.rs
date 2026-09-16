@@ -138,6 +138,35 @@ pub(crate) fn upload(context: &MetalContext, values: &[f32]) -> GpuTensor {
     }
 }
 
+/// Materialize the FP32 buffer as BF16 values, retaining an FP32 buffer ABI.
+///
+/// This is diagnostic storage emulation for the Z-Image checkpoint probe. The
+/// native image path remains FP32 unless the caller explicitly inserts this
+/// pass between operations.
+pub(crate) fn round_bf16(
+    context: &mut MetalContext,
+    input: &GpuTensor,
+) -> Result<GpuTensor, String> {
+    let output = GpuTensor {
+        buffer: context.new_output_buffer((input.len * 4) as u64),
+        len: input.len,
+        ready: None,
+    };
+    let params = u32_bytes(&[input.len as u32]);
+    let shader = pipeline(context, "image_round_bf16")?;
+    let pass = context.begin_pass_labeled("image-round-bf16");
+    dispatch(
+        context,
+        &pass,
+        &shader,
+        &[(&input.buffer, 0, 0), (&output.buffer, 1, 0)],
+        &[(&params, 2)],
+        output.len,
+    );
+    let ready = commit_deferred(pass);
+    Ok(with_ready(output, ready))
+}
+
 pub(crate) fn read(tensor: &GpuTensor) -> Vec<f32> {
     if let Some(ready) = &tensor.ready {
         ready.wait_ref();
@@ -155,7 +184,15 @@ pub(crate) fn read(tensor: &GpuTensor) -> Vec<f32> {
 // the latest pass on the component so its mmap cannot be released before an
 // early-return teardown drains all resident-backed work.
 fn commit_deferred(pass: PassEncoder) -> Arc<gpu::CommittedPass> {
-    Arc::new(gpu::autorelease_pool(|| pass.commit()))
+    let ready = Arc::new(gpu::autorelease_pool(|| pass.commit()));
+    // Diagnostic only: force a CPU completion after every primitive so a
+    // seeded parity trace can distinguish same-queue hazard handling from
+    // arithmetic or layout drift. The production path keeps the asynchronous
+    // command-buffer chain unchanged.
+    if std::env::var_os("TURBOSPARK_IMAGE_FORCE_SYNC_DISPATCH").is_some() {
+        ready.wait_ref();
+    }
+    ready
 }
 
 fn commit_component_deferred(pass: PassEncoder, component: &Component) -> Arc<gpu::CommittedPass> {
@@ -830,7 +867,6 @@ pub(crate) fn silu(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn vae_attention(
     context: &mut MetalContext,
-    component: &Component,
     q: &GpuTensor,
     k: &GpuTensor,
     v: &GpuTensor,
@@ -850,9 +886,7 @@ pub(crate) fn vae_attention(
     let params = u32_bytes(&[channels as u32, height as u32, width as u32]);
     let shader = pipeline(context, "image_vae_attention")?;
     let pass = context.begin_pass_labeled("image-vae-attention");
-    dispatch(
-        context,
-        &pass,
+    pass.encode_threadgroups_3d(
         &shader,
         &[
             (&q.buffer, 0, 0),
@@ -861,9 +895,10 @@ pub(crate) fn vae_attention(
             (&output.buffer, 3, 0),
         ],
         &[(&params, 4)],
-        output.len,
+        ((len / channels) as u64, 1, 1),
+        (256, 1, 1),
     );
-    let ready = commit_component_deferred(pass, component);
+    let ready = commit_deferred(pass);
     Ok(with_ready(output, ready))
 }
 
@@ -1095,6 +1130,69 @@ mod tests {
         let expected = cpu_attention(
             &q, &k, &v, q_rows, kv_rows, q_heads, kv_heads, head_dim, false,
         );
+        assert_close(&read(&actual), &expected, 2e-5);
+    }
+
+    #[test]
+    #[ignore = "opt-in Metal kernel parity test"]
+    fn vae_attention_matches_cpu_for_production_channels() {
+        let Ok(mut context) = MetalContext::new() else {
+            eprintln!("NOTE: skipping image Metal parity test, no Metal device");
+            return;
+        };
+        let channels = 512;
+        let height = 2;
+        let width = 3;
+        let area = height * width;
+        let len = channels * area;
+        let q: Vec<f32> = (0..len)
+            .map(|index| ((index * 13 % 97) as f32 - 48.0) / 97.0)
+            .collect();
+        let k: Vec<f32> = (0..len)
+            .map(|index| ((index * 17 % 89) as f32 - 44.0) / 89.0)
+            .collect();
+        let v: Vec<f32> = (0..len)
+            .map(|index| ((index * 19 % 83) as f32 - 41.0) / 83.0)
+            .collect();
+        let q_gpu = upload(&context, &q);
+        let k_gpu = upload(&context, &k);
+        let v_gpu = upload(&context, &v);
+        let actual = vae_attention(
+            &mut context,
+            &q_gpu,
+            &k_gpu,
+            &v_gpu,
+            channels,
+            height,
+            width,
+        )
+        .expect("VAE attention");
+
+        let scale = (channels as f32).sqrt().recip();
+        let mut expected = vec![0.0f32; len];
+        for channel in 0..channels {
+            for query in 0..area {
+                let mut maximum = f32::NEG_INFINITY;
+                for key in 0..area {
+                    let mut score = 0.0f32;
+                    for c in 0..channels {
+                        score += q[c * area + query] * k[c * area + key];
+                    }
+                    maximum = maximum.max(score * scale);
+                }
+                let mut denominator = 0.0f32;
+                for key in 0..area {
+                    let mut score = 0.0f32;
+                    for c in 0..channels {
+                        score += q[c * area + query] * k[c * area + key];
+                    }
+                    let probability = (score * scale - maximum).exp();
+                    denominator += probability;
+                    expected[channel * area + query] += probability * v[channel * area + key];
+                }
+                expected[channel * area + query] /= denominator;
+            }
+        }
         assert_close(&read(&actual), &expected, 2e-5);
     }
 

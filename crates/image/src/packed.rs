@@ -4,14 +4,15 @@
 //! format. Each tensor has a checked byte span in one payload file. Eligible
 //! two-dimensional linear weights use the repository's affine INT4 group-64
 //! layout; embeddings, norms, modulation tensors, and non-matrix tensors stay
-//! FP32 until a component-specific gate proves a narrower representation.
+//! unquantized, with F32 source tensors narrowed to BF16 to match the
+//! reference execution dtype.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use compute::{dequantize_int4_affine, quantize_int4_affine, Int4AffineRow};
+use compute::{dequantize_int4_affine, f32_to_bf16, quantize_int4_affine, Int4AffineRow};
 use serde::{Deserialize, Serialize};
 
 use crate::text_encoder::ShardedSafetensors;
@@ -359,11 +360,22 @@ pub fn pack_component(
         } else {
             let source_dtype = descriptor.dtype.to_ascii_uppercase();
             match source_dtype.as_str() {
-                "F32" | "BF16" => {
+                "F32" => {
+                    let values = shard
+                        .load_as_f32(name)
+                        .map_err(|e| format!("failed to load source tensor {name}: {e}"))?;
+                    for value in values {
+                        writer
+                            .write_all(&f32_to_bf16(value).to_le_bytes())
+                            .map_err(|e| format!("failed to write narrowed tensor {name}: {e}"))?;
+                    }
+                    ("BF16".to_string(), None)
+                }
+                "BF16" => {
                     let raw = shard
                         .raw_bytes(name)
                         .map_err(|e| format!("failed to read source tensor {name}: {e}"))?;
-                    let element_bytes = if source_dtype == "F32" { 4 } else { 2 };
+                    let element_bytes = 2;
                     let expected = element_count(&descriptor.shape)?
                         .checked_mul(element_bytes)
                         .ok_or_else(|| format!("source tensor {name} byte length overflows"))?;
@@ -727,9 +739,22 @@ mod tests {
             .iter()
             .zip(&linear)
             .all(|(actual, expected)| (actual - expected).abs() < 0.3));
+        let expected_norm: Vec<f32> = norm
+            .iter()
+            .map(|value| compute::bf16_to_f32(compute::f32_to_bf16(*value)))
+            .collect();
         assert_eq!(
-            store.load_tensor("norm.weight").expect("load F32 tensor"),
-            norm
+            store
+                .index
+                .tensors
+                .get("norm.weight")
+                .expect("norm index entry")
+                .storage_dtype,
+            "BF16"
+        );
+        assert_eq!(
+            store.load_tensor("norm.weight").expect("load BF16 tensor"),
+            expected_norm
         );
         assert_eq!(
             store

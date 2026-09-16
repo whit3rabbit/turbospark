@@ -17,8 +17,9 @@ use std::thread;
 use std::time::Instant;
 
 use turbospark_image::{
-    generate, CancellationToken, FlowMatchEulerScheduler, ImageBackend, ImageRequest, ImageStage,
-    MetalImageBackend, IMAGE_GUIDANCE, IMAGE_HEIGHT, IMAGE_QUANTIZATION, IMAGE_STEPS, IMAGE_WIDTH,
+    generate, read_npy_f32, read_npz_file, CancellationToken, FlowMatchEulerScheduler,
+    ImageBackend, ImageRequest, ImageStage, MetalImageBackend, IMAGE_GUIDANCE, IMAGE_HEIGHT,
+    IMAGE_QUANTIZATION, IMAGE_STEPS, IMAGE_WIDTH,
 };
 
 const PROMPT: &str =
@@ -241,6 +242,101 @@ fn packed_native_first_step_trace_localizes_divergent_boundary() {
         eprintln!(
             "first-step trace boundary=patchification reference=unavailable; rerun z_image_capture.py denoise"
         );
+    }
+}
+
+#[test]
+#[ignore = "opt-in isolated intra-block BF16 precision experiment"]
+fn packed_native_intra_block_bf16_trace_reports_operation_deltas() {
+    let root = image_install();
+    let mut backend = MetalImageBackend::open(&root).expect("open packed Metal image install");
+    let input = read_fixture("block_28_input.npy");
+    let timestep = read_fixture("block_28_modulation.npy");
+    let expected = read_fixture("block_28_output.npy");
+
+    let fp32 = backend
+        .intra_block_trace(28, &input, &timestep, false)
+        .expect("FP32 intra-block trace");
+    let bf16 = backend
+        .intra_block_trace(28, &input, &timestep, true)
+        .expect("BF16 intra-block trace");
+    let labels: Vec<&str> = fp32
+        .operations
+        .iter()
+        .map(|(label, _)| label.as_str())
+        .collect();
+    assert_eq!(labels.first(), Some(&"input"));
+    assert_eq!(labels.last(), Some(&"ffn.residual"));
+    assert_eq!(
+        labels,
+        bf16.operations
+            .iter()
+            .map(|(label, _)| label.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    for ((label, fp32_values), (_, bf16_values)) in fp32.operations.iter().zip(&bf16.operations) {
+        let insertion_delta = relative_l2(bf16_values, fp32_values);
+        assert!(
+            bf16_values.iter().all(|value| value.is_finite()),
+            "BF16 operation {label} produced a non-finite value"
+        );
+        eprintln!(
+            "intra-block block=28 operation={label} bf16_vs_fp32_relative_l2={insertion_delta:.8e}"
+        );
+    }
+    let fp32_output = &fp32.operations.last().expect("FP32 final operation").1;
+    let bf16_output = &bf16.operations.last().expect("BF16 final operation").1;
+    eprintln!(
+        "intra-block block=28 final fp32_relative_l2={:.8e} bf16_relative_l2={:.8e}",
+        relative_l2(fp32_output, &expected),
+        relative_l2(bf16_output, &expected),
+    );
+
+    if let Ok(path) = std::env::var("TURBOSPARK_IMAGE_REFERENCE_INTRA_TRACE") {
+        let entries = read_npz_file(Path::new(&path)).expect("read reference intra-block trace");
+        for (label, native_values) in &fp32.operations {
+            let entry = format!("{label}.npy");
+            let bytes = entries
+                .get(&entry)
+                .unwrap_or_else(|| panic!("reference trace is missing {entry}"));
+            let reference = read_npy_f32(bytes).expect("read reference operation array");
+            assert_eq!(
+                native_values.len(),
+                reference.data.len(),
+                "shape mismatch for {label}"
+            );
+            assert!(
+                reference.data.iter().all(|value| value.is_finite()),
+                "reference operation {label} produced a non-finite value"
+            );
+            let reference_error = relative_l2(native_values, &reference.data);
+            eprintln!(
+                "intra-block block=28 operation={label} native_vs_reference_relative_l2={reference_error:.8e}"
+            );
+            if matches!(label.as_str(), "attention.q_rope" | "attention.k_rope") {
+                assert!(
+                    reference_error <= 2e-2,
+                    "native {label} diverged from the pinned reference: {reference_error}"
+                );
+            }
+            if matches!(label.as_str(), "attention.q_rope" | "attention.k_rope") {
+                let image_end = 4096 * 3840;
+                eprintln!(
+                    "intra-block block=28 operation={label} image_relative_l2={:.8e} caption_relative_l2={:.8e}",
+                    relative_l2(
+                        &native_values[..image_end],
+                        &reference.data[..image_end]
+                    ),
+                    relative_l2(&native_values[image_end..], &reference.data[image_end..]),
+                );
+                eprintln!(
+                    "intra-block block=28 operation={label} native_first={:?} reference_first={:?}",
+                    &native_values[..8],
+                    &reference.data[..8]
+                );
+            }
+        }
     }
 }
 

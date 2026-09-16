@@ -1,6 +1,23 @@
 #include <metal_stdlib>
 using namespace metal;
 
+inline float image_round_bf16_value(float value) {
+    uint bits = as_type<uint>(value);
+    uint rounding = 0x7fff + ((bits >> 16) & 1);
+    return as_type<float>((bits + rounding) & 0xffff0000);
+}
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void image_round_bf16(
+    device const float *input [[buffer(0)]],
+    device float *output [[buffer(1)]],
+    constant uint &count [[buffer(2)]],
+    uint index [[thread_position_in_grid]]) {
+    if (index < count) {
+        output[index] = image_round_bf16_value(input[index]);
+    }
+}
+
 // Z-Image uses a different storage contract from the text runtime. Quantized
 // rows are [packed low/high nibbles][BF16 scales][BF16 biases], one row at a
 // time. The text runtime kernels expect three contiguous regions, so these
@@ -220,7 +237,7 @@ void image_lookup(
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]
-void image_rope(
+void image_rope_orthogonal(
     device const float *input [[buffer(0)]],
     device float *output [[buffer(1)]],
     device const uchar *weight [[buffer(2)]],
@@ -291,7 +308,7 @@ void image_rope_adjacent(
         const float c = frequency[0];
         const float s = frequency[1];
         output[uint64_t(row_base) + col] =
-            ((col & 1) == 0) ? value * c - partner * s : partner * c + value * s;
+            ((col & 1) == 0) ? value * c - partner * s : partner * s + value * c;
     }
 }
 
@@ -473,6 +490,10 @@ struct VaeAttentionParams {
     uint width;
 };
 
+// One threadgroup owns one query position. The previous elementwise launch
+// recomputed every query/key dot product once per output channel, multiplying
+// the production-shape work by another 512x. Scores are tiled through shared
+// memory so each query/key dot is computed once and reused by all channels.
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void image_vae_attention(
     device const float *q [[buffer(0)]],
@@ -480,33 +501,78 @@ void image_vae_attention(
     device const float *v [[buffer(2)]],
     device float *output [[buffer(3)]],
     constant VaeAttentionParams &p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]) {
+    uint tid [[thread_index_in_threadgroup]],
+    uint query [[threadgroup_position_in_grid]]) {
     const uint area = p.height * p.width;
-    const uint total = p.channels * area;
-    if (gid >= total) return;
-    const uint channel = gid / area;
-    const uint spatial = gid - channel * area;
+    if (query >= area) return;
+
+    threadgroup float scores[256];
+    threadgroup float maximum;
     const float inv_scale = rsqrt(float(p.channels));
-    float maximum = -INFINITY;
-    for (uint key_spatial = 0; key_spatial < area; ++key_spatial) {
-        float score = 0.0f;
-        for (uint c = 0; c < p.channels; ++c) {
-            score = fma(q[c * area + spatial], k[c * area + key_spatial], score);
+
+    // Match the reference's two-pass softmax order while sharing the score
+    // calculation. The barrier at the end of each tile protects scores from
+    // being overwritten while another lane is still consuming them.
+    maximum = -INFINITY;
+    for (uint tile = 0; tile < area; tile += 256) {
+        const uint key = tile + tid;
+        float score = -INFINITY;
+        if (key < area) {
+            score = 0.0f;
+            for (uint c = 0; c < p.channels; ++c) {
+                score = fma(q[c * area + query], k[c * area + key], score);
+            }
+            score *= inv_scale;
         }
-        maximum = max(maximum, score * inv_scale);
+        scores[tid] = score;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (tid == 0) {
+            const uint tile_end = min(tile + 256, area);
+            for (uint index = 0; index < tile_end - tile; ++index) {
+                maximum = max(maximum, scores[index]);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
     }
+
     float denominator = 0.0f;
-    float numerator = 0.0f;
-    for (uint key_spatial = 0; key_spatial < area; ++key_spatial) {
-        float score = 0.0f;
-        for (uint c = 0; c < p.channels; ++c) {
-            score = fma(q[c * area + spatial], k[c * area + key_spatial], score);
+    float numerator0 = 0.0f;
+    float numerator1 = 0.0f;
+    const uint channel0 = tid;
+    const uint channel1 = tid + 256;
+    for (uint tile = 0; tile < area; tile += 256) {
+        const uint key = tile + tid;
+        float score = -INFINITY;
+        if (key < area) {
+            score = 0.0f;
+            for (uint c = 0; c < p.channels; ++c) {
+                score = fma(q[c * area + query], k[c * area + key], score);
+            }
+            score *= inv_scale;
         }
-        const float probability = exp(score * inv_scale - maximum);
-        denominator += probability;
-        numerator += probability * v[channel * area + key_spatial];
+        scores[tid] = score;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        const uint tile_end = min(tile + 256, area);
+        for (uint index = 0; index < tile_end - tile; ++index) {
+            const uint key_index = tile + index;
+            const float probability = exp(scores[index] - maximum);
+            denominator += probability;
+            if (channel0 < p.channels) {
+                numerator0 = fma(probability, v[channel0 * area + key_index], numerator0);
+            }
+            if (channel1 < p.channels) {
+                numerator1 = fma(probability, v[channel1 * area + key_index], numerator1);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    output[gid] = numerator / denominator;
+
+    if (channel0 < p.channels) {
+        output[channel0 * area + query] = numerator0 / denominator;
+    }
+    if (channel1 < p.channels) {
+        output[channel1 * area + query] = numerator1 / denominator;
+    }
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]

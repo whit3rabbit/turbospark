@@ -167,6 +167,13 @@ impl MetalContext {
             return Ok(lib.clone());
         }
         let options = metal::CompileOptions::new();
+        // Diagnostic only: image parity can opt out of Metal's relaxed math
+        // mode to separate compiler arithmetic from model/layout drift. Keep
+        // the platform default unless the caller explicitly requests this
+        // experiment.
+        if std::env::var_os("TURBOSPARK_METAL_PRECISE_MATH").is_some() {
+            options.set_fast_math_enabled(false);
+        }
         let library = self
             .device
             .new_library_with_source(source, &options)

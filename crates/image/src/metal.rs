@@ -67,12 +67,46 @@ pub struct ImageFirstStepTrace {
     pub scheduler_latent: Vec<f32>,
 }
 
+/// Operation-level snapshots for one isolated main-transformer block.
+///
+/// This is intentionally a diagnostic API. It accepts a captured block input
+/// so the experiment does not rerun the preceding denoising recurrence.
+#[derive(Debug)]
+pub struct ImageIntraBlockTrace {
+    pub block: usize,
+    pub round_bf16: bool,
+    pub operations: Vec<(String, Vec<f32>)>,
+}
+
 /// Diagnostic knobs for one native denoise pass.
 ///
 /// Production generation uses native seeded noise and reads nothing back.
 /// The packed parity gates seed the captured reference noise, and the
 /// first-step trace observes the stage boundaries.
 type BoundaryObserver<'a> = &'a mut dyn FnMut(ImageFirstStepBoundary, &[f32]);
+
+struct IntraBlockProbe<'a> {
+    round_bf16: bool,
+    observe: &'a mut dyn FnMut(&str, &[f32]),
+}
+
+impl IntraBlockProbe<'_> {
+    fn capture(
+        &mut self,
+        context: &mut gpu::MetalContext,
+        tensor: metal_ops::GpuTensor,
+        label: &str,
+    ) -> Result<metal_ops::GpuTensor, String> {
+        let tensor = if self.round_bf16 {
+            metal_ops::round_bf16(context, &tensor)?
+        } else {
+            tensor
+        };
+        let values = metal_ops::read(&tensor);
+        (self.observe)(label, &values);
+        Ok(tensor)
+    }
+}
 
 struct DenoiseOptions<'a> {
     initial_noise: Option<&'a [f32]>,
@@ -449,6 +483,7 @@ impl MetalImageBackend {
         Ok((scale_msa, gate_msa, scale_mlp, gate_mlp))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn transformer_block(
         &mut self,
         component: &Component,
@@ -457,9 +492,28 @@ impl MetalImageBackend {
         rows: usize,
         freqs: &metal::Buffer,
         timestep: Option<&metal_ops::GpuTensor>,
+        mut intra_probe: Option<&mut IntraBlockProbe<'_>>,
     ) -> Result<metal_ops::GpuTensor, String> {
+        if let Some(probe) = intra_probe.as_deref_mut() {
+            x = probe.capture(&mut self.context, x, "input")?;
+        }
         let modulation = match timestep {
             Some(timestep) => Some(self.modulation(component, prefix, timestep)?),
+            None => None,
+        };
+        let modulation = match modulation {
+            Some((scale_msa, gate_msa, scale_mlp, gate_mlp)) => {
+                if let Some(probe) = intra_probe.as_deref_mut() {
+                    Some((
+                        probe.capture(&mut self.context, scale_msa, "modulation.scale_msa")?,
+                        probe.capture(&mut self.context, gate_msa, "modulation.gate_msa")?,
+                        probe.capture(&mut self.context, scale_mlp, "modulation.scale_mlp")?,
+                        probe.capture(&mut self.context, gate_mlp, "modulation.gate_mlp")?,
+                    ))
+                } else {
+                    Some((scale_msa, gate_msa, scale_mlp, gate_mlp))
+                }
+            }
             None => None,
         };
         let weight =
@@ -487,11 +541,21 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             TRANSFORMER_EPS,
         )?;
+        let normalized = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, normalized, "attention.rms_norm")?
+        } else {
+            normalized
+        };
         let normalized = match &modulation {
             Some((scale, _, _, _)) => {
                 metal_ops::scale_rows(&mut self.context, &normalized, scale, rows, Z_IMAGE_DIM)?
             }
             None => normalized,
+        };
+        let normalized = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, normalized, "attention.modulation")?
+        } else {
+            normalized
         };
         let q = metal_ops::linear(
             &mut self.context,
@@ -503,6 +567,11 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             Z_IMAGE_DIM,
         )?;
+        let q = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, q, "attention.q_projection")?
+        } else {
+            q
+        };
         let k = metal_ops::linear(
             &mut self.context,
             component,
@@ -513,6 +582,11 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             Z_IMAGE_DIM,
         )?;
+        let k = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, k, "attention.k_projection")?
+        } else {
+            k
+        };
         let v = metal_ops::linear(
             &mut self.context,
             component,
@@ -523,6 +597,11 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             Z_IMAGE_DIM,
         )?;
+        let v = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, v, "attention.v_projection")?
+        } else {
+            v
+        };
         let q = metal_ops::adjacent_rope(
             &mut self.context,
             component,
@@ -534,6 +613,11 @@ impl MetalImageBackend {
             Z_IMAGE_HEAD_DIM,
             TRANSFORMER_EPS,
         )?;
+        let q = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, q, "attention.q_rope")?
+        } else {
+            q
+        };
         let k = metal_ops::adjacent_rope(
             &mut self.context,
             component,
@@ -545,6 +629,11 @@ impl MetalImageBackend {
             Z_IMAGE_HEAD_DIM,
             TRANSFORMER_EPS,
         )?;
+        let k = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, k, "attention.k_rope")?
+        } else {
+            k
+        };
         let attention = metal_ops::attention(
             &mut self.context,
             &q,
@@ -557,6 +646,11 @@ impl MetalImageBackend {
             Z_IMAGE_HEAD_DIM,
             false,
         )?;
+        let attention = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, attention, "attention.output")?
+        } else {
+            attention
+        };
         let projected = metal_ops::linear(
             &mut self.context,
             component,
@@ -567,6 +661,11 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             Z_IMAGE_DIM,
         )?;
+        let projected = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, projected, "attention.output_projection")?
+        } else {
+            projected
+        };
         let projected = metal_ops::rms_norm(
             &mut self.context,
             component,
@@ -576,11 +675,21 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             TRANSFORMER_EPS,
         )?;
+        let projected = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, projected, "attention.output_norm")?
+        } else {
+            projected
+        };
         x = match &modulation {
             Some((_, gate, _, _)) => {
                 metal_ops::gate_add(&mut self.context, &x, &projected, gate, rows, Z_IMAGE_DIM)?
             }
             None => metal_ops::add(&mut self.context, &x, &projected)?,
+        };
+        x = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, x, "attention.residual")?
+        } else {
+            x
         };
 
         let ffn_input = metal_ops::rms_norm(
@@ -592,11 +701,21 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             TRANSFORMER_EPS,
         )?;
+        let ffn_input = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, ffn_input, "ffn.input_norm")?
+        } else {
+            ffn_input
+        };
         let ffn_input = match &modulation {
             Some((_, _, scale, _)) => {
                 metal_ops::scale_rows(&mut self.context, &ffn_input, scale, rows, Z_IMAGE_DIM)?
             }
             None => ffn_input,
+        };
+        let ffn_input = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, ffn_input, "ffn.modulation")?
+        } else {
+            ffn_input
         };
         let left = metal_ops::linear(
             &mut self.context,
@@ -608,6 +727,11 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             Z_IMAGE_FFN_DIM,
         )?;
+        let left = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, left, "ffn.w1")?
+        } else {
+            left
+        };
         let right = metal_ops::linear(
             &mut self.context,
             component,
@@ -618,7 +742,17 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             Z_IMAGE_FFN_DIM,
         )?;
+        let right = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, right, "ffn.w3")?
+        } else {
+            right
+        };
         let activation = metal_ops::silu_mul(&mut self.context, &left, &right)?;
+        let activation = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, activation, "ffn.silu_mul")?
+        } else {
+            activation
+        };
         let ffn_output = metal_ops::linear(
             &mut self.context,
             component,
@@ -629,6 +763,11 @@ impl MetalImageBackend {
             Z_IMAGE_FFN_DIM,
             Z_IMAGE_DIM,
         )?;
+        let ffn_output = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, ffn_output, "ffn.w2")?
+        } else {
+            ffn_output
+        };
         let ffn_output = metal_ops::rms_norm(
             &mut self.context,
             component,
@@ -638,11 +777,21 @@ impl MetalImageBackend {
             Z_IMAGE_DIM,
             TRANSFORMER_EPS,
         )?;
-        match &modulation {
+        let ffn_output = if let Some(probe) = intra_probe.as_deref_mut() {
+            probe.capture(&mut self.context, ffn_output, "ffn.output_norm")?
+        } else {
+            ffn_output
+        };
+        let output = match &modulation {
             Some((_, _, _, gate)) => {
                 metal_ops::gate_add(&mut self.context, &x, &ffn_output, gate, rows, Z_IMAGE_DIM)
             }
             None => metal_ops::add(&mut self.context, &x, &ffn_output),
+        }?;
+        if let Some(probe) = intra_probe {
+            probe.capture(&mut self.context, output, "ffn.residual")
+        } else {
+            Ok(output)
         }
     }
 
@@ -846,16 +995,8 @@ impl MetalImageBackend {
             1,
             0,
         )?;
-        let attended = metal_ops::vae_attention(
-            &mut self.context,
-            component,
-            &q,
-            &k,
-            &v,
-            channels,
-            height,
-            width,
-        )?;
+        let attended =
+            metal_ops::vae_attention(&mut self.context, &q, &k, &v, channels, height, width)?;
         let out = metal_ops::conv2d(
             &mut self.context,
             component,
@@ -1015,6 +1156,70 @@ impl MetalImageBackend {
             return Err("native first-step trace did not observe every boundary".to_string());
         }
         Ok(trace)
+    }
+
+    /// Run one captured 1024x1024 main-transformer block with labeled
+    /// operation snapshots.
+    ///
+    /// `input` and `timestep` are the captured block input and AdaLN input,
+    /// respectively. When `round_bf16` is true, each labeled output is
+    /// materialized through BF16 round-to-nearest-even before the next native
+    /// operation. This is a bounded precision experiment, not a production
+    /// setting or a quality gate.
+    pub fn intra_block_trace(
+        &mut self,
+        block: usize,
+        input: &[f32],
+        timestep: &[f32],
+        round_bf16: bool,
+    ) -> Result<ImageIntraBlockTrace, String> {
+        const IMAGE_TOKENS: usize = 4096;
+        if block >= 30 {
+            return Err(format!("main-transformer block {block} is outside 0..30"));
+        }
+        if input.len() != (IMAGE_TOKENS + 32) * Z_IMAGE_DIM {
+            return Err("intra-block input must be the padded 1024x1024 main sequence".to_string());
+        }
+        if timestep.len() != Z_IMAGE_TIME_DIM {
+            return Err(format!(
+                "intra-block timestep has {}, expected {Z_IMAGE_TIME_DIM} values",
+                timestep.len()
+            ));
+        }
+        let rows = input.len() / Z_IMAGE_DIM;
+        let cap_padded_len = rows - IMAGE_TOKENS;
+        let image_ids = create_coordinate_grid((1, 64, 64), (cap_padded_len + 1, 0, 0));
+        let caption_ids = create_coordinate_grid((cap_padded_len, 1, 1), (1, 0, 0));
+        let mut unified_ids = image_ids;
+        unified_ids.extend_from_slice(&caption_ids);
+        let freqs = self.cis_freqs(&unified_ids)?;
+        let component = self.component(TRANSFORMER_COMPONENT)?;
+        let mut operations = Vec::new();
+        let mut observe = |label: &str, values: &[f32]| {
+            operations.push((label.to_string(), values.to_vec()));
+        };
+        let mut probe = IntraBlockProbe {
+            round_bf16,
+            observe: &mut observe,
+        };
+        let timestep = metal_ops::upload(&self.context, timestep);
+        let _output = self.transformer_block(
+            &component,
+            metal_ops::upload(&self.context, input),
+            &format!("layers.{block}"),
+            rows,
+            &freqs,
+            Some(&timestep),
+            Some(&mut probe),
+        )?;
+        if operations.is_empty() {
+            return Err("intra-block trace did not observe any operation".to_string());
+        }
+        Ok(ImageIntraBlockTrace {
+            block,
+            round_bf16,
+            operations,
+        })
     }
 
     fn final_velocity(
@@ -1302,6 +1507,7 @@ impl MetalImageBackend {
                 image_padded_len,
                 &image_freqs,
                 Some(&timestep),
+                None,
             )?;
         }
         if let Some(observer) = options.trace.as_deref_mut() {
@@ -1318,6 +1524,7 @@ impl MetalImageBackend {
                 &format!("context_refiner.{index}"),
                 cap_padded_len,
                 &caption_freqs,
+                None,
                 None,
             )?;
         }
@@ -1349,6 +1556,7 @@ impl MetalImageBackend {
                     image_padded_len + cap_padded_len,
                     &unified_freqs,
                     Some(&timestep),
+                    None,
                 )?;
                 if step == 0 && FIRST_STEP_MAIN_TRACE_BLOCKS.contains(&index) {
                     if let Some(observer) = options.trace.as_deref_mut() {
@@ -1437,6 +1645,7 @@ impl MetalImageBackend {
                         image_padded_len,
                         &image_freqs,
                         Some(&next_timestep),
+                        None,
                     )?;
                 }
                 let next_image = metal_ops::read(&next_image);

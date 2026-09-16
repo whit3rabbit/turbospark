@@ -107,8 +107,11 @@ Hugging Face repository ID.
 
 The first IG2 production profile is this repository's affine INT4 linear
 format at group size 64. It is not an all-tensor INT4 claim: embeddings,
-normalization, modulation, positional, and other protected tensors remain at
-higher precision, as do image-sensitive operations such as the VAE. The
+normalization, modulation, positional, and other protected tensors remain
+unquantized, as do image-sensitive operations such as the VAE. F32 source
+weights that remain unquantized are stored as BF16 to match the reference
+transformer's loaded dtype; this is a storage alignment, not a claim that the
+native activation path is BF16-exact. The
 already-quantized [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit)
 and [`uqer1244/MLX-z-image`](https://huggingface.co/uqer1244/MLX-z-image) exports
 are close candidates by model and bit width, but their MLX tensor layout needs
@@ -475,6 +478,41 @@ The following records implementation status and the remaining evidence work:
    `packed_native_vae_decodes_the_frozen_latent` gate decodes the frozen
    latent alone so VAE issues no longer require a nine-step denoise in
    front of them.
+
+   A matched quantized-reference control then ran the same seeded first-step
+   trace. Native errors were conditioning `0.0042043`, noise-refiner
+   `0.0521734`, main transformer `1.0849981`, block 0 `0.0636551`, block 16
+   `0.0836585`, block 24 `0.4202046`, block 28 `0.9507074`, and block 29
+   `1.0849981`. The ordinary BF16 reference comparison was effectively the
+   same, so the late recurrence is not explained by the INT4 projection policy
+   or conditioning provenance. A fresh packed install that stored the
+   remaining F32 source tensors as BF16 also reproduced the original curve,
+   including block 29 `1.0846142`. A diagnostic GPU round-to-BF16 pass at
+   block boundaries changed that value only to `1.0834699` and was removed.
+   The next diagnostic must inspect intra-block activation and accumulator
+   precision or a repeated native dispatch contract. The `0.923` envelope is
+   unchanged, and the complete quality, VAE, PNG, cancellation, and quiet
+   resource gates remain open.
+
+   Two seeded controls then closed the repeated-dispatch and compiler-math
+   branches without changing the production path. Setting
+   `TURBOSPARK_IMAGE_FORCE_SYNC_DISPATCH=1` forced a CPU completion after every
+   image primitive; the selected block errors were identical to the baseline,
+   including block 28 `0.953971744` and block 29 `1.08461416`. Setting
+   `TURBOSPARK_METAL_PRECISE_MATH=1` disabled Metal fast math; block 28 moved
+   only to `0.953971624` and block 29 to `1.08461368`. These are sub-ppm
+   changes, so same-queue hazard handling and relaxed compiler math are not the
+   cause. The remaining boundary is intra-block activation or reduction
+   precision: the captured block arrays have `torch.bfloat16` source dtype,
+   while the native image tensors and shader outputs remain FP32. Keep the
+   quality envelope frozen until an intra-operation BF16/accumulator control or
+   a concrete layout mismatch explains the late recurrence.
+
+   During the fresh rebuild, the release test exposed a source-level Metal
+   ABI mismatch: `metal_ops` requested `image_rope_orthogonal` while the shader
+   exported `image_rope`. The shader export was corrected and the release
+   parity test rebuilt from current sources. Do not trust a stale compiled
+   artifact to validate this path.
 
 The original implementation requirements are preserved below as the
 acceptance contract:

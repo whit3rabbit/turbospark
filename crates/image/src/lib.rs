@@ -38,7 +38,9 @@ pub use install::{
     IMAGE_RECEIPT_NAME, IMAGE_STEPS, IMAGE_WIDTH,
 };
 #[cfg(target_os = "macos")]
-pub use metal::{ImageFirstStepBoundary, ImageFirstStepTrace, MetalImageBackend};
+pub use metal::{
+    ImageFirstStepBoundary, ImageFirstStepTrace, ImageIntraBlockTrace, MetalImageBackend,
+};
 pub use packed::{
     pack_component, PackedQuantization, PackedTensor, PackedTensorReport, PackedTensorStore,
     PACKED_DATA_NAME, PACKED_INDEX_NAME,
