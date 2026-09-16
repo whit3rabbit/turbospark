@@ -376,12 +376,13 @@ The following records implementation status and the remaining evidence work:
    higher-precision final latent. The rollout seeds from the captured
    `initial_noise` fixture because the envelopes are matched-noise bounds
    against the reference capture. The packed end-to-end decode is also checked
-   for finite output; PNG quality remains a separate gate. It has not passed
-   on a complete pinned packed install in this checkout.
+   for finite output; the complete matched-noise gate now passes on a pinned
+   packed install, including isolated frozen-latent VAE parity.
 4. **Explicit image install route.** `turbospark-model pull-image` packages a
    pinned local Diffusers export and records it as an image install, not as a
-   text `Mlx` row. A network-backed catalog source plan and rot-guard remain
-   open if remote installation is required.
+   text `Mlx` row. `pull-image --repo OWNER/NAME@REV` streams the required
+   pinned source files into temporary staging before packing. The separate
+   image catalog and its live source-file rot guard pass.
 5. **CLI production selection.** On macOS, `turbospark image generate`
    selects native Metal by default; `--backend reference` is explicit. The
    offline gates cover help, invalid envelope values, overwrite refusal, and
@@ -391,7 +392,9 @@ The following records implementation status and the remaining evidence work:
    tests are present as ignored tests. The resource report records stage and
    total latency, nine forwards, peak `phys_footprint`, Metal buffer
    allocations, idle retained buffers, process page-ins, and swap deltas.
-   Quiet cold and warm runs against a complete install remain required.
+   The cold arm completed at 6,515.892 seconds with PNG relative L2
+   `0.4284977`, zero page-ins, and a `20,725,728,336`-byte process peak
+   dominated by the VAE. The warm arm remains required.
    The original pinned local export packs to 11 files and 6,906,461,695
    bytes. Its packed conditioning error is 0.081541 against the 0.084 IG0
    INT4 envelope. A second pack using the corrected IG0 projection policy

@@ -1,9 +1,10 @@
 # Z-Image-Turbo: image-model bring-up record
 
 Status: IG0 and IG1 are closed for the pinned 1024-by-1024 reference case.
-IG2 implementation is in progress. The checked image format, local packer,
-macOS Metal backend, and CLI path exist, but no complete pinned packed install
-has passed the real native parity, quality, cancellation, and resource gates.
+IG2 implementation and its pinned image catalog path are in progress. The
+checked image format, local and remote packers, macOS Metal backend, and CLI
+path exist. Complete native quality/resource and real cancellation evidence
+remain the final closure gates.
 This page is both the summary of what was learned from Z-Image-Turbo and the
 reusable process for bringing up another image-generation model in this
 repository.
@@ -63,8 +64,9 @@ manifest fields, hashes, and qualification rules, is the
 The production target is not an arbitrary Hugging Face MLX directory. The
 canonical source is the pinned Diffusers-style Z-Image-Turbo export. The image
 packer converts that source into the repository's separate `.image.gturbo`
-format, and `turbospark-model pull-image` currently accepts the source as a
-local directory rather than downloading by repository ID.
+format. `turbospark-model pull-image --repo OWNER/NAME@REV` streams the pinned
+source into temporary staging before packing; `--source` remains the offline
+local-directory form.
 
 The first runtime profile is affine INT4 linear weights with group size 64.
 This does not quantize every tensor: embeddings, norms, modulation, positional
@@ -315,14 +317,21 @@ After the one-line Metal fix, native versus reference operation error fell from
 about `0.9` at Q/K RoPE to `0.004`, and the isolated block-28 output error fell
 to `0.08484` (BF16 storage control `0.08495`). The seeded full first-step trace
 then measured block 28 at `0.43851` and block 29 at `0.43361`, versus the prior
-`0.95397` and `1.08461`. This advances the numerical investigation, but the
-complete packed quality, VAE, PNG, cancellation, and resource gates remain open.
+`0.95397` and `1.08461`. The complete matched-noise quality/VAE gate and the
+dedicated PNG metadata gate now pass on the pinned install.
 
 The frozen-latent VAE comparison fixture was subsequently regenerated from
-the pinned Diffusers VAE. The corrected packed native VAE arm then exceeded a
-180-second safety timeout before producing a result and was terminated without
-leaving a child process. This preserves the prior GPU wait/spin finding as an
-open VAE blocker; it is not a parity failure or a reason to widen any limit.
+the pinned Diffusers VAE. The first 180-second observation was too short for
+the production-shape decoder and was stopped before a result. A later
+stage-isolated run completed every decoder boundary in 395.13 seconds, and the
+non-instrumented pinned arm passed in 370.37 seconds with max absolute error
+`4.7907233e-6` and relative L2 `3.1853588e-7`, inside the frozen limits. The
+native VAE now shares attention score work across eight queries, reduces
+GroupNorm statistics cooperatively, and reuses convolution weights across
+eight spatial outputs. The quiet resource oracle's cold arm completed in
+6,515.892 seconds with PNG relative L2 `0.4284977`, zero page-ins, and a
+`20,725,728,336`-byte process peak dominated by the VAE. Its warm arm and real
+CLI cancellation/no-device evidence remain open.
 
 The pinned setup used for this work is reproducible with:
 
@@ -414,11 +423,11 @@ packed comparison, metadata, quality, and resource gates are present as
 opt-in tests. A pinned local export now packs successfully to 11 files and
 6,906,461,695 bytes. Its native conditioning error is 0.081541 against the
 frozen 0.084 INT4 quality envelope. The grouped Metal attention kernel passes
-a focused GQA and causal-mask parity fixture, but the nine-step native denoise
-still did not complete within roughly six minutes after that optimization, so
-no complete packed install has passed the real gates. IG2 therefore remains
-open. Keep the CPU backend as the diagnostic oracle, not as an unrecorded
-fallback. See
+a focused GQA and causal-mask parity fixture, and the isolated
+production-shape VAE parity arm now passes its frozen pixel limits. The
+complete matched-noise nine-step gate is being rerun before the PNG,
+cancellation, and quiet-machine resource gates, so IG2 remains open. Keep the
+CPU backend as the diagnostic oracle, not as an unrecorded fallback. See
 [IMAGE_GENERATION.md](IMAGE_GENERATION.md#ig2-handoff-checklist) for the
 file-level checklist and stop conditions.
 

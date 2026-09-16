@@ -747,13 +747,16 @@ pub(crate) fn conv2d(
     if let Some(bias) = bias {
         buffers.push((component.resident.buffer(), 1, bias.offset));
     }
-    dispatch(
-        context,
-        &pass,
+    pass.encode_threadgroups_3d(
         &shader,
         &buffers,
         &[(&params, 4)],
-        output.len,
+        (
+            out_channels.div_ceil(8) as u64,
+            (height * width).div_ceil(8) as u64,
+            1,
+        ),
+        (256, 1, 1),
     );
     let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
@@ -791,9 +794,7 @@ pub(crate) fn group_norm(
     params.extend_from_slice(&eps.to_le_bytes());
     let shader = pipeline(context, "image_group_norm")?;
     let pass = context.begin_pass_labeled("image-group-norm");
-    dispatch(
-        context,
-        &pass,
+    pass.encode_threadgroups_3d(
         &shader,
         &[
             (&input.buffer, 0, 0),
@@ -802,7 +803,8 @@ pub(crate) fn group_norm(
             (&output.buffer, 3, 0),
         ],
         &[(&params, 4)],
-        output.len,
+        (groups as u64, 1, 1),
+        (256, 1, 1),
     );
     let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
@@ -874,6 +876,9 @@ pub(crate) fn vae_attention(
     height: usize,
     width: usize,
 ) -> Result<GpuTensor, String> {
+    if channels == 0 || channels > 512 {
+        return Err("image VAE attention channels must be in 1..=512".to_string());
+    }
     let len = channels * height * width;
     if q.len != len || k.len != len || v.len != len {
         return Err("image VAE attention input shapes do not match".to_string());
@@ -895,7 +900,7 @@ pub(crate) fn vae_attention(
             (&output.buffer, 3, 0),
         ],
         &[(&params, 4)],
-        ((len / channels) as u64, 1, 1),
+        ((len / channels).div_ceil(8) as u64, 1, 1),
         (256, 1, 1),
     );
     let ready = commit_deferred(pass);
@@ -1051,6 +1056,177 @@ mod tests {
 
     #[test]
     #[ignore = "opt-in Metal kernel parity test"]
+    fn simd_conv2d_matches_cpu_for_padded_stride_one() {
+        let Ok(mut context) = MetalContext::new() else {
+            eprintln!("NOTE: skipping image Metal parity test, no Metal device");
+            return;
+        };
+        let channels = 5;
+        let out_channels = 9;
+        let height = 4;
+        let width = 3;
+        let kernel = 3;
+        let matrix: Vec<f32> = (0..out_channels * channels * kernel * kernel)
+            .map(|index| ((index * 11 % 71) as f32 - 35.0) / 43.0)
+            .collect();
+        let bias: Vec<f32> = (0..out_channels)
+            .map(|index| (index as f32 - 4.0) / 17.0)
+            .collect();
+        let input: Vec<f32> = (0..channels * height * width)
+            .map(|index| ((index * 7 % 53) as f32 - 26.0) / 31.0)
+            .collect();
+        let mut payload = Vec::new();
+        let weight_offset = append_f32(&mut payload, &matrix);
+        let bias_offset = append_f32(&mut payload, &bias);
+        let mut tensors = BTreeMap::new();
+        tensors.insert(
+            "conv.weight".to_string(),
+            PackedTensor {
+                shape: vec![out_channels, channels, kernel, kernel],
+                source_dtype: "F32".to_string(),
+                storage_dtype: "F32".to_string(),
+                offset: weight_offset,
+                length: (matrix.len() * 4) as u64,
+                quantization: None,
+            },
+        );
+        tensors.insert(
+            "conv.bias".to_string(),
+            PackedTensor {
+                shape: vec![out_channels],
+                source_dtype: "F32".to_string(),
+                storage_dtype: "F32".to_string(),
+                offset: bias_offset,
+                length: (bias.len() * 4) as u64,
+                quantization: None,
+            },
+        );
+        let root = temporary_directory();
+        write_index(&root, payload, tensors);
+        let component = Component::open(&context, &root).expect("open synthetic component");
+        let input_gpu = upload(&context, &input);
+        let actual = conv2d(
+            &mut context,
+            &component,
+            component
+                .weight("conv.weight", &[out_channels, channels, kernel, kernel])
+                .unwrap(),
+            Some(component.weight("conv.bias", &[out_channels]).unwrap()),
+            &input_gpu,
+            channels,
+            height,
+            width,
+            out_channels,
+            kernel,
+            1,
+            1,
+        )
+        .expect("SIMD convolution");
+
+        let mut expected = vec![0.0f32; out_channels * height * width];
+        for oc in 0..out_channels {
+            for oy in 0..height {
+                for ox in 0..width {
+                    let mut sum = bias[oc];
+                    for ic in 0..channels {
+                        for ky in 0..kernel {
+                            for kx in 0..kernel {
+                                let iy = oy as isize + ky as isize - 1;
+                                let ix = ox as isize + kx as isize - 1;
+                                if iy >= 0 && ix >= 0 && iy < height as isize && ix < width as isize
+                                {
+                                    let input_index =
+                                        (ic * height + iy as usize) * width + ix as usize;
+                                    let weight_index =
+                                        ((oc * channels + ic) * kernel + ky) * kernel + kx;
+                                    sum += input[input_index] * matrix[weight_index];
+                                }
+                            }
+                        }
+                    }
+                    expected[(oc * height + oy) * width + ox] = sum;
+                }
+            }
+        }
+        assert_close(&read(&actual), &expected, 2e-5);
+        drop(component);
+        fs::remove_dir_all(root).expect("remove synthetic component");
+    }
+
+    #[test]
+    #[ignore = "opt-in Metal kernel parity test"]
+    fn cooperative_group_norm_matches_cpu() {
+        let Ok(mut context) = MetalContext::new() else {
+            eprintln!("NOTE: skipping image Metal parity test, no Metal device");
+            return;
+        };
+        let channels = 8;
+        let groups = 2;
+        let height = 3;
+        let width = 5;
+        let eps = 1e-5;
+        let input: Vec<f32> = (0..channels * height * width)
+            .map(|index| ((index * 17 % 61) as f32 - 30.0) / 29.0)
+            .collect();
+        let weight: Vec<f32> = (0..channels)
+            .map(|index| 0.7 + index as f32 / 23.0)
+            .collect();
+        let bias: Vec<f32> = (0..channels)
+            .map(|index| (index as f32 - 3.0) / 19.0)
+            .collect();
+        let mut payload = Vec::new();
+        let weight_offset = append_f32(&mut payload, &weight);
+        let bias_offset = append_f32(&mut payload, &bias);
+        let mut tensors = BTreeMap::new();
+        tensors.insert(
+            "norm.weight".to_string(),
+            PackedTensor {
+                shape: vec![channels],
+                source_dtype: "F32".to_string(),
+                storage_dtype: "F32".to_string(),
+                offset: weight_offset,
+                length: (weight.len() * 4) as u64,
+                quantization: None,
+            },
+        );
+        tensors.insert(
+            "norm.bias".to_string(),
+            PackedTensor {
+                shape: vec![channels],
+                source_dtype: "F32".to_string(),
+                storage_dtype: "F32".to_string(),
+                offset: bias_offset,
+                length: (bias.len() * 4) as u64,
+                quantization: None,
+            },
+        );
+        let root = temporary_directory();
+        write_index(&root, payload, tensors);
+        let component = Component::open(&context, &root).expect("open synthetic component");
+        let input_gpu = upload(&context, &input);
+        let actual = group_norm(
+            &mut context,
+            &component,
+            component.weight("norm.weight", &[channels]).unwrap(),
+            component.weight("norm.bias", &[channels]).unwrap(),
+            &input_gpu,
+            channels,
+            height,
+            width,
+            groups,
+            eps,
+        )
+        .expect("cooperative GroupNorm");
+        let expected =
+            crate::vae::group_norm(&input, channels, height, width, &weight, &bias, groups, eps)
+                .expect("CPU GroupNorm");
+        assert_close(&read(&actual), &expected, 2e-5);
+        drop(component);
+        fs::remove_dir_all(root).expect("remove synthetic component");
+    }
+
+    #[test]
+    #[ignore = "opt-in Metal kernel parity test"]
     fn grouped_attention_matches_cpu_for_gqa_and_causal_mask() {
         let Ok(mut context) = MetalContext::new() else {
             eprintln!("NOTE: skipping image Metal parity test, no Metal device");
@@ -1142,7 +1318,7 @@ mod tests {
         };
         let channels = 512;
         let height = 2;
-        let width = 3;
+        let width = 4;
         let area = height * width;
         let len = channels * area;
         let q: Vec<f32> = (0..len)

@@ -411,7 +411,12 @@ fn packed_native_quality_and_resource_oracle() {
     let expected_rgb = turbospark_image::vae::decoded_to_rgb8(&expected_pixels, 1024, 1024)
         .expect("expected pixels convert to RGB");
     let mut measurements = Vec::new();
-    for label in ["cold", "warm"] {
+    let arms: &[&str] = if std::env::var_os("TURBOSPARK_IMAGE_RESOURCE_WARM_ONLY").is_some() {
+        &["warm"]
+    } else {
+        &["cold", "warm"]
+    };
+    for label in arms {
         let measurement = measure_generation(&mut backend, label);
         let actual_pixels = decode_png_rgb(&measurement.result.png);
         let quality_error = relative_l2_u8(&actual_pixels, &expected_rgb);
@@ -447,10 +452,12 @@ fn packed_native_quality_and_resource_oracle() {
         }
         measurements.push((measurement, quality_error));
     }
-    assert_eq!(
-        measurements[0].0.result.png, measurements[1].0.result.png,
-        "cold and warm native generations must be deterministic"
-    );
+    if measurements.len() == 2 {
+        assert_eq!(
+            measurements[0].0.result.png, measurements[1].0.result.png,
+            "cold and warm native generations must be deterministic"
+        );
+    }
 }
 
 struct GenerationMeasurement {

@@ -1,4 +1,5 @@
 #include <metal_stdlib>
+#include <metal_simdgroup_matrix>
 using namespace metal;
 
 inline float image_round_bf16_value(float value) {
@@ -490,10 +491,12 @@ struct VaeAttentionParams {
     uint width;
 };
 
-// One threadgroup owns one query position. The previous elementwise launch
+// One threadgroup owns eight query positions. The previous elementwise launch
 // recomputed every query/key dot product once per output channel, multiplying
 // the production-shape work by another 512x. Scores are tiled through shared
 // memory so each query/key dot is computed once and reused by all channels.
+// Each SIMD group then reduces one 512-wide dot product cooperatively instead
+// of making one lane perform the whole reduction serially.
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void image_vae_attention(
     device const float *q [[buffer(0)]],
@@ -502,76 +505,102 @@ void image_vae_attention(
     device float *output [[buffer(3)]],
     constant VaeAttentionParams &p [[buffer(4)]],
     uint tid [[thread_index_in_threadgroup]],
-    uint query [[threadgroup_position_in_grid]]) {
+    uint simd_lane [[thread_index_in_simdgroup]],
+    uint simd_group [[simdgroup_index_in_threadgroup]],
+    uint group_id [[threadgroup_position_in_grid]]) {
     const uint area = p.height * p.width;
-    if (query >= area) return;
+    const uint query_base = group_id * 8;
 
-    threadgroup float scores[256];
-    threadgroup float maximum;
+    threadgroup float scores[8][64];
+    threadgroup float maximum[8];
     const float inv_scale = rsqrt(float(p.channels));
 
     // Match the reference's two-pass softmax order while sharing the score
-    // calculation. The barrier at the end of each tile protects scores from
-    // being overwritten while another lane is still consuming them.
-    maximum = -INFINITY;
-    for (uint tile = 0; tile < area; tile += 256) {
-        const uint key = tile + tid;
-        float score = -INFINITY;
-        if (key < area) {
-            score = 0.0f;
-            for (uint c = 0; c < p.channels; ++c) {
-                score = fma(q[c * area + query], k[c * area + key], score);
-            }
-            score *= inv_scale;
+    // calculation. SIMD-group matrix tiles compute QK^T directly from the
+    // CHW buffers, and the barrier protects scores before value accumulation.
+    if (tid == 0) {
+        for (uint query_slot = 0; query_slot < 8; ++query_slot) {
+            maximum[query_slot] = -INFINITY;
         }
-        scores[tid] = score;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint tile = 0; tile < area; tile += 64) {
+        const uint key_base = tile + simd_group * 8;
+        simdgroup_float8x8 score_matrix =
+            make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+        for (uint c = 0; c < p.channels; c += 8) {
+            simdgroup_float8x8 query_matrix;
+            simdgroup_float8x8 key_matrix;
+            simdgroup_load(
+                query_matrix, q + uint64_t(c) * area + query_base, area, ulong2(0, 0), true);
+            simdgroup_load(
+                key_matrix, k + uint64_t(c) * area + key_base, area, ulong2(0, 0), false);
+            simdgroup_multiply_accumulate(score_matrix, query_matrix, key_matrix, score_matrix);
+        }
+        simdgroup_store(score_matrix, scores[0] + simd_group * 8, 64, ulong2(0, 0), false);
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (tid == 0) {
-            const uint tile_end = min(tile + 256, area);
-            for (uint index = 0; index < tile_end - tile; ++index) {
-                maximum = max(maximum, scores[index]);
+            for (uint query_slot = 0; query_slot < 8; ++query_slot) {
+                const uint query = query_base + query_slot;
+                const uint tile_end = min(tile + 64, area);
+                for (uint index = 0; index < tile_end - tile; ++index) {
+                    if (query < area) {
+                        maximum[query_slot] = max(
+                            maximum[query_slot], scores[query_slot][index] * inv_scale);
+                    }
+                }
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
     float denominator = 0.0f;
-    float numerator0 = 0.0f;
-    float numerator1 = 0.0f;
-    const uint channel0 = tid;
-    const uint channel1 = tid + 256;
-    for (uint tile = 0; tile < area; tile += 256) {
-        const uint key = tile + tid;
-        float score = -INFINITY;
-        if (key < area) {
-            score = 0.0f;
-            for (uint c = 0; c < p.channels; ++c) {
-                score = fma(q[c * area + query], k[c * area + key], score);
-            }
-            score *= inv_scale;
+    float numerator[16] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                           0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    const uint query_slot = simd_group;
+    const uint channel_base = simd_lane;
+    const uint query = query_base + query_slot;
+
+    for (uint tile = 0; tile < area; tile += 64) {
+        const uint key_base = tile + simd_group * 8;
+        simdgroup_float8x8 score_matrix =
+            make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+        for (uint c = 0; c < p.channels; c += 8) {
+            simdgroup_float8x8 query_matrix;
+            simdgroup_float8x8 key_matrix;
+            simdgroup_load(
+                query_matrix, q + uint64_t(c) * area + query_base, area, ulong2(0, 0), true);
+            simdgroup_load(
+                key_matrix, k + uint64_t(c) * area + key_base, area, ulong2(0, 0), false);
+            simdgroup_multiply_accumulate(score_matrix, query_matrix, key_matrix, score_matrix);
         }
-        scores[tid] = score;
+        simdgroup_store(score_matrix, scores[0] + simd_group * 8, 64, ulong2(0, 0), false);
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        const uint tile_end = min(tile + 256, area);
+        const uint tile_end = min(tile + 64, area);
         for (uint index = 0; index < tile_end - tile; ++index) {
             const uint key_index = tile + index;
-            const float probability = exp(scores[index] - maximum);
+            const float probability =
+                exp(scores[query_slot][index] * inv_scale - maximum[query_slot]);
             denominator += probability;
-            if (channel0 < p.channels) {
-                numerator0 = fma(probability, v[channel0 * area + key_index], numerator0);
-            }
-            if (channel1 < p.channels) {
-                numerator1 = fma(probability, v[channel1 * area + key_index], numerator1);
+            for (uint output_slot = 0; output_slot < 16; ++output_slot) {
+                const uint channel = channel_base + output_slot * 32;
+                if (channel < p.channels && query < area) {
+                    numerator[output_slot] =
+                        fma(probability, v[channel * area + key_index], numerator[output_slot]);
+                }
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    if (channel0 < p.channels) {
-        output[channel0 * area + query] = numerator0 / denominator;
-    }
-    if (channel1 < p.channels) {
-        output[channel1 * area + query] = numerator1 / denominator;
+    if (query < area) {
+        for (uint output_slot = 0; output_slot < 16; ++output_slot) {
+            const uint channel = channel_base + output_slot * 32;
+            if (channel < p.channels) {
+                output[channel * area + query] = numerator[output_slot] / denominator;
+            }
+        }
     }
 }
 
@@ -582,30 +611,50 @@ void image_conv2d(
     device const float *input [[buffer(2)]],
     device float *output [[buffer(3)]],
     constant ConvParams &p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]) {
+    uint tid [[thread_index_in_threadgroup]],
+    uint simd_lane [[thread_index_in_simdgroup]],
+    uint simd_group [[simdgroup_index_in_threadgroup]],
+    uint2 group_id [[threadgroup_position_in_grid]]) {
     const uint out_area = p.in_height * p.in_width;
-    const uint total = p.out_channels * out_area;
-    if (gid >= total) return;
-    const uint oc = gid / out_area;
-    const uint flat = gid - oc * out_area;
-    const uint oy = flat / p.in_width;
-    const uint ox = flat - oy * p.in_width;
-    float sum = (p.bias_storage == 0) ? 0.0f : stored_value(bias, oc, p.bias_storage);
-    const int base_y = int(oy * p.stride) - int(p.padding);
-    const int base_x = int(ox * p.stride) - int(p.padding);
-    for (uint ic = 0; ic < p.in_channels; ++ic) {
+    const uint oc = group_id.x * 8 + simd_group;
+    const uint spatial_base = group_id.y * 8;
+    if (oc >= p.out_channels) return;
+    float sums[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    for (uint ic = simd_lane; ic < p.in_channels; ic += 32) {
         for (uint ky = 0; ky < p.kernel_size; ++ky) {
             for (uint kx = 0; kx < p.kernel_size; ++kx) {
-                const int iy = base_y + int(ky);
-                const int ix = base_x + int(kx);
-                if (iy < 0 || ix < 0 || iy >= int(p.in_height) || ix >= int(p.in_width)) continue;
-                const uint in_index = (ic * p.in_height + uint(iy)) * p.in_width + uint(ix);
-                const uint w_index = ((oc * p.in_channels + ic) * p.kernel_size + ky) * p.kernel_size + kx;
-                sum = fma(input[in_index], stored_value(weight, w_index, p.weight_storage), sum);
+                const uint w_index =
+                    ((oc * p.in_channels + ic) * p.kernel_size + ky) * p.kernel_size + kx;
+                const float weight_value = stored_value(weight, w_index, p.weight_storage);
+                for (uint slot = 0; slot < 8; ++slot) {
+                    const uint flat = spatial_base + slot;
+                    if (flat >= out_area) continue;
+                    const uint oy = flat / p.in_width;
+                    const uint ox = flat - oy * p.in_width;
+                    const int base_y = int(oy * p.stride) - int(p.padding);
+                    const int base_x = int(ox * p.stride) - int(p.padding);
+                    const int input_y = base_y + int(ky);
+                    const int input_x = base_x + int(kx);
+                    if (input_y < 0 || input_x < 0 || input_y >= int(p.in_height)
+                        || input_x >= int(p.in_width))
+                    {
+                        continue;
+                    }
+                    const uint in_index =
+                        (ic * p.in_height + uint(input_y)) * p.in_width + uint(input_x);
+                    sums[slot] = fma(input[in_index], weight_value, sums[slot]);
+                }
             }
         }
     }
-    output[gid] = sum;
+    for (uint slot = 0; slot < 8; ++slot) sums[slot] = simd_sum(sums[slot]);
+    if (simd_lane == 0) {
+        const float shift = p.bias_storage == 0 ? 0.0f : stored_value(bias, oc, p.bias_storage);
+        for (uint slot = 0; slot < 8; ++slot) {
+            const uint flat = spatial_base + slot;
+            if (flat < out_area) output[oc * out_area + flat] = sums[slot] + shift;
+        }
+    }
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]
@@ -615,30 +664,56 @@ void image_group_norm(
     device const uchar *bias [[buffer(2)]],
     device float *output [[buffer(3)]],
     constant GroupNormParams &p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]) {
+    uint tid [[thread_index_in_threadgroup]],
+    uint simd_lane [[thread_index_in_simdgroup]],
+    uint simd_group [[simdgroup_index_in_threadgroup]],
+    uint group [[threadgroup_position_in_grid]]) {
     const uint area = p.height * p.width;
-    const uint channel = gid / area;
-    if (channel >= p.channels) return;
     const uint group_size = p.channels / p.groups;
-    const uint group = channel / group_size;
-    const uint first = group * group_size;
-    float mean = 0.0f;
-    uint count = group_size * area;
-    for (uint c = first; c < first + group_size; ++c) {
-        for (uint s = 0; s < area; ++s) mean += input[c * area + s];
+    const uint group_elements = group_size * area;
+    const uint group_offset = group * group_elements;
+    threadgroup float partial[8];
+    threadgroup float statistics[2];
+
+    float sum = 0.0f;
+    for (uint index = tid; index < group_elements; index += 256) {
+        sum += input[group_offset + index];
     }
-    mean /= float(count);
+    sum = simd_sum(sum);
+    if (simd_lane == 0) partial[simd_group] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        float total = 0.0f;
+        for (uint index = 0; index < 8; ++index) total += partial[index];
+        statistics[0] = total / float(group_elements);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const float mean = statistics[0];
     float variance = 0.0f;
-    for (uint c = first; c < first + group_size; ++c) {
-        for (uint s = 0; s < area; ++s) {
-            const float d = input[c * area + s] - mean;
-            variance = fma(d, d, variance);
-        }
+    for (uint index = tid; index < group_elements; index += 256) {
+        const float d = input[group_offset + index] - mean;
+        variance = fma(d, d, variance);
     }
-    const float normalized = (input[gid] - mean) * rsqrt(variance / float(count) + p.eps);
-    const float scale = stored_value(weight, channel, p.weight_storage);
-    const float shift = stored_value(bias, channel, p.bias_storage);
-    output[gid] = normalized * scale + shift;
+    variance = simd_sum(variance);
+    if (simd_lane == 0) partial[simd_group] = variance;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        float total = 0.0f;
+        for (uint index = 0; index < 8; ++index) total += partial[index];
+        statistics[1] = total / float(group_elements);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint index = tid; index < group_elements; index += 256) {
+        const uint channel = group * group_size + index / area;
+        const uint gid = group_offset + index;
+        const float normalized =
+            (input[gid] - mean) * rsqrt(statistics[1] + p.eps);
+        const float scale = stored_value(weight, channel, p.weight_storage);
+        const float shift = stored_value(bias, channel, p.bias_storage);
+        output[gid] = normalized * scale + shift;
+    }
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]
