@@ -54,6 +54,14 @@ enum ProfileBackupImport {
         guard unsafe.isEmpty else { throw ImportError.unsafeEntries(unsafe) }
     }
 
+    static func entries(from output: ProcessExecutor.Output) throws -> [String] {
+        guard output.exitCode == 0, !output.timedOut, !output.outputTruncated else {
+            throw ImportError.unreadableArchive
+        }
+        return output.stdout.split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+    }
+
     // MARK: - Reading the summary (no extraction)
 
     /// Reads and validates the manifest WITHOUT extracting, so the import
@@ -70,11 +78,7 @@ enum ProfileBackupImport {
                 executableURL: zipinfoURL,
                 arguments: ["-1", archive.path],
                 timeoutSeconds: 120)
-            guard output.exitCode == 0, !output.timedOut else {
-                throw ImportError.unreadableArchive
-            }
-            return output.stdout.split(separator: "\n", omittingEmptySubsequences: true)
-                .map(String.init)
+            return try entries(from: output)
         } catch let error as ImportError {
             throw error
         } catch {

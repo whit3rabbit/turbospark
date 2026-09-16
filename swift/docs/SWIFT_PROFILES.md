@@ -137,8 +137,9 @@ Exporting the profile the current run belongs to first flushes the same
 store writes the quit path ends with (`persistChats` + `persistSettings`),
 so the backup cannot miss the last keystroke; other profiles have no live
 writer. Import is the inverse under the same rules: the archive is listed
-with `zipinfo` and refused before extraction if any entry is absolute,
-starts with `..`, or carries a backslash (zip-slip); the manifest must be
+with `zipinfo` and refused before extraction if the listing is truncated or
+if any entry is absolute, starts with `..`, or carries a backslash (zip-slip);
+the manifest must be
 present, kind-correct, and version-matched; and the payload always restores
 into a NEW identity -- a freshly minted UUID and a user-chosen name -- so a
 Default backup's `"default"` id can never reach the registry and a

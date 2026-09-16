@@ -23,6 +23,17 @@ final class ProcessExecutorTests: XCTestCase {
         XCTAssertGreaterThan(result.stdout.count, 190_000)
     }
 
+    func testOutputReportsWhenTheCaptureIsTruncated() async throws {
+        let result = try await ProcessExecutor.run(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "printf 123456789"],
+            timeoutSeconds: 10,
+            outputCapBytes: 4
+        )
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.outputTruncated)
+    }
+
     func testTimeoutActuallyTerminatesALongRunningCommand() async throws {
         let start = Date()
         let result = try await ProcessExecutor.run(
