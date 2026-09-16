@@ -241,6 +241,20 @@ final class ProfileBackupTests: XCTestCase {
         XCTAssertFalse(ProfileBackupImport.isSafeArchiveEntry("bad\u{1}name"))
     }
 
+    func testArchiveListingRefusesTruncatedSuccessfulOutput() {
+        let output = ProcessExecutor.Output(
+            stdout: "settings.json\n... (output truncated at 1000000 bytes)",
+            stderr: "",
+            exitCode: 0,
+            timedOut: false,
+            outputTruncated: true,
+            mergedOutput: nil)
+
+        XCTAssertThrowsError(try ProfileBackupImport.entries(from: output)) { error in
+            XCTAssertEqual(error as? ProfileBackupImport.ImportError, .unreadableArchive)
+        }
+    }
+
     // MARK: - Import: refusal cases
 
     func testImportRefusesAnArchiveWithoutAManifest() async throws {

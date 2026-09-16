@@ -33,6 +33,11 @@ final class CappedOutputBuffer: @unchecked Sendable {
         }
         return s
     }
+
+    var isTruncated: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return truncated
+    }
 }
 
 /// Shared subprocess execution helper.
@@ -53,6 +58,9 @@ enum ProcessExecutor {
         var stderr: String
         var exitCode: Int32
         var timedOut: Bool
+        /// True when either captured stream exceeded `outputCapBytes`.
+        /// Callers that require complete output must reject this result.
+        var outputTruncated: Bool
         /// Set only when the run asked for merged streams: stdout and stderr
         /// interleaved in arrival order, the shared buffer's text. `stdout`
         /// and `stderr` are both empty in that mode.
@@ -208,6 +216,7 @@ enum ProcessExecutor {
         if mergeStreams {
             return Output(
                 stdout: "", stderr: "", exitCode: exitCode, timedOut: timedOut,
+                outputTruncated: stdoutBuffer.isTruncated,
                 mergedOutput: stdoutBuffer.text)
         }
         return Output(
@@ -215,6 +224,7 @@ enum ProcessExecutor {
             stderr: stderrBuffer.text,
             exitCode: exitCode,
             timedOut: timedOut,
+            outputTruncated: stdoutBuffer.isTruncated || stderrBuffer.isTruncated,
             mergedOutput: nil
         )
     }
