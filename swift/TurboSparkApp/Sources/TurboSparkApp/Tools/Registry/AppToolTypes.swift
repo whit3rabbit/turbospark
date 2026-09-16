@@ -169,6 +169,9 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
     /// encoded into the normal chat archive; `ToolObservationStore` receives
     /// it before persistence.
     public var archivalOutput: String?
+    /// A hook requested that autonomous generation stop after this result.
+    /// This is runtime-only control state and is not persisted in chat archives.
+    public var continuationStopReason: String?
 
     public init(
         id: UUID = UUID(),
@@ -180,7 +183,8 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         observation: ToolObservationRef? = nil,
         efficiency: ToolEfficiencyOutcome? = nil,
         fullPromptSendCount: Int = 0,
-        archivalOutput: String? = nil
+        archivalOutput: String? = nil,
+        continuationStopReason: String? = nil
     ) {
         self.id = id
         self.callID = callID
@@ -192,6 +196,7 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         self.efficiency = efficiency
         self.fullPromptSendCount = fullPromptSendCount
         self.archivalOutput = archivalOutput
+        self.continuationStopReason = continuationStopReason
     }
 
     /// Spelled out because this type now has BOTH a custom `init(from:)` and
@@ -269,6 +274,7 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         efficiency = try container.decodeIfPresent(ToolEfficiencyOutcome.self, forKey: .efficiency)
         fullPromptSendCount = try container.decodeIfPresent(Int.self, forKey: .fullPromptSendCount) ?? 0
         archivalOutput = nil
+        continuationStopReason = nil
     }
 
     /// The only result representation model prompt assembly may use.

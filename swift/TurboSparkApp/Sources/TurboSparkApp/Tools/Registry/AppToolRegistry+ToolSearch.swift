@@ -1,6 +1,27 @@
 import Foundation
 
 extension AppToolRegistry {
+    struct DeferredMcpContinuationStop: LocalizedError {
+        let output: String
+        let isError: Bool
+        let reason: String
+
+        var errorDescription: String? { output }
+    }
+
+    static func deferredMcpPreHookStop(
+        _ decision: AppHookPreToolUseDecision
+    ) -> DeferredMcpContinuationStop? {
+        guard decision.preventContinuation else { return nil }
+        let reason = decision.continuationStopReason
+            ?? decision.reason
+            ?? "A PreToolUse hook stopped the turn."
+        return DeferredMcpContinuationStop(
+            output: "Deferred MCP call blocked by hook: " + reason,
+            isError: true,
+            reason: reason)
+    }
+
     /// Executes a bridge call only after rebuilding the underlying MCP call and
     /// running its own hooks and permission decision. A wrapped call cannot use
     /// the bridge tool's read-only category to bypass the target tool's gates.
@@ -29,6 +50,9 @@ extension AppToolRegistry {
             projectBoundHookDirectory: workingDirectory)
         if let updated = hookDecision.updatedInput {
             for (key, value) in updated { stringArguments[key] = value }
+        }
+        if let stop = deferredMcpPreHookStop(hookDecision) {
+            throw stop
         }
         if hookDecision.behavior == .deny {
             throw NSError(domain: "TurboSparkToolSearch", code: 6, userInfo: [
@@ -86,6 +110,13 @@ extension AppToolRegistry {
         }
         if let context = postVerdict.additionalContext, !context.isEmpty {
             output += "\n\n<hook_context>\n" + context + "\n</hook_context>"
+        }
+        if postVerdict.preventContinuation {
+            throw DeferredMcpContinuationStop(
+                output: output,
+                isError: false,
+                reason: postVerdict.continuationStopReason
+                    ?? "A PostToolUse hook stopped the turn.")
         }
         return output
     }

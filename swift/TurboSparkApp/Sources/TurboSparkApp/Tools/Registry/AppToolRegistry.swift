@@ -770,6 +770,14 @@ public enum AppToolRegistry {
             return AppToolResult(
                 callID: call.id, output: output, isError: false, durationSeconds: elapsed,
                 archivalOutput: archivalOutput)
+        } catch let stop as DeferredMcpContinuationStop {
+            let elapsed = Date().timeIntervalSince(startTime)
+            return AppToolResult(
+                callID: call.id,
+                output: stop.output,
+                isError: stop.isError,
+                durationSeconds: elapsed,
+                continuationStopReason: stop.reason)
         } catch is CancellationError {
             // **A STOP IS NOT A TOOL FAILURE** (state#64). `CancellationError`
             // localizes to "cancelled", so a command the USER stopped reached

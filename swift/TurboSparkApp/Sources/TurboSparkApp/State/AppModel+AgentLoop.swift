@@ -831,6 +831,9 @@ extension AppModel {
             if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
                 executedResult.output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
             }
+            if stopReason == nil {
+                stopReason = executedResult.continuationStopReason
+            }
             if postVerdict.preventContinuation, stopReason == nil {
                 stopReason = postVerdict.continuationStopReason
             }

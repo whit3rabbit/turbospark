@@ -35,6 +35,18 @@ final class ToolSearchTests: XCTestCase {
         XCTAssertEqual(AppToolCatalog.category(for: "tool_call"), .mcp)
     }
 
+    func testDeferredMcpPreHookContinueFalseStopsAnOtherwiseAllowedCall() throws {
+        let decision = AppHookPreToolUseDecision(
+            behavior: .allow,
+            preventContinuation: true,
+            continuationStopReason: "production blocked")
+
+        let stop = try XCTUnwrap(AppToolRegistry.deferredMcpPreHookStop(decision))
+        XCTAssertTrue(stop.isError)
+        XCTAssertEqual(stop.reason, "production blocked")
+        XCTAssertEqual(stop.output, "Deferred MCP call blocked by hook: production blocked")
+    }
+
     func testSearchRunsEachQueryIndependentlyAndStemsTerms() throws {
         let output = ToolSearchCatalog.search(
             queries: ["issues", "send message"], descriptors: descriptors)
