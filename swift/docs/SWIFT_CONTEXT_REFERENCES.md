@@ -86,6 +86,10 @@ quoted paths under `@file:` / `@folder:` for the same reason.
   cap, and the textual-MIME gate. It is additionally gated on the chat's
   web-tools toggle (`webSearchEnabled`) -- the same switch that gates the
   model's own web tools -- and refuses with a toast when it is off.
+- Git references pass `--no-ext-diff --no-textconv` to every diff-producing
+  command. Repository configuration and attributes therefore cannot turn a
+  passive attachment read into execution of an external diff or textconv
+  helper.
 
 ## Failure behavior
 
