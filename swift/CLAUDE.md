@@ -455,19 +455,14 @@ keeps resolving.
     has already learned. `testEverySectionHasAUniqueTitleAndShortcut`
     guards a missing or duplicated tooltip.
 
-    **THE WINDOW OPENS AT 94% OF THE SCREEN'S VISIBLE FRAME, AND
-    `.defaultSize` ALONE COULD NOT DELIVER THAT.** That modifier decides the
-    FIRST launch only; macOS autosaves a `Window` scene's frame and restores
-    it forever after, so raising the default is invisible to every existing
-    install, which is everyone. `ForegroundAppDelegate` therefore carries a
-    one-time migration keyed on
-    `TurboSpark.didAdoptRoomierDefaultWindowFrame`, which grows the restored
-    frame PER AXIS and only upward -- the first cut tested
-    `width < target || height < target` and then assigned the target flat,
-    which grew the height and made the window NARROWER on a machine already
-    wider than the target. It runs async, because at
-    `applicationDidFinishLaunching` the SwiftUI scene has not built its
-    window yet and `NSApp.windows` is empty.
+    **THE WINDOW DEFAULTS TO THE SCREEN'S FULL VISIBLE FRAME AND REMEMBERS
+    SUBSEQUENT RESIZING.** It takes up all available screen real estate without
+    hiding the top menu bar or entering macOS Spaces full-screen mode. `.defaultSize`
+    proposes `screen.visibleFrame` for fresh installs, while `ForegroundAppDelegate`
+    carries a one-time migration keyed on `TurboSpark.didAdoptMaximizedDefaultWindowFrame`
+    to upgrade existing installs from the previous 94% box. After that adoption,
+    macOS automatically autosaves and restores whatever size and position the user
+    subsequently chooses.
 
     The right column is one slot, not two: `previewAttachment != nil` takes
     it from the inspector, which is why `.toggleInspector` closes the

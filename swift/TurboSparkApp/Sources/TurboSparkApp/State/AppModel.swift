@@ -338,6 +338,9 @@ public final class AppModel: ObservableObject {
     /// Which user a run belongs to was fixed before any store opened
     /// (`UserProfileStore.active`); this list is display and management.
     @Published public var profiles: [UserProfile] = []
+    /// A profile backup export or import is running, so the pane's backup
+    /// buttons disable rather than letting the operations stack.
+    @Published public var profileBackupInFlight = false
 
     // Agents State
     /// All discovered agents (built-in, user, project).

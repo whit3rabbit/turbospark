@@ -406,10 +406,6 @@ extension AppModel {
     }
 
     private func sanitizedFileName(_ title: String) -> String {
-        let invalid = CharacterSet(charactersIn: "/:\\?%*|\"<>")
-        let cleaned = title.components(separatedBy: invalid).joined(separator: "-")
-        let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        let capped = String(trimmed.prefix(60))
-        return capped.isEmpty ? "chat" : capped
+        ProfileBackup.sanitizedFileName(title, fallback: "chat")
     }
 }

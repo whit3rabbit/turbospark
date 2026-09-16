@@ -57,7 +57,7 @@ extension AppSettingsView {
             case .general:
                 return ["language", "locale", "localization", "keyboard", "readability", "text size", "hugging face", "hf", "token", "auth", "authentication", "api key", "ghost", "temporary chats", "compaction", "summarize", "menu bar", "background"]
             case .profiles:
-                return ["profiles", "users", "accounts", "switch user", "multi user"]
+                return ["profiles", "users", "accounts", "switch user", "multi user", "backup", "export", "import", "restore"]
             case .appearance:
                 return ["theme", "font", "size", "color", "accent", "contrast", "dark", "light", "display", "motion", "reset", "restore", "factory"]
             case .shortcuts:

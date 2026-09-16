@@ -373,6 +373,7 @@ final class MemoryFeatureTests: XCTestCase {
     func testAQuickSaveInAGhostChatStaysOutOfTheRow() {
         let root = makeScratchDirectory("ghost-project")
         let model = makeProjectModel(project: makeProject(root: root))
+        model.memoryEnabled = true
         var chat = AppChat(title: "Temporary Chat")
         chat.isGhost = true
         chat.projectID = model.projects[0].id

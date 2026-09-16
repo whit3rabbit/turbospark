@@ -62115,6 +62115,792 @@
         }
       }
     },
+    "A backup comes back as a new user with a fresh identity and a name of its own, even when it was exported from the Default user. Keychain-stored hook secrets are not part of a backup.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعود النسخة الاحتياطية كمستخدم جديد بهوية جديدة واسم خاص بها، حتى إذا تم تصديرها من المستخدم الافتراضي. أسرار الخطافات المخزنة في سلسلة المفاتيح ليست جزءا من النسخة الاحتياطية."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein Backup kommt als neuer Benutzer mit eigener Identität und eigenem Namen zurück, selbst wenn es vom Standardbenutzer exportiert wurde. Im Schlüsselbund gespeicherte Hook-Geheimnisse sind nicht Teil eines Backups."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A backup comes back as a new user with a fresh identity and a name of its own, even when it was exported from the Default user. Keychain-stored hook secrets are not part of a backup."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una copia de seguridad se restaura como un usuario nuevo con identidad propia y su propio nombre, incluso si se exportó del usuario predeterminado. Los secretos de hooks guardados en el llavero no forman parte de una copia de seguridad."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une sauvegarde revient comme un nouvel utilisateur avec une identité neuve et son propre nom, même si elle a été exportée depuis l'utilisateur par défaut. Les secrets de hooks stockés dans le trousseau ne font pas partie d'une sauvegarde."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "גיבוי חוזר כמשתמש חדש עם זהות חדשה ושם משלו, גם אם יוצא ממשתמש ברירת המחדל. סודות הוק המאוחסנים בצרור המפתחות אינם חלק מגיבוי."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बैकअप एक नए उपयोगकर्ता के रूप में लौटता है जिसकी नई पहचान और अपना नाम होता है, भले ही वह डिफ़ॉल्ट उपयोगकर्ता से निर्यात किया गया हो। कीचेन में संग्रहीत हुक रहस्य बैकअप का हिस्सा नहीं होते।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cadangan kembali sebagai pengguna baru dengan identitas baru dan namanya sendiri, bahkan jika diekspor dari pengguna bawaan. Rahasia hook yang disimpan di Keychain bukan bagian dari cadangan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un backup torna come un nuovo utente con una nuova identità e un nome proprio, anche se è stato esportato dall'utente predefinito. I segreti degli hook memorizzati nel portachiavi non fanno parte di un backup."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップは、デフォルトユーザーから書き出されたものであっても、新しい識別子と独自の名前を持つ新しいユーザーとして復元されます。キーチェーンに保存されたフックのシークレットはバックアップに含まれません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "백업은 기본 사용자에서 내보낸 것이더라도 새로운 식별자와 고유한 이름을 가진 새 사용자로 복원됩니다. 키체인에 저장된 훅 시크릿은 백업에 포함되지 않습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een back-up komt terug als een nieuwe gebruiker met een nieuwe identiteit en een eigen naam, zelfs als deze is geëxporteerd van de standaardgebruiker. In de sleutelhanger opgeslagen hook-geheimen maken geen deel uit van een back-up."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kopia zapasowa wraca jako nowy użytkownik z nową tożsamością i własną nazwą, nawet jeśli została wyeksportowana z użytkownika domyślnego. Sekrety hooków przechowywane w pęku kluczy nie są częścią kopii zapasowej."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Um backup volta como um novo usuário com identidade própria e um nome próprio, mesmo quando exportado do usuário padrão. Segredos de hooks guardados no chaveiro não fazem parte de um backup."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Резервная копия возвращается как новый пользователь с новой идентификацией и собственным именем, даже если она была экспортирована из пользователя по умолчанию. Секреты хуков, хранящиеся в Связке ключей, не входят в резервную копию."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En säkerhetskopia kommer tillbaka som en ny användare med en ny identitet och ett eget namn, även om den exporterades från standardanvändaren. Nyckelringlagrade hookhemligheter ingår inte i en säkerhetskopia."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir yedek, varsayılan kullanıcıdan dışa aktarılmış olsa bile yeni bir kimlik ve kendi adıyla yeni bir kullanıcı olarak geri gelir. Anahtar zincirinde saklanan kanca sırları bir yedeğin parçası değildir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Резервна копія повертається як новий користувач з новою ідентичністю та власним ім'ям, навіть якщо вона була експортована з типового користувача. Секрети хуків, що зберігаються в Зв'язці ключів, не є частиною резервної копії."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bản sao lưu quay lại như một người dùng mới với danh tính mới và tên riêng, ngay cả khi nó được xuất từ người dùng mặc định. Các bí mật hook lưu trong Keychain không phải là một phần của bản sao lưu."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "备份会作为一个拥有全新标识和独立名称的新用户恢复,即使它是从默认用户导出的。存储在钥匙串中的钩子密钥不属于备份的一部分。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "備份會以擁有全新識別與獨立名稱的新使用者身分恢復,即使是從預設使用者匯出的。儲存在鑰匙圈中的掛鉤密鑰不屬於備份的一部分。"
+          }
+        }
+      }
+    },
+    "Export Backup...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تصدير نسخة احتياطية..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backup exportieren..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export Backup..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar copia de seguridad..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exporter une sauvegarde..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייצוא גיבוי..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बैकअप निर्यात करें..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekspor Cadangan..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esporta backup..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップを書き出す..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "백업 내보내기..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back-up exporteren..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eksportuj kopię zapasową..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar backup..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспортировать резервную копию..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportera säkerhetskopia..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yedeği Dışa Aktar..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Експортувати резервну копію..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xuất bản sao lưu..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出备份..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出備份..."
+          }
+        }
+      }
+    },
+    "Import Backup...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استيراد نسخة احتياطية..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backup importieren..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Backup..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importar copia de seguridad..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importer une sauvegarde..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייבוא גיבוי..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बैकअप आयात करें..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impor Cadangan..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importa backup..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップを読み込む..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "백업 가져오기..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back-up importeren..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importuj kopię zapasową..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importar backup..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Импортировать резервную копию..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importera säkerhetskopia..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yedeği İçe Aktar..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Імпортувати резервну копію..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhập bản sao lưu..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入备份..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯入備份..."
+          }
+        }
+      }
+    },
+    "Import Profile Backup": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استيراد نسخة احتياطية للملف الشخصي"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profil-Backup importieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Profile Backup"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importar copia de seguridad de perfil"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importer une sauvegarde de profil"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייבוא גיבוי פרופיל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रोफ़ाइल बैकअप आयात करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impor Cadangan Profil"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importa backup del profilo"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロファイルのバックアップを読み込む"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프로필 백업 가져오기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profielback-up importeren"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importuj kopię zapasową profilu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importar backup de perfil"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Импорт резервной копии профиля"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importera profilsäkerhetskopia"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profil Yedeğini İçe Aktar"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Імпорт резервної копії профілю"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhập bản sao lưu hồ sơ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入配置文件备份"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯入設定檔備份"
+          }
+        }
+      }
+    },
+    "Restore a Backup": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استعادة نسخة احتياطية"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backup wiederherstellen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore a Backup"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restaurar una copia de seguridad"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restaurer une sauvegarde"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שחזור גיבוי"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बैकअप पुनर्स्थापित करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pulihkan Cadangan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ripristina un backup"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックアップを復元"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "백업 복원"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een back-up herstellen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przywróć kopię zapasową"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restaurar um backup"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Восстановить резервную копию"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Återställ en säkerhetskopia"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yedek Geri Yükle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відновити резервну копію"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khôi phục bản sao lưu"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复备份"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回復備份"
+          }
+        }
+      }
+    },
+    "This is a Default-user backup: it imports as a new named user, not the built-in one.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هذه نسخة احتياطية للمستخدم الافتراضي: سيتم استيرادها كمستخدم جديد باسم، وليس كمستخدم مدمج."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dies ist ein Backup des Standardbenutzers: Es wird als neuer benannter Benutzer importiert, nicht als der eingebaute."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This is a Default-user backup: it imports as a new named user, not the built-in one."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta es una copia de seguridad del usuario predeterminado: se importará como un usuario nuevo con nombre, no como el integrado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il s'agit d'une sauvegarde de l'utilisateur par défaut : elle sera importée comme un nouvel utilisateur nommé, et non comme l'utilisateur intégré."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "זהו גיבוי של משתמש ברירת המחדל: הוא ייובא כמשתמש חדש עם שם, ולא כמשתמש המובנה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह डिफ़ॉल्ट उपयोगकर्ता का बैकअप है: यह अंतर्निहित उपयोगकर्ता के बजाय नाम वाले नए उपयोगकर्ता के रूप में आयात होगा।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ini adalah cadangan pengguna bawaan: cadangan ini diimpor sebagai pengguna baru bernama, bukan pengguna terpasang."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo è un backup dell'utente predefinito: verrà importato come un nuovo utente con nome, non come quello integrato."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "これはデフォルトユーザーのバックアップです。組み込みのユーザーではなく、新しい名前付きユーザーとして読み込まれます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기본 사용자의 백업입니다. 내장 사용자가 아닌 새로운 이름의 사용자로 가져옵니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dit is een back-up van de standaardgebruiker: deze wordt geïmporteerd als een nieuwe benoemde gebruiker, niet als de ingebouwde."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To jest kopia zapasowa użytkownika domyślnego: zostanie zaimportowana jako nowy nazwany użytkownik, a nie wbudowany."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este é um backup do usuário padrão: ele será importado como um novo usuário com nome, não como o integrado."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это резервная копия пользователя по умолчанию: она будет импортирована как новый именованный пользователь, а не как встроенный."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Det här är en säkerhetskopia av standardanvändaren: den importeras som en ny namngiven användare, inte den inbyggda."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu, varsayılan kullanıcının yedeğidir: yerleşik kullanıcı olarak değil, yeni adlandırılmış bir kullanıcı olarak içe aktarılır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Це резервна копія типового користувача: вона буде імпортована як новий іменований користувач, а не як вбудований."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đây là bản sao lưu của người dùng mặc định: nó sẽ được nhập như một người dùng mới có tên, không phải người dùng tích hợp sẵn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这是默认用户的备份:它将作为一个新的命名用户导入,而不是内置用户。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這是預設使用者的備份:它會以新的命名使用者身分匯入,而非內建使用者。"
+          }
+        }
+      }
+    },
     "Restore": {
       "extractionState": "manual",
       "localizations": {

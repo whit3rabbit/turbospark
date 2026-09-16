@@ -139,7 +139,7 @@ struct RootView: View {
                 isInspectorVisible.toggle()
             }
         }
-        .onAppear {
+        .onAppear { [weak model] in
             // The delegate cannot reach the `@StateObject`, and it is the one
             // quit hook that survives the window closing first.
             AppShutdownCoordinator.shared.onTerminate = { [weak model] in

@@ -9,26 +9,22 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
         AppFontRegistrar.registerBundledFonts()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        Self.adoptRoomierDefaultFrameOnce()
+        Self.adoptMaximizedDefaultFrameOnce()
     }
 
-    /// One-time, ever: grow an existing install's window to the new roomy
-    /// default.
+    /// One-time, ever: maximize the window to fill the screen's visible frame.
     ///
-    /// `.defaultSize` on the scene only decides the FIRST launch. macOS then
-    /// autosaves the window's frame and restores it forever after, so raising
-    /// the default is invisible to anyone who has already run the app -- which
-    /// is everyone with the app installed. This runs once, keyed on a
-    /// UserDefaults flag, and never again: after it, resizing the window is
-    /// the user's business and nothing here fights it.
+    /// The app takes up all available screen real estate without entering
+    /// macOS Spaces full-screen mode, keeping the top menu bar visible.
     ///
-    /// It runs ASYNC because at `applicationDidFinishLaunching` the SwiftUI
+    /// After this one-time adoption, macOS automatically autosaves and restores
+    /// the user's chosen window size and position on every subsequent launch.
+    /// Resizing, tiling, or moving the window is preserved naturally.
+    ///
+    /// It runs async because at `applicationDidFinishLaunching` the SwiftUI
     /// scene has not built its window yet, so `NSApp.windows` is empty.
-    ///
-    /// A window that is already at least this big is left alone: someone who
-    /// had already sized it wide should not have it nudged.
-    private static func adoptRoomierDefaultFrameOnce() {
-        let key = "TurboSpark.didAdoptRoomierDefaultWindowFrame"
+    private static func adoptMaximizedDefaultFrameOnce() {
+        let key = "TurboSpark.didAdoptMaximizedDefaultWindowFrame"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
 
@@ -37,22 +33,8 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
                   let screen = window.screen ?? NSScreen.main
             else { return }
 
-            let target = TurboSparkApp.defaultWindowSize
-            // Per axis, and only upward. A `width < target || height < target`
-            // test plus a flat assignment SHRINKS whichever axis was already
-            // past the target, which is how growing a window makes it narrower.
-            let width = max(window.frame.width, target.width)
-            let height = max(window.frame.height, target.height)
-            guard width > window.frame.width || height > window.frame.height
-            else { return }
-
             let visible = screen.visibleFrame
-            let frame = NSRect(
-                x: visible.midX - width / 2,
-                y: visible.midY - height / 2,
-                width: width,
-                height: height)
-            window.setFrame(frame, display: true, animate: false)
+            window.setFrame(visible, display: true, animate: false)
         }
     }
 
@@ -102,31 +84,22 @@ struct TurboSparkApp: App {
         AppFontRegistrar.registerBundledFonts()
     }
 
-    /// The FIRST-LAUNCH window size: nearly the whole visible screen.
+    /// The default window size: the whole visible screen.
     ///
-    /// `.defaultSize` used to be a flat 1280x760, which is a small window on
-    /// any modern display and left the app opening into a fraction of the
-    /// screen while every pane it has (rail, chat sidebar, transcript,
-    /// inspector) wants width. This asks the screen instead, and takes 94% of
-    /// its VISIBLE frame -- visible rather than full, so the menu bar and the
-    /// Dock are already subtracted and the window does not open underneath
-    /// either one.
-    ///
-    /// Only the first launch is affected. macOS restores a `Window` scene's
-    /// frame from its own autosave after that, so this cannot fight a size the
-    /// user has chosen, and it does not force full screen: the window is still
-    /// an ordinary resizable one, with the green button free to zoom it.
+    /// This asks the screen for its VISIBLE frame -- visible rather than full,
+    /// so the menu bar and Dock are subtracted and the window does not open
+    /// underneath either one.
     ///
     /// `NSScreen.main` is nil in some launch contexts (no attached display,
-    /// certain headless runs), and the fallback is the old constant rather
-    /// than a computed guess.
+    /// certain headless runs), and the fallback is the standard default size
+    /// rather than a computed guess.
     static var defaultWindowSize: CGSize {
         guard let visible = NSScreen.main?.visibleFrame else {
             return CGSize(width: 1280, height: 760)
         }
         return CGSize(
-            width: max(AppChromeLayout.minimumHeight, visible.width * 0.94),
-            height: max(AppChromeLayout.minimumHeight, visible.height * 0.94))
+            width: max(AppChromeLayout.minimumHeight, visible.width),
+            height: max(AppChromeLayout.minimumHeight, visible.height))
     }
 
     var body: some Scene {
@@ -385,7 +358,7 @@ struct TurboSparkApp: App {
                 Button {
                     ModelLocationPicker.choose(for: model)
                 } label: {
-                    Text("Choose Model Folder…", bundle: .module)
+                    Text("Choose Model Folder...", bundle: .module)
                 }
                 .disabled(model.isRunning || model.isInstallingModel)
 
