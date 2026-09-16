@@ -331,6 +331,7 @@ unimplemented and uses `GET /health` for liveness.
 | `--memory-guard-gb` | integer | unset | set custom memory guard ceiling in gigabytes (omlx compatibility) |
 | `--min-auto-context` | non-negative integer | `0` | same as `turbospark-check`'s |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | same semantics as `turbospark-check`'s |
+| `--pool-size` | positive integer | `1` | how many independent runners to open of `--model`'s ONE install; N > 1 serves N concurrent generations behind one public id, routed to the least-busy member. Each member pays the load guard on its own, so one that does not fit refuses at startup |
 | `--session-slots` | positive integer | `1` | concurrent conversation KV states maintained in pool |
 | `--max-concurrent-requests` | positive integer | `1` | alias for `--session-slots` (omlx compatibility) |
 | `--hf-endpoint` | url | unset, `$HF_ENDPOINT` | Hugging Face mirror endpoint (e.g. `https://hf-mirror.com`) |

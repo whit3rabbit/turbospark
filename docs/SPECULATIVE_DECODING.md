@@ -358,18 +358,38 @@ is a standing correctness test whatever happens to this phase.
 
 In order of leverage:
 
-1. **The routed pair, and no longer `c(M)` in general.** This entry used to
-   read "`c(M)`, not the drafter", and half of it has now been collected and
-   spent: the GEMV arm was improved ~2x and bought two points (see "The
-   composite, written out"). What is left is the specific term that
-   improvement could not reach: `moe_phase1_gate_up_act_u16load` and
-   `moe_phase2_down_reduce_k8`, 26% of decode compute, still with no batched
-   form at all. Both grants in the composite are guesses about it, and the
-   spread between them (0.95x against 1.00x at block 8) is the whole
-   remaining uncertainty on this axis. **Note it is not enough on its own**:
-   even the optimistic grant leaves block 8 at 1.00x, because the 19% floor
-   does not move either. `docs/BATCHED_PREFILL.md` steps 2 and 3 specify
-   these two kernels for a different reason and would answer this for free.
+1. ~~**The routed pair, and no longer `c(M)` in general.**~~ **MEASURED
+   2026-09-15, AND THE ANSWER DID NOT CHANGE -- IT GOT WORSE.**
+   `docs/BATCHED_PREFILL.md` steps 2 and 3 landed the batched affine pair
+   (`moe_prefill_phase1_routes_int4`, `moe_prefill_phase2_fused_int4`),
+   and its kernel-level `c(M)` is measured, not granted:
+   **c(2) = 0.77, c(4) = 0.68, c(8) = 0.66** on the real Gemma shape with
+   ragged routes at the measured union sizes
+   (`crates/gpu/tests/moe_prefill_batch_bench.rs`). Both grants above were
+   optimistic: the real pair batches WORSE than the 0.5 grant. Substituting
+   the measured pair into the composite gives c(4) = 0.688 and c(8) = 0.614
+   (against the granted 0.641 / 0.572), and the reading table becomes:
+
+   | block | accept | verify, measured pair | speedup | was, at the 0.5 grant |
+   | ---: | ---: | ---: | ---: | ---: |
+   | 4 | 2.96 | 2.74 | **1.08x** | 1.14x |
+   | 8 | 4.26 | 4.74 | 0.90x | 0.95x |
+   | 16 | 6.49 | 8.85 | 0.73x | 0.78x |
+   | 16 (best task) | 7.87 | 8.85 | 0.89x | 0.94x |
+
+   **The best case is now 1.08x, below the 1.14x this page already
+   rejected.** And the install that motivated the MoE-drafter roadmap item
+   (`ornith35b`) is a GGUF artifact, whose routed pair has NO batched form
+   at all -- BATCHED_PREFILL step 5 (GGUF pair widening) is unbuilt -- so
+   until that lands the routed term enters the composite at 1.0 and block 4
+   reads 0.99x: below break-even at EVERY block. The re-cost therefore
+   closes the item's economics on measured data: an MoE MTP/DFlash2
+   drafter on this family does not clear the bar under either scheme, and
+   the head's own forward plus the rollback term
+   (`docs/MTP_SPECULATIVE.md`'s) would only subtract from these numbers.
+   What WOULD reopen it: a measured accept length on a real MoE drafter
+   substantially above DFlash's published curve, or a batched GGUF routed
+   pair whose c(M) lands well under the affine one's.
 2. ~~**`simdgroup_matrix`.**~~ **Measured 2026-08-17 and closed.** It was
    built and benched against the exact kernel in one session
    (`dequant_int4_gemm_mma`, `c_of_m_matrix_against_exact_at_qwen38_shapes`)

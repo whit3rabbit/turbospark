@@ -1707,6 +1707,10 @@ live network).
   unauthenticated by default; Tailnet mode refuses to start without the
   process-wide API key.
 
+## The Linux backend slice: landed compile-gated, deliberately unrun (2026-09-15)
+
+ROADMAP P3.5's streaming half is in the tree and has NEVER EXECUTED. `crates/streaming/src/linux_uring.rs` declares the io_uring UAPI structs locally (the pinned `libc` ships no io_uring types) and implements setup/submit/reap; `rdadvice.rs` gained `posix_fadvise(WILLNEED)`; `crates/model-io/src/cgroup.rs` probes cgroup-v2 `memory.max`/`memory.high`. The gate these carry is the repository's accepted one for platform code no machine here can run (AGENTS.md Gotcha 8): the cross-target `cargo check` for streaming and model-io, plus unit tests for the portable parts (selector spellings, DIO alignment arithmetic, cgroup file parsing). **`TURBOSPARK_LINUX_IO=auto` resolves to `pread`**, and nothing selects `uring` until a Linux session runs the parity arm against the pread path bit for bit. The Vulkan compute half is not started at all: `crates/compute`'s `ComputeStrategy` is an empty marker struct and the dispatch trait it implies is a design task before it is a porting one.
+
 ## Not ported at all
 
 - `crates/tokenizer`'s `Sha256Verifier` used `CommonCrypto`; this port
