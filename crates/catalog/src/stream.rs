@@ -215,6 +215,12 @@ pub(crate) fn stream_mlx(
         }
     }
 
+    // ROADMAP P2.9: a probe-driven pull of a combined VLM checkpoint keeps its
+    // tower. `enable_requested_vision` above only fires on catalog-row intent,
+    // which a `--repo` pull never has; the shard headers are the other half of
+    // the answer and they are in hand by this line.
+    enable_bytes_detected_vision(plan, family, &mut arch, &headers, &config_text)?;
+
     // A separate repository carrying a multi-token-prediction head this
     // artifact's own conversion drops (`docs/MTP_SPECULATIVE.md` step 1).
     // Its shard(s) join the same multi-shard registry the trunk uses, so the
@@ -310,6 +316,86 @@ fn enable_requested_vision(
         return Err(format!(
             "{}: catalog row requests vision, but config.json declares no vision_config",
             plan.alias
+        ));
+    }
+    if vision.out_hidden_size != arch.hidden_size {
+        return Err(format!(
+            "{}: vision output width {} does not match trunk hidden size {}",
+            plan.alias, vision.out_hidden_size, arch.hidden_size
+        ));
+    }
+    arch.vision = vision;
+    Ok(())
+}
+
+/// Detect a combined vision tower from the checkpoint's BYTES and enable it
+/// on the architecture passed to the streamed writer (ROADMAP P2.9).
+///
+/// [`enable_requested_vision`] answers a catalog row's INTENT; this answers
+/// what the artifact actually ships. The trunk parsers deliberately return a
+/// text-only architecture because `config.json` alone cannot be trusted to:
+/// `ornith-ai/Ornith-1.5-35B-A3B` declares a tower in its config and ships no
+/// `vision_tower.` tensors, so the config gate must stay insufficient. The
+/// shard headers, fetched by the time [`stream_mlx`] reaches this call, are
+/// the bytes half of that rule -- and a checkpoint that ships tower tensors
+/// has a tower, whatever a sibling repo's config does.
+///
+/// Detection matches [`repack::VISION_PREFIX`] alone, the exact string
+/// `classify_for_family` buckets as `VisionTower` for these families. The
+/// HF-native `model.visual.` spelling stays a sidecar-path concern, as its
+/// classify comment records: the combined walk has never read one, and
+/// enabling a tower the walk would then drop (or refuse on) helps nobody.
+fn enable_bytes_detected_vision(
+    plan: &InstallPlan,
+    family: ModelFamily,
+    arch: &mut ArchConfig,
+    headers: &[SafetensorsHeader],
+    config_text: &str,
+) -> Result<(), String> {
+    if arch.vision.is_active() {
+        // Catalog intent already decided, and its parse + width check ran.
+        return Ok(());
+    }
+    // The same family gate `classify_for_family` applies to `VisionTower`:
+    // both halves of the shared qwen3_5 architecture and nothing else (an
+    // enabled tower under a family that buckets the prefix as
+    // `ExcludedMultimodal` would write a manifest declaring tensors the
+    // install does not carry).
+    if !matches!(family, ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe) {
+        return Ok(());
+    }
+    let carries_tower = headers.iter().any(|h| {
+        h.tensors
+            .keys()
+            .any(|k| k.starts_with(repack::VISION_PREFIX))
+    });
+    if !carries_tower {
+        return Ok(());
+    }
+    // The bytes are present, so a config this port cannot pair with them is
+    // an inconsistency in the checkpoint itself, and the walk refuses by name
+    // rather than silently dropping a third of the tensors -- which is
+    // precisely the behavior this function exists to replace.
+    let vision = repack::parse_vision_config(config_text).map_err(|e| {
+        format!(
+            "{}: the checkpoint ships {} vision_tower tensors, but its config.json does not \
+             describe a tower this port supports: {e}",
+            plan.weights,
+            headers
+                .iter()
+                .map(|h| h
+                    .tensors
+                    .keys()
+                    .filter(|k| k.starts_with(repack::VISION_PREFIX))
+                    .count())
+                .sum::<usize>()
+        )
+    })?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{}: the checkpoint ships vision_tower tensors, but its config.json declares no \
+             vision_config they could belong to",
+            plan.weights
         ));
     }
     if vision.out_hidden_size != arch.hidden_size {
@@ -651,9 +737,210 @@ pub(crate) fn shard_names(plan: &InstallPlan, client: &Client) -> Result<Vec<Str
 
 #[cfg(test)]
 mod tests {
-    use super::{enable_requested_vision, shard_names_for_prefixes};
+    use super::{enable_bytes_detected_vision, enable_requested_vision, shard_names_for_prefixes};
     use crate::{Catalog, InstallPlan};
     use model_io::ModelFamily;
+    use repack::{SafetensorsHeader, TensorInfo, VISION_PREFIX};
+
+    /// The 27-depth tower config every qwen3_5 vision checkpoint carries,
+    /// trued up to `qwen_gdn_dense_27b`'s hidden size.
+    fn vision_config_text() -> String {
+        serde_json::json!({
+            "text_config": {"rope_parameters": {"mrope_section": [11, 11, 10]}},
+            "vision_config": {
+                "depth": 27, "hidden_size": 1152, "intermediate_size": 4304,
+                "num_heads": 16, "patch_size": 16, "temporal_patch_size": 2,
+                "in_channels": 3, "spatial_merge_size": 2,
+                "num_position_embeddings": 2304, "out_hidden_size": 5120
+            },
+            "vision_start_token_id": 1, "vision_end_token_id": 2,
+            "image_token_id": 3, "video_token_id": 4
+        })
+        .to_string()
+    }
+
+    fn header_with(tensor_names: &[&str]) -> SafetensorsHeader {
+        SafetensorsHeader {
+            tensors: tensor_names
+                .iter()
+                .map(|name| {
+                    (
+                        (*name).to_string(),
+                        TensorInfo {
+                            dtype: "BF16".to_string(),
+                            shape: vec![4, 4],
+                            data_offsets: (0, 32),
+                        },
+                    )
+                })
+                .collect(),
+            metadata: None,
+            header_len: 8,
+        }
+    }
+
+    fn probe_plan() -> InstallPlan {
+        // A probe-driven plan is the shape that has no catalog intent to lean
+        // on: `include_vision` is false by construction, exactly as
+        // `InstallPlan::from_probe` builds it.
+        InstallPlan {
+            alias: "probe-vlm".to_string(),
+            weights: crate::hf::RepoRef::new("example/vlm", "main"),
+            file: None,
+            kind: crate::entry::SourceKind::Mlx,
+            sidecars: crate::hf::RepoRef::new("example/vlm", "main"),
+            sidecar_files: Vec::new(),
+            include_vision: false,
+            install_bytes: 0,
+            status: "unlisted".to_string(),
+            mtp: None,
+            reuse_trunk_from: None,
+            vision_only: false,
+            vision_file: None,
+        }
+    }
+
+    #[test]
+    fn probe_driven_bytes_carrying_the_tower_enable_combined_vision() {
+        let plan = probe_plan();
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        assert!(!arch.vision.is_active());
+        let headers = [header_with(&[
+            "language_model.model.embed_tokens.weight",
+            "vision_tower.blocks.0.norm1.weight",
+        ])];
+        enable_bytes_detected_vision(
+            &plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &headers,
+            &vision_config_text(),
+        )
+        .unwrap();
+        assert!(arch.vision.is_active(), "tower bytes must enable the tower");
+        assert_eq!(arch.vision.depth, 27);
+    }
+
+    /// The Ornith rule, held at the new layer: a config that DECLARES a tower
+    /// is not a checkpoint that SHIPS one, and the gate answers to bytes.
+    #[test]
+    fn a_declared_config_without_tower_bytes_stays_text_only() {
+        let plan = probe_plan();
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        let headers = [header_with(&["language_model.model.embed_tokens.weight"])];
+        enable_bytes_detected_vision(
+            &plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &headers,
+            &vision_config_text(),
+        )
+        .unwrap();
+        assert!(!arch.vision.is_active());
+    }
+
+    #[test]
+    fn tower_bytes_without_a_parseable_tower_config_refuse_by_name() {
+        let plan = probe_plan();
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        let headers = [header_with(&[&format!(
+            "{VISION_PREFIX}blocks.0.norm1.weight"
+        )])];
+        let err = enable_bytes_detected_vision(
+            &plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &headers,
+            "{\"text_config\": {}}",
+        )
+        .unwrap_err();
+        assert!(err.contains("vision_tower"), "{err}");
+        assert!(!arch.vision.is_active());
+    }
+
+    #[test]
+    fn tower_bytes_with_a_mismatched_hidden_size_refuse_by_name() {
+        let plan = probe_plan();
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        let headers = [header_with(&[&format!(
+            "{VISION_PREFIX}blocks.0.norm1.weight"
+        )])];
+        let mismatched = serde_json::json!({
+            "text_config": {"rope_parameters": {"mrope_section": [11, 11, 10]}},
+            "vision_config": {
+                "depth": 27, "hidden_size": 1152, "intermediate_size": 4304,
+                "num_heads": 16, "patch_size": 16, "temporal_patch_size": 2,
+                "in_channels": 3, "spatial_merge_size": 2,
+                "num_position_embeddings": 2304, "out_hidden_size": 3584
+            },
+            "vision_start_token_id": 1, "vision_end_token_id": 2,
+            "image_token_id": 3, "video_token_id": 4
+        })
+        .to_string();
+        let err = enable_bytes_detected_vision(
+            &plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &headers,
+            &mismatched,
+        )
+        .unwrap_err();
+        assert!(err.contains("does not match trunk hidden size"), "{err}");
+    }
+
+    /// Catalog intent keeps its precedence: the row's own parse + width check
+    /// already ran by the time bytes detection is reached, and this function
+    /// must not second-guess or double-apply it.
+    #[test]
+    fn bytes_detection_is_a_no_op_when_catalog_intent_already_set_the_tower() {
+        let catalog = Catalog::embedded().unwrap();
+        let entry = catalog.get("qwen38-27b-vision").unwrap();
+        let plan = InstallPlan::from_entry(entry);
+        assert!(plan.include_vision);
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        enable_requested_vision(
+            &plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &vision_config_text(),
+        )
+        .unwrap();
+        let headers = [header_with(&[
+            "language_model.model.embed_tokens.weight",
+            "vision_tower.blocks.0.norm1.weight",
+        ])];
+        enable_bytes_detected_vision(
+            &plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &headers,
+            // A config that could not back the tower the intent path already
+            // enabled must not be consulted at all.
+            "{\"text_config\": {}}",
+        )
+        .unwrap();
+        assert!(arch.vision.is_active());
+    }
+
+    /// The family gate mirrors `classify_for_family`'s `VisionTower` arm
+    /// exactly: both halves of qwen3_5, nothing else (AGENTS.md Gotcha 61).
+    #[test]
+    fn bytes_detection_ignores_families_that_do_not_classify_the_prefix() {
+        let plan = probe_plan();
+        for family in [ModelFamily::Gemma4, ModelFamily::Qwen2Dense] {
+            let mut arch = model_io::known_architecture(family);
+            let headers = [header_with(&[&format!(
+                "{VISION_PREFIX}blocks.0.norm1.weight"
+            )])];
+            enable_bytes_detected_vision(&plan, family, &mut arch, &headers, &vision_config_text())
+                .unwrap();
+            assert!(
+                !arch.vision.is_active(),
+                "{} must not enable a tower its walk cannot classify",
+                arch.family.as_str()
+            );
+        }
+    }
 
     #[test]
     fn the_vision_catalog_row_enables_the_combined_tower() {

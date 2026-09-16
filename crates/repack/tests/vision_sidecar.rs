@@ -191,15 +191,24 @@ fn tiny_tower_bytes(name: &str) -> Vec<u8> {
     out
 }
 
-/// Builds a hand-assembled one-block tower under `prefix` (every one of the
-/// twelve block roles plus the nine resident tensors), with an 8-byte dummy
+/// Builds a hand-assembled tower under `prefix` (every one of the twelve
+/// block roles at each of the `SUPPORTED_VISION_DEPTH` block positions the
+/// ingest enforces, plus the nine resident tensors), with an 8-byte dummy
 /// safetensors preamble so `SafetensorsHeader::data_region_start()` (`8 +
 /// header_len`, with `header_len` left at 0 here) lines up with the raw
-/// buffer's actual layout.
+/// buffer's actual layout. Every block carries the same per-suffix bytes,
+/// which is what keeps the canonicalization comparisons below about the
+/// PREFIX rather than about per-block content.
 fn build_tower_header_and_blob(prefix: &str) -> (SafetensorsHeader, Vec<u8>) {
-    let mut names: Vec<String> = VISION_BLOCK_ROLES
-        .iter()
-        .map(|(_, suffix)| format!("{prefix}blocks.0.{suffix}"))
+    // 27 = repack's `SUPPORTED_VISION_DEPTH`, which `read_vision_entries`
+    // enforces on every ingest and which is `pub(crate)` there, so the literal
+    // is what a test can hold.
+    let mut names: Vec<String> = (0..27)
+        .flat_map(|block| {
+            VISION_BLOCK_ROLES
+                .iter()
+                .map(move |(_, suffix)| format!("{prefix}blocks.{block}.{suffix}"))
+        })
         .collect();
     names.extend(
         VISION_RESIDENT_TENSORS
@@ -242,7 +251,9 @@ fn build_tower_header_and_blob(prefix: &str) -> (SafetensorsHeader, Vec<u8>) {
 
 fn tiny_test_vision() -> model_io::VisionConfig {
     model_io::VisionConfig {
-        depth: 1,
+        // The ingest's depth bound; the fixture above builds exactly this
+        // many blocks.
+        depth: 27,
         hidden_size: 4,
         intermediate_size: 4,
         num_heads: 1,

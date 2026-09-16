@@ -729,6 +729,17 @@ ids at attach time, not deep inside the splice on the first real image.
 
 ### Ingest: `turbospark-model pull-vision`
 
+**A COMBINED PULL KEEPS ITS TOWER SINCE 2026-09-15.** A normal
+`turbospark-model pull --repo ...` of a `qwen35`/`qwen35moe` checkpoint whose
+shard headers actually carry `vision_tower.*` tensors now enables the tower
+on the written install (`catalog::stream::enable_bytes_detected_vision`):
+the gate is the checkpoint's BYTES, not its `config.json`, because Ornith
+declares a tower it does not ship. Tower bytes beside an unusable tower
+config refuse the pull by name instead of silently writing a text-only
+install. Catalog rows keep their explicit `include_vision` precedence, and
+the HF-native `model.visual.` spelling remains a `pull-vision`-only
+convenience.
+
 `turbospark-model pull-vision <ALIAS>` (an alias already in `models.json`,
 kind `vision-tower`) or `pull-vision --repo R[@rev] --alias NAME [--file F]
 [--out DIR]` (an ad-hoc repo). `catalog::stream::fetch_prefixed_shards`

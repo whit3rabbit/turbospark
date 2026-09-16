@@ -26,10 +26,14 @@ use crate::ranged_download::MemoryRangeSource;
 use crate::safetensors_header::{parse_header, DEFAULT_MAX_HEADER_BYTES};
 use crate::synthetic_real::{assemble_safetensors, Tensor};
 
-/// Blocks in the toy tower. TWO rather than one, because a single-block tower
-/// cannot tell a per-block stride from a whole-file size, and cannot catch a
-/// walk that writes every block at block 0's offset.
-pub(crate) const V_DEPTH: i64 = 2;
+/// Blocks in the toy tower. TWENTY-SEVEN, which is `SUPPORTED_VISION_DEPTH`:
+/// the real checkpoints all declare 27 and the depth bound refuses anything
+/// else at both the config parse and the ingest, so a toy depth would fail
+/// every fixture that builds a tower through the real walk. Two rather than
+/// one is still the load-bearing property: a single-block tower cannot tell a
+/// per-block stride from a whole-file size, and cannot catch a walk that
+/// writes every block at block 0's offset.
+pub(crate) const V_DEPTH: i64 = 27;
 /// The tower's residual width.
 pub(crate) const V_HIDDEN: i64 = 64;
 /// The per-block MLP width. **NOT a multiple of `V_HIDDEN`**, unlike the real
