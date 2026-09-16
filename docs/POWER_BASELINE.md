@@ -734,6 +734,150 @@ Combined Power is CPU+GPU+ANE only. A chassis that holds Nominal on its own
 would land somewhere between these rows and the governed ones. The uncooled
 rows above remain the ones that describe what a user sees.
 
+## Ternary-Bonsai 27B: one governed capture, and the pairs that still reproduce (2026-09-15)
+
+ROADMAP P4.3's ternary row. `LABEL=ac MODEL=~/models/ternary27b.gturbo
+scripts/power.sh 2`, rev `28ecff57` dirty, install `~/models/ternary27b.gturbo`
+(manifest sha `2374453a46604330c7801146cbd88d9709cd343ffaaa477dd4e83eb71138f39e`
+-- the walk's byte-reproducibility hash, so the capture is pinned to exact
+weights), 2 pairs, 200 ms interval, all three cases, arms `default`, cooling
+`auto`, 23:41 UTC after a day of heavy Metal work. Contamination floor
+**101 mW** over 15,853 samples: a clean machine by Gotcha 43's instrument,
+second-cleanest of the captures calibrated there. Per-arm rows and the
+capture's provenance block are archived at
+`docs/verification/power-ternary27b-2026-09-15.tsv` and
+`...-system.txt`; the raw powermetrics samples stayed in `/tmp` (16.6 MB).
+
+**The caveat that governs every number below: every measured phase left
+Nominal and reached Heavy** (medium's warmups held Moderate; nothing else
+held anything). Muse Glimmer at least produced Nominal warmup windows to
+publish as the unconstrained point; this capture arrived heat-soaked and
+deepened, so there is no unconstrained window to contrast with. Everything
+here is a governed operating point, read with Gotcha 28's direction trap in
+mind: throttled arms read SLOWER and simultaneously BETTER J/token, so a
+Heavy row never looks broken -- it looks efficient.
+
+### The heat-soak progression is the capture's most instructive finding
+
+Long-synthesis prefill, identical 2,940-token work three times in a row:
+
+| run | secs | watts | J/prompt token |
+| --- | ---: | ---: | ---: |
+| warmup | 212.19 | 36.36 | 2.6253 |
+| p1 | 708.99 | 42.73 | **10.3056** |
+| p2 | 318.83 | 40.26 | 4.3685 |
+
+p1 took 2.2x p2's wall time and drew 2.4x its energy per token on
+byte-identical work, and the warmup -- before the soak -- was cheaper than
+either. The harness's 80.9% spread warning on this row is it refusing to
+average the three, correctly. **Do not quote a long-synthesis row from this
+capture, in either direction**; what it documents is the soak, which is
+exactly the condition `COOLING=max` exists to remove.
+
+### What reproduces even under governance
+
+Short-explanation decode, both pairs Heavy:
+
+| | p1 | p2 | spread |
+| --- | ---: | ---: | ---: |
+| watts | 31.08 | 31.14 | 0.2% |
+| J/token | 2.9513 | 2.9404 | 0.4% |
+| tok/s | 10.398 | 10.443 | 0.4% |
+
+Prefill pairs read 2.9611 against 2.8104 J/token (5.2%). So the publishable
+sentence is narrow and honest: **short-explanation decode on the 2-bit dense
+install reads ~31 W and ~2.95 J/token at ~10.4 tok/s, HEAVY-governed,
+reproducing to 0.4% within the capture.** The medium rows spread 13.0%
+(decode) and 15.7% (prefill) across pairs -- record as observations, not a
+row. tok/s 10.4 against this family's 14.2 (2026-08-15, `docs/BENCHMARKS.md`)
+is the governance discount, ~27%, consistent with the throttle reading.
+
+### Comparison, and what it is not
+
+Against the other sub-4-bit power point (Gemma 4 IQ3_XXS/IQ4_NL, 0.92-0.99
+J/token decode at 25-28 tok/s, mostly Nominal): ternary reads ~3.1x the
+J/token at ~40% of the throughput. The direction is the one Do-Not-Revisit 12
+records for sub-4-bit weights, amplified twice over -- the 2-bit GEMV is
+93.1% of this install's decode compute with no `+/-1` shortcut
+(`docs/MTP_SPECULATIVE.md`), and every ternary arm was Heavy where the IQ3
+capture was mostly not. It is NOT a clean ablation: different architecture,
+different corpus position, different thermal state, and one governed against
+one free-running. Read it as indicative and wait for the row that would be
+clean -- `qwen38-27b` (4-bit, same architecture, install on disk since
+2026-09-15) captured in the SAME session as a ternary COOLING=max rerun.
+
+### Still owed on this install
+
+A `COOLING=max` capture, for the unconstrained point this capture could not
+produce (the museglimmer precedent says pinned fans read BETTER J/token, so
+expect the number to move down, and per that section's rule the cooled row
+publishes beside this one, never instead of it).
+
+## Qwen3.8-27B 4-bit: the pairing row, and two refused means (2026-09-16)
+
+ROADMAP P4.3's qwen38 row, and the same-architecture 4-bit leg of the
+comparison the ternary section asked for. `LABEL=ac
+MODEL=~/models/qwen38-27b.gturbo scripts/power.sh 2`, rev `28ecff57` dirty,
+install re-streamed 2026-09-15 (manifest sha
+`ec122390a327dffa8870923a965fadcbe663f2a70c8c183f5a5c58dc9d7be8e0`), 2 pairs,
+200 ms, all three cases, cooling `auto`, 02:04 UTC -- about 2.3 hours and a
+cool-down after the ternary capture on the same day. Contamination floor
+**170 mW** over 8,374 samples: clean again. Per-arm rows and provenance
+archived at `docs/verification/power-qwen38-27b-2026-09-16.tsv` and
+`...-system.txt`.
+
+### The row that reproduces
+
+Long-synthesis, 637-token decode at 2,940-token context, p1 Heavy and p2
+Moderate -- and it does not matter:
+
+| | p1 | p2 | spread |
+| --- | ---: | ---: | ---: |
+| decode W | 26.18 | 26.19 | 0.04% |
+| decode J/token | 1.5089 | 1.5057 | 0.2% |
+| decode tok/s | 17.327 | 17.456 | 0.7% |
+| prefill J/token | 1.2705 | 1.2524 | 1.4% |
+
+**~26.2 W and ~1.507 J/token at ~17.4 tok/s is this install's decode cost,
+prefill ~24.6 W and ~1.261 J/token**, reproducing across a pressure
+transition -- the tightest multi-pair row on this page, and the cheapest
+J/token of the three dense installs measured (IQ3 0.92-0.99 at 25-28 tok/s,
+ternary 2-bit 2.95 governed). Against this family's 19.0 tok/s
+(`docs/BENCHMARKS.md`, 2026-08-15) the discount is ~9%.
+
+### Two refused means, stated rather than smoothed
+
+**Medium-review p2 ran HEAVY and 33% FASTER than Moderate p1.** 21.04 tok/s
+against 15.49, 24.92 W against 27.73, 1.1749 against 1.7744 J/token -- every
+number moved the "wrong" way for governance, on byte-identical 795-token
+work, and the summary's 40.7% spread warning is refusing to average them.
+The pressure label and the throughput disagree about which run was
+throttled, so one of the two instruments is not measuring what it names;
+until that is resolved the pair is recorded, not used. What would settle it:
+a `COOLING=max` rerun (which removes the label's ambiguity) or a third pair.
+
+**Short-explanation decodes MORE expensively than long-synthesis** -- 1.79
+J/token against 1.51, at the SHALLOWER context. The arithmetic is visible in
+the rows: short carries `cpu_W` 4.3-7.0 against long's 1.6-2.5, and at 15-16
+tok/s that 2-4 W delta is 0.2-0.4 J/token, which is the whole gap. Combined
+Power includes the CPU, the 4-bit GPU kernel is cheap enough that the fixed
+host-side per-token cost is a large fraction of a short-context token, and
+why the CPU drew 2-4x more in the short case (it ran first, on the coolest
+machine) is the unexplained residual. Pairs spread 12.1% (decode) and 23.7%
+(prefill) besides. Observations, not a row.
+
+### The pairing, and what would still make it clean
+
+Same architecture, same corpus, one night apart: **ternary 2-bit reads
+~2.95 J/token at ~10.4 tok/s (all-Heavy), qwen38 4-bit reads ~1.51 J/token
+at ~17.4 tok/s (long, mostly Nominal-adjacent)** -- 2-bit costs about 2x the
+energy per token and 40% of the throughput, which is the compute-bound
+2-bit reading (`docs/MTP_SPECULATIVE.md`'s 93.1%-of-decode GEMV) made
+quantitative on one architecture. The caveat from the ternary section
+stands but shrinks: the thermal states differ (all-Heavy against mixed),
+so the clean version is still the `COOLING=max` ternary rerun, ideally in
+one session with a qwen38 arm for the paired reading.
+
 ## Battery, and what differs
 
 Battery rows are partial: they exclude runs whose thermal pressure left
@@ -967,11 +1111,13 @@ a different lever than this one.
   UI, well under the 18.40 W that made the Qwen row obvious, moved a
   decode row 37% with every arm Nominal. See the gpt-oss section and
   AGENTS.md Gotcha 43.
-- **Ornith-1.5 35B-A3B against Qwen 3.6 in ONE session.** The two share an
-  architecture, so the 0.4731-against-0.3513 J/token gap in the section above
-  is the most interesting comparison on this page and the least trustworthy:
-  its two halves are two weeks and one binary apart. Both installs are on
-  disk and the capture is ~4 minutes for one case each.
+- ~~**Ornith-1.5 35B-A3B against Qwen 3.6 in ONE session.**~~ DESCOPED
+  2026-09-16 (user decision): the two installs had gone missing from disk
+  and the A/B wanted ~37 GB of re-pulls for one comparison row. The
+  separate 0.4731 and 0.3513 rows stand with their cross-session caveat --
+  two weeks and one binary apart, shared architecture, which is why the gap
+  was always the least trustworthy number on this page. Re-open by pulling
+  both installs and running one interleaved capture.
 - **The other two Ornith cases**, and a capture for `ornith9b`. The row above
   is `short-explanation` alone.
 - **A wall-power number**, which needs an external meter rather than the

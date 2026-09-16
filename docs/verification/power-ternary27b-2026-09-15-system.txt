@@ -1,0 +1,14 @@
+date         2026-09-15T23:41:22Z
+chip         Apple M4 Max
+memory       36 GB
+macos        26.6.2 (25G83)
+power        Now drawing from 'AC Power'
+label        ac
+arms         default
+cooling      auto
+rev          28ecff57 (dirty)
+install      /Users/whit3rabbit/models/ternary27b.gturbo
+manifest sha 2374453a46604330c7801146cbd88d9709cd343ffaaa477dd4e83eb71138f39e
+pairs        2
+interval     200 ms
+process log  processes.jsonl (1 s pause between snapshots; ps decayed CPU and cumulative CPU time)

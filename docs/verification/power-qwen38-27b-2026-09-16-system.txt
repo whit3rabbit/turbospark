@@ -1,0 +1,14 @@
+date         2026-09-16T02:04:30Z
+chip         Apple M4 Max
+memory       36 GB
+macos        26.6.2 (25G83)
+power        Now drawing from 'AC Power'
+label        ac
+arms         default
+cooling      auto
+rev          28ecff57 (dirty)
+install      /Users/whit3rabbit/models/qwen38-27b.gturbo
+manifest sha ec122390a327dffa8870923a965fadcbe663f2a70c8c183f5a5c58dc9d7be8e0
+pairs        2
+interval     200 ms
+process log  processes.jsonl (1 s pause between snapshots; ps decayed CPU and cumulative CPU time)
