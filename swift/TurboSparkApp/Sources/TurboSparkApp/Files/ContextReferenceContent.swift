@@ -17,17 +17,19 @@ extension MentionResolver {
         case .diff:
             await appendGitAttachment(
                 label: "diff", fileName: "Working tree diff", formatLabel: "diff",
-                arguments: ["diff"], emptyMessage: "@diff: no unstaged changes to attach.",
+                arguments: ["diff", "--no-ext-diff", "--no-textconv"],
+                emptyMessage: "@diff: no unstaged changes to attach.",
                 projectRoot: projectRoot, chatID: chatID, into: model)
         case .staged:
             await appendGitAttachment(
                 label: "staged", fileName: "Staged diff", formatLabel: "diff",
-                arguments: ["diff", "--cached"], emptyMessage: "@staged: nothing is staged to attach.",
+                arguments: ["diff", "--no-ext-diff", "--no-textconv", "--cached"],
+                emptyMessage: "@staged: nothing is staged to attach.",
                 projectRoot: projectRoot, chatID: chatID, into: model)
         case .git(let count):
             await appendGitAttachment(
                 label: "git:\(count)", fileName: "Last \(count) commits", formatLabel: "git",
-                arguments: ["log", "-p", "-n", String(count)],
+                arguments: ["log", "--no-ext-diff", "--no-textconv", "-p", "-n", String(count)],
                 emptyMessage: "@git: the repository has no commits yet.",
                 projectRoot: projectRoot, chatID: chatID, into: model)
         case .path, .url:
