@@ -223,6 +223,83 @@ final class ProfileBackupTests: XCTestCase {
         XCTAssertEqual(capped, String(repeating: "🚀", count: 60), "no emoji is torn in half")
     }
 
+    // MARK: - Selective export
+
+    func testAnExportWithASelectionCarriesOnlyThoseCategories() async throws {
+        let (profile, folder) = try makeProfileFolder(id: "p1", name: "Work")
+        try makeFile("memory/MEMORY.md", contents: "# memory", under: folder)
+        try makeFile("stray.txt", contents: "unowned", under: folder)
+        let destination = root.appendingPathComponent("partial.zip")
+
+        let exported = try await ProfileBackup.export(
+            profile: profile,
+            machineRoot: root.appendingPathComponent("machine"),
+            turbosparkHome: root.appendingPathComponent("home"),
+            destination: destination,
+            appVersion: "test",
+            included: ["chats"])
+
+        XCTAssertEqual(exported.includedCategories, ["chats"])
+        let extraction = root.appendingPathComponent("extracted-partial", isDirectory: true)
+        try FileManager.default.createDirectory(at: extraction, withIntermediateDirectories: true)
+        try await extract(destination, into: extraction)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("chats_archive.json").path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: extraction.appendingPathComponent("stray.txt").path),
+            "an entry no category owns always travels; the table is a description, not an allowlist")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("settings.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("skills").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("memory").path))
+    }
+
+    func testASelectionFiltersBothRootsOfTheDefaultLayout() async throws {
+        let machineRoot = root.appendingPathComponent("machine", isDirectory: true)
+        let home = root.appendingPathComponent("home/.turbospark", isDirectory: true)
+        try makeFile("settings.json", contents: "{}", under: machineRoot)
+        try makeFile("other.txt", contents: "unowned", under: machineRoot)
+        try makeFile("skills/s/SKILL.md", contents: "# s", under: home)
+        let destination = root.appendingPathComponent("partial-default.zip")
+
+        let exported = try await ProfileBackup.export(
+            profile: UserProfileStore.defaultProfile,
+            machineRoot: machineRoot,
+            turbosparkHome: home,
+            destination: destination,
+            appVersion: "test",
+            included: ["settings"])
+
+        XCTAssertEqual(exported.includedCategories, ["settings"])
+        let extraction = root.appendingPathComponent("extracted-pd", isDirectory: true)
+        try FileManager.default.createDirectory(at: extraction, withIntermediateDirectories: true)
+        try await extract(destination, into: extraction)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("app-support/settings.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("app-support/other.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("dot-turbospark/skills").path))
+    }
+
+    func testAWholeProfileExportRecordsNoSelection() async throws {
+        let (profile, _) = try makeProfileFolder(id: "p1", name: "Work")
+        let destination = root.appendingPathComponent("full.zip")
+        let exported = try await ProfileBackup.export(
+            profile: profile,
+            machineRoot: root.appendingPathComponent("machine"),
+            turbosparkHome: root.appendingPathComponent("home"),
+            destination: destination,
+            appVersion: "test",
+            included: ProfileBackup.allCategoryIDs)
+        XCTAssertNil(
+            exported.includedCategories,
+            "everything selected is canonical 'everything', not a frozen list")
+    }
+
     // MARK: - Archive entry validation
 
     func testTheZipSlipValidatorRefusesEscapeEntries() {
@@ -333,7 +410,8 @@ final class ProfileBackupTests: XCTestCase {
             layout: .defaultTwoRoot,
             exportedAt: Date(timeIntervalSince1970: 0),
             appVersion: "test",
-            contents: [])
+            contents: [],
+            includedCategories: nil)
         try JSONEncoder().encode(manifest).write(
             to: staging.appendingPathComponent(ProfileBackup.manifestFileName))
         let archive = root.appendingPathComponent("merge.zip")

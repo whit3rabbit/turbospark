@@ -197,6 +197,9 @@ enum ProfileBackup {
         included: Set<String>? = nil
     ) async throws -> Manifest {
         let fileManager = FileManager.default
+        // Everything selected is canonical "everything": the manifest then
+        // records no selection, the same as a v1.0 whole-profile backup.
+        let selection: Set<String>? = included == allCategoryIDs ? nil : included
         let staging = fileManager.temporaryDirectory
             .appendingPathComponent("turbospark-backup-\(UUID().uuidString)", isDirectory: true)
         // Created eagerly so a poisoned temp directory fails here, at the
@@ -213,7 +216,7 @@ enum ProfileBackup {
             layout = .defaultTwoRoot
             try await stageDefaultPayload(
                 machineRoot: machineRoot, turbosparkHome: turbosparkHome, staging: staging,
-                included: included)
+                included: selection)
         } else {
             layout = .profileFolder
             // Unreachable-nil is the same shape `userScopeSubdirectory` leans
@@ -224,7 +227,7 @@ enum ProfileBackup {
             guard fileManager.fileExists(atPath: source.path, isDirectory: &isDirectory),
                 isDirectory.boolValue
             else { throw ProcessError.sourceMissing }
-            try await stageProfileFolder(source: source, staging: staging, included: included)
+            try await stageProfileFolder(source: source, staging: staging, included: selection)
         }
 
         let contents = try relativeContents(of: staging)
@@ -239,7 +242,7 @@ enum ProfileBackup {
             exportedAt: exportedAt,
             appVersion: appVersion,
             contents: contents,
-            includedCategories: included.map { $0.sorted() })
+            includedCategories: selection.map { $0.sorted() })
         let manifestURL = staging.appendingPathComponent(manifestFileName)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

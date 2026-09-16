@@ -105,8 +105,21 @@ save, so the Trash is for recovering files by hand only.
 Export writes a plain `.zip` (Finder-openable, no app needed to read it):
 the payload plus `turbospark-backup-manifest.json` at the archive root. The
 manifest carries a format version, the profile's identity, the layout, the
-export time and app version, and the sorted contents list, so a backup is
-self-describing and a future restore can refuse what it cannot read.
+export time and app version, the sorted contents list, and the category
+selection (nil for a whole-profile backup), so a backup is self-describing
+and a future restore can refuse what it cannot read.
+
+The export sheet lists the categories a backup can carry -- settings
+(including SOUL and personality, which are settings keys), chat history,
+projects, model favorites and scan paths, MCP servers and marketplaces,
+skills, agents, custom tools, plugins, hooks, memory, and automation data
+(cron jobs, steering vectors, tool observations) -- with every category
+selected by default and Select All / Clear All at hand. A category owns
+whole top-level files and directories inside either source root; an entry
+NO category owns always travels, because the table is a description of the
+known stores and not an allowlist, so an unknown file is backed up rather
+than silently dropped. Import reads none of this -- its contents list
+already says what arrived -- and restores whatever the archive holds.
 
 The payload depends on the user:
 

@@ -18,10 +18,14 @@ extension AppModel {
 
     // MARK: - Export
 
-    /// Asks for a destination and writes a backup of `profile`. Runs the
-    /// save panel modally like `exportChat`; the archive itself runs on a
-    /// background task and toasts its outcome.
-    func exportProfileBackup(_ profile: UserProfile) {
+    /// Gate for opening the export sheet; the pane shows it with every
+    /// category preselected.
+    var canBeginProfileBackupExport: Bool { !profileBackupInFlight }
+
+    /// Asks for a destination and writes a backup of `profile` carrying the
+    /// selected categories. Runs the save panel modally like `exportChat`;
+    /// the archive itself runs on a background task and toasts its outcome.
+    func runProfileBackupExport(_ profile: UserProfile, included: Set<String>) {
         guard !profileBackupInFlight else { return }
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
@@ -56,7 +60,8 @@ extension AppModel {
                     machineRoot: machineRoot,
                     turbosparkHome: turbosparkHome,
                     destination: url,
-                    appVersion: appVersion))
+                    appVersion: appVersion,
+                    included: included.isEmpty ? nil : included))
             } catch {
                 outcome = .failure(error)
             }

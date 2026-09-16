@@ -16,6 +16,8 @@ struct ProfilesSettingsPaneView: View {
     @State private var renameText: String = ""
     @State private var deleteTarget: UserProfile?
     @State private var switchTarget: UserProfile?
+    @State private var exportTarget: UserProfile?
+    @State private var exportSelection: Set<String> = []
     @State private var importOffer: AppModel.ProfileBackupImportOffer?
     @State private var importName: String = ""
 
@@ -33,6 +35,9 @@ struct ProfilesSettingsPaneView: View {
         }
         .sheet(item: $importOffer) { offer in
             importSheet(offer)
+        }
+        .sheet(item: $exportTarget) { profile in
+            exportSheet(profile)
         }
         .confirmationDialog(
             "Delete Profile",
@@ -203,10 +208,12 @@ struct ProfilesSettingsPaneView: View {
     }
 
     /// One shared Export Backup button so every menu surface offers the same
-    /// action for the same profile.
+    /// action for the same profile. It opens the category sheet; the archive
+    /// only runs after the sheet's Continue.
     private func exportBackupAction(_ profile: UserProfile) -> some View {
         Button {
-            model.exportProfileBackup(profile)
+            exportSelection = ProfileBackup.allCategoryIDs
+            exportTarget = profile
         } label: { Text("Export Backup...", bundle: .module) }
         .disabled(model.profileBackupInFlight)
         .settingsControl("Export Backup...", pane: .profiles, timing: .immediate)
@@ -294,6 +301,89 @@ struct ProfilesSettingsPaneView: View {
         }
         .padding(20)
         .frame(width: 340)
+    }
+
+    // MARK: - Export sheet
+
+    /// Choose what the backup carries. Every category starts selected; the
+    /// Continue button hands the selection to the save panel and the archive.
+    private func exportSheet(_ profile: UserProfile) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("What to Include in This Backup", bundle: .module)
+                .font(theme.ui(.title3, weight: .semibold))
+                .settingsControl(
+                    "What to Include in This Backup", pane: .profiles, timing: .immediate)
+            Text("Backing up \"\(profile.name)\"", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+            ForEach(ProfileBackup.categories) { category in
+                Toggle(isOn: Binding(
+                    get: { exportSelection.contains(category.id) },
+                    set: { isOn in
+                        if isOn {
+                            exportSelection.insert(category.id)
+                        } else {
+                            exportSelection.remove(category.id)
+                        }
+                    }
+                )) {
+                    categoryHeader(category.id)
+                }
+            }
+            HStack(spacing: 12) {
+                Button {
+                    exportSelection = ProfileBackup.allCategoryIDs
+                } label: { Text("Select All", bundle: .module) }
+                .buttonStyle(.link)
+                Button {
+                    exportSelection = []
+                } label: { Text("Clear All", bundle: .module) }
+                .buttonStyle(.link)
+                Spacer()
+            }
+            Text("SOUL and personality are stored with Settings. Keychain-stored hook secrets never travel, and the Default user's downloaded models and install registry are never part of a backup.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+            HStack {
+                Spacer()
+                Button {
+                    exportTarget = nil
+                } label: { Text("Cancel", bundle: .module) }
+                .keyboardShortcut(.cancelAction)
+                Button {
+                    let target = exportTarget
+                    let selection = exportSelection
+                    exportTarget = nil
+                    if let target {
+                        model.runProfileBackupExport(target, included: selection)
+                    }
+                } label: { Text("Continue", bundle: .module) }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    /// Category labels as literal keys: existing catalog entries ("Settings",
+    /// "Skills", ...) are reused, the rest carry their own keys. The id is
+    /// the manifest's category id, never shown raw.
+    @ViewBuilder
+    private func categoryHeader(_ id: String) -> some View {
+        switch id {
+        case "settings": Text("Settings", bundle: .module)
+        case "chats": Text("Chat history", bundle: .module)
+        case "projects": Text("Projects", bundle: .module)
+        case "models": Text("Model favorites and scan paths", bundle: .module)
+        case "mcp": Text("MCP servers and marketplaces", bundle: .module)
+        case "skills": Text("Skills", bundle: .module)
+        case "agents": Text("Agents", bundle: .module)
+        case "tools": Text("Custom tools", bundle: .module)
+        case "plugins": Text("Plugins and marketplaces", bundle: .module)
+        case "hooks": Text("Hooks", bundle: .module)
+        case "memory": Text("Memory", bundle: .module)
+        default: Text("Automation and observations", bundle: .module)
+        }
     }
 
     // MARK: - Import sheet
