@@ -170,6 +170,23 @@ impl DflashShape {
             }
             Ok(())
         };
+        // The drafter's RMS norms are RANK-1 tensors ([hidden] or [head_dim]),
+        // and the index records a rank-1 tensor's second dimension as 0
+        // (`shape4` pads absent dims with 0), which is what the pinned real
+        // install records: `dflash.hidden_norm.weight` reads [5120, 0]. The
+        // ingest cannot produce a [n, 1] spelling -- its rank-2 arm would
+        // quantize it and refuse the unit column -- so 0 is the only legal
+        // recorded width and the vector check pins exactly that.
+        let expect_vector = |name: &str, rows: usize| -> Result<(), RealForwardError> {
+            let got = shape_of(name)?;
+            if got.0 != rows as u32 || got.1 != 0 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "{name} has shape [{}, {}], expected a [{rows}] vector",
+                    got.0, got.1
+                )));
+            }
+            Ok(())
+        };
         let head_dim = {
             let e = entry(index, &dflash_layer_tensor(0, "self_attn.q_norm.weight"))?;
             (e.size_bytes / 2) as usize
@@ -226,8 +243,8 @@ impl DflashShape {
             )));
         }
         expect("dflash.fc.weight", hidden, aux_count * hidden)?;
-        expect("dflash.hidden_norm.weight", hidden, 1)?;
-        expect("dflash.norm.weight", hidden, 1)?;
+        expect_vector("dflash.hidden_norm.weight", hidden)?;
+        expect_vector("dflash.norm.weight", hidden)?;
         expect(
             "dflash.candidate_selector.hidden_projection.weight",
             rank as usize,
@@ -235,10 +252,10 @@ impl DflashShape {
         )?;
         for layer in 0..layers {
             let name = |suffix| dflash_layer_tensor(layer, suffix);
-            expect(&name("input_layernorm.weight"), hidden, 1)?;
-            expect(&name("post_attention_layernorm.weight"), hidden, 1)?;
-            expect(&name("self_attn.q_norm.weight"), head_dim, 1)?;
-            expect(&name("self_attn.k_norm.weight"), head_dim, 1)?;
+            expect_vector(&name("input_layernorm.weight"), hidden)?;
+            expect_vector(&name("post_attention_layernorm.weight"), hidden)?;
+            expect_vector(&name("self_attn.q_norm.weight"), head_dim)?;
+            expect_vector(&name("self_attn.k_norm.weight"), head_dim)?;
             expect(&name("self_attn.q_proj.weight"), q_rows as usize, hidden)?;
             expect(&name("self_attn.k_proj.weight"), k_rows as usize, hidden)?;
             expect(&name("self_attn.v_proj.weight"), k_rows as usize, hidden)?;
@@ -272,7 +289,11 @@ impl DflashShape {
                     index,
                     &dflash_layer_tensor(layer, &format!("{stem}.base_kernel")),
                 )?;
-                if base.shape != (2, gpu::DFLASH_TAPS, hidden as u32, 1) {
+                // Rank 3, recorded as (2, TAPS, hidden, 0): `shape4` pads the
+                // absent fourth dimension with 0, which is what the pinned
+                // real install carries. There is no writer path that records
+                // a 4 there.
+                if base.shape != (2, gpu::DFLASH_TAPS, hidden as u32, 0) {
                     return Err(RealForwardError::Unsupported(format!(
                         "{}.layers.{layer}.{stem}.base_kernel has shape {:?}, expected [2, {}, {hidden}]",
                         DFLASH_PREFIX, base.shape, gpu::DFLASH_TAPS

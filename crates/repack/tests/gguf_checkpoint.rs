@@ -302,9 +302,13 @@ fn the_router_becomes_an_int8_affine_entry_that_dequantizes_back() {
 /// this crate forbids handing a caller's file straight to a panic.
 #[test]
 fn a_router_row_that_is_not_a_whole_group_is_rejected_rather_than_panicking() {
-    // 100 is deliberately not a multiple of 64.
-    let (bytes, _) = minimal_gemma_gguf(100)
-        .f32_tensor("blk.0.ffn_gate_inp.weight", &[100, 4], 7)
+    // 96 is a multiple of the Q8_0 block size 32, so the embedding row that
+    // `minimal_gemma_gguf` always writes passes the per-dtype divisibility
+    // check, while remaining NOT a multiple of the router's 64-element affine
+    // groups -- which is the shape this test is about. (An earlier revision
+    // used 100 and predates the divisibility gate on the embedding.)
+    let (bytes, _) = minimal_gemma_gguf(96)
+        .f32_tensor("blk.0.ffn_gate_inp.weight", &[96, 4], 7)
         .build();
     let header = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
     let err = match orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&bytes)) {
@@ -659,7 +663,10 @@ fn reports_ignored_tensors_rather_than_dropping_them_silently() {
 
     let (bytes, _) = turbospark_repack::GgufBuilder::new()
         .metadata_str("general.architecture", "gemma4")
-        .metadata_u32("gemma4.block_count", 0)
+        // One layer rather than the 0 an earlier revision used: the config
+        // bound (`1..=MAX_MODEL_LAYERS`) now refuses 0 before the tensor walk
+        // can reach the rope_freqs refusal this test is about.
+        .metadata_u32("gemma4.block_count", 1)
         .metadata_u32("gemma4.embedding_length", 64)
         .metadata_u32("gemma4.attention.head_count", 4)
         .metadata_u32("gemma4.attention.head_count_kv", 2)
@@ -668,7 +675,10 @@ fn reports_ignored_tensors_rather_than_dropping_them_silently() {
         .metadata_u32("gemma4.expert_feed_forward_length", 16)
         .metadata(
             "gemma4.attention.sliding_window_pattern",
-            turbospark_repack::GgufValue::Array(vec![]),
+            // One entry for the one layer, which the pattern-length check
+            // requires (the empty array was legal back when this fixture
+            // declared 0 layers).
+            turbospark_repack::GgufValue::Array(vec![GgufValue::Bool(true)]),
         )
         .q8_0_tensor("token_embd.weight", &[64, 128], 1)
         .tensor("rope_freqs.weight", 0, &[16], vec![0u8; 64])

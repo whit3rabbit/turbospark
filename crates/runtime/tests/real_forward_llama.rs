@@ -170,10 +170,21 @@ fn a_moe_install_relabelled_dense_is_refused_at_open() {
         .expect("install builds");
 
     // The manifest has to agree, or `validate_arch` refuses first and this
-    // never reaches the FLOW's guard, which is the thing under test. Editing
+    // never reaches the open path, which is the thing under test. Editing
     // the two counts on disk is cheaper than a second fixture and keeps the
     // failure attributable: without it the message is
     // "manifest.arch.numExperts = 8; expected 0".
+    //
+    // The refusal that lands is the open-time expert-count cross-check, not
+    // the flow guard's missing-dense-tensor line: the layout lattice
+    // (experts-per-layer agreement, per-layer blob presence, numLayers
+    // agreement) closes every route past `open_expert_streamers` for an
+    // install that carries expert blobs, however the layout is patched to
+    // agree. The missing-tensor guard stays for a resident-expert install;
+    // for this streamed fixture the cross-check is the by-name refusal a
+    // relabelled install actually hits, and it names the same disagreement
+    // (manifest and bytes disagreeing about which half this is), which is
+    // the failure mode the case exists for.
     let manifest_path = dir.join("manifest.json");
     let mut manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
@@ -186,11 +197,11 @@ fn a_moe_install_relabelled_dense_is_refused_at_open() {
     dense.top_k_experts = 0;
     let err = RealForwardRunner::open(&dir, dense)
         .err()
-        .expect("a Mixtral fixture has no dense FFN, so this must be refused");
+        .expect("a Mixtral fixture with a dense manifest must be refused");
     let message = err.to_string();
     assert!(
-        message.contains("mlp.gate_proj.weight"),
-        "the refusal must name the dense tensor that is missing: {message}"
+        message.contains("experts per layer, but the architecture declares"),
+        "the refusal must name the layout/architecture expert-count disagreement: {message}"
     );
 }
 

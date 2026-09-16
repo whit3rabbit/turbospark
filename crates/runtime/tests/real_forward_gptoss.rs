@@ -373,6 +373,15 @@ fn a_gpt_oss_install_is_refused_when_its_declared_shape_is_impossible() {
     // NO DENSE HALF. Unlike `llama`, this architecture string covers one
     // shape only, so a zero expert count is malformed rather than a second
     // model to serve.
+    //
+    // The refusal that lands is the open-time expert-count cross-check, not
+    // the family gate's own "MoE-only" line: for an install that carries
+    // expert blobs, the layout lattice (experts-per-layer agreement, per-layer
+    // blob presence, numLayers agreement) closes every route to the family
+    // gate before `RealGptOssState::build` runs, no matter how the layout is
+    // patched to agree. The family line stays for a resident-expert install;
+    // for this streamed fixture the cross-check is the by-name refusal a
+    // relabelled install actually hits, and it names the same disagreement.
     let (dir, arch, _) = gpt_oss_install();
     let mut dense = arch.clone();
     dense.num_experts = 0;
@@ -381,8 +390,8 @@ fn a_gpt_oss_install_is_refused_when_its_declared_shape_is_impossible() {
     patch_manifest(&dir, "topKExperts", serde_json::json!(0));
     let err = refusal(&dir, dense, "a dense gpt-oss");
     assert!(
-        err.contains("MoE-only"),
-        "the refusal must say the architecture has no dense half, got: {err}"
+        err.contains("experts per layer, but the architecture declares"),
+        "the refusal must name the layout/architecture expert-count disagreement, got: {err}"
     );
     std::fs::remove_dir_all(&dir).ok();
 }

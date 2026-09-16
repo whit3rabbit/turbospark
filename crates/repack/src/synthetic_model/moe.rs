@@ -70,20 +70,42 @@ pub fn build_synthetic_gemma4_moe_streamed_install(
             let gate = quantized_tensor("gate", inter, hidden, ebase + 1);
             let up = quantized_tensor("up", inter, hidden, ebase + 2);
             let down = quantized_tensor("down", hidden, inter, ebase + 3);
+            // The companions are per-GROUP (64 wide, the affine group the
+            // quantizer above uses), so their logical shape is [rows, groups]
+            // and not the weight's [rows, cols] -- the layout validator sizes
+            // every bf16 companion off its declared shape, and a [rows, cols]
+            // declaration on a 64-row, 64-col weight demands 8192 bytes where
+            // one group of 64 rows is 128.
+            let groups = |cols: usize| cols.div_ceil(64) as u64;
             let mut sub_tensors = Vec::with_capacity(9);
             let mut used = 0u64;
             for (role, spec) in [("gate", &gate), ("up", &up), ("down", &down)] {
-                for (suffix, bytes, dtype) in [
-                    ("", spec.packed.clone(), "u32"),
-                    ("_scales", u16_le(&spec.scales), "bf16"),
-                    ("_biases", u16_le(&spec.biases), "bf16"),
+                for (suffix, bytes, dtype, shape) in [
+                    (
+                        "",
+                        spec.packed.clone(),
+                        "u32",
+                        vec![spec.rows as u64, spec.cols as u64],
+                    ),
+                    (
+                        "_scales",
+                        u16_le(&spec.scales),
+                        "bf16",
+                        vec![spec.rows as u64, groups(spec.cols as usize)],
+                    ),
+                    (
+                        "_biases",
+                        u16_le(&spec.biases),
+                        "bf16",
+                        vec![spec.rows as u64, groups(spec.cols as usize)],
+                    ),
                 ] {
                     used += bytes.len() as u64;
                     sub_tensors.push(crate::gturbo_writer::SubTensor {
                         role: format!("{role}{suffix}"),
                         bytes,
                         dtype: dtype.to_string(),
-                        shape: vec![spec.rows as u64, spec.cols as u64],
+                        shape,
                     });
                 }
             }
