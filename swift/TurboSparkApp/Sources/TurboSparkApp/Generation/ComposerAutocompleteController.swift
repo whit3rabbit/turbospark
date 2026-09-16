@@ -81,13 +81,20 @@ final class ComposerAutocompleteController: ObservableObject {
     /// The full composer text with the trigger token replaced by the
     /// highlighted suggestion, or nil when there is nothing to accept. The
     /// trailing space is part of the result: a completed token is not a
-    /// trigger, so the popup closes by the same text change that inserted it.
+    /// trigger, so the popup closes by the same text change that inserted
+    /// it. A reference PREFIX row (`@file:`, `@git:`, `@url:`, `@folder:`)
+    /// continues instead: no trailing space, and the token still ends in a
+    /// live trigger, so the same text change re-opens the popup for what
+    /// follows the colon. A COMPLETED row under the scheme
+    /// (`@file:src/a.swift`) is an ordinary file row and takes the space.
     func accept(in text: String) -> String? {
         guard isVisible, let match = triggerMatch,
             suggestions.indices.contains(selectedIndex)
         else { return nil }
         let head = String(text.prefix(match.tokenStartOffset))
-        return head + suggestions[selectedIndex].replacementToken + " "
+        let row = suggestions[selectedIndex]
+        let continues = row.kind == .reference && row.replacementToken.hasSuffix(":")
+        return head + row.replacementToken + (continues ? "" : " ")
     }
 
     // MARK: - Internals

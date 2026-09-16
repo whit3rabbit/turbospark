@@ -158,11 +158,50 @@ final class ComposerAutocompleteTests: XCTestCase {
         ProjectFileEntry(relativePath: "src/deep/Helper.swift", isDirectory: false),
     ]
 
-    func testEmptyQueryOffersTheWholeTreeShallowestFirst() {
+    func testEmptyQueryOffersReferencesThenTheWholeTree() {
         let rows = ComposerAutocompleteEngine.mentionCandidates(query: "", entries: entries)
+        // The typed reference menu comes first (Hermes: `@` shows all
+        // reference types), the tree browse after it.
         XCTAssertEqual(
-            rows.map(\.title),
+            rows.prefix(6).map(\.replacementToken),
+            ["@diff", "@staged", "@git:", "@url:", "@file:", "@folder:"])
+        XCTAssertEqual(
+            rows.dropFirst(6).map(\.title),
             ["README.md", "src", "src/App.swift", "src/deep/Helper.swift"])
+    }
+
+    func testTypedPrefixFiltersTheReferenceRows() {
+        XCTAssertEqual(
+            ComposerAutocompleteEngine.referenceCandidates(query: "d").map(\.replacementToken),
+            ["@diff"])
+        XCTAssertEqual(
+            ComposerAutocompleteEngine.referenceCandidates(query: "git").map(\.replacementToken),
+            ["@git:"])
+        XCTAssertTrue(ComposerAutocompleteEngine.referenceCandidates(query: "zz").isEmpty)
+    }
+
+    func testFileSchemeCompletesPathsWithTheSchemePrefix() {
+        let rows = ComposerAutocompleteEngine.mentionCandidates(
+            query: "file:app", entries: entries)
+        XCTAssertEqual(rows.map(\.replacementToken), ["@file:src/App.swift"])
+        XCTAssertEqual(rows.first?.kind, .file)
+    }
+
+    func testFolderSchemeOffersOnlyFolders() {
+        let rows = ComposerAutocompleteEngine.mentionCandidates(query: "folder:", entries: entries)
+        XCTAssertEqual(rows.map(\.replacementToken), ["@folder:src"])
+        XCTAssertEqual(rows.first?.kind, .folder)
+    }
+
+    func testSchemeCompletionNeverWrapsReferenceRowsOrQuotedPaths() {
+        let spaced = [ProjectFileEntry(relativePath: "my notes", isDirectory: true)]
+        XCTAssertTrue(
+            ComposerAutocompleteEngine.mentionCandidates(query: "file:", entries: spaced).isEmpty,
+            "the token grammar cannot carry quotes behind a scheme prefix")
+        XCTAssertTrue(
+            ComposerAutocompleteEngine.mentionCandidates(query: "file:", entries: entries)
+                .allSatisfy { $0.replacementToken.hasPrefix("@file:") },
+            "every row under the scheme stays inside the scheme")
     }
 
     func testFilenamePrefixRanksBeforePathMatch() {
@@ -261,6 +300,64 @@ final class ComposerAutocompleteTests: XCTestCase {
         XCTAssertTrue(controller.suggestions.isEmpty)
         XCTAssertNotNil(controller.hint)
         XCTAssertNil(controller.accept(in: "@src"))
+    }
+
+    /// Drives the real controller against a real (one-file) project root and
+    /// waits for the async scan to land, because `accept` needs populated
+    /// suggestions and the scan is the only thing that fills them.
+    @MainActor
+    private func controllerWithRows(
+        _ text: String, projectRoot: URL
+    ) async throws -> ComposerAutocompleteController {
+        let controller = ComposerAutocompleteController()
+        controller.textChanged(text: text, skills: [], projectRoot: projectRoot)
+        for _ in 0..<200 where controller.suggestions.isEmpty {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(
+            controller.suggestions.isEmpty,
+            "the project scan never produced rows for '\(text)'")
+        return controller
+    }
+
+    @MainActor
+    func testAcceptingTheDiffRowCompletesWithATrailingSpace() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ts-ref-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "x".write(to: root.appendingPathComponent("a.swift"), atomically: true, encoding: .utf8)
+
+        let controller = try await controllerWithRows("check @d", projectRoot: root)
+        XCTAssertEqual(
+            controller.suggestions.first?.replacementToken, "@diff",
+            "the typed prefix 'd' lands on the diff reference row")
+        XCTAssertEqual(controller.accept(in: "check @d"), "check @diff ")
+    }
+
+    @MainActor
+    func testAcceptingASchemePrefixRowContinuesWithoutATrailingSpace() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ts-ref-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "x".write(to: root.appendingPathComponent("a.swift"), atomically: true, encoding: .utf8)
+
+        // The PREFIX row is offered while the scheme name is being typed,
+        // and accepting it continues the token: no trailing space, the
+        // popup re-opens on the next keystroke.
+        let typing = try await controllerWithRows("check @f", projectRoot: root)
+        let prefixIndex = try XCTUnwrap(
+            typing.suggestions.firstIndex { $0.replacementToken == "@file:" },
+            "the half-typed scheme offers its prefix row: \(typing.suggestions.map(\.replacementToken))")
+        typing.select(prefixIndex)
+        XCTAssertEqual(typing.accept(in: "check @f"), "check @file:")
+
+        // A COMPLETED row under the scheme is an ordinary file row: it
+        // takes the trailing space and closes the popup like any file.
+        let completing = try await controllerWithRows("check @file:", projectRoot: root)
+        XCTAssertEqual(completing.suggestions.first?.replacementToken, "@file:a.swift")
+        XCTAssertEqual(completing.accept(in: "check @file:"), "check @file:a.swift ")
     }
 
     // MARK: - Registry drift

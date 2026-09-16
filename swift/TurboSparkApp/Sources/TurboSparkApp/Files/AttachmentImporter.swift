@@ -13,6 +13,10 @@ enum AttachmentImporter {
         var importedCount: Int
         /// One line per document that failed, ready to show verbatim.
         var failures: [String]
+        /// IDs of the attachments this import appended, in import order, so
+        /// a caller that post-processes content (the mention resolver's
+        /// line ranges) can find them on the chat row.
+        var importedIDs: [UUID] = []
 
         /// A single newline-joined error string, or nil when nothing failed.
         var errorText: String? {
@@ -64,6 +68,7 @@ enum AttachmentImporter {
 
         var imported = 0
         var failures: [String] = []
+        var importedIDs: [UUID] = []
         for (url, size, outcome) in outcomes {
             switch outcome {
             case .success(let document):
@@ -79,12 +84,13 @@ enum AttachmentImporter {
                 } else {
                     model.addPromptAttachment(attachment, toChatID: chatID)
                 }
+                importedIDs.append(attachment.id)
                 imported += 1
             case .failure(let error):
                 failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
         }
-        return Outcome(importedCount: imported, failures: failures)
+        return Outcome(importedCount: imported, failures: failures, importedIDs: importedIDs)
     }
 
     /// Recursively scans a directory for supported text, code, document, and image files.

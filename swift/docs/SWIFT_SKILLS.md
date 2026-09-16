@@ -403,6 +403,13 @@ and `ComposerAutocompleteEngine`:
   picker uses -- and the `@path` token STAYS in the message text. A token
   that resolves to nothing stays as prose, silently; the missing chip is the
   feedback.
+- Beyond bare paths, the same token grammar carries the TYPED context
+  references (`@diff`, `@staged`, `@git:N`, `@url:`, `@file:` with line
+  ranges, `@folder:`), which extend the popup with reference rows and
+  resolve through the git and web layers. Their grammar, gates, and
+  failure behavior are documented in
+  [SWIFT_CONTEXT_REFERENCES.md](SWIFT_CONTEXT_REFERENCES.md); this
+  section covers only the bare-path case above.
 
 ### B. Session capture ("Skillify" / propose_skills)
 - When a complex task completes successfully, the user or model can invoke the

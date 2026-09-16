@@ -26,11 +26,14 @@ struct ComposerSuggestion: Identifiable, Equatable {
         case skill
         case file
         case folder
+        /// A typed context reference: `@diff`, `@staged`, `@git:`, `@url:`,
+        /// `@file:`, `@folder:`.
+        case reference
     }
 
     let kind: Kind
     /// Full replacement token, trigger character included: `/explore`,
-    /// `/my-skill`, `@src/App.swift`, `@"my notes.txt"`.
+    /// `/my-skill`, `@src/App.swift`, `@"my notes.txt"`, `@file:src/App.swift`.
     let replacementToken: String
     let title: String
     let subtitle: String?
@@ -144,17 +147,78 @@ enum ComposerAutocompleteEngine {
             .map(\.suggestion)
     }
 
+    // MARK: - Reference candidates
+
+    /// The typed context-reference rows, in offer order. `@git:`, `@url:`,
+    /// `@file:` and `@folder:` are PREFIX rows: accepting one continues the
+    /// token after the colon instead of completing it.
+    static let referenceRows: [ComposerSuggestion] = [
+        ComposerSuggestion(
+            kind: .reference, replacementToken: "@diff", title: "@diff",
+            subtitle: "Unstaged working tree changes", iconName: "arrow.triangle.branch"),
+        ComposerSuggestion(
+            kind: .reference, replacementToken: "@staged", title: "@staged",
+            subtitle: "Staged changes", iconName: "tray.full"),
+        ComposerSuggestion(
+            kind: .reference, replacementToken: "@git:", title: "@git:",
+            subtitle: "Last N commits with patches", iconName: "clock"),
+        ComposerSuggestion(
+            kind: .reference, replacementToken: "@url:", title: "@url:",
+            subtitle: "Fetch a web page into the message", iconName: "globe"),
+        ComposerSuggestion(
+            kind: .reference, replacementToken: "@file:", title: "@file:",
+            subtitle: "File contents, optionally :10-25", iconName: "doc"),
+        ComposerSuggestion(
+            kind: .reference, replacementToken: "@folder:", title: "@folder:",
+            subtitle: "Folder tree of supported files", iconName: "folder"),
+    ]
+
+    /// Reference rows whose scheme name the typed query is a prefix of, best
+    /// first. `@file:`/`@folder:` queries never land here: they are path
+    /// completion (see `mentionCandidates`) rather than row matches.
+    static func referenceCandidates(query: String) -> [ComposerSuggestion] {
+        let clean = query.lowercased()
+        guard !clean.hasPrefix("file:"), !clean.hasPrefix("folder:") else { return [] }
+        return referenceRows.filter { row in
+            row.replacementToken.dropFirst().lowercased().hasPrefix(clean)
+        }
+    }
+
     // MARK: - Mention candidates
 
     /// Project paths matching a typed `@query`, best first.
     ///
-    /// An empty query offers the whole tree alphabetically rather than
-    /// nothing: `@` alone is the browse gesture. A query may span directories
-    /// (`src/deep/he`) and is matched as a substring of the relative path.
+    /// An empty query offers the reference rows ahead of the whole tree
+    /// alphabetically: `@` alone is both the browse gesture and the menu of
+    /// typed schemes. A query may span directories (`src/deep/he`) and is
+    /// matched as a substring of the relative path.
+    ///
+    /// A query under `@file:` or `@folder:` completes paths INTO the scheme:
+    /// every row's replacement carries the prefix, and paths needing the
+    /// quoted form are skipped, because the mention grammar can only carry
+    /// quotes directly after the `@` -- a path with spaces under a scheme is
+    /// typed as the bare quoted `@"my note.txt"` instead.
     static func mentionCandidates(
         query: String,
         entries: [ProjectFileEntry]
     ) -> [ComposerSuggestion] {
+        for scheme in ["file:", "folder:"] where query.lowercased().hasPrefix(scheme) {
+            let remainder = String(query.dropFirst(scheme.count))
+            return mentionCandidates(query: remainder, entries: entries).compactMap { row in
+                // Only path rows wrap into the scheme: the nested call also
+                // returns reference rows for the remainder, and `@file:@diff`
+                // is not a token this grammar can mean.
+                guard row.kind == .file || row.kind == .folder else { return nil }
+                guard !row.replacementToken.contains("\"") else { return nil }
+                if scheme == "folder:", row.kind != .folder { return nil }
+                return ComposerSuggestion(
+                    kind: row.kind,
+                    replacementToken: "@" + scheme + row.replacementToken.dropFirst(),
+                    title: String(row.replacementToken.dropFirst()),
+                    subtitle: "@" + scheme + " reference",
+                    iconName: row.iconName)
+            }
+        }
         let clean = query.lowercased()
         var ranked: [(bucket: Int, entry: ProjectFileEntry)] = []
         for entry in entries {
@@ -178,13 +242,14 @@ enum ComposerAutocompleteEngine {
             }
             ranked.append((bucket, entry))
         }
-        return ranked
+        let fileRows = ranked
             .sorted {
                 if $0.bucket != $1.bucket { return $0.bucket < $1.bucket }
                 return $0.entry.relativePath.lowercased() < $1.entry.relativePath.lowercased()
             }
             .prefix(maxSuggestions)
             .map { ComposerSuggestion(entry: $0.entry) }
+        return (referenceCandidates(query: query) + fileRows).prefix(maxSuggestions).map { $0 }
     }
 
     /// 0 = name prefix, 1 = name contains, 2 = description contains, else
