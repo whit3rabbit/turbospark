@@ -14,11 +14,12 @@ extension AppModel {
         var result = await AppToolRegistry.execute(
             call: mutation, in: project, chatID: chatID,
             webToolsEnabled: webToolsEnabled)
+        var stopReason = result.continuationStopReason
         mutation.status = result.isError ? .failed : .completed
         let mutationPost = await applyPostToolUse(
             to: result, call: mutation, chatID: chatID, project: project)
         result = mutationPost.result
-        var stopReason = mutationPost.stopReason
+        if stopReason == nil { stopReason = mutationPost.stopReason }
 
         guard actionFusionEnabled, let validation = ToolActionFusion.validation(for: mutation) else {
             result = archiveToolObservation(result, chatID: chatID)
