@@ -1,5 +1,5 @@
 use crate::arch_config::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -57,6 +57,8 @@ pub fn gpt_oss_20b() -> ArchConfig {
         full_rope_theta: 150_000.0,
         partial_rotary_factor: 1.0,
         num_layers: 24,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 32,
         top_k_experts: 4,
         tie_word_embeddings: false,
@@ -76,6 +78,7 @@ pub fn gpt_oss_20b() -> ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,
@@ -91,6 +94,7 @@ pub fn gpt_oss_20b() -> ArchConfig {
             original_context: 4096,
             beta_fast: 32.0,
             beta_slow: 1.0,
+            mscale: 0.0,
         },
         vision: VisionConfig::NONE,
         ple: PleConfig::NONE,

@@ -22,6 +22,8 @@ fn toy_dsv4_arch() -> model_io::ArchConfig {
         full_rope_theta: 10000.0,
         partial_rotary_factor: 1.0,
         num_layers: 3,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 1,
         top_k_experts: 1,
         tie_word_embeddings: false,
@@ -37,6 +39,7 @@ fn toy_dsv4_arch() -> model_io::ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: model_io::LinearAttentionConfig::NONE,
+        mla: model_io::MlaConfig::NONE,
         compressed_attention: model_io::CompressedAttentionConfig {
             q_lora_rank: 16,
             o_lora_rank: 16,

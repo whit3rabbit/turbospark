@@ -1,12 +1,13 @@
 use super::family::ModelFamily;
 use super::sub_configs::{
-    CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, PleConfig,
+    CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig, PleConfig,
     RopeScalingConfig, VisionConfig,
 };
 
 /// `full_attention_layer_mask` values: 0 = sliding-window attention, 1 =
 /// full attention, 2 = gated-DeltaNet linear attention, 3 = compressed
-/// sparse attention (CSA), 4 = heavily compressed attention (HCA).
+/// sparse attention (CSA), 4 = heavily compressed attention (HCA), 5 =
+/// multi-head latent attention (MLA, `deepseek2`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArchConfig {
     /// Model hidden dimension size.
@@ -39,6 +40,21 @@ pub struct ArchConfig {
     pub partial_rotary_factor: f64,
     /// Number of layers in model architecture.
     pub num_layers: i64,
+    /// How many leading layers are DENSE (`first_k_dense_replace`): the
+    /// routed-expert blob files start after them, which is a POSITION in
+    /// `packed_experts/`, not just a width. Zero means no dense lead, which
+    /// is every family here except `deepseek2`.
+    pub num_dense_leading_layers: i64,
+    /// The dense lead layers' FFN width.
+    ///
+    /// A separate field from [`Self::intermediate_size`] because [`Self::intermediate_size`] is the SHARED
+    /// expert's width on this architecture (2816) and the dense lead's is
+    /// a different number (10944); one scalar cannot carry both, and a
+    /// baseline that overloaded either would produce a layer that runs at
+    /// the wrong width with no error. Read off the GGUF pair
+    /// `feed_forward_length` (dense lead) against the shexp tensors'
+    /// second dim (shared), not inferred.
+    pub dense_lead_intermediate_size: i64,
     /// Number of routed experts in MoE layers.
     pub num_experts: i64,
     /// Number of selected experts per token.
@@ -70,6 +86,15 @@ pub struct ArchConfig {
     pub rope_neox_subdim: bool,
     /// Gated-DeltaNet linear attention configuration.
     pub linear_attention: LinearAttentionConfig,
+    /// Multi-head latent attention configuration (`deepseek2`), or
+    /// [`MlaConfig::NONE`].
+    ///
+    /// Resolved explicitly to `NONE` when the manifest omits it, never to a
+    /// Gemma value, for the reason [`Self::vision`] states: an omitted
+    /// family-extension field is otherwise validated against GEMMA's value
+    /// whatever family the manifest claims (AGENTS.md Gotcha 24).
+    /// `build_manifest_json` writes it unconditionally.
+    pub mla: MlaConfig,
     /// Compressed attention configuration.
     pub compressed_attention: CompressedAttentionConfig,
     /// Hyper-connection configuration.
@@ -169,6 +194,10 @@ impl ArchConfig {
     pub fn layer_is_csa(&self, layer: usize) -> bool {
         self.full_attention_layer_mask[layer] == 3
     }
+    /// Returns true if layer at index runs multi-head latent attention (MLA).
+    pub fn layer_is_mla(&self, layer: usize) -> bool {
+        self.full_attention_layer_mask[layer] == 5
+    }
     /// Returns true if layer at index runs heavily compressed attention (HCA).
     pub fn layer_is_hca(&self, layer: usize) -> bool {
         self.full_attention_layer_mask[layer] == 4
@@ -186,6 +215,10 @@ impl ArchConfig {
         self.full_attention_layer_mask
             .iter()
             .any(|&v| v == 3 || v == 4)
+    }
+    /// Returns true if model contains MLA layers.
+    pub fn has_mla_layers(&self) -> bool {
+        self.full_attention_layer_mask.contains(&5)
     }
     /// Hash-routed MoE layer: expert selection is `tid2eid[token]`.
     pub fn layer_is_hash_routed(&self, layer: usize) -> bool {

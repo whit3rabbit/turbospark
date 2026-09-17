@@ -101,6 +101,15 @@ int main(int argc, char **argv) {
     const int32_t n_vocab = llama_vocab_n_tokens(vocab);
 
     struct llama_context_params cparams = llama_context_default_params();
+    // Optional rope override for A/B runs: argv[6]=none|yarn, argv[7]=scale.
+    if (argc > 6) {
+        cparams.rope_scaling_type = strcmp(argv[6], "none") == 0
+            ? LLAMA_ROPE_SCALING_TYPE_NONE
+            : LLAMA_ROPE_SCALING_TYPE_YARN;
+    }
+    if (argc > 7) {
+        cparams.rope_freq_scale = (float)atof(argv[7]);
+    }
     cparams.n_ctx = (uint32_t)n_ids + 8;
     // One decode call per token in `cached`, one call over the whole
     // sequence in `batched`. n_batch also sizes llama.cpp's own output

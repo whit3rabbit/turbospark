@@ -3,6 +3,7 @@
 //! members in `Infrastructure/ModelIO/ModelTypes.swift`.
 
 mod deepseek;
+mod deepseek2;
 mod gemma;
 mod gpt_oss;
 mod llama;
@@ -12,6 +13,7 @@ mod qwen;
 mod spark;
 
 pub use deepseek::deepseek_v4_flash_284b_a13b;
+pub use deepseek2::deepseek_v2_lite_16b;
 pub use gemma::gemma4_26b_a4b;
 pub use gpt_oss::gpt_oss_20b;
 pub use llama::mixtral_8x7b;
@@ -41,6 +43,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::Qwen3Dense => qwen3_4b(),
         ModelFamily::MiniMaxM2 => minimax_m2(),
         ModelFamily::Qwen2Dense => qwen2_5_7b(),
+        ModelFamily::Deepseek2 => deepseek_v2_lite_16b(),
     }
 }
 
@@ -59,5 +62,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         qwen3_4b(),
         minimax_m2(),
         qwen2_5_7b(),
+        deepseek_v2_lite_16b(),
     ]
 }

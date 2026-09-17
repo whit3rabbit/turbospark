@@ -1,7 +1,7 @@
 //! Gemma 4 and Qwen 3.6 config and quantization spec parsing.
 
 use model_io::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -146,6 +146,8 @@ pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         full_rope_theta: full_theta,
         partial_rotary_factor: prf,
         num_layers: i("num_hidden_layers")?,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: i("num_experts")?,
         top_k_experts: i("top_k_experts")?,
         tie_word_embeddings: b("tie_word_embeddings"),
@@ -161,6 +163,7 @@ pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

@@ -228,11 +228,25 @@ pub enum ModelFamily {
     Spark25,
     /// MiniMax-M2: full GQA with whole-projection Q/K norms and sigmoid MoE.
     MiniMaxM2,
+    /// The `deepseek2` GGUF architecture / HF `model_type: "deepseek_v2"`:
+    /// multi-head latent attention plus fine-grained MoE. The pinned
+    /// witness is `DeepSeek-V2-Lite-Chat` (16B, 64 experts top-6 plus a
+    /// fused shared expert, one dense lead layer); the same string reports
+    /// DeepSeek V2/V3, Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3,
+    /// which is why the roadmap calls it the highest-leverage unlock.
+    ///
+    /// Its attention compresses each token's KV into ONE row per layer --
+    /// `[latent 512 ; rope-carried key 64]` -- and runs the ABSORBED form
+    /// (q_nope folded through the up-projection, V read from the cached
+    /// row itself), which converts the attention into MQA over that row.
+    /// Every layer is mask 5, a kind no earlier family carries. Facts:
+    /// `docs/DEEPSEEK2_PHASE0.md`.
+    Deepseek2,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 13 model families.
-    pub const ALL: [ModelFamily; 13] = [
+    /// Exhaustive list of all 14 model families.
+    pub const ALL: [ModelFamily; 14] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -246,6 +260,7 @@ impl ModelFamily {
         ModelFamily::Qwen3Dense,
         ModelFamily::MiniMaxM2,
         ModelFamily::Qwen2Dense,
+        ModelFamily::Deepseek2,
     ];
 
     /// Returns static string identifier for the model family.
@@ -286,6 +301,11 @@ impl ModelFamily {
             ModelFamily::Qwen3Dense => "qwen3",
             ModelFamily::MiniMaxM2 => "minimax_m2",
             ModelFamily::Qwen2Dense => "qwen2",
+            // New, and it matches the GGUF `general.architecture` string.
+            // The HF `model_type` is "deepseek_v2"; the GGUF spelling won
+            // because the pinned witness is a GGUF and the registry key
+            // must not have a second copy.
+            ModelFamily::Deepseek2 => "deepseek2",
         }
     }
 
@@ -305,6 +325,7 @@ impl ModelFamily {
             "qwen3" => Some(ModelFamily::Qwen3Dense),
             "minimax_m2" => Some(ModelFamily::MiniMaxM2),
             "qwen2" => Some(ModelFamily::Qwen2Dense),
+            "deepseek2" => Some(ModelFamily::Deepseek2),
             _ => None,
         }
     }
@@ -331,9 +352,10 @@ mod tests {
                 ModelFamily::Qwen3Dense => 10,
                 ModelFamily::MiniMaxM2 => 11,
                 ModelFamily::Qwen2Dense => 12,
+                ModelFamily::Deepseek2 => 13,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 13);
+        assert_eq!(ModelFamily::ALL.len(), 14);
     }
 }

@@ -44,7 +44,19 @@ pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealFor
         .copied()
         .max()
         .unwrap_or(0);
-    if max_kind > 2 {
+    // Mask 5 is multi-head latent attention (`deepseek2`), whose compressed
+    // cache and absorbed kernels live in `families/deepseek2/`; masks 3 and
+    // 4 remain the DeepSeek V4 compressed-attention kinds nothing runs yet.
+    // Gated BY FAMILY rather than by kind alone so a future family declaring
+    // mask 5 without an MLA flow is refused here instead of reaching for a
+    // neighbour's kernel.
+    if max_kind == 5 && expecting.family != model_io::ModelFamily::Deepseek2 {
+        return Err(RealForwardError::Unsupported(format!(
+            "MLA (mask 5) layers need the deepseek2 family, not {}",
+            expecting.family.as_str()
+        )));
+    }
+    if max_kind > 2 && max_kind != 5 {
         return Err(RealForwardError::Unsupported(
             "compressed (DeepSeek CSA/HCA) attention layers are not supported yet".to_string(),
         ));
@@ -295,14 +307,23 @@ pub(crate) fn open_expert_streamers(
         // `set_routed_batch_prefill` can flip that seam after open and an
         // env read here would miss the setter.
         let mut mapped = MappedResidency::default();
-        for layer in 0..num_layers {
+        // Blob positions are sequential from the first ROUTED layer, so
+        // checkpoint layer L reads layout position `L - lead` (`deepseek2`'s
+        // dense lead; zero on every family that routes all its layers). The
+        // dense lead layers get None holes, which is safe because a dense
+        // FFN layer never consults the routed path.
+        let lead = expecting.num_dense_leading_layers.max(0) as usize;
+        mapped.buffers.resize_with(num_layers, || None);
+        mapped.layers.resize_with(num_layers, || None);
+        for layer in lead..num_layers {
             let entry = layout
                 .layers
                 .iter()
-                .find(|l| l.layer == layer)
+                .find(|l| l.layer == layer - lead)
                 .ok_or_else(|| {
                     RealForwardError::Unsupported(format!(
-                        "packed_experts layout missing layer {layer}"
+                        "packed_experts layout missing blob position {} (checkpoint layer {layer})",
+                        layer - lead
                     ))
                 })?;
             let stream_layout = streaming::StreamLayout::from_packed_experts_layer(entry, dir);
@@ -313,8 +334,8 @@ pub(crate) fn open_expert_streamers(
             let buffer =
                 gpu::wrap_page_aligned_no_copy(context.device(), bytes.as_ptr(), bytes.len())
                     .map_err(RealForwardError::Gpu)?;
-            mapped.buffers.push(Some(buffer));
-            mapped.layers.push(Some(mapped_layer));
+            mapped.buffers[layer] = Some(buffer);
+            mapped.layers[layer] = Some(mapped_layer);
         }
         let resolved = expert_cache_slots
             .resolve(
@@ -342,14 +363,23 @@ pub(crate) fn open_expert_streamers(
     let working_set = bytes_per_slot * expert_cache_slots as u64;
     let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
     let experts_layout = if layout.num_layers > 0 {
+        // Dense lead layers carry no expert blob: they get None holes, and
+        // the flow (which indexes by CHECKPOINT layer) never consults them.
+        let lead = expecting.num_dense_leading_layers.max(0) as usize;
         for layer in 0..num_layers {
+            if layer < lead {
+                streamers.push(None);
+                continue;
+            }
             let entry = layout
                 .layers
                 .iter()
-                .find(|l| l.layer == layer)
+                .find(|l| l.layer == layer - lead)
                 .ok_or_else(|| {
                     RealForwardError::Unsupported(format!(
-                        "packed_experts layout missing layer {layer}"
+                        "packed_experts layout missing blob position {} (checkpoint layer \
+                         {layer})",
+                        layer - lead
                     ))
                 })?;
             let stream_layout = streaming::StreamLayout::from_packed_experts_layer(entry, dir);
@@ -430,6 +460,10 @@ mod tests {
         ModelFamily::Qwen3Dense,
         ModelFamily::MiniMaxM2,
         ModelFamily::Qwen2Dense,
+        // Refused deliberately: mapped residency over the compressed MLA
+        // cache has no mapped arm in the deepseek2 dispatch, and the family
+        // opens fine on the streamed path.
+        ModelFamily::Deepseek2,
     ];
 
     fn assert_invalid_kv_dimension(name: &str, value: i64, mutate: fn(&mut model_io::ArchConfig)) {

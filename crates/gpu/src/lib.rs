@@ -98,6 +98,7 @@ mod kv_quantize;
 #[cfg(target_os = "macos")]
 mod logit_softmax;
 #[cfg(target_os = "macos")]
+mod mla;
 mod moe_decode;
 #[cfg(target_os = "macos")]
 mod moe_gguf;
@@ -243,6 +244,12 @@ pub use kv_quant_tables::{KvQuantTables, TqSideTables};
 pub use kv_quantize::encode_kv_quantize_tq;
 #[cfg(target_os = "macos")]
 pub use logit_softmax::{encode_logit_softcap_softmax, logit_softcap_softmax};
+#[cfg(target_os = "macos")]
+pub use mla::{
+    encode_mla_absorb_q, encode_mla_attention_decode, encode_mla_cache_write, encode_mla_kv_norm,
+    encode_mla_rope_q_pe, encode_mla_v_combine, mla_absorb_q, mla_attention_decode, mla_kv_norm,
+    mla_rope_q_pe, mla_v_combine,
+};
 #[cfg(target_os = "macos")]
 pub use moe_decode::{
     encode_moe_phase1, encode_moe_phase2, encode_router_gemv_gemma4, moe_decode_source,

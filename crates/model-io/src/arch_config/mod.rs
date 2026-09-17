@@ -13,6 +13,6 @@ mod sub_configs;
 pub use config::ArchConfig;
 pub use family::ModelFamily;
 pub use sub_configs::{
-    CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, PleConfig,
+    CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig, PleConfig,
     RopeScalingConfig, VisionConfig,
 };

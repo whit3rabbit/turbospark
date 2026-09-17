@@ -133,7 +133,29 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
     {
         ChatDialect::MiniMax
     } else if special_token_id(tokenizer, DEEPSEEK_USER_MARK).is_some() {
-        ChatDialect::Deepseek
+        // THE THINK PAIR IS THE SPLIT, not a third marker: every V3/V4-era
+        // table carries `<think>`, the V2-era ones (`DeepSeek-V2-Lite`) do
+        // not. Probing a token the resolver REQUIRES is what keeps this
+        // probe unable to pass where its resolver fails (AGENTS.md Gotcha
+        // 52); probing an arbitrary extra marker would route V2 tables into
+        // a resolver that then dies on the missing pair.
+        if special_token_id(tokenizer, "<think>").is_some() {
+            ChatDialect::Deepseek
+        } else {
+            ChatDialect::DeepseekV2
+        }
+    } else if special_token_id(tokenizer, DEEPSEEK_BOS_MARK).is_some()
+        && special_token_id(tokenizer, DEEPSEEK_EOS_MARK).is_some()
+    {
+        // THE V2-ERA TABLES: fullwidth DeepSeek BOS/EOS and NOTHING ELSE
+        // structural. The `<｜User｜>` / `<｜Assistant｜>` marks exist only
+        // as template TEXT here (read off the actual V2-Lite-Chat
+        // tokenizer.json: its added_tokens list holds exactly two entries,
+        // bos and eos), so the User-mark probe above cannot fire and the
+        // resolver must not require what the table does not carry. Spark
+        // spells its bos `<｜start▁of▁sentence｜>` -- `start`, not `begin` --
+        // so the pair below cannot catch it.
+        ChatDialect::DeepseekV2
     } else if special_token_id(tokenizer, SPARK_BOT_MARK).is_some() {
         // Spark-X2.5, probed BEFORE ChatML on a marker no other table
         // carries. Order relative to the DeepSeek arm is not load-bearing --
@@ -201,8 +223,8 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 }
 
 use super::resolvers::{
-    resolve_chatml, resolve_deepseek, resolve_gemma, resolve_harmony, resolve_llama3,
-    resolve_mistral, resolve_muse_glimmer, resolve_spark,
+    resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_gemma, resolve_harmony,
+    resolve_llama3, resolve_mistral, resolve_muse_glimmer, resolve_spark,
 };
 
 pub(crate) fn resolve_dialect(
@@ -214,6 +236,7 @@ pub(crate) fn resolve_dialect(
         ChatDialect::Gemma => resolve_gemma(tokenizer, config),
         ChatDialect::ChatMl => resolve_chatml(tokenizer),
         ChatDialect::Deepseek => resolve_deepseek(tokenizer),
+        ChatDialect::DeepseekV2 => resolve_deepseek_v2(tokenizer),
         ChatDialect::Mistral => resolve_mistral(tokenizer),
         ChatDialect::Harmony => resolve_harmony(tokenizer),
         ChatDialect::MuseGlimmer => resolve_muse_glimmer(tokenizer),

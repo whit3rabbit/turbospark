@@ -139,6 +139,14 @@ fn resolve_target() -> Option<DumpTarget> {
         // something, where the dense 9B's shape floor collapses to nearly
         // nothing (`crates/bench/CLAUDE.md` Gotcha 8).
         .or_else(|| plain("TURBOSPARK_ORNITH35B_INSTALL_DIR"))
+        // `deepseek2`, and a plain arm for the same two reasons as its
+        // neighbours: the V2 template opens an assistant turn and says words
+        // (no structured slot, Gotcha 13) and reads no clock (Gotcha 14).
+        // Its KL against llama.cpp is the only instrument that reaches the
+        // absorbed-MLA attention's numerics -- the compressed-latency cache
+        // and the transposed q absorption have no self-referential gate that
+        // can see them.
+        .or_else(|| plain("TURBOSPARK_DSV2_INSTALL_DIR"))
         .or_else(|| {
             env_dir("TURBOSPARK_GPTOSS_INSTALL_DIR").map(|install| DumpTarget {
                 install,

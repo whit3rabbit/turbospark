@@ -570,6 +570,12 @@ impl RealForwardRunner {
             })
             .map_err(|e| e.to_string());
         }
+        if self.real_deepseek2.is_some() {
+            return Err(
+                "deepseek2 does not support chunked prefill; the sequential path serves it"
+                    .to_string(),
+            );
+        }
         Err(format!(
             "chunked prefill is wired for the real Gemma 4 flow, both halves of the \
              llama flow (Mistral, Llama 2/3.x, Mixtral, qwen3moe), muse_glimmer, \

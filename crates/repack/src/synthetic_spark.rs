@@ -21,7 +21,7 @@
 
 use model_io::{
     spark_layer_mask, ArchConfig, CompressedAttentionConfig, HyperConnectionConfig,
-    LinearAttentionConfig, ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
+    LinearAttentionConfig, MlaConfig, ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 use crate::gguf_header::{parse_header as parse_gguf_header, GgufValue, DEFAULT_MAX_HEADER_BYTES};
@@ -74,6 +74,8 @@ pub fn tiny_spark_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         full_rope_theta: ROPE_THETA_FULL,
         partial_rotary_factor: PARTIAL_ROTARY_FACTOR,
         num_layers,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 0,
         top_k_experts: 0,
         // TIED: the GGUF fixture ships no `output.weight` and the head
@@ -101,6 +103,7 @@ pub fn tiny_spark_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

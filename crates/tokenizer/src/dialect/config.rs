@@ -1,9 +1,39 @@
 //! Tokenizer and generation configuration loading and embedded template resolution.
 
+/// A special-token reference in `tokenizer_config.json`: either a bare
+/// string or HF's `{"__type": "AddedToken", "content": ...}` object. The
+/// V2-era DeepSeek tables spell every one of these as the object, and a
+/// strict-string field fails the WHOLE config parse -- which silently
+/// stripped the embedded chat template too, because `chat_template` lives
+/// in the same object.
+#[derive(Default, serde::Deserialize)]
+#[serde(untagged)]
+pub(crate) enum TokenRef {
+    Added {
+        content: String,
+    },
+    /// The older convention: the bare string. Newer configs wrap it.
+    Plain(String),
+    #[default]
+    Missing,
+}
+
+impl TokenRef {
+    pub(crate) fn content(&self) -> Option<&str> {
+        match self {
+            TokenRef::Added { content } => Some(content),
+            TokenRef::Plain(content) => Some(content),
+            TokenRef::Missing => None,
+        }
+    }
+}
+
 #[derive(Default, serde::Deserialize)]
 pub(crate) struct TokenizerConfig {
-    pub(crate) bos_token: Option<String>,
-    pub(crate) eos_token: Option<String>,
+    #[serde(default)]
+    pub(crate) bos_token: TokenRef,
+    #[serde(default)]
+    pub(crate) eos_token: TokenRef,
     /// The pre-`chat_template.jinja` convention. HF allowed either one
     /// template string or a NAMED LIST of them (the `default` /
     /// `tool_use` split some checkpoints ship), so both shapes parse.

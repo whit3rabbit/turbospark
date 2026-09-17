@@ -128,6 +128,15 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // `Qwen/Qwen2.5-7B-Instruct-GGUF/qwen2.5-7b-instruct-q3_k_m.gguf`
     ("qwen2", ModelFamily::Qwen2Dense),
     ("minimax-m2", ModelFamily::MiniMaxM2),
+    // Promoted out of the planned table by the `deepseek2` MLA bring-up
+    // (ROADMAP Priority 2 item 3). Read off the witness below AND
+    // `mradermacher/DeepSeek-V2-Lite-Chat-GGUF`'s Q8_0 (the checkpoint this
+    // port installs; the Q4_K_M of the same repo refuses at `open()` on two
+    // Q5_K expert layers, since the routed-pair kernel matrix has no Q5_K
+    // arm). One string covers DeepSeek V2/V3, Kimi K2.5/K2.6, GLM-4.7-Flash
+    // and Mistral-Large-3 -- the roadmap's multi-model unlock. Facts:
+    // `docs/DEEPSEEK2_PHASE0.md`.
+    ("deepseek2", ModelFamily::Deepseek2),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.
@@ -206,15 +215,6 @@ const PLANNED_GGUF: &[(&str, PlannedArch)] = &[
                     is 58.4 GiB of slot cache at 16 slots), plus RoPE frequency scaling \
                     and its interleaved chunked-attention layer graph",
             witness: "https://huggingface.co/unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF/resolve/main/Llama-4-Scout-17B-16E-Instruct-Q2_K.gguf",
-        },
-    ),
-    (
-        "deepseek2",
-        PlannedArch {
-            needs: "multi-head latent attention kernels (layer mask 3-4, unported)",
-            // Shard 1 of 12: a split GGUF puts the whole header in the first
-            // shard, so this stays a header read like every other row.
-            witness: "https://huggingface.co/unsloth/DeepSeek-V3-GGUF/resolve/main/DeepSeek-V3-Q6_K/DeepSeek-V3-Q6_K-00001-of-00012.gguf",
         },
     ),
     (

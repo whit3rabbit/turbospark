@@ -163,6 +163,24 @@ pub fn kv_layer_strides(arch: &ArchConfig, layer: usize, quant: KvQuant) -> (u64
     if mask == 2 {
         return (0, 0);
     }
+    // Mask 5 (MLA, `deepseek2`) reads its geometry from the `mla` block,
+    // not from the head-dim pair: the cache row is the compressed
+    // `[latent ; rope key]` ONE row per token (`num_kv_heads` is already 1
+    // on this architecture, but the DERIVATION belongs here rather than in
+    // a caller's assumption). K carries the whole row; V is read as the
+    // row's first `kv_lora` halves, so its stride keeps the row width and
+    // the buffer is never written by the MLA flow.
+    if mask == 5 {
+        let row = arch.mla.cache_row_dim().max(0) as u64 * FP16_BYTES;
+        let v = arch.mla.kv_lora_rank.max(0) as u64 * FP16_BYTES;
+        if !layer_is_quantized(quant, mask, layer, arch.num_layers as usize) {
+            return (row, v);
+        }
+        // TurboQuant against the compressed latent cache is not a thing:
+        // the quantization gates refuse mask 5 with --kv-bits, and falling
+        // through would silently size the buffers as if it had applied.
+        return (row, v);
+    }
     let (kv_heads, head_dim) = if mask == 0 {
         (arch.num_kv_heads, arch.head_dim)
     } else {

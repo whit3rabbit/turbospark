@@ -24,6 +24,18 @@ pub struct RopeScalingConfig {
     pub beta_fast: f64,
     /// YaRN's `beta_slow`, the low-frequency end.
     pub beta_slow: f64,
+    /// YaRN's `mscale` family parameter (`rope_scaling.mscale_all_dim` in
+    /// the HF configs), which scales BOTH the rope magnitude and the
+    /// attention score: the effective multiplier is
+    /// `(1 + 0.1 * mscale * ln(factor))` where the plain-YaRN value uses
+    /// `mscale = 1`. ZERO means the plain value, which is what preserves
+    /// every manifest written before the field existed -- gpt-oss's and
+    /// DeepSeek's only differ by this one number (1.0 against 0.707), read
+    /// off the checkpoint's own `rope_scaling` (`yarn_log_multiplier` is
+    /// `0.1 * mscale` in the GGUF spelling) and NOT from a baseline
+    /// constant, because the checkpoint states it and both engines apply
+    /// it. See `docs/DEEPSEEK2_PHASE0.md` for the two derived floats.
+    pub mscale: f64,
 }
 
 impl RopeScalingConfig {
@@ -33,11 +45,24 @@ impl RopeScalingConfig {
         original_context: 0,
         beta_fast: 0.0,
         beta_slow: 0.0,
+        mscale: 0.0,
     };
 
     /// Whether YaRN applies at all.
     pub fn is_active(&self) -> bool {
         self.factor > 0.0
+    }
+
+    /// The rope magnitude (and, squared, the attention-score) multiplier:
+    /// `1 + 0.1 * mscale_param * ln(factor)`, where an absent `mscale`
+    /// parameter (zero) means the plain-YaRN 1.0. Identity (1.0) when no
+    /// scaling is active.
+    pub fn yarn_mscale(&self) -> f64 {
+        if self.factor <= 0.0 {
+            return 1.0;
+        }
+        let mscale_param = if self.mscale > 0.0 { self.mscale } else { 1.0 };
+        1.0 + 0.1 * mscale_param * self.factor.ln()
     }
 }
 
@@ -285,6 +310,70 @@ impl CompressedAttentionConfig {
     /// above it, and below it the same early return keeps attention dense.
     pub fn sparse_below(&self) -> i64 {
         self.index_budget
+    }
+}
+
+/// DeepSeek V2 multi-head latent attention (MLA) dimensions, read off the
+/// checkpoint (`docs/DEEPSEEK2_PHASE0.md`). Zeroed for architectures
+/// without MLA layers, which is every family here except `deepseek2`.
+///
+/// A grouped struct with a `NONE`, for [`LinearAttentionConfig`]'s reason:
+/// the values are meaningless apart, and one `NONE` per `ArchConfig`
+/// literal is less to get wrong than five zeros in each.
+///
+/// **THIS IS NOT [`CompressedAttentionConfig`]**, which is DeepSeek V4's
+/// block-sparse compressed attention with a query-side indexer. MLA has no
+/// indexer and no compression of the token axis: it compresses the
+/// per-token KV ROW itself into a low-rank latent (`kv_lora_rank`) plus a
+/// small rope-carried key (`rope_head_dim`), and its layers are mask 5 --
+/// distinct from mask 3 (CSA) and 4 (HCA) precisely so the two DeepSeek
+/// mechanisms cannot be confused by a reader or by a gate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MlaConfig {
+    /// The latent rank every head's key/value compresses into, and the
+    /// per-token cache width that buys the memory result.
+    pub kv_lora_rank: i64,
+    /// The query low-rank. 0 on the lite variants (V2-Lite, Coder-V2-Lite),
+    /// which project q straight to `num_heads * (nope + rope)`; nonzero on
+    /// full V2/V3 and their descendants, which this port does not run yet.
+    pub q_lora_rank: i64,
+    /// Per-head nope (non-rotated) query/key width, `qk_nope_head_dim`.
+    pub nope_head_dim: i64,
+    /// Per-head rope-carried width, `qk_rope_head_dim`. Also the rope
+    /// dimension count, and the tail of the q head: rope applies to the
+    /// LAST `rope_head_dim` dims of each `nope + rope` head.
+    pub rope_head_dim: i64,
+    /// Per-head value width, `v_head_dim`: what the v-combine projection
+    /// produces per head and what the output projection consumes.
+    pub v_head_dim: i64,
+}
+
+impl MlaConfig {
+    /// Empty MLA configuration, for every architecture without MLA layers.
+    pub const NONE: MlaConfig = MlaConfig {
+        kv_lora_rank: 0,
+        q_lora_rank: 0,
+        nope_head_dim: 0,
+        rope_head_dim: 0,
+        v_head_dim: 0,
+    };
+
+    /// Whether this architecture carries MLA layers.
+    pub fn is_active(&self) -> bool {
+        self.kv_lora_rank > 0
+    }
+
+    /// The full per-head q/k width: nope + rope. This is what the q
+    /// projection emits per head and what `attention.key_length` reports.
+    pub fn key_head_dim(&self) -> i64 {
+        self.nope_head_dim + self.rope_head_dim
+    }
+
+    /// The compressed cache row: `[c (kv_lora_rank) ; k_pe
+    /// (rope_head_dim)]`, in elements. The absorbed form's entire per-token
+    /// state; V is read as the row's first `kv_lora_rank` halves.
+    pub fn cache_row_dim(&self) -> i64 {
+        self.kv_lora_rank + self.rope_head_dim
     }
 }
 

@@ -111,6 +111,29 @@ pub struct ManifestArch {
     #[serde(default)]
     pub linear_output_gate_sigmoid: Option<bool>,
 
+    /// Multi-head latent attention (`deepseek2`). All five are `Option` with
+    /// zero fallback: absent means `MlaConfig::NONE`, never another family's
+    /// value (AGENTS.md Gotcha 39).
+    #[serde(default)]
+    pub mla_kv_lora_rank: Option<i64>,
+    /// The query low-rank; absent (or zero) is the lite variants' answer.
+    #[serde(default)]
+    pub mla_q_lora_rank: Option<i64>,
+    #[serde(default)]
+    pub mla_nope_head_dim: Option<i64>,
+    #[serde(default)]
+    pub mla_rope_head_dim: Option<i64>,
+    #[serde(default)]
+    pub mla_v_head_dim: Option<i64>,
+    /// FFN width of the leading dense layers (`first_k_dense_replace`);
+    /// absent means none.
+    #[serde(default)]
+    pub dense_lead_intermediate_size: Option<i64>,
+    /// How many leading layers are dense; the routed blob files start after
+    /// them. Absent means none.
+    #[serde(default)]
+    pub num_dense_leading_layers: Option<i64>,
+
     /// Compressed attention Q LoRA rank.
     #[serde(default)]
     pub ca_q_lora_rank: Option<i64>,
@@ -218,6 +241,12 @@ pub struct ManifestArch {
     pub rope_scaling_beta_fast: Option<f64>,
     #[serde(default)]
     pub rope_scaling_beta_slow: Option<f64>,
+    /// YaRN's `mscale` family parameter (`deepseek2`; `0.1 * mscale` is what
+    /// the GGUF spelling calls `yarn_log_multiplier`). Absent means the
+    /// plain-YaRN parameter 1.0, which preserves every pre-`deepseek2`
+    /// manifest; the multiplier itself derives at the use site.
+    #[serde(default)]
+    pub rope_scaling_mscale: Option<f64>,
     /// The vision tower (ROADMAP M-V3). Absent means no tower, which is what
     /// `VisionConfig::NONE` says and what every install written before M-V3
     /// declares -- which is why all fifteen are `Option` and default rather

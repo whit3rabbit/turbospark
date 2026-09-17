@@ -76,7 +76,10 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     headwise output gate; GGUF intake, HF safetensors intake deferred)
   - `"minimax-m2"` -> `ModelFamily::MiniMaxM2` (GGUF text execution implemented;
     real-checkpoint gates pending, see [Phase 0](MINIMAX_M2_PHASE0.md))
-  - `"llama4"`, `"deepseek2"`, `"phi3"` are recognized but unported: the
+  - `"deepseek2"` -> `ModelFamily::Deepseek2` (MLA absorbed form over a
+    compressed 576-half cache plus fine-grained MoE; promoted by the
+    `deepseek2` bring-up, see [Phase 0](DEEPSEEK2_PHASE0.md))
+  - `"llama4"`, `"phi3"` are recognized but unported: the
     refusal names what each would need, and `tests/arch_registry_network.rs`
     re-reads every row's witness header so the string cannot rot silently
   - anything else -> refused as unknown. The audited candidate strings for
@@ -172,7 +175,7 @@ specific "recognized, needs X" refusal.
 | --- | --- | :---: | :---: | :---: | :---: | ---: |
 | **Gemma 4 26B-A4B** (`gemma4`) | SWA/Full Attention, MoE (128 experts, top-8), Tied Embeddings | **Full Support** | **Full Support** | Full Support | Full Support | **~2.1 GiB RAM** |
 | **Qwen 3.6 35B-A3B** (`qwen35moe`) | Gated-DeltaNet Linear Attention + MoE (256 experts, top-8) | **Full Support** | **Full Support** | Full Support | Full Support | **~1.6 GiB RAM** |
-| **DeepSeek V3** (`deepseek2`, confirmed; the same string also reports Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3) | Multi-head Latent Attention (MLA), DeepSeek MoE | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **DeepSeek V2-Lite / V3 line** (`deepseek2`, confirmed; the same string also reports Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3) | Multi-head Latent Attention (MLA, absorbed form over a compressed 576-half cache), DeepSeek MoE | **Implemented** (V2-Lite witness; low-temperature generation coherent and deterministic, cross-engine logits vs llama.cpp still diverge from position 1 on -- [Phase 0](DEEPSEEK2_PHASE0.md)) | *Planned* | Full Support | Full Support | ~3.6 GiB slot cache at 16 slots; KV 243 MiB at 8192 (compressed) |
 | **DeepSeek V4 Flash / Pro** (`deepseek4`, witnessed 2026-09-06) | MLA, hyper connections, SWA (window 128), 256-384 experts top-6; the Flash variant carries a VISION tower | *Scaffolded* (`DeepseekV4Flash`) | *Scaffolded* | Full Support | Not supported (absent from mlx-lm, checked 2026-09-08) | *TBD* |
 | **Mixtral 8x7B / 8x22B** (`llama` + `expert_count`) | Plain GQA attention + MoE (8 experts, top-2), no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 2, Mistral 7B, TinyLlama** (`llama`, dense) | Standard Dense Transformer, GQA | **Full Support** (ROADMAP M4) | *Planned* | Full Support | Full Support | *dense: whole model resident* |
@@ -240,7 +243,7 @@ GGUF-witnessed group below is row-eligible, not merely plausible.
 | --- | --- |
 | Running in BOTH engines | `gemma4` / `gemma4_text`, `qwen3_5`, `qwen3_5_moe`, `qwen3` (GGUF only here; 0.6B Q8_0 verified), `qwen3_moe`, `gpt_oss`, `muse_glimmer`, `llama` / `mixtral` -- with the two splits the matrix rows above record (Llama 3.1+ refused on `rope_freqs.weight`; Mixtral runs on the GGUF path only, no HF writer exists here) |
 | Running HERE, ABSENT from mlx-lm | `qwen4_exp` (running here) and `deepseek4` (scaffolded here): no model file and no remap entry in mlx-lm on 2026-09-08. The other direction is format-level, not a family: this port reads GGUF natively, mlx-lm reads MLX safetensors only |
-| Implemented here, real-checkpoint gates pending | `minimax` (GGUF `minimax-m2`; HF `minimax_m2` intake deferred; [record](MINIMAX_M2_PHASE0.md)) |
+| Implemented here, real-checkpoint gates pending | `minimax` (GGUF `minimax-m2`; HF `minimax_m2` intake deferred; [record](MINIMAX_M2_PHASE0.md)), `deepseek2` (GGUF `deepseek2`, V2-Lite witness; HF `deepseek_v2` intake deferred; [record](DEEPSEEK2_PHASE0.md)) |
 | Registered, planned here; running there | `phi3` (the row's string also covers Phi-4, witnessed), `llama4` / `llama4_text`, `deepseek2` (mlx-lm's `deepseek_v2` / `deepseek_v3`; the audit's highest-leverage unlock -- one MLA bring-up covers Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3, and mlx-lm's own `kimi_k2 -> deepseek_v3` remap corroborates the shape), `kimi_k25` (mlx-lm ships a native file; here it reports the witnessed `deepseek2` string and is unported) |
 | GGUF-witnessed, unregistered here (Unsloth audit) | `qwen2_moe` (the MoE line remains out of scope), `gemma3` / `gemma3_text` / `gemma2` / `gemma3n`, `qwen3_next` (`qwen3next`, 512 top-10 GDN -- its OWN string despite sharing `qwen36`'s layer graph), `glm4_moe` (`glm4moe`), `glm_moe_dsa` (`glm-dsa`, the GLM-5 DSA line), `nemotron_h` (`nemotron_h_moe`, 128 top-6 up to 512 top-22), `hunyuan` / `hunyuan_v1_dense` (`hunyuan-moe`), `ernie4_5` / `ernie4_5_moe` (`ernie4_5-moe`), `mistral3` / `ministral3` (`mistral3` -- dense, and a separate string from `llama`, so Devstral Small 2 needs its own row despite the name) |
 | Audit-noted model_type, no GGUF witness here | `deepseek_v32` (DeepSeek V3.2 -- rides omlx's `glm_moe_dsa` patch; needs MLA latent KV plus a token-level sparse indexer, where `qwen4_exp`'s QSA indexes blocks), `bailing_moe` / `bailing_moe_linear` / `bailing_moe_v3` (the Ling line; omlx audits `bailing_hybrid`, Ling 3.0 Flash -- MLA and KDA in one model), `laguna`, `longcat_flash` / `longcat_flash_ngram`, `mimo` / `mimo_v2_flash`, `step3p5` (omlx notes `step3p7`, the same vendor line) |
@@ -268,7 +271,9 @@ Two structural readings fall out of the census:
   and sampled CLI smokes, and is listed as a `runs` catalog row. Its memory
   and quality gates remain open; the pinned Q3_K_M GGUF is parse-only until a
   Q3_K resident kernel exists. Dense Gemma (`gemma3`/`gemma2`/`gemma3n`) remains
-  unported here, and `deepseek2` remains the multi-model MLA candidate.
+  unported here, and `deepseek2`'s MLA is now implemented (V2-Lite witness;
+  the Kimi/GLM checkpoints remain future witnesses with their own slot
+  arithmetic per AGENTS.md Gotcha 36).
   MiniMax-M2's top-8-of-256 structure motivated its streaming bring-up;
   that structure alone makes no measured footprint or throughput claim.
 - **A class this engine has no machinery for at all.** The recurrent and

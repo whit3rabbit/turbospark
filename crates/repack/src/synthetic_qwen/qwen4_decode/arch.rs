@@ -1,7 +1,7 @@
 //! Architectural constants and config builders for synthetic `qwen4_exp` decode fixtures.
 
 use model_io::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig,
 };
 
@@ -108,6 +108,8 @@ pub fn tiny_qwen4_exp_decode_arch_with_indexer_budget(
         full_rope_theta: 10_000_000.0,
         partial_rotary_factor: 0.25,
         num_layers,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: NUM_EXPERTS as i64,
         top_k_experts: TOP_K as i64,
         // The real checkpoint's own value: `lm_head` is its own tensor.
@@ -133,6 +135,7 @@ pub fn tiny_qwen4_exp_decode_arch_with_indexer_budget(
         // the indexer was wired (`families/qwen4/attn.rs`): heads and dim
         // size `index_qk_proj` and the per-head norms, compress and top_k
         // decide when block selection starts dropping blocks.
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig {
             index_n_heads: IDX_HEADS as i64,
             index_kv_heads: IDX_KV_HEADS as i64,

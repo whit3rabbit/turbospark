@@ -257,6 +257,9 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         | ModelFamily::Spark25
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
+        // `deepseek2` is GGUF-intake-only like these (no safetensors path),
+        // so the marker can never match; the default is the honest arm.
+        | ModelFamily::Deepseek2
         | ModelFamily::MiniMaxM2 => ".experts.switch_glu.",
     }
 }

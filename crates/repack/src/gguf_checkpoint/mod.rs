@@ -128,21 +128,44 @@ pub fn write_gguf_install_streamed(
     // Deliberately keyed on the expected size and not on mere existence: a
     // truncated leftover, or one from a walk with a different stride, is
     // refused by `adopt_layer` rather than silently believed.
-    for layer in plan.routed.keys().copied() {
+    // THE BLOB FILES ARE NUMBERED BY POSITION, NOT BY CHECKPOINT LAYER.
+    // `packed_experts/layout.json`'s entries must appear in order 0..N with
+    // no gaps (`PackedExpertsLayout` indexes `layers[layer]` BY POSITION),
+    // so the i-th routed layer writes `layer_{i:02}.bin` and carries layout
+    // entry `layer: i`. Every family before `deepseek2` routed ALL of its
+    // layers, so position and checkpoint index coincided and the
+    // distinction was invisible; a dense lead breaks it, because
+    // `deepseek2`'s routed layers are `lead..num_layers` and its blob
+    // position 0 IS checkpoint layer 1. The runtime maps back with the
+    // same `num_dense_leading_layers` the manifest carries.
+    let lead = arch.num_dense_leading_layers as usize;
+    for (seq, layer) in plan.routed.keys().copied().enumerate() {
+        if layer != seq + lead {
+            return Err(GgufRepackError::ShapeMismatch {
+                tensor: format!("blk.{layer}"),
+                detail: format!(
+                    "routed layer {layer} is not blob position {seq} (dense lead {lead}): \
+                     a layer graph with routed tensors outside [lead, num_layers) needs a \
+                     walk that maps positions explicitly"
+                ),
+            });
+        }
         let expected = plan::layer_file_bytes(header, &arch, &plan, layer, stride)?;
         let layer_path = dir
             .join("packed_experts")
-            .join(format!("layer_{layer:02}.bin"));
+            .join(format!("layer_{seq:02}.bin"));
         let on_disk = std::fs::metadata(&layer_path).map(|m| m.len()).ok();
         if on_disk == Some(expected) {
-            let (blobs, _) = plan::plan_one_layer_shape(header, &arch, &plan, layer)?;
+            let (mut blobs, _) = plan::plan_one_layer_shape(header, &arch, &plan, layer)?;
+            blobs.layer = seq;
             writer.adopt_layer(&blobs)?;
             progress(&format!(
                 "layer {layer} adopted ({expected} bytes already on disk)"
             ));
             continue;
         }
-        let (blobs, used) = plan::plan_one_layer(header, source, &arch, &plan, layer)?;
+        let (mut blobs, used) = plan::plan_one_layer(header, source, &arch, &plan, layer)?;
+        blobs.layer = seq;
         writer.write_layer(&blobs)?;
         progress(&format!(
             "layer {layer} written ({} experts, {used} bytes/expert)",

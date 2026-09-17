@@ -135,6 +135,32 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         seed: m.ple_seed.unwrap_or(0),
         eos_token_id: m.ple_eos_token_id.unwrap_or(0),
     };
+    // Multi-head latent attention (`deepseek2`) and the dense lead, resolved
+    // on the same zero-fallback rule as the three blocks above.
+    arch.mla = model_io::MlaConfig {
+        kv_lora_rank: m.mla_kv_lora_rank.unwrap_or(0),
+        q_lora_rank: m.mla_q_lora_rank.unwrap_or(0),
+        nope_head_dim: m.mla_nope_head_dim.unwrap_or(0),
+        rope_head_dim: m.mla_rope_head_dim.unwrap_or(0),
+        v_head_dim: m.mla_v_head_dim.unwrap_or(0),
+    };
+    arch.dense_lead_intermediate_size = m.dense_lead_intermediate_size.unwrap_or(0);
+    arch.num_dense_leading_layers = m.num_dense_leading_layers.unwrap_or(0);
+    // YaRN, read back rather than left on the baseline. The writer has
+    // carried these five fields since ROADMAP M5, and `arch_validation`
+    // compares each against the baseline's value, so an install that omits
+    // them can only be a pre-M5 one -- which can only belong to a family
+    // whose baseline is `NONE`. `deepseek2` is the first family whose
+    // scaling differs from the only other yarn baseline's, which is what
+    // makes reading it back load-bearing rather than tidy: the rope
+    // frequency table and both rope kernels take their mscale from here.
+    arch.rope_scaling = model_io::RopeScalingConfig {
+        factor: m.rope_scaling_factor.unwrap_or(0.0),
+        original_context: m.rope_scaling_original_context.unwrap_or(0),
+        beta_fast: m.rope_scaling_beta_fast.unwrap_or(0.0),
+        beta_slow: m.rope_scaling_beta_slow.unwrap_or(0.0),
+        mscale: m.rope_scaling_mscale.unwrap_or(0.0),
+    };
 
     // THE VISION TOWER, AND `unwrap_or(0)` RATHER THAN THE BASELINE, which is
     // the one place this function's own fallback rule does not apply.

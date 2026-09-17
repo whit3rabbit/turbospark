@@ -31,7 +31,7 @@
 //! `parse_gemma4_config` writes Gemma's.
 
 use model_io::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -530,6 +530,8 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
         full_rope_theta: rope_theta,
         partial_rotary_factor: prf,
         num_layers,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts,
         top_k_experts,
         tie_word_embeddings: b("tie_word_embeddings"),
@@ -556,6 +558,7 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
             conv_kernel_size: i("linear_conv_kernel_dim")?,
             output_gate_sigmoid,
         },
+        mla: MlaConfig::NONE,
         compressed_attention,
         hyper_connections,
         num_hash_routed_layers: 0,

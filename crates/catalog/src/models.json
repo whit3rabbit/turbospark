@@ -816,6 +816,31 @@
         }
       ],
       "notes": "The ninth family: dense 36-layer GQA with the muse window at 512, per-class RoPE (full: theta 5e6 over the leading quarter; SWA: theta 1e4 whole head), a fused q_k_v_proj, a headwise scalar sigmoid output gate, exact-erf GELU and a tied head. GGUF intake only this pass (the upstream llama.cpp merge PR 27868 fixes the conventions this intake mirrors); HF safetensors intake is deferred. 1M trained context; the bench window is the derived 8,192 pending its first protocol run. Tool-call markup exists but has no parser (DEVIATIONS.md)."
+    },
+    {
+      "alias": "dsv2lite-16b",
+      "name": "DeepSeek-V2-Lite-Chat 16B (GGUF Q8_0, MLA MoE)",
+      "family": "deepseek2",
+      "source": {
+        "kind": "gguf",
+        "repo": "mradermacher/DeepSeek-V2-Lite-Chat-GGUF",
+        "revision": "main",
+        "file": "DeepSeek-V2-Lite-Chat.Q8_0.gguf"
+      },
+      "sidecars": {
+        "repo": "deepseek-ai/DeepSeek-V2-Lite-Chat",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 16699906000,
+      "install_bytes": 16700000000,
+      "status": "caveat",
+      "gates": [],
+      "notes": "The architecture bring-up's own artifact: MLA (compressed 576-half cache, absorbed form) plus 64 experts top-6 and a fused shared expert, one dense lead layer. Status caveat, not runs: greedy and sampled generation are coherent at the opening tokens and deterministic after the ffn-scratch sizing fix, but the cross-engine logits against llama.cpp on the same Q8_0 bytes still diverge from position 1 on (corr 0.25-0.88 per position; see docs/DEEPSEEK2_PHASE0.md's open-numerics section), so this is not yet a 'runs' claim. The repo's Q4_K_M variant refuses at repack: its calibration gives four layers Q5_K routed/shared experts and the routed-pair kernel matrix has no Q5_K arm; use the Q8_0."
     }
   ]
 }

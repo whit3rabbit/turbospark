@@ -36,6 +36,7 @@ mod repack;
 mod resident_reader;
 mod resident_writer;
 mod safetensors_header;
+mod synthetic_deepseek2;
 mod synthetic_gguf;
 mod synthetic_llama;
 mod synthetic_model;
@@ -111,6 +112,7 @@ pub use safetensors_header::{
     parse_header, required_prefix_len, SafetensorsHeader, SafetensorsHeaderError, TensorInfo,
     DEFAULT_MAX_HEADER_BYTES,
 };
+pub use synthetic_deepseek2::{build_synthetic_deepseek2_install, tiny_deepseek2_arch};
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
     GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,

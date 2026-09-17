@@ -468,6 +468,10 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // kernels are unported, so it is refused at open before any decode
         // flow -- there is no layer loop for a hook to sit in.
         F::DeepseekV4Flash => false,
+        // No hook in the flow yet (the MLA flow is landing separately); the
+        // joins are one-stream residual adds like the muse/spark shape, so
+        // the boundary when it lands is a plain residual add.
+        F::Deepseek2 => false,
         // Same answer, and the boundary this will need is not the same shape
         // as any `true` arm above. Every family here joins its sublayer
         // output to a ONE-stream residual, so a steering edit is one row at
@@ -500,8 +504,9 @@ pub fn steering_unsupported_reason(family: model_io::ModelFamily) -> Option<Stri
          (both halves), the llama flow (Mixtral, Qwen3-MoE, and the dense Llama / \
          Mistral half), Gemma 4 (sequential decode and chunked prefill, both \
          batched-routed and per-token), gpt-oss, and museGlimmer. Unwired: \
-         DeepSeek-V4-Flash (no decode flow exists to hook) and qwen4_exp (its \
-         residual is hc_count streams wide, so the boundary is a different shape)"
+         DeepSeek-V4-Flash (no decode flow exists to hook), deepseek2 (MLA flow, \
+         not hooked yet), and qwen4_exp (its residual is hc_count streams wide, \
+         so the boundary is a different shape)"
     ))
 }
 

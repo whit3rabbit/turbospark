@@ -166,7 +166,9 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// this repo's dense MTP/DFlash2 family, not MoE at all -- the old
     /// alias-substring chain wrongly flagged it as MoE.
     private static let knownMoEFamilies: Set<String> = [
-        "gemma4", "qwen36", "qwen3moe", "qwen35moe", "gptoss", "mixtral"
+        "gemma4", "qwen36", "qwen3moe", "qwen35moe", "gptoss", "mixtral",
+        // deepseek2: 64 experts top-6 plus a fused shared expert.
+        "deepseek2",
     ]
 
     /// Pure mirror of `model_io::rht_supported` + `model_io::layer_is_quantized`'s

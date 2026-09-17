@@ -32,6 +32,7 @@
 //! `linear_attn.A_log` and `linear_attn.dt_bias` take NO `.weight` suffix,
 //! and the rows below spell them out.
 
+mod deepseek2;
 mod gemma4;
 mod gpt_oss;
 mod llama;
@@ -169,6 +170,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::Spark25 => spark::map_spark_layer(suffix, layer),
             ModelFamily::Qwen3Dense => qwen::map_qwen3_dense_layer(suffix, layer),
             ModelFamily::MiniMaxM2 => minimax::map_layer(suffix, layer),
+            ModelFamily::Deepseek2 => deepseek2::map_deepseek2_layer(suffix, layer),
             // Neither of the first two is published as a GGUF; an unmapped
             // name is the right answer rather than a neighbour's table,
             // which would map names these families do not have.
@@ -223,6 +225,9 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         ModelFamily::Qwen3Dense => Some("qwen3"),
         ModelFamily::MiniMaxM2 => Some("minimax-m2"),
         ModelFamily::Qwen2Dense => Some("qwen2"),
+        // Read off the V2-Lite header itself (`general.architecture`), and
+        // the same spelling the HF `model_type` takes modulo the underscore.
+        ModelFamily::Deepseek2 => Some("deepseek2"),
         // Neither of the first two is published as a GGUF. `None` is the
         // honest answer: inventing a string here would make
         // `family_for_architecture` claim to recognize a file that does not

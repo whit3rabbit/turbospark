@@ -1,5 +1,5 @@
 use crate::arch_config::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -73,6 +73,8 @@ pub fn spark_x25_4b() -> ArchConfig {
         // 0.25 on the FULL layers; the SWA layers rotate the full head.
         partial_rotary_factor: 0.25,
         num_layers: 36,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 0,
         top_k_experts: 0,
         // The GGUF carries no `output.weight`; the head reuses the embedding.
@@ -94,6 +96,7 @@ pub fn spark_x25_4b() -> ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

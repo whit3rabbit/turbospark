@@ -260,6 +260,10 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
             vec![1u8; num_layers_usize]
         }
         ModelFamily::GptOss => gpt_oss_layer_mask(&m, num_layers_usize)?,
+        // Every `deepseek2` layer carries MLA attention (mask 5); the dense
+        // LEAD is an FFN difference only, not an attention one, and this
+        // architecture publishes no sliding-window key.
+        ModelFamily::Deepseek2 => vec![5u8; num_layers_usize],
         // Refused rather than defaulted: no GGUF exists for either, so any
         // mask here would be invented. `muse_glimmer`'s is doubly so -- its
         // `[0,0,0,1]` window comes from a `layer_types` ARRAY that no GGUF
@@ -339,6 +343,18 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
             // absent one is not an error. gpt-oss publishes both.
             beta_fast: m.opt_f64("rope.scaling.yarn_beta_fast").unwrap_or(32.0),
             beta_slow: m.opt_f64("rope.scaling.yarn_beta_slow").unwrap_or(1.0),
+            // The mscale family parameter arrives as llama.cpp's
+            // `yarn_log_multiplier`, which is `0.1 * mscale`. Absent means
+            // the plain-YaRN parameter 1.0, which `RopeScalingConfig`'s
+            // zero-fallback already means (the multiplier derives as
+            // `1 + 0.1 * mscale_param * ln(factor)` at the use site).
+            // DeepSeek's is 0.0707; gpt-oss publishes none and keeps the
+            // plain value, which is what preserves every pre-existing
+            // install byte for byte.
+            mscale: m
+                .opt_f64("rope.scaling.yarn_log_multiplier")
+                .map(|v| v * 10.0)
+                .unwrap_or(0.0),
         };
     }
 
@@ -406,6 +422,94 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
         if let Some(k) = m.opt_i64("attention.key_length_swa")? {
             arch.head_dim = k;
+        }
+    }
+
+    // DeepSeek V2 MLA: the head geometry lives in `mla`, not in the
+    // `head_dim` pair, and the cache is ONE shared row per layer. The
+    // checkpoint's `attention.head_count_kv = 16` describes its EXPANDED
+    // form (what llama.cpp caches when it runs this file non-absorbed);
+    // this port's absorbed form reads `[latent ; rope key]` once per token,
+    // so `num_kv_heads` is 1 here whatever the file says
+    // (`docs/DEEPSEEK2_PHASE0.md`). The generic `attention.key_length`
+    // handling above already set both head-dim fields to 192; the baseline
+    // semantics here are `head_dim` = the q/k head width and
+    // `full_head_dim` = the per-head value width, and the mla block is the
+    // authority the runtime reads.
+    if family == ModelFamily::Deepseek2 {
+        let kv_lora = m.i64("attention.kv_lora_rank")?;
+        let rope_dim = m
+            .opt_i64("rope.dimension_count")?
+            .ok_or(GgufConfigError::MissingKey {
+                key: m.key("rope.dimension_count"),
+            })?;
+        let key_length = m.i64("attention.key_length")?;
+        if rope_dim <= 0 || rope_dim % 2 != 0 || rope_dim >= key_length {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("rope.dimension_count"),
+                detail: format!(
+                    "{rope_dim} must be a positive even count below key_length {key_length}"
+                ),
+            });
+        }
+        let nope = key_length - rope_dim;
+        if kv_lora <= 0 || nope <= 0 {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.kv_lora_rank"),
+                detail: format!("latent {kv_lora} / nope {nope} must both be positive"),
+            });
+        }
+        arch.mla = model_io::MlaConfig {
+            kv_lora_rank: kv_lora,
+            // The lite variants carry no q low-rank; the full ones publish
+            // `attention.q_lora_rank`, which this port does not execute yet
+            // and refuses below rather than silently dropping the branch.
+            q_lora_rank: m.opt_i64("attention.q_lora_rank")?.unwrap_or(0),
+            nope_head_dim: nope,
+            rope_head_dim: rope_dim,
+            v_head_dim: m.opt_i64("attention.value_length")?.unwrap_or(nope),
+        };
+        if arch.mla.q_lora_rank > 0 {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.q_lora_rank"),
+                detail: format!(
+                    "q low-rank {} is the full V2/V3 branch, which this port does not \
+                     execute yet; the lite checkpoints carry none",
+                    arch.mla.q_lora_rank
+                ),
+            });
+        }
+        arch.num_kv_heads = 1;
+        arch.num_full_kv_heads = 1;
+        arch.head_dim = arch.mla.key_head_dim();
+        arch.full_head_dim = arch.mla.v_head_dim;
+        // The shared expert width: the file publishes only the per-expert
+        // width and the shared COUNT, and the shexp tensors are the two
+        // fused into one SwiGLU. The dense lead's width is
+        // `feed_forward_length`, which the generic fallback above would
+        // have put in `intermediate_size` -- the two are different numbers
+        // here (10944 against 2816) and each names a different projection.
+        if let Some(shared_count) = m.opt_i64("expert_shared_count")? {
+            if shared_count > 0 {
+                arch.intermediate_size = arch.moe_intermediate_size * shared_count;
+            }
+        }
+        if let Some(dense_ff) = m.opt_i64("feed_forward_length")? {
+            arch.dense_lead_intermediate_size = dense_ff;
+        }
+        // llama.cpp's `leading_dense_block_count` / HF's
+        // `first_k_dense_replace`. Also a POSITION: the packed-expert blob
+        // files are numbered from the first routed layer, so the runtime
+        // maps checkpoint layer L to blob position L minus this count.
+        arch.num_dense_leading_layers = m.opt_i64("leading_dense_block_count")?.unwrap_or(0).max(0);
+        if arch.num_dense_leading_layers >= arch.num_layers {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("leading_dense_block_count"),
+                detail: format!(
+                    "{} dense lead layers leaves no MoE stack of {}",
+                    arch.num_dense_leading_layers, arch.num_layers
+                ),
+            });
         }
     }
 

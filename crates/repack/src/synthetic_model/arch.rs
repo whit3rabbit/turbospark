@@ -2,7 +2,7 @@
 
 use compute::quantize_int4_affine;
 use model_io::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -42,6 +42,8 @@ pub fn tiny_gemma4_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         full_rope_theta: 10_000.0,
         partial_rotary_factor: 1.0,
         num_layers,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 0,
         top_k_experts: 0,
         tie_word_embeddings: true,
@@ -57,6 +59,7 @@ pub fn tiny_gemma4_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

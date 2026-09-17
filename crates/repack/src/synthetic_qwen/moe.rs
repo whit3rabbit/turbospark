@@ -1,7 +1,7 @@
 //! Builds a tiny Qwen 3.6 MoE install through the REAL checkpoint repack pipeline.
 
 use model_io::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -58,6 +58,8 @@ pub fn tiny_qwen_gdn_moe_arch(vocab_size: i64, num_layers: i64, num_experts: i64
         full_rope_theta: 10_000_000.0,
         partial_rotary_factor: 0.25,
         num_layers,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts,
         top_k_experts: num_experts.min(8),
         tie_word_embeddings: false,
@@ -83,6 +85,7 @@ pub fn tiny_qwen_gdn_moe_arch(vocab_size: i64, num_layers: i64, num_experts: i64
         shared_expert_gated: true,
         rope_neox_subdim: true,
         linear_attention: linear_attention(),
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

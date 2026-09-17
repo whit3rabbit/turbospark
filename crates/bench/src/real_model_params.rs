@@ -124,6 +124,18 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             max_context: DENSE_LLAMA_MAX_CONTEXT,
             max_new: PROTOCOL_MAX_NEW,
         },
+        // `deepseek2`, provisional like the row above. The window rides the
+        // compressed KV cache: 1,152 bytes per token per layer over 27
+        // layers is 243 MiB at 8,192 (`docs/DEEPSEEK2_PHASE0.md`), so the
+        // dense-llama window costs an MLA family a quarter of what it costs
+        // a full-cache one. The budget stays at the shared 1,024:
+        // V2-Lite-Chat answers directly with no reasoning channel, and a
+        // `maxTokens` stop on the frozen prose is what would say otherwise.
+        ModelFamily::Deepseek2 => ProtocolParameters {
+            family,
+            max_context: DENSE_LLAMA_MAX_CONTEXT,
+            max_new: PROTOCOL_MAX_NEW,
+        },
         // ONE FAMILY, BOTH HALVES OF THE ARCHITECTURE STRING. The window is
         // the dense half's requirement, measured on Mistral-7B-Instruct-v0.3
         // (ROADMAP M4). Mixtral shares that checkpoint's 32k sentencepiece

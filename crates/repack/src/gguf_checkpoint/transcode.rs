@@ -26,6 +26,10 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // are F32 and are NOT here: they take the BF16 default, which is
         // what a bias-add kernel reads.
         ModelFamily::Llama | ModelFamily::Qwen3Moe | ModelFamily::GptOss => &["mlp.gate.weight"],
+        // `deepseek2`'s router is `ffn_gate_inp` F32 exactly as `qwen3moe`'s
+        // is (read off the V2-Lite header), and its INT8-transcoded canonical
+        // name is the same `mlp.gate.weight`.
+        ModelFamily::Deepseek2 => &["mlp.gate.weight"],
         // `qwen3_5` DOES have a real GGUF file now
         // (`ornith-ai/Ornith-1.5-9B-GGUF`, walked by
         // `tests/ornith_gguf_network.rs`), so the empty list is not about

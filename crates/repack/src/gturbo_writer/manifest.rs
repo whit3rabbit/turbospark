@@ -126,6 +126,20 @@ pub(crate) fn build_manifest_json(
             "ropeScalingOriginalContext": arch.rope_scaling.original_context,
             "ropeScalingBetaFast": arch.rope_scaling.beta_fast,
             "ropeScalingBetaSlow": arch.rope_scaling.beta_slow,
+            "ropeScalingMscale": arch.rope_scaling.mscale,
+            // `deepseek2`'s MLA block and its dense lead, unconditional for
+            // the same reason every field above is: validation falls back on
+            // an omitted field, so an MLA install that said nothing would
+            // validate its latent rank against zero and a dense-lead
+            // install would validate its FFN width against zero. Zero is
+            // `MlaConfig::NONE`'s value and every non-MLA family writes it.
+            "mlaKvLoraRank": arch.mla.kv_lora_rank,
+            "mlaQLoraRank": arch.mla.q_lora_rank,
+            "mlaNopeHeadDim": arch.mla.nope_head_dim,
+            "mlaRopeHeadDim": arch.mla.rope_head_dim,
+            "mlaVHeadDim": arch.mla.v_head_dim,
+            "denseLeadIntermediateSize": arch.dense_lead_intermediate_size,
+            "numDenseLeadingLayers": arch.num_dense_leading_layers,
             // ROADMAP M-V3, the vision tower, and unconditional for the block
             // comment's reason rather than a new one: an omitted field is
             // resolved against a baseline, so an install that HAS a tower and

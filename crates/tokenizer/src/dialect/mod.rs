@@ -120,6 +120,22 @@ pub enum ChatDialect {
     Spark,
     /// MiniMax-M2 checkpoint framing and EOS; native tool parsing is deferred.
     MiniMax,
+    /// DeepSeek V2-line checkpoints whose tables predate the reasoning
+    /// channel (`DeepSeek-V2-Lite` / `-Chat` and siblings): the same
+    /// fullwidth `<｜User｜>` / `<｜Assistant｜>` marks and BOS/EOS the
+    /// [`ChatDialect::Deepseek`] probe keys on, but NO `<think>` / `</think>`
+    /// pair and a smaller table. That absence is the probe's split: a table
+    /// WITH the think pair resolves Deepseek (V3/V4 semantics), one WITHOUT
+    /// resolves this, so neither can pass where its own resolver would fail
+    /// (AGENTS.md Gotcha 52).
+    ///
+    /// No renderer, on the Harmony/Muse/Spark doctrine: the checkpoint
+    /// ships its template (`User: ... \n\nAssistant: ...` plain text) and
+    /// `apply_chat_template` prefers it. This variant exists for the ids
+    /// and the STOP SET (EOS only; no tool or reasoning markup, so every
+    /// structured id is [`NO_SUCH_TOKEN_ID`] and the decoder passes plain
+    /// content through).
+    DeepseekV2,
 }
 
 /// Whether a dialect's own markup carries tool calls that this engine PARSES.
@@ -204,6 +220,10 @@ impl ChatDialect {
             // stream: unlike muse's header/body DSL, Spark's call syntax is
             // self-contained plain text a caller's parser can read.
             ChatDialect::Spark | ChatDialect::MiniMax => ToolCallSupport::Prompted,
+            // No tool markup at all: every call id is NO_SUCH_TOKEN_ID and the
+            // decoder passes plain content through, where a rescue layer can
+            // reach a call the model attempts in prose.
+            ChatDialect::DeepseekV2 => ToolCallSupport::Prompted,
         }
     }
 

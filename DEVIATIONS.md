@@ -2050,3 +2050,48 @@ catalog records that artifact as `qwen25-7b-4bit` with status `runs`.
   gate, cross-engine KLD row, or frozen performance measurement yet. Qwen2-MoE,
   Qwen2-VL, split GGUF, and native unquantized BF16/FP16 safetensors
   conversion remain outside this bring-up.
+
+## deepseek2 (DeepSeek V2-Lite, the tenth running family), landed 2026-09-17
+
+The `deepseek2` architecture bring-up (MLA + fine-grained MoE, witness
+`mradermacher/DeepSeek-V2-Lite-Chat-GGUF` Q8_0) landed with these deliberate
+divergences and one open gap. Facts and the verified-correct list:
+`docs/DEEPSEEK2_PHASE0.md`.
+
+- **Absorbed MLA over a compressed cache, not llama.cpp's expanded form.**
+  llama.cpp runs this (2024-era) GGUF through its NON-absorbed path (it
+  expands `wkv_b` per token and caches full k[192/head] and v[128/head]);
+  this port caches the compressed `[latent 512 ; k_pe 64]` row (576 halves,
+  1152 bytes/token/layer -- 243 MiB at 8192 against 2160 for the expanded
+  form) and folds q_nope through the up-projection instead. Algebraically
+  identical scores; the whole point of the family (Kimi/GLM fit).
+- **Rope magnitude 1.0, not HF's 1.2608.** llama.cpp's DEEPSEEK2 special
+  case (`mscale == mscale_all_dim` -> ratio 1.0, then the
+  `*= 1/(1+0.1*log(factor))` cancel) nets ggml's internal rope multiplier to
+  exactly 1.0; the mscale parameter's only effect is the score scale
+  `(1 + 0.1 * mscale_all_dim * ln factor)^2 / sqrt(key_length)`, which is
+  the manifest's `attentionScale`. Applying HF's 1.2608 on top scores the
+  rope terms 1.5896x too high.
+- **The dense lead and the shared expert share sized FFN scratch.** The
+  dense lead runs 10944 wide and the fused shared expert 2816 against a
+  2048-wide residual stream; the flow carries `ffn_a`/`ffn_b` sized to the
+  max. The first draft reused hidden-sized scratch and overflowed into the
+  yarn frequency table -- invisible at position 0 (any table gives the
+  identity rope at angle 0), nondeterministic at every later position.
+- **Softmax-over-ALL top-k, no renormalization** (`norm_topk_prob: false`):
+  the routed weights are the full-softmax values of the selected six, not a
+  renormalized distribution -- the llama flow's softmax-over-selected is a
+  different function and must not run here.
+- **Sequential prefill only, and no V rows in the cache.** Chunked prefill is
+  refused by name (the sequential path serves the family; a T-row absorbed
+  attention kernel is the follow-up). The cache holds one K row per token;
+  V is read as the row's first `kv_lora` halves, and the manager's V buffer
+  for mask-5 layers is allocated but never written (the recoverable overhead
+  is ~216 MiB at 8192).
+- **OPEN: per-position logits diverge from llama.cpp from position 1 on**
+  (corr 0.25-0.88; pos 0 matches at 0.9996). Everything verified correct is
+  listed in `docs/DEEPSEEK2_PHASE0.md`'s open-numerics section with the
+  suspect stack and the instrument (`logit_dump`'s `TURBOSPARK_DSV2_INSTALL_DIR`
+  arm + `scripts/llamacpp_logits.c`'s rope overrides). The catalog row is
+  `caveat` until this closes. Debug knobs kept for that session:
+  `TURBOSPARK_DSV2_NO_YARN`, `TURBOSPARK_DSV2_SCALE`, `TURBOSPARK_DSV2_ROPE_MS`.

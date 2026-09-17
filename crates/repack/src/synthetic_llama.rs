@@ -18,7 +18,7 @@
 //! on text (AGENTS.md Gotcha 12).
 
 use model_io::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -101,6 +101,8 @@ pub fn tiny_gqa_moe_arch(
         // says.
         partial_rotary_factor: 1.0,
         num_layers,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts,
         top_k_experts: num_experts.min(2),
         tie_word_embeddings: false,
@@ -123,6 +125,7 @@ pub fn tiny_gqa_moe_arch(
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

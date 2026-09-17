@@ -16,9 +16,9 @@ mod llama3;
 mod mistral;
 
 use crate::dialect::{
-    ChatDialect, MfTokenizer, HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_START_MARK,
-    MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK,
-    SPARK_EOS_MARK, SPARK_USER_MARK,
+    ChatDialect, MfTokenizer, DEEPSEEK_BOS_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK,
+    HARMONY_START_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK, SPARK_BOS_MARK,
+    SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use crate::error::TokenizerError;
 use crate::json_value::JsonValue;
@@ -264,6 +264,15 @@ impl MfTokenizer {
             ChatDialect::Gemma => gemma::gemma_chat_template(messages),
             ChatDialect::ChatMl => chatml::chatml_chat_template(messages),
             ChatDialect::Deepseek => deepseek::deepseek_chat_template(messages),
+            // NO FALLBACK RENDERER, on the Harmony/Muse doctrine: the
+            // published template is four short branches of plain text and
+            // the checkpoint always ships it, so the only render this arm
+            // could get wrong is a malformed install's -- and refusing that
+            // beats inventing a prompt (AGENTS.md Gotcha 41).
+            ChatDialect::DeepseekV2 => Err(TokenizerError::UnsupportedForDialect(
+                "deepseek2-era (V2) tables render through the checkpoint's own chat_template;                  the install must carry tokenizer_config.json's chat_template key"
+                    .to_string(),
+            )),
             ChatDialect::Mistral => mistral::mistral_chat_template(messages),
             // NO FALLBACK RENDERER FOR `muse_glimmer` EITHER, and for Harmony's
             // reason one model over: its template carries an image/video
@@ -320,6 +329,15 @@ impl MfTokenizer {
             ChatDialect::Gemma => gemma::gemma_continuation_suffix(content),
             ChatDialect::ChatMl => chatml::chatml_continuation_suffix(content),
             ChatDialect::Deepseek => deepseek::deepseek_continuation_suffix(user_content),
+            // Writable despite the no-renderer doctrine: the published
+            // frame is four plain-text branches, and a continuation is one
+            // user turn plus the generation prompt, with no system preamble
+            // or tool section to get wrong. Byte-for-byte the checkpoint's
+            // own template at this point (`User: c\n\n` then `Assistant:`,
+            // no trailing space -- the model was trained to emit it).
+            ChatDialect::DeepseekV2 => format!(
+                "{DEEPSEEK_BOS_MARK}User: {content}\n\nAssistant:"
+            ),
             // No leading newline and no assistant marker: this dialect's
             // generation point is simply the character after `[/INST]`.
             ChatDialect::Mistral => mistral::mistral_continuation_suffix(content),

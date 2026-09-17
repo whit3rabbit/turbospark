@@ -45,6 +45,7 @@ read the page before proposing the thing it refutes.
 | `docs/QWEN4_EXP.md` | `qwen4_exp` bring-up beyond Phase 0: intake, decode wiring, memory policy, the router/shared-expert-gate dtype bug and fix, first real-hardware decode | touching `families/qwen4/` or the safetensors write path, or continuing that bring-up |
 | `docs/SPARK_PHASE0.md` | `spark2_5` (Spark-X2.5-4B) Phase 0 fact-finding: config, per-class RoPE, the headwise gate, the fused QKV, GGUF tensor inventory, tokenizer frame | reading a `spark2_5` fact, or touching `families/spark/` |
 | `docs/MINIMAX_M2_PHASE0.md` | MiniMax-M2 split-GGUF intake, FP32 sigmoid routing, whole-projection norms, pinned evidence, and release-gate status | continuing MiniMax-M2 bring-up or changing its intake and execution contract |
+| `docs/DEEPSEEK2_PHASE0.md` | `deepseek2` (DeepSeek V2 line) Phase 0 fact-finding: MLA absorbed form, the compressed 576-half cache, expert and slot arithmetic, the V2 dialect gap | reading a `deepseek2` fact, or continuing that bring-up |
 | `docs/SKILL_STATE.md` | the SKILL.state bounded-state agent runtime, a measured POSITIVE with its scale caveat | proposing agent context compaction, structured output, or constrained decoding |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `swift/docs/SWIFT_TOOLS.md` | Swift native tool implementation: execution, containment, adding new tools | implementing or changing tools in TurboSparkApp |

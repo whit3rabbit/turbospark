@@ -32,6 +32,7 @@ pub mod kv_quant;
 /// CPU reference for causal attention over TurboQuant-quantized K/V rows.
 pub mod kv_quant_attention;
 /// Mixture-of-Experts (MoE) routing and FFN compute kernels.
+pub mod mla;
 pub mod moe;
 /// `qwen4_exp`'s PLE (per-layer n-gram embedding) gate (PORT-LOCAL).
 pub mod ple;
@@ -88,6 +89,7 @@ pub use kv_quant::{
     NORM_EPS, VALUE_SEED,
 };
 pub use kv_quant_attention::{causal_attention_tq, TqTables};
+pub use mla::{mla_absorb_q, mla_attention_decode, mla_kv_norm, mla_rope_window, mla_v_combine};
 pub use moe::{apply_streamed_routed, gelu_tanh, run_ffn};
 pub use ple::{dequant_ngram_row, dilated_conv_step, ple_gate};
 pub use qsa_indexer::{pool_blocks_mean, score_blocks, select_blocks};

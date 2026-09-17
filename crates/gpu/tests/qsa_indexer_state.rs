@@ -27,6 +27,8 @@ fn qwen4_style_arch() -> model_io::ArchConfig {
         full_rope_theta: 10_000_000.0,
         partial_rotary_factor: 0.25,
         num_layers: 3,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 1,
         top_k_experts: 1,
         tie_word_embeddings: false,
@@ -49,6 +51,7 @@ fn qwen4_style_arch() -> model_io::ArchConfig {
             conv_kernel_size: 4,
             output_gate_sigmoid: true,
         },
+        mla: model_io::MlaConfig::NONE,
         compressed_attention: model_io::CompressedAttentionConfig {
             index_n_heads: 4,
             index_kv_heads: 1,

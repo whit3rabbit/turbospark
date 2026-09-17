@@ -211,6 +211,7 @@ impl RealForwardRunner {
             batched_tape: None,
             batched_tape_row0: None,
             real_llama: None,
+            real_deepseek2: None,
             real_gpt_oss: None,
             real_muse: None,
             real_qwen4: None,
@@ -348,6 +349,14 @@ impl RealForwardRunner {
                 return Err(RealForwardError::Unsupported(
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
+            }
+            model_io::ModelFamily::Deepseek2 => {
+                runner.real_deepseek2 =
+                    Some(crate::families::deepseek2::RealDeepseek2State::build(
+                        &mut runner.context,
+                        &runner.index,
+                        &runner.arch,
+                    )?);
             }
             // Refused BY NAME even though `validate_arch_config` already
             // stops it a few lines up (its mask-2 layers are not on the

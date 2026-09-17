@@ -29,7 +29,7 @@
 
 use model_io::{
     muse_glimmer_layer_mask, ArchConfig, CompressedAttentionConfig, HyperConnectionConfig,
-    LinearAttentionConfig, ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
+    LinearAttentionConfig, MlaConfig, ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 use crate::gemma4_checkpoint::{write_muse_glimmer_install, Gemma4Quant};
@@ -92,6 +92,8 @@ pub fn tiny_muse_glimmer_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         full_rope_theta: 0.0,
         partial_rotary_factor: 1.0,
         num_layers,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 0,
         top_k_experts: 0,
         tie_word_embeddings: false,
@@ -109,6 +111,7 @@ pub fn tiny_muse_glimmer_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

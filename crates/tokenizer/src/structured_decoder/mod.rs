@@ -252,6 +252,16 @@ impl<'a> StructuredAssistantDecoder<'a> {
             ChatDialect::Deepseek | ChatDialect::Spark => {
                 return self.consume_deepseek(token_id, delta)
             }
+            // V2-era tables carry NO structural markup at all: plain text in,
+            // plain text out, exactly the Llama3 arm's contract (all ids are
+            // NO_SUCH_TOKEN_ID, nothing can open a span).
+            ChatDialect::DeepseekV2 => {
+                return Ok(if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![StructuredAssistantEvent::Content(delta.to_string())]
+                })
+            }
             ChatDialect::MuseGlimmer => return Ok(self.consume_muse(token_id, delta)),
             ChatDialect::Gemma => {}
             // Mistral's `[TOOL_CALLS]` arm: the marker is a SPECIAL token, so

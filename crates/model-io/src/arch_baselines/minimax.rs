@@ -1,5 +1,5 @@
 use crate::arch_config::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -21,6 +21,8 @@ pub fn minimax_m2() -> ArchConfig {
         full_rope_theta: 5_000_000.0,
         partial_rotary_factor: 0.5,
         num_layers: 62,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 256,
         top_k_experts: 8,
         tie_word_embeddings: false,
@@ -36,6 +38,7 @@ pub fn minimax_m2() -> ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: true,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

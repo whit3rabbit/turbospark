@@ -71,6 +71,9 @@ impl RealForwardRunner {
     pub fn supports_chunked_prefill(&self) -> bool {
         self.real.is_some()
             || self.real_llama.is_some()
+            // `deepseek2` is deliberately absent: its chunked driver is not
+            // written, and the plain sequential `produce` path serves it
+            // correctly. Record the ceiling, do not half-wire the driver.
             || self.real_muse.is_some()
             || self.real_gpt_oss.is_some()
             || (self.real_qwen.as_ref().is_some_and(|s| s.dense)

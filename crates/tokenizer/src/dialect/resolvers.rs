@@ -20,12 +20,12 @@ pub(crate) fn resolve_gemma(
 ) -> Result<Resolved, TokenizerError> {
     let bos_token = config
         .bos_token
-        .as_deref()
+        .content()
         .ok_or_else(|| TokenizerError::MissingSpecialToken("<bos>".to_string()))?;
     let bos = required_id(tokenizer, bos_token)?;
     let eos_token = config
         .eos_token
-        .as_deref()
+        .content()
         .ok_or_else(|| TokenizerError::MissingSpecialToken("<eos>".to_string()))?;
     let eos = required_id(tokenizer, eos_token)?;
     let pad = required_id(tokenizer, "<pad>")?;
@@ -409,6 +409,44 @@ pub(crate) fn resolve_deepseek(tokenizer: &Tokenizer) -> Result<Resolved, Tokeni
         think_end_id: Some(think_end),
         stop_token_ids: [eos].into_iter().collect(),
         vocab_size: 129_280,
+    })
+}
+
+/// The V2-era DeepSeek tables: the same fullwidth marks as
+/// [`resolve_deepseek`] and NOTHING ELSE structural -- no think pair, no
+/// tool markup, EOS the only stop. The vocab is the LOADED TABLE's size
+/// rather than a per-model constant: this dialect's checkpoints span more
+/// than one width, and the real decode path takes the row count from the
+/// model itself (`RealForwardRunner::vocab_size`), so a constant here would
+/// be Gotcha 37's shape waiting for its second checkpoint.
+pub(crate) fn resolve_deepseek_v2(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    let bos = required_id(tokenizer, DEEPSEEK_BOS_MARK)?;
+    let eos = required_id(tokenizer, DEEPSEEK_EOS_MARK)?;
+    // And that is the whole required set. The `<｜User｜>` /
+    // `<｜Assistant｜>` turn marks are the TEMPLATE's text on these
+    // checkpoints, not special tokens -- the actual V2-Lite-Chat
+    // tokenizer.json carries exactly two added tokens (bos, eos) -- so
+    // requiring them would refuse every real table this dialect exists
+    // for. The probe tests exactly these two, no fewer (Gotcha 52).
+    Ok(Resolved {
+        bos_id: bos,
+        bos_prefix_id: Some(bos),
+        eos_id: eos,
+        pad_id: eos,
+        end_of_turn_id: eos,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: NO_SUCH_TOKEN_ID,
+        channel_start_id: NO_SUCH_TOKEN_ID,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: None,
+        think_end_id: None,
+        stop_token_ids: [eos].into_iter().collect(),
+        vocab_size: tokenizer.get_vocab_size(true),
     })
 }
 

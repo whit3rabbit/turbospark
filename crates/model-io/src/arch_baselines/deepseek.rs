@@ -1,5 +1,5 @@
 use crate::arch_config::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -34,6 +34,8 @@ pub fn deepseek_v4_flash_284b_a13b() -> ArchConfig {
         full_rope_theta: 10_000.0,
         partial_rotary_factor: 0.125,
         num_layers: 43,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 256,
         top_k_experts: 6,
         tie_word_embeddings: false,
@@ -49,6 +51,7 @@ pub fn deepseek_v4_flash_284b_a13b() -> ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig {
             q_lora_rank: 1024,
             o_lora_rank: 1024,

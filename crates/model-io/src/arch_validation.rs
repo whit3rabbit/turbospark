@@ -352,6 +352,57 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         a.rope_scaling_beta_slow.unwrap_or(0.0),
         e.rope_scaling.beta_slow
     );
+    // `deepseek2`'s mscale parameter. The same zero-fallback rule as the
+    // four above: silence means the plain-YaRN parameter, which is exactly
+    // what `RopeScalingConfig::mscale = 0` computes at the use site.
+    // gpt-oss's value is absent and stays absent; DeepSeek's is 0.707, a
+    // decimal the f64 round-trip holds (pinned by a test beside the
+    // baseline).
+    check!(
+        "ropeScalingMscale",
+        a.rope_scaling_mscale.unwrap_or(0.0),
+        e.rope_scaling.mscale
+    );
+    // Multi-head latent attention (`deepseek2`). Zero fallback, same rule
+    // as the linear* block above: silence means `MlaConfig::NONE`, and no
+    // other family's answer about ITS attention is evidence.
+    check!(
+        "mlaKvLoraRank",
+        a.mla_kv_lora_rank.unwrap_or(0),
+        e.mla.kv_lora_rank
+    );
+    check!(
+        "mlaQLoraRank",
+        a.mla_q_lora_rank.unwrap_or(0),
+        e.mla.q_lora_rank
+    );
+    check!(
+        "mlaNopeHeadDim",
+        a.mla_nope_head_dim.unwrap_or(0),
+        e.mla.nope_head_dim
+    );
+    check!(
+        "mlaRopeHeadDim",
+        a.mla_rope_head_dim.unwrap_or(0),
+        e.mla.rope_head_dim
+    );
+    check!(
+        "mlaVHeadDim",
+        a.mla_v_head_dim.unwrap_or(0),
+        e.mla.v_head_dim
+    );
+    // The dense lead's FFN width. Zero means the architecture has no dense
+    // lead, which is every pre-`deepseek2` family.
+    check!(
+        "denseLeadIntermediateSize",
+        a.dense_lead_intermediate_size.unwrap_or(0),
+        e.dense_lead_intermediate_size
+    );
+    check!(
+        "numDenseLeadingLayers",
+        a.num_dense_leading_layers.unwrap_or(0),
+        e.num_dense_leading_layers
+    );
     // ROADMAP M-V3, the vision tower. Every field falls back to
     // `VisionConfig::NONE`'s zero and NOT to `gemma_defaults.vision`, which is
     // the same distinction the rope-scaling block above draws: silence here

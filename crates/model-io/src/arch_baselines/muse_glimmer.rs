@@ -1,5 +1,5 @@
 use crate::arch_config::{
-    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
@@ -70,6 +70,8 @@ pub fn muse_glimmer_30b() -> ArchConfig {
         // reference builds its rope at `head_dim` with no partial factor.
         partial_rotary_factor: 1.0,
         num_layers: 52,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
         num_experts: 0,
         top_k_experts: 0,
         tie_word_embeddings: false,
@@ -95,6 +97,7 @@ pub fn muse_glimmer_30b() -> ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,

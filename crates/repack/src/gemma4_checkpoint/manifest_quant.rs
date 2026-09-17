@@ -121,6 +121,12 @@ pub fn manifest_quant_for(
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
+        // `deepseek2` has no safetensors path (GGUF-only), so this arm is
+        // unreachable; its canonical names match this shape (self_attn.q_proj,
+        // mlp.gate router) if one is ever written. Its shared-expert probe
+        // would find nothing here and take the default, which is the same
+        // behavior the llama arm gives its shared-expert-less families.
+        | ModelFamily::Deepseek2
         | ModelFamily::MiniMaxM2 => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
