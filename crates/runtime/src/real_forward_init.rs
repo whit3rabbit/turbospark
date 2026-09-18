@@ -201,15 +201,14 @@ pub fn resolve_expert_residency(
         ExpertResidency::Mapped => ResolvedExpertResidency::Mapped,
         ExpertResidency::Streamed => ResolvedExpertResidency::Streamed,
         ExpertResidency::Auto => {
-            if mapped_residency_requested() {
-                ResolvedExpertResidency::Mapped
-            } else if mapped_supported
-                && model_io::auto_residency_prefers_mapped(
-                    physical_bytes,
-                    resident_bytes,
-                    bytes_per_slot,
-                )
-            {
+            let should_map = mapped_residency_requested()
+                || (mapped_supported
+                    && model_io::auto_residency_prefers_mapped(
+                        physical_bytes,
+                        resident_bytes,
+                        bytes_per_slot,
+                    ));
+            if should_map {
                 ResolvedExpertResidency::Mapped
             } else {
                 ResolvedExpertResidency::Streamed
