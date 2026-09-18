@@ -48,6 +48,7 @@ cargo clippy --workspace --tests
 | `runtime` | The raw-completion loop against `ScriptedLogitProducer`, plus real end-to-end forward passes over synthetic installs. |
 | `cli` | Black-box binary invocation, including real generation in all three modes. |
 | `repack` | Safetensors parsing, quantization, `.gturbo` assembly round-tripped through every `model-io` loader, install verification. |
+| `image` | Z-Image install assembly, packed affine-width decoding, and the opt-in native image parity and resource gates. |
 | `server` | OpenAI-compatible endpoint shapes, full-response and SSE, the `--model` argument parser, and (gated) the real `RealForwardRunner` backend end to end. |
 | `bench` | Protocol constants and footer format, the memory sampler, and the binary's black-box output. Its gated targets carry the quality axis: per-install perplexity and golden digests, the damage-sensitivity proof, and the logit dump feeding the cross-engine KLD. |
 
@@ -190,6 +191,25 @@ TURBOSPARK_QWEN2_INSTALL_DIR=~/models/qwen25-7b-4bit.gturbo \
 
 # Real ~270 MB HF checkpoint download through the Llama-family mapping.
 cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --ignored --nocapture
+
+# Pinned Z-Image MLX source headers, all three transformer shards, and
+# quantization companions. No weight payload is downloaded.
+cargo test -p turbospark-repack --test zimage_mlx_source_network --release -- --ignored --nocapture
+
+# One selected real tensor range from each published 2/4/8-bit and fp16 MLX
+# variant, packed and decoded through the image adapter. This avoids a full
+# multi-gigabyte install while exercising real payload bytes.
+cargo test -p turbospark-image --test zimage_mlx_payload_network --release -- --ignored --nocapture
+
+# Full installer gate for one published variant. Select 2bit, 4bit, 8bit, or
+# fp16. The destination volume must hold the source staging tree and packed
+# install at the same time.
+TURBOSPARK_ZIMAGE_MLX_VARIANT=4bit \
+TURBOSPARK_ZIMAGE_MLX_INSTALL_DIR=~/models/z-image-turbo-mlx-4bit.image.gturbo \
+  cargo test -p turbospark-cli --test zimage_mlx_install_network --release -- --ignored --nocapture
+
+# The 2bit, 4bit, and 8bit variants passed this complete-install gate on
+# 2026-09-18. The remaining fp16 run is tracked separately as unquantized.
 
 # The four GGUF checks (ROADMAP Phase G). All are `*_network` but NONE of
 # them downloads a checkpoint: each reads a few KB to a few MB off a
@@ -467,6 +487,8 @@ attention) so it cannot rot silently; only the timings are advisory.
 | `TURBOSPARK_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network`, `qwen36_memory_oracle`, `qwen36_quality_gate`, `logit_dump` | Where the repacked Qwen 3.6 install lives. The oracle and the quality gate skip (with a note) when unset; the repack test falls back to a temp dir. Deliberately a second variable rather than a generalized one, so both installs can coexist and each target asserts its own family's row. `logit_dump` takes it as a fallback when the Gemma variable is unset; its cross-engine reference is `scripts/kld_mlx_affine.py`'s `qwen36` row, not `scripts/kld.py` (that driver has no guard that an MoE reference loaded quantized, and this checkpoint is one). |
 | `TURBOSPARK_QWEN3MOE_INSTALL_DIR` | `gguf_qwen3moe_install_network`, `qwen3moe_memory_oracle`, `qwen3moe_quality_gate`, `logit_dump` | Where the real Qwen3-30B-A3B Q4_K_M GGUF install lives (ROADMAP M3). A FOURTH variable for the same reason as the two below it: each family's oracle asserts its own ceiling (2,900 MiB here against Gemma's 2,300, because 48 layers of slot cache is not 30) and its own frozen digests. The install test refuses to write to any of the pinned variables. `logit_dump` takes it as the third fallback, which is how the cross-engine KL against llama.cpp is run on this family. |
 | `TURBOSPARK_QWEN2_INSTALL_DIR` | `qwen2_checkpoint_network` | Where the real Qwen2/Qwen2.5 `.gturbo` install lives. The full target streams the pinned 4-bit MLX checkpoint; it falls back to a process-specific temporary directory when unset. There is no Qwen2 memory oracle, quality gate, or frozen baseline yet. |
+| `TURBOSPARK_ZIMAGE_MLX_VARIANT` | `zimage_mlx_install_network` | Selects exactly one published Z-Image MLX source: `2bit`, `4bit`, `8bit`, or `fp16`. The ignored full-install gate skips when this is unset. |
+| `TURBOSPARK_ZIMAGE_MLX_INSTALL_DIR` | `zimage_mlx_install_network` | New destination for the selected full image install. The gate refuses to choose a default because the source staging tree and packed output coexist during the walk. |
 | `TURBOSPARK_DSV2_INSTALL_DIR` | `dsv2_memory_oracle`, `dsv2_quality_gate`, `logit_dump` | Where the real DeepSeek-V2-Lite-Chat Q8_0 `.gturbo` install lives (`~/.turbospark/models/dsv2lite-16b.gturbo`). The two gates skip (with a note) when unset; the oracle runs the protocol at the family's own 8,192/1,024 row (`real_model_params`), and the quality gate needs NO assistant prefix (V2's answer slot is plain prose after `Assistant:`). `logit_dump` takes it as a fallback for the llama.cpp cross-engine arm that closed the numerics gap. |
 | `TURBOSPARK_GEMMA4_IQ_INSTALL_DIR` | `gguf_iq_install_network`, `iq3_quality_gate` | Where the 3-bit (IQ3_XXS/IQ4_NL) Gemma 4 install lives (ROADMAP Phase S). A THIRD variable rather than a reuse of the Gemma one, for the reason `iq3_quality_gate` documents: the quality rows are keyed on the chip and freeze the MLX INT4 goldens, so pointing an existing variable at a different artifact asserts the wrong digests. The install test refuses to write to either of the two variables above, and both readers skip or fall back to a temp dir when unset. |
 | `TURBOSPARK_LOGIT_DUMP_DIR` | `logit_dump` | Where to write `logits.f16` and `meta.json` (~275 MiB on either family). Required: the target skips when unset, since a few hundred MB is not something to write to a default path. |

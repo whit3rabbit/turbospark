@@ -20,18 +20,22 @@ void image_round_bf16(
 }
 
 // Z-Image uses a different storage contract from the text runtime. Quantized
-// rows are [packed low/high nibbles][BF16 scales][BF16 biases], one row at a
-// time. The text runtime kernels expect three contiguous regions, so these
-// kernels deliberately decode the image format in place from a mapped
-// tensors.bin buffer.
+// rows are [packed values][scales][biases], one row at a time. The text
+// runtime kernels expect three contiguous regions, so these kernels
+// deliberately decode the image format in place from a mapped tensors.bin
+// buffer. Storage 3 is the legacy local INT4 layout. Storage 4 is an MLX
+// affine row, supporting 2, 3, 4, 5, 6, and 8-bit little-endian fields.
 
 struct LinearParams {
     uint rows;
     uint in_dim;
     uint out_dim;
     uint row_stride;
-    uint storage;       // 1 = F32, 2 = BF16, 3 = interleaved INT4 affine
+    uint storage;       // 1 = F32, 2 = BF16, 3 = local INT4, 4 = MLX affine
     uint bias_storage;  // 0 = no bias, otherwise 1 or 2
+    uint bits;           // affine field width, zero for unquantized storage
+    uint group_size;     // affine group width, zero for unquantized storage
+    uint companion_storage; // 2 = BF16, 4 = F16
 };
 
 struct NormParams {
@@ -91,11 +95,20 @@ struct LookupParams {
     uint dim;
     uint vocab;
     uint storage;
+    uint row_stride;
+    uint bits;
+    uint group_size;
+    uint companion_storage;
 };
 
 inline float bf16_value(device const uchar *ptr) {
     const ushort bits = *reinterpret_cast<device const ushort *>(ptr);
     return as_type<float>(uint(bits) << 16);
+}
+
+inline float f16_value(device const uchar *ptr) {
+    const ushort bits = *reinterpret_cast<device const ushort *>(ptr);
+    return float(as_type<half>(bits));
 }
 
 inline float stored_value(device const uchar *base, uint index, uint storage) {
@@ -106,6 +119,10 @@ inline float stored_value(device const uchar *base, uint index, uint storage) {
         return bf16_value(base + uint64_t(index) * 2);
     }
     return 0.0f;
+}
+
+inline float affine_companion_value(device const uchar *ptr, uint storage) {
+    return storage == 4 ? f16_value(ptr) : bf16_value(ptr);
 }
 
 inline float affine_int4_value(device const uchar *row, uint col, uint cols) {
@@ -120,9 +137,46 @@ inline float affine_int4_value(device const uchar *row, uint col, uint cols) {
     return float(nibble) * scale + bias;
 }
 
+inline float affine_mlx_value(
+    device const uchar *row,
+    uint col,
+    uint cols,
+    uint bits,
+    uint group_size,
+    uint companion_storage) {
+    const uint bit_offset = col * bits;
+    const uint byte = bit_offset >> 3;
+    const uint word = uint(row[byte]) | (uint(row[byte + 1]) << 8);
+    const uint mask = (1u << bits) - 1u;
+    const uint q = (word >> (bit_offset & 7)) & mask;
+    const uint group = col / group_size;
+    const uint packed_bytes = (cols * bits) >> 3;
+    const uint group_bytes = (cols / group_size) * 2;
+    const float scale = affine_companion_value(
+        row + packed_bytes + group * 2,
+        companion_storage);
+    const float bias = affine_companion_value(
+        row + packed_bytes + group_bytes + group * 2,
+        companion_storage);
+    return float(q) * scale + bias;
+}
+
 inline float matrix_value(device const uchar *row, uint col, constant LinearParams &p) {
     if (p.storage == 3) {
         return affine_int4_value(row, col, p.in_dim);
+    }
+    if (p.storage == 4) {
+        return affine_mlx_value(row, col, p.in_dim, p.bits, p.group_size, p.companion_storage);
+    }
+    return stored_value(row, col, p.storage);
+}
+
+inline float lookup_value(device const uchar *row, uint col, constant LookupParams &p) {
+    if (p.storage == 3) {
+        return affine_int4_value(row, col, p.dim);
+    }
+    if (p.storage == 4) {
+        return affine_mlx_value(row, col, p.dim, p.bits, p.group_size, p.companion_storage);
     }
     return stored_value(row, col, p.storage);
 }
@@ -152,7 +206,7 @@ void image_linear(
 
 // Input-tiled version of image_linear. One 32x8 output tile shares each 32-wide
 // input tile across its 256 threads. The row-major packed contract is unchanged,
-// including the per-row INT4 scales and biases.
+// including the per-row affine scales and biases.
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void image_linear_tiled(
     device const uchar *weight [[buffer(0)]],
@@ -233,8 +287,8 @@ void image_lookup(
         output[gid] = 0.0f;
         return;
     }
-    const uint index = token * p.dim + col;
-    output[gid] = stored_value(weight, index, p.storage);
+    device const uchar *row_ptr = weight + uint64_t(token) * p.row_stride;
+    output[gid] = lookup_value(row_ptr, col, p);
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]

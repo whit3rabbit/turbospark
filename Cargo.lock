@@ -2147,6 +2147,7 @@ dependencies = [
  "turbospark-core",
  "turbospark-gpu",
  "turbospark-model-io",
+ "turbospark-repack",
  "turbospark-tokenizer",
 ]
 

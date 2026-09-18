@@ -131,34 +131,39 @@ struct TurboSparkApp: App {
                 .keyboardShortcut("1", modifiers: .command)
 
                 Button {
+                    model.activeSection = .images
+                } label: {
+                    Text("Images", bundle: .module)
+                }
+                .keyboardShortcut("2", modifiers: .command)
+
+                Button {
                     model.activeSection = .files
                 } label: {
                     Text("Files", bundle: .module)
                 }
-                .keyboardShortcut("2", modifiers: .command)
+                .keyboardShortcut("3", modifiers: .command)
 
                 Button {
                     model.activeSection = .modelManager
                 } label: {
                     Text("Installed Models", bundle: .module)
                 }
-                .keyboardShortcut("3", modifiers: .command)
+                .keyboardShortcut("4", modifiers: .command)
 
                 Button {
                     model.activeSection = .modelHub
                 } label: {
                     Text("Discover Models", bundle: .module)
                 }
-                .keyboardShortcut("4", modifiers: .command)
+                .keyboardShortcut("5", modifiers: .command)
 
-                // The rail's tooltip had advertised this since the section
-                // was appended (`AppSection.shortcutKey`), with nothing bound.
                 Button {
                     model.activeSection = .server
                 } label: {
                     Text("Server", bundle: .module)
                 }
-                .keyboardShortcut("5", modifiers: .command)
+                .keyboardShortcut("6", modifiers: .command)
 
                 Divider()
 

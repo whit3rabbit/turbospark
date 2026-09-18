@@ -1,15 +1,18 @@
 # Native image generation: Z-Image-Turbo
 
-Status: IG0 resource evidence and the IG0 resource/manifest contract are
-closed for the reference envelope. IG1 native component parity and IG2 packed
-runtime closure are also complete for the pinned 1024-by-1024 case: the
-full-width checkpoint block, complete nine-step DiT rollout, production-shape
-VAE pixel parity, PNG metadata, cancellation, remote intake, and packed
-resource evidence pass their recorded contracts.
+Status: IG0, IG1, IG2, IG3, and IG4 are closed for the pinned 1024-by-1024
+case. The full-width checkpoint block, complete nine-step DiT rollout,
+production-shape VAE parity, PNG metadata, cancellation, remote intake,
+packed resource evidence, bounded streaming, repeated-job stability, Swift
+integration, and app image mode pass their recorded contracts. IG5 remains
+open only for measured optimization work.
 [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
 real-image captures, and component comparisons.
 The reusable bring-up process and the lessons from this model are summarized
 in [ZIMAGE_TURBO.md](ZIMAGE_TURBO.md).
+
+The image benchmark summary is maintained in
+[ZIMAGE_TURBO.md](ZIMAGE_TURBO.md#recommended-model-and-benchmark-record).
 
 Quiet-AC resource evidence now exists for all three reference stages. The
 encoder cold and reuse arms, both VAE arms, and the denoiser cold load and
@@ -96,28 +99,76 @@ execution evidence gates. The remaining work is tracked in
 [ROADMAP](../ROADMAP.md). This page owns the design, gates, and rationale;
 the roadmap owns the remaining task checklist.
 
-### Artifact support boundary
+### Default MLX source and artifact support
 
-The current runtime does not load arbitrary Hugging Face MLX image exports
-directly. The intended source is a pinned Diffusers-style Z-Image-Turbo
-export, which `turbospark image pack` converts into the repository's separate
-`.image.gturbo` install format. `turbospark-model pull-image` currently accepts
-that source as a local directory; it does not yet download an image model by
-Hugging Face repository ID.
+MLX safetensors is the default source format for Z-Image-Turbo image installs.
+The default source is
+[`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit),
+and the installer accepts all four upstream variants below through the same
+source adapter and `.image.gturbo` artifact path.
 
-The first IG2 production profile is this repository's affine INT4 linear
-format at group size 64. It is not an all-tensor INT4 claim: embeddings,
+| Variant | Install alias | Size | Quantization | Link |
+| --- | --- | ---: | --- | --- |
+| Full precision (fp16) | `z-image-turbo-mlx-fp16` | 20.54 GB | None | [`andrevp/Z-Image-Turbo-MLX`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX) |
+| 8-bit | `z-image-turbo-mlx-8bit` | 11.37 GB | 8-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit) |
+| 4-bit (default) | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
+| 2-bit | `z-image-turbo-mlx-2bit` | 4.04 GB | 2-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-2bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-2bit) |
+
+The pinned header-only intake gate covers these four revisions and checks the
+published transformer layout before any payload download. It confirms U32
+affine planes with matching F16/BF16 scale and bias companions for the 2, 4,
+and 8-bit exports, and F16 tensors for the full-precision export. The gate does
+not claim real-install or image-quality parity for those variants. The
+payload-range gate reads one selected real transformer tensor from each pinned
+variant, runs it through the production image packer and decoder, and still
+avoids staging the complete source tree.
+
+When the destination volume can hold both the source staging tree and the
+packed output, run the full installer gate for one variant at a time:
+
+```sh
+TURBOSPARK_ZIMAGE_MLX_VARIANT=4bit \
+TURBOSPARK_ZIMAGE_MLX_INSTALL_DIR=~/models/z-image-turbo-mlx-4bit.image.gturbo \
+  cargo test -p turbospark-cli --test zimage_mlx_install_network --release \
+  -- --ignored --nocapture
+```
+
+The `2bit`, `4bit`, and `8bit` gates passed on 2026-09-18: `pull-image`
+completed each pinned source staging and pack, and every installed manifest
+verified with its expected observed-width label. The `fp16` gate remains open
+as a separate unquantized source path. This installer gate does not close
+image-quality, resource, or Swift parity evidence for any non-INT4 variant.
+
+These are published download sizes, not runtime memory guarantees. The
+original `Tongyi-MAI/Z-Image-Turbo` Diffusers export remains the independent
+parity and quality reference. `turbospark image pack` normalizes either source
+shape into the repository's `.image.gturbo` install format, while
+`turbospark-model pull-image --repo OWNER/NAME@REV` handles remote MLX source
+intake and `--source` handles a local MLX directory.
+
+The pinned IG2 production profile is this repository's legacy affine INT4
+linear format at group size 64. It is not an all-tensor INT4 claim: embeddings,
 normalization, modulation, positional, and other protected tensors remain
-unquantized, as do image-sensitive operations such as the VAE. F32 source
-weights that remain unquantized are stored as BF16 to match the reference
-transformer's loaded dtype; this is a storage alignment, not a claim that the
-native activation path is BF16-exact. The
-already-quantized [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit)
-and [`uqer1244/MLX-z-image`](https://huggingface.co/uqer1244/MLX-z-image) exports
-are close candidates by model and bit width, but their MLX tensor layout needs
-an explicit adapter and packed parity evidence. The 2-bit, 8-bit, and
-full-precision variants are not current IG2 runtime profiles. Do not register
-any of these as ordinary text `Mlx` catalog rows.
+unquantized, as do image-sensitive operations such as the VAE. The default
+published MLX 4-bit source uses MLX affine U32 rows with F16 or BF16
+scale/bias companions and remains in that representation through the image
+adapter. F32 source weights that remain unquantized are stored as BF16 to match
+the reference transformer's loaded dtype; this is a storage alignment, not a
+claim that the native activation path is BF16-exact. All four published
+variants use the same adapter, manifest, and runtime family. Do not register
+any image variant as an ordinary text `Mlx` catalog row.
+
+The source adapter and native row decoder accept MLX affine U32 weights at 2,
+3, 4, 5, 6, and 8 bits, with group size 64 and F16 or BF16 scale/bias
+companions. The packed index records the logical matrix shape rather than the
+source U32 packing shape. Focused tests cover every supported width and both
+companion dtypes. The CLI and generated image request, PNG metadata, and
+Swift's installed-image listing carry the observed MLX width label. This is
+the complete upstream `mx.quantize` width set;
+upstream rejects 1-bit quantization. Full installer gates pass for the
+published 2-, 4-, and 8-bit variants; the FP16 install remains open. Quality,
+resource, and Swift gates are still required before any non-INT4 variant is
+considered verified.
 
 The image crate is intentional. `turbospark-image` owns the image graph,
 image-specific install schema, packed storage, scheduler, VAE, and the native
@@ -140,7 +191,8 @@ scratch is not observable, so the contract uses an inclusive non-parameter
 process budget and explicitly does not call driver-retained bytes scratch or
 claim a minimum whole-machine RAM size. IG3 closed repeated full-pipeline
 stability, resident-versus-streamed ownership, and cancellation lifetime proof.
-IG2 is closed; app work remains IG4.
+IG2 and IG4 are closed for the pinned install; MLX variant install, quality,
+resource, and Swift parity gates remain separate open work.
 
 ## IG4 app seam
 
@@ -151,12 +203,14 @@ another thread, returns explicit PNG ownership, and returns the same
 camelCase metadata that the runtime embeds in the PNG. `TurboSparkImageSession`
 copies the PNG before releasing the C buffer.
 
-The macOS app's image-mode composer accepts a direct prompt and lists valid
-installed image artifacts through the separate `ts_image_installed_json`
-catalog surface. A folder chooser remains available for a side-loaded install,
-but image mode never falls back to the selected text model. A process-wide FIFO
-coordinator serializes heavyweight image jobs across chats in the app. The
-result stays in transient
+The macOS app's top-level `Images` destination is the canonical image workflow.
+Its `Create` tab accepts a direct prompt and lists valid installed image
+artifacts through the separate `ts_image_installed_json` catalog surface. A
+folder chooser remains available for a side-loaded install, but image
+generation never falls back to the selected text model. The `Gallery` tab
+shows profile-owned PNG thumbnails and opens a previous/next carousel. A
+process-wide FIFO coordinator serializes heavyweight image jobs across chats in
+the app. The result stays in transient
 job state until the user saves it, which provides preview, regeneration, and
 safe interruption without turning an incomplete job into durable history.
 Saved PNGs live below `AppStorageRoot.subdirectory("image-artifacts")`, and a
@@ -195,8 +249,9 @@ milestone checkbox is marked.
 Build Z-Image-Turbo text-to-image inference in Rust with the existing Metal
 backend. Deliver a quantized CLI pipeline first, then expose that same
 runtime through the C ABI and Swift package to an explicit image mode in
-chat. External engines are correctness references and benchmark tools,
-not production subprocesses or a new MLX dependency.
+chat. MLX safetensors are a supported source format; external engines remain
+correctness references and benchmark tools, not production subprocesses or
+runtime dependencies.
 
 The first release generates one PNG per request from an explicit prompt,
 with a resolved seed, dimensions, progress, cancellation, and reproducibility
@@ -226,9 +281,10 @@ approximate timestep reuse, and concurrent heavyweight text/image execution.
 | [Swift bindings](SWIFT_BINDINGS.md) | Keep inference in process and share the runtime with the CLI. Add an image session contract rather than overloading token events. |
 
 The production Rust GPU backend is Metal. MLX array ownership experiments
-are not prerequisites for this direction. Existing quantized kernels are
-reuse candidates, not proof that a community checkpoint's packing or shapes
-are compatible. Likewise, a text-generation Qwen runner is not automatically
+are not prerequisites for this direction because the source adapter normalizes
+MLX safetensors before native execution. Existing quantized kernels are reuse
+candidates, not proof that a community checkpoint's packing or shapes are
+compatible. Likewise, a text-generation Qwen runner is not automatically
 the hidden-state encoder the image pipeline requires.
 
 MoE demand loading already exists, and [KV quantization](TRUBOQUANT.md)
@@ -427,10 +483,11 @@ The following records implementation status and the remaining evidence work:
    for finite output; the complete matched-noise gate now passes on a pinned
    packed install, including isolated frozen-latent VAE parity.
 4. **Explicit image install route.** `turbospark-model pull-image` packages a
-   pinned local Diffusers export and records it as an image install, not as a
-   text `Mlx` row. `pull-image --repo OWNER/NAME@REV` streams the required
-   pinned source files into temporary staging before packing. The separate
-   image catalog and its live source-file rot guard pass.
+   pinned local MLX export and records it as an image install, not as a text
+   `Mlx` row. `pull-image --repo OWNER/NAME@REV` streams the selected MLX
+   variant into temporary staging before packing. The four upstream variants
+   share the same adapter and artifact path; the separate image catalog and
+   its live source-file rot guard pass.
 5. **CLI production selection.** On macOS, `turbospark image generate`
    selects native Metal by default; `--backend reference` is explicit. The
    offline gates cover help, invalid envelope values, overwrite refusal, and
@@ -590,11 +647,12 @@ acceptance contract:
    guidance-zero, fixed-seed contract. Explain the first divergent
    intermediate and mutation-check every assertion.
 4. **Real install contract.** Extend `crates/catalog` and
-   `turbospark-model` with an explicit image install plan for the pinned
-   Diffusers export. Do not encode this as an ordinary text `Mlx` model row.
-   Fetch and verify all five components before the atomic publish, preserve
-   the source revision in the manifest and receipt, and add catalog rot-guard
-   coverage before adding an alias.
+   `turbospark-model` with an explicit image install plan for the default
+   pinned MLX export and its four supported variants. Do not encode this as an
+   ordinary text `Mlx` model row. Fetch and verify all required components
+   before the atomic publish, preserve the source revision and selected
+   variant in the manifest and receipt, and add catalog rot-guard coverage
+   before adding an alias.
 5. **CLI contract.** On macOS, `turbospark image generate`
    should select the native backend. The CPU backend remains an explicit
    reference path for fixtures and diagnostics. Non-macOS and no-device
@@ -704,18 +762,19 @@ tradeoff at each advertised budget. These gates now pass for the pinned
 install. A managed budget does not claim a hard cap on whole-process or system
 physical memory.
 
-### IG4: Expose the runtime to Swift and image mode in chat
+### IG4: Expose the runtime to Swift and the Images destination
 
 Extend the C ABI and Swift wrapper with an image session, request, progress,
 result, cancellation, and explicit buffer ownership. Keep the existing text
 session ABI behavior intact. The CLI and app must use the same conditioning,
 scheduler, quantization, and output-generation implementation.
 
-Add a chat-scoped image mode with compatible installed-model selection,
-prompt, dimensions, seed, stage progress, Stop, result preview, Save, and
-Regenerate. Use the submitted prompt directly in v1; do not silently run a
-text-model prompt enhancer or include the entire conversation as conditioning.
-Regenerate reuses the recorded request and seed; changing the seed is explicit.
+Add a top-level `Images` destination with `Create` and `Gallery` tabs,
+compatible installed-model selection, a prompt, stage progress, Stop, result
+preview, Save, and Regenerate. Use the submitted prompt directly in v1; do not
+silently run a text-model prompt enhancer or include the entire conversation as
+conditioning. Regenerate reuses the recorded request and seed; changing the
+seed is explicit. Gallery thumbnails open a previous/next carousel.
 
 Capture the originating chat ID and job identity when submitting. Switching
 chats cannot redirect events or results. Serialize heavyweight jobs across
@@ -743,9 +802,9 @@ timestep reuse remain separate proposals requiring quality and end-to-end
 benefit on the quantized pipeline. Faster attention is not automatically
 useful when storage dominates. No MoE cache-policy rewrite is required.
 
-## Proposed public surfaces
+## Current public surfaces
 
-This command and alias are design targets, not available commands:
+The unified image command is available through the `turbospark` wrapper:
 
 ```sh
 turbospark image generate \
@@ -753,18 +812,41 @@ turbospark image generate \
   --prompt "A lighthouse in winter" \
   --seed 42 \
   --width 1024 --height 1024 \
+  --steps 9 --backend native \
   --output lighthouse.png
 ```
 
-Use the existing model-management infrastructure to install and discover
-image-capable models. Add shipped syntax to [CLI](CLI.md) only when the
-parser and implementation exist. Output is PNG, progress goes to stderr,
-and successful completion reports the resulting path. Resolve and record a
-seed when omitted. Require an output path and refuse accidental overwrite.
-Publish a result only after encoding succeeds; remove incomplete output on
-failure or cancellation. Record prompt, seed, dimensions, model/component
-revisions, quantization, scheduler settings, actual evaluations, and engine
-revision in PNG metadata so exported images retain their generation context.
+`--seed`, `--width`, `--height`, `--steps`, and `--backend` are explicit
+options. The native backend is the default on macOS; `reference` is an
+explicit CPU diagnostic backend. `ImageRequest::validate()` enforces the
+installed manifest's dimensions and scheduler envelope. Output is PNG,
+progress goes to stderr, a missing seed is resolved randomly, and an existing
+output path is refused. Publication happens only after encoding succeeds, and
+incomplete output is removed on failure or cancellation.
+
+Image installs are separate from text installs. A local source can be packed
+and a pinned remote source can be streamed into the verified store:
+
+```sh
+turbospark-model pull-image \
+  --source /path/to/Z-Image-Turbo \
+  --alias z-image-turbo \
+  --model-id Tongyi-MAI/Z-Image-Turbo \
+  --model-revision f332072aa78be7aecdf3ee76d5c247082da564a6
+
+turbospark-model pull-image \
+  --repo Tongyi-MAI/Z-Image-Turbo@f332072aa78be7aecdf3ee76d5c247082da564a6 \
+  --alias z-image-turbo
+
+# The pinned MLX variants are also available through the image catalog.
+turbospark-model pull-image --alias z-image-turbo-mlx-4bit
+```
+
+The C ABI uses `TsImageSession`, `TsImageEventCallback`, explicit PNG buffer
+ownership, and cancellation. The Swift package wraps it with
+`TurboSparkImageSession`, `ImageGenerateOptions`, `ImageGenerationEvent`, and
+`ImageGenerationResult`. The options JSON contract remains camelCase:
+`prompt`, `seed`, `width`, `height`, and `steps`.
 
 The shared runtime interface needs a model/session handle, prompt and image
 options, resolved settings, phase progress, cancellation, owned pixel output,

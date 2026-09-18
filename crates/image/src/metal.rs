@@ -3,8 +3,8 @@
 //! The backend owns one queue and maps only the component currently being
 //! executed. Packed tensor rows stay in their verified `tensors.bin` mapping;
 //! the image shaders decode FP32, BF16, and the image-specific interleaved
-//! INT4 representation at the point of use. There is no CPU fallback in this
-//! type. The opt-in parity and resource gates remain separate from this
+//! legacy INT4 and MLX affine representations at the point of use. There is
+//! no CPU fallback in this type. The opt-in parity and resource gates remain separate from this
 //! device implementation because no source checkpoint is copied into tests.
 
 use std::{

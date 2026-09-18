@@ -1,18 +1,19 @@
-# Z-Image-Turbo Phase 0 evidence
+# Z-Image-Turbo Phase 0 evidence (historical)
 
-Status: IG0 resource evidence and the resource/manifest contract are closed for
-the reference envelope. Native IG1 parity is closed for the available
-fixtures: the full-width native checkpoint block, complete nine-step
-DiT gate, and real 1024-by-1024 VAE decode gate pass their frozen contracts.
+Status: Historical Phase 0 evidence. IG0 and the available IG1 fixture gates
+were the active work when this page was written. The full-width native
+checkpoint block, complete nine-step DiT gate, and real 1024-by-1024 VAE
+decode gate pass their recorded contracts.
 The optional raw-pixel arrays are absent from this checkout, so the VAE test's
 conditional pixel comparisons were not exercised. This page records measured
 facts and unresolved gates for
 [the image-generation design](IMAGE_GENERATION.md). It does not establish
 a supported RAM minimum, general image-quality guarantee, or packed INT4
 runtime result. The frozen [IG0 resource and manifest contract](verification/z-image-ig0-resource-contract.json)
-records the supported first envelope and the fields the IG2 installer must
-populate. IG2 production runtime work follows that contract, and app work
-remains IG4 after IG3 proves bounded lifetimes.
+records the first envelope and the fields later populated by the IG2
+installer. The current implementation status is maintained in
+[IMAGE_GENERATION.md](IMAGE_GENERATION.md) and [ZIMAGE_TURBO.md](ZIMAGE_TURBO.md);
+IG2, IG3, and IG4 are no longer pending on this historical page.
 
 ## Inputs and reproducibility
 
@@ -423,8 +424,8 @@ target/ig0/venv/bin/python scripts/z_image_benchmark_summary.py \
   whole-machine RAM cap. See the frozen
   [resource contract](verification/z-image-ig0-resource-contract.json).
 - [x] Finalize the image manifest contract from those measurements. The
-  contract is frozen for IG2; the installed packed manifest and its runtime
-  measurements are IG2 deliverables.
+  contract is frozen and the installed packed manifest and runtime
+  measurements were completed in the later IG2 and IG3 work.
 
 ## Reproduction and handoff
 
@@ -519,7 +520,8 @@ must be explicit so protected projections cannot silently become INT4.
 The measured activation/scratch field is an inclusive process budget because
 exact MPS operator scratch is not observable. The final allocation ownership
 policy is frozen in the [IG0 contract](verification/z-image-ig0-resource-contract.json);
-the installed packed manifest and runtime implementation remain IG2 work.
+the installed packed manifest and runtime implementation were completed after
+this Phase 0 record.
 
 Thirteen tests pass. Eleven validator/preflight mutations (component omission,
 header shape/bytes, fixture shape, corruption, non-finite values, revision,

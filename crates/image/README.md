@@ -26,7 +26,7 @@ This crate is NOT a text-model family and does not plug into `RealForwardRunner`
 
 - `install.rs`: Image model manifest schema, receipt verification, and fixed resource envelope constants.
 - `builder.rs` / `builder_files.rs` / `builder_manifest.rs`: Offline install builder for assembling packed `.gturbo` image directories.
-- `packed.rs`: Packed component store reader (`index.json` + `tensors.bin`) supporting affine INT4 group-64 quantization over FP32 stragglers.
+- `packed.rs`: Packed component store reader (`index.json` + `tensors.bin`) supporting the legacy affine INT4 group-64 layout and MLX affine U32 weights at 2, 3, 4, 5, 6, or 8 bits with F16/BF16 scale-bias companions.
 - `conditioning.rs`: Prompt framing, tokenizer loading, and padded token ID preparation.
 - `text_encoder.rs`: Qwen3 text encoder forward pass and sharded safetensors reader.
 - `transformer.rs`: Dense diffusion transformer blocks and attention calculations.
@@ -53,6 +53,11 @@ cargo check --target x86_64-unknown-linux-gnu -p turbospark-image
 # Run full Metal pipeline parity tests against a packed install (macOS, ignored by default)
 TURBOSPARK_IMAGE_INSTALL_DIR=~/models/z-image-turbo \
   cargo test -p turbospark-image --test metal_parity -- --ignored --nocapture
+
+# Read and decode selected real payload ranges from every pinned Z-Image MLX
+# variant without staging a complete multi-gigabyte source tree.
+cargo test -p turbospark-image --test zimage_mlx_payload_network --release \
+  -- --ignored --nocapture
 ```
 
 ## Tests
@@ -64,6 +69,7 @@ TURBOSPARK_IMAGE_INSTALL_DIR=~/models/z-image-turbo \
 - `tests/pipeline_parity.rs`: Validates timestep injection and end-to-end diffusion steps.
 - `tests/vae_parity.rs`: Validates latent decoding and RGB8 reconstruction.
 - `tests/metal_parity.rs`: Opt-in end-to-end hardware parity test against a real packed installation.
+- `tests/zimage_mlx_payload_network.rs`: Opt-in selected-payload pack/decode gate for the published Z-Image MLX variants.
 
 ## Crate Gotchas
 

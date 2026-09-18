@@ -91,7 +91,10 @@ fn sub_tensor_ranges_must_fit_the_expert_blob() {
     assert!(oversized.contains(r#""size": 68,"#));
     write_layout(&dir, &oversized);
     let err = load_packed_experts_layout(&dir, 1024).unwrap_err();
-    assert!(err.to_string().contains("expected the layer stride"), "{err}");
+    assert!(
+        err.to_string().contains("expected the layer stride"),
+        "{err}"
+    );
 }
 
 #[test]

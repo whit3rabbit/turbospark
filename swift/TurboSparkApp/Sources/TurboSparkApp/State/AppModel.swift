@@ -92,6 +92,8 @@ public final class AppModel: ObservableObject {
     /// Explicit image install path. Image installs are not text catalog rows,
     /// so an empty value must never fall back to the selected text model.
     @Published public var imageModelPathText: String = ""
+    /// Empty means choose a fresh random seed for each new request.
+    @Published public var imageSeedText: String = ""
     /// The current image job is intentionally transient. A relaunch never
     /// restores an interrupted generation as completed; saved PNGs and chat
     /// artifacts are the durable record.

@@ -8,6 +8,11 @@ Reproduce with `scripts/parity.sh`. Read `docs/BENCHMARKING.md` for the
 harness itself (the three `turbospark-bench` modes, the memory oracle, and
 how memory is sampled).
 
+Image creation is a separate staged workload, not a text-model throughput
+row. Its pinned Z-Image-Turbo benchmark record, including full-image wall time,
+packed resident-versus-streamed memory, and repeated-job stability, is in
+[`docs/ZIMAGE_TURBO.md`](ZIMAGE_TURBO.md#recommended-model-and-benchmark-record).
+
 ## Run provenance
 
 | | |

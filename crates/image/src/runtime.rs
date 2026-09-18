@@ -13,15 +13,95 @@ use std::sync::{
 use serde::{Deserialize, Serialize};
 
 use crate::install::{
-    IMAGE_BATCH, IMAGE_FORWARDS, IMAGE_GUIDANCE, IMAGE_HEIGHT, IMAGE_PROMPT_MAX_TOKENS,
-    IMAGE_STEPS, IMAGE_WIDTH,
+    ImageManifest, IMAGE_BATCH, IMAGE_FORWARDS, IMAGE_GUIDANCE, IMAGE_HEIGHT,
+    IMAGE_PROMPT_MAX_TOKENS, IMAGE_STEPS, IMAGE_WIDTH,
 };
+use crate::packed::MLX_AFFINE_BITS;
 use crate::scheduler::FlowMatchEulerScheduler;
 use crate::vae::decoded_to_rgb8;
 
 pub const IMAGE_CANCELLED: &str = "image generation cancelled";
 pub const IMAGE_ENGINE_REVISION: &str = "ig2-runtime-v1";
 pub const IMAGE_QUANTIZATION: &str = "four-bit-linear-weights-group-64";
+pub const IMAGE_MLX_QUANTIZATION: &str = "mlx-affine-linear-weights-group-64";
+pub const IMAGE_UNQUANTIZED: &str = "unquantized";
+
+/// Return the quantization label carried by an installed image manifest.
+///
+/// The old INT4 label remains the default for the original packed profile, but
+/// MLX installs need the observed width in their request and PNG metadata so
+/// a 2-, 3-, 4-, 5-, 6-, or 8-bit run is not reported as the legacy INT4
+/// profile.
+pub fn image_quantization_label(manifest: &ImageManifest) -> Result<String, String> {
+    let transformer = manifest
+        .components
+        .get("transformer")
+        .ok_or_else(|| "image manifest is missing transformer metadata".to_string())?;
+    let scheme = transformer
+        .metadata
+        .get("quantization_scheme")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "image transformer metadata is missing quantization_scheme".to_string())?;
+    match scheme {
+        IMAGE_QUANTIZATION | IMAGE_UNQUANTIZED => Ok(scheme.to_string()),
+        IMAGE_MLX_QUANTIZATION => {
+            let widths = transformer
+                .metadata
+                .get("observed_affine_bit_widths")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| {
+                    "MLX transformer metadata is missing observed_affine_bit_widths".to_string()
+                })?;
+            let mut widths = widths
+                .iter()
+                .map(|value| {
+                    let width = value.as_u64().ok_or_else(|| {
+                        "MLX observed affine bit width is not an integer".to_string()
+                    })?;
+                    u8::try_from(width)
+                        .map_err(|_| "MLX observed affine bit width overflows u8".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            widths.sort_unstable();
+            widths.dedup();
+            if widths.is_empty() || widths.iter().any(|width| !MLX_AFFINE_BITS.contains(width)) {
+                return Err(format!(
+                    "MLX observed affine bit widths {:?} are unsupported",
+                    widths
+                ));
+            }
+            let suffix = widths
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join("-");
+            Ok(format!("{IMAGE_MLX_QUANTIZATION}-bits-{suffix}"))
+        }
+        other => Err(format!("unsupported image quantization scheme {other:?}")),
+    }
+}
+
+fn is_supported_quantization_label(label: &str) -> bool {
+    if matches!(label, IMAGE_QUANTIZATION | IMAGE_UNQUANTIZED) {
+        return true;
+    }
+    let Some(suffix) = label.strip_prefix("mlx-affine-linear-weights-group-64-bits-") else {
+        return false;
+    };
+    let mut widths = suffix
+        .split('-')
+        .map(|part| part.parse::<u8>())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_default();
+    if widths.is_empty() {
+        return false;
+    }
+    widths.sort_unstable();
+    if widths.windows(2).any(|pair| pair[0] == pair[1]) {
+        return false;
+    }
+    widths.iter().all(|width| MLX_AFFINE_BITS.contains(width))
+}
 
 /// The categories used by the image admission and resource ledgers.
 ///
@@ -312,10 +392,10 @@ impl ImageRequest {
                 self.batch, self.scheduler_steps, self.guidance_scale
             ));
         }
-        if self.quantization != IMAGE_QUANTIZATION {
+        if !is_supported_quantization_label(&self.quantization) {
             return Err(format!(
-                "unsupported image quantization {:?}, expected {:?}",
-                self.quantization, IMAGE_QUANTIZATION
+                "unsupported image quantization {:?}",
+                self.quantization
             ));
         }
         if self.noise_provenance.is_empty() {
@@ -577,6 +657,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn image_requests_accept_every_mlx_width_label() {
+        for bits in MLX_AFFINE_BITS {
+            let mut request = request();
+            request.quantization = format!("mlx-affine-linear-weights-group-64-bits-{bits}");
+            request.validate().expect("MLX image request label");
+        }
+        let mut mixed = request();
+        mixed.quantization = "mlx-affine-linear-weights-group-64-bits-2-3-4-5-6-8".to_string();
+        mixed.validate().expect("mixed MLX image request label");
+    }
+
+    #[test]
+    fn image_requests_reject_non_mlx_or_unsupported_width_labels() {
+        for label in [
+            "mlx-affine-linear-weights-group-64-bits-1",
+            "mlx-affine-linear-weights-group-64-bits-7",
+            "mlx-affine-linear-weights-group-64-bits-2-2",
+            "not-a-quantization",
+        ] {
+            let mut request = request();
+            request.quantization = label.to_string();
+            assert!(
+                request.validate().is_err(),
+                "unsupported image quantization label {label:?} was accepted"
+            );
+        }
+    }
+
     struct TestBackend {
         cancel_at: Option<ImageStage>,
         idle_waits: Option<Arc<AtomicUsize>>,
@@ -669,6 +778,28 @@ mod tests {
         assert!(progress
             .iter()
             .any(|event| event.stage == ImageStage::PngEncode));
+    }
+
+    #[test]
+    fn generation_preserves_the_selected_mlx_width_in_metadata() {
+        let mut backend = TestBackend {
+            cancel_at: None,
+            idle_waits: None,
+        };
+        let mut request = request();
+        request.quantization = "mlx-affine-linear-weights-group-64-bits-6".to_string();
+        let result = generate(&mut backend, &request, &CancellationToken::new(), |_| {})
+            .expect("MLX metadata generation");
+
+        assert_eq!(
+            result.metadata.quantization,
+            "mlx-affine-linear-weights-group-64-bits-6"
+        );
+        let metadata = serde_json::to_value(&result.metadata).expect("metadata JSON");
+        assert_eq!(
+            metadata["quantization"],
+            "mlx-affine-linear-weights-group-64-bits-6"
+        );
     }
 
     #[test]

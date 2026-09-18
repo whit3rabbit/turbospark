@@ -15,6 +15,7 @@ struct ImageInstalledRow {
     height: u32,
     #[serde(rename = "schedulerSteps")]
     scheduler_steps: u32,
+    quantization: String,
 }
 
 #[derive(Serialize)]
@@ -87,6 +88,7 @@ fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
                 width: manifest.supported.width,
                 height: manifest.supported.height,
                 scheduler_steps: manifest.supported.scheduler_steps,
+                quantization: image::image_quantization_label(&manifest).ok()?,
             })
         })
         .collect()

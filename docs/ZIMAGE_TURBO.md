@@ -1,10 +1,11 @@
 # Z-Image-Turbo: image-model bring-up record
 
-Status: IG0, IG1, IG2, and IG3 are closed for the pinned 1024-by-1024 reference
+Status: IG0, IG1, IG2, IG3, and IG4 are closed for the pinned 1024-by-1024
 case. The checked image format, local and remote packers, macOS Metal backend,
 CLI path, native quality/resource evidence, real cancellation, no-device
-execution evidence, bounded memory, and lifetime proof are complete. IG4 owns
-app integration.
+execution evidence, bounded memory, lifetime proof, Swift integration, and
+macOS app image mode are complete. IG5 is intentionally open for measured
+optimization work only.
 This page is both the summary of what was learned from Z-Image-Turbo and the
 reusable process for bringing up another image-generation model in this
 repository.
@@ -59,25 +60,132 @@ The complete contract, including physical reads, swap observations, ownership,
 manifest fields, hashes, and qualification rules, is the
 [IG0 resource contract](verification/z-image-ig0-resource-contract.json).
 
+## Recommended model and benchmark record
+
+The default image source is the MLX export
+[`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit).
+It is the default because it preserves the image-quality-oriented protected
+tensors while reducing the published download to 6.48 GB. All four MLX
+variants below are first-class inputs to the same image install and runtime
+path; the selected variant is recorded in the install manifest.
+
+| Variant | Install alias | Size | Quantization | Source |
+| --- | --- | ---: | --- | --- |
+| Full precision (fp16) | `z-image-turbo-mlx-fp16` | 20.54 GB | None | [`andrevp/Z-Image-Turbo-MLX`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX) |
+| 8-bit | `z-image-turbo-mlx-8bit` | 11.37 GB | 8-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit) |
+| 4-bit (default) | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
+| 2-bit | `z-image-turbo-mlx-2bit` | 4.04 GB | 2-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-2bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-2bit) |
+
+The header-only source gate pins the four published revisions at `2bit`
+(`32b4e9ceb3a813485027b1ea942f199608fb8200`), `4bit`
+(`9adc576198c9126874792d35569b53cf2f45a03c`), `8bit`
+(`c9f70995562299b1eda9b9145a94dd7a5a1ae0d6`), and `fp16`
+(`e186d7d65d66883270671fcee05324178928ea03`). It reads the transformer
+safetensors headers and quantization metadata without downloading payloads,
+and proves the published 2/4/8-bit U32 plus scale/bias layout and the F16
+full-precision layout. This is source-shape evidence, not install or quality
+parity evidence.
+
+Run that gate with:
+
+```sh
+cargo test -p turbospark-repack --test zimage_mlx_source_network \
+  --release -- --ignored --nocapture
+```
+
+A companion payload-range gate reads one small real transformer tensor from
+each pinned variant, packs it through the production image adapter, and
+decodes it without staging a complete multi-gigabyte source tree:
+
+```sh
+cargo test -p turbospark-image --test zimage_mlx_payload_network \
+  --release -- --ignored --nocapture
+```
+
+Together these are source and payload compatibility checks. They do not
+replace a complete install, image-quality, resource, or Swift parity gate.
+
+When a machine has enough free space for both the source staging tree and the
+packed output, the opt-in installer gate exercises the real `pull-image` path
+for one selected published variant and verifies its complete manifest:
+
+```sh
+TURBOSPARK_ZIMAGE_MLX_VARIANT=4bit \
+TURBOSPARK_ZIMAGE_MLX_INSTALL_DIR=~/models/z-image-turbo-mlx-4bit.image.gturbo \
+  cargo test -p turbospark-cli --test zimage_mlx_install_network --release -- --ignored --nocapture
+```
+
+The `2bit`, `4bit`, and `8bit` gates passed on 2026-09-18: each pinned source
+was staged, packed, file-verified, and reported its expected observed-width
+label in the installed manifest. The remaining `fp16` gate is intentionally
+tracked separately because it is an unquantized source path, not an affine
+bit-width claim; it remains disk-bound in the current checkout because its
+source and packed output must coexist.
+
+The benchmark record below remains the pinned native Rust/Metal gate record;
+the upstream sizes in this table are download sizes, not runtime memory
+claims. The original `Tongyi-MAI/Z-Image-Turbo` Diffusers export remains the
+reference source for parity and quality evidence at revision
+`f332072aa78be7aecdf3ee76d5c247082da564a6`.
+
+The repository does have image-creation benchmarks. They are kept beside the
+image bring-up record rather than in the text-model table in
+[`docs/BENCHMARKS.md`](BENCHMARKS.md), because the image pipeline has staged
+diffusion work instead of token throughput. The pinned 1024-by-1024 record is:
+
+| Path | Measured result | Scope |
+| --- | --- | --- |
+| Text encoder reference | 0.395-0.400 s resident execution; 8,969,979,152-byte peak | BF16 reference stage, quiet AC, [`quiet-05`](verification/z-image-ig0-benchmarks-quiet-05.json) |
+| Nine-forward denoiser reference | 51.773-56.223 s resident execution; 17,512,599,008-byte peak | BF16 reference stage, quiet AC, [`quiet-05`](verification/z-image-ig0-benchmarks-quiet-05.json) |
+| VAE reference decode | 0.933-0.938 s resident execution; 11,025,630,840-byte peak | FP32 reference stage, quiet AC, [`quiet-06`](verification/z-image-ig0-benchmarks-quiet-06.json) |
+| Packed native, resident | 4,911.114 s; 7,037,387,832-byte peak | Current-source 1024-by-1024 generation; exact PNG agreement with the streamed path |
+| Packed native, two-slot streamed | 4,840.856 s; 7,328,138,608-byte peak | 0.985694 streamed/resident latency ratio, 400 payload reads, 393 fenced slot reuses |
+| Repeated packed jobs | 2 complete jobs; peak growth 113,557,576 bytes | Exact repeated PNGs, zero page-ins, zero swap delta, [`IG3`](IMAGE_GENERATION.md#ig3-bound-memory-and-add-dense-streaming-where-necessary) |
+| Swift app image gate | 4,665.912 s for the pinned image; cancellation 21.827 s | Real-install 1024-by-1024 app path, [`IG4`](IMAGE_GENERATION.md#ig4-expose-the-runtime-to-swift-and-the-images-destination) |
+
+The first three rows are reference-stage observations and must not be read as
+packed-runtime memory claims. The packed rows are full image-generation
+measurements on the pinned install, and the long wall times are why IG5 is
+limited to measured optimization proposals. The full evidence ledger remains
+in the [IG0 resource records](verification/z-image-ig0-benchmarks-quiet-05.json),
+the [IG3 runtime record](IMAGE_GENERATION.md#ig3-bound-memory-and-add-dense-streaming-where-necessary),
+and the [IG4 app closure](IMAGE_GENERATION.md#ig4-expose-the-runtime-to-swift-and-the-images-destination).
+
 ## Artifact and runtime boundary
 
-The production target is not an arbitrary Hugging Face MLX directory. The
-canonical source is the pinned Diffusers-style Z-Image-Turbo export. The image
-packer converts that source into the repository's separate `.image.gturbo`
-format. `turbospark-model pull-image --repo OWNER/NAME@REV` streams the pinned
+The production source is a Hugging Face MLX safetensors directory. The image
+packer normalizes that source into the repository's separate `.image.gturbo`
+format, preserving the variant and protected-tensor policy in the manifest.
+`turbospark-model pull-image --repo OWNER/NAME@REV` streams the selected MLX
 source into temporary staging before packing; `--source` remains the offline
-local-directory form.
+local-directory form. The pinned Diffusers export is retained as the
+independent parity reference, not as the default user-facing source.
 
-The first runtime profile is affine INT4 linear weights with group size 64.
-This does not quantize every tensor: embeddings, norms, modulation, positional
-data, and other protected tensors remain at higher precision, as do the VAE
-and other image-sensitive operations. The already-quantized
-[`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit)
-and [`uqer1244/MLX-z-image`](https://huggingface.co/uqer1244/MLX-z-image) exports
-are candidate inputs for a future adapter, not supported drop-in installs.
-Their MLX tensor layout must be translated and checked against the pinned
-reference before admission. The 2-bit, 8-bit, and full-precision variants are
-not current IG2 profiles.
+The pinned IG2 quality record uses the repository's legacy affine INT4 linear
+profile at group size 64. The default published MLX 4-bit source instead uses
+MLX affine U32 rows with F16 or BF16 companions; it is not requantized into
+the legacy local row format. Neither profile quantizes every tensor:
+embeddings, norms, modulation, positional data, and other protected tensors
+remain at higher precision, as do the VAE and other image-sensitive
+operations. All four published MLX variants use the same tensor-layout adapter
+and install contract; they are not separate model families. MLX is a supported
+source format and does not require an MLX runtime dependency.
+
+The adapter's affine-width contract is now explicit: MLX U32 weight planes
+with F16 or BF16 `.scales` and `.biases` companions are accepted at 2, 3, 4,
+5, 6, or 8 bits, with group size 64. The packed store preserves the logical
+matrix shape and the native Metal path carries the bit width, companion dtype,
+and group size into its decoder. The width decoder has a focused round-trip
+test for every supported width and both companion dtypes. The image manifest
+records the supported width set separately from the widths observed in the
+packed component, and the CLI, FFI, PNG metadata, and Swift image listing
+carry the selected observed-width label instead of hardcoding INT4. This is the
+complete upstream `mx.quantize` width set;
+upstream MLX refuses 1-bit quantization, so 1-bit is deliberately outside this
+contract. The real full-install gates pass for the published 2-, 4-, and
+8-bit variants; the FP16 install remains open. Quality, memory, and Swift
+gates remain open for the non-INT4 variants; the closed IG2 claim still applies
+only to the pinned INT4 profile.
 
 `crates/image` is an intentional new Rust crate. It owns the image graph,
 install schema, packed storage, scheduler, VAE, and native Metal backend. It
@@ -486,9 +594,9 @@ complete oracle passed in 18,839.90 seconds.
 
 With the repeated-job and denoise evidence, the lifetime-safe cancellation
 seams, pre-execution budget refusal, and resident/streamed gate all pass for
-the pinned artifact. IG3 is closed. VAE tiling, prefetch, allocator reuse, and
-Swift image integration remain separate later work and are not implied by
-this result.
+the pinned artifact. IG3 is closed. VAE tiling, prefetch, and allocator reuse
+remain separate IG5 work. Swift image integration is closed under IG4 and is
+documented below.
 
 Cancellation must stop future scheduling and wait for outstanding I/O and GPU
 consumers before freeing or reusing buffers. VAE tiling is a conditional
@@ -497,18 +605,22 @@ re-run geometry, seam, quality, and memory gates.
 
 Handoff after IG3: keep the `0.923` quality envelope fixed, separate
 `phys_footprint` from the managed allocation ledger and driver-retained
-capacity, and leave VAE tiling, prefetch, allocator reuse, and IG4 app/Swift
-integration for later scoped work.
+capacity, and leave VAE tiling, prefetch, and allocator reuse for IG5. IG4 app
+and Swift integration is closed: the canonical top-level `Images` destination
+provides `Create` and `Gallery` tabs, profile-scoped PNG artifacts, thumbnails,
+and a previous/next carousel. The supported envelope remains one 1024-by-1024
+image, batch one, nine scheduler steps, guidance zero, and native Metal
+execution.
 
 ### IG4: app and ABI integration
 
 IG4 exposes the already-proven runtime through the C ABI and Swift wrapper. It
-adds image chat mode, preview, save, regenerate, profile-scoped persistence,
-and serialized heavyweight image jobs. The app must use the same conditioning,
-scheduler, quantization, cancellation, and output implementation as the CLI.
-
-Image chat does not begin before IG2 and IG3 establish stable native ownership,
-memory, and cancellation contracts.
+adds the top-level `Images` destination, prompt-first `Create` and `Gallery`
+tabs, preview, save, regenerate, profile-scoped persistence, thumbnails, a
+previous/next carousel, and serialized heavyweight image jobs. The app uses
+the same conditioning, scheduler, quantization, cancellation, and output
+implementation as the CLI. Image jobs remain transient until saved, while
+saved request metadata makes regeneration reuse the original seed and options.
 
 ### IG5: measured optimization
 

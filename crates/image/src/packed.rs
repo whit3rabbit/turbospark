@@ -1,18 +1,20 @@
-//! Packed image-component storage for the IG2 candidate quantization.
+//! Packed image-component storage for local and MLX affine profiles.
 //!
 //! This is a component format, not a replacement for the text `.gturbo`
 //! format. Each tensor has a checked byte span in one payload file. Eligible
-//! two-dimensional linear weights use the repository's affine INT4 group-64
-//! layout; embeddings, norms, modulation tensors, and non-matrix tensors stay
-//! unquantized, with F32 source tensors narrowed to BF16 to match the
-//! reference execution dtype.
+//! two-dimensional linear weights may use the repository's affine INT4 group-64
+//! layout or MLX affine U32 planes at the supported widths. Embeddings, norms,
+//! modulation tensors, and non-matrix tensors stay unquantized, with F32 source
+//! tensors narrowed to BF16 to match the reference execution dtype.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use compute::{dequantize_int4_affine, f32_to_bf16, quantize_int4_affine, Int4AffineRow};
+use compute::{
+    dequantize_int4_affine, f16_to_f32, f32_to_bf16, quantize_int4_affine, Int4AffineRow,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::text_encoder::ShardedSafetensors;
@@ -22,6 +24,9 @@ pub const PACKED_DATA_NAME: &str = "tensors.bin";
 pub const PACKED_MAGIC: &str = "turbospark.image.packed.v1";
 pub const PACKED_VERSION: u32 = 1;
 pub const PACKED_GROUP_SIZE: usize = 64;
+/// Widths accepted by upstream MLX `mx.quantize`; 1-bit is not an upstream
+/// quantization mode, so it is intentionally outside this image contract.
+pub const MLX_AFFINE_BITS: [u8; 6] = [2, 3, 4, 5, 6, 8];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackedIndex {
@@ -47,8 +52,20 @@ pub struct PackedTensor {
 pub struct PackedQuantization {
     pub scheme: String,
     pub group_size: usize,
+    #[serde(default = "default_int4_bits")]
+    pub bits: u8,
+    #[serde(default = "default_bf16_companion")]
+    pub companion_dtype: String,
     pub nibble_order: String,
     pub scale_and_bias_convention: String,
+}
+
+fn default_int4_bits() -> u8 {
+    4
+}
+
+fn default_bf16_companion() -> String {
+    "BF16".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,6 +269,7 @@ impl PackedTensorStore {
             "F32" => decode_f32(name, &bytes, elements),
             "BF16" => decode_bf16(name, &bytes, elements),
             "INT4_AFFINE" => decode_int4(name, tensor, &bytes, elements),
+            "MLX_AFFINE" => decode_mlx_affine(name, tensor, &bytes, elements),
             other => Err(format!(
                 "tensor {name} has unsupported storage dtype {other}"
             )),
@@ -297,6 +315,17 @@ impl PackedTensorStore {
                     .ok_or_else(|| format!("tensor {name} row offset overflows"))?;
                 let bytes = self.read_tensor_range(tensor, start, row_bytes as u64)?;
                 decode_int4_row(name, &bytes, cols)
+            }
+            "MLX_AFFINE" => {
+                let quantization = tensor.quantization.as_ref().ok_or_else(|| {
+                    format!("packed MLX tensor {name} is missing quantization metadata")
+                })?;
+                let row_bytes = affine_row_bytes(cols, quantization)?;
+                let start = row
+                    .checked_mul(row_bytes)
+                    .ok_or_else(|| format!("tensor {name} row offset overflows"))?;
+                let bytes = self.read_tensor_range(tensor, start, row_bytes as u64)?;
+                decode_mlx_affine_row(name, &bytes, cols, quantization)
             }
             other => Err(format!(
                 "tensor {name} has unsupported storage dtype {other}"
@@ -367,7 +396,38 @@ pub fn pack_component(
     let mut tensors = BTreeMap::new();
     let mut quantized_tensor_count = 0;
 
+    // MLX affine checkpoints store a U32 packed plane beside separate scale
+    // and bias tensors. Normalize that source layout into the image runtime's
+    // checked per-row layout, then omit the companion tensors from the output.
+    let source_names: Vec<String> = source
+        .source_tensors()
+        .map(|(name, _)| name.to_string())
+        .collect();
+    let mut mlx_quantized = BTreeMap::new();
+    let mut mlx_companions = BTreeSet::new();
+    for name in &source_names {
+        let shard_name = source
+            .weight_map
+            .get(name)
+            .ok_or_else(|| format!("source tensor {name} missing from index"))?;
+        let shard = source
+            .shards
+            .get(shard_name)
+            .ok_or_else(|| format!("source shard {shard_name} not loaded"))?;
+        let descriptor = shard
+            .descriptor(name)
+            .ok_or_else(|| format!("source tensor {name} missing from shard {shard_name}"))?;
+        if let Some(quantization) = discover_mlx_affine(&source, name, descriptor)? {
+            mlx_companions.insert(quantization.scales_name.clone());
+            mlx_companions.insert(quantization.biases_name.clone());
+            mlx_quantized.insert(name.clone(), quantization);
+        }
+    }
+
     for (name, shard_name) in source.source_tensors() {
+        if mlx_companions.contains(name) {
+            continue;
+        }
         let shard = source
             .shards
             .get(shard_name)
@@ -378,8 +438,11 @@ pub fn pack_component(
         let offset = writer
             .stream_position()
             .map_err(|e| format!("failed to query packed payload offset: {e}"))?;
-        let quantized = can_quantize(name, &descriptor.shape);
-        let (storage_dtype, quantization) = if quantized {
+        let (storage_dtype, quantization) = if let Some(mlx) = mlx_quantized.get(name) {
+            write_mlx_affine_tensor(&mut writer, &source, name, descriptor, mlx)?;
+            quantized_tensor_count += 1;
+            ("MLX_AFFINE".to_string(), Some(mlx.metadata()))
+        } else if can_quantize(name, &descriptor.shape) {
             let values = shard
                 .load_as_f32(name)
                 .map_err(|e| format!("failed to load source tensor {name}: {e}"))?;
@@ -394,6 +457,8 @@ pub fn pack_component(
                 Some(PackedQuantization {
                     scheme: "four-bit-linear-weights-group-64".to_string(),
                     group_size: PACKED_GROUP_SIZE,
+                    bits: 4,
+                    companion_dtype: "BF16".to_string(),
                     nibble_order: "low_nibble_even_high_nibble_odd".to_string(),
                     scale_and_bias_convention: "value = nibble * bf16_scale + bf16_bias"
                         .to_string(),
@@ -449,8 +514,18 @@ pub fn pack_component(
         let end = writer
             .stream_position()
             .map_err(|e| format!("failed to query packed payload end: {e}"))?;
+        let shape = if let Some(mlx) = mlx_quantized.get(name) {
+            let packed_cols = descriptor.shape[1];
+            let cols = packed_cols
+                .checked_mul(32)
+                .and_then(|bits| bits.checked_div(mlx.bits as usize))
+                .ok_or_else(|| format!("MLX affine logical width for {name} overflows"))?;
+            vec![descriptor.shape[0], cols]
+        } else {
+            descriptor.shape.clone()
+        };
         let entry = PackedTensor {
-            shape: descriptor.shape.clone(),
+            shape,
             source_dtype: descriptor.dtype.clone(),
             storage_dtype: storage_dtype.clone(),
             offset,
@@ -496,6 +571,170 @@ pub fn pack_component(
         data_sha256,
         tensor_inventory_sha256,
     })
+}
+
+#[derive(Debug, Clone)]
+struct MlxAffineSource {
+    scales_name: String,
+    biases_name: String,
+    bits: u8,
+    group_size: usize,
+    companion_dtype: String,
+}
+
+impl MlxAffineSource {
+    fn metadata(&self) -> PackedQuantization {
+        PackedQuantization {
+            scheme: "mlx-affine".to_string(),
+            group_size: self.group_size,
+            bits: self.bits,
+            companion_dtype: self.companion_dtype.clone(),
+            nibble_order: "lsb_first_bit_fields".to_string(),
+            scale_and_bias_convention: "value = q * scale + bias".to_string(),
+        }
+    }
+}
+
+fn source_tensor<'a>(
+    source: &'a ShardedSafetensors,
+    name: &str,
+) -> Result<
+    (
+        &'a model_io::safetensors::SafetensorsFile,
+        &'a model_io::safetensors::TensorDescriptor,
+    ),
+    String,
+> {
+    let shard_name = source
+        .weight_map
+        .get(name)
+        .ok_or_else(|| format!("source tensor {name} missing from index"))?;
+    let shard = source
+        .shards
+        .get(shard_name)
+        .ok_or_else(|| format!("source shard {shard_name} not loaded"))?;
+    let descriptor = shard
+        .descriptor(name)
+        .ok_or_else(|| format!("source tensor {name} missing from shard {shard_name}"))?;
+    Ok((shard, descriptor))
+}
+
+fn discover_mlx_affine(
+    source: &ShardedSafetensors,
+    name: &str,
+    descriptor: &model_io::safetensors::TensorDescriptor,
+) -> Result<Option<MlxAffineSource>, String> {
+    if !descriptor.dtype.eq_ignore_ascii_case("U32") {
+        return Ok(None);
+    }
+    let prefix = name.strip_suffix(".weight").unwrap_or(name);
+    let scales_name = format!("{prefix}.scales");
+    let biases_name = format!("{prefix}.biases");
+    let (_, scales) = source_tensor(source, &scales_name)
+        .map_err(|_| format!("MLX U32 tensor {name} is missing its {scales_name} companion"))?;
+    let (_, biases) = source_tensor(source, &biases_name)
+        .map_err(|_| format!("MLX U32 tensor {name} is missing its {biases_name} companion"))?;
+    if descriptor.shape.len() != 2
+        || scales.shape.len() != 2
+        || biases.shape.len() != 2
+        || descriptor.shape[0] != scales.shape[0]
+        || scales.shape != biases.shape
+    {
+        return Err(format!(
+            "MLX affine tensors for {name} have incompatible shapes"
+        ));
+    }
+    let companion_dtype = scales.dtype.to_ascii_uppercase();
+    if companion_dtype != biases.dtype.to_ascii_uppercase()
+        || !matches!(companion_dtype.as_str(), "F16" | "BF16")
+    {
+        return Err(format!(
+            "MLX affine companions for {name} must share F16 or BF16 dtype"
+        ));
+    }
+
+    let rows = descriptor.shape[0];
+    let packed_cols = descriptor.shape[1];
+    let packed_bits = packed_cols
+        .checked_mul(32)
+        .ok_or_else(|| format!("MLX affine packed width for {name} overflows"))?;
+    let mut matches = Vec::new();
+    for bits in MLX_AFFINE_BITS {
+        if packed_bits % bits as usize != 0 {
+            continue;
+        }
+        let cols = packed_bits / bits as usize;
+        if cols % PACKED_GROUP_SIZE == 0
+            && scales.shape[1] == cols / PACKED_GROUP_SIZE
+            && scales.shape[0] == rows
+        {
+            matches.push(bits);
+        }
+    }
+    let bits = matches.into_iter().next().ok_or_else(|| {
+        format!(
+            "MLX affine tensors for {name} do not match a supported bit width at group size {}",
+            PACKED_GROUP_SIZE
+        )
+    })?;
+    Ok(Some(MlxAffineSource {
+        scales_name,
+        biases_name,
+        bits,
+        group_size: PACKED_GROUP_SIZE,
+        companion_dtype,
+    }))
+}
+
+fn write_mlx_affine_tensor(
+    writer: &mut BufWriter<File>,
+    source: &ShardedSafetensors,
+    name: &str,
+    descriptor: &model_io::safetensors::TensorDescriptor,
+    quantization: &MlxAffineSource,
+) -> Result<(), String> {
+    let (weight_shard, _) = source_tensor(source, name)?;
+    let weight = weight_shard
+        .raw_bytes(name)
+        .map_err(|e| format!("failed to read MLX weight {name}: {e}"))?;
+    let rows = descriptor.shape[0];
+    let packed_row_bytes = descriptor.shape[1]
+        .checked_mul(4)
+        .ok_or_else(|| format!("MLX weight {name} row size overflows"))?;
+    if weight.len() != rows * packed_row_bytes {
+        return Err(format!("MLX weight {name} has an invalid U32 byte length"));
+    }
+    let (scales_shard, scales) = source_tensor(source, &quantization.scales_name)?;
+    let (biases_shard, _biases) = source_tensor(source, &quantization.biases_name)?;
+    let scales_bytes = scales_shard
+        .raw_bytes(&quantization.scales_name)
+        .map_err(|e| format!("failed to read MLX scales for {name}: {e}"))?;
+    let biases_bytes = biases_shard
+        .raw_bytes(&quantization.biases_name)
+        .map_err(|e| format!("failed to read MLX biases for {name}: {e}"))?;
+    let groups = scales.shape[1];
+    let companion_row_bytes = groups * 2;
+    if scales_bytes.len() != rows * companion_row_bytes
+        || biases_bytes.len() != rows * companion_row_bytes
+    {
+        return Err(format!(
+            "MLX affine companions for {name} have invalid byte lengths"
+        ));
+    }
+    for row in 0..rows {
+        let start = row * packed_row_bytes;
+        writer
+            .write_all(&weight[start..start + packed_row_bytes])
+            .map_err(|e| format!("failed to write MLX packed weight {name}: {e}"))?;
+        let start = row * companion_row_bytes;
+        writer
+            .write_all(&scales_bytes[start..start + companion_row_bytes])
+            .map_err(|e| format!("failed to write MLX scales {name}: {e}"))?;
+        writer
+            .write_all(&biases_bytes[start..start + companion_row_bytes])
+            .map_err(|e| format!("failed to write MLX biases {name}: {e}"))?;
+    }
+    Ok(())
 }
 
 fn validate_tensor(name: &str, tensor: &PackedTensor) -> Result<(), String> {
@@ -558,6 +797,26 @@ fn validate_tensor(name: &str, tensor: &PackedTensor) -> Result<(), String> {
                     tensor.length, expected
                 ));
             }
+        }
+        "MLX_AFFINE" => {
+            if tensor.shape.len() != 2 || tensor.shape[1] == 0 {
+                return Err(format!(
+                    "packed MLX tensor {name} has invalid shape {:?}",
+                    tensor.shape
+                ));
+            }
+            let quantization = tensor.quantization.as_ref().ok_or_else(|| {
+                format!("packed MLX tensor {name} is missing quantization metadata")
+            })?;
+            let expected = tensor.shape[0]
+                .checked_mul(affine_row_bytes(tensor.shape[1], quantization)?)
+                .ok_or_else(|| format!("packed tensor {name} MLX byte length overflows"))?;
+            if tensor.length != expected as u64 {
+                return Err(format!(
+                    "packed MLX tensor {name} has invalid shape or length"
+                ));
+            }
+            validate_affine_quantization(name, quantization)?;
         }
         other => {
             return Err(format!(
@@ -663,6 +922,117 @@ fn decode_int4_row(name: &str, row: &[u8], cols: usize) -> Result<Vec<f32>, Stri
         },
         cols,
     ))
+}
+
+fn decode_mlx_affine(
+    name: &str,
+    tensor: &PackedTensor,
+    bytes: &[u8],
+    elements: usize,
+) -> Result<Vec<f32>, String> {
+    let quantization = tensor
+        .quantization
+        .as_ref()
+        .ok_or_else(|| format!("packed MLX tensor {name} is missing quantization metadata"))?;
+    let rows = tensor.shape[0];
+    let cols = tensor.shape[1];
+    let row_bytes = affine_row_bytes(cols, quantization)?;
+    if bytes.len() != rows * row_bytes || elements != rows * cols {
+        return Err(format!(
+            "packed tensor {name} has an invalid MLX byte length"
+        ));
+    }
+    let mut output = Vec::with_capacity(elements);
+    for row in bytes.chunks_exact(row_bytes) {
+        output.extend(decode_mlx_affine_row(name, row, cols, quantization)?);
+    }
+    Ok(output)
+}
+
+fn decode_mlx_affine_row(
+    name: &str,
+    row: &[u8],
+    cols: usize,
+    quantization: &PackedQuantization,
+) -> Result<Vec<f32>, String> {
+    let row_bytes = affine_row_bytes(cols, quantization)?;
+    if row.len() != row_bytes {
+        return Err(format!(
+            "packed tensor {name} has an invalid MLX row length"
+        ));
+    }
+    let packed_bytes = cols * quantization.bits as usize / 8;
+    let groups = cols / quantization.group_size;
+    let companion_bytes = groups * 2;
+    let scales = &row[packed_bytes..packed_bytes + companion_bytes];
+    let biases = &row[packed_bytes + companion_bytes..];
+    let mut output = Vec::with_capacity(cols);
+    for col in 0..cols {
+        let bit_offset = col * quantization.bits as usize;
+        let byte = bit_offset / 8;
+        let word = u16::from_le_bytes([row[byte], row[byte + 1]]);
+        let mask = (1u16 << quantization.bits) - 1;
+        let q = (word >> (bit_offset % 8)) & mask;
+        let group = col / quantization.group_size;
+        let scale = decode_companion(
+            &scales[group * 2..group * 2 + 2],
+            &quantization.companion_dtype,
+        );
+        let bias = decode_companion(
+            &biases[group * 2..group * 2 + 2],
+            &quantization.companion_dtype,
+        );
+        output.push(q as f32 * scale + bias);
+    }
+    Ok(output)
+}
+
+fn decode_companion(bytes: &[u8], dtype: &str) -> f32 {
+    let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
+    match dtype {
+        "F16" => f16_to_f32(bits),
+        _ => f32::from_bits((bits as u32) << 16),
+    }
+}
+
+fn affine_row_bytes(cols: usize, quantization: &PackedQuantization) -> Result<usize, String> {
+    validate_affine_quantization("<row>", quantization)?;
+    if cols == 0 || cols % quantization.group_size != 0 {
+        return Err("MLX affine width must be a multiple of group size".to_string());
+    }
+    let packed_bits = cols
+        .checked_mul(quantization.bits as usize)
+        .ok_or_else(|| "MLX affine packed width overflows".to_string())?;
+    if packed_bits % 8 != 0 {
+        return Err("MLX affine packed width must be byte aligned".to_string());
+    }
+    let groups = cols / quantization.group_size;
+    packed_bits
+        .checked_div(8)
+        .and_then(|packed| packed.checked_add(groups * 4))
+        .ok_or_else(|| "MLX affine row size overflows".to_string())
+}
+
+fn validate_affine_quantization(
+    name: &str,
+    quantization: &PackedQuantization,
+) -> Result<(), String> {
+    if !MLX_AFFINE_BITS.contains(&quantization.bits) {
+        return Err(format!(
+            "packed tensor {name} has unsupported MLX affine bit width {}",
+            quantization.bits
+        ));
+    }
+    if quantization.group_size == 0 || quantization.group_size % 8 != 0 {
+        return Err(format!("packed tensor {name} has invalid MLX group size"));
+    }
+    if !matches!(quantization.companion_dtype.as_str(), "BF16" | "F16") {
+        return Err(format!(
+            "packed tensor {name} has unsupported MLX companion dtype {}",
+            quantization.companion_dtype
+        ));
+    }
+    Ok(())
 }
 
 fn read_u16_vec(bytes: &[u8]) -> Vec<u16> {
@@ -809,6 +1179,216 @@ mod tests {
     }
 
     #[test]
+    fn packs_unquantized_f16_source_as_f32() {
+        let root = temporary_directory("pack-f16");
+        let source = root.join("source");
+        let output = root.join("packed");
+        fs::create_dir_all(&source).expect("create source");
+
+        let values = [1.333f32, -2.5f32];
+        let mut payload = Vec::new();
+        for value in values {
+            payload.extend_from_slice(&compute::f32_to_f16(value).to_le_bytes());
+        }
+        let header = serde_json::json!({
+            "transformer.f16_bias": {
+                "dtype": "F16",
+                "shape": [1, 2],
+                "data_offsets": [0, 4]
+            }
+        });
+        let header_bytes = serde_json::to_vec(&header).expect("serialize F16 header");
+        let mut shard = Vec::with_capacity(8 + header_bytes.len() + payload.len());
+        shard.extend_from_slice(&(header_bytes.len() as u64).to_le_bytes());
+        shard.extend_from_slice(&header_bytes);
+        shard.extend_from_slice(&payload);
+        fs::write(source.join("shard.safetensors"), shard).expect("write F16 source shard");
+        fs::write(
+            source.join("model.safetensors.index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "weight_map": { "transformer.f16_bias": "shard.safetensors" }
+            }))
+            .expect("serialize F16 source index"),
+        )
+        .expect("write F16 source index");
+
+        pack_component(&source, "model.safetensors.index.json", &output)
+            .expect("pack F16 source component");
+        let store = PackedTensorStore::open(&output).expect("open F16 packed component");
+        assert_eq!(
+            store
+                .index
+                .tensors
+                .get("transformer.f16_bias")
+                .expect("F16 index entry")
+                .storage_dtype,
+            "F32"
+        );
+        let actual = store
+            .load_tensor("transformer.f16_bias")
+            .expect("load F16 source tensor");
+        assert!(actual
+            .iter()
+            .zip(values)
+            .all(|(actual, expected)| (*actual - expected).abs() < 0.0005));
+
+        fs::remove_dir_all(root).expect("remove F16 test directory");
+    }
+
+    #[test]
+    fn packs_all_supported_mlx_affine_widths() {
+        let root = temporary_directory("mlx-pack");
+        let source = root.join("source");
+        let output = root.join("packed");
+        fs::create_dir_all(&source).expect("create source");
+
+        let mut payload = Vec::new();
+        let mut header = serde_json::Map::new();
+        let mut weight_map = serde_json::Map::new();
+        for bits in MLX_AFFINE_BITS {
+            let name = format!("layers.0.self_attn.q_proj_{bits}.weight");
+            let packed_cols = PACKED_GROUP_SIZE * bits as usize / 32;
+            let packed_bytes = packed_cols * 4;
+            let start = payload.len();
+            let mut packed = vec![0u8; packed_bytes];
+            let levels = 1u16 << bits;
+            for col in 0..PACKED_GROUP_SIZE {
+                let q = col as u16 % levels;
+                let bit_offset = col * bits as usize;
+                for bit in 0..bits as usize {
+                    if q & (1 << bit) != 0 {
+                        packed[(bit_offset + bit) / 8] |= 1 << ((bit_offset + bit) % 8);
+                    }
+                }
+            }
+            payload.extend_from_slice(&packed);
+            let end = payload.len();
+            header.insert(
+                name.clone(),
+                serde_json::json!({
+                    "dtype": "U32",
+                    "shape": [1, packed_cols],
+                    "data_offsets": [start, end]
+                }),
+            );
+            weight_map.insert(name.clone(), serde_json::json!("shard.safetensors"));
+
+            let scales_name = format!("layers.0.self_attn.q_proj_{bits}.scales");
+            let start = payload.len();
+            payload.extend_from_slice(&compute::f32_to_f16(1.0).to_le_bytes());
+            let end = payload.len();
+            header.insert(
+                scales_name.clone(),
+                serde_json::json!({
+                    "dtype": "F16",
+                    "shape": [1, 1],
+                    "data_offsets": [start, end]
+                }),
+            );
+            weight_map.insert(scales_name, serde_json::json!("shard.safetensors"));
+
+            let biases_name = format!("layers.0.self_attn.q_proj_{bits}.biases");
+            let start = payload.len();
+            payload.extend_from_slice(&compute::f32_to_f16(0.5).to_le_bytes());
+            let end = payload.len();
+            header.insert(
+                biases_name.clone(),
+                serde_json::json!({
+                    "dtype": "F16",
+                    "shape": [1, 1],
+                    "data_offsets": [start, end]
+                }),
+            );
+            weight_map.insert(biases_name, serde_json::json!("shard.safetensors"));
+        }
+
+        // Z-Image also carries affine token vectors without a `.weight`
+        // suffix. Keep this case in the source contract rather than relying
+        // on projection-name conventions.
+        let name = "x_pad_token".to_string();
+        let bits = 4u8;
+        let packed_cols = PACKED_GROUP_SIZE * bits as usize / 32;
+        let start = payload.len();
+        payload.resize(start + packed_cols * 4, 0);
+        for col in 0..PACKED_GROUP_SIZE {
+            let q = (col % 16) as u8;
+            payload[start + col / 2] |= if col % 2 == 0 { q } else { q << 4 };
+        }
+        let end = payload.len();
+        header.insert(
+            name.clone(),
+            serde_json::json!({
+                "dtype": "U32",
+                "shape": [1, packed_cols],
+                "data_offsets": [start, end]
+            }),
+        );
+        weight_map.insert(name.clone(), serde_json::json!("shard.safetensors"));
+        for suffix in ["scales", "biases"] {
+            let companion = format!("x_pad_token.{suffix}");
+            let start = payload.len();
+            payload.extend_from_slice(
+                &compute::f32_to_f16(if suffix == "scales" { 1.0 } else { 0.5 }).to_le_bytes(),
+            );
+            let end = payload.len();
+            header.insert(
+                companion.clone(),
+                serde_json::json!({
+                    "dtype": "F16",
+                    "shape": [1, 1],
+                    "data_offsets": [start, end]
+                }),
+            );
+            weight_map.insert(companion, serde_json::json!("shard.safetensors"));
+        }
+
+        let header_bytes = serde_json::to_vec(&header).expect("serialize MLX header");
+        let mut shard = Vec::with_capacity(8 + header_bytes.len() + payload.len());
+        shard.extend_from_slice(&(header_bytes.len() as u64).to_le_bytes());
+        shard.extend_from_slice(&header_bytes);
+        shard.extend_from_slice(&payload);
+        fs::write(source.join("shard.safetensors"), shard).expect("write MLX source shard");
+        fs::write(
+            source.join("model.safetensors.index.json"),
+            serde_json::to_vec(&serde_json::json!({ "weight_map": weight_map }))
+                .expect("serialize MLX source index"),
+        )
+        .expect("write MLX source index");
+
+        let report = pack_component(&source, "model.safetensors.index.json", &output)
+            .expect("pack MLX source component");
+        assert_eq!(report.tensor_count, MLX_AFFINE_BITS.len() + 1);
+        assert_eq!(report.quantized_tensor_count, MLX_AFFINE_BITS.len() + 1);
+        let store = PackedTensorStore::open(&output).expect("open packed MLX component");
+        for bits in MLX_AFFINE_BITS {
+            let name = format!("layers.0.self_attn.q_proj_{bits}.weight");
+            assert_eq!(store.shape(&name), Some([1, PACKED_GROUP_SIZE].as_slice()));
+            let values = store.load_tensor(&name).expect("load packed MLX tensor");
+            assert!(values.iter().enumerate().all(|(col, value)| {
+                let expected = (col as u16 % (1 << bits)) as f32 + 0.5;
+                (value - expected).abs() < 0.01
+            }));
+            let tensor = store.tensor(&name).expect("MLX tensor index entry");
+            assert_eq!(tensor.storage_dtype, "MLX_AFFINE");
+            assert_eq!(
+                tensor.quantization.as_ref().expect("MLX metadata").bits,
+                bits
+            );
+        }
+        assert_eq!(
+            store.shape("x_pad_token"),
+            Some([1, PACKED_GROUP_SIZE].as_slice())
+        );
+        let x_pad = store.load_tensor("x_pad_token").expect("load token vector");
+        assert!(x_pad
+            .iter()
+            .enumerate()
+            .all(|(col, value)| (*value - (col % 16) as f32 - 0.5).abs() < 0.01));
+
+        fs::remove_dir_all(root).expect("remove test directory");
+    }
+
+    #[test]
     fn quantizes_only_the_frozen_quality_projection_families() {
         let shape = [3840, 3840];
         for name in [
@@ -830,6 +1410,53 @@ mod tests {
                 !can_quantize(name, &shape),
                 "expected {name} to stay precise"
             );
+        }
+    }
+
+    #[test]
+    fn decodes_every_supported_mlx_affine_width() {
+        assert_eq!(MLX_AFFINE_BITS, [2, 3, 4, 5, 6, 8]);
+        let cols = PACKED_GROUP_SIZE;
+        for (companion_dtype, encode) in [
+            ("BF16", compute::f32_to_bf16 as fn(f32) -> u16),
+            ("F16", compute::f32_to_f16 as fn(f32) -> u16),
+        ] {
+            for bits in MLX_AFFINE_BITS {
+                let quantization = PackedQuantization {
+                    scheme: "mlx-affine".to_string(),
+                    group_size: PACKED_GROUP_SIZE,
+                    bits,
+                    companion_dtype: companion_dtype.to_string(),
+                    nibble_order: "lsb_first_bit_fields".to_string(),
+                    scale_and_bias_convention: "value = q * scale + bias".to_string(),
+                };
+                let packed_len = cols * bits as usize / 8;
+                let mut row = vec![0u8; packed_len];
+                let levels = 1u16 << bits;
+                let expected: Vec<f32> = (0..cols)
+                    .map(|col| (col as u16 % levels) as f32 + 0.5)
+                    .collect();
+                for (col, value) in expected.iter().enumerate() {
+                    let q = (*value - 0.5) as u16;
+                    let bit_offset = col * bits as usize;
+                    for bit in 0..bits as usize {
+                        if q & (1 << bit) != 0 {
+                            row[(bit_offset + bit) / 8] |= 1 << ((bit_offset + bit) % 8);
+                        }
+                    }
+                }
+                row.extend_from_slice(&encode(1.0).to_le_bytes());
+                row.extend_from_slice(&encode(0.5).to_le_bytes());
+                let actual = decode_mlx_affine_row("test", &row, cols, &quantization)
+                    .expect("decode MLX affine row");
+                assert!(
+                    actual
+                        .iter()
+                        .zip(expected)
+                        .all(|(actual, expected)| (actual - expected).abs() < 0.01),
+                    "MLX {bits}-bit {companion_dtype} row did not round-trip"
+                );
+            }
         }
     }
 

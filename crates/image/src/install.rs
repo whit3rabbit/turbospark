@@ -191,6 +191,20 @@ impl ImageManifest {
                 COMPONENT_ORDER.len()
             ));
         }
+        let expected_quantization = crate::runtime::image_quantization_label(self)?;
+        let declared_quantization = self.components["transformer"]
+            .metadata
+            .get("quantization_label")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                "image transformer metadata is missing quantization_label".to_string()
+            })?;
+        if declared_quantization != expected_quantization {
+            return Err(format!(
+                "image transformer quantization label {:?} does not match {:?}",
+                declared_quantization, expected_quantization
+            ));
+        }
 
         let mut paths = BTreeMap::new();
         for file in &self.files {
@@ -417,6 +431,7 @@ pub(crate) fn required_metadata_for(component_name: &str) -> &'static [&'static 
             "timestep_modulation",
             "three_axis_rope",
             "quantization_scheme",
+            "quantization_label",
             "group_size",
             "nibble_order",
             "scale_and_bias_convention",
@@ -453,7 +468,7 @@ mod tests {
 
     #[test]
     fn validates_the_frozen_ig2_envelope_and_stage_owners() {
-        let components = COMPONENT_ORDER
+        let mut components: BTreeMap<String, ImageComponent> = COMPONENT_ORDER
             .iter()
             .map(|name| {
                 let metadata = BTreeMap::from([(
@@ -482,6 +497,24 @@ mod tests {
                 )
             })
             .collect();
+        components
+            .get_mut("transformer")
+            .expect("transformer component")
+            .metadata
+            .extend([
+                (
+                    "quantization_scheme".to_string(),
+                    serde_json::json!(crate::runtime::IMAGE_QUANTIZATION),
+                ),
+                (
+                    "observed_affine_bit_widths".to_string(),
+                    serde_json::json!([]),
+                ),
+                (
+                    "quantization_label".to_string(),
+                    serde_json::json!(crate::runtime::IMAGE_QUANTIZATION),
+                ),
+            ]);
         let manifest = ImageManifest {
             magic: IMAGE_MANIFEST_MAGIC.to_string(),
             version: IMAGE_MANIFEST_SCHEMA,
@@ -514,6 +547,21 @@ mod tests {
         let validation = manifest.validate().expect("valid image manifest");
         assert_eq!(validation.file_count, 1);
         assert_eq!(validation.dimensions, (IMAGE_WIDTH, IMAGE_HEIGHT));
+
+        let mut forged = manifest.clone();
+        forged
+            .components
+            .get_mut("transformer")
+            .expect("transformer component")
+            .metadata
+            .insert(
+                "quantization_label".to_string(),
+                serde_json::json!("unquantized"),
+            );
+        let error = forged
+            .validate()
+            .expect_err("mismatched quantization label must be rejected");
+        assert!(error.contains("quantization label"), "got {error}");
     }
 
     #[test]

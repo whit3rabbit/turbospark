@@ -206,6 +206,7 @@ fn run_generate(args: &[String]) -> Result<(), String> {
                 .map(|revision| (name.clone(), revision.to_string()))
         })
         .collect::<BTreeMap<_, _>>();
+    let quantization = image::image_quantization_label(&manifest)?;
 
     let request = ImageRequest {
         model_id: model_arg,
@@ -218,7 +219,7 @@ fn run_generate(args: &[String]) -> Result<(), String> {
         scheduler_steps: steps,
         guidance_scale: 0.0,
         seed,
-        quantization: IMAGE_QUANTIZATION.to_string(),
+        quantization,
         noise_provenance,
     };
     request.validate()?;

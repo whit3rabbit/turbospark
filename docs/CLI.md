@@ -50,6 +50,9 @@ Inspired by oMLX and Unsloth workflows, `turbospark` provides a single unified t
 turbospark image generate \
   --model z-image-turbo \
   --prompt "A red rabbit under a moonlit sky" \
+  --seed 42 \
+  --width 1024 --height 1024 \
+  --steps 9 --backend native \
   --output image.png
 
 turbospark image pack \
@@ -60,10 +63,14 @@ turbospark image pack \
 ```
 
 The image command supports the frozen 1024-by-1024, batch-one, nine-step
-Z-Image-Turbo envelope. Native Metal is the default on macOS. The CPU backend
-is available only as an explicit `--backend reference` diagnostic path. Image
-installs use their own manifest and `.image.gturbo` suffix; they are not text
-model rows and are not opened by `turbospark-check`.
+Z-Image-Turbo envelope. `--seed` is optional and is randomized when omitted.
+`--width`, `--height`, and `--steps` are validated against the selected
+install before model I/O; there is no separate validation switch. Native Metal
+is the default on macOS. The CPU backend is available only as an explicit
+`--backend reference` diagnostic path. A completed output is never overwritten,
+and failed or cancelled output is not published. Image installs use their own
+manifest and `.image.gturbo` suffix; they are not text model rows and are not
+opened by `turbospark-check`.
 
 ### oMLX compatibility
 

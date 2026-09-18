@@ -317,6 +317,10 @@ Mixtral 8x7B is the deepest "unverified": it installs and decodes correctly but 
 
 DeepSeek-V4-Flash is recognized and refused at open. Its kernels are unported, and the refusal names them rather than reporting the architecture as unknown.
 
+### Image Generation
+
+- **Native Z-Image-Turbo image generation**: The recommended, and currently only fully validated, image model is the pinned `Tongyi-MAI/Z-Image-Turbo` artifact, installed as `z-image-turbo` in the separate `.image.gturbo` format. Native Metal generation supports 1024-by-1024 output, nine denoising steps, explicit seeds, progress, cancellation, PNG metadata, CLI generation, and macOS app image mode. The [image benchmark record](docs/ZIMAGE_TURBO.md#recommended-model-and-benchmark-record) covers the packed full-image run, stage measurements, and repeated-job memory stability. Image editing, LoRA, batching, HTTP image endpoints, and approximate timestep reuse remain out of scope.
+
 Two things worth knowing. **A new checkpoint is usually not a new family**: `Qwen/Qwen3.8-27B` shipped in August 2026 and needed no engine change at all, because its architecture is identical to a checkpoint already supported, which is asserted by a test that parses every published config against one baseline rather than assumed. The ternary checkpoint went further and differs from `Bonsai-27B` in its `quantization` block alone. And **the family is chosen from the architecture string, never from tensor names**, because several of these families use identical tensor naming and picking the wrong flow produces fluent, wrong output rather than an error.
 
 ### Checkpoints & GGUF Support

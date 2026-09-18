@@ -1,7 +1,7 @@
 import Foundation
 
 /// The fixed IG4 image-generation envelope.
-public struct ImageGenerateOptions: Encodable, Sendable, Equatable {
+public struct ImageGenerateOptions: Codable, Sendable, Equatable {
     public var prompt: String
     public var seed: UInt64
     public var width: UInt32

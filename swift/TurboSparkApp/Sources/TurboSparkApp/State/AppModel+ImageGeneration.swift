@@ -20,6 +20,35 @@ extension AppModel {
         imageModelPathText = model.path
     }
 
+    public var selectedImageModel: ImageInstalledModel? {
+        imageModels.first { $0.path == imageModelPath }
+    }
+
+    /// Sizes are owned by the selected install. A side-loaded current
+    /// Z-Image install uses the same single supported envelope.
+    public var imageSupportedSize: (width: UInt32, height: UInt32)? {
+        if let selectedImageModel {
+            return (selectedImageModel.width, selectedImageModel.height)
+        }
+        return imageModelPath.isEmpty ? nil : (1024, 1024)
+    }
+
+    public var imageSchedulerSteps: UInt32 {
+        selectedImageModel?.schedulerSteps ?? 9
+    }
+
+    public var imageSizeLabel: String {
+        guard let size = imageSupportedSize else { return "Select an image model" }
+        return "\(size.width) x \(size.height)"
+    }
+
+    public var savedImageArtifacts: [AppArtifact] {
+        chats
+            .flatMap(\.artifacts)
+            .filter { $0.origin == .imageGeneration && $0.existsOnDisk }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
     private var canStartImageGeneration: Bool {
         !generating && !submitting && !opening && !isInstallingModel
             && pendingToolCall == nil && imageGenerationTask == nil
@@ -48,7 +77,26 @@ extension AppModel {
             return
         }
         guard canStartImageGeneration else { return }
-        let options = ImageGenerateOptions(prompt: prompt, seed: UInt64.random(in: 0...UInt64.max))
+        let seedText = imageSeedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let seed: UInt64
+        if seedText.isEmpty {
+            seed = UInt64.random(in: 0...UInt64.max)
+        } else if let parsed = UInt64(seedText) {
+            seed = parsed
+        } else {
+            showToast("Seed must be an unsigned integer or blank for random.", style: .warning)
+            return
+        }
+        guard let size = imageSupportedSize else {
+            showToast("Select an image model with a supported size first.", style: .warning)
+            return
+        }
+        let options = ImageGenerateOptions(
+            prompt: prompt,
+            seed: seed,
+            width: size.width,
+            height: size.height,
+            steps: imageSchedulerSteps)
         let chatID = selectedChatID
         materializeDraftChatIfNeeded()
         if selectedChatIndex == nil {
@@ -71,6 +119,19 @@ extension AppModel {
         }
         guard canStartImageGeneration else { return }
         startImageGeneration(job.options, chatID: job.chatID)
+    }
+
+    public func regenerateImage(from artifact: AppArtifact) {
+        guard let request = artifact.imageRequest else {
+            showToast("This saved image has no request metadata to regenerate.", style: .warning)
+            return
+        }
+        guard !imageModelPath.isEmpty else {
+            showToast("Select an image .gturbo install first.", style: .warning)
+            return
+        }
+        guard canStartImageGeneration else { return }
+        startImageGeneration(request.options, chatID: artifact.chatID)
     }
 
     public func cancelImageGeneration() {
@@ -182,7 +243,8 @@ extension AppModel {
             createdAt: now,
             updatedAt: now,
             lastKnownByteSize: (try? FileManager.default.attributesOfItem(atPath: path.path)[.size] as? Int),
-            lastKnownModified: (try? FileManager.default.attributesOfItem(atPath: path.path)[.modificationDate] as? Date)
+            lastKnownModified: (try? FileManager.default.attributesOfItem(atPath: path.path)[.modificationDate] as? Date),
+            imageRequest: AppImageRequest(options: job.options)
         )
         let row = AppArtifact.upsert(artifact, into: &chats[index].artifacts)
         let storedPath = "image-artifacts/\(job.id.uuidString).png"

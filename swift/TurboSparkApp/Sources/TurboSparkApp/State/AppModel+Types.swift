@@ -24,6 +24,7 @@ extension AppModel {
     /// Primary top-level navigation destination in the application.
     public enum AppNavigationSection: String, CaseIterable, Identifiable, Sendable {
         case chat
+        case images
         case files
         case modelManager
         case modelHub
@@ -33,6 +34,7 @@ extension AppModel {
         public var title: String {
             switch self {
             case .chat: return "Chat"
+            case .images: return "Images"
             case .files: return "Files"
             case .modelManager: return "Installed"
             case .modelHub: return "Discover"
@@ -42,6 +44,7 @@ extension AppModel {
         public var systemImage: String {
             switch self {
             case .chat: return "bubble.left.and.bubble.right"
+            case .images: return "photo.on.rectangle"
             case .files: return "folder"
             case .modelManager: return "internaldrive"
             case .modelHub: return "shippingbox"
@@ -52,6 +55,7 @@ extension AppModel {
         public var selectedSystemImage: String {
             switch self {
             case .chat: return "bubble.left.and.bubble.right.fill"
+            case .images: return "photo.on.rectangle.angled"
             case .files: return "folder.fill"
             case .modelManager: return "internaldrive.fill"
             case .modelHub: return "shippingbox.fill"
@@ -62,10 +66,11 @@ extension AppModel {
         public var shortcutKey: Character {
             switch self {
             case .chat: return "1"
-            case .files: return "2"
-            case .modelManager: return "3"
-            case .modelHub: return "4"
-            case .server: return "5"
+            case .images: return "2"
+            case .files: return "3"
+            case .modelManager: return "4"
+            case .modelHub: return "5"
+            case .server: return "6"
             }
         }
     }

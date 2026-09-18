@@ -27,7 +27,7 @@ crates/image/
 |   |   +-- builder_manifest.rs  # manifest + receipt assembly
 |   |   \-- builder_tests.rs     # builder unit tests
 |   +-- packed.rs            # packed component store: index.json + tensors.bin,
-|   |                        # affine INT4 group-64 rows over FP32 stragglers
+|   |                        # local INT4 and MLX affine rows over FP32 stragglers
 |   +-- conditioning.rs      # prompt framing, tokenizer loading, padded token ids
 |   +-- text_encoder.rs      # Qwen3 encoder forward, sharded safetensors reader
 |   +-- transformer.rs       # ZImageTransformer blocks (CPU math)
@@ -51,7 +51,8 @@ crates/image/
     +-- transformer_math_parity.rs
     +-- pipeline_parity.rs
     +-- vae_parity.rs
-    \-- metal_parity.rs      # opt-in packed Metal gates; needs a pinned install
+    +-- metal_parity.rs      # opt-in packed Metal gates; needs a pinned install
+    \-- zimage_mlx_payload_network.rs # selected real MLX payload gate
 ```
 
 The CPU modules (`transformer.rs`, `vae.rs`, `pipeline.rs`) are the portable
@@ -113,21 +114,24 @@ cargo test -p turbospark-image --test metal_parity -- --ignored --nocapture
    defeats the residency contract the resource gates measure, and it fails
    no test -- it just makes the footprint three times the frozen ceiling.
 
-4. **PACKED INT4 IS AN IMAGE COMPONENT FORMAT, NOT `.gturbo`.** One payload
-   file per component (`tensors.bin`) with a checked byte span per tensor in
-   `index.json`. Eligible 2-D linear weights are the repo's affine INT4
-   group-64 rows; embeddings, norms, modulation tensors, and anything
-   non-matrix stay FP32 until a component-specific gate proves a narrower
-   representation. `metal_ops.rs` deliberately does NOT call the text
-   runtime kernels: image activations and accumulators are FP32 and the
-   packed row layout is image-specific. The only shared GPU contracts are
-   `MetalContext`, `PassEncoder`, and `ResidentGpuWeights`.
+4. **PACKED AFFINE WEIGHTS ARE AN IMAGE COMPONENT FORMAT, NOT `.gturbo`.**
+   One payload file per component (`tensors.bin`) has a checked byte span per
+   tensor in `index.json`. The legacy local profile uses affine INT4 group-64
+   rows. MLX source weights use affine U32 planes at 2, 3, 4, 5, 6, or 8 bits
+   with F16/BF16 scale-bias companions, normalized into the same image
+   component store. Embeddings, norms, modulation tensors, and anything
+   non-matrix stay at their protected storage precision. `metal_ops.rs`
+   deliberately does NOT call the text runtime kernels: image activations and
+   accumulators are FP32 and the packed row layouts are image-specific. The
+   only shared GPU contracts are `MetalContext`, `PassEncoder`, and
+   `ResidentGpuWeights`.
 
 5. **A TOLERANCE AGAINST A HIGHER-PRECISION FIXTURE MEASURES THE
    QUANTIZATION, NOT THE IMPLEMENTATION.** The packed conditioning and
-   rollout rel-L2 limits are large by design: they bound INT4-emulation
-   drift against FP32/BF16 reference fixtures, so a "tighter" limit is not a
-   stricter test, it is a different question. The unquantized VAE limits,
+   rollout rel-L2 limits are large by design: the pinned quality gate bounds
+   local INT4-emulation drift against FP32/BF16 reference fixtures, while MLX
+   width-specific parity still needs its own real-source evidence. A "tighter"
+   limit is not a stricter test, it is a different question. The unquantized VAE limits,
    by contrast, ARE parity tolerances and are correspondingly tight. Name
    each constant for what it bounds, never reuse one limit name across the
    two classes, and assert with the MEASURED error in the message, not the
@@ -173,4 +177,3 @@ cargo test -p turbospark-image --test metal_parity -- --ignored --nocapture
     access resident component memory, passes must be committed using
     `commit_component_deferred` so component mmap drops wait for the kernel to
     complete.
-

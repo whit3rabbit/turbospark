@@ -56,3 +56,4 @@ notes/
 
 .venv/
 ig2-work/
+.build/

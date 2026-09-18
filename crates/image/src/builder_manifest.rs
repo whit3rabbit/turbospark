@@ -11,7 +11,6 @@ use crate::install::{
     IMAGE_MANIFEST_SCHEMA, IMAGE_PROMPT_MAX_TOKENS, IMAGE_STEPS, IMAGE_WIDTH,
 };
 use crate::packed::{PackedIndex, PackedTensorReport, PACKED_INDEX_NAME};
-use crate::runtime::IMAGE_QUANTIZATION;
 
 const COMPONENTS_DIR: &str = "components";
 
@@ -217,6 +216,19 @@ fn transformer_metadata(
     report: &PackedTensorReport,
     index: &PackedIndex,
 ) -> BTreeMap<String, serde_json::Value> {
+    let quantization_scheme = super::builder_files::quantization_scheme(index);
+    let quantization_label = super::builder_files::quantization_label(index);
+    let mlx_affine = quantization_scheme == crate::runtime::IMAGE_MLX_QUANTIZATION;
+    let nibble_order = if mlx_affine {
+        "lsb_first_bit_fields"
+    } else {
+        "low_nibble_even_high_nibble_odd"
+    };
+    let scale_and_bias_convention = if mlx_affine {
+        "value = q * scale + bias"
+    } else {
+        "value = nibble * bf16_scale + bf16_bias"
+    };
     BTreeMap::from([
         (
             "component_name".to_string(),
@@ -249,16 +261,25 @@ fn transformer_metadata(
         ("three_axis_rope".to_string(), serde_json::json!(true)),
         (
             "quantization_scheme".to_string(),
-            serde_json::json!(IMAGE_QUANTIZATION),
+            serde_json::json!(quantization_scheme),
+        ),
+        (
+            "quantization_label".to_string(),
+            serde_json::json!(quantization_label),
         ),
         ("group_size".to_string(), serde_json::json!(64)),
         (
-            "nibble_order".to_string(),
-            serde_json::json!("low_nibble_even_high_nibble_odd"),
+            "affine_bit_widths".to_string(),
+            serde_json::json!(crate::packed::MLX_AFFINE_BITS),
         ),
         (
+            "observed_affine_bit_widths".to_string(),
+            serde_json::json!(super::builder_files::observed_mlx_bit_widths(index)),
+        ),
+        ("nibble_order".to_string(), serde_json::json!(nibble_order)),
+        (
             "scale_and_bias_convention".to_string(),
-            serde_json::json!("value = nibble * bf16_scale + bf16_bias"),
+            serde_json::json!(scale_and_bias_convention),
         ),
         (
             "quantized_tensor_names".to_string(),
@@ -341,7 +362,7 @@ fn quantized_names(index: &PackedIndex) -> Vec<String> {
     index
         .tensors
         .iter()
-        .filter(|(_, tensor)| tensor.storage_dtype == "INT4_AFFINE")
+        .filter(|(_, tensor)| matches!(tensor.storage_dtype.as_str(), "INT4_AFFINE" | "MLX_AFFINE"))
         .map(|(name, _)| name.clone())
         .collect()
 }
@@ -350,7 +371,9 @@ fn protected_names(index: &PackedIndex) -> Vec<String> {
     index
         .tensors
         .iter()
-        .filter(|(_, tensor)| tensor.storage_dtype != "INT4_AFFINE")
+        .filter(|(_, tensor)| {
+            !matches!(tensor.storage_dtype.as_str(), "INT4_AFFINE" | "MLX_AFFINE")
+        })
         .map(|(name, _)| name.clone())
         .collect()
 }

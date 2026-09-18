@@ -278,6 +278,8 @@ struct RootView: View {
     @ViewBuilder
     private var primaryContent: some View {
         switch model.activeSection {
+        case .images:
+            ImagesSectionView(model: model)
         case .modelManager:
             ModelManagerView(model: model)
         case .modelHub:

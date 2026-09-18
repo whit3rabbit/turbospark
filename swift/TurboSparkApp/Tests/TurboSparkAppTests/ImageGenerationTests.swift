@@ -7,6 +7,71 @@ import TurboSpark
 
 @MainActor
 final class ImageGenerationTests: XCTestCase {
+    func testImageRequestRetainsTheCamelCaseGenerationEnvelope() throws {
+        let options = ImageGenerateOptions(
+            prompt: "a red kite", seed: 42, width: 1024, height: 1024, steps: 9)
+        let encoded = try JSONEncoder().encode(options)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+
+        XCTAssertEqual(object["prompt"] as? String, "a red kite")
+        XCTAssertEqual(object["seed"] as? UInt64, 42)
+        XCTAssertEqual(object["width"] as? UInt32, 1024)
+        XCTAssertEqual(object["height"] as? UInt32, 1024)
+        XCTAssertEqual(object["steps"] as? UInt32, 9)
+    }
+
+    func testSavedImageArtifactRetainsTheRequestForRegeneration() throws {
+        let chatID = UUID()
+        let request = AppImageRequest(
+            options: ImageGenerateOptions(
+                prompt: "a red kite", seed: 42, width: 1024, height: 1024, steps: 9))
+        let artifact = AppArtifact(
+            chatID: chatID,
+            path: "/tmp/red-kite.png",
+            title: "Generated image",
+            origin: .imageGeneration,
+            imageRequest: request)
+
+        let roundTrip = try JSONDecoder().decode(
+            AppArtifact.self,
+            from: JSONEncoder().encode(artifact))
+
+        XCTAssertEqual(roundTrip.imageRequest, request)
+        XCTAssertEqual(roundTrip.imageRequest?.options.prompt, "a red kite")
+        XCTAssertEqual(roundTrip.imageRequest?.options.seed, 42)
+    }
+
+    func testImageSizeComesFromTheSelectedInstall() {
+        let model = AppModel()
+        model.imageModels = [ImageInstalledModel(
+            alias: "z-image-turbo",
+            modelID: "Tongyi-MAI/Z-Image-Turbo",
+            revision: String(repeating: "a", count: 40),
+            path: "/models/z-image-turbo.image.gturbo",
+            width: 1024,
+            height: 1024,
+            schedulerSteps: 9,
+            quantization: "mlx-affine-linear-weights-group-64-bits-4")]
+        model.selectImageModel(model.imageModels[0])
+
+        XCTAssertEqual(model.imageSupportedSize?.width, 1024)
+        XCTAssertEqual(model.imageSupportedSize?.height, 1024)
+        XCTAssertEqual(model.imageSizeLabel, "1024 x 1024")
+        XCTAssertEqual(model.imageSchedulerSteps, 9)
+        XCTAssertEqual(
+            model.selectedImageModel?.quantization,
+            "mlx-affine-linear-weights-group-64-bits-4")
+    }
+
+    func testImageInstallDecodesTheObservedMlxWidth() throws {
+        let data = Data(
+            "{\"alias\":\"z-image-turbo-mlx-6bit\",\"modelID\":\"andrevp/Z-Image-Turbo-MLX-6bit\",\"revision\":\"rev\",\"path\":\"/models/z.image.gturbo\",\"width\":1024,\"height\":1024,\"schedulerSteps\":9,\"quantization\":\"mlx-affine-linear-weights-group-64-bits-6\"}"
+                .utf8)
+        let model = try JSONDecoder().decode(ImageInstalledModel.self, from: data)
+        XCTAssertEqual(model.quantization, "mlx-affine-linear-weights-group-64-bits-6")
+    }
+
     func testImageJobStartsWaitingAndCarriesTheRequest() {
         let options = ImageGenerateOptions(prompt: "a red kite", seed: 42)
         let chatID = UUID()

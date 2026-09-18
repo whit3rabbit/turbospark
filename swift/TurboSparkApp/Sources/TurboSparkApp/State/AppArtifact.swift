@@ -1,4 +1,27 @@
 import Foundation
+import TurboSpark
+
+/// The small request envelope retained with a saved generated image.
+public struct AppImageRequest: Codable, Equatable, Sendable {
+    public let prompt: String
+    public let seed: UInt64
+    public let width: UInt32
+    public let height: UInt32
+    public let steps: UInt32
+
+    public init(options: ImageGenerateOptions) {
+        prompt = options.prompt
+        seed = options.seed
+        width = options.width
+        height = options.height
+        steps = options.steps
+    }
+
+    public var options: ImageGenerateOptions {
+        ImageGenerateOptions(
+            prompt: prompt, seed: seed, width: width, height: height, steps: steps)
+    }
+}
 
 /// How the artifact panel should render a file.
 ///
@@ -105,6 +128,8 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
     /// be presentable as a zero (Gotcha 23).
     public var lastKnownByteSize: Int?
     public var lastKnownModified: Date?
+    /// The request that produced an image-generation artifact, when known.
+    public var imageRequest: AppImageRequest?
 
     public init(
         id: UUID = UUID(),
@@ -117,7 +142,8 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
         updatedAt: Date = Date(),
         revision: Int = 1,
         lastKnownByteSize: Int? = nil,
-        lastKnownModified: Date? = nil
+        lastKnownModified: Date? = nil,
+        imageRequest: AppImageRequest? = nil
     ) {
         self.id = id
         self.chatID = chatID
@@ -130,6 +156,7 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
         self.revision = revision
         self.lastKnownByteSize = lastKnownByteSize
         self.lastKnownModified = lastKnownModified
+        self.imageRequest = imageRequest
     }
 
     // MARK: - Identity
@@ -263,6 +290,7 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
         merged.updatedAt = incoming.updatedAt
         merged.lastKnownByteSize = incoming.lastKnownByteSize
         merged.lastKnownModified = incoming.lastKnownModified
+        merged.imageRequest = incoming.imageRequest ?? merged.imageRequest
         // The card follows the LATEST production point, so a file rewritten
         // three turns later is reachable from the turn that rewrote it.
         merged.toolCallID = incoming.toolCallID ?? merged.toolCallID
@@ -279,7 +307,7 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, chatID, path, title, origin, toolCallID
-        case createdAt, updatedAt, revision, lastKnownByteSize, lastKnownModified
+        case createdAt, updatedAt, revision, lastKnownByteSize, lastKnownModified, imageRequest
     }
 
     /// Hand-written for Gotcha 13 and state#45.
@@ -303,5 +331,6 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
         revision = (try? container.decodeIfPresent(Int.self, forKey: .revision)) ?? 1
         lastKnownByteSize = try? container.decodeIfPresent(Int.self, forKey: .lastKnownByteSize)
         lastKnownModified = try? container.decodeIfPresent(Date.self, forKey: .lastKnownModified)
+        imageRequest = try? container.decodeIfPresent(AppImageRequest.self, forKey: .imageRequest)
     }
 }

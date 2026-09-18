@@ -96,6 +96,7 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
     public let width: UInt32
     public let height: UInt32
     public let schedulerSteps: UInt32
+    public let quantization: String
 
     public init(
         alias: String,
@@ -104,7 +105,8 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         path: String,
         width: UInt32,
         height: UInt32,
-        schedulerSteps: UInt32
+        schedulerSteps: UInt32,
+        quantization: String = "unknown"
     ) {
         self.alias = alias
         self.modelID = modelID
@@ -113,6 +115,23 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         self.width = width
         self.height = height
         self.schedulerSteps = schedulerSteps
+        self.quantization = quantization
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case alias, modelID, revision, path, width, height, schedulerSteps, quantization
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.alias = try values.decode(String.self, forKey: .alias)
+        self.modelID = try values.decode(String.self, forKey: .modelID)
+        self.revision = try values.decode(String.self, forKey: .revision)
+        self.path = try values.decode(String.self, forKey: .path)
+        self.width = try values.decode(UInt32.self, forKey: .width)
+        self.height = try values.decode(UInt32.self, forKey: .height)
+        self.schedulerSteps = try values.decode(UInt32.self, forKey: .schedulerSteps)
+        self.quantization = try values.decodeIfPresent(String.self, forKey: .quantization) ?? "unknown"
     }
 }
 

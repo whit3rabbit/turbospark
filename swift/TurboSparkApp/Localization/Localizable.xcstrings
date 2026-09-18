@@ -34474,6 +34474,32 @@
         }
       }
     },
+    "Images": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Images" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Imágenes" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Images" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Bilder" } },
+        "it": { "stringUnit": { "state": "translated", "value": "Immagini" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Imagens" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Изображения" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "画像" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이미지" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "图像" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "影像" } },
+        "ar": { "stringUnit": { "state": "translated", "value": "الصور" } },
+        "he": { "stringUnit": { "state": "translated", "value": "תמונות" } },
+        "hi": { "stringUnit": { "state": "translated", "value": "छवियाँ" } },
+        "nl": { "stringUnit": { "state": "translated", "value": "Afbeeldingen" } },
+        "pl": { "stringUnit": { "state": "translated", "value": "Obrazy" } },
+        "tr": { "stringUnit": { "state": "translated", "value": "Görseller" } },
+        "uk": { "stringUnit": { "state": "translated", "value": "Зображення" } },
+        "sv": { "stringUnit": { "state": "translated", "value": "Bilder" } },
+        "vi": { "stringUnit": { "state": "translated", "value": "Hình ảnh" } },
+        "id": { "stringUnit": { "state": "translated", "value": "Gambar" } }
+      }
+    },
     "Installed Models": {
       "extractionState": "manual",
       "localizations": {

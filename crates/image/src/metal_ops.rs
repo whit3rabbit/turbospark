@@ -2,7 +2,7 @@
 //!
 //! These wrappers intentionally do not call the text runtime kernels. Image
 //! activations and accumulators are FP32, while the packed image payload is a
-//! per-row interleaved INT4 format. The only shared GPU contracts here are
+//! per-row interleaved affine format. The only shared GPU contracts here are
 //! `MetalContext`, `PassEncoder`, and the zero-copy resident buffer wrapper.
 
 use std::{
@@ -27,6 +27,9 @@ pub(crate) struct WeightRef {
     pub(crate) offset: u64,
     pub(crate) storage: u32,
     pub(crate) row_stride: u32,
+    pub(crate) bits: u32,
+    pub(crate) group_size: u32,
+    pub(crate) companion_storage: u32,
 }
 
 #[derive(Clone)]
@@ -275,10 +278,39 @@ impl Component {
                 tensor.shape
             ));
         }
-        let storage = match tensor.storage_dtype.as_str() {
-            "F32" => 1,
-            "BF16" => 2,
-            "INT4_AFFINE" => 3,
+        let (storage, bits, group_size, companion_storage) = match tensor.storage_dtype.as_str() {
+            "F32" => (1, 0, 0, 0),
+            "BF16" => (2, 0, 0, 0),
+            "INT4_AFFINE" => (3, 4, 64, 2),
+            "MLX_AFFINE" => {
+                let quantization = tensor.quantization.as_ref().ok_or_else(|| {
+                    format!("image tensor {name} is missing MLX quantization metadata")
+                })?;
+                let companion_storage = match quantization.companion_dtype.as_str() {
+                    "BF16" => 2,
+                    "F16" => 4,
+                    other => {
+                        return Err(format!(
+                            "image tensor {name} has unsupported MLX companion storage {other}"
+                        ))
+                    }
+                };
+                if !crate::packed::MLX_AFFINE_BITS.contains(&quantization.bits)
+                    || quantization.group_size == 0
+                {
+                    return Err(format!(
+                        "image tensor {name} has invalid MLX affine metadata"
+                    ));
+                }
+                (
+                    4,
+                    u32::from(quantization.bits),
+                    u32::try_from(quantization.group_size).map_err(|_| {
+                        format!("image tensor {name} MLX group size exceeds Metal parameters")
+                    })?,
+                    companion_storage,
+                )
+            }
             other => {
                 return Err(format!(
                     "image tensor {name} has unsupported storage {other}"
@@ -330,6 +362,9 @@ impl Component {
             offset,
             storage,
             row_stride,
+            bits,
+            group_size,
+            companion_storage,
         })
     }
 }
@@ -492,7 +527,16 @@ pub(crate) fn lookup(
         len: ids.len() * dim,
         ready: None,
     };
-    let params = u32_bytes(&[ids.len() as u32, dim as u32, vocab as u32, weight.storage]);
+    let params = u32_bytes(&[
+        ids.len() as u32,
+        dim as u32,
+        vocab as u32,
+        weight.storage,
+        weight.row_stride,
+        weight.bits,
+        weight.group_size,
+        weight.companion_storage,
+    ]);
     let shader = pipeline(context, "image_lookup")?;
     let pass = context.begin_pass_labeled("image-text-embedding");
     dispatch(
@@ -539,6 +583,9 @@ pub(crate) fn linear(
         weight.row_stride,
         weight.storage,
         bias.as_ref().map_or(0, |value| value.storage),
+        weight.bits,
+        weight.group_size,
+        weight.companion_storage,
     ]);
     let shader = pipeline(context, "image_linear_tiled")?;
     let pass = context.begin_pass_labeled("image-linear");
@@ -1160,7 +1207,7 @@ mod tests {
     use super::*;
     use crate::packed::{
         compute_tensor_inventory_sha256, PackedIndex, PackedQuantization, PackedTensor,
-        PACKED_DATA_NAME, PACKED_GROUP_SIZE, PACKED_MAGIC, PACKED_VERSION,
+        MLX_AFFINE_BITS, PACKED_DATA_NAME, PACKED_GROUP_SIZE, PACKED_MAGIC, PACKED_VERSION,
     };
     use compute::quantize_int4_affine;
     use std::collections::BTreeMap;
@@ -1170,7 +1217,7 @@ mod tests {
 
     #[test]
     #[ignore = "opt-in Metal kernel parity test"]
-    fn tiled_linear_matches_f32_and_interleaved_int4_packed_rows() {
+    fn tiled_linear_matches_f32_int4_and_all_mlx_affine_packed_rows() {
         let Ok(mut context) = MetalContext::new() else {
             eprintln!("NOTE: skipping image Metal parity test, no Metal device");
             return;
@@ -1207,6 +1254,16 @@ mod tests {
             (out_dim * int4_row_bytes) as u64
         );
 
+        let mlx_matrix: Vec<f32> = (0..out_dim * in_dim)
+            .map(|index| (index % 4) as f32 + 0.5)
+            .collect();
+        let mut mlx_ranges = Vec::new();
+        for bits in MLX_AFFINE_BITS {
+            let offset = payload.len() as u64;
+            append_mlx_affine_rows(&mut payload, &mlx_matrix, out_dim, in_dim, bits);
+            mlx_ranges.push((bits, offset, payload.len() as u64 - offset));
+        }
+
         let mut tensors = BTreeMap::new();
         tensors.insert(
             "matrix.weight".to_string(),
@@ -1241,12 +1298,34 @@ mod tests {
                 quantization: Some(PackedQuantization {
                     scheme: "four-bit-linear-weights-group-64".to_string(),
                     group_size: PACKED_GROUP_SIZE,
+                    bits: 4,
+                    companion_dtype: "BF16".to_string(),
                     nibble_order: "low_nibble_even_high_nibble_odd".to_string(),
                     scale_and_bias_convention: "value = nibble * bf16_scale + bf16_bias"
                         .to_string(),
                 }),
             },
         );
+        for (bits, offset, length) in &mlx_ranges {
+            tensors.insert(
+                format!("matrix.mlx_{bits}"),
+                PackedTensor {
+                    shape: vec![out_dim, in_dim],
+                    source_dtype: "U32".to_string(),
+                    storage_dtype: "MLX_AFFINE".to_string(),
+                    offset: *offset,
+                    length: *length,
+                    quantization: Some(PackedQuantization {
+                        scheme: "mlx-affine".to_string(),
+                        group_size: PACKED_GROUP_SIZE,
+                        bits: *bits,
+                        companion_dtype: "F16".to_string(),
+                        nibble_order: "lsb_first_bit_fields".to_string(),
+                        scale_and_bias_convention: "value = q * scale + bias".to_string(),
+                    }),
+                },
+            );
+        }
         write_index(&root, payload, tensors);
 
         let component = Component::open(&context, &root).expect("open synthetic component");
@@ -1287,6 +1366,23 @@ mod tests {
             .collect();
         let expected_int4 = cpu_linear(&input, &dequantized, &[], rows, in_dim, out_dim);
         assert_close(&read(&int4_output), &expected_int4, 2e-5);
+        let expected_mlx = cpu_linear(&input, &mlx_matrix, &[], rows, in_dim, out_dim);
+        for bits in MLX_AFFINE_BITS {
+            let mlx_output = linear(
+                &mut context,
+                &component,
+                component
+                    .weight(&format!("matrix.mlx_{bits}"), &[out_dim, in_dim])
+                    .unwrap(),
+                None,
+                &input_gpu,
+                rows,
+                in_dim,
+                out_dim,
+            )
+            .expect("MLX affine tiled linear");
+            assert_close(&read(&mlx_output), &expected_mlx, 2e-3);
+        }
         drop(component);
 
         let streamed = Component::open_with_mode(&context, &root, true)
@@ -1695,6 +1791,32 @@ mod tests {
             payload.extend_from_slice(&value.to_le_bytes());
         }
         offset
+    }
+
+    fn append_mlx_affine_rows(
+        payload: &mut Vec<u8>,
+        matrix: &[f32],
+        rows: usize,
+        cols: usize,
+        bits: u8,
+    ) {
+        let packed_bytes = cols * bits as usize / 8;
+        let levels = 1u16 << bits;
+        for row in matrix.chunks_exact(cols).take(rows) {
+            let mut packed = vec![0u8; packed_bytes];
+            for (col, value) in row.iter().enumerate() {
+                let q = (*value - 0.5) as u16 % levels;
+                let bit_offset = col * bits as usize;
+                for bit in 0..bits as usize {
+                    if q & (1 << bit) != 0 {
+                        packed[(bit_offset + bit) / 8] |= 1 << ((bit_offset + bit) % 8);
+                    }
+                }
+            }
+            payload.extend_from_slice(&packed);
+            payload.extend_from_slice(&compute::f32_to_f16(1.0).to_le_bytes());
+            payload.extend_from_slice(&compute::f32_to_f16(0.5).to_le_bytes());
+        }
     }
 
     fn cpu_linear(

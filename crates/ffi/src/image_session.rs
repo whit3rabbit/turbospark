@@ -52,6 +52,7 @@ pub struct ImageSession {
     model_id: String,
     model_revision: String,
     component_revisions: BTreeMap<String, String>,
+    quantization: String,
     #[cfg(target_os = "macos")]
     _model_path: PathBuf,
 }
@@ -86,6 +87,7 @@ impl ImageSession {
                     .map(|revision| (name.clone(), revision.to_string()))
             })
             .collect();
+        let quantization = image::image_quantization_label(&manifest)?;
         let backend = image::MetalImageBackend::open(&model_path)?;
         Ok(Self {
             backend: Mutex::new(backend),
@@ -93,6 +95,7 @@ impl ImageSession {
             model_id,
             model_revision,
             component_revisions,
+            quantization,
             _model_path: model_path,
         })
     }
@@ -138,7 +141,7 @@ impl ImageSession {
             scheduler_steps: options.steps,
             guidance_scale: image::IMAGE_GUIDANCE,
             seed: options.seed,
-            quantization: image::IMAGE_QUANTIZATION.to_string(),
+            quantization: self.quantization.clone(),
             noise_provenance: "zimage_metal_xorshift_box_muller_v1".to_string(),
         };
         match image::generate(&mut *backend, &request, &cancellation, |progress| {

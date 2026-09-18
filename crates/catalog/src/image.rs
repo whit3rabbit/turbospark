@@ -77,5 +77,33 @@ mod tests {
             .required_files
             .iter()
             .all(|file| !file.contains("text-generation")));
+
+        for (alias, model_id, revision) in [
+            (
+                "z-image-turbo-mlx-2bit",
+                "andrevp/Z-Image-Turbo-MLX-2bit",
+                "32b4e9ceb3a813485027b1ea942f199608fb8200",
+            ),
+            (
+                "z-image-turbo-mlx-4bit",
+                "andrevp/Z-Image-Turbo-MLX-4bit",
+                "9adc576198c9126874792d35569b53cf2f45a03c",
+            ),
+            (
+                "z-image-turbo-mlx-8bit",
+                "andrevp/Z-Image-Turbo-MLX-8bit",
+                "c9f70995562299b1eda9b9145a94dd7a5a1ae0d6",
+            ),
+            (
+                "z-image-turbo-mlx-fp16",
+                "andrevp/Z-Image-Turbo-MLX",
+                "e186d7d65d66883270671fcee05324178928ea03",
+            ),
+        ] {
+            let entry = catalog.get(alias).expect("published MLX image row");
+            assert_eq!(entry.model_id, model_id);
+            assert_eq!(entry.revision, revision);
+            assert_eq!(entry.required_files.len(), 17);
+        }
     }
 }

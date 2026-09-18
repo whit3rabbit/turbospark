@@ -50,7 +50,8 @@ export to the ordinary text catalog as an `Mlx` model. The image route writes
 the image-specific `.image.gturbo` format, with its own manifest, component
 owners, packed tensors, and verification receipt.
 
-The current route takes a pinned local Diffusers-style source directory:
+The image route accepts either a pinned local Diffusers-style source directory
+or an immutable Hugging Face repository revision:
 
 ```sh
 turbospark-model pull-image \
@@ -62,14 +63,24 @@ turbospark image generate --model z-image-turbo \
   --prompt "A red rabbit under a moonlit sky" --output image.png
 ```
 
-`pull-image` currently does not fetch by Hugging Face repository ID. It packs
-the local source atomically and records the image install separately from text
+`pull-image` streams a pinned remote source into temporary staging, or packs
+the local source atomically, and records the image install separately from text
 rows. Already-quantized MLX exports such as
 [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit)
 and [`uqer1244/MLX-z-image`](https://huggingface.co/uqer1244/MLX-z-image) are
-not drop-in inputs: their MLX tensor layout requires an explicit adapter and
-parity gate. The first image runtime profile is this port's affine INT4 linear
-weights at group size 64, not a promise to support every MLX bit width.
+accepted through the image-only source adapter. The pinned andrevp 2-bit,
+4-bit, 8-bit, and fp16 variants are also available as image aliases:
+`z-image-turbo-mlx-2bit`, `z-image-turbo-mlx-4bit`,
+`z-image-turbo-mlx-8bit`, and `z-image-turbo-mlx-fp16`. It recognizes MLX affine U32
+weight planes and F16 or BF16 `.scales` and `.biases` companions at 2, 3, 4,
+5, 6, and 8 bits, with group size 64, then writes the repository's separate
+`.image.gturbo` format. The full installer gates pass for the published 2-bit,
+4-bit, and 8-bit variants; the FP16 full install remains open because it is an
+unquantized source path. Image quality, resource, and Swift parity gates remain
+open for the non-INT4 variants. These are the complete widths accepted by
+upstream MLX; upstream rejects 1-bit quantization. The closed IG2 evidence is
+still only for the pinned INT4 profile. Do not register these artifacts as
+ordinary text `Mlx` rows.
 
 ---
 

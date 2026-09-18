@@ -947,6 +947,30 @@ callback, and the returned PNG must be released with `ts_image_buffer_free`.
 Swift copies the PNG into `Data` before releasing the native buffer. An image
 session must not be closed while its generation call is active.
 
+The Swift package keeps the wire keys camelCase and exposes the request as a
+Codable value:
+
+```swift
+let options = ImageGenerateOptions(
+    prompt: "A red rabbit under a moonlit sky",
+    seed: 42,
+    width: 1024,
+    height: 1024,
+    steps: 9
+)
+let outputURL = URL(fileURLWithPath: "image.png")
+for try await event in imageSession.generate(options) {
+    if case .finished(let result) = event {
+        try result.png.write(to: outputURL)
+    }
+}
+```
+
+The encoded JSON contains `prompt`, `seed`, `width`, `height`, and `steps`.
+The app's `Images` destination stores the PNG below the active profile's
+`AppStorageRoot` only after the job succeeds and the user saves it. The saved
+request metadata powers deterministic regeneration and the Gallery carousel.
+
 | function | notes |
 |---|---|
 | `ts_last_error(buf, cap)` | returns the message's own length, not bytes written; `buf` may be NULL to size |

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::install::{ImageManifest, ImageManifestFile, IMAGE_RECEIPT_NAME};
 use crate::packed::{PackedIndex, PACKED_DATA_NAME, PACKED_INDEX_NAME};
-use crate::runtime::IMAGE_QUANTIZATION;
+use crate::runtime::{IMAGE_MLX_QUANTIZATION, IMAGE_QUANTIZATION, IMAGE_UNQUANTIZED};
 
 pub(super) fn write_receipt(
     spec: &super::ImageInstallSpec,
@@ -122,9 +122,17 @@ fn file_metadata(
             .map_err(|e| format!("failed to read {}: {e}", index_path.display()))?;
         let index: PackedIndex = serde_json::from_slice(&index_bytes)
             .map_err(|e| format!("failed to parse packed index {}: {e}", index_path.display()))?;
+        let observed_affine_bit_widths = observed_mlx_bit_widths(&index);
+        let scheme = quantization_scheme(&index);
         return Ok((
             "mixed".to_string(),
-            serde_json::json!({"scheme": IMAGE_QUANTIZATION, "group_size": 64}),
+            serde_json::json!({
+                "scheme": scheme,
+                "label": quantization_label(&index),
+                "group_size": 64,
+                "affine_bit_widths": crate::packed::MLX_AFFINE_BITS,
+                "observed_affine_bit_widths": observed_affine_bit_widths,
+            }),
             index.tensor_inventory_sha256,
         ));
     }
@@ -133,6 +141,54 @@ fn file_metadata(
         serde_json::json!({"scheme": "none"}),
         model_io::hash_data(b""),
     ))
+}
+
+pub(super) fn observed_mlx_bit_widths(index: &PackedIndex) -> Vec<u8> {
+    let mut widths: Vec<u8> = index
+        .tensors
+        .values()
+        .filter(|tensor| tensor.storage_dtype == "MLX_AFFINE")
+        .filter_map(|tensor| {
+            tensor
+                .quantization
+                .as_ref()
+                .map(|quantization| quantization.bits)
+        })
+        .collect();
+    widths.sort_unstable();
+    widths.dedup();
+    widths
+}
+
+pub(super) fn quantization_scheme(index: &PackedIndex) -> &'static str {
+    if index
+        .tensors
+        .values()
+        .any(|tensor| tensor.storage_dtype == "MLX_AFFINE")
+    {
+        IMAGE_MLX_QUANTIZATION
+    } else if index
+        .tensors
+        .values()
+        .any(|tensor| tensor.storage_dtype == "INT4_AFFINE")
+    {
+        IMAGE_QUANTIZATION
+    } else {
+        IMAGE_UNQUANTIZED
+    }
+}
+
+pub(super) fn quantization_label(index: &PackedIndex) -> String {
+    let scheme = quantization_scheme(index);
+    if scheme != IMAGE_MLX_QUANTIZATION {
+        return scheme.to_string();
+    }
+    let suffix = observed_mlx_bit_widths(index)
+        .into_iter()
+        .map(|width| width.to_string())
+        .collect::<Vec<_>>()
+        .join("-");
+    format!("{scheme}-bits-{suffix}")
 }
 
 pub(super) fn owner_for_path(path: &str) -> Result<String, String> {

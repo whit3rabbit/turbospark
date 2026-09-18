@@ -136,6 +136,44 @@ mod tests {
     }
 
     #[test]
+    fn selects_the_published_mlx_image_source_contract() {
+        let files = vec![
+            "README.md".to_string(),
+            "model_index.json".to_string(),
+            "quantize_config.json".to_string(),
+            "scheduler/scheduler_config.json".to_string(),
+            "tokenizer/merges.txt".to_string(),
+            "tokenizer/tokenizer.json".to_string(),
+            "tokenizer/tokenizer_config.json".to_string(),
+            "tokenizer/vocab.json".to_string(),
+            "text_encoder/config.json".to_string(),
+            "text_encoder/generation_config.json".to_string(),
+            "text_encoder/model.safetensors.index.json".to_string(),
+            "text_encoder/model-00001-of-00003.safetensors".to_string(),
+            "text_encoder/model-00002-of-00003.safetensors".to_string(),
+            "text_encoder/model-00003-of-00003.safetensors".to_string(),
+            "transformer/config.json".to_string(),
+            "transformer/diffusion_pytorch_model.safetensors.index.json".to_string(),
+            "transformer/diffusion_pytorch_model-00001-of-00003.safetensors".to_string(),
+            "transformer/diffusion_pytorch_model-00002-of-00003.safetensors".to_string(),
+            "transformer/diffusion_pytorch_model-00003-of-00003.safetensors".to_string(),
+            "vae/config.json".to_string(),
+            "vae/diffusion_pytorch_model.safetensors".to_string(),
+        ];
+        let selected = select_files(&files).expect("published MLX source");
+        assert_eq!(selected.len(), 17);
+        assert!(!selected.iter().any(|file| {
+            matches!(
+                file.as_str(),
+                "README.md" | "model_index.json" | "quantize_config.json"
+            )
+        }));
+        assert!(!selected
+            .iter()
+            .any(|file| file == "text_encoder/generation_config.json"));
+    }
+
+    #[test]
     fn rejects_missing_component_and_unsafe_paths() {
         let missing = vec![
             "scheduler/scheduler_config.json".to_string(),

@@ -22,5 +22,101 @@
       "vae/config.json",
       "vae/diffusion_pytorch_model.safetensors"
     ]
+  },
+  {
+    "alias": "z-image-turbo-mlx-2bit",
+    "model_id": "andrevp/Z-Image-Turbo-MLX-2bit",
+    "revision": "32b4e9ceb3a813485027b1ea942f199608fb8200",
+    "required_files": [
+      "scheduler/scheduler_config.json",
+      "tokenizer/merges.txt",
+      "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json",
+      "tokenizer/vocab.json",
+      "text_encoder/config.json",
+      "text_encoder/model.safetensors.index.json",
+      "text_encoder/model-00001-of-00003.safetensors",
+      "text_encoder/model-00002-of-00003.safetensors",
+      "text_encoder/model-00003-of-00003.safetensors",
+      "transformer/config.json",
+      "transformer/diffusion_pytorch_model.safetensors.index.json",
+      "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+      "transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
+      "transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
+      "vae/config.json",
+      "vae/diffusion_pytorch_model.safetensors"
+    ]
+  },
+  {
+    "alias": "z-image-turbo-mlx-4bit",
+    "model_id": "andrevp/Z-Image-Turbo-MLX-4bit",
+    "revision": "9adc576198c9126874792d35569b53cf2f45a03c",
+    "required_files": [
+      "scheduler/scheduler_config.json",
+      "tokenizer/merges.txt",
+      "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json",
+      "tokenizer/vocab.json",
+      "text_encoder/config.json",
+      "text_encoder/model.safetensors.index.json",
+      "text_encoder/model-00001-of-00003.safetensors",
+      "text_encoder/model-00002-of-00003.safetensors",
+      "text_encoder/model-00003-of-00003.safetensors",
+      "transformer/config.json",
+      "transformer/diffusion_pytorch_model.safetensors.index.json",
+      "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+      "transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
+      "transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
+      "vae/config.json",
+      "vae/diffusion_pytorch_model.safetensors"
+    ]
+  },
+  {
+    "alias": "z-image-turbo-mlx-8bit",
+    "model_id": "andrevp/Z-Image-Turbo-MLX-8bit",
+    "revision": "c9f70995562299b1eda9b9145a94dd7a5a1ae0d6",
+    "required_files": [
+      "scheduler/scheduler_config.json",
+      "tokenizer/merges.txt",
+      "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json",
+      "tokenizer/vocab.json",
+      "text_encoder/config.json",
+      "text_encoder/model.safetensors.index.json",
+      "text_encoder/model-00001-of-00003.safetensors",
+      "text_encoder/model-00002-of-00003.safetensors",
+      "text_encoder/model-00003-of-00003.safetensors",
+      "transformer/config.json",
+      "transformer/diffusion_pytorch_model.safetensors.index.json",
+      "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+      "transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
+      "transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
+      "vae/config.json",
+      "vae/diffusion_pytorch_model.safetensors"
+    ]
+  },
+  {
+    "alias": "z-image-turbo-mlx-fp16",
+    "model_id": "andrevp/Z-Image-Turbo-MLX",
+    "revision": "e186d7d65d66883270671fcee05324178928ea03",
+    "required_files": [
+      "scheduler/scheduler_config.json",
+      "tokenizer/merges.txt",
+      "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json",
+      "tokenizer/vocab.json",
+      "text_encoder/config.json",
+      "text_encoder/model.safetensors.index.json",
+      "text_encoder/model-00001-of-00003.safetensors",
+      "text_encoder/model-00002-of-00003.safetensors",
+      "text_encoder/model-00003-of-00003.safetensors",
+      "transformer/config.json",
+      "transformer/diffusion_pytorch_model.safetensors.index.json",
+      "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+      "transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
+      "transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
+      "vae/config.json",
+      "vae/diffusion_pytorch_model.safetensors"
+    ]
   }
 ]
