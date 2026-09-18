@@ -212,6 +212,16 @@ fn the_shim_respects_string_literals() {
     );
 }
 
+/// An escape inside a quoted string consumes the complete following Unicode
+/// scalar, rather than leaving the scanner on a UTF-8 continuation byte.
+#[test]
+fn the_shim_handles_escaped_unicode_in_string_literals() {
+    assert_eq!(
+        render_with("escaped-unicode", "x={{ '\\\u{7248}' }}"),
+        "x=\\\u{7248}"
+    );
+}
+
 /// Several keyword arguments in one call, only one of them conditional.
 #[test]
 fn the_shim_handles_one_conditional_among_several_kwargs() {

@@ -165,11 +165,25 @@ fn rewrite_expression(body: &str) -> (String, bool) {
     let mut depth = 0usize;
 
     while i < bytes.len() {
+        // Preserve multibyte scalars while scanning the ASCII-only syntax.
+        // The final copy uses byte offsets, but advancing by a whole scalar
+        // keeps escaped Unicode from being mistaken for separate characters.
+        if bytes[i] >= 0x80 {
+            let ch_len = body[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+            i += ch_len;
+            continue;
+        }
         let c = bytes[i];
         match quote {
             Some(q) => {
                 if c == b'\\' && i + 1 < bytes.len() {
-                    i += 2;
+                    let escaped_start = i + 1;
+                    let escaped_len = body[escaped_start..]
+                        .chars()
+                        .next()
+                        .map(char::len_utf8)
+                        .unwrap_or(1);
+                    i = escaped_start + escaped_len;
                     continue;
                 }
                 if c == q {
