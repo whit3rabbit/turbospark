@@ -737,6 +737,18 @@ int32_t ts_server_poll_events_json(const TsServer *server, uint32_t max,
 
 /* ---- model management (available on every platform) ---- */
 
+/* Returns the active model store root. The caller owns the result. */
+int32_t ts_store_root_get(char **out);
+
+/* Sets the process-local model store root. NULL or an empty string restores
+ * TURBOSPARK_HOME/HOME resolution. */
+int32_t ts_store_root_set(const char *root);
+
+/* Copies and verifies the managed store at destination, then activates it.
+ * The destination must be empty. Progress uses TS_INSTALL_BYTES. */
+int32_t ts_store_relocate(const char *destination, TsInstallCallback cb,
+                          void *userdata, char **result_json);
+
 /* The curated catalog as a JSON array, each row carrying "installed". */
 int32_t ts_catalog_json(char **out);
 

@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use turbospark_catalog::{InstalledModel, ModelModality, Store};
+use turbospark_catalog::{set_default_root, InstalledModel, ModelModality, Store};
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -73,6 +73,59 @@ fn modality_paths_share_a_root_but_do_not_share_aliases() {
     std::fs::create_dir_all(&image).unwrap();
     assert_eq!(store.resolve("same-name"), Some(text));
     assert_eq!(store.resolve_image("same-name"), Some(image));
+}
+
+#[test]
+fn relocating_the_default_store_verifies_and_rewrites_install_paths() {
+    let root = temp_root("relocation");
+    let source = root.join("source");
+    let destination = root.join("destination");
+    let store = Store::new(&source);
+    let text_model = store.install_path("text-model");
+    let image_model = store.image_install_path("image-model");
+    let audio_model = store.audio_install_path("audio-model");
+
+    std::fs::create_dir_all(&text_model).unwrap();
+    std::fs::create_dir_all(&image_model).unwrap();
+    std::fs::create_dir_all(&audio_model).unwrap();
+    std::fs::write(text_model.join("weights.bin"), [1, 2, 3, 4]).unwrap();
+    std::fs::write(image_model.join("weights.bin"), [5, 6]).unwrap();
+    std::fs::write(audio_model.join("weights.bin"), [7, 8, 9]).unwrap();
+    store.record(&row("text-model", &text_model)).unwrap();
+    std::fs::write(source.join("hf_token"), "hf_test").unwrap();
+    let expected_source = source.canonicalize().unwrap();
+
+    set_default_root(Some(source.clone())).unwrap();
+    let outcome = turbospark_catalog::relocate_default_store(&destination, |done, total| {
+        assert!(done <= total);
+    });
+    set_default_root(None).unwrap();
+    let relocation = outcome.unwrap();
+
+    assert_eq!(relocation.source, expected_source);
+    assert_eq!(relocation.destination, destination);
+    assert!(relocation.bytes >= 9);
+    assert!(relocation.files >= 4);
+    assert!(
+        !source.exists(),
+        "the managed source store should be removed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(destination.join("hf_token")).unwrap(),
+        "hf_test"
+    );
+    assert!(destination
+        .join("models/image/image-model.gturbo/weights.bin")
+        .is_file());
+    assert!(destination
+        .join("models/audio/audio-model.gturbo/weights.bin")
+        .is_file());
+
+    let installed = Store::new(&destination).installed();
+    assert_eq!(
+        installed["text-model"].path,
+        destination.join("models/text/text-model.gturbo")
+    );
 }
 
 #[test]

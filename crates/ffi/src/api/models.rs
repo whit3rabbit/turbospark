@@ -1,12 +1,71 @@
 //! Catalog, model inspection, recommendations, and installation C ABI entry points.
 
 use std::os::raw::{c_char, c_int, c_void};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::abi::{self, guard_result};
 use crate::models::{self, TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 use crate::strings;
 use crate::TsInstallCallback;
+
+/// Returns the active process-local model store root.
+#[no_mangle]
+pub unsafe extern "C" fn ts_store_root_get(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        let root = catalog::default_root().ok_or_else(|| {
+            (
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "neither TURBOSPARK_HOME nor HOME is set".to_string(),
+            )
+        })?;
+        let root = root.to_string_lossy();
+        strings::emit(&root, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Sets or clears the active process-local model store root.
+/// Null and empty values restore environment-based resolution.
+#[no_mangle]
+pub unsafe extern "C" fn ts_store_root_set(root: *const c_char) -> c_int {
+    guard_result(|| {
+        let root =
+            strings::optional(root, "root").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        catalog::set_default_root(root.map(Path::new).map(Path::to_path_buf))
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Relocates the managed store and activates the destination on success.
+#[no_mangle]
+pub unsafe extern "C" fn ts_store_relocate(
+    destination: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        if result_json.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "resultJson must not be null".to_string(),
+            ));
+        }
+        let destination = strings::required(destination, "destination")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let relocation = catalog::relocate_default_store(Path::new(destination), |done, total| {
+            if let Some(f) = cb {
+                unsafe {
+                    f(userdata, TS_INSTALL_BYTES, std::ptr::null(), 0, done, total);
+                }
+            }
+        })
+        .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json =
+            serde_json::to_string(&relocation).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
 
 /// The catalog, as a JSON array, each row carrying an `installed` flag.
 #[no_mangle]
