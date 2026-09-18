@@ -121,17 +121,19 @@ impl RealForwardRunner {
         for layer in 0..arch.num_layers as usize {
             self.encode_gemma4_layer_attn_and_router(&pass, layer, position, seq_len, base, 0)?;
 
-            let cb1 = pass.commit();
-            if self.shared_cb_overlap {
-                self.encode_shared_expert_branch(
+            let cb1 = pass.commit().waiting_on_drop();
+            let _shared_pass = if self.shared_cb_overlap {
+                Some(self.encode_shared_expert_branch(
                     layer,
                     hidden,
                     inter,
                     use_silu,
                     &sequential,
                     (&h1, 0),
-                )?;
-            }
+                )?)
+            } else {
+                None
+            };
 
             let t_wait = Instant::now();
             self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
@@ -187,7 +189,7 @@ impl RealForwardRunner {
             )?;
 
             if self.routed_pipeline {
-                pending_routed.set(pass.commit());
+                pending_routed.set(pass.commit().waiting_on_drop());
                 pass = self.context.begin_pass_labeled("cb1 (attn+router)");
             }
         }

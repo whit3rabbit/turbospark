@@ -12,6 +12,8 @@ impl RealForwardRunner {
     /// The shared (dense) expert branch: INT8 gate/up on `dense_x`, gated
     /// activation, down projection, then `post_feedforward_layernorm_1`,
     /// encoded into its own command buffer and committed without waiting.
+    /// The returned handle drains on drop so an error cannot release the
+    /// external no-copy weight backing while this work is still running.
     ///
     /// `slot` names which token of a prefill micro-batch this is; it reads
     /// that token's `dense_x` row. `h1_out` is the row the down
@@ -27,7 +29,7 @@ impl RealForwardRunner {
         use_silu: bool,
         slot: &moe::RoutedSlot,
         h1_out: (&gpu::MetalBuffer, u64),
-    ) -> Result<(), RealForwardError> {
+    ) -> Result<gpu::CommittedPass, RealForwardError> {
         let gpu_err = RealForwardError::Gpu;
         let x_off = (slot.token * hidden * 2) as u64;
         let shared_pass = self.context.begin_pass_labeled("shared-expert cb");
@@ -101,8 +103,7 @@ impl RealForwardRunner {
             RMS_EPS,
         )
         .map_err(gpu_err)?;
-        shared_pass.commit();
-        Ok(())
+        Ok(shared_pass.commit().waiting_on_drop())
     }
 
     /// The same branch for ALL `m` tokens of a prefill micro-batch, in one
@@ -130,7 +131,7 @@ impl RealForwardRunner {
         inter: usize,
         use_silu: bool,
         m: usize,
-    ) -> Result<(), RealForwardError> {
+    ) -> Result<gpu::CommittedPass, RealForwardError> {
         let gpu_err = RealForwardError::Gpu;
         // Cloned up front so the `&mut self.context` borrows below do not
         // contend with the `&self.real` these live behind. Cheap: a
@@ -209,7 +210,6 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
         }
-        shared_pass.commit();
-        Ok(())
+        Ok(shared_pass.commit().waiting_on_drop())
     }
 }
