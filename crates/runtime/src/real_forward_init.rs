@@ -136,6 +136,9 @@ pub(crate) type ExpertStreamersResult = (
     // caller because `Auto` reads the machine, so a second evaluation is not
     // guaranteed to agree with the one the buffers were allocated against.
     usize,
+    // The RESOLVED residency mode, carried with the buffers for the same
+    // reason as the slot count. The runner must report what actually opened.
+    model_io::ResolvedExpertResidency,
     // MAPPED residency, `None` per layer unless the seam is on. Carries the
     // Metal buffers FIRST so they drop before the mappings they alias, the
     // same declaration-order contract `slot_buffers` has against `streamers`.
@@ -183,11 +186,15 @@ pub(crate) fn mapped_residency_requested() -> bool {
 ///
 /// `Auto` defers to the `TURBOSPARK_EXPERT_RESIDENCY=mapped` seam when it is
 /// set -- that seam predates the flag and every mapped test and probe drives
-/// it -- and otherwise to the memory-headroom rule, which TODAY is "always
-/// stream" (see `ExpertResidency::Auto`'s doc for why that is deliberate
-/// and what has to be measured before it flips).
+/// it -- and otherwise to the memory-headroom rule. The caller supplies the
+/// already-read layout cost so this decision is identical before and during
+/// open.
 pub fn resolve_expert_residency(
     requested: model_io::ExpertResidency,
+    physical_bytes: u64,
+    resident_bytes: u64,
+    bytes_per_slot: u64,
+    mapped_supported: bool,
 ) -> model_io::ResolvedExpertResidency {
     use model_io::{ExpertResidency, ResolvedExpertResidency};
     match requested {
@@ -196,11 +203,60 @@ pub fn resolve_expert_residency(
         ExpertResidency::Auto => {
             if mapped_residency_requested() {
                 ResolvedExpertResidency::Mapped
+            } else if mapped_supported
+                && model_io::auto_residency_prefers_mapped(
+                    physical_bytes,
+                    resident_bytes,
+                    bytes_per_slot,
+                )
+            {
+                ResolvedExpertResidency::Mapped
             } else {
                 ResolvedExpertResidency::Streamed
             }
         }
     }
+}
+
+/// Resolve the same policy before Metal allocation, when only an install path
+/// and its architecture are available. The runtime open repeats the layout
+/// read and carries its resolved answer out of `open_expert_streamers`; this
+/// helper makes the CLI, server, FFI and app admission checks use the same
+/// inputs rather than assuming every `Auto` open is streamed.
+#[cfg(target_os = "macos")]
+pub fn resolve_expert_residency_for_install(
+    dir: &Path,
+    family: model_io::ModelFamily,
+    requested: model_io::ExpertResidency,
+    physical_bytes: u64,
+) -> Result<model_io::ResolvedExpertResidency, String> {
+    let resident_bytes = std::fs::metadata(dir.join("model_weights.bin"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let bytes_per_slot = model_io::load_packed_experts_layout(
+        dir,
+        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .map(|layout| layout.layers.iter().map(|layer| layer.expert_stride).sum())
+    .unwrap_or(0);
+    Ok(resolve_expert_residency(
+        requested,
+        physical_bytes,
+        resident_bytes,
+        bytes_per_slot,
+        mapped_residency_supported(family),
+    ))
+}
+
+fn mapped_residency_supported(family: model_io::ModelFamily) -> bool {
+    matches!(
+        family,
+        model_io::ModelFamily::Gemma4
+            | model_io::ModelFamily::QwenGdnMoe
+            | model_io::ModelFamily::Llama
+            | model_io::ModelFamily::Qwen3Moe
+            | model_io::ModelFamily::GptOss
+    )
 }
 
 /// REFUSED BY NAME, NEVER IGNORED, AND NEVER LEFT TO FAIL DOWNSTREAM.
@@ -258,7 +314,14 @@ pub(crate) fn open_expert_streamers(
             layout.experts_per_layer, expecting.num_experts
         )));
     }
-    let resolved_residency = resolve_expert_residency(residency);
+    let bytes_per_slot = layout.layers.iter().map(|l| l.expert_stride).sum::<u64>();
+    let resolved_residency = resolve_expert_residency(
+        residency,
+        gpu::physical_memory(),
+        resident_bytes,
+        bytes_per_slot,
+        mapped_residency_supported(expecting.family),
+    );
 
     // THE SLOT CACHE IS SIZED `slots x layers x expert_stride`, AND THAT
     // PRODUCT IS A PROPERTY OF THE MODEL'S EXPERT GRANULARITY, NOT OF ITS
@@ -347,7 +410,14 @@ pub(crate) fn open_expert_streamers(
         let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
         streamers.resize_with(num_layers, || None);
         let slot_buffers = vec![Vec::new(); num_layers];
-        return Ok((streamers, slot_buffers, Some(layout), resolved, mapped));
+        return Ok((
+            streamers,
+            slot_buffers,
+            Some(layout),
+            resolved,
+            resolved_residency,
+            mapped,
+        ));
     }
 
     let experts_per_layer = layout.experts_per_layer.max(1);
@@ -431,13 +501,14 @@ pub(crate) fn open_expert_streamers(
         slot_buffers,
         experts_layout,
         expert_cache_slots,
+        resolved_residency,
         MappedResidency::default(),
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{mapped_residency_refusal, validate_arch_config};
+    use super::{mapped_residency_refusal, resolve_expert_residency, validate_arch_config};
     use model_io::ModelFamily;
 
     /// EVERY family is listed, not a sample, so adding a `ModelFamily`
@@ -541,5 +612,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn auto_residency_uses_memory_headroom_only_for_wired_families() {
+        let bytes_per_slot = 30 * 3_355_443;
+        assert_eq!(
+            resolve_expert_residency(
+                model_io::ExpertResidency::Auto,
+                16 * 1024 * 1024 * 1024,
+                13 * 1024 * 1024 * 1024,
+                bytes_per_slot,
+                true,
+            ),
+            model_io::ResolvedExpertResidency::Mapped
+        );
+        assert_eq!(
+            resolve_expert_residency(
+                model_io::ExpertResidency::Auto,
+                16 * 1024 * 1024 * 1024,
+                13 * 1024 * 1024 * 1024,
+                bytes_per_slot,
+                false,
+            ),
+            model_io::ResolvedExpertResidency::Streamed
+        );
+        assert_eq!(
+            resolve_expert_residency(
+                model_io::ExpertResidency::Streamed,
+                16 * 1024 * 1024 * 1024,
+                13 * 1024 * 1024 * 1024,
+                bytes_per_slot,
+                true,
+            ),
+            model_io::ResolvedExpertResidency::Streamed
+        );
     }
 }

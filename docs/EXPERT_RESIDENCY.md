@@ -260,9 +260,11 @@ why both paths ship rather than one replacing the other.
   the shape `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` already have:
   both arms must produce identical tokens, so it is a seam first and a feature
   second.
-- No CLI flag yet, and deliberately: `turbospark-bench`, the memory oracles
-  and the quality gates must not sense a knob that moves prefill and footprint
-  by this much (AGENTS.md Gotcha 35). A flag needs the harnesses pinned first.
+- The measurement harnesses remain pinned: `turbospark-bench`, the memory
+  oracles and the quality gates must not sense a knob that moves prefill and
+  footprint by this much (AGENTS.md Gotcha 35). User-facing CLI, server and
+  C ABI opens may use the policy because their resolved mode is reported and
+  the same mode is used for admission sizing.
 - Every frozen row in `crates/bench` is a STREAMED row and stands unchanged. A
   mapped row is a new row, not a re-freeze.
 - **The VISION TOWER has its own mapped arm since 2026-08-30, behind its OWN
@@ -318,12 +320,14 @@ why both paths ship rather than one replacing the other.
 
 - **`--expert-residency auto|streamed|mapped`** exists on `turbospark-check`
   and `turbospark-server` (`model_io::ExpertResidency`, resolved by the ONE
-  resolver `runtime::resolve_expert_residency`, which the open, both front
+  resolver `runtime::resolve_expert_residency`, which the open, all front
   ends' `committed_breakdown_with_residency` sizing and the startup lines all
   share so the budget arithmetic and the allocation cannot disagree about
-  which mode was chosen). `Auto` defers to the `TURBOSPARK_EXPERT_RESIDENCY`
-  seam when set (every mapped test and probe predates the flag and drives
-  it) and otherwise resolves DOWN to streamed; under mapped residency the
+  which mode was chosen). `Auto` defers to the
+  `TURBOSPARK_EXPERT_RESIDENCY=mapped` seam when set. Otherwise it selects
+  mapped only when the minimum streamed cache does not fit the measured
+  headroom budget, and only for a family already wired for mapped access;
+  ordinary installs retain the streamed default. Under mapped residency the
   committed breakdown budgets ZERO slot bytes, which is the whole
   3-GiB-per-open difference between the two arms.
 - **The eviction probe ran** (`crates/bench/tests/

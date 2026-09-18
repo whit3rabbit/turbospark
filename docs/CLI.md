@@ -159,6 +159,7 @@ than one, is a parse error.
 | `--vision-sidecar` | path, or `auto` | none | attach a standalone vision-tower sidecar install to a text-only trunk. `auto` resolves one from the installed store by the trunk's own family and hidden size after the trunk opens: the trunk's own tower wins, zero installed towers runs text-only with the reason on stderr, and two candidate towers REFUSE the open because the revision pin is load-bearing; see [`docs/VISION.md`](VISION.md) |
 | `--rdadvise` | `off\|normal\|aggressive` | `off` | read-ahead hint mode for streamed expert reads (macOS) |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | routed-expert slot cache size; `auto` never resolves below `16` |
+| `--expert-residency` | `auto\|streamed\|mapped` | `auto` | routed-expert storage; `auto` selects mapped only when the minimum streamed cache cannot fit the measured headroom |
 | `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `TURBOSPARK_PREFILL_CHUNK` environment variable overrides when set |
 | `--power-profile` | `performance\|balanced\|efficiency` | `performance` (or `efficiency` under Low Power Mode) | decode rate governance |
 | `--max-tokens-per-sec` | float `> 0` | uncapped (or the efficiency profile's reading speed) | hard decode rate cap |
@@ -300,7 +301,7 @@ to add a row.
 ## `turbospark-server`
 
 ```sh
-turbospark-server --model <path-or-alias> [flags...]
+turbospark-server --model <path-or-alias>... [flags...]
 turbospark-server <tokenizer-dir> [port]   # legacy scripted mode, see below
 ```
 
@@ -322,7 +323,7 @@ unimplemented and uses `GET /health` for liveness.
 
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |
-| `--model` | path or alias | optional | same resolution as `turbospark-check`'s; auto-resolved from `--model-dir` or store if omitted |
+| `--model` | path or alias, repeatable | optional | attach one or more generation installs; exact ids and aliases route requests to the matching install. A single model keeps the legacy unknown-name fallback |
 | `--model-dir` | path | none | directory containing `.gturbo` models; enables auto-discovery (omlx compatibility) |
 | `--port` | u16 | `8080` | listen port |
 | `--max-context` | integer, or `auto` | `auto` | same semantics as `turbospark-check`'s |

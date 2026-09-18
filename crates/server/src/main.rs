@@ -28,25 +28,28 @@ mod bind;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use args::{parse_model_args, short_circuit, BindMode, ModelArgs, USAGE};
+use args::{parse_model_args, short_circuit, usage, BindMode, ModelArgs};
 use tokenizer::MfTokenizer;
 
 #[cfg(target_os = "macos")]
-fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
+fn open_real_model(
+    args: &ModelArgs,
+    model_arg: &str,
+) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
     // `--model` takes a path OR a `turbospark-model` alias, resolved the same
     // way `turbospark-check` resolves it, so one install serves both binaries
     // under one name. An existing directory always wins over an alias: a bare
     // name that silently preferred an alias would serve a DIFFERENT model
     // than the one on the command line, and a server does that unattended.
-    let dir = catalog::resolve_model_arg(&args.model);
+    let dir = catalog::resolve_model_arg(model_arg);
     // A 13 GB install takes a noticeable while to map and compile pipelines
     // for; without this line the startup reads as hung. Print what the
     // argument RESOLVED to when the two differ, since an alias says nothing
     // about which directory is being served.
-    if dir.as_os_str() == args.model.as_str() {
-        eprintln!("opening {} ...", args.model);
+    if dir.as_os_str() == model_arg {
+        eprintln!("opening {model_arg} ...");
     } else {
-        eprintln!("opening {} ({}) ...", args.model, dir.display());
+        eprintln!("opening {model_arg} ({}) ...", dir.display());
     }
     // Resolved once here, which is also the one place this process asks the
     // OS about Low Power Mode.
@@ -68,6 +71,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.session_slots,
         args.vision_sidecar.as_deref().map(std::path::Path::new),
         args.kv_bits,
+        args.expert_residency,
     )?;
     // Both sized figures are the RESOLVED ones, never `args`: under `auto`
     // the request carries no number, and each has to be readable beside any
@@ -77,7 +81,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
     let context = model.context_plan();
     eprintln!(
         "model open (max_context {}{} [{}, {:.0} MiB of KV, suggested {}{}{}], \
-         {} expert cache slots{}, {} profile, rate cap {})",
+         {} expert cache slots{}, {} residency, {} profile, rate cap {})",
         context.resolved,
         if args.max_context.is_none() {
             " (auto)"
@@ -108,6 +112,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         } else {
             ""
         },
+        model.resolved_expert_residency().as_str(),
         profile.as_str(),
         match rate.max_tokens_per_sec {
             Some(r) => format!("{r} tok/s"),
@@ -189,7 +194,10 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
 }
 
 #[cfg(not(target_os = "macos"))]
-fn open_real_model(_args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
+fn open_real_model(
+    _args: &ModelArgs,
+    _model_arg: &str,
+) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
     Err("--model needs macOS and a Metal device; only the scripted \
          <tokenizer-dir> mode is available on this platform"
         .to_string())
@@ -219,18 +227,40 @@ fn open_real_encoder_model(
 fn open_models_registry(
     parsed: &ModelArgs,
 ) -> Result<Arc<dyn turbospark_server::registry::ModelRegistry>, String> {
-    let has_model = !parsed.model.is_empty();
+    let has_model = !parsed.models.is_empty();
 
     match (has_model, &parsed.embedding_model) {
         (true, Some(emb_arg)) => {
-            let chat_model = open_real_model(parsed)?;
-            let emb_model = open_real_encoder_model(emb_arg)?;
-            let registry =
-                turbospark_server::registry::StaticRegistry::new(vec![chat_model, emb_model])?;
+            let mut models: Vec<Arc<dyn turbospark_server::ChatModel>> = parsed
+                .models
+                .iter()
+                .map(|model_arg| open_real_model(parsed, model_arg))
+                .collect::<Result<_, _>>()?;
+            models.push(open_real_encoder_model(emb_arg)?);
+            let registry = turbospark_server::registry::StaticRegistry::new(models)?;
             Ok(Arc::new(registry))
         }
         (true, None) => {
-            let dir = catalog::resolve_model_arg(&parsed.model);
+            if parsed.models.len() > 1 {
+                let mut models: Vec<Arc<dyn turbospark_server::ChatModel>> = Vec::new();
+                for model_arg in &parsed.models {
+                    let dir = catalog::resolve_model_arg(model_arg);
+                    if !dir.join("manifest.json").exists() && dir.join("config.json").exists() {
+                        return Err(format!(
+                            "--model {model_arg} is an embedding install; use --embedding-model for embedding models"
+                        ));
+                    }
+                    models.push(open_real_model(parsed, model_arg)?);
+                }
+                let registry = turbospark_server::registry::StaticRegistry::new(models)?;
+                eprintln!(
+                    "multi-model registry ready: {} generation models route by request model id or alias",
+                    parsed.models.len()
+                );
+                return Ok(Arc::new(registry));
+            }
+            let model_arg = &parsed.models[0];
+            let dir = catalog::resolve_model_arg(model_arg);
             if !dir.join("manifest.json").exists() && dir.join("config.json").exists() {
                 if parsed.pool_size > 1 {
                     return Err(
@@ -238,7 +268,7 @@ fn open_models_registry(
                             .to_string(),
                     );
                 }
-                let emb_model = open_real_encoder_model(&parsed.model)?;
+                let emb_model = open_real_encoder_model(model_arg)?;
                 Ok(Arc::new(turbospark_server::registry::SingleModel::new(
                     emb_model,
                 )))
@@ -248,14 +278,14 @@ fn open_models_registry(
                 // so a member that does not fit fails HERE with the guard's
                 // own subtraction rather than degrading every request later.
                 let n = parsed.pool_size;
-                eprintln!("opening pool of {n} runners of {} ...", parsed.model);
+                eprintln!("opening pool of {n} runners of {model_arg} ...");
                 let mut members: Vec<Arc<dyn turbospark_server::ChatModel>> =
                     Vec::with_capacity(n as usize);
                 for i in 0..n {
                     if i > 0 {
                         eprintln!("opening pool member {}/{n} ...", i + 1);
                     }
-                    let model = open_real_model(parsed).map_err(|e| {
+                    let model = open_real_model(parsed, model_arg).map_err(|e| {
                         format!(
                             "--pool-size {n}: member {} of {n} failed to open: {e}",
                             i + 1
@@ -275,7 +305,7 @@ fn open_models_registry(
                 );
                 Ok(Arc::new(registry))
             } else {
-                let chat_model = open_real_model(parsed)?;
+                let chat_model = open_real_model(parsed, model_arg)?;
                 Ok(Arc::new(turbospark_server::registry::SingleModel::new(
                     chat_model,
                 )))
@@ -319,7 +349,7 @@ fn resolve_api_key(
 async fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        eprintln!("{USAGE}");
+        eprintln!("{}", usage());
         return std::process::ExitCode::from(2);
     }
     if let Some(text) = short_circuit(&args) {

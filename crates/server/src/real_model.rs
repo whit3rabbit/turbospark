@@ -40,6 +40,7 @@ pub struct RealChatModel {
     context: runtime::ContextPlan,
     vocab_size: usize,
     expert_cache_slots: usize,
+    resolved_expert_residency: runtime::ResolvedExpertResidency,
     model_id: String,
     rate: RateControl,
     /// Whether this process may draft ahead, resolved ONCE at open against
@@ -147,6 +148,7 @@ impl RealChatModel {
         session_slots: u32,
         vision_sidecar: Option<&Path>,
         kv_bits: runtime::KvQuant,
+        expert_residency: runtime::ExpertResidency,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         // Captured this early because the open below consumes `arch`: the
@@ -154,12 +156,18 @@ impl RealChatModel {
         // trunk's own family and hidden size, and both are Copy.
         let trunk_family = arch.family;
         let trunk_hidden_size = arch.hidden_size;
-        // Resolved here, ahead of `committed_breakdown` below, so the same
+        // Resolved here, ahead of the committed breakdown below, so the same
         // policy sizes both the context budget and the actual open.
         let expert_cache_slots_policy = match expert_cache_slots {
             Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
             None => runtime::ExpertCacheSlots::Auto,
         };
+        let resolved_expert_residency = runtime::resolve_expert_residency_for_install(
+            model_dir,
+            arch.family,
+            expert_residency,
+            runtime::physical_memory(),
+        )?;
         // Bound rather than computed inline: the vision pixel budget (Part
         // B3) needs the SAME committed-bytes figure `max_context` resolved
         // against, and the `--session-slots` refusal below already reads
@@ -168,10 +176,11 @@ impl RealChatModel {
         // will actually request, not `committed_bytes`'s worst case, so a
         // `--load-guard custom` ceiling is checked against a real
         // allocation.
-        let committed = runtime::committed_breakdown(
+        let committed = runtime::committed_breakdown_with_residency(
             model_dir,
             runtime::physical_memory(),
             expert_cache_slots_policy,
+            resolved_expert_residency,
         );
         let context = runtime::resolve_max_context_with(
             match max_context {
@@ -257,7 +266,7 @@ impl RealChatModel {
         // -- two copies would name different causes the first time they
         // disagreed.
         let choice = runtime::resolve_drafter(drafter, model_dir);
-        let mut runner = RealForwardRunner::open_with_kv_quant(
+        let mut runner = RealForwardRunner::open_with_residency(
             model_dir,
             arch,
             context.resolved as usize,
@@ -266,6 +275,7 @@ impl RealChatModel {
             steering,
             session_slots as usize,
             kv_bits,
+            expert_residency,
         )
         .map_err(|e| e.to_string())?;
         // A request continues from the previous request's KV wherever the
@@ -285,6 +295,7 @@ impl RealChatModel {
         // constant: two checkpoints can share a dialect and pad differently.
         let vocab_size = runner.vocab_size();
         let expert_cache_slots = runner.expert_cache_slots();
+        let resolved_expert_residency = runner.resolved_expert_residency();
         // Vision memory sidecar (Part A4): attach BEFORE computing
         // `preprocess_params` below -- Part A3 already routes that read
         // through `runner.vision_dir()` for exactly this sequence, so
@@ -446,6 +457,7 @@ impl RealChatModel {
             context,
             vocab_size,
             expert_cache_slots,
+            resolved_expert_residency,
             model_id,
             rate,
             speculation: plan,
@@ -571,6 +583,12 @@ impl RealChatModel {
     /// with, for the startup line to report.
     pub fn expert_cache_slots(&self) -> usize {
         self.expert_cache_slots
+    }
+
+    /// The residency mode the runner actually opened with, which is the
+    /// answer that makes a footprint or throughput line interpretable.
+    pub fn resolved_expert_residency(&self) -> runtime::ResolvedExpertResidency {
+        self.resolved_expert_residency
     }
 
     /// How many distinct sessions this runner's pool holds reusable KV/

@@ -63,6 +63,7 @@ pub fn session_for_testing_named(
             trained_context: None,
             past_trained_context: false,
             expert_cache_slots: 0,
+            expert_residency: "streamed".to_string(),
             vocab_size,
             dialect: format!("{:?}", tokenizer.dialect),
             // ASKED rather than asserted, and that is a fix rather than

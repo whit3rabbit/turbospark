@@ -1,5 +1,5 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server [--model <install-dir|alias>] [--embedding-model <install-dir|alias>] [--model-dir PATH] [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--memory-guard TIER] [--memory-guard-gb N] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--max-concurrent-requests N] [--pool-size N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--hf-endpoint URL] [--paged-ssd-cache-dir PATH] [--hot-cache-max-size SIZE] [--mcp-config PATH] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F] [--vision-sidecar PATH|auto] [--kv-bits off|2|3|3.5|4]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --embedding-model    path to an embedding model (.safetensors directory) or alias\n                       to serve for /v1/embeddings alongside generation\n  --model-dir          directory containing .gturbo models (omlx compatibility)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,\n                       relaxed (default), balanced, strict, or a byte ceiling on\n                       what the engine ALLOCATES. relaxed is what shipped before\n                       this flag and what every published memory figure was\n                       measured under; see docs/LOAD_GUARD.md\n  --memory-guard       alias for --load-guard: safe (balanced), balanced, strict,\n                       relaxed, off (omlx compatibility)\n  --memory-guard-gb    set custom memory guard ceiling in gigabytes (omlx compatibility)\n  --min-auto-context   refuse to open when --max-context auto resolves below this\n                       many tokens (default 0, no floor). Says nothing about an\n                       explicit --max-context\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet requires\n                       --api-key or $TURBOSPARK_API_KEY)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default off). When explicitly enabled, a request\n                       continues from the previous request's KV cache wherever\n                       the prompts agree, instead of re-prefilling the whole\n                       transcript. Enable only when every request belongs to one\n                       trusted client: the shared cache is not partitioned by API\n                       key or client, so reuse can expose prefix matches through\n                       response timing. It also raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on,\n                       since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --pool-size          how many independent runners to open of --model's ONE install
+pub const USAGE: &str = "usage: turbospark-server [--model <install-dir|alias>]... [--embedding-model <install-dir|alias>] [--model-dir PATH] [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--memory-guard TIER] [--memory-guard-gb N] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--max-concurrent-requests N] [--pool-size N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--hf-endpoint URL] [--paged-ssd-cache-dir PATH] [--hot-cache-max-size SIZE] [--mcp-config PATH] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F] [--vision-sidecar PATH|auto] [--kv-bits off|2|3|3.5|4]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`); repeat to attach distinct generation models\n  --embedding-model    path to an embedding model (.safetensors directory) or alias\n                       to serve for /v1/embeddings alongside generation\n  --model-dir          directory containing .gturbo models (omlx compatibility)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,\n                       relaxed (default), balanced, strict, or a byte ceiling on\n                       what the engine ALLOCATES. relaxed is what shipped before\n                       this flag and what every published memory figure was\n                       measured under; see docs/LOAD_GUARD.md\n  --memory-guard       alias for --load-guard: safe (balanced), balanced, strict,\n                       relaxed, off (omlx compatibility)\n  --memory-guard-gb    set custom memory guard ceiling in gigabytes (omlx compatibility)\n  --min-auto-context   refuse to open when --max-context auto resolves below this\n                       many tokens (default 0, no floor). Says nothing about an\n                       explicit --max-context\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet requires\n                       --api-key or $TURBOSPARK_API_KEY)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default off). When explicitly enabled, a request\n                       continues from the previous request's KV cache wherever\n                       the prompts agree, instead of re-prefilling the whole\n                       transcript. Enable only when every request belongs to one\n                       trusted client: the shared cache is not partitioned by API\n                       key or client, so reuse can expose prefix matches through\n                       response timing. It also raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on,\n                       since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --pool-size          how many independent runners to open of --model's ONE install
                        (default 1, i.e. one runner per process as always). N > 1
                        serves N CONCURRENT generations of one model: each member
                        has its own KV, session pool and admission gate, and
@@ -10,9 +10,23 @@ pub const USAGE: &str = "usage: turbospark-server [--model <install-dir|alias>] 
 
 pub use crate::bind::BindMode;
 
+/// Add flags introduced after the legacy usage string was frozen. Keeping
+/// this small compatibility shim avoids duplicating the long help text while
+/// ensuring `--help` advertises every accepted residency mode.
+pub fn usage() -> String {
+    USAGE.replace(
+        "[--expert-cache-slots auto|N]",
+        "[--expert-cache-slots auto|N] [--expert-residency auto|streamed|mapped]",
+    )
+}
+
 /// Parsed command line arguments for running `turbospark-server` in `--model` mode.
 #[derive(Debug)]
 pub struct ModelArgs {
+    /// Every explicitly attached generation install, in command-line order.
+    /// `model` remains the first entry for compatibility with existing
+    /// callers and diagnostics; multi-install startup uses this complete list.
+    pub models: Vec<String>,
     pub model: String,
     /// How many independent runners to open of `--model`'s ONE install
     /// (ROADMAP P3.6). 1 is every pre-flag behaviour; N > 1 opens N
@@ -36,6 +50,9 @@ pub struct ModelArgs {
     /// `Option` rather than reusing `invocation`'s enum because this binary
     /// has its own flat parser and does not depend on that crate.
     pub expert_cache_slots: Option<u32>,
+    /// Routed-expert storage policy, resolved against the install and machine
+    /// at open. Auto remains streamed when the minimum cache fits.
+    pub expert_residency: runtime::ExpertResidency,
     pub bind: BindMode,
     /// ROADMAP Phase P2. Process-level, like every other flag here: there
     /// is one runner per process, so there is nothing per-request to vary.
@@ -127,11 +144,13 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         return Ok(None);
     }
     let mut parsed = ModelArgs {
+        models: Vec::new(),
         model: String::new(),
         embedding_model: None,
         port: 8080,
         max_context: None,
         expert_cache_slots: None,
+        expert_residency: runtime::ExpertResidency::Auto,
         bind: BindMode::Loopback,
         power_profile: None,
         load_policy: runtime::LoadPolicy::default(),
@@ -188,7 +207,12 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
             .ok_or_else(|| format!("{flag} needs a value"))?;
         let number = || value.parse::<u32>().map_err(|e| format!("{flag}: {e}"));
         match flag {
-            "--model" => parsed.model = value.clone(),
+            "--model" => {
+                if parsed.model.is_empty() {
+                    parsed.model = value.clone();
+                }
+                parsed.models.push(value.clone());
+            }
             "--embedding-model" => parsed.embedding_model = Some(value.clone()),
             "--port" => parsed.port = value.parse::<u16>().map_err(|e| format!("--port: {e}"))?,
             "--max-context" => {
@@ -215,6 +239,12 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 } else {
                     Some(number()?)
                 }
+            }
+            "--expert-residency" => {
+                parsed.expert_residency =
+                    runtime::ExpertResidency::parse(value).ok_or_else(|| {
+                        format!("--expert-residency must be auto, streamed or mapped, not {value}")
+                    })?;
             }
             "--bind" => {
                 parsed.bind = match value.as_str() {
@@ -468,10 +498,11 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         }
         i += 2;
     }
-    if parsed.model.is_empty() {
+    if parsed.models.is_empty() {
         if let Some(ref dir) = parsed.model_dir {
             if dir.join("manifest.json").exists() {
                 parsed.model = dir.display().to_string();
+                parsed.models.push(parsed.model.clone());
             } else if dir.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(dir) {
                     let mut found = Vec::new();
@@ -487,6 +518,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     found.sort();
                     if let Some(first) = found.into_iter().next() {
                         parsed.model = first.display().to_string();
+                        parsed.models.push(parsed.model.clone());
                     }
                 }
             }
@@ -508,13 +540,22 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
             ));
         }
     } else if let Some(ref dir) = parsed.model_dir {
-        let direct = dir.join(&parsed.model);
-        let with_ext = dir.join(format!("{}.gturbo", parsed.model));
-        if direct.exists() {
-            parsed.model = direct.display().to_string();
-        } else if with_ext.exists() {
-            parsed.model = with_ext.display().to_string();
+        for model in &mut parsed.models {
+            let direct = dir.join(&*model);
+            let with_ext = dir.join(format!("{}.gturbo", model));
+            if direct.exists() {
+                *model = direct.display().to_string();
+            } else if with_ext.exists() {
+                *model = with_ext.display().to_string();
+            }
         }
+        parsed.model = parsed.models[0].clone();
+    }
+    if parsed.models.len() > 1 && parsed.pool_size > 1 {
+        return Err(
+            "--pool-size cannot be combined with multiple --model flags; repeat --model for distinct installs, or use --pool-size for one install"
+                .to_string(),
+        );
     }
     // NAMING BOTH IS REFUSED RATHER THAN RESOLVED. They are two spellings of
     // one setting, so a command line carrying both says two things, and
@@ -668,7 +709,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
 /// `crates/invocation`'s scan returns at the token for the same reason.
 pub fn short_circuit(args: &[String]) -> Option<String> {
     args.iter().find_map(|arg| match arg.as_str() {
-        "--help" | "-h" => Some(format!("{USAGE}\n")),
+        "--help" | "-h" => Some(format!("{}\n", usage())),
         // From cargo, not a literal, and deliberately NOT by depending on
         // `turbospark-invocation` for its `render_version`: every crate here
         // inherits `version.workspace = true`, so this env var is the same

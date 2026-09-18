@@ -24,8 +24,8 @@ pub use failure::ParseFailure;
 pub use options::{OptionDecl, OPTIONS};
 pub use parser::{parse, ParseOutcome};
 pub use request::{
-    steering_knob, ExpertCacheSlots, InvocationRequest, KvBits, LoadGuard, MaxContext, Mode,
-    PowerProfile, PrefillChunk, ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter,
-    SteeringMode, ALLOWED_SPECULATION_BLOCKS,
+    steering_knob, ExpertCacheSlots, ExpertResidency, InvocationRequest, KvBits, LoadGuard,
+    MaxContext, Mode, PowerProfile, PrefillChunk, ReadAheadMode, ReasoningEffort, Speculation,
+    SpeculativeDrafter, SteeringMode, ALLOWED_SPECULATION_BLOCKS,
 };
 pub use usage::{render_usage, render_version, VERSION};

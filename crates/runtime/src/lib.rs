@@ -82,13 +82,14 @@ pub use encoder::{cosine_similarity, EncoderRunner};
 // this is where a reader of the decode engine expects to find them named.
 #[cfg(target_os = "macos")]
 pub use model_io::{
-    committed_breakdown, committed_bytes, gdn_state_bytes, kv_bytes_for_context,
-    kv_bytes_for_context_with, largest_context_within, largest_context_within_with,
-    resolve_max_context, resolve_max_context_with, session_pool_bytes, session_pool_bytes_with,
-    CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap, ContextPlan, ContextRefused,
-    ContextTooLarge, ExpertCacheSlots, ExpertResidency, GuardBudget, KvQuant, LoadGuard,
-    LoadPolicy, MaxContext, ResolvedExpertResidency, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
-    CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_breakdown, committed_breakdown_with_residency, committed_bytes, gdn_state_bytes,
+    kv_bytes_for_context, kv_bytes_for_context_with, largest_context_within,
+    largest_context_within_with, resolve_max_context, resolve_max_context_with, session_pool_bytes,
+    session_pool_bytes_with, CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap,
+    ContextPlan, ContextRefused, ContextTooLarge, ExpertCacheSlots, ExpertResidency, GuardBudget,
+    KvQuant, LoadGuard, LoadPolicy, MaxContext, ResolvedExpertResidency, CONTEXT_BUDGET_FRACTION,
+    CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES,
+    MAX_SUPPORTED_CONTEXT,
 };
 
 pub use error::RuntimeError;
@@ -117,7 +118,7 @@ pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };
 #[cfg(target_os = "macos")]
-pub use real_forward_init::resolve_expert_residency;
+pub use real_forward_init::{resolve_expert_residency, resolve_expert_residency_for_install};
 // The drafter/speculation policy, shared by `turbospark-check` and
 // `turbospark-server`. It lived in the CLI until the server needed the same
 // three decisions in the same order; see `speculation_policy`'s own header

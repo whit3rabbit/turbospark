@@ -65,6 +65,7 @@ fn an_image_turn_prefills_in_chunk_spans_not_per_token() {
         1,
         None,
         KvQuant::Off,
+        runtime::ExpertResidency::Auto,
     )
     .expect("the vision install should open");
     let model: Arc<dyn ChatModel> = Arc::new(model);

@@ -126,7 +126,7 @@ impl RealForwardRunner {
         .map_err(RealForwardError::Gpu)?;
         let scratch = DecodeScratch::new(&context, &expecting, kv_quant);
 
-        let (streamers, slot_buffers, experts_layout, resolved_slots, mapped) =
+        let (streamers, slot_buffers, experts_layout, resolved_slots, resolved_residency, mapped) =
             crate::real_forward_init::open_expert_streamers(
                 dir,
                 &expecting,
@@ -198,7 +198,7 @@ impl RealForwardRunner {
             scratch,
             slot_buffers,
             expert_cache_slots: resolved_slots,
-            resolved_residency: crate::real_forward_init::resolve_expert_residency(residency),
+            resolved_residency,
             streamers,
             mapped,
             moe_offsets,

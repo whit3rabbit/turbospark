@@ -30,7 +30,9 @@ use std::sync::{Arc, Mutex};
 use tokenizer::MfTokenizer;
 
 use crate::session::{Engine, Session, SessionCore};
-use crate::wire::{kv_bits, load_guard, sized, OpenOptions, SessionInfo, SpeculationInfo};
+use crate::wire::{
+    expert_residency, kv_bits, load_guard, sized, OpenOptions, SessionInfo, SpeculationInfo,
+};
 
 /// Maps the wire spelling of a power profile.
 fn power_profile(name: &str) -> Result<runtime::PowerProfile, String> {
@@ -197,6 +199,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // and `ts_probe_json` take the same knob now, and a second copy of an
     // allowed set is the thing that goes stale.
     let expert_cache_slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)?;
+    let requested_expert_residency = expert_residency(&options.expert_residency)?;
     // Mapped here with the rest, BEFORE anything is read from disk, so a
     // misspelled tier outranks a bad path in the error -- the rule this file
     // already follows, and what lets the SwiftPM target reach these spellings
@@ -270,8 +273,18 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // slot cache to what THIS open will actually request (`expert_cache_slots`,
     // already mapped above), not `committed_bytes`'s worst case, so a
     // `loadGuard: "custom"` ceiling is checked against a real allocation.
-    let committed =
-        runtime::committed_breakdown(dir, runtime::physical_memory(), expert_cache_slots);
+    let resolved_expert_residency = runtime::resolve_expert_residency_for_install(
+        dir,
+        arch.family,
+        requested_expert_residency,
+        runtime::physical_memory(),
+    )?;
+    let committed = model_io::committed_breakdown_with_residency(
+        dir,
+        runtime::physical_memory(),
+        expert_cache_slots,
+        resolved_expert_residency,
+    );
     let plan = runtime::resolve_max_context_with(
         match max_context {
             Some(n) => runtime::MaxContext::Fixed(n),
@@ -332,7 +345,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // front ends disagree, which is why that module left `crates/cli` when
     // the server needed it.
     let choice = runtime::resolve_drafter(requested_drafter, dir);
-    let mut runner = runtime::RealForwardRunner::open_with_kv_quant(
+    let mut runner = runtime::RealForwardRunner::open_with_residency(
         dir,
         arch,
         plan.resolved as usize,
@@ -341,6 +354,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         steering_policy.clone(),
         1,
         kv_quant,
+        requested_expert_residency,
     )
     .map_err(|e| e.to_string())?;
     // **THE ONE PLACE THIS FILE DELIBERATELY DOES NOT MIRROR
@@ -463,6 +477,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         // installs and not others.
         past_trained_context: plan.past_trained,
         expert_cache_slots: runner.expert_cache_slots(),
+        expert_residency: runner.resolved_expert_residency().as_str().to_string(),
         vocab_size: runner.vocab_size(),
         dialect: format!("{:?}", tokenizer.dialect),
         reasoning_support: match tokenizer.reasoning_support() {

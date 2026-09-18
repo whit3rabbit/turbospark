@@ -17,6 +17,26 @@ fn an_absent_speculation_is_auto() {
 }
 
 #[test]
+fn expert_residency_accepts_the_three_modes_and_rejects_typos() {
+    assert_eq!(
+        expert_residency(&None).unwrap(),
+        model_io::ExpertResidency::Auto
+    );
+    for (spelling, expected) in [
+        ("auto", model_io::ExpertResidency::Auto),
+        ("streamed", model_io::ExpertResidency::Streamed),
+        ("mapped", model_io::ExpertResidency::Mapped),
+    ] {
+        assert_eq!(
+            expert_residency(&Some(spelling.to_string())).unwrap(),
+            expected
+        );
+    }
+    let error = expert_residency(&Some("mmap".to_string())).unwrap_err();
+    assert!(error.contains("expertResidency"));
+}
+
+#[test]
 fn a_block_is_accepted_as_a_number_and_as_a_string() {
     // Both spellings, for `sized`'s reason: a Swift enum encoding a
     // mixed number/string value may choose either, and two meanings for

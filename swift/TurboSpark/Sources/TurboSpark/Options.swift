@@ -29,6 +29,14 @@ public struct OpenOptions: Encodable, Sendable {
         case efficiency
     }
 
+    /// Routed-expert storage policy. `auto` maps only when the minimum
+    /// streamed cache cannot fit the measured memory headroom.
+    public enum ExpertResidency: String, Encodable, Sendable {
+        case auto
+        case streamed
+        case mapped
+    }
+
     /// Whether and how far this session drafts ahead.
     ///
     /// Settled when the model is OPENED, because that is where the
@@ -159,6 +167,8 @@ public struct OpenOptions: Encodable, Sendable {
     public var maxContext: Sizing?
     /// Expert cache slot sizing for MoE models.
     public var expertCacheSlots: Sizing?
+    /// Routed-expert storage mode; `nil` means `.auto`.
+    public var expertResidency: ExpertResidency?
     /// `nil` ASKS THE OS, so Low Power Mode selects efficiency. Name one
     /// explicitly when measuring anything.
     public var powerProfile: PowerProfile?
@@ -198,6 +208,7 @@ public struct OpenOptions: Encodable, Sendable {
     public init(
         maxContext: Sizing? = nil,
         expertCacheSlots: Sizing? = nil,
+        expertResidency: ExpertResidency? = nil,
         powerProfile: PowerProfile? = nil,
         maxTokensPerSec: Double? = nil,
         loadGuard: LoadGuard? = nil,
@@ -215,6 +226,7 @@ public struct OpenOptions: Encodable, Sendable {
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
+        self.expertResidency = expertResidency
         self.powerProfile = powerProfile
         self.maxTokensPerSec = maxTokensPerSec
         self.loadGuard = loadGuard

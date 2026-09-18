@@ -216,6 +216,34 @@ fn model_mode_defaults_and_overrides() {
     assert!(parse(&["--model", "/tmp/m", "--max-context", "lots"]).is_err());
 }
 
+#[test]
+fn repeated_model_flags_attach_distinct_installs_in_order() {
+    let parsed = parse(&[
+        "--model",
+        "/tmp/alpha.gturbo",
+        "--model",
+        "/tmp/beta.gturbo",
+    ])
+    .unwrap()
+    .unwrap();
+    assert_eq!(parsed.model, "/tmp/alpha.gturbo");
+    assert_eq!(parsed.models, vec!["/tmp/alpha.gturbo", "/tmp/beta.gturbo"]);
+}
+
+#[test]
+fn a_multi_install_registry_cannot_also_request_a_same_install_pool() {
+    let err = parse(&[
+        "--model",
+        "/tmp/alpha.gturbo",
+        "--model",
+        "/tmp/beta.gturbo",
+        "--pool-size",
+        "2",
+    ])
+    .unwrap_err();
+    assert!(err.contains("multiple --model flags"), "{err}");
+}
+
 /// **A flag-led invocation must not fall through to the scripted mode.**
 /// The mode test used to be `args[0] == "--model"`, so
 /// `--port 8080 --model X` was read as a positional TOKENIZER DIRECTORY

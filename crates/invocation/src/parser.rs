@@ -8,10 +8,10 @@
 use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
-    ExpertCacheSlots, InvocationRequest, KvBits, LoadGuard, MaxContext, Mode, PowerProfile,
-    PrefillChunk, ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, SteeringMode,
-    ALLOWED_SPECULATION_BLOCKS, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE,
-    DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
+    ExpertCacheSlots, ExpertResidency, InvocationRequest, KvBits, LoadGuard, MaxContext, Mode,
+    PowerProfile, PrefillChunk, ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter,
+    SteeringMode, ALLOWED_SPECULATION_BLOCKS, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY,
+    DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
 };
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 
@@ -68,6 +68,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut image_batch = false;
     let mut rdadvise = ReadAheadMode::default();
     let mut expert_cache_slots = ExpertCacheSlots::default();
+    let mut expert_residency = ExpertResidency::default();
     let mut speculation = Speculation::default();
     let mut speculative_drafter = SpeculativeDrafter::default();
     // Repeatable and ORDER-PRESERVING: the i-th occurrence of each knob
@@ -212,6 +213,10 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                     }
                 }
             }
+            "--expert-residency" => match ExpertResidency::parse(value) {
+                Some(mode) => expert_residency = mode,
+                None => return invalid("--expert-residency", value),
+            },
             "--speculative" => match value.as_str() {
                 "auto" => speculation = Speculation::Auto,
                 "off" => speculation = Speculation::Off,
@@ -453,11 +458,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         reasoning,
         kv_bits,
         quiet,
-        // PLACEHOLDER so the tree compiles while the --expert-residency parse
-        // arm is in flight in another session: flipped to the shorthand once
-        // the local binding exists. `Auto` is the request's documented
-        // default, identical to the pre-flag behaviour.
-        expert_residency: Default::default(),
+        expert_residency,
     })
 }
 

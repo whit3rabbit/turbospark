@@ -22,6 +22,9 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     /// The RESOLVED slot count. No throughput or footprint figure is
     /// readable without it.
     public let expertCacheSlots: Int
+    /// The routed-expert storage mode the session actually opened with.
+    /// Optional for compatibility with older hosts that do not report it.
+    public let expertResidency: String?
     public let vocabSize: Int
     public let dialect: String
     /// What KIND of reasoning control is meaningful. See `reasoningLevels`

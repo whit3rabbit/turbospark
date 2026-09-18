@@ -36,6 +36,27 @@ pub const HEADROOM_RESERVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// the size of this engine can run beside it without the machine swapping.
 pub const HEADROOM_FRACTION: f64 = 0.25;
 
+/// Whether the minimum streamed cache would exceed the memory budget that
+/// `Auto` is allowed to consume. Mapped residency is the conservative escape
+/// hatch for that case: it removes the pinned slot cache while preserving the
+/// install's resident weights and the reserved headroom.
+///
+/// This stays pure so every front end can make the same decision before it
+/// asks the runtime to allocate Metal buffers. A zero physical-memory report
+/// is treated as unknown, not as permission to map.
+pub fn auto_residency_prefers_mapped(
+    physical_bytes: u64,
+    resident_bytes: u64,
+    bytes_per_slot: u64,
+) -> bool {
+    if physical_bytes == 0 || bytes_per_slot == 0 {
+        return false;
+    }
+    let free = physical_bytes.saturating_sub(resident_bytes.saturating_add(HEADROOM_RESERVE_BYTES));
+    let budget = (free as f64 * HEADROOM_FRACTION) as u64;
+    (DEFAULT_CACHE_SLOTS as u64).saturating_mul(bytes_per_slot) > budget
+}
+
 /// Routed-expert cache sizing, as it reaches `runtime::RealForwardRunner`.
 ///
 /// The mirror of `turbospark_invocation::ExpertCacheSlots`, spelled again
@@ -121,12 +142,10 @@ fn auto_slots(physical_bytes: u64, resident_bytes: u64, bytes_per_slot: u64) -> 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExpertResidency {
     /// Defer to the `TURBOSPARK_EXPERT_RESIDENCY=mapped` seam when set, and
-    /// otherwise to the memory-headroom rule -- which TODAY always resolves
-    /// down to `Streamed`, deliberately: `docs/EXPERT_RESIDENCY.md` records
-    /// that flipping `Auto` up to mapped requires the eviction behaviour
-    /// under real memory pressure to be measured first
-    /// (`crates/bench/tests/mapped_residency_eviction.rs`), and no frozen
-    /// row may move because a default started sensing (AGENTS.md Gotcha 35).
+    /// otherwise let the runtime choose mapped when the minimum streamed cache
+    /// cannot fit inside the measured headroom budget. A machine with enough
+    /// room keeps the historical streamed default, so ordinary quality and
+    /// throughput rows do not move merely because this default senses memory.
     #[default]
     Auto,
     /// The `pread` streamer with its pinned slot cache. What every frozen
@@ -303,6 +322,26 @@ mod tests {
             auto_slots(36 * GIB, 4 * GIB, 0),
             DEFAULT_CACHE_SLOTS as usize
         );
+    }
+
+    #[test]
+    fn auto_residency_maps_only_when_the_minimum_streamed_cache_does_not_fit() {
+        assert!(!auto_residency_prefers_mapped(
+            36 * GIB,
+            GEMMA4_RESIDENT,
+            GEMMA4_BYTES_PER_SLOT
+        ));
+        assert!(auto_residency_prefers_mapped(
+            16 * GIB,
+            GEMMA4_RESIDENT,
+            GEMMA4_BYTES_PER_SLOT
+        ));
+        assert!(!auto_residency_prefers_mapped(
+            0,
+            GEMMA4_RESIDENT,
+            GEMMA4_BYTES_PER_SLOT
+        ));
+        assert!(!auto_residency_prefers_mapped(36 * GIB, GEMMA4_RESIDENT, 0));
     }
 
     /// `Fixed` is the identity, including for values `Auto` would never

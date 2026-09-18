@@ -63,6 +63,17 @@ pub fn expert_cache_slots(
     }
 }
 
+/// Reads the routed-expert residency policy. Absent and `null` mean `auto`;
+/// a typo is rejected before an install is opened.
+pub fn expert_residency(value: &Option<String>) -> Result<model_io::ExpertResidency, String> {
+    match value.as_deref() {
+        None => Ok(model_io::ExpertResidency::Auto),
+        Some(raw) => model_io::ExpertResidency::parse(raw).ok_or_else(|| {
+            format!("expertResidency must be auto, streamed or mapped, got {raw:?}")
+        }),
+    }
+}
+
 /// Reads a load guard that may be a tier NAME, a byte ceiling, `null`, or
 /// absent.
 ///
@@ -149,6 +160,9 @@ pub struct ProbeOptions {
 pub struct OpenOptions {
     pub max_context: Option<serde_json::Value>,
     pub expert_cache_slots: Option<serde_json::Value>,
+    /// `auto` | `streamed` | `mapped`. Absent means `auto`, which maps only
+    /// when the minimum streamed cache cannot fit the measured headroom.
+    pub expert_residency: Option<String>,
     /// `performance` | `balanced` | `efficiency`. Absent means ASK THE OS,
     /// which is what a user-facing binary should do (Low Power Mode selects
     /// `efficiency`) and what a measurement harness must not.
@@ -556,6 +570,8 @@ pub struct SessionInfo {
     /// The RESOLVED slot count. Worth 44.2 tok/s against 51.2 on one
     /// install, so no throughput or footprint figure is readable without it.
     pub expert_cache_slots: usize,
+    /// The residency mode the session actually opened with.
+    pub expert_residency: String,
     pub vocab_size: usize,
     pub dialect: String,
     /// `level` | `toggleOnly` | `none`. Says what KIND of control is

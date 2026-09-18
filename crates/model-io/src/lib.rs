@@ -54,8 +54,8 @@ pub use context_policy::{
 pub use encoder_config::{EncoderConfig, EncoderQuantization};
 pub use error::ModelError;
 pub use expert_cache_policy::{
-    ExpertCacheSlots, ExpertResidency, ResolvedExpertResidency, HEADROOM_FRACTION,
-    HEADROOM_RESERVE_BYTES,
+    auto_residency_prefers_mapped, ExpertCacheSlots, ExpertResidency, ResolvedExpertResidency,
+    HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES,
 };
 pub use install_receipt::{
     load as load_install_receipt, validate as validate_install_receipt,

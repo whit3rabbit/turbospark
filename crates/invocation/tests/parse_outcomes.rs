@@ -5,8 +5,8 @@
 
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CHUNK_SIZE};
 use turbospark_invocation::{
-    parse, ExpertCacheSlots, InvocationRequest, KvBits, MaxContext, Mode, ParseOutcome,
-    PowerProfile, PrefillChunk, ReasoningEffort, Speculation,
+    parse, ExpertCacheSlots, ExpertResidency, InvocationRequest, KvBits, MaxContext, Mode,
+    ParseOutcome, PowerProfile, PrefillChunk, ReasoningEffort, Speculation,
 };
 
 fn tok(items: &[&str]) -> Vec<String> {
@@ -153,6 +153,27 @@ fn every_documented_slot_count_is_accepted_and_auto_is_a_value() {
         "auto",
     ])));
     assert_eq!(req.expert_cache_slots, ExpertCacheSlots::Auto);
+}
+
+#[test]
+fn expert_residency_round_trips_and_defaults_to_auto() {
+    let default = expect_success(parse(&tok(&["--model", "m", "--prompt", "hi"]))).expert_residency;
+    assert_eq!(default, ExpertResidency::Auto);
+    for (spelling, expected) in [
+        ("auto", ExpertResidency::Auto),
+        ("streamed", ExpertResidency::Streamed),
+        ("mapped", ExpertResidency::Mapped),
+    ] {
+        let req = expect_success(parse(&tok(&[
+            "--model",
+            "m",
+            "--prompt",
+            "hi",
+            "--expert-residency",
+            spelling,
+        ])));
+        assert_eq!(req.expert_residency, expected);
+    }
 }
 
 /// The THIRD flag on the `auto`-or-a-value grammar, and the second whose

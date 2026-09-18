@@ -19,13 +19,17 @@ cargo run --release -p turbospark-server --bin turbospark-server -- \
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo --pool-size 2
 
+# Attach distinct installs and route requests by model id or alias
+cargo run --release -p turbospark-server --bin turbospark-server -- \
+  --model ~/models/gemma4.gturbo --model ~/models/qwen38-27b.gturbo
+
 # Launch scripted server (canned completions, for client integration testing)
 cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 ```
 
 ## Key Modules
 
-- `main.rs` & `args.rs`: Binary entry point and command-line flag parser (`--model`, `--bind`, `--port`, `--pool-size`, `--api-key`, `--max-queue-depth`).
+- `main.rs` & `args.rs`: Binary entry point and command-line flag parser (`--model`, repeatable for distinct installs, `--bind`, `--port`, `--pool-size`, `--api-key`, `--max-queue-depth`).
 - `handler/`: Core handlers for `/v1/chat/completions`, `/v1/models`, and `/health`, and generation orchestration (`plan`, `run_full`, `stream_blocking`).
 - `messages.rs`: Handler for Anthropic `/v1/messages` and `/v1/messages/count_tokens`, translating Anthropic messages to/from the OpenAI pipeline.
 - `completions.rs`: Handler for legacy OpenAI `/v1/completions` (raw prompts without chat templates).

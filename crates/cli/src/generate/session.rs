@@ -116,6 +116,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         invocation::ExpertCacheSlots::Auto => runtime::ExpertCacheSlots::Auto,
         invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
     };
+    let expert_residency = map_expert_residency(request.expert_residency);
+    let resolved_residency = runtime::resolve_expert_residency_for_install(
+        model_dir,
+        arch.family,
+        expert_residency,
+        runtime::physical_memory(),
+    )?;
     // `--kv-bits` has to reach this budget too: a quantized KV cache costs
     // fewer bytes per context than the FP16 estimate `resolve_max_context`
     // (the non-`_with` wrapper) assumes, which under-admits a window this
@@ -127,8 +134,12 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // resolves the slot cache to what THIS open will actually request,
     // rather than `committed_bytes`'s worst case, so the `--load-guard
     // custom` ceiling below is checked against a real allocation.
-    let committed =
-        runtime::committed_breakdown(model_dir, runtime::physical_memory(), expert_cache_slots);
+    let committed = model_io::committed_breakdown_with_residency(
+        model_dir,
+        runtime::physical_memory(),
+        expert_cache_slots,
+        resolved_residency,
+    );
     let plan = runtime::resolve_max_context_with(
         match request.max_context {
             invocation::MaxContext::Auto => runtime::MaxContext::Auto,
@@ -178,7 +189,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let asked = map_speculation(request.speculation);
     let choice = resolve_drafter(map_drafter(request.speculative_drafter), model_dir);
     let steering = resolve_steering(request)?;
-    let mut runner = RealForwardRunner::open_with_kv_quant(
+    let mut runner = RealForwardRunner::open_with_residency(
         model_dir,
         arch,
         plan.resolved as usize,
@@ -187,6 +198,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         steering,
         1,
         kv_quant,
+        expert_residency,
     )
     .map_err(|e| e.to_string())?;
     // Reported only when NOT off, matching `--load-guard`'s convention
@@ -283,6 +295,10 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // same Gemma 4 install (`docs/DECODE_BUDGET.md`), so no throughput or
     // footprint figure from this run is readable without it.
     if !request.quiet {
+        eprintln!(
+            "expert residency: {}",
+            runner.resolved_expert_residency().as_str()
+        );
         eprintln!(
             "expert cache: {} slots per layer{}",
             runner.expert_cache_slots(),
@@ -442,6 +458,14 @@ fn map_drafter(drafter: invocation::SpeculativeDrafter) -> runtime::SpeculativeD
         invocation::SpeculativeDrafter::Auto => runtime::SpeculativeDrafter::Auto,
         invocation::SpeculativeDrafter::Mtp => runtime::SpeculativeDrafter::Mtp,
         invocation::SpeculativeDrafter::Dflash => runtime::SpeculativeDrafter::Dflash,
+    }
+}
+
+fn map_expert_residency(residency: invocation::ExpertResidency) -> runtime::ExpertResidency {
+    match residency {
+        invocation::ExpertResidency::Auto => runtime::ExpertResidency::Auto,
+        invocation::ExpertResidency::Streamed => runtime::ExpertResidency::Streamed,
+        invocation::ExpertResidency::Mapped => runtime::ExpertResidency::Mapped,
     }
 }
 
