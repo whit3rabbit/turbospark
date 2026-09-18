@@ -940,6 +940,17 @@ byte callback is *also* called concurrently from worker threads.
 
 ### The surface
 
+Image catalog and installation are separate from text model catalog rows. The
+C ABI exposes `ts_image_catalog_json` for curated image sources,
+`ts_image_installed_json` for verified `.image.gturbo` installs, and
+`ts_image_install` for staged source download and packing. Swift wraps these
+as `TurboSparkCatalog.imageAvailable()`,
+`TurboSparkCatalog.imageInstalled()`, and
+`TurboSparkCatalog.installImage(_:)`. The install event stream reports stage,
+monotonic byte-progress handling remains the caller's responsibility, and a
+finished event returns an `ImageInstalledModel` with the verified path and
+image metadata.
+
 Image generation is a separate surface from token generation. `TsImageSession`
 opens a verified `.image.gturbo` install, `ts_image_generate` blocks on one
 serialized heavyweight job, stage callbacks borrow their text only for the
@@ -998,6 +1009,8 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_server_poll_events_json(server, max, out)` | drain server event ring buffer |
 | `ts_catalog_json(out)` | every platform |
 | `ts_installed_json(out)` | every platform |
+| `ts_image_catalog_json(out)` | curated image sources, every platform |
+| `ts_image_installed_json(out)` | installed `.image.gturbo` rows, every platform |
 | `ts_model_delete(alias)` | delete installed model directory and forget row |
 | `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
@@ -1007,6 +1020,7 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_install_bytes_json(alias, out)` | cost before committing |
 | `ts_install(alias, cb, ud, out)` | blocks for minutes; cannot resume |
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
+| `ts_image_install(alias, cb, ud, out)` | download and pack a curated image source; cannot resume |
 | `ts_embedding_encode_json(model_path, texts_json, out)` | standalone batch text embedding generation |
 | `ts_cosine_similarity(a, b, len)` | cosine similarity between two float vectors |
 | `ts_image_session_open(model_dir, out)` | open a verified `.image.gturbo` install |

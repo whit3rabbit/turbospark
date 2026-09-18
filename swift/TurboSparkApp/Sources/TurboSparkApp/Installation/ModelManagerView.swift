@@ -10,6 +10,14 @@ struct ModelManagerView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var orgStore = ModelOrganizationStore.shared
 
+    private enum ManagerSection: String, CaseIterable, Identifiable {
+        case text
+        case images
+
+        var id: String { rawValue }
+    }
+
+    @State private var managerSection: ManagerSection = .text
     @State private var searchText = ""
     @State private var architectureFilter: ArchitectureFilter = .all
     @State private var drafterFilter: DrafterFilter = .all
@@ -23,7 +31,38 @@ struct ModelManagerView: View {
     var body: some View {
         VStack(spacing: 0) {
             ModelManagerHeaderView(model: model)
+            managerSectionPicker
             Divider()
+            if managerSection == .text {
+                textModelContent
+            } else {
+                ImageModelManagerView(model: model)
+            }
+        }
+        .task {
+            if selectedModelPath == nil {
+                selectedModelPath = model.selected?.path ?? model.installed.first?.path
+            }
+        }
+    }
+
+    private var managerSectionPicker: some View {
+        HStack {
+            Picker("Installed model type", selection: $managerSection) {
+                Text("Text Models", bundle: .module).tag(ManagerSection.text)
+                Text("Image Models", bundle: .module).tag(ManagerSection.images)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 240)
+            .accessibilityLabel("Installed model type")
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private var textModelContent: some View {
+        VStack(spacing: 0) {
             ModelManagerFilterBarView(
                 searchText: $searchText,
                 architectureFilter: $architectureFilter,
@@ -36,11 +75,6 @@ struct ModelManagerView: View {
             )
             Divider()
             masterDetailContent
-        }
-        .task {
-            if selectedModelPath == nil {
-                selectedModelPath = model.selected?.path ?? model.installed.first?.path
-            }
         }
     }
 

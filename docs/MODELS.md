@@ -76,11 +76,16 @@ weight planes and F16 or BF16 `.scales` and `.biases` companions at 2, 3, 4,
 5, 6, and 8 bits, with group size 64, then writes the repository's separate
 `.image.gturbo` format. The full installer gates pass for the published 2-bit,
 4-bit, and 8-bit variants; the FP16 full install remains open because it is an
-unquantized source path. Image quality, resource, and Swift parity gates remain
-open for the non-INT4 variants. These are the complete widths accepted by
-upstream MLX; upstream rejects 1-bit quantization. The closed IG2 evidence is
-still only for the pinned INT4 profile. Do not register these artifacts as
-ordinary text `Mlx` rows.
+unquantized source path. Image quality, resource, and real-install Swift
+generation gates remain open for the non-INT4 variants. These are the complete
+widths accepted by upstream MLX; upstream rejects 1-bit quantization. The
+closed IG2 evidence is still only for the pinned INT4 profile. Do not register
+these artifacts as ordinary text `Mlx` rows.
+
+The Swift package exposes the same image rows through
+`TurboSparkCatalog.imageAvailable()` and the same shared-store install through
+`TurboSparkCatalog.installImage(_:)`. The macOS Images destination offers the
+curated rows, progress, cancellation, and native generation after install.
 
 ---
 

@@ -135,6 +135,18 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
     }
 }
 
+/// A curated image-generation source that can be downloaded into the shared
+/// image store. This is separate from `CatalogEntry` because image installs
+/// are not text-model installs.
+public struct ImageCatalogEntry: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { alias }
+
+    public let alias: String
+    public let modelID: String
+    public let revision: String
+    public let quantization: String
+}
+
 /// What an install will cost, before it starts.
 public struct InstallCost: Decodable, Sendable, Equatable {
     public let downloadBytes: UInt64
@@ -146,6 +158,13 @@ public enum InstallEvent: Sendable, Equatable {
     case stage(String)
     case bytes(done: UInt64, total: UInt64)
     case finished(InstalledModel)
+}
+
+/// Progress from a curated image source download and pack.
+public enum ImageInstallEvent: Sendable, Equatable {
+    case stage(String)
+    case bytes(done: UInt64, total: UInt64)
+    case finished(ImageInstalledModel)
 }
 
 /// Browsing, probing and installing models.
@@ -170,6 +189,13 @@ public enum TurboSparkCatalog {
         try decode(
             [ImageInstalledModel].self,
             from: try takeString { ts_image_installed_json($0) })
+    }
+
+    /// The curated pinned image sources, including the Z-Image MLX variants.
+    public static func imageAvailable() throws -> [ImageCatalogEntry] {
+        try decode(
+            [ImageCatalogEntry].self,
+            from: try takeString { ts_image_catalog_json($0) })
     }
 
     /// What installing `alias` will cost. Call this before `install` to show
@@ -204,6 +230,11 @@ public enum TurboSparkCatalog {
     /// Checks whether a model alias or directory path is installed locally.
     public static func isInstalled(_ aliasOrPath: String) throws -> Bool {
         try resolvePath(for: aliasOrPath) != nil
+    }
+
+    /// Deletes a validated image install from the shared image store.
+    public static func deleteImage(_ alias: String) throws {
+        try check(alias.withCString { ts_image_delete($0) })
     }
 
     /// Returns the catalog entry for a given alias from the curated table, if present.
@@ -403,6 +434,30 @@ public enum TurboSparkCatalog {
         }
     }
 
+    /// Downloads and packs one curated image source into the shared image
+    /// store. The source is staged temporarily and removed after publication.
+    public static func installImage(_ alias: String) -> AsyncThrowingStream<ImageInstallEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let thread = Thread {
+                let box = ImageInstallBox(continuation)
+                let userdata = Unmanaged.passRetained(box).toOpaque()
+                defer { Unmanaged<ImageInstallBox>.fromOpaque(userdata).release() }
+                do {
+                    let json = try takeString { out in
+                        alias.withCString { ts_image_install($0, imageInstallCallback, userdata, out) }
+                    }
+                    continuation.yield(.finished(
+                        try decode(ImageInstalledModel.self, from: json)))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            thread.name = "com.turbospark.image-install"
+            thread.start()
+        }
+    }
+
     /// Probes and installs an arbitrary Hugging Face repository, streaming progress.
     ///
     /// `repo` is `owner/name` or `owner/name@revision`. `alias` is the local name.
@@ -488,6 +543,31 @@ private let installCallback: TsInstallCallback = { userdata, kind, text, len, do
             let s = String(bytes: UnsafeRawBufferPointer(start: text, count: len), encoding: .utf8)
         else { return }
         box.continuation.yield(.stage(s))
+    case TS_INSTALL_BYTES:
+        box.continuation.yield(.bytes(done: done, total: total))
+    default:
+        return
+    }
+}
+
+private final class ImageInstallBox: @unchecked Sendable {
+    let continuation: AsyncThrowingStream<ImageInstallEvent, Error>.Continuation
+
+    init(_ continuation: AsyncThrowingStream<ImageInstallEvent, Error>.Continuation) {
+        self.continuation = continuation
+    }
+}
+
+private let imageInstallCallback: TsInstallCallback = { userdata, kind, text, len, done, total in
+    guard let userdata else { return }
+    let box = Unmanaged<ImageInstallBox>.fromOpaque(userdata).takeUnretainedValue()
+    switch kind {
+    case TS_INSTALL_STAGE:
+        guard let text, len > 0,
+            let stage = String(
+                bytes: UnsafeRawBufferPointer(start: text, count: len), encoding: .utf8)
+        else { return }
+        box.continuation.yield(.stage(stage))
     case TS_INSTALL_BYTES:
         box.continuation.yield(.bytes(done: done, total: total))
     default:

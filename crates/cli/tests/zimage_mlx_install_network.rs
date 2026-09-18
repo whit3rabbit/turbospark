@@ -12,8 +12,10 @@
 //! `pull-image` stages the source before packing, so the destination volume
 //! must hold both the source download and the resulting image install.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 use image::{image_quantization_label, ImageManifest};
 
@@ -56,20 +58,52 @@ const VARIANTS: [Variant; 4] = [
     },
 ];
 
-fn binary() -> Command {
+fn binary_path() -> PathBuf {
     let mut path = std::env::current_exe().expect("test binary path");
     path.pop();
     path.pop();
     path.push("turbospark-model");
-    let mut command = Command::new(path);
-    command.env(
-        "TURBOSPARK_HOME",
-        std::env::temp_dir().join(format!(
-            "turbospark-zimage-mlx-install-{}",
-            std::process::id()
-        )),
-    );
-    command
+    path
+}
+
+fn directory_bytes(root: &Path) -> u64 {
+    fs::read_dir(root)
+        .unwrap_or_else(|error| panic!("read installed image {}: {error}", root.display()))
+        .map(|entry| {
+            let path = entry
+                .unwrap_or_else(|error| panic!("read installed image entry: {error}"))
+                .path();
+            let metadata = fs::symlink_metadata(&path)
+                .unwrap_or_else(|error| panic!("stat installed image {}: {error}", path.display()));
+            if metadata.is_dir() {
+                directory_bytes(&path)
+            } else if metadata.is_file() {
+                metadata.len()
+            } else {
+                0
+            }
+        })
+        .sum()
+}
+
+fn output_bytes(output: &[u8], prefix: &str) -> u64 {
+    String::from_utf8_lossy(output)
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("missing {prefix:?} in command output"))
+}
+
+fn peak_rss_bytes(stderr: &[u8]) -> u64 {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .find_map(|line| {
+            line.contains("maximum resident set size")
+                .then(|| line.split_whitespace().find_map(|value| value.parse().ok()))
+                .flatten()
+        })
+        .unwrap_or_else(|| panic!("missing macOS peak RSS in /usr/bin/time output"))
 }
 
 #[test]
@@ -95,7 +129,17 @@ fn installs_one_selected_published_zimage_mlx_variant() {
         });
 
     let repo = format!("{}@{}", variant.repo, variant.revision);
-    let output = binary()
+    let started = Instant::now();
+    let mut timed = Command::new("/usr/bin/time");
+    timed.arg("-l").arg(binary_path());
+    timed.env(
+        "TURBOSPARK_HOME",
+        std::env::temp_dir().join(format!(
+            "turbospark-zimage-mlx-install-{}",
+            std::process::id()
+        )),
+    );
+    let output = timed
         .args([
             "pull-image",
             "--repo",
@@ -122,5 +166,17 @@ fn installs_one_selected_published_zimage_mlx_variant() {
     assert_eq!(
         image_quantization_label(&manifest).expect("derive installed quantization label"),
         variant.quantization
+    );
+
+    let source_bytes = output_bytes(&output.stdout, "downloaded ");
+    let install_bytes = directory_bytes(&install_dir);
+    let peak_rss_bytes = peak_rss_bytes(&output.stderr);
+    eprintln!(
+        "zimage_mlx_install_benchmark variant={} source_bytes={} install_bytes={} elapsed_ms={} peak_rss_bytes={}",
+        variant.name,
+        source_bytes,
+        install_bytes,
+        started.elapsed().as_millis(),
+        peak_rss_bytes
     );
 }

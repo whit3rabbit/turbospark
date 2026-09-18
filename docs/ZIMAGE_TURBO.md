@@ -103,7 +103,10 @@ cargo test -p turbospark-image --test zimage_mlx_payload_network \
 ```
 
 Together these are source and payload compatibility checks. They do not
-replace a complete install, image-quality, resource, or Swift parity gate.
+replace a complete install, image-quality, resource, or real-install Swift
+image-generation gate. The complete 2-bit, 4-bit, and 8-bit install gates
+below now cover the published quantized MLX variants; the FP16 install remains
+open.
 
 When a machine has enough free space for both the source staging tree and the
 packed output, the opt-in installer gate exercises the real `pull-image` path
@@ -121,6 +124,40 @@ label in the installed manifest. The remaining `fp16` gate is intentionally
 tracked separately because it is an unquantized source path, not an affine
 bit-width claim; it remains disk-bound in the current checkout because its
 source and packed output must coexist.
+
+The synthetic complete-install and decode tests pass all supported affine
+widths, 2, 3, 4, 5, 6, and 8 bits. The ignored native Metal packed-row parity
+test also passes the complete width set. The published repositories currently
+provide real full-install sources for 2, 4, and 8 bits only, so 3, 5, and
+6-bit support is covered structurally until matching upstream artifacts exist.
+
+The fresh full-install benchmark record is below. Source bytes are the exact
+staged download reported by `pull-image`; install bytes are the recursive size
+of the published `.image.gturbo` directory, including its manifest and
+receipt; peak RSS is the macOS `/usr/bin/time -l` maximum for the installer
+process. Each install was deleted immediately after its gate passed, so these
+are not retained model artifacts.
+
+| Variant | Source bytes | Packed install bytes | Install time | Installer peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| 2-bit | 4,040,703,000 (4.04 GB) | 5,009,974,980 (5.01 GB) | 338.942 s | 2,709,520,384 (2.71 GB) |
+| 4-bit | 6,484,850,717 (6.48 GB) | 7,454,121,834 (7.45 GB) | 551.911 s | 3,617,767,424 (3.62 GB) |
+| 8-bit | 11,373,145,154 (11.37 GB) | 12,342,415,237 (12.34 GB) | 603.442 s | 6,585,450,496 (6.59 GB) |
+
+The complete-install source-plus-output working-set floors are 9.05 GB,
+13.94 GB, and 23.72 GB for 2-, 4-, and 8-bit. Allowing 20% for filesystem
+overhead, build activity, and temporary files, reserve at least 11 GB, 17 GB,
+and 29 GB of free storage respectively. These are installation requirements,
+not image-generation runtime requirements. The fp16 source was not rerun as a
+full install because it is unquantized and needs more temporary storage than
+the current free-space budget supports.
+
+For a practical provisional machine recommendation, use 4-bit as the default
+with 17 GB free storage and 32 GB unified memory. The 32 GB memory figure is
+conservative, not an MLX runtime qualification: the existing pinned native
+image resource record reached a 20,725,728,336-byte process peak, while the
+MLX numbers above measure installation only. A variant-specific generation
+memory floor remains open until the real MLX image resource gate is run.
 
 The benchmark record below remains the pinned native Rust/Metal gate record;
 the upstream sizes in this table are download sizes, not runtime memory
@@ -183,9 +220,11 @@ carry the selected observed-width label instead of hardcoding INT4. This is the
 complete upstream `mx.quantize` width set;
 upstream MLX refuses 1-bit quantization, so 1-bit is deliberately outside this
 contract. The real full-install gates pass for the published 2-, 4-, and
-8-bit variants; the FP16 install remains open. Quality, memory, and Swift
-gates remain open for the non-INT4 variants; the closed IG2 claim still applies
-only to the pinned INT4 profile.
+8-bit variants; the FP16 install remains open. Quality, memory, and real-
+install Swift image-generation gates remain open for the non-INT4 variants;
+the closed IG2 claim still applies only to the pinned INT4 profile. The Swift
+catalog/install binding surface is implemented separately from the real
+image-generation gate.
 
 `crates/image` is an intentional new Rust crate. It owns the image graph,
 install schema, packed storage, scheduler, VAE, and native Metal backend. It
@@ -621,6 +660,15 @@ previous/next carousel, and serialized heavyweight image jobs. The app uses
 the same conditioning, scheduler, quantization, cancellation, and output
 implementation as the CLI. Image jobs remain transient until saved, while
 saved request metadata makes regeneration reuse the original seed and options.
+
+The Swift catalog now exposes the pinned image rows through
+`TurboSparkCatalog.imageAvailable()` and installs them through
+`TurboSparkCatalog.installImage(_:)`. The app's image model picker uses those
+bindings, reports staged download progress, and routes a completed
+`.image.gturbo` install into the existing native `TurboSparkImageSession`.
+This proves the catalog and ABI surface without retaining a multi-gigabyte
+fixture; the real image-generation Swift gate remains opt-in through
+`TURBOSPARK_TEST_IMAGE_MODEL`.
 
 ### IG5: measured optimization
 

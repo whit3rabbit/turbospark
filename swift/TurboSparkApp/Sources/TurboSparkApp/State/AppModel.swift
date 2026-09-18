@@ -79,6 +79,8 @@ public final class AppModel: ObservableObject {
     @Published public var catalog: [CatalogEntry] = []
     /// Valid image-generation installs, separate from text model rows.
     @Published public var imageModels: [ImageInstalledModel] = []
+    /// Curated image sources available for download.
+    @Published public var imageCatalog: [ImageCatalogEntry] = []
     /// Currently selected installed model.
     @Published public var selected: InstalledModel?
     /// Active TurboSpark session when a model is loaded.
@@ -101,6 +103,11 @@ public final class AppModel: ObservableObject {
     var imageSession: TurboSparkImageSession?
     var imageSessionPath: String?
     var imageGenerationTask: Task<Void, Never>?
+    var imageInstallTask: Task<Void, Never>?
+    @Published public var isInstallingImageModel: Bool = false
+    @Published public var imageInstallAlias: String?
+    @Published public var imageInstallStage: String?
+    @Published public var imageInstallProgressFraction: Double?
     /// The in-process HTTP server, when one is running.
     ///
     /// It serves ALREADY-OPEN models rather than opening its own, and holds

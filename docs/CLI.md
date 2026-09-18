@@ -636,6 +636,14 @@ and the Swift package (`OpenOptions.steering`, `SessionInfo.steering`). An app
 embedding the engine through `swift/TurboSpark` can configure directional
 steering at session open.
 
+Image catalog/install bindings are separate from text catalog rows. The C ABI
+exposes `ts_image_catalog_json` and `ts_image_install` for the pinned image
+rows and staged install progress. Swift wraps these as
+`TurboSparkCatalog.imageAvailable()` and `installImage(_:)`; image generation
+itself remains the `TurboSparkImageSession` surface. See
+[`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md) for the runtime and real-model
+gate boundaries.
+
 For everything measured about these edits -- throughput cost, the collapse
 mechanism, cross-family and cross-direction replication, and what is still
 open -- see [`docs/OBLITERATION.md`](OBLITERATION.md).

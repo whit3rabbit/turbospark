@@ -160,6 +160,24 @@ struct ImagesSectionView: View {
                         }
                     }
                 }
+                if !model.imageCatalog.isEmpty {
+                    Divider()
+                    Text(verbatim: "Download curated model")
+                    ForEach(model.imageCatalog) { source in
+                        Button {
+                            model.installImageModel(source)
+                        } label: {
+                            Label(
+                                source.alias,
+                                systemImage: model.imageInstallAlias == source.alias
+                                    ? "arrow.down.circle" : "icloud.and.arrow.down")
+                        }
+                        .disabled(
+                            model.isInstallingImageModel
+                                || model.imageModels.contains { $0.alias == source.alias }
+                                || !AppModel.testedZImageAliases.contains(source.alias))
+                    }
+                }
                 Divider()
                 Button {
                     isImportingImageModel = true
@@ -183,7 +201,21 @@ struct ImagesSectionView: View {
             }
             .menuStyle(.borderlessButton)
             .frame(maxWidth: 420)
-            .disabled(model.isRunning || model.isInstallingModel)
+            .disabled(model.isRunning || model.isInstallingModel || model.isInstallingImageModel)
+
+            if model.isInstallingImageModel {
+                HStack(spacing: 10) {
+                    ProgressView(value: model.imageInstallProgressFraction)
+                        .frame(width: 180)
+                    Text(model.imageInstallStage ?? "Installing image model")
+                        .font(theme.ui(.small))
+                        .foregroundStyle(.secondary)
+                    Button { model.cancelImageInstall() } label: {
+                        Text(verbatim: "Cancel")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
         }
     }
 

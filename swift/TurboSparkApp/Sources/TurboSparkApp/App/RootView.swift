@@ -26,6 +26,9 @@ struct RootView: View {
     @State private var isChatSearchPresented = false
     @State private var isSummaryVisible = true
     @State private var workingWidth: CGFloat = 0
+    @AppStorage("TurboSpark.imageModelRecommendationSeen")
+    private var imageModelRecommendationSeen = false
+    @State private var showingImageModelRecommendation = false
 
     private var canPinSummary: Bool { ProjectChatSummary.canPin(availableWidth: workingWidth) }
     private var hasProjectSummary: Bool {
@@ -117,7 +120,10 @@ struct RootView: View {
             set: { presented in
                 if !presented { model.pendingMcpApprovals.removeAll() }
             })) {
-            ProjectMcpApprovalSheet(model: model)
+                ProjectMcpApprovalSheet(model: model)
+        }
+        .sheet(isPresented: $showingImageModelRecommendation) {
+            ImageModelRecommendationSheet(model: model)
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             isSidebarExpanded.toggle()
@@ -145,6 +151,7 @@ struct RootView: View {
             AppShutdownCoordinator.shared.onTerminate = { [weak model] in
                 model?.shutdown()
             }
+            presentImageModelRecommendationIfNeeded()
         }
         .onChange(of: model.isModelAvailable) { wasAvailable, isAvailable in
             // Surface Model Settings the moment a load completes, rather than
@@ -154,6 +161,15 @@ struct RootView: View {
                 isInspectorVisible = true
             }
         }
+    }
+
+    private func presentImageModelRecommendationIfNeeded() {
+        guard !imageModelRecommendationSeen,
+            !model.hasInstalledZImageModel,
+            !model.recommendedZImageSources.isEmpty
+        else { return }
+        imageModelRecommendationSeen = true
+        showingImageModelRecommendation = true
     }
 
     private var workingArea: some View {

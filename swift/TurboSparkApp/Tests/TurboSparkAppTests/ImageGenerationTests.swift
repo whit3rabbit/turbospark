@@ -72,6 +72,43 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertEqual(model.quantization, "mlx-affine-linear-weights-group-64-bits-6")
     }
 
+    func testZImageRecommendationsFollowPhysicalMemoryAndPreferTestedMlxRows() {
+        let eightGB = AppModel.recommendedZImageAliases(
+            physicalMemoryBytes: 8 * 1024 * 1024 * 1024)
+        let sixteenGB = AppModel.recommendedZImageAliases(
+            physicalMemoryBytes: 16 * 1024 * 1024 * 1024)
+        let thirtyTwoGB = AppModel.recommendedZImageAliases(
+            physicalMemoryBytes: 32 * 1024 * 1024 * 1024)
+
+        XCTAssertEqual(eightGB, ["z-image-turbo-mlx-2bit"])
+        XCTAssertEqual(
+            sixteenGB,
+            ["z-image-turbo-mlx-4bit", "z-image-turbo-mlx-2bit"])
+        XCTAssertEqual(
+            thirtyTwoGB,
+            [
+                "z-image-turbo-mlx-8bit",
+                "z-image-turbo-mlx-4bit",
+                "z-image-turbo-mlx-2bit",
+            ])
+        XCTAssertTrue(
+            sixteenGB.allSatisfy { AppModel.testedZImageAliases.contains($0) })
+    }
+
+    func testInstalledZImageDetectionUsesTheValidatedImageIdentity() {
+        let model = AppModel()
+        model.imageModels = [ImageInstalledModel(
+            alias: "custom-image",
+            modelID: "andrevp/Z-Image-Turbo-MLX-4bit",
+            revision: "rev",
+            path: "/models/custom.image.gturbo",
+            width: 1024,
+            height: 1024,
+            schedulerSteps: 9)]
+
+        XCTAssertTrue(model.hasInstalledZImageModel)
+    }
+
     func testImageJobStartsWaitingAndCarriesTheRequest() {
         let options = ImageGenerateOptions(prompt: "a red kite", seed: 42)
         let chatID = UUID()

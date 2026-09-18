@@ -59,6 +59,25 @@ pub(crate) fn image_installed_json() -> Result<String, String> {
     serde_json::to_string(&rows).map_err(|e| e.to_string())
 }
 
+/// Deletes one valid image install from the shared image store.
+///
+/// Image installs are absent from the text index, so deletion resolves the
+/// alias from the same validated manifest listing used by the app. That keeps
+/// arbitrary aliases from becoming filesystem paths.
+pub(crate) fn delete_image(alias: &str) -> Result<(), String> {
+    let store = Store::default_store()?;
+    let models = store.root().join("models");
+    let row = image_installed_rows(&models)
+        .into_iter()
+        .find(|row| row.alias == alias)
+        .ok_or_else(|| format!("image model {alias:?} is not installed"))?;
+    if row.path.exists() {
+        std::fs::remove_dir_all(&row.path)
+            .map_err(|e| format!("failed to remove {}: {e}", row.path.display()))?;
+    }
+    Ok(())
+}
+
 fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
     let Ok(entries) = std::fs::read_dir(models) else {
         return Vec::new();

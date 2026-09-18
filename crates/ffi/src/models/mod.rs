@@ -15,14 +15,16 @@
 mod catalog;
 mod control_vector;
 mod fit;
+mod image_install;
 mod install;
 mod probe;
 
 pub(crate) use catalog::{
-    catalog_json, delete, image_installed_json, install_bytes, installed_json,
+    catalog_json, delete, delete_image, image_installed_json, install_bytes, installed_json,
 };
 pub use control_vector::control_vector_info_json;
 pub(crate) use fit::{context_ladder_json, recommend_json};
+pub(crate) use image_install::{catalog_json as image_catalog_json, install as image_install};
 pub(crate) use install::{cancel_active_installs, install, install_repo, installs_finished};
 pub use install::{TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 pub(crate) use probe::{probe_json, repo_variants_json};

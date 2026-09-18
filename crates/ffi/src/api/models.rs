@@ -35,6 +35,84 @@ pub unsafe extern "C" fn ts_image_installed_json(out: *mut *mut c_char) -> c_int
     })
 }
 
+/// Deletes one valid image-generation install from the shared image store.
+#[no_mangle]
+pub unsafe extern "C" fn ts_image_delete(alias: *const c_char) -> c_int {
+    guard_result(|| {
+        let alias =
+            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        models::delete_image(alias).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// The curated image-generation catalog, including the pinned source rows.
+#[no_mangle]
+pub unsafe extern "C" fn ts_image_catalog_json(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        let json = models::image_catalog_json().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Downloads and packs one curated image-generation catalog row.
+#[no_mangle]
+pub unsafe extern "C" fn ts_image_install(
+    alias: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        if result_json.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "resultJson must not be null".to_string(),
+            ));
+        }
+        let alias =
+            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        struct Sink(TsInstallCallback, *mut c_void);
+        unsafe impl Send for Sink {}
+        unsafe impl Sync for Sink {}
+        let sink = Arc::new(Sink(cb, userdata));
+        let bytes_sink = Arc::clone(&sink);
+        let on_bytes: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done, total| {
+            if let Some(f) = bytes_sink.0 {
+                unsafe {
+                    f(
+                        bytes_sink.1,
+                        TS_INSTALL_BYTES,
+                        std::ptr::null(),
+                        0,
+                        done,
+                        total,
+                    )
+                };
+            }
+        });
+        let json = models::image_install(
+            alias,
+            |line| {
+                if let Some(f) = sink.0 {
+                    unsafe {
+                        f(
+                            sink.1,
+                            TS_INSTALL_STAGE,
+                            line.as_ptr() as *const c_char,
+                            line.len(),
+                            0,
+                            0,
+                        )
+                    };
+                }
+            },
+            on_bytes,
+        )
+        .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Deletes an installed model from `~/.turbospark` and drops its directory.
 #[no_mangle]
 pub unsafe extern "C" fn ts_model_delete(alias: *const c_char) -> c_int {

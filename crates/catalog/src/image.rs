@@ -1,6 +1,10 @@
 //! Curated Diffusers image sources, separate from the text-model catalog.
 
+use std::path::{Component, Path, PathBuf};
+
 use serde::Deserialize;
+
+use crate::{CancelFlag, Client, RepoRef, INSTALL_CANCELLED};
 
 const EMBEDDED: &str = include_str!("image_models.json");
 
@@ -37,6 +41,128 @@ impl ImageCatalog {
     pub fn get(&self, alias: &str) -> Option<&ImageCatalogEntry> {
         self.entries.iter().find(|entry| entry.alias == alias)
     }
+}
+
+/// Materializes the bounded Diffusers source tree consumed by the image
+/// packer. The large safetensors files are streamed to disk, not collected in
+/// memory. `progress` receives the selected filename and cumulative bytes
+/// after each file completes.
+pub fn materialize_image_source(
+    client: &Client,
+    repo: &RepoRef,
+    destination: &Path,
+    cancel: Option<&CancelFlag>,
+    mut progress: impl FnMut(&str, u64, u64),
+) -> Result<u64, String> {
+    if destination.exists() {
+        return Err(format!(
+            "refusing to overwrite image source staging directory {}",
+            destination.display()
+        ));
+    }
+    if repo.revision.len() != 40 || !repo.revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!(
+            "image repository revision {:?} is not an immutable 40-hex commit",
+            repo.revision
+        ));
+    }
+    let files = client.file_list_with_sizes(repo)?;
+    let selected = select_files(
+        &files
+            .iter()
+            .map(|file| file.name.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    let total = selected
+        .iter()
+        .filter_map(|name| files.iter().find(|file| file.name == *name)?.size)
+        .sum();
+    let mut bytes: u64 = 0;
+    for remote in selected {
+        if cancel.is_some_and(CancelFlag::is_cancelled) {
+            return Err(INSTALL_CANCELLED.to_string());
+        }
+        let local = safe_join(destination, &remote)?;
+        let stage = format!("downloading {remote}");
+        progress(&stage, bytes, total);
+        bytes = bytes
+            .checked_add(client.download_to(&repo.file_url(&remote), &local)?)
+            .ok_or_else(|| "image source download byte count overflowed u64".to_string())?;
+        progress(&stage, bytes, total);
+    }
+    if cancel.is_some_and(CancelFlag::is_cancelled) {
+        return Err(INSTALL_CANCELLED.to_string());
+    }
+    Ok(bytes)
+}
+
+fn select_files(files: &[String]) -> Result<Vec<String>, String> {
+    let mut selected = Vec::new();
+    let mut has_scheduler = false;
+    let mut components = [false; 3];
+    for file in files {
+        let path = Path::new(file);
+        if !safe_relative(path) {
+            return Err(format!("Hugging Face file path is unsafe: {file}"));
+        }
+        let is_metadata = file == "scheduler/scheduler_config.json"
+            || file == "scheduler/config.json"
+            || file.ends_with("/config.json")
+            || file.ends_with(".index.json");
+        let is_tokenizer = file == "tokenizer"
+            || file.starts_with("tokenizer/")
+            || file.starts_with("tokenizer_config.")
+            || file == "special_tokens_map.json";
+        let component = if file.starts_with("text_encoder/") {
+            Some(0)
+        } else if file.starts_with("transformer/") {
+            Some(1)
+        } else if file.starts_with("vae/") {
+            Some(2)
+        } else {
+            None
+        };
+        let is_weight = component.is_some() && file.ends_with(".safetensors");
+        if is_metadata || is_tokenizer || is_weight {
+            if file == "scheduler/scheduler_config.json" || file == "scheduler/config.json" {
+                has_scheduler = true;
+            }
+            if let Some(index) = component.filter(|_| is_weight) {
+                components[index] = true;
+            }
+            selected.push(file.clone());
+        }
+    }
+    if !has_scheduler {
+        return Err("image repository is missing scheduler/scheduler_config.json".to_string());
+    }
+    for (name, present) in [
+        ("text_encoder", components[0]),
+        ("transformer", components[1]),
+        ("vae", components[2]),
+    ] {
+        if !present {
+            return Err(format!("image repository is missing {name} safetensors"));
+        }
+    }
+    selected.sort();
+    selected.dedup();
+    Ok(selected)
+}
+
+fn safe_join(root: &Path, remote: &str) -> Result<PathBuf, String> {
+    let path = Path::new(remote);
+    if !safe_relative(path) {
+        return Err(format!("Hugging Face file path is unsafe: {remote}"));
+    }
+    Ok(root.join(path))
+}
+
+fn safe_relative(path: &Path) -> bool {
+    !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 fn validate(entry: &ImageCatalogEntry) -> Result<(), String> {

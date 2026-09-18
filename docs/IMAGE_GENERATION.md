@@ -137,7 +137,9 @@ The `2bit`, `4bit`, and `8bit` gates passed on 2026-09-18: `pull-image`
 completed each pinned source staging and pack, and every installed manifest
 verified with its expected observed-width label. The `fp16` gate remains open
 as a separate unquantized source path. This installer gate does not close
-image-quality, resource, or Swift parity evidence for any non-INT4 variant.
+image-quality, resource, or real-install Swift image-generation evidence for
+any non-INT4 variant. The Swift catalog/ABI/app integration itself is
+implemented and covered by the binding and app build gates below.
 
 These are published download sizes, not runtime memory guarantees. The
 original `Tongyi-MAI/Z-Image-Turbo` Diffusers export remains the independent
@@ -167,8 +169,10 @@ Swift's installed-image listing carry the observed MLX width label. This is
 the complete upstream `mx.quantize` width set;
 upstream rejects 1-bit quantization. Full installer gates pass for the
 published 2-, 4-, and 8-bit variants; the FP16 install remains open. Quality,
-resource, and Swift gates are still required before any non-INT4 variant is
-considered verified.
+resource, and real-install Swift image-generation gates are still required
+before any non-INT4 variant is considered fully verified. The Swift
+catalog/install binding surface is covered separately by `make swift-test` and
+the app build.
 
 The image crate is intentional. `turbospark-image` owns the image graph,
 image-specific install schema, packed storage, scheduler, VAE, and the native
@@ -191,8 +195,11 @@ scratch is not observable, so the contract uses an inclusive non-parameter
 process budget and explicitly does not call driver-retained bytes scratch or
 claim a minimum whole-machine RAM size. IG3 closed repeated full-pipeline
 stability, resident-versus-streamed ownership, and cancellation lifetime proof.
-IG2 and IG4 are closed for the pinned install; MLX variant install, quality,
-resource, and Swift parity gates remain separate open work.
+IG2 and IG4 are closed for the pinned install. MLX variant installation is
+closed for the published 2-, 4-, and 8-bit rows, while FP16 installation,
+quality, resource, and real-install Swift image-generation gates remain open.
+The Swift catalog/install surface is covered separately by the binding and app
+build gates.
 
 ## IG4 app seam
 
@@ -231,18 +238,22 @@ make swift-test-real IMAGE_MODEL=~/models/z-image-turbo.image.gturbo
 The image-generation tests open the verified install, assert PNG and metadata
 return through Swift, and cancel during a stage.
 
-The current pinned real install now passes both Swift image-session gates. The
-full 1024-by-1024 generation returned a valid PNG and decoded runtime metadata
-in 4,665.912 seconds, including the public `modelID` spelling used by Swift;
-the cancellation arm returned `cancelled` without publishing a PNG in 21.827
-seconds. The app bundle was built and strict deep-signature verification
+The recorded native pinned-install gate passed both Swift image-session arms:
+the full 1024-by-1024 generation returned a valid PNG and decoded runtime
+metadata in 4,665.912 seconds, including the public `modelID` spelling used by
+Swift; the cancellation arm returned `cancelled` without publishing a PNG in
+21.827 seconds. The app bundle was built and strict deep-signature verification
 passed. The focused app image-job suite passes 9 tests, including FIFO
 serialization, preview/save/regenerate state, profile isolation, chat-delete
-protection, and persisted relative artifact paths. The full Swift package
-suite passes 77 tests with 17 expected real-model skips. This is IG4
-implementation and real-install evidence; the roadmap still owns the
-independent measurement and validation backlog that must be closed before the
-milestone checkbox is marked.
+protection, and persisted relative artifact paths.
+
+The current no-model `make swift-test` run passes 79 tests with 17 expected
+real-model skips. The image-generation tests remain opt-in because they need a
+retained verified `.image.gturbo` install. Run the real gate above with
+`IMAGE_MODEL` set to close Swift runtime evidence for a specific MLX variant;
+the catalog/install binding surface is already covered by the regular Swift
+suite. The roadmap still owns the independent measurement and validation
+backlog that must be closed before the milestone checkbox is marked.
 
 ## Direction and first release
 
@@ -764,10 +775,12 @@ physical memory.
 
 ### IG4: Expose the runtime to Swift and the Images destination
 
-Extend the C ABI and Swift wrapper with an image session, request, progress,
-result, cancellation, and explicit buffer ownership. Keep the existing text
-session ABI behavior intact. The CLI and app must use the same conditioning,
-scheduler, quantization, and output-generation implementation.
+IG4 is implemented for the pinned 1024-by-1024 envelope. The C ABI and Swift
+wrapper expose image sessions, requests, progress, results, cancellation, and
+explicit buffer ownership. The app Images destination includes curated image
+catalog download, progress, cancellation, model selection, generation, and
+gallery behavior. The remaining opt-in gate is real runtime verification
+against a retained `.image.gturbo` install.
 
 Add a top-level `Images` destination with `Create` and `Gallery` tabs,
 compatible installed-model selection, a prompt, stage progress, Stop, result
@@ -842,18 +855,24 @@ turbospark-model pull-image \
 turbospark-model pull-image --alias z-image-turbo-mlx-4bit
 ```
 
+Swift hosts can list and install the same pinned image rows without duplicating
+catalog data. `TurboSparkCatalog.imageAvailable()` returns aliases, model IDs,
+revisions, and quantization labels. `TurboSparkCatalog.installImage(_:)`
+streams staged byte progress and returns a verified `ImageInstalledModel`; the
+macOS Images destination exposes these rows with progress and cancellation.
+
 The C ABI uses `TsImageSession`, `TsImageEventCallback`, explicit PNG buffer
 ownership, and cancellation. The Swift package wraps it with
 `TurboSparkImageSession`, `ImageGenerateOptions`, `ImageGenerationEvent`, and
 `ImageGenerationResult`. The options JSON contract remains camelCase:
 `prompt`, `seed`, `width`, `height`, and `steps`.
 
-The shared runtime interface needs a model/session handle, prompt and image
+The shared runtime interface provides a model/session handle, prompt and image
 options, resolved settings, phase progress, cancellation, owned pixel output,
-and metadata. Encoding/export can be shared without making the core runner
-own app storage paths. Specify C allocation/free and callback-thread rules
-before exposing these types through the ABI; do not reuse text token event
-numbers for image progress. Rust, CLI, and Swift validation must agree.
+and metadata. Encoding/export stays separate from app storage paths. C
+allocation/free and callback-thread rules are part of the ABI contract; image
+progress does not reuse text token event numbers. Rust, CLI, and Swift
+validation must agree.
 
 ## Verification and measurement
 

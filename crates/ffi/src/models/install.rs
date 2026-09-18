@@ -32,18 +32,22 @@ pub(crate) fn cancel_active_installs() -> usize {
 
 /// Registers one walk: hands out its cancel flag and guarantees
 /// deregistration on every exit path, panic included.
-struct ActiveInstall {
+pub(crate) struct ActiveInstall {
     flag: CancelFlag,
 }
 
 impl ActiveInstall {
-    fn register() -> Self {
+    pub(crate) fn register() -> Self {
         let flag = CancelFlag::new();
         ACTIVE_INSTALLS
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .push(flag.clone());
         Self { flag }
+    }
+
+    pub(crate) fn cancel_flag(&self) -> &CancelFlag {
+        &self.flag
     }
 }
 

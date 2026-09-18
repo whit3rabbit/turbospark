@@ -104,6 +104,18 @@ final class SurfaceTests: XCTestCase {
         }
     }
 
+    func testImageCatalogDecodesPublishedMLXRows() throws {
+        let rows = try TurboSparkCatalog.imageAvailable()
+        let aliases = Set(rows.map(\.alias))
+        XCTAssertTrue(aliases.contains("z-image-turbo-mlx-2bit"))
+        XCTAssertTrue(aliases.contains("z-image-turbo-mlx-4bit"))
+        XCTAssertTrue(aliases.contains("z-image-turbo-mlx-8bit"))
+        for row in rows {
+            XCTAssertFalse(row.modelID.isEmpty)
+            XCTAssertEqual(row.revision.count, 40)
+        }
+    }
+
     /// Tests that a misspelled speculation option is refused by NAME, with
     /// no model on the machine.
     ///
@@ -403,6 +415,16 @@ final class SurfaceTests: XCTestCase {
             let e = error as? TurboSparkError
             XCTAssertEqual(e?.code, .invalidArgument)
             XCTAssertTrue(e?.message.contains("not installed") == true)
+        }
+    }
+
+    /// Image deletion uses a separate ABI because image installs are not in
+    /// the text model index.
+    func testDeletingNonexistentImageModelThrows() throws {
+        XCTAssertThrowsError(try TurboSparkCatalog.deleteImage("nonexistent_image_test_123")) { error in
+            let e = error as? TurboSparkError
+            XCTAssertEqual(e?.code, .invalidArgument)
+            XCTAssertTrue(e?.message.contains("image model") == true)
         }
     }
 
@@ -708,6 +730,10 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(
             ts_image_generate(nil, nil, nil, nil, nil, nil, nil),
             TS_ERR_INVALID_ARGUMENT)
+        var catalog: UnsafeMutablePointer<CChar>?
+        XCTAssertEqual(ts_image_catalog_json(&catalog), TS_OK)
+        if let catalog { ts_string_free(catalog) }
+        XCTAssertEqual(ts_image_install(nil, nil, nil, &catalog), TS_ERR_INVALID_ARGUMENT)
         ts_image_buffer_free(nil, 0)
     }
 

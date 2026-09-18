@@ -746,6 +746,20 @@ int32_t ts_installed_json(char **out);
 /* What valid image-generation installs are present in ~/.turbospark. */
 int32_t ts_image_installed_json(char **out);
 
+/* Deletes one valid image-generation install from ~/.turbospark. */
+int32_t ts_image_delete(const char *alias);
+
+/* The curated pinned image-generation sources, including Z-Image MLX rows. */
+int32_t ts_image_catalog_json(char **out);
+
+/*
+ * Downloads and packs one curated image-generation source under the shared
+ * image store. The callback uses TS_INSTALL_STAGE and TS_INSTALL_BYTES.
+ * Like ts_install, this blocks until the complete install succeeds or fails.
+ */
+int32_t ts_image_install(const char *alias, TsInstallCallback cb, void *userdata,
+                         char **result_json);
+
 /*
  * Deletes an installed model directory and forgets it from ~/.turbospark.
  * Returns TS_OK on success or TS_ERR_INVALID_ARGUMENT if not installed.
