@@ -33,13 +33,6 @@ mkdir -p "$dest"
 cp "$lib" "$dest/libturbospark_ffi.a"
 cp "$root/crates/ffi/include/turbospark.h" "$dest/turbospark.h"
 
-# Keep Rust's panic personality global inside the archive. `nmedit -R` makes
-# the definition static in the one std object that owns it, while the other
-# Rust archive members still reference it as an external symbol. Swift then
-# fails at link time with `_rust_eh_personality` undefined. The FFI archive is
-# the only Rust static library linked by these Swift packages, so there is no
-# duplicate runtime symbol to localize here.
-
 # **SwiftPM DOES NOT TREAT THE ARCHIVE AS A BUILD INPUT, so without this the
 # test target links the PREVIOUS staticlib and reports on code that is no
 # longer in the tree.** The `-L` path arrives as an unsafe linker flag, which
