@@ -186,6 +186,12 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     // derivations are unchanged.
     let mtp_blocks = m.opt_i64("nextn_predict_layers")?.unwrap_or(0);
     let block_count = m.i64("block_count")?;
+    if !(1..=MAX_MODEL_LAYERS).contains(&block_count) {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("block_count"),
+            detail: format!("must be between 1 and {MAX_MODEL_LAYERS}"),
+        });
+    }
     // Guard the head subtraction separately so its error names the metadata
     // responsible; the resulting trunk depth is bounded below.
     if mtp_blocks < 0 || (mtp_blocks > 0 && mtp_blocks >= block_count) {

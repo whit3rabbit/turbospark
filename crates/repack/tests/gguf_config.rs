@@ -269,7 +269,7 @@ fn rejects_a_gpt_oss_layer_count_above_the_allocation_bound() {
     match arch_from_gguf(&h) {
         Err(GgufConfigError::BadValue { key, detail }) => {
             assert_eq!(key, "gpt-oss.block_count");
-            assert!(detail.contains("1..=4096"), "{detail}");
+            assert!(detail.contains("between 1 and 4096"), "{detail}");
         }
         other => panic!("expected bounded block_count error, got {other:?}"),
     }
@@ -286,9 +286,29 @@ fn rejects_a_zero_layer_model_before_building_its_mask() {
     match arch_from_gguf(&h) {
         Err(GgufConfigError::BadValue { key, detail }) => {
             assert_eq!(key, "gpt-oss.block_count");
-            assert!(detail.contains("outside 1..=4096"), "{detail}");
+            assert!(detail.contains("between 1 and 4096"), "{detail}");
         }
         other => panic!("expected positive block_count error, got {other:?}"),
+    }
+}
+
+/// Layer counts size per-layer allocations during import, so malformed GGUF
+/// metadata must be rejected before any mask allocation is attempted.
+#[test]
+fn rejects_llama_block_counts_outside_the_model_limit() {
+    for block_count in [0, 4097] {
+        let (bytes, _) = GgufBuilder::new()
+            .metadata_str("general.architecture", "llama")
+            .metadata_u32("llama.block_count", block_count)
+            .build();
+        let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+        match arch_from_gguf(&h) {
+            Err(GgufConfigError::BadValue { key, detail }) => {
+                assert_eq!(key, "llama.block_count");
+                assert!(detail.contains("between 1 and 4096"), "{detail}");
+            }
+            other => panic!("expected bounded block_count error, got {other:?}"),
+        }
     }
 }
 
