@@ -1,0 +1,48 @@
+{
+  "rows": 579,
+  "reference": "mlx-community/Qwen2.5-7B-Instruct-4bit@c8e91874",
+  "install": "/Users/whit3rabbit/.turbospark/models/qwen25-7b-4bit.gturbo",
+  "prompt_len": 79,
+  "expert_cache_slots": 16,
+  "cache_state": "warm (one discarded walk of the same sequence)",
+  "heads": {
+    "declared_softcap": 0.0,
+    "max_abs_logit_mlx": 43.125,
+    "max_abs_logit_port": 43.125
+  },
+  "kl_vs_mlx": {
+    "forward": {
+      "mean": 0.0002922943071109564,
+      "median": 0.0001444521283676801,
+      "p99": 0.0022752271137318368,
+      "max": 0.004671180958349586
+    },
+    "reverse": {
+      "mean": 0.00029233527260492107,
+      "median": 0.00014389626150462646,
+      "p99": 0.002280858922489517,
+      "max": 0.004705512044060417
+    },
+    "top1_agreement": 0.9965457685664939
+  },
+  "kl_mlx_self": {
+    "forward": {
+      "mean": 0.0000259308932331561,
+      "median": 0.00001984190892264048,
+      "p99": 0.00013723417131866937,
+      "max": 0.0004405402371987846
+    },
+    "reverse": {
+      "mean": 0.000025937965849696765,
+      "median": 0.000019834786315495456,
+      "p99": 0.00013824083062636115,
+      "max": 0.00043888336420759696
+    },
+    "top1_agreement": 0.998272884283247
+  },
+  "perplexity": {
+    "turbospark": 12.420618961104713,
+    "mlx_cached": 12.416732318944273,
+    "mlx_batched": 12.416450973580979
+  }
+}

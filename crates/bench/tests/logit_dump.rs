@@ -95,6 +95,7 @@ fn resolve_target() -> Option<DumpTarget> {
         })
     };
     plain("TURBOSPARK_GEMMA4_INSTALL_DIR")
+        .or_else(|| plain("TURBOSPARK_QWEN2_DENSE_INSTALL_DIR"))
         .or_else(|| plain("TURBOSPARK_QWEN36_INSTALL_DIR"))
         .or_else(|| plain("TURBOSPARK_QWEN38_INSTALL_DIR"))
         .or_else(|| plain("TURBOSPARK_QWEN3MOE_INSTALL_DIR"))
@@ -162,7 +163,8 @@ fn dump_reference_logits() {
     let (Some(target), Some(out)) = (resolve_target(), env_dir("TURBOSPARK_LOGIT_DUMP_DIR")) else {
         eprintln!(
             "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
-             TURBOSPARK_QWEN36_INSTALL_DIR, TURBOSPARK_QWEN38_INSTALL_DIR, \
+             TURBOSPARK_QWEN2_DENSE_INSTALL_DIR, TURBOSPARK_QWEN36_INSTALL_DIR, \
+             TURBOSPARK_QWEN38_INSTALL_DIR, \
              TURBOSPARK_QWEN3MOE_INSTALL_DIR, \
              TURBOSPARK_QWEN35_INSTALL_DIR, TURBOSPARK_TERNARY_INSTALL_DIR, \
              TURBOSPARK_ORNITH9B_INSTALL_DIR, TURBOSPARK_ORNITH35B_INSTALL_DIR, \

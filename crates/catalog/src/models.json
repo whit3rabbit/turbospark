@@ -123,7 +123,7 @@
           "source": "this port, one oracle reading, AC"
         }
       ],
-      "notes": "128 experts of 2.5 MiB, so it streams. Peak footprint 2.7 GiB rather than the README band: 48 layers deep, and the slot cache is slots x layers x expert_stride."
+      "notes": "128 experts of 2.5 MiB, so it streams. Peak footprint 2.7 GiB rather than the README band: 48 layers deep, and the slot cache is slots x layers x expert_stride. The pinned install was re-streamed and the quality and memory gates were reproduced on 2026-09-17 at 14.5988 perplexity, 2,663.8 MiB peak, and 17.245-27.907 tok/s."
     },
     {
       "alias": "qwen25-7b-4bit",
@@ -147,13 +147,27 @@
       },
       "download_bytes": 4284346255,
       "install_bytes": 4300000000,
-      "status": "runs",
+      "status": "verified",
       "gates": [
         "qwen2_checkpoint_network",
-        "real CLI greedy + sampled smokes"
+        "real CLI greedy + sampled smokes",
+        "qwen2_dense_quality_gate",
+        "qwen2_dense_memory_oracle",
+        "logit_dump + scripts/kld.py"
       ],
-      "measured": [],
-      "notes": "The pinned Qwen2.5 7B 4-bit MLX checkpoint streamed and passed real greedy and sampled CLI smokes on 2026-09-13. This is MLX safetensors intake, not GGUF. The qwen2 GGUF path is recognized, but the pinned Q3_K_M GGUF is header-only until a Q3_K resident kernel exists. No Qwen2 memory oracle, quality gate, or frozen performance baseline yet. Official ChatML sidecars may omit special-token ids for <think> and <tool_response>; the resolver treats those pairs as optional."
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 623,
+          "decode_tok_s_min": 38.754,
+          "decode_tok_s_max": 68.799,
+          "measured_on": "2026-09-17",
+          "source": "this port, Qwen2.5-7B Instruct MLX INT4, AC; quality, memory, and cross-engine gates"
+        }
+      ],
+      "notes": "The pinned Qwen2.5 7B 4-bit MLX checkpoint streamed and passed real greedy and sampled CLI smokes, the Qwen2 quality gate (perplexity 12.4206, deterministic greedy and sampled digests), the Qwen2 memory oracle (622 MiB peak at 8192 context), and the MLX cross-engine KL gate (mean forward KL 0.0002923, 99th percentile 0.0022752, top-1 agreement 99.6546%). This is MLX safetensors intake, not GGUF. The qwen2 GGUF path is recognized, but the pinned Q3_K_M GGUF is header-only until a Q3_K resident kernel exists. Official ChatML sidecars may omit special-token ids for <think> and <tool_response>; the resolver treats those pairs as optional."
     },
     {
       "alias": "gptoss-20b",

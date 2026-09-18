@@ -591,8 +591,13 @@ Both inputs to that multiplication (`expert_count`, `feed_forward_length`) sit
 in the GGUF header, so the answer is available before any download.
 
 **Qwen3-30B-A3B is the third column and it is what picking on granularity
-first buys.** Measured 2026-08-10 on the real streamed `qwen3moe` install,
-frozen protocol, AC, release, 16 slots, all three cases stopping endOfTurn:
+first buys.** The original row was measured 2026-08-10 on the real streamed
+`qwen3moe` install. The install was re-streamed and the quality and memory
+gates were re-run on 2026-09-17; the current gate row is 14.5988 perplexity,
+2,663.8 MiB peak, and 27.907 / 27.176 / 17.245 tok/s for the short,
+medium, and long cases. The older cross-engine dump below remains tied to its
+2026-08-10 same-GGUF llama.cpp run, frozen protocol, AC, release, 16 slots,
+with all three cases stopping endOfTurn:
 
 | | value |
 | --- | ---: |
@@ -789,6 +794,19 @@ gate's detection floor, which is a second and independent bound on it.
 Everything here reproduced exactly across separate processes: the port's
 logit dump is byte-identical run to run (SHA-256 `ee22f854...`), and
 `kld.py`'s output diffs clean.
+
+Qwen2.5 7B Instruct MLX INT4, 579 positions, 16 expert-cache slots,
+2026-09-17, AC on Apple M4 Max:
+
+| Comparison | Mean KL | Median | p99 | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: |
+| this port vs mlx-lm, both cached | 0.0002923 | 0.0001445 | 0.0022752 | 99.65% |
+| mlx-lm batched vs mlx-lm cached | 0.0000259 | 0.0000198 | 0.0001372 | 99.83% |
+
+The Qwen2.5 port is therefore within the MLX shape floor at this resolution.
+The same corpus gives perplexity `12.4206` for this port, `12.4167` for MLX
+cached, and `12.4165` for MLX batched. The full machine-readable report is
+[`qwen25-kld-2026-09-17.json`](verification/qwen25-kld-2026-09-17.json).
 
 Caveats. One corpus, one family, one machine. mlx-lm returns bfloat16,
 whose 8 mantissa bits are strictly coarser than this port's f16 storage at
@@ -2274,4 +2292,3 @@ swallows the efficiency arm's. What it did settle is that the rate cap holds
 10.00 tok/s to 0.01% and keeps the machine out of thermal governance
 entirely, where the performance arm never is. Full write-up:
 `docs/POWER_BASELINE.md`.
-

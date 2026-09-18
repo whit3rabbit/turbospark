@@ -92,6 +92,11 @@ CHECKPOINTS = {
         "revision": "0d77464eeb233a2da68ebf9d7dc4edaac7db956d",
         "install_var": "TURBOSPARK_GEMMA4_INSTALL_DIR",
     },
+    "qwen25": {
+        "repo": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+        "revision": "c8e9187488f846965507bfc2b3957d59fd0d5a27",
+        "install_var": "TURBOSPARK_QWEN2_DENSE_INSTALL_DIR",
+    },
     # `qwen36` IS NOT HERE, AND THAT IS A DECISION RATHER THAN AN OMISSION.
     # `docs/BENCHMARKS.md` has recorded since Phase Q that Qwen 3.6 has no
     # cross-engine number because "`kld.py`'s reference is pinned to the
