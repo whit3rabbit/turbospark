@@ -214,6 +214,8 @@ public struct AppSettingsView: View {
             SkillsSettingsPaneView(model: model)
         case .memory:
             MemorySettingsPaneView(model: model)
+        case .soul:
+            SoulSettingsPaneView(model: model)
         case .agents:
             AgentsSettingsPaneView(model: model)
         case .plugins:

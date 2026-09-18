@@ -15,13 +15,20 @@ struct SoulSettingsSection: View {
 
     var body: some View {
         Section(header: Text(verbatim: "SOUL.md")) {
-            Text("Global personality and communication guidance for the agent.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
+            HStack(alignment: .center, spacing: 18) {
+                TSIdlingSoulSparkView(size: 80)
 
-            Text(sourceDescription)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Global personality and communication guidance for the agent.", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+
+                    Text(sourceDescription)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                }
+            }
+            .padding(.vertical, 4)
 
             if let readError = resolution.readError {
                 Text(verbatim: "Could not read SOUL.md: \(readError)")
@@ -61,7 +68,7 @@ struct SoulSettingsSection: View {
                         createHermes()
                     } label: {
                         Text("Create Hermes SOUL.md", bundle: .module)
-                            .settingsControl("Create Hermes SOUL.md", pane: .engine, timing: .nextTurn)
+                            .settingsControl("Create Hermes SOUL.md", pane: .soul, timing: .nextTurn)
                     }
                 }
 
@@ -73,7 +80,7 @@ struct SoulSettingsSection: View {
             } label: {
                 Text("Load File...", bundle: .module)
             }
-            .settingsControl("Load File...", pane: .engine, timing: .nextTurn)
+            .settingsControl("Load File...", pane: .soul, timing: .nextTurn)
 
             if let statusMessage {
                 Text(statusMessage)
@@ -81,7 +88,7 @@ struct SoulSettingsSection: View {
                     .foregroundStyle(.appAccent)
             }
         }
-        .settingsControl("SOUL.md", pane: .engine, timing: .nextTurn)
+        .settingsControl("SOUL.md", pane: .soul, timing: .nextTurn)
         .onAppear(perform: reload)
         .fileImporter(
             isPresented: $isImportingFile,

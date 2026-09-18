@@ -190,4 +190,16 @@ final class SoulPromptTests: XCTestCase {
         let systemPiece = model.buildEstimateParts().pieces.first { $0.label == "System prompt" }
         XCTAssertTrue(systemPiece?.content.contains("ACCOUNTED-SOUL") ?? false)
     }
+
+    @MainActor
+    func testSoulCharacterAssetLoadsFromBundle() {
+        let image = SoulCharacterAssetCache.shared.soulImage
+        XCTAssertNotNil(image, "SoulCharacter asset should load from bundle resources")
+        if let image {
+            XCTAssertGreaterThan(image.size.width, 0)
+            XCTAssertGreaterThan(image.size.height, 0)
+        }
+        let view = TSIdlingSoulSparkView(size: 80)
+        XCTAssertEqual(view.size, 80)
+    }
 }

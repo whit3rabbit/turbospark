@@ -24,18 +24,28 @@ struct MemorySettingsPaneView: View {
 
     private var enableSection: some View {
         Section(header: Text("Memory", bundle: .module)) {
-            Toggle(isOn: Binding(
-                get: { model.memoryEnabled },
-                set: { newValue in
-                    model.memoryEnabled = newValue
-                    model.persistSettingsDebounced()
-                })) {
-                Text("Let the model remember across conversations", bundle: .module)
+            HStack(alignment: .center, spacing: 18) {
+                TSIdlingMemorySparkView(size: 80)
+                    .opacity(model.memoryEnabled ? 1.0 : 0.65)
+                    .animation(TSMotion.select, value: model.memoryEnabled)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: Binding(
+                        get: { model.memoryEnabled },
+                        set: { newValue in
+                            model.memoryEnabled = newValue
+                            model.persistSettingsDebounced()
+                        })) {
+                        Text("Let the model remember across conversations", bundle: .module)
+                    }
+                    .settingsControl("Let the model remember across conversations", pane: .memory, timing: .nextTurn)
+
+                    Text("Memory is profile-specific. Project memory remains separate. Type `#` or `/memory text` to save a dated entry, or `/memory` to open the profile memory folder.", bundle: .module)
+                        .font(theme.ui(.small))
+                        .foregroundStyle(.appSecondary)
+                }
             }
-            .settingsControl("Let the model remember across conversations", pane: .memory, timing: .nextTurn)
-            Text("Memory is profile-specific. Project memory remains separate. Type `#` or `/memory text` to save a dated entry, or `/memory` to open the profile memory folder.", bundle: .module)
-            .font(theme.ui(.small))
-            .foregroundStyle(.appSecondary)
+            .padding(.vertical, 4)
         }
             .settingsControl("Memory", pane: .memory, timing: .nextTurn)
     }

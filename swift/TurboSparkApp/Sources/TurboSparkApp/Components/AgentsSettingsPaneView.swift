@@ -100,6 +100,29 @@ public struct AgentsSettingsPaneView: View {
         }
     }
 
+    @ViewBuilder private var projectInstructionsBanner: some View {
+        if scopeFilter == .project, let project = model.selectedProject {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text")
+                    .foregroundStyle(.appAccent)
+                if let root = project.rootDirectoryPath, !root.isEmpty {
+                    let detected = ProjectRuleDetector.detectRules(in: root, preference: project.rulePreference)
+                    Text(detected?.statusDescription ?? "No live AGENTS.md or CLAUDE.md detected in project root.")
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                } else {
+                    Text("No project folder attached. Set a folder in project settings to read AGENTS.md.", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 6)
+            .background(.appSurface.opacity(0.3))
+        }
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             // Header bar
@@ -113,6 +136,7 @@ public struct AgentsSettingsPaneView: View {
                 .frame(height: 1)
 
             overrideDisclosureBanner
+            projectInstructionsBanner
 
             if model.allManagedAgents.isEmpty {
                 emptyStateView
@@ -132,10 +156,8 @@ public struct AgentsSettingsPaneView: View {
                         agentDetailView(agent: current)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        VStack(spacing: 12) {
-                            Image(systemName: "person.2.badge.gearshape")
-                                .themedFont(.display)
-                                .foregroundStyle(.tertiary)
+                        VStack(spacing: 16) {
+                            TSIdlingAgentsSparkView(size: 80)
                             Text("Select an agent to inspect system instructions and capabilities.", bundle: .module)
                                 .themedFont(.base)
                                 .foregroundStyle(.appSecondary)
@@ -410,10 +432,8 @@ public struct AgentsSettingsPaneView: View {
     // MARK: - Empty State
 
     private var emptyStateView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "person.2.badge.gearshape")
-                .themedFont(.display)
-                .foregroundStyle(.tertiary)
+        VStack(spacing: 16) {
+            TSIdlingAgentsSparkView(size: 80)
             Text("No Agents Found", bundle: .module)
                 .themedFont(.title3, weight: .bold)
             Text("No agent definitions match the selected scope filter.", bundle: .module)

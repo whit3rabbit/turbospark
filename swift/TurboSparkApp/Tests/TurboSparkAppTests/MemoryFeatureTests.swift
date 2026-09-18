@@ -475,4 +475,16 @@ final class MemoryFeatureTests: XCTestCase {
         XCTAssertTrue(prompt.contains("T"))
         MemoryStore.shared.isModelEnabled = false
     }
+
+    @MainActor
+    func testMemoryCharacterAssetLoadsFromBundle() {
+        let image = MemoryCharacterAssetCache.shared.memoryImage
+        XCTAssertNotNil(image, "MemoryCharacter asset should load from bundle resources")
+        if let image {
+            XCTAssertGreaterThan(image.size.width, 0)
+            XCTAssertGreaterThan(image.size.height, 0)
+        }
+        let view = TSIdlingMemorySparkView(size: 80)
+        XCTAssertEqual(view.size, 80)
+    }
 }

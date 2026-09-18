@@ -11,18 +11,28 @@ struct ProjectRulesSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Project Rules & Instructions", bundle: .module)
-                    .themedFont(.small, weight: .semibold)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                if !rootDirectoryPath.isEmpty {
-                    Button {
-                        onAutoDetect()
-                    } label: { Text("Check Project Instructions", bundle: .module) }
-                    .themedFont(.small)
-                    .buttonStyle(.borderless)
-                    .help("Check the live AGENTS.md, CLAUDE.md, CONTEXT.md, and SOUL.md files for this project")
+            HStack(alignment: .center, spacing: 14) {
+                TSIdlingAgentsSparkView(size: 64)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Project Rules & Instructions", bundle: .module)
+                            .themedFont(.small, weight: .semibold)
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        if !rootDirectoryPath.isEmpty {
+                            Button {
+                                onAutoDetect()
+                            } label: { Text("Check Project Instructions", bundle: .module) }
+                            .themedFont(.small)
+                            .buttonStyle(.borderless)
+                            .help("Check the live AGENTS.md, CLAUDE.md, CONTEXT.md, and SOUL.md files for this project")
+                        }
+                    }
+
+                    Text("Loads live AGENTS.md or CLAUDE.md instructions from the repository root.", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
                 }
             }
 

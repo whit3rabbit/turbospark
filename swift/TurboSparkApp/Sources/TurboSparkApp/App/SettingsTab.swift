@@ -13,6 +13,7 @@ extension AppSettingsView {
         case mcp = "MCP Servers"
         case skills = "Skills"
         case memory = "Memory"
+        case soul = "Soul"
         case agents = "Agents & Subagents"
         case plugins = "Plugins"
         case automation = "Scheduled Tasks"
@@ -35,6 +36,7 @@ extension AppSettingsView {
             case .mcp: return "server.rack"
             case .skills: return "wand.and.stars"
             case .memory: return "brain"
+            case .soul: return "sparkles"
             case .agents: return "person.2.badge.gearshape"
             case .plugins: return "puzzlepiece.extension"
             case .automation: return "clock.badge.checkmark"
@@ -46,7 +48,7 @@ extension AppSettingsView {
             switch self {
             case .general, .profiles, .appearance, .shortcuts, .permissions:
                 return "Personal"
-            case .models, .engine, .safety, .mcp, .skills, .memory, .agents, .plugins,
+            case .models, .engine, .safety, .mcp, .skills, .memory, .soul, .agents, .plugins,
                 .automation, .hooks:
                 return "Engine & Coding"
             }
@@ -76,8 +78,10 @@ extension AppSettingsView {
                 return ["skills", "custom tools", "instructions", "triggers", "shell", "scope"]
             case .memory:
                 return ["memory", "remember", "auto-memory", "persistence", "notes", "brain"]
+            case .soul:
+                return ["soul", "soul.md", "hermes", "personality", "prompt", "instructions", "character", "identity"]
             case .agents:
-                return ["agents", "subagents", "personas", "system instructions", "scope"]
+                return ["agents", "subagents", "personas", "system instructions", "scope", "agents.md", "claude.md", "rules"]
             case .plugins:
                 return ["plugins", "marketplace", "extensions", "addons", "contributions", "commands"]
             case .automation:
