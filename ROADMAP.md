@@ -116,7 +116,7 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   - `crates/gpu/src/shaders/` (Q3_K resident kernels, if that scope is chosen)
   - `docs/NEW_MODEL.md`, `docs/MODEL_FAMILY.md`, `docs/TESTING.md`
 
-#### 3. `deepseek2` Architecture Support (High-Leverage Multi-Model Unlock) -- LANDED 2026-09-17, numerics closed same day
+#### 3. `deepseek2` Architecture Support (High-Leverage Multi-Model Unlock) -- LANDED, numerics closed, RELEASED 2026-09-17
 - **Landed**: the full cross-layer bring-up -- `ModelFamily::Deepseek2`
   (mask 5, MLA), baseline + manifest round-trip, GGUF name table, config
   parser, registry promotion (witness: `mradermacher/DeepSeek-V2-Lite-Chat-GGUF`
@@ -133,9 +133,21 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   on 14 of 15 prompt positions), greedy + sampled generation coherent with
   EndOfTurn reached, catalog row promoted to `runs`
   ([DEEPSEEK2_PHASE0.md](docs/DEEPSEEK2_PHASE0.md)'s closed-numerics section
-  carries the record and the two false leads). Still owed for full release:
-  frozen quality/throughput/memory rows for the family, and the descope list
-  (split `wk_b`/`wv_b` files, `q_lora_rank > 0`, batched absorbed prefill).
+  carries the record and the two false leads).
+- **RELEASED (2026-09-17): the owed rows are frozen.** Quality gate at
+  perplexity `14.3688` with stable greedy and sampled digests (two fresh
+  processes byte-identical; no assistant prefix; the 8-slot constrained
+  digest equals the 16-slot one); memory oracle at `4,103 MiB` peak
+  (ceiling `4,300`) with all three protocol cases stopping endOfTurn at
+  the family's own `8,192/1,024` window and a `4.0` tok/s decode floor
+  (readings `17.533` / `11.285` / `5.722`); catalog `measured` block and
+  `gates` filled, with the offline agreement test tying them to the
+  oracle's row. The descope list (split `wk_b`/`wv_b` files,
+  `q_lora_rank > 0`, batched absorbed prefill, pure-576 KV, and the
+  V3/GLM/Kimi witnesses) is detailed once in `DEVIATIONS.md`'s `deepseek2`
+  section, its one home. Numbers and interpretation:
+  [DEEPSEEK2_PHASE0.md](docs/DEEPSEEK2_PHASE0.md)'s frozen-release-gates
+  section.
 - **Files touched**: the four below, plus `gguf_names/deepseek2.rs`,
   `gguf_config`, `arch_registry`, `kv_layer_strides` (mask 5), the
   `MlaConfig` manifest block, the dense-lead positional walk, the V2

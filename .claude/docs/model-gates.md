@@ -155,4 +155,15 @@ TURBOSPARK_ORNITH35B_INSTALL_DIR=~/models/ornith35b.gturbo \
 # artifact asserts the wrong digests. ~2 min.
 TURBOSPARK_GEMMA4_IQ_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
   cargo test -p turbospark-bench --test iq3_quality_gate --release -- --ignored --nocapture
+
+# The `deepseek2` family's two gates (DeepSeek-V2-Lite-Chat Q8_0, the MLA
+# bring-up's witness). The oracle runs the protocol at the family's OWN
+# 8,192/1,024 row -- the compressed 576-half KV cache is why it can take the
+# dense window for a quarter of the KV cost (`real_model_params`) -- and the
+# quality gate needs NO assistant prefix: V2's answer slot is plain prose
+# after `Assistant:`, with no think frame to close and no channel marker.
+TURBOSPARK_DSV2_INSTALL_DIR=~/.turbospark/models/dsv2lite-16b.gturbo \
+  cargo test -p turbospark-bench --test dsv2_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_DSV2_INSTALL_DIR=~/.turbospark/models/dsv2lite-16b.gturbo \
+  cargo test -p turbospark-bench --test dsv2_quality_gate --release -- --ignored --nocapture
 ```

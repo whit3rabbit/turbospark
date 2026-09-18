@@ -2103,3 +2103,31 @@ divergences and one open gap. Facts and the verified-correct list:
   a latent-recovery run against llama's expanded K cache read as a
   compressed row), is `docs/DEEPSEEK2_PHASE0.md`'s closed-numerics section.
   The bisect-era debug knobs were removed with the gap they served.
+
+Deliberately not done (the descope list; this section is its one home):
+
+- **Split `wk_b`/`wv_b` GGUF files.** Newer conversions split the fused
+  `attn_kv_b` into separate k/v up-projections; llama.cpp's own comment
+  notes the older files carry it unsplit, and the witness Q8_0 is unsplit.
+  A split-file reader is a follow-up keyed on a real artifact that ships
+  one, not a speculative name table.
+- **`q_lora_rank > 0`** (the q low-rank branch of full V2/V3, GigaChat,
+  Kanana). V2-Lite has `q_lora_rank: null`, so the branch is unreachable on
+  the witness; it needs its own baseline, its own `a/q` norm pair, and a
+  real checkpoint to verify against before it means anything.
+- **A batched (T-row) absorbed prefill kernel.** Prefill runs the same
+  per-token MLA dispatches the decode path uses (the llama MoE prefill
+  pattern), which is correct and slow-ish; chunked prefill is refused by
+  name for this family rather than silently falling back. A T-row absorbed
+  attention kernel is the follow-up, costed after prefill shows up in a
+  profile.
+- **Pure-576 KV (dropping the V buffer).** The compressed row needs no V
+  storage, but the layout keeps the cache manager's V buffer allocated (at
+  1,024 halves for mask-5 layers) so the manager is reused untouched: the
+  ~216 MiB of never-written V at 8,192 context is the recorded recoverable
+  overhead, reclaimed only if a second mask-5 family ever makes a
+  shared-manager refactor worth it.
+- **The V3 / GLM-4.7-Flash / Kimi K2 checkpoints themselves.** One
+  architecture string covers many models; each is its own witness with its
+  own slot arithmetic (AGENTS.md Gotcha 36), and `q_lora_rank > 0` above
+  gates several of them before any kernel question is reached.

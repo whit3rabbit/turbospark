@@ -336,15 +336,45 @@ Two false leads are recorded so nobody re-walks them:
   log (`cache_k_l1 (view)` ne=[3072,256] plus `(permuted)` views) is what
   settled the layout.
 
+## Frozen release gates (2026-09-17)
+
+The family's three owed rows, frozen on the real Q8_0 install
+(`~/.turbospark/models/dsv2lite-16b.gturbo`), Apple M4 Max, AC, release,
+16 expert-cache slots, protocol at the family's own 8,192/1,024 window
+(`real_model_params`' `Deepseek2` arm, confirmed by the oracle run: all
+three cases stop endOfTurn, `long-synthesis` prefills 3,153 tokens):
+
+- **Quality** (`crates/bench/tests/dsv2_quality_gate.rs`): reference-answer
+  perplexity **14.3688**, greedy digest
+  `8a0e247593e9487004eeb152723edea46f1e645626d4b496945eef598fab44e9`,
+  sampled digest
+  `d212a8365d648b285f8de6fd19225b802eb0e23d6ab9c0f1789e97b72db99d56`.
+  Two fresh processes agreed on every digit and hex character. NO assistant
+  prefix: V2's answer slot is plain prose after `Assistant:`. The 8-slot
+  constrained digest equals the 16-slot one; the constrained arm's
+  throughput ratio read 0.73x in one process and 1.51x in the other (the
+  16-slot decode itself moved 13.1 to 24.4 tok/s on identical work), which
+  is machine-state spread on a shared machine, recorded in the gate's row
+  rather than explained.
+- **Memory** (`crates/bench/tests/dsv2_memory_oracle.rs`): session peak
+  **4,103 MiB** at the 8,192 window, ceiling frozen at 4,300 (measured
+  +5%), replay growth +0.05 MiB. The peak is slot cache (3,828 MiB) + KV
+  (243 MiB) + ~33 MiB: the ~1.33 GiB resident core is NOT counted, the
+  same phenomenon AGENTS.md Gotcha 40 measured on a dense install, now
+  observed on a streamed MoE one. The counted figure is a leak sentinel,
+  not a capacity number.
+- **Throughput**: decode **17.533 / 11.285 / 5.722 tok/s** on
+  short-explanation / medium-review / long-synthesis, oracle floor frozen
+  at 4.0 tok/s (0.70x the slow case). The slow case is slow for two
+  stacked reasons: it decodes at 3,754-token context, and it gets there
+  through a 375.57 s sequential per-token prefill (8.4 tok/s prefill) --
+  the descope list's unbuilt T-row absorbed prefill kernel is the single
+  biggest known throughput lever this family has.
+
 ## Deliberately not done at bring-up (the descope list)
 
-- Split `wk_b`/`wv_b` GGUF variants (newer files split the fused kv_b;
-  llama.cpp notes old files carry it unsplit). The witness is unsplit; a
-  split-file reader is a follow-up keyed on a real artifact.
-- `q_lora_rank > 0` (full V2/V3/GigaChat/Kanana) q low-rank branch.
-- A batched (T-row) absorbed prefill attention kernel.
-- Pure-576 KV (dropping the V buffer allocation) -- the layout keeps V
-  allocated at 1024 halves for v1 to reuse the cache manager untouched;
-  the 216 MiB at 8192 is recorded as the recoverable overhead.
-- The V3/GLM/Kimi checkpoints themselves: one architecture string, many
-  models, each its own witness and slot arithmetic per Gotcha 36.
+Named in the ROADMAP entry and detailed once in `DEVIATIONS.md`'s
+`deepseek2` section, which stays the list's only home: split `wk_b`/`wv_b`
+GGUF files, `q_lora_rank > 0`, a batched (T-row) absorbed prefill kernel,
+pure-576 KV (the never-written V buffer), and the V3/GLM/Kimi checkpoints
+themselves.

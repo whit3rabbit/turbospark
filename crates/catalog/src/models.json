@@ -853,8 +853,23 @@
       "download_bytes": 16699906000,
       "install_bytes": 16700000000,
       "status": "runs",
-      "gates": [],
-      "notes": "The architecture bring-up's own artifact: MLA (compressed 576-half cache, absorbed form) plus 64 experts top-6 and a fused shared expert, one dense lead layer. Runs: the cross-engine numerics gap is CLOSED -- layer-1 cache rows match llama.cpp at corr 0.99998+ at every position, full-vocab logits at corr 0.984-0.9999 with argmax identical on 14 of 15 prompt positions on the same Q8_0 bytes, and greedy + sampled generation are coherent with EndOfTurn reached (root cause was a half-split rope pairing where ggml pairs consecutive elements; docs/DEEPSEEK2_PHASE0.md's closed-numerics section carries the record). No frozen quality/throughput/memory gates yet. The repo's Q4_K_M variant refuses at repack: its calibration gives four layers Q5_K routed/shared experts and the routed-pair kernel matrix has no Q5_K arm; use the Q8_0."
+      "gates": [
+        "dsv2_quality_gate",
+        "dsv2_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 4103,
+          "decode_tok_s_min": 5.722,
+          "decode_tok_s_max": 17.533,
+          "measured_on": "2026-09-17",
+          "source": "this port, two oracle readings, AC; the slow case decodes at 3,754-token context after a 267-376 s sequential per-token prefill"
+        }
+      ],
+      "notes": "The architecture bring-up's own artifact: MLA (compressed 576-half cache, absorbed form) plus 64 experts top-6 and a fused shared expert, one dense lead layer. Runs: the cross-engine numerics gap is CLOSED -- layer-1 cache rows match llama.cpp at corr 0.99998+ at every position, full-vocab logits at corr 0.984-0.9999 with argmax identical on 14 of 15 prompt positions on the same Q8_0 bytes, and greedy + sampled generation are coherent with EndOfTurn reached (root cause was a half-split rope pairing where ggml pairs consecutive elements; docs/DEEPSEEK2_PHASE0.md's closed-numerics section carries the record). Frozen release gates: quality at perplexity 14.3688 with stable greedy and sampled digests, memory oracle at 4,103 MiB peak (ceiling 4,300) with a 4.0 tok/s floor, all three protocol cases stopping endOfTurn at the 8,192/1,024 window. The repo's Q4_K_M variant refuses at repack: its calibration gives four layers Q5_K routed/shared experts and the routed-pair kernel matrix has no Q5_K arm; use the Q8_0."
     }
   ]
 }
