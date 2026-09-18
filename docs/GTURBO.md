@@ -2,9 +2,10 @@
 
 This document specifies the `.gturbo` model installation directory format, its binary layout, streaming mechanics, and compatibility with the upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (Mference) inference engine.
 
-This specification covers autoregressive text-model installs. Z-Image-Turbo
-uses a separate image-generation install with the `.image.gturbo` convention,
-its own manifest schema, component ownership, and packed tensor indexes. Do
+This specification covers autoregressive text-model installs. Text artifacts
+now live under `~/.turbospark/models/text`. Z-Image-Turbo uses a separate
+image-generation install under `~/.turbospark/models/image`, with its own
+manifest schema, component ownership, and packed tensor indexes. Do
 not make an image install look like a text `Mlx` row or assume that this text
 manifest can validate it. See [Native image generation](IMAGE_GENERATION.md)
 and [Z-Image-Turbo](ZIMAGE_TURBO.md).

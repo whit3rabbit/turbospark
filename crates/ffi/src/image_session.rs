@@ -60,7 +60,7 @@ pub struct ImageSession {
 impl ImageSession {
     #[cfg(target_os = "macos")]
     pub fn open(model_arg: &str) -> Result<Self, String> {
-        let model_path = catalog::resolve_model_arg(model_arg);
+        let model_path = catalog::resolve_image_arg(model_arg);
         let manifest = image::ImageManifest::load(&model_path)?;
         manifest.validate()?;
         manifest.verify_files(&model_path)?;

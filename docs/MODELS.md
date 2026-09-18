@@ -46,9 +46,11 @@ turbospark-model probe TheBloke/SomeModel-GGUF --file some-model.Q4_K_M.gguf
 ## Image-generation installs are separate
 
 Z-Image-Turbo is not a text model row. Do not add a Diffusers or MLX image
-export to the ordinary text catalog as an `Mlx` model. The image route writes
-the image-specific `.image.gturbo` format, with its own manifest, component
-owners, packed tensors, and verification receipt.
+export to the ordinary text catalog as an `Mlx` model. Text installs go under
+`~/.turbospark/models/text`, image installs under
+`~/.turbospark/models/image`, and the image route writes its own manifest,
+component owners, packed tensors, and verification receipt. Audio is reserved
+under `~/.turbospark/models/audio` for the future transcription runtime.
 
 The image route accepts either a pinned local Diffusers-style source directory
 or an immutable Hugging Face repository revision:
@@ -74,7 +76,7 @@ accepted through the image-only source adapter. The pinned andrevp 2-bit,
 `z-image-turbo-mlx-8bit`, and `z-image-turbo-mlx-fp16`. It recognizes MLX affine U32
 weight planes and F16 or BF16 `.scales` and `.biases` companions at 2, 3, 4,
 5, 6, and 8 bits, with group size 64, then writes the repository's separate
-`.image.gturbo` format. The full installer gates pass for the published 2-bit,
+image install format. The full installer gates pass for the published 2-bit,
 4-bit, and 8-bit variants; the FP16 full install remains open because it is an
 unquantized source path. Image quality, resource, and real-install Swift
 generation gates remain open for the non-INT4 variants. These are the complete
@@ -107,7 +109,7 @@ Adding resume is a change to the walks in `crates/repack`, not to
 | | |
 |---|---|
 | root | `$TURBOSPARK_HOME`, default `~/.turbospark` |
-| installs | `$ROOT/models/<alias>.gturbo`, or wherever `--out` says |
+| installs | `$ROOT/models/text/<alias>.gturbo` for text, `$ROOT/models/image/<alias>.gturbo` for image, or wherever an explicit output flag says |
 | record | `$ROOT/installed.json` |
 
 `--model <name>` takes a path or an alias, on **both** `turbospark-check` and

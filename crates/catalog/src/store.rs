@@ -51,6 +51,45 @@ pub struct InstalledModel {
     /// rows keep deserializing rather than failing to parse the whole file.
     #[serde(default)]
     pub kind: Option<String>,
+    /// The runtime modality. Missing means text for rows written before the
+    /// modality-aware store existed. A legacy image row is recognized from
+    /// `kind == "image"` by [`Self::effective_modality`].
+    #[serde(default)]
+    pub modality: ModelModality,
+}
+
+/// The user-facing model namespace under the shared TurboSpark store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelModality {
+    /// Chat, completion, embedding, and vision-enabled text models.
+    #[default]
+    Text,
+    /// Diffusion and other image-generation artifacts.
+    Image,
+    /// Audio models, reserved for the transcription runtime.
+    Audio,
+}
+
+impl ModelModality {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Image => "image",
+            Self::Audio => "audio",
+        }
+    }
+}
+
+impl InstalledModel {
+    /// Interprets rows written before `modality` existed.
+    pub fn effective_modality(&self) -> ModelModality {
+        if self.kind.as_deref() == Some("image") {
+            ModelModality::Image
+        } else {
+            self.modality
+        }
+    }
 }
 
 /// The `~/.turbospark` tree.
@@ -92,27 +131,52 @@ impl Store {
         &self.root
     }
 
-    /// Where a pull of `alias` lands by default.
+    /// The shared parent for all modality-specific model directories.
+    pub fn models_root(&self) -> PathBuf {
+        self.root.join("models")
+    }
+
+    /// The canonical directory for one modality.
+    pub fn modality_root(&self, modality: ModelModality) -> PathBuf {
+        self.models_root().join(modality.as_str())
+    }
+
+    /// Where a text-model pull of `alias` lands by default.
     pub fn install_path(&self, alias: &str) -> PathBuf {
-        self.root.join("models").join(format!("{alias}.gturbo"))
+        self.modality_root(ModelModality::Text)
+            .join(format!("{alias}.gturbo"))
     }
 
-    /// Where a separately packaged image install lands. The suffix keeps an
-    /// image artifact from colliding with a text model that happens to use the
-    /// same local alias.
+    /// Where an image install lands by default. The modality directory, not a
+    /// filename suffix, keeps image and text aliases independent.
     pub fn image_install_path(&self, alias: &str) -> PathBuf {
-        self.root
-            .join("models")
-            .join(format!("{alias}.image.gturbo"))
+        self.modality_root(ModelModality::Image)
+            .join(format!("{alias}.gturbo"))
     }
 
-    /// Where a vision-tower sidecar pull of `alias` lands by default: the
-    /// same `models/` directory, `-vision` distinguishing it from a trunk
-    /// install of the same alias.
+    /// Where a future audio install lands by default.
+    pub fn audio_install_path(&self, alias: &str) -> PathBuf {
+        self.modality_root(ModelModality::Audio)
+            .join(format!("{alias}.gturbo"))
+    }
+
+    /// Where a vision-tower sidecar pull of `alias` lands by default. Towers
+    /// are text-model accessories, so they stay in the text namespace.
     pub fn vision_install_path(&self, alias: &str) -> PathBuf {
-        self.root
-            .join("models")
+        self.modality_root(ModelModality::Text)
             .join(format!("{alias}.gturbo-vision"))
+    }
+
+    fn legacy_install_path(&self, alias: &str) -> PathBuf {
+        self.models_root().join(format!("{alias}.gturbo"))
+    }
+
+    fn legacy_image_install_path(&self, alias: &str) -> PathBuf {
+        self.models_root().join(format!("{alias}.image.gturbo"))
+    }
+
+    fn legacy_vision_install_path(&self, alias: &str) -> PathBuf {
+        self.models_root().join(format!("{alias}.gturbo-vision"))
     }
 
     fn record_path(&self) -> PathBuf {
@@ -195,38 +259,55 @@ impl Store {
     /// the record is a convenience index over directories that are
     /// self-describing, so a corrupt one must not stop `pull` from writing a
     /// new install.
-    pub fn installed(&self) -> BTreeMap<String, InstalledModel> {
+    fn read_rows(&self) -> Vec<InstalledModel> {
         let text = match std::fs::read_to_string(self.record_path()) {
             Ok(t) => t,
-            Err(_) => return BTreeMap::new(),
+            Err(_) => return Vec::new(),
         };
-        let rows: Vec<InstalledModel> = serde_json::from_str(&text).unwrap_or_default();
-        rows.into_iter()
-            .filter(|r| r.path.is_dir())
+        serde_json::from_str(&text).unwrap_or_default()
+    }
+
+    /// Every recorded text install whose directory still exists, alias order.
+    /// Image rows are deliberately excluded even if an older CLI wrote one
+    /// into this shared record.
+    pub fn installed(&self) -> BTreeMap<String, InstalledModel> {
+        self.read_rows()
+            .into_iter()
+            .filter(|r| r.path.is_dir() && r.effective_modality() == ModelModality::Text)
             .map(|r| (r.alias.clone(), r))
             .collect()
     }
 
     /// Add or replace a row, then rewrite the record.
     pub fn record(&self, model: &InstalledModel) -> Result<(), String> {
-        let mut rows = self.installed();
-        rows.insert(model.alias.clone(), model.clone());
+        let modality = model.effective_modality();
+        let mut rows: Vec<InstalledModel> = self
+            .read_rows()
+            .into_iter()
+            .filter(|row| {
+                row.path.is_dir()
+                    && !(row.alias == model.alias && row.effective_modality() == modality)
+            })
+            .collect();
+        rows.push(model.clone());
         self.write_rows(&rows)
     }
 
     /// Drop a row. Does not touch the install directory; deleting that is
     /// the caller's decision and its confirmation prompt.
     pub fn forget(&self, alias: &str) -> Result<(), String> {
-        let mut rows = self.installed();
-        rows.remove(alias);
+        let rows: Vec<InstalledModel> = self
+            .read_rows()
+            .into_iter()
+            .filter(|row| !(row.alias == alias && row.effective_modality() == ModelModality::Text))
+            .collect();
         self.write_rows(&rows)
     }
 
-    fn write_rows(&self, rows: &BTreeMap<String, InstalledModel>) -> Result<(), String> {
+    fn write_rows(&self, rows: &[InstalledModel]) -> Result<(), String> {
         std::fs::create_dir_all(&self.root)
             .map_err(|e| format!("creating {}: {e}", self.root.display()))?;
-        let list: Vec<&InstalledModel> = rows.values().collect();
-        let text = serde_json::to_string_pretty(&list)
+        let text = serde_json::to_string_pretty(rows)
             .map_err(|e| format!("serializing the install record: {e}"))?;
         std::fs::write(self.record_path(), text)
             .map_err(|e| format!("writing {}: {e}", self.record_path().display()))
@@ -238,6 +319,12 @@ impl Store {
     ///
     /// See the module header for why the first arm is first.
     pub fn resolve(&self, name: &str) -> Option<PathBuf> {
+        self.resolve_text(name)
+    }
+
+    /// Resolve a text alias or explicit path. Image and audio aliases are
+    /// intentionally not considered.
+    pub fn resolve_text(&self, name: &str) -> Option<PathBuf> {
         let as_path = PathBuf::from(name);
         if as_path.is_dir() {
             return Some(as_path);
@@ -249,17 +336,42 @@ impl Store {
         if default.is_dir() {
             return Some(default);
         }
-        // The vision-tower default, tried second for the same "a store
-        // populated by hand still resolves" reason the trunk default
-        // exists: a recorded row (the arm above) already carries whichever
-        // path the install actually used, so this is only reached when
-        // nothing was ever recorded.
         let vision_default = self.vision_install_path(name);
         if vision_default.is_dir() {
             return Some(vision_default);
         }
-        let image_default = self.image_install_path(name);
-        image_default.is_dir().then_some(image_default)
+        let legacy = self.legacy_install_path(name);
+        if legacy.is_dir() {
+            return Some(legacy);
+        }
+        let legacy_vision = self.legacy_vision_install_path(name);
+        legacy_vision.is_dir().then_some(legacy_vision)
+    }
+
+    /// Resolve an image alias or explicit path. Text and audio aliases are
+    /// intentionally not considered.
+    pub fn resolve_image(&self, name: &str) -> Option<PathBuf> {
+        let as_path = PathBuf::from(name);
+        if as_path.is_dir() {
+            return Some(as_path);
+        }
+        let canonical = self.image_install_path(name);
+        if canonical.is_dir() {
+            return Some(canonical);
+        }
+        let legacy = self.legacy_image_install_path(name);
+        legacy.is_dir().then_some(legacy)
+    }
+
+    /// Resolve an audio alias or explicit path. Audio loading is reserved for
+    /// the transcription runtime, but its namespace is defined now.
+    pub fn resolve_audio(&self, name: &str) -> Option<PathBuf> {
+        let as_path = PathBuf::from(name);
+        if as_path.is_dir() {
+            return Some(as_path);
+        }
+        let canonical = self.audio_install_path(name);
+        canonical.is_dir().then_some(canonical)
     }
 }
 
@@ -273,7 +385,20 @@ impl Store {
 /// and the caller reports the same "no such install" it always did.
 pub fn resolve_model_arg(name: &str) -> PathBuf {
     match Store::default_store() {
-        Ok(store) => store.resolve(name).unwrap_or_else(|| PathBuf::from(name)),
+        Ok(store) => store
+            .resolve_text(name)
+            .unwrap_or_else(|| PathBuf::from(name)),
+        Err(_) => PathBuf::from(name),
+    }
+}
+
+/// Resolve an image alias against the default store, preserving explicit
+/// paths and the old flat image location.
+pub fn resolve_image_arg(name: &str) -> PathBuf {
+    match Store::default_store() {
+        Ok(store) => store
+            .resolve_image(name)
+            .unwrap_or_else(|| PathBuf::from(name)),
         Err(_) => PathBuf::from(name),
     }
 }

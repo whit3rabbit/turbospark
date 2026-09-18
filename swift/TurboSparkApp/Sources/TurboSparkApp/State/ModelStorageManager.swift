@@ -3,16 +3,35 @@ import Foundation
 import TurboSpark
 
 /// Discovers, validates, and indexes local model storage directories, including
-/// the primary TurboSpark store (~/.turbospark/models), LM Studio (~/.lmstudio/models),
+/// the primary TurboSpark text store (~/.turbospark/models/text), LM Studio (~/.lmstudio/models),
 /// and custom external scan folders without copying weight files.
 public enum ModelStorageManager {
-    /// Default TurboSpark primary storage directory for downloaded models.
+    /// Default TurboSpark text storage directory for downloaded models.
     public static var defaultTurboSparkModelsDirectory: String {
         if let home = ProcessInfo.processInfo.environment["TURBOSPARK_HOME"], !home.isEmpty {
-            return (home as NSString).appendingPathComponent("models")
+            return (home as NSString).appendingPathComponent("models/text")
         }
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-        return (homeDir as NSString).appendingPathComponent(".turbospark/models")
+        return (homeDir as NSString).appendingPathComponent(".turbospark/models/text")
+    }
+
+    /// Default TurboSpark image storage directory. Image installs are listed
+    /// through the dedicated catalog surface rather than the text index.
+    public static var defaultTurboSparkImageModelsDirectory: String {
+        if let home = ProcessInfo.processInfo.environment["TURBOSPARK_HOME"], !home.isEmpty {
+            return (home as NSString).appendingPathComponent("models/image")
+        }
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        return (homeDir as NSString).appendingPathComponent(".turbospark/models/image")
+    }
+
+    /// Reserved storage directory for future audio transcription models.
+    public static var defaultTurboSparkAudioModelsDirectory: String {
+        if let home = ProcessInfo.processInfo.environment["TURBOSPARK_HOME"], !home.isEmpty {
+            return (home as NSString).appendingPathComponent("models/audio")
+        }
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        return (homeDir as NSString).appendingPathComponent(".turbospark/models/audio")
     }
 
     /// Default LM Studio models directory on macOS.

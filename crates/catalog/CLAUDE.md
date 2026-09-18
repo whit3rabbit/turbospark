@@ -327,20 +327,14 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
     picker, which reads as "no GGUF here" instead of "this port cannot walk a
     shard set".
 
-16. **A NEW INSTALL KIND NEEDS ITS OWN STORE SUFFIX AND A DELIBERATE PLACE IN
-    `resolve`'s FALLBACK ORDER.** Image installs land at `<alias>.image.gturbo`
-    (`Store::image_install_path`) rather than `<alias>.gturbo` precisely so an
-    image artifact cannot collide with a text model that happens to share the
-    alias; the vision sidecar made the same move earlier with
-    `<alias>.gturbo-vision`. The suffix alone is not the contract:
-    `Store::resolve`'s default-path arms run in a fixed order (existing path,
-    recorded row, trunk default, vision sidecar, image install), and that
-    order decides what a bare alias names on a machine that holds several
-    artifacts for it. When adding another artifact class, give it a suffix and
-    add its arm to `resolve` in a position you can defend, then test the
-    ambiguous-alias case -- a resolution order nobody chose is still a
-    resolution order, and it gets discovered the first time two installs
-    disagree about who owns a name.
+16. **A NEW MODALITY NEEDS ITS OWN STORE NAMESPACE AND RESOLVER.** New
+    installs land below `models/text`, `models/image`, or `models/audio`, so an
+    image or audio artifact cannot collide with a text model that happens to
+    share the alias. Vision sidecars stay under `models/text`.
+    `Store::resolve_text` and `Store::resolve_image` are intentionally
+    separate; do not add another modality to the text fallback order. The old
+    flat paths remain read-only compatibility fallbacks while existing
+    installs are migrated by the user or reinstalled.
 
 17. **COMBINED VISION MODELS REQUIRE PREPROCESSOR CONFIG IN SIDECARS.**
     When a catalog row enables vision directly (`include_vision: true`),
@@ -356,4 +350,3 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
     prunes any top-level regular files that are neither part of the current plan's
     `sidecar_files` nor generated install payloads (`manifest.json`,
     `model_weights.bin`).
-

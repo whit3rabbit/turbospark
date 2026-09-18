@@ -11,7 +11,9 @@ real-image captures, and component comparisons.
 The reusable bring-up process and the lessons from this model are summarized
 in [ZIMAGE_TURBO.md](ZIMAGE_TURBO.md).
 
-The image benchmark summary is maintained in
+Image installs use the shared `~/.turbospark/models/image` namespace and are
+not rows in the text model registry. Existing flat `.image.gturbo` installs
+remain readable for compatibility. The image benchmark summary is maintained in
 [ZIMAGE_TURBO.md](ZIMAGE_TURBO.md#recommended-model-and-benchmark-record).
 
 Quiet-AC resource evidence now exists for all three reference stages. The
@@ -105,7 +107,7 @@ MLX safetensors is the default source format for Z-Image-Turbo image installs.
 The default source is
 [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit),
 and the installer accepts all four upstream variants below through the same
-source adapter and `.image.gturbo` artifact path.
+source adapter and image install format.
 
 | Variant | Install alias | Size | Quantization | Link |
 | --- | --- | ---: | --- | --- |
@@ -128,7 +130,7 @@ packed output, run the full installer gate for one variant at a time:
 
 ```sh
 TURBOSPARK_ZIMAGE_MLX_VARIANT=4bit \
-TURBOSPARK_ZIMAGE_MLX_INSTALL_DIR=~/models/z-image-turbo-mlx-4bit.image.gturbo \
+TURBOSPARK_ZIMAGE_MLX_INSTALL_DIR=~/.turbospark/models/image/z-image-turbo-mlx-4bit.gturbo \
   cargo test -p turbospark-cli --test zimage_mlx_install_network --release \
   -- --ignored --nocapture
 ```
@@ -144,7 +146,7 @@ implemented and covered by the binding and app build gates below.
 These are published download sizes, not runtime memory guarantees. The
 original `Tongyi-MAI/Z-Image-Turbo` Diffusers export remains the independent
 parity and quality reference. `turbospark image pack` normalizes either source
-shape into the repository's `.image.gturbo` install format, while
+shape into the repository's image install format, while
 `turbospark-model pull-image --repo OWNER/NAME@REV` handles remote MLX source
 intake and `--source` handles a local MLX directory.
 
@@ -232,7 +234,7 @@ measurement and validation gates remain outstanding.
 The real Swift seam is gated separately from text and vision installs:
 
 ```sh
-make swift-test-real IMAGE_MODEL=~/models/z-image-turbo.image.gturbo
+make swift-test-real IMAGE_MODEL=~/.turbospark/models/image/z-image-turbo.gturbo
 ```
 
 The image-generation tests open the verified install, assert PNG and metadata
@@ -459,7 +461,7 @@ are preferred for a pinned export.
 ```sh
 turbospark image pack \
   --source /path/to/Z-Image-Turbo \
-  --output /path/to/z-image-turbo.image.gturbo \
+  --output ~/.turbospark/models/image/z-image-turbo.gturbo \
   --model-id Tongyi-MAI/Z-Image-Turbo \
   --model-revision f332072aa78be7aecdf3ee76d5c247082da564a6
 ```
@@ -545,7 +547,7 @@ The following records implementation status and the remaining evidence work:
    scheduler latent errors. Run it with:
 
    ```sh
-   TURBOSPARK_IMAGE_INSTALL_DIR=/path/to/pinned.image.gturbo \
+   TURBOSPARK_IMAGE_INSTALL_DIR=/path/to/pinned.gturbo \
    TURBOSPARK_IMAGE_TRACE_DIR=/path/to/fresh/lighting-trace \
      cargo test -p turbospark-image --test metal_parity \
      packed_native_first_step_trace_localizes_divergent_boundary -- \
@@ -780,7 +782,7 @@ wrapper expose image sessions, requests, progress, results, cancellation, and
 explicit buffer ownership. The app Images destination includes curated image
 catalog download, progress, cancellation, model selection, generation, and
 gallery behavior. The remaining opt-in gate is real runtime verification
-against a retained `.image.gturbo` install.
+against a retained verified image install.
 
 Add a top-level `Images` destination with `Create` and `Gallery` tabs,
 compatible installed-model selection, a prompt, stage progress, Stop, result

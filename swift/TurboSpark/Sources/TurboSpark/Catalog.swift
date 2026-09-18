@@ -9,7 +9,7 @@ import Foundation
 // Rust side spells it camelCase and no CodingKeys are needed anywhere. These
 // two are not: they are the engine's own on-disk formats -- `models.json`
 // (checked into the repository) and `~/.turbospark/installed.json` (written
-// by every `turbospark-model pull`) -- passed through unchanged so a GUI's
+// by text-model installs) -- passed through unchanged so a GUI's
 // rows and the CLI's rows are provably the same data. Renaming them to suit
 // Swift would either fork the format or rewrite files this binding does not
 // own.
@@ -55,6 +55,8 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
     public let revision: String
     public let path: String
     public let family: String
+    /// `text`, `image`, or `audio`. Older rows decode as `text`.
+    public let modality: String
     public let installBytes: UInt64
     /// `YYYY-MM-DD`. Whole days only.
     public let installedOn: String
@@ -65,6 +67,7 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
         revision: String = "main",
         path: String,
         family: String,
+        modality: String = "text",
         installBytes: UInt64 = 0,
         installedOn: String = ""
     ) {
@@ -73,14 +76,27 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
         self.revision = revision
         self.path = path
         self.family = family
+        self.modality = modality
         self.installBytes = installBytes
         self.installedOn = installedOn
     }
 
     enum CodingKeys: String, CodingKey {
-        case alias, repo, revision, path, family
+        case alias, repo, revision, path, family, modality
         case installBytes = "install_bytes"
         case installedOn = "installed_on"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.alias = try values.decode(String.self, forKey: .alias)
+        self.repo = try values.decode(String.self, forKey: .repo)
+        self.revision = try values.decode(String.self, forKey: .revision)
+        self.path = try values.decode(String.self, forKey: .path)
+        self.family = try values.decode(String.self, forKey: .family)
+        self.modality = try values.decodeIfPresent(String.self, forKey: .modality) ?? "text"
+        self.installBytes = try values.decode(UInt64.self, forKey: .installBytes)
+        self.installedOn = try values.decode(String.self, forKey: .installedOn)
     }
 }
 
@@ -179,7 +195,7 @@ public enum TurboSparkCatalog {
         try decode([CatalogEntry].self, from: try takeString { ts_catalog_json($0) })
     }
 
-    /// What is installed in `~/.turbospark`.
+    /// What text models are installed in `~/.turbospark/models/text`.
     public static func installed() throws -> [InstalledModel] {
         try decode([InstalledModel].self, from: try takeString { ts_installed_json($0) })
     }

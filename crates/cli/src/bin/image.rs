@@ -187,7 +187,7 @@ fn run_generate(args: &[String]) -> Result<(), String> {
             output.display()
         ));
     }
-    let model_path = catalog::resolve_model_arg(&model_arg);
+    let model_path = catalog::resolve_image_arg(&model_arg);
     let manifest = ImageManifest::load(&model_path)?;
     let model_revision = manifest
         .source

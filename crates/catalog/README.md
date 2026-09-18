@@ -71,7 +71,7 @@ cargo run -p turbospark-cli --bin turbospark-model -- probe Qwen/Qwen3-30B-A3B-G
 # Recommend models that fit local hardware RAM
 cargo run --release -p turbospark-cli --bin turbospark-model -- recommend --context 8192
 
-# Install a curated model into ~/.turbospark/models
+# Install a curated text model into ~/.turbospark/models/text
 cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
 ```
 

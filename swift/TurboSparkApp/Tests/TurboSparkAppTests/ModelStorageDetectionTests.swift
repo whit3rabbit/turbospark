@@ -20,7 +20,9 @@ final class ModelStorageDetectionTests: XCTestCase {
 
     func testDefaultStoragePaths() {
         let turboPath = ModelStorageManager.defaultTurboSparkModelsDirectory
-        XCTAssertTrue(turboPath.contains(".turbospark/models") || turboPath.contains("models"))
+        XCTAssertTrue(turboPath.contains(".turbospark/models/text") || turboPath.contains("models/text"))
+        XCTAssertTrue(ModelStorageManager.defaultTurboSparkImageModelsDirectory.contains("models/image"))
+        XCTAssertTrue(ModelStorageManager.defaultTurboSparkAudioModelsDirectory.contains("models/audio"))
 
         let lmPath = ModelStorageManager.defaultLMStudioModelsDirectory
         XCTAssertTrue(lmPath.contains(".lmstudio/models"))

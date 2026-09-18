@@ -361,18 +361,6 @@ pub fn pull_image(
         .output_root
         .canonicalize()
         .unwrap_or_else(|_| report.output_root.clone());
-    let model = catalog::InstalledModel {
-        alias: alias.to_string(),
-        repo: model_id.to_string(),
-        revision: model_revision.to_string(),
-        path: path.clone(),
-        family: "z-image-turbo".to_string(),
-        install_bytes: report.total_bytes,
-        installed_on: today(),
-        status: "unlisted".to_string(),
-        kind: Some("image".to_string()),
-    };
-    store.record(&model).map_err(Error::Failed)?;
     println!(
         "installed image {} ({} bytes) to {}",
         alias,
@@ -380,24 +368,6 @@ pub fn pull_image(
         path.display()
     );
     Ok(())
-}
-
-fn today() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(0);
-    let z = secs.div_euclid(86_400) + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
 }
 
 /// Install a curated vision-tower row, or an ad-hoc `--repo` naming one

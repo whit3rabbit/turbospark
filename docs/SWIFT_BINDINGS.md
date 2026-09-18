@@ -940,9 +940,11 @@ byte callback is *also* called concurrently from worker threads.
 
 ### The surface
 
-Image catalog and installation are separate from text model catalog rows. The
-C ABI exposes `ts_image_catalog_json` for curated image sources,
-`ts_image_installed_json` for verified `.image.gturbo` installs, and
+Image catalog and installation are separate from text model catalog rows. Text
+installs are rooted at `~/.turbospark/models/text`, and image installs are
+rooted at `~/.turbospark/models/image`. The C ABI exposes
+`ts_image_catalog_json` for curated image sources,
+`ts_image_installed_json` for verified image installs, and
 `ts_image_install` for staged source download and packing. Swift wraps these
 as `TurboSparkCatalog.imageAvailable()`,
 `TurboSparkCatalog.imageInstalled()`, and
@@ -952,7 +954,7 @@ finished event returns an `ImageInstalledModel` with the verified path and
 image metadata.
 
 Image generation is a separate surface from token generation. `TsImageSession`
-opens a verified `.image.gturbo` install, `ts_image_generate` blocks on one
+opens a verified image install, `ts_image_generate` blocks on one
 serialized heavyweight job, stage callbacks borrow their text only for the
 callback, and the returned PNG must be released with `ts_image_buffer_free`.
 Swift copies the PNG into `Data` before releasing the native buffer. An image
@@ -1010,7 +1012,7 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_catalog_json(out)` | every platform |
 | `ts_installed_json(out)` | every platform |
 | `ts_image_catalog_json(out)` | curated image sources, every platform |
-| `ts_image_installed_json(out)` | installed `.image.gturbo` rows, every platform |
+| `ts_image_installed_json(out)` | installed image rows under the image namespace, every platform |
 | `ts_model_delete(alias)` | delete installed model directory and forget row |
 | `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
@@ -1023,7 +1025,7 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_image_install(alias, cb, ud, out)` | download and pack a curated image source; cannot resume |
 | `ts_embedding_encode_json(model_path, texts_json, out)` | standalone batch text embedding generation |
 | `ts_cosine_similarity(a, b, len)` | cosine similarity between two float vectors |
-| `ts_image_session_open(model_dir, out)` | open a verified `.image.gturbo` install |
+| `ts_image_session_open(model_dir, out)` | open a verified image install |
 | `ts_image_session_close(s)` | close an image session when no job is running |
 | `ts_image_session_cancel(s)` | cancel image generation from any thread |
 | `ts_image_generate(s, options, cb, ud, png, len, metadata)` | blocking image job with stage callbacks, owned PNG bytes, and camelCase metadata |

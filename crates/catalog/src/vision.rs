@@ -139,7 +139,7 @@ pub fn resolve_vision_sidecar_auto(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::InstalledModel;
+    use crate::store::{InstalledModel, ModelModality};
     use std::path::Path;
 
     fn temp_store(tag: &str) -> Store {
@@ -173,6 +173,7 @@ mod tests {
                 installed_on: "2026-01-01".to_string(),
                 status: "runs".to_string(),
                 kind: Some("vision-tower".to_string()),
+                modality: ModelModality::Text,
             })
             .expect("recording the row");
         dir
@@ -237,6 +238,7 @@ mod tests {
                 installed_on: "2026-01-01".to_string(),
                 status: "runs".to_string(),
                 kind: None,
+                modality: ModelModality::Text,
             })
             .expect("recording the row");
         let err = resolve_vision_sidecar(&store, ModelFamily::QwenGdnDense, 5120).unwrap_err();

@@ -30,7 +30,7 @@ use tokenizer::{Message, MfTokenizer, Role};
 use crate::entry::{CatalogEntry, EntryKind, SourceKind};
 use crate::hf::{Client, RepoRef};
 use crate::probe::{probe, ProbeReport, Verdict};
-use crate::store::{directory_bytes, InstalledModel, Store};
+use crate::store::{directory_bytes, InstalledModel, ModelModality, Store};
 
 /// The sidecar files a vision-tower-only install fetches, in the order
 /// `install()` writes them: `config.json` decides the family and the
@@ -283,6 +283,7 @@ pub fn install_with_byte_progress(
         installed_on: today(),
         status: plan.status.clone(),
         kind: None,
+        modality: ModelModality::Text,
     };
     Ok(Installed { model, arch })
 }
@@ -341,6 +342,7 @@ fn install_vision_only(
         installed_on: today(),
         status: plan.status.clone(),
         kind: Some(EntryKind::VisionTower.as_str().to_string()),
+        modality: ModelModality::Text,
     };
     Ok(Installed { model, arch })
 }

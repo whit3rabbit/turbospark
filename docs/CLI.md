@@ -4,7 +4,7 @@ The primary command-line interface is the unified `turbospark` binary, alongside
 
 - `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`, `image`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
 - `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/CLAUDE.md`](../crates/cli/CLAUDE.md).
-- `turbospark-model` -- find, inspect, and install text models and image installs into the `~/.turbospark` store. See [`docs/MODELS.md`](MODELS.md).
+- `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`. Image installs use `~/.turbospark/models/image`, and audio is reserved at `~/.turbospark/models/audio`. See [`docs/MODELS.md`](MODELS.md).
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/CLAUDE.md`](../crates/server/CLAUDE.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
@@ -57,7 +57,7 @@ turbospark image generate \
 
 turbospark image pack \
   --source /path/to/Z-Image-Turbo \
-  --output /path/to/z-image-turbo.image.gturbo \
+  --output ~/.turbospark/models/image/z-image-turbo.gturbo \
   --model-id Tongyi-MAI/Z-Image-Turbo \
   --model-revision f332072aa78be7aecdf3ee76d5c247082da564a6
 ```
@@ -69,8 +69,8 @@ install before model I/O; there is no separate validation switch. Native Metal
 is the default on macOS. The CPU backend is available only as an explicit
 `--backend reference` diagnostic path. A completed output is never overwritten,
 and failed or cancelled output is not published. Image installs use their own
-manifest and `.image.gturbo` suffix; they are not text model rows and are not
-opened by `turbospark-check`.
+manifest and image namespace; they are not text model rows and are not opened
+by `turbospark-check`. Existing legacy `.image.gturbo` installs remain readable.
 
 ### oMLX compatibility
 

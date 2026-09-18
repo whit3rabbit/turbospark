@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use turbospark_catalog::{InstalledModel, Store};
+use turbospark_catalog::{InstalledModel, ModelModality, Store};
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -31,6 +31,7 @@ fn row(alias: &str, path: &std::path::Path) -> InstalledModel {
         installed_on: "2026-08-15".to_string(),
         status: "runs".to_string(),
         kind: None,
+        modality: ModelModality::Text,
     }
 }
 
@@ -40,18 +41,70 @@ fn an_install_path_is_the_alias_under_models() {
     let store = Store::new(&root);
     assert_eq!(
         store.install_path("gemma4"),
-        root.join("models").join("gemma4.gturbo")
+        root.join("models").join("text").join("gemma4.gturbo")
     );
 }
 
 #[test]
-fn an_image_install_has_its_own_suffix_and_resolves_without_a_record() {
+fn an_image_install_has_its_own_namespace_and_resolves_without_a_record() {
     let root = temp_root("image-path");
     let store = Store::new(&root);
     let path = store.image_install_path("z-image");
-    assert_eq!(path, root.join("models").join("z-image.image.gturbo"));
+    assert_eq!(
+        path,
+        root.join("models").join("image").join("z-image.gturbo")
+    );
     std::fs::create_dir_all(&path).unwrap();
-    assert_eq!(store.resolve("z-image").unwrap(), path);
+    assert_eq!(store.resolve_image("z-image").unwrap(), path);
+}
+
+#[test]
+fn modality_paths_share_a_root_but_do_not_share_aliases() {
+    let root = temp_root("modalities");
+    let store = Store::new(&root);
+    assert_eq!(
+        store.audio_install_path("whisper"),
+        root.join("models").join("audio").join("whisper.gturbo")
+    );
+
+    let text = store.install_path("same-name");
+    let image = store.image_install_path("same-name");
+    std::fs::create_dir_all(&text).unwrap();
+    std::fs::create_dir_all(&image).unwrap();
+    assert_eq!(store.resolve("same-name"), Some(text));
+    assert_eq!(store.resolve_image("same-name"), Some(image));
+}
+
+#[test]
+fn legacy_flat_paths_remain_readable_by_their_modality() {
+    let root = temp_root("legacy-paths");
+    let store = Store::new(&root);
+    let text = root.join("models").join("legacy.gturbo");
+    let image = root.join("models").join("legacy-image.image.gturbo");
+    std::fs::create_dir_all(&text).unwrap();
+    std::fs::create_dir_all(&image).unwrap();
+    assert_eq!(store.resolve("legacy"), Some(text));
+    assert_eq!(store.resolve_image("legacy-image"), Some(image));
+}
+
+#[test]
+fn legacy_image_registry_rows_do_not_enter_the_text_index() {
+    let root = temp_root("legacy-image-row");
+    let store = Store::new(&root);
+    let path = root.join("models").join("legacy-image.image.gturbo");
+    std::fs::create_dir_all(&path).unwrap();
+
+    let mut image_row = row("legacy-image", &path);
+    image_row.kind = Some("image".to_string());
+    std::fs::write(
+        root.join("installed.json"),
+        serde_json::to_vec(&vec![image_row]).unwrap(),
+    )
+    .unwrap();
+
+    assert!(!store.installed().contains_key("legacy-image"));
+    assert!(store.resolve("legacy-image").is_none());
+    assert_eq!(store.resolve_image("legacy-image"), Some(path));
 }
 
 #[test]

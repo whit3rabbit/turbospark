@@ -1,6 +1,6 @@
 //! Catalog and local store model management.
 
-use catalog::{Catalog, Store};
+use catalog::{Catalog, ModelModality, Store};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -53,8 +53,8 @@ pub(crate) fn installed_json() -> Result<String, String> {
 /// app can offer compatible rows without making image artifacts text models.
 pub(crate) fn image_installed_json() -> Result<String, String> {
     let store = Store::default_store()?;
-    let models = store.root().join("models");
-    let mut rows = image_installed_rows(&models);
+    let mut rows = image_installed_rows(&store.modality_root(ModelModality::Image));
+    rows.extend(image_installed_rows(&store.models_root()));
     rows.sort_by(|a, b| a.alias.cmp(&b.alias));
     serde_json::to_string(&rows).map_err(|e| e.to_string())
 }
@@ -66,8 +66,11 @@ pub(crate) fn image_installed_json() -> Result<String, String> {
 /// arbitrary aliases from becoming filesystem paths.
 pub(crate) fn delete_image(alias: &str) -> Result<(), String> {
     let store = Store::default_store()?;
-    let models = store.root().join("models");
-    let row = image_installed_rows(&models)
+    let canonical = store.modality_root(ModelModality::Image);
+    let legacy = store.models_root();
+    let row = image_installed_rows(&canonical)
+        .into_iter()
+        .chain(image_installed_rows(&legacy))
         .into_iter()
         .find(|row| row.alias == alias)
         .ok_or_else(|| format!("image model {alias:?} is not installed"))?;
@@ -90,7 +93,9 @@ fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
                 return None;
             }
             let name = path.file_name()?.to_str()?;
-            let alias = name.strip_suffix(".image.gturbo")?;
+            let alias = name
+                .strip_suffix(".image.gturbo")
+                .or_else(|| name.strip_suffix(".gturbo"))?;
             if alias.is_empty() {
                 return None;
             }
@@ -187,6 +192,7 @@ mod tests {
                 installed_on: "2026-09-14".to_string(),
                 status: "runs".to_string(),
                 kind: None,
+                modality: ModelModality::Text,
             })
             .unwrap();
     }

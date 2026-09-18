@@ -1,13 +1,52 @@
-# Swift app storage: where state lives, and what a test may touch
+# Swift and engine storage: where state lives, and what a test may touch
 
 All app state lives in three JSON files under
 `~/Library/Application Support/TurboSpark/`, plus a handful of manager
 directories that split the same way. This page is the home for what each
 store does on a decode failure, why `AppStorageRoot` exists, and the
-three-way answer to "which directories may a test write to."
+three-way answer to "which directories may a test write to," plus the shared
+engine model-store contract.
 
 Read this before adding a persisted field, writing a test that constructs
 an `AppModel`, or touching any of the seven stores listed below.
+
+## The shared engine model store
+
+The Rust catalog and Swift bindings share one machine-level model store. Its
+root is `$TURBOSPARK_HOME` when set, otherwise `~/.turbospark`:
+
+```text
+$TURBOSPARK_HOME/                  # or ~/.turbospark/
+  models/
+    text/<alias>.gturbo             # chat, completion, embedding, and vision-enabled text
+    text/<alias>.gturbo-vision      # vision tower accessory for a text model
+    image/<alias>.gturbo             # image-generation install
+    audio/<alias>.gturbo             # reserved for future transcription
+  installed.json                    # text-install registry, with legacy rows tolerated
+```
+
+The modality directory is part of the storage contract, not a display hint.
+The text resolver only considers `models/text`; the image CLI and image FFI
+use the image resolver; audio has a reserved path and resolver but no runtime
+yet. Image installs are listed through the dedicated image catalog APIs and
+must not be added to the text `installed.json` index. Vision sidecars remain
+in the text namespace because they are accessories to text models.
+
+Existing flat installs remain readable for compatibility: legacy text and
+vision paths under `models/`, plus legacy `<alias>.image.gturbo` image paths.
+There is no automatic migration because these directories can contain
+multi-gigabyte artifacts. New installs always use the modality directories.
+
+`InstalledModel.modality` defaults to `text` when decoding an older registry
+row. A legacy row marked `kind: "image"` is excluded from the text index, so
+old image installs cannot leak into Swift's text model list. `ModelStorageManager`
+therefore uses `models/text` as its TurboSpark scan root, while image rows come
+from `TurboSparkCatalog.imageInstalled()` and audio remains reserved.
+
+The engine store is shared machine data, not app-profile state. Do not redirect
+it through `AppStorageRoot` in tests. Tests that need model rows should use
+fixture paths or a temporary `TURBOSPARK_HOME`, and tests for the Swift scanner
+should assert path classification without touching real model directories.
 
 ## The three JSON files
 
@@ -101,9 +140,10 @@ every store sees under test.
 `AppStorageRoot` covers the seven stores above. Two other answers are not
 written down anywhere else and are easy to get wrong.
 
-**The engine's `~/.turbospark` is NOT covered.** `~/.turbospark/installed.json`
-is the CATALOG's, reached through the FFI, and nothing redirects it. Any
-assertion driven through `refreshModels`, `deleteModel` or `installed()`
+**The engine's `~/.turbospark` is NOT covered by `AppStorageRoot`.**
+`~/.turbospark/installed.json` is the CATALOG's, reached through the FFI, and
+nothing redirects it. Any assertion driven through `refreshModels`,
+`deleteModel` or `installed()`
 answers differently on a machine with a given alias installed -- not a
 flaky test, a test measuring the developer's disk. Found 2026-09-03 by a
 SURVIVING mutation: `deleteModel`'s alias-collision guard could not be

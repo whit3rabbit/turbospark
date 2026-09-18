@@ -56,7 +56,10 @@ pub use recommend::{
     FitVerdict, GgufVariant, GgufVariants, LadderRung, Machine, Origin, Recommendation, Shape,
     ThroughputBand,
 };
-pub use store::{default_root, directory_bytes, resolve_model_arg, InstalledModel, Store};
+pub use store::{
+    default_root, directory_bytes, resolve_image_arg, resolve_model_arg, InstalledModel,
+    ModelModality, Store,
+};
 pub use vision::{resolve_vision_sidecar, resolve_vision_sidecar_auto, AutoVisionSidecar};
 
 // Token id width consumed from the core primitives, keeping the dependency
