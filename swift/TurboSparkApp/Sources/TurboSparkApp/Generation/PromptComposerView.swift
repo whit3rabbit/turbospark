@@ -9,6 +9,7 @@ struct PromptComposerView: View {
     @State private var showingPromptTips = false
     @State private var isImportingDocuments = false
     @State private var isImportingFolder = false
+    @State private var isImportingImageModel = false
     @State private var isExtractingDocuments = false
     @State private var documentImportError: String?
     @State private var showingProjectSettingsSheet = false
@@ -39,6 +40,36 @@ struct PromptComposerView: View {
             QueuedPromptsSection(model: model)
             PromptComposerEditor(
                 model: model, promptFocused: $promptFocused, autocomplete: autocomplete)
+            if model.imageModeEnabled {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo")
+                        .foregroundStyle(.secondary)
+                    Menu {
+                        if model.imageModels.isEmpty {
+                            Text("No installed image models")
+                        } else {
+                            ForEach(model.imageModels) { imageModel in
+                                Button {
+                                    model.selectImageModel(imageModel)
+                                } label: {
+                                    Label(imageModel.alias, systemImage: "photo")
+                                }
+                            }
+                        }
+                        Divider()
+                        Button("Choose image install folder…") {
+                            isImportingImageModel = true
+                        }
+                    } label: {
+                        Label(
+                            selectedImageModelLabel,
+                            systemImage: "photo.on.rectangle")
+                            .lineLimit(1)
+                    }
+                    .menuStyle(.borderlessButton)
+                }
+                .font(.caption)
+            }
             if model.isInGhostChat {
                 // Under the text box, before sending: the one place the user
                 // is certain to look as they compose. Persistent rather than
@@ -112,6 +143,15 @@ struct PromptComposerView: View {
             allowedContentTypes: [.folder],
             allowsMultipleSelection: true,
             onCompletion: handleFolderSelection)
+        .fileImporter(
+            isPresented: $isImportingImageModel,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case let .success(urls) = result, let url = urls.first {
+                model.imageModelPathText = url.path
+            }
+        }
         .sheet(isPresented: $showingProjectSettingsSheet) {
             ProjectSettingsSheet(
                 model: model,
@@ -178,6 +218,18 @@ struct PromptComposerView: View {
         .onChange(of: promptFocused) { _, isFocused in
             autocomplete.focusChanged(isFocused: isFocused)
         }
+    }
+
+    private var selectedImageModelLabel: String {
+        if let selected = model.imageModels.first(where: {
+            $0.path == model.imageModelPath
+        }) {
+            return selected.alias
+        }
+        if model.imageModelPath.isEmpty {
+            return "Select image model"
+        }
+        return URL(fileURLWithPath: model.imageModelPath).lastPathComponent
     }
 
     private func acceptAutocomplete() {

@@ -17,6 +17,11 @@ extension AppModel {
     public func run() {
         let userDraft = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        if imageModeEnabled {
+            generateImage()
+            return
+        }
+
         // The memory commands NEVER GENERATE, so they sit above the `canRun`
         // guard and work with no model loaded -- the point of a quick-save.
         // Everything below needs the session. A `#` draft is not a slash

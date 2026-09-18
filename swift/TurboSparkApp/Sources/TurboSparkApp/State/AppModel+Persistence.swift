@@ -482,6 +482,9 @@ extension AppModel {
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,
         // which is exactly the case where the flush below matters most.
         cancel()
+        imageSession?.cancel()
+        imageSession = nil
+        imageSessionPath = nil
         // Background work is NOT reachable by `cancel()`: shells are
         // separate processes and agent tasks are unstructured, so both would
         // otherwise outlive the app (a shell's children keep running after

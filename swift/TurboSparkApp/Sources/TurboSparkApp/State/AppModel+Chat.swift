@@ -270,6 +270,16 @@ extension AppModel {
         // carrying the prompt the user thought they had thrown away.
         guard !generating, !submitting, let index = chats.firstIndex(where: { $0.id == id })
         else { return }
+        if let imageJob, imageJob.chatID == id,
+            imageJob.status == .completed,
+            imageJob.result != nil,
+            imageJob.savedPath == nil
+        {
+            showToast(
+                String(localized: "Save the image before deleting this chat.", bundle: .module),
+                style: .error)
+            return
+        }
         // Captured before the removal below: `SessionEnd` describes the chat
         // that is going away, and after `chats.remove` there is no row left
         // to resolve its project from (state#67).

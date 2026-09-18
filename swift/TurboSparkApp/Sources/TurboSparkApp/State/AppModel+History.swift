@@ -78,7 +78,9 @@ extension AppModel {
                     ChatMessage(
                         role: msg.role,
                         content: content,
-                        images: msg.imagePaths.map(ChatImage.path)))
+                        images: msg.imagePaths.map {
+                            ChatImage.path(AppStorageRoot.resolveStoredPath($0))
+                        }))
             }
             // **A TOOL RESULT GOES BACK AS `.tool`, NOT AS `.system`**
             // (state#32). `ChatMessage.Role.tool` exists and the FFI maps it.

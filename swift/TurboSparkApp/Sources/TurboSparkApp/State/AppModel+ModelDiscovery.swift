@@ -55,6 +55,7 @@ extension AppModel {
 
             installed = catalogRows
             catalog = try TurboSparkCatalog.available()
+            imageModels = try TurboSparkCatalog.imageInstalled()
             telemetry = TurboSparkSession.systemTelemetry
             reconcileSelection()
 

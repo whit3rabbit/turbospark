@@ -54,6 +54,20 @@ struct PromptComposerFooter: View {
 
             SearchToggleButton(model: model)
 
+            Button {
+                model.imageModeEnabled.toggle()
+            } label: {
+                Image(systemName: model.imageModeEnabled ? "photo.fill" : "photo")
+                    .themedFont(.callout, weight: .medium)
+                    .foregroundStyle(model.imageModeEnabled ? theme.accent : .secondary)
+                    .frame(width: iconButtonSize, height: iconButtonSize)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isRunning || model.submitting)
+            .help(model.imageModeEnabled ? "Text mode" : "Image mode")
+            .accessibilityLabel(model.imageModeEnabled ? "Switch to text mode" : "Switch to image mode")
+
             if model.selectedProject != nil {
                 PromptProjectContextPill(model: model)
             }

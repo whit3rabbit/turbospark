@@ -77,6 +77,11 @@ extension AppModel {
     /// FURTHER model turn or tool call is started.
     public func cancel() {
         guard canCancel else { return }
+        if imageGenerationTask != nil {
+            isCancellationPending = true
+            cancelImageGeneration()
+            return
+        }
         isCancellationPending = true
         // **A PENDING CALL IS DENIED, NOT DROPPED** (state#34). Clearing the
         // four fields alone left the persisted proposal at

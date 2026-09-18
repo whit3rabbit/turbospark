@@ -142,6 +142,16 @@ struct GenerateControl: View {
         if model.isCancellationPending {
             Text("Stopping", bundle: .module)
                 .themedFont(.base, weight: .medium)
+        } else if model.imageModeEnabled, let job = model.imageJob {
+            if job.status == .waiting {
+                Text("Waiting for image slot", bundle: .module)
+                    .themedFont(.base, weight: .medium)
+                    .lineLimit(1)
+            } else {
+                Text(job.stage.map { "\($0) \(job.completed)/\(max(job.total, 1))" } ?? String(localized: "Generating image", bundle: .module))
+                    .themedFont(.base, weight: .medium)
+                    .lineLimit(1)
+            }
         } else if model.phase == .prefill {
             Text("Reading \(model.livePrefillDone)/\(max(model.livePrefillTotal, 1))", bundle: .module)
                 .themedFont(.base, weight: .medium)
@@ -160,12 +170,24 @@ struct GenerateControl: View {
 
     /// Nil unless prefill is running against a known total.
     private var prefillFraction: CGFloat? {
+        if model.imageModeEnabled, let fraction = model.imageProgressFraction {
+            return CGFloat(fraction)
+        }
         guard model.phase == .prefill, model.livePrefillTotal > 0 else { return nil }
         return min(1, CGFloat(model.livePrefillDone) / CGFloat(model.livePrefillTotal))
     }
 
     private var stopButtonStatusText: String {
         if model.isCancellationPending { return "Stopping" }
+        if model.imageModeEnabled, let job = model.imageJob {
+            if job.status == .waiting {
+                return String(localized: "Waiting for image slot", bundle: .module)
+            }
+            if let stage = job.stage {
+                return "\(stage), \(job.completed) of \(max(job.total, 1))"
+            }
+            return String(localized: "Generating image", bundle: .module)
+        }
         switch model.phase {
         case .prefill:
             return "Reading \(model.livePrefillDone) of \(max(model.livePrefillTotal, 1))"

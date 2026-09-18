@@ -77,6 +77,8 @@ public final class AppModel: ObservableObject {
     @Published public var installed: [InstalledModel] = []
     /// Catalog entries available for download.
     @Published public var catalog: [CatalogEntry] = []
+    /// Valid image-generation installs, separate from text model rows.
+    @Published public var imageModels: [ImageInstalledModel] = []
     /// Currently selected installed model.
     @Published public var selected: InstalledModel?
     /// Active TurboSpark session when a model is loaded.
@@ -85,6 +87,18 @@ public final class AppModel: ObservableObject {
     @Published public var opening: Bool = false
     /// Custom filesystem path entered for manual model loading.
     @Published public var modelPathText: String = ""
+    /// Routes the composer to the native image session for the selected image install.
+    @Published public var imageModeEnabled: Bool = false
+    /// Explicit image install path. Image installs are not text catalog rows,
+    /// so an empty value must never fall back to the selected text model.
+    @Published public var imageModelPathText: String = ""
+    /// The current image job is intentionally transient. A relaunch never
+    /// restores an interrupted generation as completed; saved PNGs and chat
+    /// artifacts are the durable record.
+    @Published public var imageJob: AppImageJob?
+    var imageSession: TurboSparkImageSession?
+    var imageSessionPath: String?
+    var imageGenerationTask: Task<Void, Never>?
     /// The in-process HTTP server, when one is running.
     ///
     /// It serves ALREADY-OPEN models rather than opening its own, and holds

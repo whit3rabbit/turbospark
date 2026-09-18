@@ -107,10 +107,11 @@ struct AppChatShareDocument {
     }
 
     private static func localPNG(_ path: String) -> Data? {
-        guard path.hasPrefix("/"),
-              let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? NSNumber,
+        let resolved = AppStorageRoot.resolveStoredPath(path)
+        guard resolved.hasPrefix("/"),
+              let size = (try? FileManager.default.attributesOfItem(atPath: resolved)[.size]) as? NSNumber,
               size.intValue <= 20 * 1024 * 1024,
-              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: resolved) as CFURL, nil),
               let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,

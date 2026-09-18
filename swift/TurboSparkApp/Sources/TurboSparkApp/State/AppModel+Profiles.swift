@@ -97,7 +97,15 @@ extension AppModel {
     /// state the flush below would cut short, and an install is writing a
     /// shared model directory the new process would scan mid-write.
     public var canSwitchProfile: Bool {
-        !generating && !submitting && !isInstallingModel
+        !generating && !submitting && !isInstallingModel && imageGenerationTask == nil
+            && !hasUnsavedImageResult
+    }
+
+    private var hasUnsavedImageResult: Bool {
+        guard let imageJob else { return false }
+        return imageJob.status == .completed
+            && imageJob.result != nil
+            && imageJob.savedPath == nil
     }
 
     /// Flushes every store, records the target profile, and relaunches the
@@ -107,6 +115,12 @@ extension AppModel {
     public func switchToProfile(_ profile: UserProfile) {
         guard profile.id != UserProfileStore.active.id else { return }
         guard canSwitchProfile else {
+            if hasUnsavedImageResult {
+                showToast(
+                    String(localized: "Save the image before switching profiles.", bundle: .module),
+                    style: .error)
+                return
+            }
             showToast(
                 "Finish or cancel the running work before switching profiles.",
                 style: .error)

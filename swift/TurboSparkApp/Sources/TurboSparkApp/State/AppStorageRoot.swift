@@ -101,6 +101,17 @@ public enum AppStorageRoot {
     public static func file(_ name: String) -> URL {
         directory.appendingPathComponent(name)
     }
+
+    /// Resolves a path stored in chat history. New generated artifacts use a
+    /// relative path so a profile's archive never hardcodes its root; older
+    /// absolute paths and remote URLs retain their existing meaning.
+    public static func resolveStoredPath(_ path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") || URL(string: expanded)?.scheme != nil {
+            return expanded
+        }
+        return directory.appendingPathComponent(expanded).standardizedFileURL.path
+    }
 }
 
 /// Shared read/write behaviour for the app's JSON stores.

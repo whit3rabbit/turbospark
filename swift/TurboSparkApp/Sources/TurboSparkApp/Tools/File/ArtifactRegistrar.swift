@@ -68,7 +68,7 @@ public enum ArtifactRegistrar {
     public static func artifactCandidates(from files: [ProducedFile]) -> [ProducedFile] {
         files.filter { file in
             switch file.origin {
-            case .sentToUser, .plan:
+            case .sentToUser, .plan, .imageGeneration:
                 return true
             case .fileWrite:
                 let ext = file.url.pathExtension.lowercased()

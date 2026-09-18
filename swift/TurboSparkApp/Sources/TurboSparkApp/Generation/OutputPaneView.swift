@@ -10,12 +10,20 @@ struct OutputPaneView: View {
     @State private var showingMemoryCapture = false
 
     var body: some View {
-        Group {
-            if model.hasOutputTranscript {
-                transcript
-            } else {
-                placeholder
+        VStack(spacing: 0) {
+            if let job = model.imageJob, job.chatID == model.selectedChatID, job.result != nil {
+                ImageGenerationPreviewView(model: model, job: job)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
             }
+            Group {
+                if model.hasOutputTranscript {
+                    transcript
+                } else {
+                    placeholder
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task(id: responseCopyFeedbackID) {
             guard responseCopyFeedbackID != nil else { return }
@@ -178,6 +186,48 @@ struct OutputPaneView: View {
         withAnimation(.easeIn(duration: 0.15)) {
             responseCopyFeedbackID = UUID()
         }
+    }
+}
+
+private struct ImageGenerationPreviewView: View {
+    @ObservedObject var model: AppModel
+    let job: AppImageJob
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Generated image", systemImage: "photo")
+                    .font(.headline)
+                Spacer()
+                if let stage = job.stage {
+                    Text(stage.replacingOccurrences(of: "_", with: " "))
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+            }
+            if let data = job.result?.png, let image = NSImage(data: data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 420)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+            }
+            HStack {
+                Button("Save") { model.saveImage() }
+                    .disabled(job.savedPath != nil)
+                Button("Regenerate") { model.regenerateImage() }
+                    .disabled(model.isRunning)
+                if let path = job.savedPath {
+                    Text((path as NSString).lastPathComponent)
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 /// Native SwiftUI transcript view rendering multi-turn conversations with Markdown formatting.
@@ -472,6 +522,25 @@ private struct MessageRowView: View {
         }
     }
 
+    @ViewBuilder
+    private var imageAttachments: some View {
+        ForEach(message.imagePaths, id: \.self) { path in
+            if let image = NSImage(contentsOfFile: AppStorageRoot.resolveStoredPath(path)) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 420)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityLabel("Attached image")
+            } else {
+                Label("Image is no longer at its saved path", systemImage: "photo.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     /// The ordinary user bubble. Split out of `body` when `#` quick-saves
     /// arrived: a transcript row holding a `<user-memory-input>` wrap is a
     /// user message too, and rendering it as a bubble showed raw tags.
@@ -493,6 +562,8 @@ private struct MessageRowView: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .shadow(color: Color.black.opacity(0.03), radius: 3, x: 0, y: 1)
+
+                imageAttachments
 
                 if isHovered || isCurrentlySpeakingThis {
                     MessageActionBarView(
@@ -717,6 +788,8 @@ private struct MessageRowView: View {
                                 onPreviewHTML: previewHTML)
                         }
                     }
+
+                    imageAttachments
 
                     if isHovered || isCurrentlySpeakingThis {
                         HStack(spacing: 6) {

@@ -33,7 +33,10 @@ extension AppModel {
     /// left the first turn running with nothing able to cancel it. This is
     /// `canCancel`'s third term, in the predicate that has to agree with it.
     public var canRun: Bool {
-        Self.canRunTerms(
+        if imageModeEnabled {
+            return canGenerateImage
+        }
+        return Self.canRunTerms(
             generating: generating,
             submitting: submitting,
             opening: opening,
@@ -66,7 +69,8 @@ extension AppModel {
     /// queues nothing, because nothing drains the queue at the END of an
     /// open, and a prompt parked there would sit forever.
     public var canQueue: Bool {
-        Self.canQueueTerms(
+        guard !imageModeEnabled else { return false }
+        return Self.canQueueTerms(
             generating: generating,
             submitting: submitting,
             hasPendingCall: pendingToolCall != nil,
@@ -101,7 +105,8 @@ extension AppModel {
     /// were Approve, Deny, or deleting the chat -- and `cancel()`'s own
     /// `clearPendingToolCall()` was unreachable (state#34).
     public var canCancel: Bool {
-        (generating || submitting || pendingToolCall != nil) && !isCancellationPending
+        (generating || submitting || pendingToolCall != nil || imageGenerationTask != nil)
+            && !isCancellationPending
     }
 
     /// Whether an active model download can be cancelled.

@@ -77,6 +77,8 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
         case sentToUser
         /// ExitPlanMode finalized a plan.
         case plan
+        /// Native image generation wrote the PNG.
+        case imageGeneration
     }
 
     public var id: UUID
