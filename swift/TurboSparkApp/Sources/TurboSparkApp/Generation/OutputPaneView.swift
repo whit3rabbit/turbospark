@@ -47,7 +47,7 @@ struct OutputPaneView: View {
             if model.memoryEnabled {
                 Button {
                     showingMemoryCapture = true
-                } label: { Text("Add conversation to memory", bundle: .module) }
+                } label: { Text(verbatim: "Add conversation to memory") }
                 .disabled(model.outputConversationPlainText.isEmpty)
             }
 
@@ -197,12 +197,12 @@ private struct ImageGenerationPreviewView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Generated image", systemImage: "photo")
-                    .font(.headline)
+                    .themedFont(.base, weight: .semibold)
                 Spacer()
                 if let stage = job.stage {
                     Text(stage.replacingOccurrences(of: "_", with: " "))
                         .foregroundStyle(.secondary)
-                        .font(.caption)
+                        .themedFont(.small)
                 }
             }
             if let data = job.result?.png, let image = NSImage(data: data) {
@@ -221,7 +221,7 @@ private struct ImageGenerationPreviewView: View {
                 if let path = job.savedPath {
                     Text((path as NSString).lastPathComponent)
                         .foregroundStyle(.secondary)
-                        .font(.caption)
+                        .themedFont(.small)
                         .lineLimit(1)
                 }
             }
@@ -535,7 +535,7 @@ private struct MessageRowView: View {
                     .accessibilityLabel("Attached image")
             } else {
                 Label("Image is no longer at its saved path", systemImage: "photo.badge.exclamationmark")
-                    .font(.caption)
+                    .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
         }

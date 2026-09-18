@@ -6,7 +6,7 @@ import Foundation
 /// generates, and all of it works while a turn is running, like every other
 /// local command.
 extension AppModel {
-    static let gitDiffLineLimit = 10_000
+    nonisolated static let gitDiffLineLimit = 10_000
 
     /// Which view the git sheet is showing. One sheet for the three commands
     /// (qwen-code's GitDialog is the same container with `diff | log | prs`

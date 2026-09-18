@@ -2,6 +2,23 @@ import XCTest
 
 @testable import TurboSparkApp
 
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func increment() {
+        lock.lock()
+        storage += 1
+        lock.unlock()
+    }
+}
+
 /// The artifact policy and the dedupe, both as pure values.
 ///
 /// Every case here runs without an `AppModel`, a window or a tool call, which
@@ -149,14 +166,14 @@ final class ArtifactRegistryTests: XCTestCase {
     }
 
     func testNothingIsReportedWhenNoFileSurvivesThePolicy() {
-        var seen = 0
-        ArtifactRegistrar.onArtifactsProduced = { _, _ in seen += 1 }
+        let seen = LockedCounter()
+        ArtifactRegistrar.onArtifactsProduced = { _, _ in seen.increment() }
         defer { ArtifactRegistrar.onArtifactsProduced = nil }
 
         ArtifactRegistrar.report(
             chatID: chat, produced: [produced("/tmp/p/src/lib.rs", origin: .fileWrite)])
 
-        XCTAssertEqual(seen, 0)
+        XCTAssertEqual(seen.value, 0)
     }
 
     // MARK: - Presentation

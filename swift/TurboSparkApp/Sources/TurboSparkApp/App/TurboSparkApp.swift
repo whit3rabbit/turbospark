@@ -358,7 +358,7 @@ struct TurboSparkApp: App {
                 Button {
                     ModelLocationPicker.choose(for: model)
                 } label: {
-                    Text("Choose Model Folder...", bundle: .module)
+                    Text(verbatim: "Choose Model Folder…")
                 }
                 .disabled(model.isRunning || model.isInstallingModel)
 
@@ -499,4 +499,3 @@ extension Notification.Name {
     /// "Search Chats" overlay.
     static let showChatSearch = Notification.Name("TurboSpark.showChatSearch")
 }
-

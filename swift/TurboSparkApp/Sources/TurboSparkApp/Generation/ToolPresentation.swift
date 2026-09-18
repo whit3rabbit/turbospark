@@ -34,7 +34,8 @@ struct ToolPresentation: Equatable {
         register("Update Tasks", "list-checks", "todowrite todo_write")
         register("Run Agent", "bot", "agent subagent task")
         register("Run Batch", "layers", "batch")
-        register("Search Documentation", "book-search", "codesearch code_search")
+        register("Search Documentation", "book-search", "codesearch code_search tool_search")
+        register("Describe Tool", "book-open-text", "tool_describe")
         register("Edit Files", "files", "multiedit multi_edit")
         register("Stop Agent", "bot-off", "stop_agent agentstop kill_agent")
         register("Ask Question", "circle-help", "askuserquestion ask_user_question ask_question question")
@@ -64,7 +65,7 @@ struct ToolPresentation: Equatable {
         register("Enter Worktree", "git-branch", "enterworktree enter_worktree")
         register("Exit Worktree", "git-merge", "exitworktree exit_worktree")
         register("Memory", "brain", "memory remember")
-        register("Call Extension", "plug", "call_mcp_tool callmcptool mcp_tool")
+        register("Call Extension", "plug", "call_mcp_tool callmcptool mcp_tool tool_call")
         register("List Resources", "library", "listmcpresources list_mcp_resources list_resources")
         register("Read Resource", "book-open-text", "readmcpresource read_mcp_resource read_resource")
         return result

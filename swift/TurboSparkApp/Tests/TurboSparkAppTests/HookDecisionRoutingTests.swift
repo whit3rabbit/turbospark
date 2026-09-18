@@ -13,8 +13,9 @@ final class HookDecisionRoutingTests: XCTestCase {
 
     // MARK: - T11: an async PreToolUse hook must still be able to deny
 
+    @MainActor
     func testAsyncPreToolUseHookDecisionIsNotDiscarded() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         let hook = AppHookCommand(
             name: "Async Guardrail",
             event: .preToolUse,
@@ -24,9 +25,9 @@ final class HookDecisionRoutingTests: XCTestCase {
             isAsync: true, // this used to be discarded via Task.detached
             sourceType: .custom
         )
-        await store.addCustomHook(hook)
+        store.addCustomHook(hook)
         defer {
-            Task { await store.deleteCustomHook(id: hook.id) }
+            Task { store.deleteCustomHook(id: hook.id) }
         }
 
         let decision = await AppHookExecutionEngine.shared.evaluatePreToolUse(
@@ -120,7 +121,7 @@ final class HookDecisionRoutingTests: XCTestCase {
         appModel.chats = [chat]
         appModel.selectedChatID = chat.id
 
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         let hook = AppHookCommand(
             name: "Ask First",
             event: .preToolUse,
@@ -129,9 +130,9 @@ final class HookDecisionRoutingTests: XCTestCase {
             matcher: "run_command",
             sourceType: .custom
         )
-        await store.addCustomHook(hook)
+        store.addCustomHook(hook)
         defer {
-            Task { await store.deleteCustomHook(id: hook.id) }
+            Task { store.deleteCustomHook(id: hook.id) }
         }
 
         // A benign, low-risk command that `AppToolPermissionEngine` would

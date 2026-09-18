@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// Flat top bar: sidebar toggles, live machine load.
 ///

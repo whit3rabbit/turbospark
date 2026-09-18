@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).

@@ -475,7 +475,7 @@ final class McpCatalogApprovalRulesTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let model = AppModel()
-        var project = AppProject(name: "Lifecycle", rootDirectoryPath: root.path)
+        let project = AppProject(name: "Lifecycle", rootDirectoryPath: root.path)
         model.projects = [project]
         model.selectedProjectID = project.id
 

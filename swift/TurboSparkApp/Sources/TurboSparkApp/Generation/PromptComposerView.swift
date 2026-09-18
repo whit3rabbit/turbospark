@@ -46,7 +46,7 @@ struct PromptComposerView: View {
                         .foregroundStyle(.secondary)
                     Menu {
                         if model.imageModels.isEmpty {
-                            Text("No installed image models")
+                            Text(verbatim: "No installed image models")
                         } else {
                             ForEach(model.imageModels) { imageModel in
                                 Button {
@@ -68,7 +68,7 @@ struct PromptComposerView: View {
                     }
                     .menuStyle(.borderlessButton)
                 }
-                .font(.caption)
+                .themedFont(.small)
             }
             if model.isInGhostChat {
                 // Under the text box, before sending: the one place the user

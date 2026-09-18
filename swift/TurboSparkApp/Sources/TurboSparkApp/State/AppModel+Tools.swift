@@ -233,8 +233,6 @@ extension AppModel {
     ) -> [(section: SystemPromptSection, content: String)] {
         var sections: [(section: SystemPromptSection, content: String)] = []
 
-        sections.append((.environment, "## Current Date and Time\n\(MemoryPromptBuilder.currentTimestamp())"))
-
         let trimmedUserPrompt = userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedUserPrompt.isEmpty {
             sections.append((.userPrompt, trimmedUserPrompt))
@@ -303,6 +301,12 @@ extension AppModel {
         let availableAgents = AgentManager.shared
             .resolveEffectiveAgents(projectURL: project.rootDirectoryURL)
             .filter { $0.isEnabled }
+            .sorted {
+                if $0.scope != $1.scope {
+                    return $0.scope == .project
+                }
+                return $0.name < $1.name
+            }
             .map { (name: $0.name, whenToUse: $0.agentDescription) }
         let toolsPrompt = AppToolCatalog.systemPromptAddendum(
             for: agentType,

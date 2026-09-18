@@ -20,18 +20,18 @@ struct ProfileMemoryCaptureSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Add conversation to memory")
-                .font(.title3.weight(.semibold))
-            Text("Review and edit what will be appended to this user's profile MEMORY.md. Nothing is saved until you confirm.")
+            Text(verbatim: "Add conversation to memory")
+                .themedFont(.title3, weight: .semibold)
+            Text(verbatim: "Review and edit what will be appended to this user's profile MEMORY.md. Nothing is saved until you confirm.")
                 .foregroundStyle(.secondary)
             TextEditor(text: $draft)
-                .font(.body)
+                .themedFont(.base)
                 .frame(minWidth: 520, minHeight: 260)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
             HStack {
                 if isSummarizing {
                     ProgressView()
-                    Text("Extracting durable memories…")
+                    Text(verbatim: "Extracting durable memories…")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()

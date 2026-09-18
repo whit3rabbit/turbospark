@@ -194,7 +194,7 @@ final class MemoryFeatureTests: XCTestCase {
     func testTheSectionNamesTheDirectoryAndCarriesTheIndex() {
         let store = MemoryStore(base: makeScratchDirectory("prompt"))
         let root = makeScratchDirectory("project")
-        try? store.saveTopic(
+        _ = try? store.saveTopic(
             projectRoot: root, name: "deploys", type: .project,
             description: "how this deploys", body: "body")
         let section = MemoryPromptBuilder.section(store: store, projectRoot: root)
@@ -255,6 +255,7 @@ final class MemoryFeatureTests: XCTestCase {
 
     func testTheToolSavesReadsAndForgets() throws {
         let store = MemoryStore(base: makeScratchDirectory("tool"))
+        store.isModelEnabled = true
         let root = makeScratchDirectory("project")
 
         let saved = try MemoryToolExecutor.execute(

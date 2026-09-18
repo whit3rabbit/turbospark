@@ -466,7 +466,7 @@ final class AgentModeTests: XCTestCase {
     /// Counting stub: lets tests assert the classifier was (or was not)
     /// consulted. The lock lives behind sync methods because `lock()`
     /// itself is unavailable from an async context.
-    private final class ClassifierStub: ToolCallClassifying {
+    private final class ClassifierStub: ToolCallClassifying, @unchecked Sendable {
         let verdict: ClassifierVerdict
         private let lock = NSLock()
         private var count = 0

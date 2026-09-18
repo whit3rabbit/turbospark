@@ -40,7 +40,7 @@ struct MemorySettingsPaneView: View {
                     }
                     .settingsControl("Let the model remember across conversations", pane: .memory, timing: .nextTurn)
 
-                    Text("Memory is profile-specific. Project memory remains separate. Type `#` or `/memory text` to save a dated entry, or `/memory` to open the profile memory folder.", bundle: .module)
+                    Text(verbatim: "Memory is profile-specific. Project memory remains separate. Type `#` or `/memory text` to save a dated entry, or `/memory` to open the profile memory folder.")
                         .font(theme.ui(.small))
                         .foregroundStyle(.appSecondary)
                 }
@@ -51,7 +51,7 @@ struct MemorySettingsPaneView: View {
     }
 
     private var profileSection: some View {
-        Section(header: Text("Profile Memory", bundle: .module)) {
+        Section(header: Text(verbatim: "Profile Memory")) {
             HStack {
                 Text(ProfileMemoryStore.shared.fileURL.path)
                     .font(theme.code(.small))
@@ -65,7 +65,7 @@ struct MemorySettingsPaneView: View {
             }
             TextField("Arctic embedding model path or alias", text: $model.memoryEmbeddingModel)
                 .onSubmit { model.persistSettingsDebounced() }
-            Text("Embeddings are optional. Without a configured model, profile memory uses bounded Markdown and lexical recall.", bundle: .module)
+            Text(verbatim: "Embeddings are optional. Without a configured model, profile memory uses bounded Markdown and lexical recall.")
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
             HStack {
@@ -80,11 +80,11 @@ struct MemorySettingsPaneView: View {
                 Spacer()
                 Button {
                     Task { try? await ProfileMemoryStore.shared.rebuildIndex(modelPath: model.memoryEmbeddingModel) }
-                } label: { Text("Rebuild Index", bundle: .module) }
+                } label: { Text(verbatim: "Rebuild Index") }
                 .disabled(model.memoryEmbeddingModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button {
                     ProfileMemoryStore.shared.clearIndex()
-                } label: { Text("Clear Index", bundle: .module) }
+                } label: { Text(verbatim: "Clear Index") }
                 .disabled(!ProfileMemoryStore.shared.hasIndex)
             }
         }

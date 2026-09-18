@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// Animated footer status row displayed during model generation and tool execution.
 /// Features a slowly pulsing/breathing TurboSpark logo and live telemetry (elapsed time, token count, status).

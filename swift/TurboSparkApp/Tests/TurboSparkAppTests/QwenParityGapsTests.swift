@@ -61,7 +61,7 @@ final class QwenParityGapsTests: XCTestCase {
     }
 
     func testResetBehavesLikeClear() {
-        makeChat(messages: [
+        _ = makeChat(messages: [
             AppChatMessage(role: .user, content: "hi"),
             AppChatMessage(role: .assistant, content: "hello"),
         ])
@@ -72,7 +72,7 @@ final class QwenParityGapsTests: XCTestCase {
     func testDiffWithoutAProjectRefusesQuietly() {
         // A projectless chat has no root to diff; the sheet must NOT open,
         // which is what distinguishes the refusal from a broken command.
-        makeChat()
+        _ = makeChat()
         appModel.handleLocalCommand("/diff")
         XCTAssertFalse(appModel.showGitSheet)
         appModel.handleLocalCommand("/log")

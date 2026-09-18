@@ -162,7 +162,7 @@ final class SoulPromptTests: XCTestCase {
         model.selectedPersonalityID = personality.id
 
         let sections = model.buildSystemPromptSections(for: nil, userPrompt: "USER")
-        XCTAssertEqual(sections.map(\.section), [.environment, .userPrompt, .soul, .personality])
+        XCTAssertEqual(sections.map(\.section), [.userPrompt, .soul, .personality])
         XCTAssertEqual(model.appWideSystemPrompt, "SYSTEM\n\nSOUL\n\nPERSONALITY")
     }
 

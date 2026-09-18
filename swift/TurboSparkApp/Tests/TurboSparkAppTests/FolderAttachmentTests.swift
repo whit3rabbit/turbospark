@@ -37,13 +37,17 @@ final class FolderAttachmentTests: XCTestCase {
         try "git config".write(to: gitFile, atomically: true, encoding: .utf8)
 
         let appModel = AppModel()
+        let initialAttachmentIDs = Set(appModel.promptAttachments.map(\.id))
         let outcome = await AttachmentImporter.importFolder(tempDir, into: appModel, chatID: nil)
 
         XCTAssertEqual(outcome.importedCount, 4, "Should import 4 files, ignoring the one in .git")
         XCTAssertNil(outcome.errorText)
-        XCTAssertEqual(appModel.promptAttachments.count, 4)
+        let importedAttachments = appModel.promptAttachments.filter {
+            !initialAttachmentIDs.contains($0.id)
+        }
+        XCTAssertEqual(importedAttachments.count, 4)
 
-        let names = Set(appModel.promptAttachments.map(\.fileName))
+        let names = Set(importedAttachments.map(\.fileName))
         XCTAssertTrue(names.contains("Main.swift"))
         XCTAssertTrue(names.contains("README.md"))
         XCTAssertTrue(names.contains("notes.txt"))

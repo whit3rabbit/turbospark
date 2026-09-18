@@ -31,7 +31,7 @@ final class CronTimerLifecycleTests: XCTestCase {
 
     func testModelReleaseInvalidatesTimer() async throws {
         var model: AppModel? = AppModel()
-        weak var releasedModel = model
+        weak let releasedModel = model
         let timer = try XCTUnwrap(model?.cronPollTimer)
         defer { timer.invalidate() }
         XCTAssertTrue(timer.isValid)

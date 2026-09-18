@@ -190,7 +190,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
     /// Tests that a blocking UserPromptSubmit hook correctly surfaces its block reason in the UI.
     @MainActor
     func testUserPromptSubmitHookBlockSurfacesReason() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         let hook = AppHookCommand(
             name: "Block Prompt",
             event: .userPromptSubmit,
@@ -198,8 +198,8 @@ final class HookClaudeCodeContractTests: XCTestCase {
             command: "echo 'no secrets please' >&2; exit 2",
             sourceType: .custom
         )
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let appModel = AppModel()
         let verdict = await appModel.evaluateUserPromptSubmit(
@@ -211,8 +211,9 @@ final class HookClaudeCodeContractTests: XCTestCase {
     // MARK: - AppModel wiring: PreToolUse updatedInput / additionalContext
 
     /// Tests that PreToolUse hooks can update input arguments and attach additional context.
+    @MainActor
     func testPreToolUseUpdatedInputAndAdditionalContextRoundTrip() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         let hook = AppHookCommand(
             name: "Rewrite Command",
             event: .preToolUse,
@@ -221,8 +222,8 @@ final class HookClaudeCodeContractTests: XCTestCase {
             matcher: "run_command",
             sourceType: .custom
         )
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let decision = await AppHookExecutionEngine.shared.evaluatePreToolUse(
             sessionID: UUID().uuidString, toolName: "run_command", toolArguments: ["command": "rm -rf /"]
@@ -237,7 +238,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
     /// Tests that exit code 2 from a PostToolUse hook generates advisory feedback without blocking.
     @MainActor
     func testPostToolUseExitTwoSurfacesAsFeedbackNotABlock() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         let hook = AppHookCommand(
             name: "Post Feedback",
             event: .postToolUse,
@@ -245,8 +246,8 @@ final class HookClaudeCodeContractTests: XCTestCase {
             command: "echo 'consider re-reading the file' >&2; exit 2",
             sourceType: .custom
         )
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let appModel = AppModel()
         let verdict = await appModel.dispatchPostToolUseVerdict(
@@ -267,7 +268,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
     /// Tests that Stop hook blocking re-enters the agent loop at most 8 times before stopping.
     @MainActor
     func testStopHookBlockReentersUpToEightTimesThenStops() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         let hook = AppHookCommand(
             name: "Always Continue",
             event: .stop,
@@ -275,8 +276,8 @@ final class HookClaudeCodeContractTests: XCTestCase {
             command: "exit 2",
             sourceType: .custom
         )
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let appModel = AppModel()
         let chat = AppChat(title: "Stop cap test")
@@ -331,7 +332,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         let localData = try JSONSerialization.data(withJSONObject: localSettings)
         try localData.write(to: claudeDir.appendingPathComponent("settings.local.json"))
 
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         store.refresh(projectDirectory: tempDir.path)
         defer { store.refresh(projectDirectory: nil) }
 
@@ -372,19 +373,19 @@ final class HookClaudeCodeContractTests: XCTestCase {
     /// WITHOUT re-entering it: no user turn appended, no re-entry consumed.
     @MainActor
     func testStopHookContinueFalseEndsTurnWithoutReentry() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         // `saveCustomHooks` is skipped before the first refresh, so make the
         // hook durable (and visible to AppModel.init's own refresh) even
         // when this test runs without the rest of the suite.
-        await store.refresh(projectDirectory: nil)
+        store.refresh(projectDirectory: nil)
         let hook = AppHookCommand(
             name: "Hard Stop",
             event: .stop,
             type: .command,
             command: #"echo '{"continue":false,"stopReason":"work is done"}'"#,
             sourceType: .custom)
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let appModel = AppModel()
         let chat = AppChat(title: "Stop continue false")
@@ -405,19 +406,19 @@ final class HookClaudeCodeContractTests: XCTestCase {
     /// stopReason through the app-level evaluation.
     @MainActor
     func testUserPromptSubmitContinueFalseCarriesStopReason() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         // `saveCustomHooks` is skipped before the first refresh, so make the
         // hook durable (and visible to AppModel.init's own refresh) even
         // when this test runs without the rest of the suite.
-        await store.refresh(projectDirectory: nil)
+        store.refresh(projectDirectory: nil)
         let hook = AppHookCommand(
             name: "Refuse Prompt",
             event: .userPromptSubmit,
             type: .command,
             command: #"echo '{"continue":false,"stopReason":"prompt refused"}'"#,
             sourceType: .custom)
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let appModel = AppModel()
         let verdict = await appModel.evaluateUserPromptSubmit(
@@ -428,12 +429,13 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
     /// Tests that a PreToolUse hook's `continue: false` reaches the
     /// PreToolUse decision the agent loop acts on.
+    @MainActor
     func testPreToolUseContinueFalseCarriesPreventContinuation() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         // `saveCustomHooks` is skipped before the first refresh, so make the
         // hook durable (and visible to AppModel.init's own refresh) even
         // when this test runs without the rest of the suite.
-        await store.refresh(projectDirectory: nil)
+        store.refresh(projectDirectory: nil)
         let hook = AppHookCommand(
             name: "Nope",
             event: .preToolUse,
@@ -441,8 +443,8 @@ final class HookClaudeCodeContractTests: XCTestCase {
             command: #"echo '{"continue":false,"stopReason":"not this"}'"#,
             matcher: "read_file",
             sourceType: .custom)
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let decision = await AppHookExecutionEngine.shared.evaluatePreToolUse(
             sessionID: UUID().uuidString, toolName: "read_file", toolArguments: ["path": "x"])
@@ -504,19 +506,19 @@ final class HookClaudeCodeContractTests: XCTestCase {
     /// denial is dispatched.
     @MainActor
     func testPermissionDeniedDispatchReachesConfiguredHooks() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         // `saveCustomHooks` is skipped before the first refresh, so make the
         // hook durable (and visible to AppModel.init's own refresh) even
         // when this test runs without the rest of the suite.
-        await store.refresh(projectDirectory: nil)
+        store.refresh(projectDirectory: nil)
         let hook = AppHookCommand(
             name: "Deny Auditor",
             event: .permissionDenied,
             type: .command,
             command: #"echo '{"systemMessage":"denial recorded"}'"#,
             sourceType: .custom)
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let appModel = AppModel()
         let results = await appModel.dispatchPermissionDenied(
@@ -575,7 +577,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: settings)
             .write(to: claudeDir.appendingPathComponent("settings.json"))
 
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         store.refresh(projectDirectory: tempDir.path)
         defer { store.refresh(projectDirectory: nil) }
 
@@ -591,19 +593,19 @@ final class HookClaudeCodeContractTests: XCTestCase {
     /// outcome rather than the anonymous no-op it used to be.
     @MainActor
     func testPromptHookRunSurfacesNonBlockingOutcome() async {
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         // `saveCustomHooks` is skipped before the first refresh, so make the
         // hook durable (and visible to AppModel.init's own refresh) even
         // when this test runs without the rest of the suite.
-        await store.refresh(projectDirectory: nil)
+        store.refresh(projectDirectory: nil)
         let hook = AppHookCommand(
             name: "LLM Check",
             event: .postToolUse,
             type: .prompt,
             command: "verify the output",
             sourceType: .custom)
-        await store.addCustomHook(hook)
-        defer { Task { await store.deleteCustomHook(id: hook.id) } }
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
 
         let results = await AppHookExecutionEngine.shared.dispatch(
             event: .postToolUse, sessionID: UUID().uuidString, toolName: "read_file",
@@ -625,7 +627,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
         try FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        let store = await AppHookStore.shared
+        let store = AppHookStore.shared
         store.refresh(projectDirectory: tempDir.path)
         defer { store.refresh(projectDirectory: nil) }
 

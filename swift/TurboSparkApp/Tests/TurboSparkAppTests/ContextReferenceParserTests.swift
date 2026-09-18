@@ -54,15 +54,15 @@ final class ContextReferenceParserTests: XCTestCase {
     // MARK: - @url:
 
     func testHTTPAndHTTPSURLsParse() throws {
-        XCTAssertEqual(try parse("url:https://example.com/a"), .url(try XCTUnwrap(URL(string: "https://example.com/a"))))
-        XCTAssertEqual(try parse("url:http://example.com"), .url(try XCTUnwrap(URL(string: "http://example.com"))))
+        XCTAssertEqual(parse("url:https://example.com/a"), .url(try XCTUnwrap(URL(string: "https://example.com/a"))))
+        XCTAssertEqual(parse("url:http://example.com"), .url(try XCTUnwrap(URL(string: "http://example.com"))))
     }
 
     func testTrailingPunctuationStripsFromURLValues() throws {
         // "summarize @url:https://example.com." must not send the dot to the
         // fetcher as part of the host.
         XCTAssertEqual(
-            try parse("url:https://example.com."),
+            parse("url:https://example.com."),
             .url(try XCTUnwrap(URL(string: "https://example.com"))))
     }
 

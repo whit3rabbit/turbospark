@@ -57,7 +57,6 @@ public enum SubagentRunner {
     ) -> String {
         var sections: [String] = []
 
-        sections.append("## Current Date and Time\n\(MemoryPromptBuilder.currentTimestamp())")
         if MemoryStore.shared.isModelEnabled {
             sections.append(MemoryPromptBuilder.profileSection(userPrompt: userPrompt))
         }

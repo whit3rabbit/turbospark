@@ -59,7 +59,7 @@ final class SlashParityTests: XCTestCase {
     // MARK: - Sheet-opening commands
 
     func testSheetCommandsSetTheirFlags() {
-        makeChat()
+        _ = makeChat()
         appModel.handleLocalCommand("/context")
         XCTAssertTrue(appModel.showContextSheet)
         appModel.handleLocalCommand("/tasks")
@@ -75,13 +75,13 @@ final class SlashParityTests: XCTestCase {
     // MARK: - /rename
 
     func testRenameCommandRenamesTheSelectedChat() {
-        makeChat()
+        _ = makeChat()
         appModel.handleLocalCommand("/rename Fresh Topic")
         XCTAssertEqual(appModel.selectedChat.title, "Fresh Topic")
     }
 
     func testRenameWithoutATitleIsANoOp() {
-        makeChat(title: "Original")
+        _ = makeChat(title: "Original")
         appModel.handleLocalCommand("/rename")
         XCTAssertEqual(appModel.selectedChat.title, "Original")
     }
@@ -166,7 +166,7 @@ final class SlashParityTests: XCTestCase {
         let u1 = AppChatMessage(role: .user, content: "first prompt")
         let a1 = AppChatMessage(role: .assistant, content: "first answer")
         let u2 = AppChatMessage(role: .user, content: "second prompt")
-        makeChat(messages: [u1, a1, u2])
+        _ = makeChat(messages: [u1, a1, u2])
 
         let targets = appModel.rewindTargets
         // The LAST prompt offers nothing to rewind to, so it is not listed.
@@ -194,7 +194,7 @@ final class SlashParityTests: XCTestCase {
         // is still meaningful (redo this reply), so the operation honors it.
         let u = AppChatMessage(role: .user, content: "only")
         let a = AppChatMessage(role: .assistant, content: "reply")
-        makeChat(messages: [u, a])
+        _ = makeChat(messages: [u, a])
         appModel.rewindTo(anchorMessageID: u.id)
         XCTAssertEqual(appModel.chats[0].messages.map(\.id), [u.id])
     }
@@ -213,7 +213,7 @@ final class SlashParityTests: XCTestCase {
         // collapseAllTurns only marks turns that would HIDE something.
         let u = AppChatMessage(role: .user, content: "q")
         let a = AppChatMessage(role: .assistant, content: "answer only, nothing hidden")
-        makeChat(messages: [u, a])
+        _ = makeChat(messages: [u, a])
         appModel.collapseAllTurns()
         XCTAssertTrue(appModel.collapsedTurnAnchors.isEmpty)
         XCTAssertFalse(appModel.canCollapseTurns)

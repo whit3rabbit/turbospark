@@ -72,16 +72,13 @@ extension AppModel {
             ?? (interactionMode == .projects ? selectedProject : nil)
     }
 
-    /// `/memory` opens the profile store. `/memory text` appends a dated
-    /// profile memory, and `/memory search text` performs a bounded search.
+    /// `/memory` opens the selected project's store, or the profile store in
+    /// a projectless chat. `/memory text` appends a dated profile memory, and
+    /// `/memory search text` performs a bounded search.
     func handleMemoryCommand(
         _ draft: String = "/memory",
         opener: (URL) -> Void = { NSWorkspace.shared.open($0) }
     ) {
-        guard MemoryStore.shared.isModelEnabled else {
-            showToast("Memory is disabled in Settings.", style: .warning)
-            return
-        }
         let argument = draft.dropFirst("/memory".count)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if argument.lowercased().hasPrefix("search ") {
@@ -94,7 +91,11 @@ extension AppModel {
             handleProfileMemorySave(argument)
             return
         }
-        opener(ProfileMemoryStore.shared.directory)
+        if let root = memoryProject()?.rootDirectoryURL, !root.path.isEmpty {
+            opener(MemoryStore.shared.directory(forProjectRoot: root))
+        } else {
+            opener(ProfileMemoryStore.shared.directory)
+        }
     }
 
     /// The `#` quick-save: writes the text as a `user`-type memory and

@@ -173,6 +173,35 @@ enum AttachmentImporter {
             let isSymlink = resourceValues?.isSymbolicLink ?? false
             let isDirectory = resourceValues?.isDirectory ?? fileURL.hasDirectoryPath
 
+            // FileManager's hidden-file option is not sufficient for every
+            // enumerator root. Enforce the skip list against the full path so
+            // repository metadata such as `.git/config` cannot become an
+            // attachment when a folder is imported.
+            let relativeComponents = canonical.pathComponents.dropFirst(rootDepth)
+            let containsSkippedDirectory = relativeComponents.contains {
+                skipDirectoryNames.contains($0)
+            }
+            // Keep the original path check as well. A directory can be
+            // hidden from the enumerator before its canonical path has been
+            // resolved, and the raw path still gives us the name that must
+            // never be attached.
+            let rawComponents = fileURL.standardizedFileURL.pathComponents
+            let rawRootComponents = folderURL.standardizedFileURL.pathComponents
+            let rawRelativeComponents = rawComponents.dropFirst(rawRootComponents.count)
+            let containsSkippedRawAncestor = rawRelativeComponents.dropLast().contains {
+                skipDirectoryNames.contains($0)
+            }
+            let containsSkippedPathComponent = fileURL.pathComponents.dropFirst().contains {
+                skipDirectoryNames.contains($0)
+            }
+            let isSkippedDirectory = isDirectory && skipDirectoryNames.contains(fileURL.lastPathComponent)
+            if containsSkippedDirectory || containsSkippedRawAncestor
+                || containsSkippedPathComponent || isSkippedDirectory
+            {
+                if isDirectory { enumerator.skipDescendants() }
+                continue
+            }
+
             if isDirectory {
                 // Symlinked directories are never descended into to prevent infinite recursion
                 if isSymlink {
@@ -206,6 +235,10 @@ enum AttachmentImporter {
             }
             visitedCanonicalPaths.insert(canonical.path)
 
+            if FileSystemScanRules.skipFileNames.contains(fileURL.lastPathComponent) {
+                continue
+            }
+
             let ext = fileURL.pathExtension.lowercased()
             if supportedExtensions.contains(ext) {
                 let fileSize = Int64(resourceValues?.fileSize ?? 0)
@@ -222,4 +255,3 @@ enum AttachmentImporter {
         return results
     }
 }
-
