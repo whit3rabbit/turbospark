@@ -91,7 +91,7 @@ fn sub_tensor_ranges_must_fit_the_expert_blob() {
     assert!(oversized.contains(r#""size": 68,"#));
     write_layout(&dir, &oversized);
     let err = load_packed_experts_layout(&dir, 1024).unwrap_err();
-    assert!(err.to_string().contains("exceeds its stride"), "{err}");
+    assert!(err.to_string().contains("expected the layer stride"), "{err}");
 }
 
 #[test]
@@ -167,7 +167,10 @@ fn experts_in_one_layer_must_use_the_same_sub_tensor_layout() {
     assert_ne!(json, valid_layout_json(), "fixture mutation must apply");
     write_layout(&dir, &json);
     let err = load_packed_experts_layout(&dir, 1024 * 1024).unwrap_err();
-    assert!(err.to_string().contains("layout differs"), "{err}");
+    assert!(
+        err.to_string().contains("different sub-tensor layout"),
+        "{err}"
+    );
 }
 
 /// A layer without its own `expertStride` inherits the top-level one, which
@@ -221,6 +224,61 @@ fn per_layer_strides_are_read_and_bounded_by_the_top_level() {
     let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
     assert!(
         matches!(err, ModelError::IndexCorrupt { ref detail } if detail.contains("8192")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn load_rejects_an_expert_range_outside_the_layer_file() {
+    let dir = tempdir();
+    let json = valid_layout_json().replace(
+        r#""expert": 1,
+                        "offset": 4096"#,
+        r#""expert": 1,
+                        "offset": 8192"#,
+    );
+    write_layout(&dir, &json);
+    let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
+    assert!(
+        matches!(err, ModelError::IndexCorrupt { ref detail } if detail.contains("exceeds its")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn load_rejects_a_sub_tensor_range_outside_its_expert() {
+    let dir = tempdir();
+    let json = valid_layout_json().replace(
+        r#""gate": {"offset": 0, "size": 2048"#,
+        r#""gate": {"offset": 3072, "size": 2048"#,
+    );
+    write_layout(&dir, &json);
+    let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
+    assert!(
+        matches!(err, ModelError::IndexCorrupt { ref detail } if detail.contains("tensor gate byte range")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn load_rejects_different_sub_tensor_layouts_within_a_layer() {
+    let dir = tempdir();
+    let json = valid_layout_json().replace(
+        r#""expert": 1,
+                        "offset": 4096,
+                        "size": 4096,
+                        "tensors": {
+                            "gate": {"offset": 0"#,
+        r#""expert": 1,
+                        "offset": 4096,
+                        "size": 4096,
+                        "tensors": {
+                            "gate": {"offset": 1"#,
+    );
+    write_layout(&dir, &json);
+    let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
+    assert!(
+        matches!(err, ModelError::IndexCorrupt { ref detail } if detail.contains("different sub-tensor layout")),
         "{err:?}"
     );
 }

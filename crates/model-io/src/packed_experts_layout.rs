@@ -207,6 +207,14 @@ pub fn load_from(
                  {expert_stride} that sizes every consumer's slot"
             )));
         }
+        if layer_stride == 0 {
+            return Err(corrupt(&format!(
+                "layer {layer_idx} declares a zero expert stride"
+            )));
+        }
+        let layer_file_size = layer_stride
+            .checked_mul(experts_per_layer as u64)
+            .ok_or_else(|| corrupt(&format!("layer {layer_idx} file size overflows u64")))?;
 
         let mut experts: Vec<Option<ExpertEntry>> = vec![None; experts_per_layer];
         for expert_obj in experts_arr {
@@ -218,9 +226,21 @@ pub fn load_from(
                 .get("size")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| corrupt("malformed expert entry"))?;
-            if size > layer_stride {
+            if size != layer_stride {
                 return Err(corrupt(&format!(
-                    "layer {layer_idx} expert blob size {size} exceeds its stride {layer_stride}"
+                    "layer {layer_idx} expert at offset {offset} declares size {size}, expected \
+                     the layer stride {layer_stride}"
+                )));
+            }
+            let expert_end = offset.checked_add(size).ok_or_else(|| {
+                corrupt(&format!(
+                    "layer {layer_idx} expert range {offset}+{size} overflows u64"
+                ))
+            })?;
+            if expert_end > layer_file_size {
+                return Err(corrupt(&format!(
+                    "layer {layer_idx} expert range {offset}..{expert_end} exceeds its \
+                     {layer_file_size}-byte layer file"
                 )));
             }
             let tensors_obj = expert_obj
@@ -355,9 +375,16 @@ pub fn load_from(
         let experts: Vec<ExpertEntry> = experts.into_iter().map(Option::unwrap).collect();
         if let Some(first) = experts.first() {
             for expert in &experts[1..] {
-                if expert.size != first.size || expert.sub_tensors != first.sub_tensors {
+                if expert.size != first.size {
                     return Err(corrupt(&format!(
-                        "layer {layer_idx} expert {} layout differs from expert {}",
+                        "layer {layer_idx} expert {} size differs from expert {}",
+                        expert.expert, first.expert
+                    )));
+                }
+                if expert.sub_tensors != first.sub_tensors {
+                    return Err(corrupt(&format!(
+                        "layer {layer_idx} expert {} has a different sub-tensor layout from \
+                         expert {}",
                         expert.expert, first.expert
                     )));
                 }
