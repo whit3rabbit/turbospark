@@ -234,30 +234,15 @@ impl RealDeepseek2State {
         // Q8_0 bytes, whose teacher-forced logits this flow now reproduces
         // (`docs/DEEPSEEK2_PHASE0.md`, the cross-engine section).
         let _ = arch.rope_scaling.yarn_mscale(); // documented above; NOT applied
-        let rope_mscale: f32 = std::env::var("TURBOSPARK_DSV2_ROPE_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1.0);
-        let yarn_off = std::env::var("TURBOSPARK_DSV2_NO_YARN").is_ok();
-        let yarn = if yarn_off {
-            compute::yarn_frequencies(
-                rope_dim as usize,
-                arch.full_rope_theta as f32,
-                0.0,
-                0,
-                0.0,
-                0.0,
-            )
-        } else {
-            compute::yarn_frequencies(
-                rope_dim as usize,
-                arch.full_rope_theta as f32,
-                arch.rope_scaling.factor as f32,
-                arch.rope_scaling.original_context,
-                arch.rope_scaling.beta_fast as f32,
-                arch.rope_scaling.beta_slow as f32,
-            )
-        };
+        let rope_mscale: f32 = 1.0;
+        let yarn = compute::yarn_frequencies(
+            rope_dim as usize,
+            arch.full_rope_theta as f32,
+            arch.rope_scaling.factor as f32,
+            arch.rope_scaling.original_context,
+            arch.rope_scaling.beta_fast as f32,
+            arch.rope_scaling.beta_slow as f32,
+        );
         let freq_bytes: Vec<u8> = yarn
             .frequencies
             .iter()

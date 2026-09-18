@@ -34,12 +34,18 @@ pub fn mla_kv_norm(kv_a: &[f32], rank: usize, weight: &[f32], eps: f32) -> Vec<f
 }
 
 /// Rotate the `rotary_dim`-wide window that starts at `window_offset`
-/// inside each `head_dim`-wide head: pair `(window_offset + i,
-/// window_offset + rotary_dim / 2 + i)` takes angle
-/// `position * freqs[i]`, both elements scaled by `mscale`. This is
-/// llama.cpp's `rope_set_offset` convention for MLA -- the tail of each q
-/// head rotates, the leading nope dims do not -- and neither existing rope
-/// kernel expresses a window that does not start at 0.
+/// inside each `head_dim`-wide head, CONSECUTIVE-element pairs:
+/// `(window_offset + 2*i, window_offset + 2*i + 1)` takes angle
+/// `position * freqs[i]`, both elements scaled by `mscale`. That pairing is
+/// ggml's own (`ggml_rope_cache_init` steps `i0` by 2 and fills
+/// `cache[i0]`/`cache[i0+1]`), and it was settled EMPIRICALLY, not from
+/// prose: an earlier draft used the half-split `(i, i + dim/2)` pairing the
+/// port's other rope kernels use; position 0 still matched (angles are all
+/// zero there, so the pairing is invisible) and every row past it degraded
+/// smoothly with position -- pair 0's extrapolated YaRN frequency is
+/// 1.0 rad/position, so the two conventions differ by a full radian at
+/// position 1 already. The llama.cpp per-layer dump matched this function's
+/// consecutive form at corr 1.0000 (`docs/DEEPSEEK2_PHASE0.md`).
 #[allow(clippy::too_many_arguments)]
 pub fn mla_rope_window(
     data: &mut [f32],
@@ -59,8 +65,8 @@ pub fn mla_rope_window(
         for (pair, &freq) in freqs.iter().enumerate() {
             let angle = position * freq;
             let (s, c) = angle.sin_cos();
-            let lo = window_offset + pair;
-            let hi = window_offset + rotary_dim / 2 + pair;
+            let lo = window_offset + 2 * pair;
+            let hi = lo + 1;
             let (a, b) = (head[lo], head[hi]);
             head[lo] = (a * c - b * s) * mscale;
             head[hi] = (a * s + b * c) * mscale;

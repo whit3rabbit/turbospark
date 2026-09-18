@@ -2088,10 +2088,18 @@ divergences and one open gap. Facts and the verified-correct list:
   V is read as the row's first `kv_lora` halves, and the manager's V buffer
   for mask-5 layers is allocated but never written (the recoverable overhead
   is ~216 MiB at 8192).
-- **OPEN: per-position logits diverge from llama.cpp from position 1 on**
-  (corr 0.25-0.88; pos 0 matches at 0.9996). Everything verified correct is
-  listed in `docs/DEEPSEEK2_PHASE0.md`'s open-numerics section with the
-  suspect stack and the instrument (`logit_dump`'s `TURBOSPARK_DSV2_INSTALL_DIR`
-  arm + `scripts/llamacpp_logits.c`'s rope overrides). The catalog row is
-  `caveat` until this closes. Debug knobs kept for that session:
-  `TURBOSPARK_DSV2_NO_YARN`, `TURBOSPARK_DSV2_SCALE`, `TURBOSPARK_DSV2_ROPE_MS`.
+- **CLOSED: the per-position numerics gap against llama.cpp.** Root cause:
+  the MLA rope kernels paired the pe window's elements half-split
+  `(i, i + dim/2)` where ggml pairs CONSECUTIVE elements `(2i, 2i + 1)` --
+  invisible at position 0, a full radian apart at position 1 on the
+  extrapolated pair 0, and smoothly worse with position. Now fixed in
+  `compute::mla_rope_window` + `mla_rope_q_pe` (the cache tail routes
+  through the same kernel) and pinned by
+  `rope_pairs_consecutive_elements_not_split_halves`. Cache rows match
+  llama.cpp at corr 0.99998+ at every position, logits at 0.984-0.9999 with
+  argmax identical on 14 of 15 prompt positions, greedy and sampled
+  generation coherent, catalog row promoted to `runs`. The full record,
+  including two false leads (a yarn-ramp "fix" that was itself the bug, and
+  a latent-recovery run against llama's expanded K cache read as a
+  compressed row), is `docs/DEEPSEEK2_PHASE0.md`'s closed-numerics section.
+  The bisect-era debug knobs were removed with the gap they served.

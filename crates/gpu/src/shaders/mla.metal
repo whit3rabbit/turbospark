@@ -83,8 +83,15 @@ kernel void mla_rope_q_pe(
     float angle = float(position) * frequencies[pair];
     float c = cos(angle) * mscale;
     float s = sin(angle) * mscale;
-    uint lo = window_offset + pair;
-    uint hi = window_offset + rotary_dim / 2 + pair;
+    // CONSECUTIVE-element pairs, ggml's `ggml_rope_cache_init` layout
+    // (cache[i0]/cache[i0+1], i0 even). NOT the half-split `(i, i + dim/2)`
+    // pairing the rope.metal kernels use: ggml's own rope for this family
+    // pairs neighbours, settled empirically against llama.cpp's per-layer
+    // dump after the split form degraded every row past position 0 (pair 0
+    // is extrapolated at 1.0 rad/position, so the two conventions differ by
+    // a radian at position 1 already).
+    uint lo = window_offset + 2 * pair;
+    uint hi = lo + 1;
     float a = float(head_ptr[lo]);
     float b = float(head_ptr[hi]);
     head_ptr[lo] = half(a * c - b * s);

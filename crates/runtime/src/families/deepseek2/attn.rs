@@ -97,18 +97,23 @@ pub(crate) fn encode_mla_attention_block(
         state.rms_eps,
     )
     .map_err(gpu_err)?;
-    // The pe tail of the cache row: one head of rope_dim, from byte offset
-    // kv_lora * 2. `rope_neox_freqs` pairs `(i, rope_dim/2 + i)` within the
-    // head, which is exactly the pe window's own pairing.
-    gpu::encode_rope_neox_freqs(
+    // The pe tail of the cache row, roped in place: one head of rope_dim
+    // whose window starts at kv_lora. It goes through the SAME kernel as q
+    // because the pairing must match ggml's consecutive-element layout
+    // (see `compute::mla_rope_window`); `rope_neox_freqs` pairs
+    // `(i, i + dim/2)` instead, which silently swaps every pair's partner
+    // and degrades all rows past position 0.
+    gpu::encode_mla_rope_q_pe(
         context,
         pass,
-        (k_buf, (k_off + state.kv_lora as usize * 2) as u64),
-        position as u32,
-        1,
-        state.rope_dim,
-        state.rope_dim / 2,
+        (k_buf, k_off as u64),
         (&state.rope_frequencies, 0),
+        1,
+        1,
+        state.cache_row,
+        state.kv_lora,
+        state.rope_dim,
+        position as u32,
         state.rope_mscale,
     )
     .map_err(gpu_err)?;
@@ -143,14 +148,7 @@ pub(crate) fn encode_mla_attention_block(
         state.kv_lora,
         (position + 1) as u32,
         // Folded at repack: (1 + 0.1 * mscale * ln factor)^2 / sqrt(key_dim).
-        // The NO_YARN debug switch pairs plain rope with the plain scale.
-        if let Ok(v) = std::env::var("TURBOSPARK_DSV2_SCALE") {
-            v.parse().unwrap()
-        } else if std::env::var("TURBOSPARK_DSV2_NO_YARN").is_ok() {
-            1.0 / (arch.mla.key_head_dim() as f32).sqrt()
-        } else {
-            arch.attention_scale as f32
-        },
+        arch.attention_scale as f32,
     )
     .map_err(gpu_err)?;
 

@@ -140,6 +140,57 @@ fn rope_q_pe_rotates_only_the_window() {
     }
 }
 
+/// Pins the PAIRING, not just the GPU/CPU agreement: both sides above would
+/// stay green together under either convention. The window here is 4 wide
+/// with angle-pi frequencies, so pair 0 swaps the SIGN of both elements and
+/// the two conventions rotate DIFFERENT partners: consecutive pairs
+/// `(w0, w1), (w2, w3)` against half-split `(w0, w2), (w1, w3)`. The
+/// expected values are hand-derived for consecutive, ggml's layout (see
+/// `compute::mla_rope_window`).
+#[test]
+fn rope_pairs_consecutive_elements_not_split_halves() {
+    let mut context = MetalContext::new().expect("Metal device");
+    // freqs = [pi/2, pi/4], position = 1: angles [pi/2, pi/4].
+    let data: Vec<f16> = [1.0f32, 2.0, 3.0, 4.0]
+        .iter()
+        .map(|&v| f16::from_f32(v))
+        .collect();
+    let s = std::f32::consts::SQRT_2 / 2.0;
+    let gpu = gpu_rope_q_pe(
+        &mut context,
+        &data,
+        &[std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_4],
+        1, // heads
+        4, // head_dim == window width: the whole head rotates
+        0, // window offset
+        4, // rotary
+        1, // position
+        1.0,
+    )
+    .expect("dispatch");
+    // Angle pi/2: (cos, sin) = (0, 1). Consecutive pair 0 = (1, 2):
+    // lo' = 1*0 - 2*1 = -2, hi' = 1*1 + 2*0 = 1.
+    // Angle pi/4: (cos, sin) = (s, s). Consecutive pair 1 = (3, 4):
+    // lo' = (3-4)*s = -s, hi' = (3+4)*s = 7s.
+    let expect = [-2.0f32, 1.0, -s, 7.0 * s];
+    for (i, (&g, &e)) in gpu.iter().zip(expect.iter()).enumerate() {
+        let diff = (g.to_f32() - e).abs();
+        assert!(
+            diff < 2e-2,
+            "element {i}: gpu {g} vs consecutive-expected {e}"
+        );
+    }
+    // The split-half convention would instead rotate pair 0's (1, 3):
+    // lo' = 1*0 - 3*1 = -3, a DIFFERENT first element. Guard the
+    // discriminator itself: the fixture must be able to see the wrong
+    // convention.
+    let split_pair0_first = -3.0f32;
+    assert!(
+        (split_pair0_first - expect[0]).abs() > 0.5,
+        "fixture no longer distinguishes the two pairings"
+    );
+}
+
 #[test]
 fn absorb_q_matches_the_cpu_matmul_and_gathers_the_pe_tail() {
     let mut context = MetalContext::new().expect("Metal device");

@@ -270,46 +270,71 @@ vocab 102400). `produce` writes logits; the sampler softmaxes once
   kernels separately, so the 0.707 parameter needs its own path (a new
   `RopeScalingConfig` field; zero-fallback preserves gpt-oss exactly).
 
-## The open numerics gap (2026-09-17), and the instrument that found it
+## The numerics gap: FOUND AND CLOSED (2026-09-17), and the instruments that found it
 
-The flow runs, is deterministic, and generates coherent English on the real
-install, but its per-position logits still diverge from llama.cpp on the
-IDENTICAL Q8_0 bytes from position 1 onward (per-position corr 0.87 at pos 1,
-0.25 at pos 2, recovering to 0.9+ mid-prompt, 0.78 at the last prompt
-position; pos 0 matches at 0.9996). The instrument, now permanent:
-`logit_dump.rs` gained a `TURBOSPARK_DSV2_INSTALL_DIR` arm, and
-`scripts/llamacpp_logits.c` gained rope-override argv so the reference can be
-run yarn and no-yarn. What was verified CORRECT piece by piece against
-independent implementations: the embed lookup, both input norms, the q and
-kv_a GEMVs, the k_pe and q_pe rope rotations (implied angles match pos×freq
-to fp16), the latent-norm, the compressed cache row contents, the absorb
-algebra (exact algebraic identity with llama.cpp's expanded form), the fused
-score scale (0.11472138679292612 = llama's own `mscale²/sqrt(192)` with its
-logged `yarn_attn_factor = 1.0000`), and the whole pos-0 stack end to end.
-Two REAL bugs were found and fixed along the way:
+The flow's per-position logits now reproduce llama.cpp's on the IDENTICAL
+Q8_0 bytes: layer-1 cache rows match at corr 0.99998+ at EVERY position 0-14,
+the per-layer residual grid matches to worst-layer corr 0.9998, full-vocab
+logits match at corr 0.984-0.9999 with argmax identical on 14 of 15 prompt
+positions (the two soft spots are near-ties under this port's f16 GPU path
+against llama's f32 CPU), and greedy AND sampled generation are coherent with
+EndOfTurn reached. Instruments, now permanent: `logit_dump.rs`'s
+`TURBOSPARK_DSV2_INSTALL_DIR` arm, `scripts/llamacpp_logits.c` with
+rope-override argv, and the `~/dsv2ref/` harnesses (a llama.cpp eval-callback
+per-layer dump plus the numpy confrontations that consumed it). What was
+verified CORRECT piece by piece against independent implementations: the
+embed lookup, both input norms, the q and kv_a GEMVs, the install weights
+against the GGUF source bytes, the latent-norm, the absorb algebra (exact
+algebraic identity with llama.cpp's expanded form), the fused score scale
+(0.11472138679292612 -- reproducing llama's own attention output at corr
+1.0000 from exact inputs), and the whole pos-0 stack end to end.
+
+Three REAL bugs were found and fixed along the way; the third closed the gap:
 
 1. **The absorb was not transposed** (fixed): q'_h must read
-   `sum_i W_uk[i][j]·q_nope[i]` — reduction over the nope ROWS — not the
+   `sum_i W_uk[i][j]·q_nope[i]` -- reduction over the nope ROWS -- not the
    per-row GEMV every other kernel here uses. A self-consistent fixture
    (kernel vs CPU mirror of the same wrong indexing) passed while both were
    wrong; only the real install's garbage output exposed it.
 2. **The FFN scratch overflowed** (fixed): the dense lead's 10944-wide and
    the shared expert's 2816-wide gate/up runs were written into hidden-sized
    (2048) or kv-sized (8192) buffers, clobbering whatever the allocator
-   placed next — including the yarn frequency table. Position 0 was immune
+   placed next -- including the yarn frequency table. Position 0 was immune
    (any table gives the identity rope at angle 0), which made the corruption
    look like a position-dependent rope bug. Also the source of run-to-run
    NONDETERMINISM that initially read as a race.
+3. **The MLA rope paired the WRONG ELEMENTS** (fixed, the root cause): the
+   q_pe and cache-tail rotations paired `(i, i + dim/2)` -- the half-split
+   layout the port's other rope kernels use -- where ggml's
+   `ggml_rope_cache_init` pairs CONSECUTIVE elements `(2i, 2i + 1)`.
+   Invisible at position 0 (all angles zero, any pairing is the identity),
+   small-but-present at position 1, and degrading smoothly with position
+   (pair 0 is an EXTRAPOLATED YaRN pair at 1.0 rad/position, so the two
+   conventions differ by a full radian there): exactly the observed
+   row-by-row decay of corr 1.0000 (row 0) through 0.9692 (row 1) to ~0.89
+   (row 14). `compute::mla_rope_window` + `mla_rope_q_pe` now pair
+   consecutively, the cache tail goes through the same kernel (one "head"
+   whose window starts at kv_lora), and
+   `rope_pairs_consecutive_elements_not_split_halves` pins the convention
+   with hand-derived expected values that the split form CANNOT satisfy.
 
-The remaining divergence is therefore in something neither piece-wise
-verification nor the fixed constants cover; the prime suspects, in order:
-the attention score's yarn handling (an mscale landing in llama's kq that
-the cancel chain hides), the fused score's pe/nope weighting (llama runs the
-non-absorbed path where both parts ride one scale — algebraically identical
-only if the rope magnitudes really are 1.0), or a residual interaction in
-the shared-expert + routed sum ordering. The next instrument is a per-layer
-activation diff against llama.cpp (`llama-eval-callback` prints shapes only;
-a small harness extension would print values).
+Two false leads are recorded so nobody re-walks them:
+
+- **The yarn ramp direction is NOT the bug, and "fixing" it IS one.** ggml
+  interpolates the SLOW (long-wavelength) pairs and extrapolates the fast
+  ones -- `ramp` is 1 at the fast end, mixed toward `theta_extrap`. A draft
+  read the YaRN paper's prose the other way, flipped `yarn_ramp`, and saw an
+  apparent improvement -- measured through the scratch-overflow corruption
+  and the mis-paired rope, i.e. through two broken components. Reverted to
+  the ggml-identical form; `yarn_ramp`'s doc comment now carries the trap.
+- **llama.cpp's deepseek2 K cache is NOT the compressed `[c ; k_pe]` row.**
+  On CPU (no flash attn) it de-absorbs: 16 kv heads x 192
+  (`[k_nope ; k_pe]` each), V 16 x 128. The compressed row appears only in
+  views. Comparing a 576-wide window against this port's compressed row
+  produced a bogus "latent corr ~0" that sent the bisect through a wasted
+  lstsq recovery of `c` from the wrong tensor. The eval-callback's node-name
+  log (`cache_k_l1 (view)` ne=[3072,256] plus `(permuted)` views) is what
+  settled the layout.
 
 ## Deliberately not done at bring-up (the descope list)
 

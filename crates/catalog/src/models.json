@@ -838,9 +838,9 @@
       },
       "download_bytes": 16699906000,
       "install_bytes": 16700000000,
-      "status": "caveat",
+      "status": "runs",
       "gates": [],
-      "notes": "The architecture bring-up's own artifact: MLA (compressed 576-half cache, absorbed form) plus 64 experts top-6 and a fused shared expert, one dense lead layer. Status caveat, not runs: greedy and sampled generation are coherent at the opening tokens and deterministic after the ffn-scratch sizing fix, but the cross-engine logits against llama.cpp on the same Q8_0 bytes still diverge from position 1 on (corr 0.25-0.88 per position; see docs/DEEPSEEK2_PHASE0.md's open-numerics section), so this is not yet a 'runs' claim. The repo's Q4_K_M variant refuses at repack: its calibration gives four layers Q5_K routed/shared experts and the routed-pair kernel matrix has no Q5_K arm; use the Q8_0."
+      "notes": "The architecture bring-up's own artifact: MLA (compressed 576-half cache, absorbed form) plus 64 experts top-6 and a fused shared expert, one dense lead layer. Runs: the cross-engine numerics gap is CLOSED -- layer-1 cache rows match llama.cpp at corr 0.99998+ at every position, full-vocab logits at corr 0.984-0.9999 with argmax identical on 14 of 15 prompt positions on the same Q8_0 bytes, and greedy + sampled generation are coherent with EndOfTurn reached (root cause was a half-split rope pairing where ggml pairs consecutive elements; docs/DEEPSEEK2_PHASE0.md's closed-numerics section carries the record). No frozen quality/throughput/memory gates yet. The repo's Q4_K_M variant refuses at repack: its calibration gives four layers Q5_K routed/shared experts and the routed-pair kernel matrix has no Q5_K arm; use the Q8_0."
     }
   ]
 }

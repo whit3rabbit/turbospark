@@ -301,7 +301,14 @@ fn yarn_corr_dim(n_dims: usize, n_ctx_orig: i64, n_rot: f32, base: f32) -> f32 {
         / (2.0 * base.ln())
 }
 
-/// `1` at the fast end of the ramp, `0` at the slow end, linear between.
+/// ggml's YaRN ramp mix: `1` at the fast end (the shortest-wavelength pairs
+/// keep the EXTRAPOLATED angle), `0` at the slow end (the longest-wavelength
+/// pairs take the full `1/factor` interpolation), linear between. That
+/// direction reads backwards off the YaRN paper's own prose, and a draft
+/// that "fixed" it interpolated the fast end instead; it passed every
+/// self-referential fixture and degraded long-position attention against
+/// llama.cpp. The mixing is `extrap * (freq_scale * (1 - mix) + mix)`, so
+/// mix here must be 1 exactly where ggml's `rope_yarn_ramp` is 1.
 fn yarn_ramp(low: f32, high: f32, i0: usize) -> f32 {
     let y = (i0 as f32 / 2.0 - low) / (high - low).max(0.001);
     1.0 - y.clamp(0.0, 1.0)

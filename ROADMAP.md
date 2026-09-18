@@ -114,7 +114,7 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   - `crates/gpu/src/shaders/` (Q3_K resident kernels, if that scope is chosen)
   - `docs/NEW_MODEL.md`, `docs/MODEL_FAMILY.md`, `docs/TESTING.md`
 
-#### 3. `deepseek2` Architecture Support (High-Leverage Multi-Model Unlock) -- LANDED 2026-09-17, one numerics gap open
+#### 3. `deepseek2` Architecture Support (High-Leverage Multi-Model Unlock) -- LANDED 2026-09-17, numerics closed same day
 - **Landed**: the full cross-layer bring-up -- `ModelFamily::Deepseek2`
   (mask 5, MLA), baseline + manifest round-trip, GGUF name table, config
   parser, registry promotion (witness: `mradermacher/DeepSeek-V2-Lite-Chat-GGUF`
@@ -124,11 +124,16 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   dense-lead blob positions in the walk, the V2 tokenizer dialect, the
   catalog row `dsv2lite-16b`, and the `logit_dump`/`llamacpp_logits`
   cross-engine instruments. The real install runs deterministic generation.
-- **Still open (the numerics gap)**: per-position logits vs llama.cpp on the
-  identical Q8_0 bytes diverge from position 1 on (corr 0.25-0.88;
-  [DEEPSEEK2_PHASE0.md](docs/DEEPSEEK2_PHASE0.md)'s open-numerics section
-  has the verified-correct list and the suspect stack). Until it closes, the
-  catalog row is `caveat`, not `runs`, and no benchmark rows freeze.
+- **Numerics CLOSED (2026-09-17)**: the pos>=1 divergence from llama.cpp on
+  the identical Q8_0 bytes was a half-split rope pairing in the MLA kernels
+  where ggml pairs consecutive elements. Cache rows now match llama.cpp at
+  corr 0.99998+ at every position, logits at 0.984-0.9999 (argmax identical
+  on 14 of 15 prompt positions), greedy + sampled generation coherent with
+  EndOfTurn reached, catalog row promoted to `runs`
+  ([DEEPSEEK2_PHASE0.md](docs/DEEPSEEK2_PHASE0.md)'s closed-numerics section
+  carries the record and the two false leads). Still owed for full release:
+  frozen quality/throughput/memory rows for the family, and the descope list
+  (split `wk_b`/`wv_b` files, `q_lora_rank > 0`, batched absorbed prefill).
 - **Files touched**: the four below, plus `gguf_names/deepseek2.rs`,
   `gguf_config`, `arch_registry`, `kv_layer_strides` (mask 5), the
   `MlaConfig` manifest block, the dense-lead positional walk, the V2
@@ -174,7 +179,7 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 - **Objective**: Implement structured tool-call decoders for formats found in modern checkpoints: GLM XML `<arg_key>/<arg_value>`, MiniMax namespaced `<minimax:tool_call>`, Mistral `[TOOL_CALLS]`, and Kimi K2 section markers `<|tool_calls_section_begin|>`.
 - **Landed (2026-09-15): Mistral `[TOOL_CALLS]`.** The real `mistral7b-dense.gturbo` install's table resolves `[TOOL_CALLS]` as a special token (id 5), so the native arm keys on the id like Gemma's, buffers every token after it, and emits the parsed call from the decoder's `finish` -- a `[TOOL_CALLS]` span has NO closing token (the JSON-array body runs to end of turn, and end of turn is `</s>`, a stop token), which is structurally Harmony's terminator-blind case. `resolve_mistral` resolves the marker OPTIONALLY, so the earliest tables (Mixtral 8x7B-Instruct's three tokens) keep the passthrough. `tool_call_support` flips Mistral to `Native`; `MistralToolCallParser` accepts both the array and the single-object form. Covered by four decoder-level tests, the dialect-support table test (whose harness now calls `finish`, which the previous one never did), and a mutation check on the finish dispatch.
 - **Deferred with findings (2026-09-15): MiniMax.** The published M2 `tokenizer_config.json` shows the `<minimax:tool_call>` wrapper tokens are NON-special added tokens (ids 200052/200053, `special: false`), so a native arm would be a text-marker arm like DeepSeek's rather than the id-bracket arm the entry's wording assumed; and this port's MiniMax dialect probe strings (`]~!b[`/`]~b]`/`[e~[`) do not match the published M2 table's bos (`]!p~[`), so the dialect itself may need re-derivation against the M2 table first. The MiniMax-M2 install is no longer on disk (store drift from the artifact table), so no real-model gate is reachable this session; the rescue tier already parses the invoke shape.
-- **Deferred with rationale (2026-09-15): GLM and Kimi K2.** Neither markup has a registered dialect here, and both model families are deepseek2 (MLA), which is recognition-only -- there is no loadable checkpoint to smoke a native decoder against, which is the bar `docs/TOOL_CALLING.md` itself sets for building one. Revisit when `deepseek2` (Priority 2 item 3) lands.
+- **Deferred with rationale (2026-09-15, updated 2026-09-17): GLM and Kimi K2.** Neither markup has a registered dialect here, and both model families are deepseek2 (MLA), which was recognition-only when this was written -- no loadable checkpoint to smoke a native decoder against, the bar `docs/TOOL_CALLING.md` itself sets. The family side of that precondition is now MET (deepseek2 landed and runs, item 3 above); what remains is deriving each dialect's probe/resolver from a real checkpoint's tokenizer tables and installing a witness for it.
 - **Files to Touch**:
   - `crates/tokenizer/src/structured_decoder/`
   - `crates/tokenizer/src/chat_template.rs`
