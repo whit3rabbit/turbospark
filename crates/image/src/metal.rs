@@ -7,13 +7,17 @@
 //! type. The opt-in parity and resource gates remain separate from this
 //! device implementation because no source checkpoint is copied into tests.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::{atomic::Ordering, Arc},
+};
 
 use tokenizer::MfTokenizer;
 
 use crate::conditioning::{frame_prompt, tokenize_prompt};
 use crate::install::ImageManifest;
-use crate::metal_ops::{self, Component};
+use crate::metal_ops::{self, Component, StreamMetrics};
 use crate::patchify::{
     create_coordinate_grid, patchify_image, unpatchify, DEFAULT_F_PATCH_SIZE, DEFAULT_PATCH_SIZE,
     LATENT_CHANNELS, SEQ_MULTI_OF,
@@ -23,7 +27,9 @@ use crate::pipeline::{
     Z_IMAGE_HEAD_DIM, Z_IMAGE_TIME_DIM,
 };
 use crate::rope::RopeEmbedder;
-use crate::runtime::{CancellationToken, ImageBackend, ImageRequest};
+use crate::runtime::{
+    CancellationToken, ImageBackend, ImageMemoryPlan, ImageRequest, ImageWorkTracker,
+};
 use crate::scheduler::FlowMatchEulerScheduler;
 
 use super::text_encoder::{EXTRACT_LAYER_COUNT, HEAD_DIM, HIDDEN_SIZE, NUM_KV_HEADS, NUM_Q_HEADS};
@@ -35,6 +41,76 @@ const IMAGE_CANCELLED: &str = "image generation cancelled";
 const ROPE_THETA: f32 = 1_000_000.0;
 const TRANSFORMER_EPS: f32 = 1e-5;
 const FIRST_STEP_MAIN_TRACE_BLOCKS: [usize; 7] = [0, 15, 16, 20, 24, 28, 29];
+
+fn max_stream_block_span(store: &crate::packed::PackedTensorStore) -> Result<u64, String> {
+    let mut prefixes = BTreeSet::new();
+    for name in store.tensor_names() {
+        let parts: Vec<&str> = name.split('.').collect();
+        let prefix_len = if parts.starts_with(&["model", "layers"]) {
+            (parts.len() >= 3).then_some(3)
+        } else if parts.starts_with(&["layers"])
+            || parts.starts_with(&["noise_refiner"])
+            || parts.starts_with(&["context_refiner"])
+        {
+            (parts.len() >= 2).then_some(2)
+        } else if parts.starts_with(&["decoder", "mid_block", "resnets"])
+            || parts.starts_with(&["decoder", "mid_block", "attentions"])
+        {
+            (parts.len() >= 4).then_some(4)
+        } else if parts.starts_with(&["decoder", "up_blocks"]) {
+            if parts.get(3) == Some(&"resnets") {
+                (parts.len() >= 5).then_some(5)
+            } else if parts.get(3) == Some(&"upsamplers") {
+                (parts.len() >= 6).then_some(6)
+            } else {
+                None
+            }
+        } else if parts.starts_with(&["all_x_embedder"])
+            || parts.starts_with(&["cap_embedder"])
+            || parts.starts_with(&["t_embedder"])
+            || parts.starts_with(&["all_final_layer"])
+            || parts.starts_with(&["decoder", "conv_in"])
+            || parts.starts_with(&["decoder", "conv_norm_out"])
+            || parts.starts_with(&["decoder", "conv_out"])
+        {
+            (parts.len() >= 2).then_some(2)
+        } else {
+            None
+        };
+        if let Some(prefix_len) = prefix_len {
+            prefixes.insert(parts[..prefix_len].join("."));
+        }
+    }
+    prefixes
+        .iter()
+        .filter_map(|prefix| store.prefix_span(prefix).map(|(_, end)| (prefix, end)))
+        .map(|(prefix, end)| {
+            let (start, _) = store
+                .prefix_span(prefix)
+                .expect("prefix span was present in the preceding filter");
+            end.checked_sub(start)
+                .ok_or_else(|| format!("image prefix {prefix} range underflows"))
+        })
+        .try_fold(0u64, |largest, span| Ok(largest.max(span?)))
+}
+
+/// Selects whether packed component weights remain resident or are loaded
+/// through the bounded synchronous two-slot streamer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageResidency {
+    Resident,
+    Streamed,
+}
+
+/// Synchronous streamed-weight counters, kept separate from process-wide
+/// `phys_footprint` because the driver may retain released Metal capacity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImageStreamMetrics {
+    pub peak_slot_bytes: u64,
+    pub read_count: u64,
+    pub read_bytes: u64,
+    pub slot_reuse_waits: u64,
+}
 
 /// A bounded diagnostic boundary in the first packed denoising step.
 ///
@@ -126,6 +202,9 @@ pub struct MetalImageBackend {
     root: PathBuf,
     tokenizer: MfTokenizer,
     manifest: ImageManifest,
+    residency: ImageResidency,
+    stream_metrics: Arc<StreamMetrics>,
+    work: ImageWorkTracker,
 }
 
 impl std::fmt::Debug for MetalImageBackend {
@@ -140,6 +219,11 @@ impl std::fmt::Debug for MetalImageBackend {
 impl MetalImageBackend {
     /// Open and verify a packed image install on a Metal-capable macOS host.
     pub fn open(root: &Path) -> Result<Self, String> {
+        Self::open_with_residency(root, ImageResidency::Resident)
+    }
+
+    /// Open and verify an install with an explicit component residency mode.
+    pub fn open_with_residency(root: &Path, residency: ImageResidency) -> Result<Self, String> {
         let context = gpu::MetalContext::new().map_err(|e| {
             format!(
                 "native image generation requires a Metal device: {e}; use the explicit reference backend for diagnostics"
@@ -150,11 +234,15 @@ impl MetalImageBackend {
         manifest.verify_files(root)?;
         let tokenizer = crate::conditioning::load_tokenizer(&root.join("components/tokenizer"))
             .map_err(|e| format!("failed to load image tokenizer: {e}"))?;
+        let stream_metrics = Arc::new(StreamMetrics::default());
         Ok(Self {
             context,
             root: root.to_path_buf(),
             tokenizer,
             manifest,
+            residency,
+            stream_metrics,
+            work: ImageWorkTracker::default(),
         })
     }
 
@@ -165,8 +253,74 @@ impl MetalImageBackend {
         self.context.buffer_allocation_count()
     }
 
+    /// Return the exact capacity and synchronous payload-read counters for
+    /// this backend's streamed components. Zeroes are expected in resident
+    /// mode. This does not reinterpret driver-retained capacity as scratch.
+    pub fn stream_metrics(&self) -> ImageStreamMetrics {
+        ImageStreamMetrics {
+            peak_slot_bytes: self.stream_metrics.peak_slot_bytes.load(Ordering::Relaxed),
+            read_count: self.stream_metrics.read_count.load(Ordering::Relaxed),
+            read_bytes: self.stream_metrics.read_bytes.load(Ordering::Relaxed),
+            slot_reuse_waits: self.stream_metrics.slot_reuse_waits.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Build the bounded image memory plan from the verified packed indexes.
+    /// The plan is a component/request lower bound, not a claim about total
+    /// machine RAM or driver-retained capacity.
+    pub fn memory_plan(&self) -> Result<ImageMemoryPlan, String> {
+        let component_roots = [TEXT_COMPONENT, TRANSFORMER_COMPONENT, VAE_COMPONENT];
+        let mut component_weights = 0u64;
+        let mut largest_block = 0u64;
+        for relative in component_roots {
+            let store = crate::packed::PackedTensorStore::open(&self.root.join(relative))?;
+            component_weights = component_weights
+                .checked_add(store.payload_bytes()?)
+                .ok_or_else(|| "image component weight bytes overflow".to_string())?;
+            largest_block = largest_block.max(max_stream_block_span(&store)?);
+        }
+        let streamed_component_weights = largest_block
+            .checked_mul(2)
+            .ok_or_else(|| "image streamed slot bytes overflow".to_string())?;
+        let conditioning = (crate::install::IMAGE_PROMPT_MAX_TOKENS as u64)
+            .checked_mul(Z_IMAGE_CAP_DIM as u64)
+            .and_then(|bytes| bytes.checked_mul(4))
+            .ok_or_else(|| "image conditioning bytes overflow".to_string())?;
+        let latent_values = (LATENT_CHANNELS * 128 * 128) as u64;
+        let latents = latent_values
+            .checked_mul(3)
+            .and_then(|bytes| bytes.checked_mul(4))
+            .ok_or_else(|| "image latent bytes overflow".to_string())?;
+        let transformer_activation = (4096u64 + 512)
+            .checked_mul(Z_IMAGE_DIM as u64)
+            .and_then(|values| values.checked_mul(4))
+            .ok_or_else(|| "image activation bytes overflow".to_string())?;
+        let vae_activation = 512u64 * 256 * 256 * 4;
+        let activations = transformer_activation.max(vae_activation).saturating_mul(4);
+        let block_workspace = transformer_activation.max(vae_activation).saturating_mul(2);
+        Ok(ImageMemoryPlan {
+            component_weights,
+            streamed_component_weights,
+            conditioning,
+            latents,
+            activations,
+            scratch: 0,
+            staging: largest_block,
+            in_flight_gpu: block_workspace,
+            allocator_retention: 0,
+            largest_block,
+            block_workspace,
+        })
+    }
+
     fn component(&self, relative: &str) -> Result<Component, String> {
-        Component::open(&self.context, &self.root.join(relative))
+        Component::open_with_metrics(
+            &self.context,
+            &self.root.join(relative),
+            self.residency == ImageResidency::Streamed,
+            Some(Arc::clone(&self.stream_metrics)),
+            self.work.clone(),
+        )
     }
 
     fn cancelled(cancellation: &CancellationToken) -> Result<(), String> {
@@ -208,6 +362,7 @@ impl MetalImageBackend {
         freqs: &metal::Buffer,
     ) -> Result<metal_ops::GpuTensor, String> {
         let prefix = format!("model.layers.{layer}");
+        component.load_prefix(&self.context, &prefix)?;
         let input_norm = Self::text_weight(
             component,
             &format!("{prefix}.input_layernorm.weight"),
@@ -388,7 +543,9 @@ impl MetalImageBackend {
             crate::text_encoder::INTERMEDIATE_SIZE,
             HIDDEN_SIZE,
         )?;
-        metal_ops::add(&mut self.context, &x, &down)
+        let output = metal_ops::add(&mut self.context, &x, &down)?;
+        component.wait_for_latest();
+        Ok(output)
     }
 
     fn time_embedding(
@@ -398,6 +555,7 @@ impl MetalImageBackend {
     ) -> Result<metal_ops::GpuTensor, String> {
         let frequencies = timestep_embedding(scaled_timestep, Z_IMAGE_TIME_DIM);
         let input = metal_ops::upload(&self.context, &frequencies);
+        component.load_prefix(&self.context, "t_embedder.mlp.0")?;
         let first_weight =
             component.weight("t_embedder.mlp.0.weight", &[1024, Z_IMAGE_TIME_DIM])?;
         let first_bias = component.weight("t_embedder.mlp.0.bias", &[1024])?;
@@ -416,6 +574,7 @@ impl MetalImageBackend {
             .map(crate::transformer::silu)
             .collect::<Vec<_>>();
         let activated = metal_ops::upload(&self.context, &first_values);
+        component.load_prefix(&self.context, "t_embedder.mlp.2")?;
         let second_weight =
             component.weight("t_embedder.mlp.2.weight", &[Z_IMAGE_TIME_DIM, 1024])?;
         let second_bias = component.weight("t_embedder.mlp.2.bias", &[Z_IMAGE_TIME_DIM])?;
@@ -494,6 +653,7 @@ impl MetalImageBackend {
         timestep: Option<&metal_ops::GpuTensor>,
         mut intra_probe: Option<&mut IntraBlockProbe<'_>>,
     ) -> Result<metal_ops::GpuTensor, String> {
+        component.load_prefix(&self.context, prefix)?;
         if let Some(probe) = intra_probe.as_deref_mut() {
             x = probe.capture(&mut self.context, x, "input")?;
         }
@@ -788,11 +948,17 @@ impl MetalImageBackend {
             }
             None => metal_ops::add(&mut self.context, &x, &ffn_output),
         }?;
-        if let Some(probe) = intra_probe {
-            probe.capture(&mut self.context, output, "ffn.residual")
+        let output = if let Some(probe) = intra_probe {
+            probe.capture(&mut self.context, output, "ffn.residual")?
         } else {
-            Ok(output)
-        }
+            output
+        };
+        // Bound resident command-buffer retention at the same seam where a
+        // streamed block can be safely replaced. The next block remains
+        // numerically identical, but cannot accumulate the whole denoise
+        // pass's in-flight GPU work.
+        component.wait_for_latest();
+        Ok(output)
     }
 
     // These arguments mirror the VAE block's separate convolution, norm, and
@@ -809,6 +975,7 @@ impl MetalImageBackend {
         height: usize,
         width: usize,
     ) -> Result<metal_ops::GpuTensor, String> {
+        component.load_prefix(&self.context, prefix)?;
         let weight =
             |suffix: &str, shape: &[usize]| component.weight(&format!("{prefix}.{suffix}"), shape);
         let norm1_weight = weight("norm1.weight", &[in_channels])?;
@@ -902,7 +1069,9 @@ impl MetalImageBackend {
             }
             x
         };
-        metal_ops::add(&mut self.context, &shortcut, &conv2)
+        let output = metal_ops::add(&mut self.context, &shortcut, &conv2)?;
+        component.wait_for_latest();
+        Ok(output)
     }
 
     fn vae_attention(
@@ -913,6 +1082,7 @@ impl MetalImageBackend {
         width: usize,
     ) -> Result<metal_ops::GpuTensor, String> {
         let channels = 512;
+        component.load_prefix(&self.context, "decoder.mid_block.attentions.0")?;
         let norm = metal_ops::group_norm(
             &mut self.context,
             component,
@@ -1014,7 +1184,9 @@ impl MetalImageBackend {
             1,
             0,
         )?;
-        metal_ops::add(&mut self.context, &x, &out)
+        let output = metal_ops::add(&mut self.context, &x, &out)?;
+        component.wait_for_latest();
+        Ok(output)
     }
 
     /// Run native denoising from this backend's own seeded noise while
@@ -1231,6 +1403,7 @@ impl MetalImageBackend {
         token_size: (usize, usize, usize),
         timestep: &metal_ops::GpuTensor,
     ) -> Result<metal_ops::GpuTensor, String> {
+        component.load_prefix(&self.context, "all_final_layer.2-1")?;
         let values = metal_ops::read(unified);
         let image = metal_ops::upload(&self.context, &values[..image_padded_len * Z_IMAGE_DIM]);
         let timestep_values = metal_ops::read(timestep)
@@ -1326,16 +1499,28 @@ impl ImageBackend for MetalImageBackend {
                 "image embedding has shape {embedding_shape:?}, expected [vocab, {HIDDEN_SIZE}]"
             ));
         }
-        let embedding =
-            Self::text_weight(&component, "model.embed_tokens.weight", &embedding_shape)?;
-        let mut x = metal_ops::lookup(
-            &mut self.context,
-            &component,
-            embedding,
-            &ids,
-            embedding_shape[0],
-            HIDDEN_SIZE,
-        )?;
+        let mut x = if component.is_streamed() {
+            let mut values = Vec::with_capacity(ids.len() * HIDDEN_SIZE);
+            for &id in &ids {
+                values.extend_from_slice(
+                    &component
+                        .store
+                        .load_row("model.embed_tokens.weight", id as usize)?,
+                );
+            }
+            metal_ops::upload(&self.context, &values)
+        } else {
+            let embedding =
+                Self::text_weight(&component, "model.embed_tokens.weight", &embedding_shape)?;
+            metal_ops::lookup(
+                &mut self.context,
+                &component,
+                embedding,
+                &ids,
+                embedding_shape[0],
+                HIDDEN_SIZE,
+            )?
+        };
         let freqs = self.freqs(seq_len);
         let total = EXTRACT_LAYER_COUNT as u32;
         for layer in 0..EXTRACT_LAYER_COUNT {
@@ -1380,6 +1565,10 @@ impl ImageBackend for MetalImageBackend {
         progress: &mut dyn FnMut(u32, u32),
     ) -> Result<Vec<f32>, String> {
         self.decode_impl(latents, width, height, cancellation, progress)
+    }
+
+    fn wait_for_idle(&mut self) {
+        self.work.wait_for_idle();
     }
 }
 
@@ -1427,6 +1616,7 @@ impl MetalImageBackend {
         let image_len = token_size.0 * token_size.1 * token_size.2;
         let image_padded_len = round_up(image_len, SEQ_MULTI_OF)?;
         let image_patch_buffer = metal_ops::upload(&self.context, &patches);
+        component.load_prefix(&self.context, "all_x_embedder.2-1")?;
         let image_embed_weight =
             component.weight("all_x_embedder.2-1.weight", &[Z_IMAGE_DIM, 64])?;
         let image_embed_bias = component.weight("all_x_embedder.2-1.bias", &[Z_IMAGE_DIM])?;
@@ -1453,7 +1643,9 @@ impl MetalImageBackend {
         let image = metal_ops::upload(&self.context, &image_values);
 
         let cap_input = metal_ops::upload(&self.context, conditioning);
+        component.load_prefix(&self.context, "cap_embedder.0")?;
         let cap_norm = component.weight("cap_embedder.0.weight", &[Z_IMAGE_CAP_DIM])?;
+        component.load_prefix(&self.context, "cap_embedder.1")?;
         let cap_weight =
             component.weight("cap_embedder.1.weight", &[Z_IMAGE_DIM, Z_IMAGE_CAP_DIM])?;
         let cap_bias = component.weight("cap_embedder.1.bias", &[Z_IMAGE_DIM])?;
@@ -1613,6 +1805,7 @@ impl MetalImageBackend {
                     DEFAULT_F_PATCH_SIZE,
                 )?;
                 let next_input = metal_ops::upload(&self.context, &next_patches);
+                component.load_prefix(&self.context, "all_x_embedder.2-1")?;
                 unified = metal_ops::linear(
                     &mut self.context,
                     &component,
@@ -1681,6 +1874,7 @@ impl MetalImageBackend {
             .map(|value| value / crate::vae::VAE_SCALE_FACTOR + crate::vae::VAE_SHIFT_FACTOR)
             .collect::<Vec<_>>();
         let input = metal_ops::upload(&self.context, &scaled);
+        component.load_prefix(&self.context, "decoder.conv_in")?;
         let mut current = metal_ops::conv2d(
             &mut self.context,
             &component,
@@ -1695,6 +1889,7 @@ impl MetalImageBackend {
             1,
             1,
         )?;
+        component.wait_for_latest();
         current = self.vae_resnet(
             &component,
             current,
@@ -1754,6 +1949,10 @@ impl MetalImageBackend {
                 )?;
                 cur_height *= 2;
                 cur_width *= 2;
+                component.load_prefix(
+                    &self.context,
+                    &format!("decoder.up_blocks.{block}.upsamplers.0.conv"),
+                )?;
                 current = metal_ops::conv2d(
                     &mut self.context,
                     &component,
@@ -1774,8 +1973,10 @@ impl MetalImageBackend {
                     1,
                     1,
                 )?;
+                component.wait_for_latest();
             }
         }
+        component.load_prefix(&self.context, "decoder.conv_norm_out")?;
         let normalized = metal_ops::group_norm(
             &mut self.context,
             &component,
@@ -1789,6 +1990,7 @@ impl MetalImageBackend {
             crate::vae::GROUP_NORM_EPS,
         )?;
         let activated = metal_ops::silu(&mut self.context, &component, &normalized)?;
+        component.load_prefix(&self.context, "decoder.conv_out")?;
         let output = metal_ops::conv2d(
             &mut self.context,
             &component,

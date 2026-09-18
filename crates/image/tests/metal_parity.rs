@@ -18,8 +18,8 @@ use std::time::Instant;
 
 use turbospark_image::{
     generate, read_npy_f32, read_npz_file, CancellationToken, FlowMatchEulerScheduler,
-    ImageBackend, ImageRequest, ImageStage, MetalImageBackend, IMAGE_GUIDANCE, IMAGE_HEIGHT,
-    IMAGE_QUANTIZATION, IMAGE_STEPS, IMAGE_WIDTH,
+    ImageBackend, ImageMemoryBudget, ImageRequest, ImageResidency, ImageStage, MetalImageBackend,
+    IMAGE_GUIDANCE, IMAGE_HEIGHT, IMAGE_QUANTIZATION, IMAGE_STEPS, IMAGE_WIDTH,
 };
 
 const PROMPT: &str =
@@ -410,54 +410,333 @@ fn packed_native_quality_and_resource_oracle() {
     let expected_pixels = read_fixture("decoded_pixels.npy");
     let expected_rgb = turbospark_image::vae::decoded_to_rgb8(&expected_pixels, 1024, 1024)
         .expect("expected pixels convert to RGB");
-    let mut measurements = Vec::new();
+    let plan = backend.memory_plan().expect("build image memory plan");
+    println!(
+        "memory plan: resident_component_weights={} streamed_component_weights={} conditioning={} latents={} activations={} scratch={} staging={} in_flight_gpu={} allocator_retention={} largest_block={} block_workspace={} resident_lower_bound={} streamed_lower_bound={}",
+        plan.component_weights,
+        plan.streamed_component_weights,
+        plan.conditioning,
+        plan.latents,
+        plan.activations,
+        plan.scratch,
+        plan.staging,
+        plan.in_flight_gpu,
+        plan.allocator_retention,
+        plan.largest_block,
+        plan.block_workspace,
+        plan.resident_lower_bound(),
+        plan.streamed_lower_bound(),
+    );
     let arms: &[&str] = if std::env::var_os("TURBOSPARK_IMAGE_RESOURCE_WARM_ONLY").is_some() {
         &["warm"]
     } else {
         &["cold", "warm"]
     };
+    let repeats = optional_u64("TURBOSPARK_IMAGE_RESOURCE_REPEATS")
+        .unwrap_or(2)
+        .max(1) as usize;
+    let repeat_idle_growth_limit =
+        optional_u64("TURBOSPARK_IMAGE_MAX_REPEAT_IDLE_GROWTH").unwrap_or(256 * 1024 * 1024);
     for label in arms {
-        let measurement = measure_generation(&mut backend, label);
-        let actual_pixels = decode_png_rgb(&measurement.result.png);
-        let quality_error = relative_l2_u8(&actual_pixels, &expected_rgb);
+        let mut first_idle = None;
+        let mut first_peak = None;
+        let mut previous_png = None;
+        for repeat in 0..repeats {
+            let measurement = measure_generation(&mut backend, label);
+            let actual_pixels = decode_png_rgb(&measurement.result.png);
+            let quality_error = relative_l2_u8(&actual_pixels, &expected_rgb);
+            println!(
+                "resource report: arm={label} repeat={} latency_ms={:.3} forward_count=9 phys_footprint_bytes={:?} idle_phys_footprint_bytes={:?} stage_peak_phys_footprint={:?} managed_allocations={} rust_owned_retained_buffers=0_at_idle physical_reads_pageins={:?} swap_used_before={:?} swap_used_after={:?} swap_delta={:?} png_relative_l2={quality_error:.6e}",
+                repeat + 1,
+                measurement.elapsed_ms,
+                measurement.peak,
+                measurement.after.footprint,
+                measurement.stage_peaks,
+                measurement.allocations,
+                measurement.physical_reads,
+                measurement.before.swap_used,
+                measurement.after.swap_used,
+                measurement.swap_delta,
+            );
+            if let Some(limit) = optional_u64("TURBOSPARK_IMAGE_MAX_PHYS_FOOTPRINT") {
+                assert!(
+                    measurement.peak.unwrap_or(u64::MAX) <= limit,
+                    "{label} repeat {} phys_footprint exceeds {limit}",
+                    repeat + 1
+                );
+            }
+            if let Some(limit) = optional_u64("TURBOSPARK_IMAGE_MAX_ALLOCATIONS") {
+                assert!(
+                    measurement.allocations <= limit,
+                    "{label} repeat {} Metal allocations {} exceed {limit}",
+                    repeat + 1,
+                    measurement.allocations
+                );
+            }
+            if let Some(limit) = optional_f32("TURBOSPARK_IMAGE_MAX_PNG_REL_L2") {
+                assert!(
+                    quality_error <= limit,
+                    "{label} repeat {} PNG quality error {quality_error} exceeds {limit}",
+                    repeat + 1
+                );
+            }
+            if repeats > 1 {
+                let current_peak = measurement
+                    .peak
+                    .expect("phys_footprint is required for repeated image peak oracle");
+                if let Some(first) = first_peak {
+                    let growth = current_peak.saturating_sub(first);
+                    assert!(
+                        growth <= repeat_idle_growth_limit,
+                        "{label} repeat {} peak footprint grew by {growth} bytes, limit {repeat_idle_growth_limit}",
+                        repeat + 1
+                    );
+                }
+                first_peak = Some(current_peak);
+                let current = measurement
+                    .after
+                    .footprint
+                    .expect("phys_footprint is required for repeated image storage oracle");
+                if let Some(first) = first_idle {
+                    let growth = current.saturating_sub(first);
+                    assert!(
+                        growth <= repeat_idle_growth_limit,
+                        "{label} repeat {} idle footprint grew by {growth} bytes, limit {repeat_idle_growth_limit}",
+                        repeat + 1
+                    );
+                }
+                first_idle = Some(current);
+            }
+            if let Some(previous) = &previous_png {
+                assert_eq!(
+                    previous, &measurement.result.png,
+                    "repeated {label} native generations must be deterministic"
+                );
+            }
+            previous_png = Some(measurement.result.png.clone());
+        }
+    }
+
+    let denoise_repeats = optional_u64("TURBOSPARK_IMAGE_RESOURCE_DENOISE_REPEATS")
+        .unwrap_or(2)
+        .max(1) as usize;
+    let cancellation = CancellationToken::new();
+    let conditioning = backend
+        .encode_conditioning(PROMPT, 512, &cancellation, &mut |_, _| {})
+        .expect("conditioning for repeated denoise oracle");
+    let initial_noise = read_fixture("initial_noise.npy");
+    let mut previous_final_latent = None;
+    let mut first_denoise_idle = None;
+    let mut first_denoise_peak = None;
+    for cycle in 0..denoise_repeats {
+        let before = resource_snapshot();
+        let allocations_before = backend.buffer_allocation_count();
+        let monitor = PeakMonitor::start(before.footprint);
+        let started = Instant::now();
+        let steps = backend
+            .denoise_steps_from_noise(
+                &conditioning,
+                &request(),
+                &scheduler_for_request(),
+                &cancellation,
+                &initial_noise,
+            )
+            .expect("repeated native denoise cycle");
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let (peak, _) = monitor.finish();
+        let after = resource_snapshot();
+        assert_eq!(steps.len(), IMAGE_STEPS as usize);
+        assert!(steps.iter().flatten().all(|value| value.is_finite()));
+        let final_latent = steps.last().expect("denoise cycle has a final latent");
+        if let Some(previous) = &previous_final_latent {
+            assert_eq!(previous, final_latent, "repeated denoise cycles must agree");
+        }
+        previous_final_latent = Some(final_latent.to_vec());
+        if denoise_repeats > 1 {
+            let current_peak =
+                peak.expect("phys_footprint is required for repeated denoise peak oracle");
+            if let Some(first) = first_denoise_peak {
+                let growth = current_peak.saturating_sub(first);
+                assert!(
+                    growth <= repeat_idle_growth_limit,
+                    "denoise cycle {} peak footprint grew by {growth} bytes, limit {repeat_idle_growth_limit}",
+                    cycle + 1
+                );
+            }
+            first_denoise_peak = Some(current_peak);
+            let current = after
+                .footprint
+                .expect("phys_footprint is required for repeated denoise oracle");
+            if let Some(first) = first_denoise_idle {
+                let growth = current.saturating_sub(first);
+                assert!(
+                    growth <= repeat_idle_growth_limit,
+                    "denoise cycle {} idle footprint grew by {growth} bytes, limit {repeat_idle_growth_limit}",
+                    cycle + 1
+                );
+            }
+            first_denoise_idle = Some(current);
+        }
         println!(
-            "resource report: arm={label} latency_ms={:.3} forward_count=9 phys_footprint_bytes={:?} stage_peak_phys_footprint={:?} managed_allocations={} retained_buffers=0_at_idle physical_reads_pageins={:?} swap_used_before={:?} swap_used_after={:?} swap_delta={:?} png_relative_l2={quality_error:.6e}",
-            measurement.elapsed_ms,
-            measurement.peak,
-            measurement.stage_peaks,
-            measurement.allocations,
-            measurement.physical_reads,
-            measurement.before.swap_used,
-            measurement.after.swap_used,
-            measurement.swap_delta,
-        );
-        if let Some(limit) = optional_u64("TURBOSPARK_IMAGE_MAX_PHYS_FOOTPRINT") {
-            assert!(
-                measurement.peak.unwrap_or(u64::MAX) <= limit,
-                "{label} phys_footprint exceeds {limit}"
-            );
-        }
-        if let Some(limit) = optional_u64("TURBOSPARK_IMAGE_MAX_ALLOCATIONS") {
-            assert!(
-                measurement.allocations <= limit,
-                "{label} Metal allocations {} exceed {limit}",
-                measurement.allocations
-            );
-        }
-        if let Some(limit) = optional_f32("TURBOSPARK_IMAGE_MAX_PNG_REL_L2") {
-            assert!(
-                quality_error <= limit,
-                "{label} PNG quality error {quality_error} exceeds {limit}"
-            );
-        }
-        measurements.push((measurement, quality_error));
-    }
-    if measurements.len() == 2 {
-        assert_eq!(
-            measurements[0].0.result.png, measurements[1].0.result.png,
-            "cold and warm native generations must be deterministic"
+            "denoise cycle report: cycle={} latency_ms={elapsed_ms:.3} forwards={} final_latent_values={} peak_phys_footprint_bytes={peak:?} idle_phys_footprint_bytes={:?} managed_allocations={} physical_reads_pageins={:?} swap_delta={:?}",
+            cycle + 1,
+            steps.len(),
+            steps.last().map_or(0, Vec::len),
+            after.footprint,
+            backend.buffer_allocation_count() - allocations_before,
+            delta(before.pageins, after.pageins),
+            signed_delta(before.swap_used, after.swap_used),
         );
     }
+}
+
+#[test]
+#[ignore = "opt-in resident versus bounded streamed image comparison"]
+fn packed_native_resident_agrees_with_two_slot_streamed() {
+    let root = image_install();
+    let expected_pixels = read_fixture("decoded_pixels.npy");
+    let expected_rgb = turbospark_image::vae::decoded_to_rgb8(&expected_pixels, 1024, 1024)
+        .expect("expected pixels convert to RGB");
+    let mut resident = MetalImageBackend::open_with_residency(&root, ImageResidency::Resident)
+        .expect("open resident packed Metal image install");
+    let plan = resident.memory_plan().expect("build image memory plan");
+    println!(
+        "memory plan: resident_component_weights={} streamed_component_weights={} conditioning={} latents={} activations={} scratch={} staging={} in_flight_gpu={} allocator_retention={} largest_block={} block_workspace={} resident_lower_bound={} streamed_lower_bound={}",
+        plan.component_weights,
+        plan.streamed_component_weights,
+        plan.conditioning,
+        plan.latents,
+        plan.activations,
+        plan.scratch,
+        plan.staging,
+        plan.in_flight_gpu,
+        plan.allocator_retention,
+        plan.largest_block,
+        plan.block_workspace,
+        plan.resident_lower_bound(),
+        plan.streamed_lower_bound(),
+    );
+    let allocations_before_refusal = resident.buffer_allocation_count();
+    let refusal = turbospark_image::generate_with_memory_budget(
+        &mut resident,
+        &request(),
+        &CancellationToken::new(),
+        plan,
+        ImageMemoryBudget {
+            max_bytes: plan
+                .largest_block
+                .saturating_add(plan.block_workspace)
+                .saturating_sub(1),
+        },
+        true,
+        |_| {},
+    )
+    .expect_err("a too-small streamed budget must refuse before execution");
+    assert!(
+        refusal.contains("refused before execution"),
+        "unexpected budget refusal: {refusal}"
+    );
+    assert_eq!(
+        resident.buffer_allocation_count(),
+        allocations_before_refusal,
+        "budget refusal must not allocate Metal buffers"
+    );
+    let resident_measurement = measure_generation(&mut resident, "resident");
+    drop(resident);
+
+    let mut streamed = MetalImageBackend::open_with_residency(&root, ImageResidency::Streamed)
+        .expect("open streamed packed Metal image install");
+    let streamed_measurement = measure_generation(&mut streamed, "streamed");
+    let metrics = streamed.stream_metrics();
+
+    assert_eq!(
+        resident_measurement.result.png, streamed_measurement.result.png,
+        "resident and synchronous streamed generation must agree"
+    );
+    assert!(
+        metrics.peak_slot_bytes > 0,
+        "streamed path allocated no slots"
+    );
+    assert!(
+        metrics.read_count > 0,
+        "streamed path performed no payload reads"
+    );
+    assert!(
+        metrics.read_bytes > 0,
+        "streamed path read no payload bytes"
+    );
+    assert!(
+        metrics.slot_reuse_waits > 0,
+        "streamed path did not exercise a fenced slot reuse"
+    );
+    assert!(
+        metrics.peak_slot_bytes <= plan.streamed_component_weights,
+        "streamed slot capacity exceeded the admission plan"
+    );
+
+    for (label, measurement) in [
+        ("resident", &resident_measurement),
+        ("streamed", &streamed_measurement),
+    ] {
+        let actual_rgb = decode_png_rgb(&measurement.result.png);
+        let quality_error = relative_l2_u8(&actual_rgb, &expected_rgb);
+        assert!(
+            quality_error <= PACKED_ROLLOUT_REL_L2_LIMIT,
+            "{label} PNG quality error {quality_error} exceeds {PACKED_ROLLOUT_REL_L2_LIMIT}"
+        );
+    }
+    println!(
+        "resident_vs_streamed report: resident_latency_ms={:.3} streamed_latency_ms={:.3} latency_ratio={:.6} resident_peak_phys_footprint={:?} streamed_peak_phys_footprint={:?} streamed_peak_slot_bytes={} streamed_read_count={} streamed_read_bytes={} streamed_slot_reuse_waits={}",
+        resident_measurement.elapsed_ms,
+        streamed_measurement.elapsed_ms,
+        streamed_measurement.elapsed_ms / resident_measurement.elapsed_ms,
+        resident_measurement.peak,
+        streamed_measurement.peak,
+        metrics.peak_slot_bytes,
+        metrics.read_count,
+        metrics.read_bytes,
+        metrics.slot_reuse_waits,
+    );
+}
+
+#[test]
+#[ignore = "opt-in packed image memory plan and pre-execution refusal gate"]
+fn packed_native_memory_plan_refuses_before_execution() {
+    let root = image_install();
+    let mut backend = MetalImageBackend::open_with_residency(&root, ImageResidency::Streamed)
+        .expect("open streamed packed Metal image install");
+    let plan = backend.memory_plan().expect("build image memory plan");
+    assert!(plan.component_weights > plan.streamed_component_weights);
+    assert!(plan.largest_block > 0);
+    assert!(plan.block_workspace > 0);
+    let budget = ImageMemoryBudget {
+        max_bytes: plan
+            .largest_block
+            .saturating_add(plan.block_workspace)
+            .saturating_sub(1),
+    };
+    let allocations_before = backend.buffer_allocation_count();
+    let error = turbospark_image::generate_with_memory_budget(
+        &mut backend,
+        &request(),
+        &CancellationToken::new(),
+        plan,
+        budget,
+        true,
+        |_| {},
+    )
+    .expect_err("budget refusal must happen before streamed execution");
+    assert!(error.contains("refused before execution"));
+    let metrics = backend.stream_metrics();
+    assert_eq!(backend.buffer_allocation_count(), allocations_before);
+    assert_eq!(metrics.read_count, 0);
+    assert_eq!(metrics.read_bytes, 0);
+}
+
+fn scheduler_for_request() -> FlowMatchEulerScheduler {
+    let mut scheduler = FlowMatchEulerScheduler::default();
+    scheduler.set_timesteps(IMAGE_STEPS as usize);
+    scheduler
 }
 
 struct GenerationMeasurement {
@@ -479,6 +758,12 @@ fn measure_generation(backend: &mut MetalImageBackend, _label: &str) -> Generati
     let started = Instant::now();
     let cancellation = CancellationToken::new();
     let generated = generate(backend, &request(), &cancellation, |event| {
+        if std::env::var_os("TURBOSPARK_IMAGE_STREAM_PROGRESS").is_some() {
+            eprintln!(
+                "image generation progress: stage={:?} completed={} total={}",
+                event.stage, event.completed, event.total
+            );
+        }
         monitor.set_stage(event.stage);
     });
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;

@@ -33,11 +33,12 @@ mkdir -p "$dest"
 cp "$lib" "$dest/libturbospark_ffi.a"
 cp "$root/crates/ffi/include/turbospark.h" "$dest/turbospark.h"
 
-# Localize runtime symbols that collide when multiple Rust static libraries
-# (e.g. Syntext and TurboSpark) are linked into the same macOS binary.
-printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
-nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
-rm -f "$dest/.hide_symbols"
+# Keep Rust's panic personality global inside the archive. `nmedit -R` makes
+# the definition static in the one std object that owns it, while the other
+# Rust archive members still reference it as an external symbol. Swift then
+# fails at link time with `_rust_eh_personality` undefined. The FFI archive is
+# the only Rust static library linked by these Swift packages, so there is no
+# duplicate runtime symbol to localize here.
 
 # **SwiftPM DOES NOT TREAT THE ARCHIVE AS A BUILD INPUT, so without this the
 # test target links the PREVIOUS staticlib and reports on code that is no

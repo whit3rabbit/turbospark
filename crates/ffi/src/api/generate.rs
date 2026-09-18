@@ -4,6 +4,7 @@ use std::os::raw::{c_char, c_int, c_void};
 
 use crate::abi::{self, guard_result, parse_json_or_default};
 use crate::generate;
+use crate::heavy::HeavyWorkGuard;
 use crate::session;
 use crate::strings;
 use crate::wire;
@@ -43,6 +44,7 @@ pub unsafe extern "C" fn ts_generate(
         let messages: Vec<wire::WireMessage> = serde_json::from_str(raw)
             .map_err(|e| (abi::TS_ERR_JSON, format!("messagesJson: {e}")))?;
         let options = parse_json_or_default::<wire::GenerateOptions>(options_json, "options")?;
+        let _heavy_work = HeavyWorkGuard::acquire();
 
         let result = generate::generate(session, &messages, &options, |kind, text, a, b| {
             if let Some(f) = cb {

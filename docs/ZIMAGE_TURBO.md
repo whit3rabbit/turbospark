@@ -1,10 +1,10 @@
 # Z-Image-Turbo: image-model bring-up record
 
-Status: IG0 and IG1 are closed for the pinned 1024-by-1024 reference case.
-IG2 implementation and its pinned image catalog path are in progress. The
-checked image format, local and remote packers, macOS Metal backend, and CLI
-path exist. Complete native quality/resource and real cancellation evidence
-remain the final closure gates.
+Status: IG0, IG1, IG2, and IG3 are closed for the pinned 1024-by-1024 reference
+case. The checked image format, local and remote packers, macOS Metal backend,
+CLI path, native quality/resource evidence, real cancellation, no-device
+execution evidence, bounded memory, and lifetime proof are complete. IG4 owns
+app integration.
 This page is both the summary of what was learned from Z-Image-Turbo and the
 reusable process for bringing up another image-generation model in this
 repository.
@@ -330,8 +330,13 @@ native VAE now shares attention score work across eight queries, reduces
 GroupNorm statistics cooperatively, and reuses convolution weights across
 eight spatial outputs. The quiet resource oracle's cold arm completed in
 6,515.892 seconds with PNG relative L2 `0.4284977`, zero page-ins, and a
-`20,725,728,336`-byte process peak dominated by the VAE. Its warm arm and real
-CLI cancellation/no-device evidence remain open.
+`20,725,728,336`-byte process peak dominated by the VAE. Its corrected
+warm-only arm also passed in 4,572.05 seconds with PNG relative L2
+`0.4284977`, zero page-ins, unchanged swap, and a
+`19,874,055,248`-byte peak. Real CLI cancellation and sparse real-install
+missing-component refusal pass. The no-device integration test also executes
+on Linux ARM64 and passes the
+unsupported-platform refusal before model I/O.
 
 The pinned setup used for this work is reproducible with:
 
@@ -425,9 +430,10 @@ opt-in tests. A pinned local export now packs successfully to 11 files and
 frozen 0.084 INT4 quality envelope. The grouped Metal attention kernel passes
 a focused GQA and causal-mask parity fixture, and the isolated
 production-shape VAE parity arm now passes its frozen pixel limits. The
-complete matched-noise nine-step gate is being rerun before the PNG,
-cancellation, and quiet-machine resource gates, so IG2 remains open. Keep the
-CPU backend as the diagnostic oracle, not as an unrecorded fallback. See
+complete matched-noise nine-step gate, PNG metadata gate, cancellation path,
+quiet resource oracle, remote install path, and Linux ARM64 no-device
+integration test all pass, so IG2 is closed. Keep the CPU backend as the
+diagnostic oracle, not as an unrecorded fallback. See
 [IMAGE_GENERATION.md](IMAGE_GENERATION.md#ig2-handoff-checklist) for the
 file-level checklist and stop conditions.
 
@@ -438,10 +444,61 @@ refusal before execution, and repeated-job memory stability. It accounts for
 weights, conditioning, latents, activations, scratch, staging, in-flight GPU
 work, and allocator retention.
 
+The runtime admission and lifetime seams are now present and unit-tested:
+`ImageMemoryPlan` plus `generate_with_memory_budget` refuse an infeasible
+largest-block/workspace lower bound before backend execution,
+`ImageWorkTracker` provides cancellation-safe consumer accounting, and
+`SequentialImageSlots` proves no early reuse with a two-slot live-byte bound.
+These are implementation contracts backed by the measured IG3 closure below.
+The public generation wrapper also invokes the backend idle hook after cancellation, so
+registered synchronous I/O and staging consumers are drained before the
+cancelled request returns. The pinned Metal oracle below qualified repeated
+jobs, repeated denoise cycles, a real resident-versus-streamed comparison, and
+the latency tradeoff.
+
+The resource oracle now repeats complete jobs and matched-noise denoise cycles.
+It records the separate memory-plan categories plus peak and idle
+`phys_footprint`, managed allocations, physical reads, and swap deltas.
+Repeated PNGs and final latents must agree exactly, and repeated idle footprint
+growth defaults to a 256 MiB bound.
+
+The pre-execution plan gate passed on 2026-09-17 for the pinned artifact, with
+6,651,207,110 resident payload bytes, 214,918,144 two-slot bytes, and a
+107,459,072-byte largest block. The current-source resident-versus-streamed
+gate then passed with exact PNG agreement. Resident latency was 4,911,114 ms
+and streamed latency was 4,840,856 ms, a streamed/resident ratio of 0.985694.
+Resident peak `phys_footprint` was 7,037,387,832 bytes; streamed peak was
+7,328,138,608 bytes. The streamed path measured 214,918,144 slot bytes, 400
+payload reads totaling 33,298,002,054 bytes, and 393 fenced slot reuses. The
+earlier fixture-missing, Metal out-of-memory, and first-step stall runs remain
+retained as failed qualification attempts and do not establish a
+machine-memory requirement.
+
+The repeated warm-only oracle also passed on 2026-09-17. Complete jobs 1 and 2
+grew peak `phys_footprint` by 113,557,576 bytes and idle footprint by
+83,476,552 bytes, with 7,784 managed allocations for each job, zero page-ins,
+zero swap growth, and identical `0.4284977` PNG relative L2. Matched-noise
+denoise cycles 1 and 2 each completed nine forwards over 262,144 finite latent
+values and asserted exact final-latent equality. Peak footprint grew by
+15,663,176 bytes, while idle footprint fell by 52,035,680 bytes; both cycles
+reported 7,138 managed allocations, zero page-ins, and zero swap delta. The
+complete oracle passed in 18,839.90 seconds.
+
+With the repeated-job and denoise evidence, the lifetime-safe cancellation
+seams, pre-execution budget refusal, and resident/streamed gate all pass for
+the pinned artifact. IG3 is closed. VAE tiling, prefetch, allocator reuse, and
+Swift image integration remain separate later work and are not implied by
+this result.
+
 Cancellation must stop future scheduling and wait for outstanding I/O and GPU
 consumers before freeing or reusing buffers. VAE tiling is a conditional
 optimization. Add it only if measured VAE resource use requires it, then
 re-run geometry, seam, quality, and memory gates.
+
+Handoff after IG3: keep the `0.923` quality envelope fixed, separate
+`phys_footprint` from the managed allocation ledger and driver-retained
+capacity, and leave VAE tiling, prefetch, allocator reuse, and IG4 app/Swift
+integration for later scoped work.
 
 ### IG4: app and ABI integration
 

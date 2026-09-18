@@ -18,7 +18,9 @@ mod fit;
 mod install;
 mod probe;
 
-pub(crate) use catalog::{catalog_json, delete, install_bytes, installed_json};
+pub(crate) use catalog::{
+    catalog_json, delete, image_installed_json, install_bytes, installed_json,
+};
 pub use control_vector::control_vector_info_json;
 pub(crate) use fit::{context_ladder_json, recommend_json};
 pub(crate) use install::{cancel_active_installs, install, install_repo, installs_finished};

@@ -32,6 +32,8 @@ pub mod abi;
 /// C ABI entry points organized by domain.
 pub mod api;
 mod generate;
+mod heavy;
+mod image_session;
 mod models;
 #[cfg(target_os = "macos")]
 mod open;
@@ -54,6 +56,7 @@ pub use api::*;
 pub use generate::{
     TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING, TS_EVENT_TOOL,
 };
+pub use image_session::ImageSession;
 pub use models::{TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 pub use server::Server;
 pub use session::Session;
@@ -62,6 +65,9 @@ pub use testing::{session_for_testing, session_for_testing_named};
 
 /// The opaque handle a caller holds. `TsSession *` in C.
 pub type TsSession = Session;
+
+/// The opaque native image-generation handle. `TsImageSession *` in C.
+pub type TsImageSession = ImageSession;
 
 /// The opaque in-process-server handle a caller holds. `TsServer *` in C.
 pub type TsServer = Server;
@@ -82,3 +88,11 @@ pub type TsEventCallback =
 /// `TS_INSTALL_BYTES`; see `models::install`.
 pub type TsInstallCallback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_char, usize, u64, u64)>;
+
+/// One image stage-progress event. `text` is the snake-case stage name,
+/// `a` is completed work, and `b` is the stage total.
+pub type TsImageEventCallback =
+    Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_char, usize, u32, u32)>;
+
+pub const TS_IMAGE_EVENT_STAGE: c_int = 0;
+pub const TS_IMAGE_EVENT_FINISH: c_int = 1;

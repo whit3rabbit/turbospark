@@ -1,11 +1,11 @@
 # Native image generation: Z-Image-Turbo
 
 Status: IG0 resource evidence and the IG0 resource/manifest contract are
-closed for the reference envelope. IG1 native component parity is closed for
-the available fixtures: the full-width checkpoint block, complete
-nine-step DiT rollout, and real 1024-by-1024 VAE decode gate pass their frozen
-contracts. The optional raw-pixel arrays were not present in this checkout, so
-the VAE test's conditional pixel comparisons were not exercised.
+closed for the reference envelope. IG1 native component parity and IG2 packed
+runtime closure are also complete for the pinned 1024-by-1024 case: the
+full-width checkpoint block, complete nine-step DiT rollout, production-shape
+VAE pixel parity, PNG metadata, cancellation, remote intake, and packed
+resource evidence pass their recorded contracts.
 [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
 real-image captures, and component comparisons.
 The reusable bring-up process and the lessons from this model are summarized
@@ -90,9 +90,9 @@ text encoder, transformer, scheduler, and VAE source tree into an atomic
 install and emits the existing `verified-install.json` receipt. The model CLI
 also has an explicit `pull-image` route that records image installs separately
 from text catalog rows. Native packed parity and resource tests are present as
-opt-in gates. This does not close IG2: no complete packed install has passed
-the real-model quality, memory, latency, and cancellation evidence gates yet.
-The remaining work is tracked in
+opt-in gates. IG2 is now closed: the pinned real packed install passed the
+quality, VAE, PNG metadata, cancellation, resource, intake, and no-device
+execution evidence gates. The remaining work is tracked in
 [ROADMAP](../ROADMAP.md). This page owns the design, gates, and rationale;
 the roadmap owns the remaining task checklist.
 
@@ -131,17 +131,64 @@ VAE do not remain resident together. Packed linear weights stay in the mapped
 component payload and are decoded by Metal at use rather than expanded into a
 full-precision copy. The current wrappers are still correctness-first and
 create many operation-level command buffers and temporary buffers, so the
-native packed memory envelope is not frozen. Pooled scratch, activation reuse,
-fewer command-buffer boundaries, safe BF16/FP16 storage for non-INT4 tensors,
-and repeated cold/warm measurements are the next memory steps.
+native packed memory envelope is now measured for the pinned install. Pooled
+scratch, activation reuse, fewer command-buffer boundaries, and safer BF16/FP16
+storage for non-INT4 tensors remain later optimization work.
 
 IG0 is now closed by the measured reference contract. Exact MPS operator
 scratch is not observable, so the contract uses an inclusive non-parameter
 process budget and explicitly does not call driver-retained bytes scratch or
-claim a minimum whole-machine RAM size. Repeated full-pipeline stability,
-resident-versus-streamed ownership, and cancellation lifetime proof remain IG3
-work. IG2 implementation has begun; app work remains IG4 after IG3 establishes
-bounded lifetimes.
+claim a minimum whole-machine RAM size. IG3 closed repeated full-pipeline
+stability, resident-versus-streamed ownership, and cancellation lifetime proof.
+IG2 is closed; app work remains IG4.
+
+## IG4 app seam
+
+The app-facing image path is now a separate session rather than an overload of
+the text token stream. `TsImageSession` opens a verified image install, emits
+stage progress through `TsImageEventCallback`, supports cancellation from
+another thread, returns explicit PNG ownership, and returns the same
+camelCase metadata that the runtime embeds in the PNG. `TurboSparkImageSession`
+copies the PNG before releasing the C buffer.
+
+The macOS app's image-mode composer accepts a direct prompt and lists valid
+installed image artifacts through the separate `ts_image_installed_json`
+catalog surface. A folder chooser remains available for a side-loaded install,
+but image mode never falls back to the selected text model. A process-wide FIFO
+coordinator serializes heavyweight image jobs across chats in the app. The
+result stays in transient
+job state until the user saves it, which provides preview, regeneration, and
+safe interruption without turning an incomplete job into durable history.
+Saved PNGs live below `AppStorageRoot.subdirectory("image-artifacts")`, and a
+saved result registers an `.imageGeneration` artifact plus a chat message, so
+profile switching and chat persistence keep the image in the originating
+profile. Regeneration reuses the recorded request and seed, so the result is
+reproducible without overwriting the prior saved artifact. The native app path
+required a real pinned install and Metal execution evidence before IG4 could be
+checked closed; that evidence now exists, while the independent roadmap
+measurement and validation gates remain outstanding.
+
+The real Swift seam is gated separately from text and vision installs:
+
+```sh
+make swift-test-real IMAGE_MODEL=~/models/z-image-turbo.image.gturbo
+```
+
+The image-generation tests open the verified install, assert PNG and metadata
+return through Swift, and cancel during a stage.
+
+The current pinned real install now passes both Swift image-session gates. The
+full 1024-by-1024 generation returned a valid PNG and decoded runtime metadata
+in 4,665.912 seconds, including the public `modelID` spelling used by Swift;
+the cancellation arm returned `cancelled` without publishing a PNG in 21.827
+seconds. The app bundle was built and strict deep-signature verification
+passed. The focused app image-job suite passes 9 tests, including FIFO
+serialization, preview/save/regenerate state, profile isolation, chat-delete
+protection, and persisted relative artifact paths. The full Swift package
+suite passes 77 tests with 17 expected real-model skips. This is IG4
+implementation and real-install evidence; the roadmap still owns the
+independent measurement and validation backlog that must be closed before the
+milestone checkbox is marked.
 
 ## Direction and first release
 
@@ -219,8 +266,9 @@ architecture fields.
 Gate: a reproducible component contract, reference fixtures, operator gap
 table, chosen quantization candidate, and resource/manifest contract. This gate
 is closed by [the frozen IG0 contract](verification/z-image-ig0-resource-contract.json).
-The packed representation and its measured Metal behavior remain IG2 gates;
-no minimum whole-machine RAM claim is made.
+The packed representation and its measured Metal behavior were IG2 gates and
+are recorded in the closure evidence; no minimum whole-machine RAM claim is
+made.
 
 The [official Turbo example](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo)
 requests nine scheduler steps, guidance zero, and 1024-by-1024 output; its
@@ -386,15 +434,20 @@ The following records implementation status and the remaining evidence work:
 5. **CLI production selection.** On macOS, `turbospark image generate`
    selects native Metal by default; `--backend reference` is explicit. The
    offline gates cover help, invalid envelope values, overwrite refusal, and
-   unsupported-platform refusal. Real missing-component, cancellation,
-   deterministic-output, and no-device paths remain to be exercised.
+   unsupported-platform refusal. The sparse real-install missing-component
+   refusal and real native cancellation path pass. The deterministic-output
+   assertion passes in the corrected cold/warm resource oracle. The no-device
+   path executes on Linux ARM64 and passes the unsupported-platform refusal
+   before model I/O.
 6. **Real gates.** The packed PNG metadata, quality, and resource-oracle
    tests are present as ignored tests. The resource report records stage and
    total latency, nine forwards, peak `phys_footprint`, Metal buffer
    allocations, idle retained buffers, process page-ins, and swap deltas.
    The cold arm completed at 6,515.892 seconds with PNG relative L2
    `0.4284977`, zero page-ins, and a `20,725,728,336`-byte process peak
-   dominated by the VAE. The warm arm remains required.
+   dominated by the VAE. The corrected warm-only arm also passed in 4,572.05
+   seconds with PNG relative L2 `0.4284977`, zero page-ins, unchanged swap,
+   and a `19,874,055,248`-byte process peak.
    The original pinned local export packs to 11 files and 6,906,461,695
    bytes. Its packed conditioning error is 0.081541 against the 0.084 IG0
    INT4 envelope. A second pack using the corrected IG0 projection policy
@@ -580,8 +633,9 @@ revision recorded in the manifest example, a Metal-capable macOS machine with
 the Xcode Metal toolchain, the existing `target/ig0` fixtures, and enough
 free disk for the source tree plus a staged packed install. Keep the first
 release envelope fixed at 1024-by-1024, batch one, nine steps, nine forwards,
-guidance zero, one image per prompt, and no app/Swift integration. IG2 is not
-closed until the native packed path passes all six items on one real install.
+guidance zero, one image per prompt, and no app/Swift integration. IG2 is
+closed only after the native packed path passes all six items on one real
+install. Those six items are now evidenced in the records above.
 
 ### IG3: Bound memory and add dense streaming where necessary
 
@@ -589,6 +643,48 @@ Account in bytes for component weights, conditioning, latents, activations,
 scratch, staging, in-flight buffers, and retained allocator capacity. Reserve
 headroom for macOS and allocations outside the managed ledger. Shared views
 of one allocation count once; genuine staging copies count separately.
+
+The runtime now exposes this admission contract through `ImageMemoryPlan`,
+`generate_with_memory_budget`, and `ImageWorkTracker`. Resident component
+teardown still waits the latest ordered Metal fence, while the tracker is the
+explicit seam for I/O or staging consumers. `SequentialImageSlots` rejects a
+third acquisition while both slots are live and records peak live bytes. These
+portable contracts have focused unit coverage. The pinned hardware oracle
+below also populated the category ledger and compared resident execution with
+a real two-slot path. `generate` invokes the backend idle hook before returning
+a cancelled request, so synchronous I/O and staging leases are drained at the
+public cancellation boundary.
+
+The resource oracle now repeats complete jobs and matched-noise denoise cycles.
+Each cycle records peak and idle `phys_footprint`, managed Metal allocations,
+physical reads, and swap deltas, while repeated PNGs and final latents must
+agree exactly. Repeated idle footprint growth is limited to 256 MiB by default,
+with an explicit environment override for a machine-specific qualification.
+
+On 2026-09-17, the pinned install's pre-execution plan gate passed. It reported
+6,651,207,110 resident payload bytes, 214,918,144 two-slot bytes, a
+107,459,072-byte largest block, and a 1,136,072,192-byte streamed lower bound.
+The current-source resident-versus-streamed gate then passed with exact PNG
+agreement: resident latency was 4,911,114 ms, streamed latency was 4,840,856
+ms, and the streamed/resident ratio was 0.985694. Resident peak
+`phys_footprint` was 7,037,387,832 bytes and streamed peak was 7,328,138,608
+bytes. The streamed path held 214,918,144 slot bytes, performed 400 payload
+reads totaling 33,298,002,054 bytes, and recorded 393 fenced slot reuses.
+The earlier fixture-missing, Metal out-of-memory, and first-step stall runs
+remain retained as failed qualification attempts, not IG3 evidence.
+
+The repeated warm-only oracle then passed on the same pinned install. Complete
+jobs 1 and 2 reported peak `phys_footprint` values of 7,038,518,400 and
+7,152,075,976 bytes, an increase of 113,557,576 bytes; idle values were
+623,903,872 and 707,380,424 bytes, an increase of 83,476,552 bytes. Both
+reported 7,784 managed allocations, zero page-ins, zero swap delta, and the
+same PNG relative L2 of `0.4284977`. Matched-noise denoise cycles 1 and 2
+completed nine forwards over 262,144 finite latent values. Their peak
+footprints were 2,497,283,440 and 2,512,946,616 bytes, a 15,663,176-byte
+increase; idle footprints were 789,415,208 and 737,379,528 bytes. Each cycle
+reported 7,138 managed allocations, zero page-ins, and zero swap delta, and
+the test asserted exact final-latent equality. The full oracle passed in
+18,839.90 seconds.
 
 Reuse the existing streamer for bounded sequential block reads. Compare
 resident execution, two-slot streaming, and a deliberately retained subset.
@@ -604,8 +700,9 @@ only when its measured stage peak requires it, with seam/quality validation.
 
 Gate: resident-versus-streamed agreement, bounded live storage over repeated
 jobs and denoising steps, no early slot reuse, and a useful measured latency
-tradeoff at each advertised budget. A managed budget does not claim a hard
-cap on whole-process or system physical memory.
+tradeoff at each advertised budget. These gates now pass for the pinned
+install. A managed budget does not claim a hard cap on whole-process or system
+physical memory.
 
 ### IG4: Expose the runtime to Swift and image mode in chat
 
@@ -728,6 +825,6 @@ processes. Freeze a memory-versus-latency curve, not an isolated RAM headline.
 Upstream links above are discovery entry points, not pinned implementation
 dependencies. [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) supplies exact
 comparison revisions, the limited visual review, and resource observations.
-The reference latency observations are frozen in the IG0 contract, but packed
-runtime performance limits and a minimum RAM figure remain intentionally open
-until IG2 and IG3 measure them.
+The reference latency observations are frozen in the IG0 contract. IG3 records
+the pinned resident/streamed latency tradeoff, while broader performance
+curves and any minimum whole-machine RAM figure remain intentionally open.

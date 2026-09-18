@@ -5,16 +5,25 @@
 //! per-row interleaved INT4 format. The only shared GPU contracts here are
 //! `MetalContext`, `PassEncoder`, and the zero-copy resident buffer wrapper.
 
-use std::{cell::RefCell, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 use gpu::{MetalContext, PassEncoder, ResidentGpuWeights};
 use metal::{Buffer, ComputePipelineState, FunctionConstantValues};
 
+use crate::runtime::ImageWorkTracker;
+
 const SOURCE: &str = include_str!("shaders/image.metal");
 const THREADS: u64 = 256;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct WeightRef {
+    pub(crate) buffer: Buffer,
     pub(crate) offset: u64,
     pub(crate) storage: u32,
     pub(crate) row_stride: u32,
@@ -29,35 +38,230 @@ pub(crate) struct GpuTensor {
 
 pub(crate) struct Component {
     pub(crate) store: crate::PackedTensorStore,
-    pub(crate) resident: ResidentGpuWeights,
+    resident: Option<ResidentGpuWeights>,
+    streamed: Option<StreamedWeights>,
     latest_pass: RefCell<Option<Arc<gpu::CommittedPass>>>,
+    work: ImageWorkTracker,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct StreamMetrics {
+    pub(crate) peak_slot_bytes: AtomicU64,
+    pub(crate) read_count: AtomicU64,
+    pub(crate) read_bytes: AtomicU64,
+    pub(crate) slot_reuse_waits: AtomicU64,
+}
+
+struct StreamSlot {
+    buffer: Option<Buffer>,
+    capacity: usize,
+    last_pass: Option<Arc<gpu::CommittedPass>>,
+}
+
+struct StreamedWeights {
+    slots: RefCell<[StreamSlot; 2]>,
+    active: RefCell<Option<ActiveStream>>,
+    next_slot: Cell<usize>,
+    metrics: Arc<StreamMetrics>,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveStream {
+    slot: usize,
+    start: u64,
+    end: u64,
+    prefix: String,
+}
+
+impl StreamedWeights {
+    fn new(metrics: Arc<StreamMetrics>) -> Self {
+        Self {
+            slots: RefCell::new(std::array::from_fn(|_| StreamSlot {
+                buffer: None,
+                capacity: 0,
+                last_pass: None,
+            })),
+            active: RefCell::new(None),
+            next_slot: Cell::new(0),
+            metrics,
+        }
+    }
+}
+
+#[cfg(test)]
+fn streamed_requested() -> bool {
+    std::env::var("TURBOSPARK_IMAGE_RESIDENCY")
+        .map(|value| value.eq_ignore_ascii_case("streamed"))
+        .unwrap_or(false)
 }
 
 impl Component {
+    #[cfg(test)]
     pub(crate) fn open(context: &MetalContext, root: &std::path::Path) -> Result<Self, String> {
+        Self::open_with_mode(context, root, streamed_requested())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_with_mode(
+        context: &MetalContext,
+        root: &std::path::Path,
+        streamed: bool,
+    ) -> Result<Self, String> {
+        Self::open_with_metrics(context, root, streamed, None, ImageWorkTracker::default())
+    }
+
+    pub(crate) fn open_with_metrics(
+        context: &MetalContext,
+        root: &std::path::Path,
+        streamed: bool,
+        stream_metrics: Option<Arc<StreamMetrics>>,
+        work: ImageWorkTracker,
+    ) -> Result<Self, String> {
         let store = crate::PackedTensorStore::open(root)?;
-        let length = std::fs::metadata(store.payload_path())
-            .map_err(|e| {
-                format!(
-                    "failed to stat image payload {}: {e}",
-                    store.payload_path().display()
-                )
-            })?
-            .len();
-        let mapped =
-            model_io::ResidentBuffer::map(store.payload_path(), 0, length).map_err(|e| {
-                format!(
-                    "failed to map image payload {}: {e}",
-                    store.payload_path().display()
-                )
-            })?;
-        let resident = ResidentGpuWeights::wrap(context.device(), mapped)
-            .map_err(|e| format!("failed to wrap image payload in Metal: {e}"))?;
+        let (resident, streamed) = if streamed {
+            let metrics = stream_metrics
+                .clone()
+                .unwrap_or_else(|| Arc::new(StreamMetrics::default()));
+            (None, Some(StreamedWeights::new(metrics)))
+        } else {
+            let length = std::fs::metadata(store.payload_path())
+                .map_err(|e| {
+                    format!(
+                        "failed to stat image payload {}: {e}",
+                        store.payload_path().display()
+                    )
+                })?
+                .len();
+            let mapped =
+                model_io::ResidentBuffer::map(store.payload_path(), 0, length).map_err(|e| {
+                    format!(
+                        "failed to map image payload {}: {e}",
+                        store.payload_path().display()
+                    )
+                })?;
+            let resident = ResidentGpuWeights::wrap(context.device(), mapped)
+                .map_err(|e| format!("failed to wrap image payload in Metal: {e}"))?;
+            (Some(resident), None)
+        };
         Ok(Self {
             store,
             resident,
+            streamed,
             latest_pass: RefCell::new(None),
+            work,
         })
+    }
+
+    pub(crate) fn is_streamed(&self) -> bool {
+        self.streamed.is_some()
+    }
+
+    /// Load one logical block into the next stream slot. The slot's prior GPU
+    /// consumer is waited before the host overwrites it. Reads are kept
+    /// synchronous until a separately proven asynchronous I/O owner exists.
+    pub(crate) fn load_prefix(&self, context: &MetalContext, prefix: &str) -> Result<(), String> {
+        let Some(streamed) = self.streamed.as_ref() else {
+            return Ok(());
+        };
+        if self
+            .active_prefix(prefix)
+            .is_some_and(|active| active.prefix == prefix)
+        {
+            return Ok(());
+        }
+        let marker = format!("{prefix}.");
+        let mut range: Option<(u64, u64)> = None;
+        for name in self.store.tensor_names() {
+            if name != prefix && !name.starts_with(&marker) {
+                continue;
+            }
+            let tensor = self
+                .store
+                .tensor(name)
+                .expect("tensor_names must resolve in the packed index");
+            let end = tensor
+                .offset
+                .checked_add(tensor.length)
+                .ok_or_else(|| format!("image block {prefix} byte range overflows"))?;
+            range = Some(match range {
+                Some((start, current_end)) => (start.min(tensor.offset), current_end.max(end)),
+                None => (tensor.offset, end),
+            });
+        }
+        let (start, end) =
+            range.ok_or_else(|| format!("image streamed block {prefix} has no tensors"))?;
+        let slot = streamed.next_slot.get();
+        streamed.next_slot.set((slot + 1) % 2);
+        let length = usize::try_from(end - start)
+            .map_err(|_| format!("image streamed block {prefix} is too large"))?;
+        let mut slots = streamed.slots.borrow_mut();
+        if let Some(pass) = slots[slot].last_pass.take() {
+            streamed
+                .metrics
+                .slot_reuse_waits
+                .fetch_add(1, Ordering::Relaxed);
+            pass.wait_ref();
+        }
+        if slots[slot].capacity < length {
+            slots[slot].buffer = Some(context.new_output_buffer(length as u64));
+            slots[slot].capacity = length;
+            let live_capacity = slots.iter().map(|slot| slot.capacity as u64).sum::<u64>();
+            streamed
+                .metrics
+                .peak_slot_bytes
+                .fetch_max(live_capacity, Ordering::Relaxed);
+        }
+        let state = &mut slots[slot];
+        let _io_lease = self.work.begin();
+        let bytes = self.store.read_payload_range(start, length)?;
+        streamed.metrics.read_count.fetch_add(1, Ordering::Relaxed);
+        streamed
+            .metrics
+            .read_bytes
+            .fetch_add(length as u64, Ordering::Relaxed);
+        gpu::write_buffer_bytes(
+            state.buffer.as_ref().expect("stream slot buffer allocated"),
+            0,
+            &bytes,
+        );
+        drop(_io_lease);
+        if std::env::var_os("TURBOSPARK_IMAGE_STREAM_PROGRESS").is_some() {
+            eprintln!("image streamed block: prefix={prefix} slot={slot} bytes={length}");
+        }
+        *streamed.active.borrow_mut() = Some(ActiveStream {
+            slot,
+            start,
+            end,
+            prefix: prefix.to_string(),
+        });
+        Ok(())
+    }
+
+    fn active_prefix(&self, prefix: &str) -> Option<ActiveStream> {
+        self.streamed.as_ref().and_then(|streamed| {
+            streamed
+                .active
+                .borrow()
+                .as_ref()
+                .filter(|active| active.prefix == prefix)
+                .cloned()
+        })
+    }
+
+    fn record_pass(&self, ready: Arc<gpu::CommittedPass>) {
+        *self.latest_pass.borrow_mut() = Some(Arc::clone(&ready));
+        if let Some(streamed) = self.streamed.as_ref() {
+            if let Some(active) = streamed.active.borrow().as_ref() {
+                streamed.slots.borrow_mut()[active.slot].last_pass = Some(ready);
+            }
+        }
+    }
+
+    pub(crate) fn wait_for_latest(&self) {
+        let latest = self.latest_pass.borrow().as_ref().cloned();
+        if let Some(pass) = latest {
+            pass.wait_ref();
+        }
     }
 
     pub(crate) fn weight(&self, name: &str, expected_shape: &[usize]) -> Result<WeightRef, String> {
@@ -89,8 +293,41 @@ impl Component {
         } else {
             0
         };
+        let (buffer, offset) = if let Some(resident) = self.resident.as_ref() {
+            (
+                resident.buffer().clone(),
+                resident.gpu_offset(tensor.offset),
+            )
+        } else {
+            let streamed = self
+                .streamed
+                .as_ref()
+                .expect("component has either resident or streamed storage");
+            let active = streamed
+                .active
+                .borrow()
+                .as_ref()
+                .ok_or_else(|| format!("image tensor {name} was not loaded before use"))?
+                .clone();
+            let end = tensor
+                .offset
+                .checked_add(tensor.length)
+                .ok_or_else(|| format!("image tensor {name} byte range overflows"))?;
+            if tensor.offset < active.start || end > active.end {
+                return Err(format!(
+                    "image tensor {name} was not loaded in active streamed block"
+                ));
+            }
+            let buffer = streamed.slots.borrow()[active.slot]
+                .buffer
+                .as_ref()
+                .expect("active stream slot buffer allocated")
+                .clone();
+            (buffer, tensor.offset - active.start)
+        };
         Ok(WeightRef {
-            offset: self.resident.gpu_offset(tensor.offset),
+            buffer,
+            offset,
             storage,
             row_stride,
         })
@@ -100,12 +337,12 @@ impl Component {
 impl Drop for Component {
     fn drop(&mut self) {
         // The resident Metal buffer aliases the mmap. Waiting for the latest
-        // pass also completes every earlier pass on this component's queue.
-        // This barrier is required on cancellation and error unwinding, where
-        // no output tensor reaches the normal read barrier.
+        // pass completes every earlier component-backed pass on this queue.
+        // The tracker covers non-GPU consumers owned by an extended path.
         if let Some(pass) = self.latest_pass.get_mut().take() {
             pass.wait_ref();
         }
+        self.work.wait_for_idle();
     }
 }
 
@@ -197,7 +434,7 @@ fn commit_deferred(pass: PassEncoder) -> Arc<gpu::CommittedPass> {
 
 fn commit_component_deferred(pass: PassEncoder, component: &Component) -> Arc<gpu::CommittedPass> {
     let ready = commit_deferred(pass);
-    *component.latest_pass.borrow_mut() = Some(Arc::clone(&ready));
+    component.record_pass(Arc::clone(&ready));
     ready
 }
 
@@ -263,7 +500,7 @@ pub(crate) fn lookup(
         &pass,
         &shader,
         &[
-            (component.resident.buffer(), 0, weight.offset),
+            (&weight.buffer, 0, weight.offset),
             (&ids_buffer, 1, 0),
             (&output.buffer, 2, 0),
         ],
@@ -301,17 +538,17 @@ pub(crate) fn linear(
         out_dim as u32,
         weight.row_stride,
         weight.storage,
-        bias.map_or(0, |value| value.storage),
+        bias.as_ref().map_or(0, |value| value.storage),
     ]);
     let shader = pipeline(context, "image_linear_tiled")?;
     let pass = context.begin_pass_labeled("image-linear");
     let mut buffers = vec![
-        (component.resident.buffer(), 0, weight.offset),
+        (&weight.buffer, 0, weight.offset),
         (&input.buffer, 1, 0),
         (&output.buffer, 2, 0),
     ];
-    if let Some(bias) = bias {
-        buffers.push((component.resident.buffer(), 3, bias.offset));
+    if let Some(bias) = bias.as_ref() {
+        buffers.push((&bias.buffer, 3, bias.offset));
     }
     dispatch_tiled(&pass, &shader, &buffers, &[(&params, 4)], rows, out_dim);
     let ready = commit_component_deferred(pass, component);
@@ -343,7 +580,7 @@ pub(crate) fn rms_norm(
         &shader,
         &[
             (&input.buffer, 0, 0),
-            (component.resident.buffer(), 1, weight.offset),
+            (&weight.buffer, 1, weight.offset),
             (&output.buffer, 2, 0),
         ],
         &[(&params, 3)],
@@ -385,7 +622,7 @@ pub(crate) fn rope(
         &[
             (&input.buffer, 0, 0),
             (&output.buffer, 1, 0),
-            (component.resident.buffer(), 2, weight.offset),
+            (&weight.buffer, 2, weight.offset),
             (freqs, 3, 0),
         ],
         &[(&params, 4)],
@@ -424,7 +661,7 @@ pub(crate) fn adjacent_rope(
         &[
             (&input.buffer, 0, 0),
             (&output.buffer, 1, 0),
-            (component.resident.buffer(), 2, weight.offset),
+            (&weight.buffer, 2, weight.offset),
             (freqs, 3, 0),
         ],
         &[(&params, 4)],
@@ -735,17 +972,17 @@ pub(crate) fn conv2d(
         stride as u32,
         padding as u32,
         weight.storage,
-        bias.map_or(0, |value| value.storage),
+        bias.as_ref().map_or(0, |value| value.storage),
     ]);
     let shader = pipeline(context, "image_conv2d")?;
     let pass = context.begin_pass_labeled("image-conv2d");
     let mut buffers = vec![
-        (component.resident.buffer(), 0, weight.offset),
+        (&weight.buffer, 0, weight.offset),
         (&input.buffer, 2, 0),
         (&output.buffer, 3, 0),
     ];
-    if let Some(bias) = bias {
-        buffers.push((component.resident.buffer(), 1, bias.offset));
+    if let Some(bias) = bias.as_ref() {
+        buffers.push((&bias.buffer, 1, bias.offset));
     }
     pass.encode_threadgroups_3d(
         &shader,
@@ -798,8 +1035,8 @@ pub(crate) fn group_norm(
         &shader,
         &[
             (&input.buffer, 0, 0),
-            (component.resident.buffer(), 1, weight.offset),
-            (component.resident.buffer(), 2, bias.offset),
+            (&weight.buffer, 1, weight.offset),
+            (&bias.buffer, 2, bias.offset),
             (&output.buffer, 3, 0),
         ],
         &[(&params, 4)],
@@ -1051,6 +1288,27 @@ mod tests {
         let expected_int4 = cpu_linear(&input, &dequantized, &[], rows, in_dim, out_dim);
         assert_close(&read(&int4_output), &expected_int4, 2e-5);
         drop(component);
+
+        let streamed = Component::open_with_mode(&context, &root, true)
+            .expect("open streamed synthetic component");
+        streamed
+            .load_prefix(&context, "matrix")
+            .expect("load streamed matrix block");
+        let streamed_output = linear(
+            &mut context,
+            &streamed,
+            streamed
+                .weight("matrix.weight", &[out_dim, in_dim])
+                .unwrap(),
+            Some(streamed.weight("matrix.bias", &[out_dim]).unwrap()),
+            &input_gpu,
+            rows,
+            in_dim,
+            out_dim,
+        )
+        .expect("streamed F32 tiled linear");
+        assert_close(&read(&streamed_output), &expected_f32, 2e-5);
+        drop(streamed);
         fs::remove_dir_all(root).expect("remove synthetic component");
     }
 

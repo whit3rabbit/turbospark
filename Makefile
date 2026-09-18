@@ -83,13 +83,15 @@ swift-test: swift-lib
 # install (`make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo
 # BLOCKED=~/models/ornith35b.gturbo`). Unset, those two cases skip like the
 # rest.
-# IMAGE is a THIRD install shape, for the reason BLOCKED is a second: one
-# variable gates one shape, and a vision install is not something MODEL can
-# be assumed to be. Point MODEL at an install with a tower when setting it.
+# IMAGE is the vision fixture path. IMAGE_MODEL is the separate verified image
+# install for the native image-session tests. Point MODEL at an install with a
+# vision tower when setting IMAGE, and use an `.image.gturbo` install for the
+# image-generation arm.
 swift-test-real: swift-lib
 	cd swift/TurboSpark && TURBOSPARK_TEST_MODEL=$(MODEL) \
 	  TURBOSPARK_TEST_MODEL_NO_SPECULATION=$(BLOCKED) \
-	  TURBOSPARK_TEST_IMAGE=$(IMAGE) swift test
+	  TURBOSPARK_TEST_IMAGE=$(IMAGE) \
+	  TURBOSPARK_TEST_IMAGE_MODEL=$(IMAGE_MODEL) swift test
 
 swift-app-build: swift-lib compile-strings
 	cd swift/TurboSparkApp && swift build
@@ -130,5 +132,4 @@ clean-dist:
 	rm -rf dist
 
 clean: clean-cargo clean-swift clean-dist
-
 

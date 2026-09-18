@@ -65,6 +65,20 @@ final class SurfaceTests: XCTestCase {
         }
     }
 
+    /// The image wrapper must cross the same open/error boundary as the text
+    /// wrapper, even though the image install is a separate artifact family.
+    func testOpeningAMissingImageModelFailsWithAReadableMessage() async throws {
+        do {
+            _ = try await TurboSparkImageSession(modelPath: "/nonexistent/image.image.gturbo")
+            XCTFail("opening a path that does not exist should throw")
+        } catch let error as TurboSparkError {
+            XCTAssertEqual(error.code, .open)
+            XCTAssertTrue(
+                error.message.contains("/nonexistent/image.image.gturbo"),
+                "the message should name the path, got \(error.message)")
+        }
+    }
+
     /// Tests consistency between installed models and catalog availability flags.
     func testCatalogRowsKnowWhetherTheyAreInstalled() throws {
         // Cross-checks the two calls against each other: every alias the
@@ -77,6 +91,17 @@ final class SurfaceTests: XCTestCase {
         XCTAssertTrue(
             flagged.isSubset(of: installed),
             "catalog flagged \(flagged.subtracting(installed)) as installed, store disagrees")
+    }
+
+    func testImageInstallListingDecodesSeparatelyFromTextModels() throws {
+        let rows = try TurboSparkCatalog.imageInstalled()
+        for row in rows {
+            XCTAssertTrue(row.path.hasSuffix(".image.gturbo"))
+            XCTAssertFalse(row.modelID.isEmpty)
+            XCTAssertFalse(row.revision.isEmpty)
+            XCTAssertEqual(row.width, 1024)
+            XCTAssertEqual(row.height, 1024)
+        }
     }
 
     /// Tests that a misspelled speculation option is refused by NAME, with
@@ -641,6 +666,23 @@ final class SurfaceTests: XCTestCase {
         }
     }
 
+    func testExpertResidencySpellingsEncodeToTheDocumentedStrings() throws {
+        var options = OpenOptions()
+        XCTAssertFalse(
+            String(decoding: try JSONEncoder().encode(options), as: UTF8.self)
+                .contains("expertResidency")
+        )
+        for mode in [
+            OpenOptions.ExpertResidency.auto,
+            .streamed,
+            .mapped,
+        ] {
+            options.expertResidency = mode
+            let json = String(decoding: try JSONEncoder().encode(options), as: UTF8.self)
+            XCTAssertTrue(json.contains("\"expertResidency\":\"\(mode.rawValue)\""))
+        }
+    }
+
     /// Tests that new C ABI symbols in turbospark.h link and handle null arguments.
     func testNewCABISymbolsLinkAndValidateNullArgs() {
         var out: UnsafeMutablePointer<CChar>?
@@ -655,6 +697,18 @@ final class SurfaceTests: XCTestCase {
 
         let statusReleaseVision = ts_session_release_vision(nil)
         XCTAssertEqual(statusReleaseVision, TS_ERR_INVALID_ARGUMENT)
+    }
+
+    /// The image ABI is separate from text, so exercise its symbols directly
+    /// through the handwritten header rather than relying only on wrapper use.
+    func testImageCABISymbolsLinkAndValidateNullArgs() {
+        XCTAssertEqual(ts_image_session_open(nil, nil), TS_ERR_INVALID_ARGUMENT)
+        ts_image_session_cancel(nil)
+        ts_image_session_close(nil)
+        XCTAssertEqual(
+            ts_image_generate(nil, nil, nil, nil, nil, nil, nil),
+            TS_ERR_INVALID_ARGUMENT)
+        ts_image_buffer_free(nil, 0)
     }
 
     /// The in-process server's C ABI entry points, called through the

@@ -2109,6 +2109,7 @@ dependencies = [
  "turbospark-catalog",
  "turbospark-compute",
  "turbospark-core",
+ "turbospark-image",
  "turbospark-model-io",
  "turbospark-repack",
  "turbospark-runtime",

@@ -310,6 +310,11 @@ impl ChatModel for FfiChatModel {
         cancel: CancelFlag<'_>,
         on_progress: &mut dyn FnMut(RawDecodeProgress),
     ) -> Result<RawDecodeResult, RuntimeError> {
+        // The server shares the process with direct FFI text/image calls.
+        // Hold the same heavyweight gate for the complete request, including
+        // vision preprocessing and the final decode, so a server request
+        // cannot overlap an app image job on the same Metal device.
+        let _heavy_work = crate::heavy::HeavyWorkGuard::acquire();
         #[cfg(target_os = "macos")]
         if let Some(images) = images {
             return self.run_with_images(prompt_ids, config, images, cancel, on_progress);

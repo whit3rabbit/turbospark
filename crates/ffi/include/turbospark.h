@@ -104,6 +104,7 @@ extern "C" {
 
 typedef struct TsSession TsSession;
 typedef struct TsServer TsServer;
+typedef struct TsImageSession TsImageSession;
 
 /*
  * One streamed generation event.
@@ -114,6 +115,16 @@ typedef struct TsServer TsServer;
 typedef void (*TsEventCallback)(void *userdata, int32_t kind,
                                 const char *text, size_t len,
                                 uint32_t a, uint32_t b);
+
+/* Image progress callback kinds. For TS_IMAGE_EVENT_STAGE, `text` is one of
+ * text_encoder, transformer, vae_decoder or png_encode, and `a`/`b` are the
+ * completed and total stage units. TS_IMAGE_EVENT_FINISH is terminal. */
+typedef void (*TsImageEventCallback)(void *userdata, int32_t kind,
+                                     const char *text, size_t len,
+                                     uint32_t a, uint32_t b);
+
+#define TS_IMAGE_EVENT_STAGE 0
+#define TS_IMAGE_EVENT_FINISH 1
 
 /*
  * One install-progress event. `text`/`len` as above; `done` and `total` are
@@ -250,6 +261,31 @@ void ts_session_cancel(const TsSession *s);
  * place: a scripted test session, or any session on a non-macOS build.
  */
 int32_t ts_session_release_vision(const TsSession *s);
+
+/* ---- native image generation ---- */
+
+/* Opens a verified image install. This is a separate handle from TsSession:
+ * image generation has its own backend and output lifetime. */
+int32_t ts_image_session_open(const char *model_dir, TsImageSession **out);
+
+/* Closes an image session. Do not call while ts_image_generate is running. */
+void ts_image_session_close(TsImageSession *s);
+
+/* Requests cancellation without blocking behind image work. */
+void ts_image_session_cancel(const TsImageSession *s);
+
+/* Generates one PNG. options_json is `{ "prompt", "seed", "width",
+ * "height", "steps" }`; width, height and steps default to the supported
+ * IG2 envelope. On success metadata_json is an owned JSON string released by
+ * ts_string_free. A completed result has status "completed" and a PNG; a
+ * canceled result has status "cancelled" and a zero-length PNG. */
+int32_t ts_image_generate(const TsImageSession *s, const char *options_json,
+                          TsImageEventCallback cb, void *userdata,
+                          uint8_t **out_png, size_t *out_png_len,
+                          char **out_metadata_json);
+
+/* Frees the byte buffer returned by ts_image_generate. */
+void ts_image_buffer_free(uint8_t *bytes, size_t len);
 
 /* ---- introspection ---- */
 
@@ -706,6 +742,9 @@ int32_t ts_catalog_json(char **out);
 
 /* What is installed in ~/.turbospark, as a JSON array. */
 int32_t ts_installed_json(char **out);
+
+/* What valid image-generation installs are present in ~/.turbospark. */
+int32_t ts_image_installed_json(char **out);
 
 /*
  * Deletes an installed model directory and forgets it from ~/.turbospark.

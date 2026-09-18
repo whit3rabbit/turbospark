@@ -23,6 +23,11 @@ public struct TurboSparkError: Error, CustomStringConvertible {
     public let code: Code
     public let message: String
 
+    public init(code: Code, message: String) {
+        self.code = code
+        self.message = message
+    }
+
     public var description: String { "\(code): \(message)" }
 
     /// Reads the library's error slot. Call ONLY after a non-zero return,

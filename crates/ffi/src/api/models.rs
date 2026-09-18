@@ -26,6 +26,15 @@ pub unsafe extern "C" fn ts_installed_json(out: *mut *mut c_char) -> c_int {
     })
 }
 
+/// What valid image-generation installs are present in `~/.turbospark`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_image_installed_json(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        let json = models::image_installed_json().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Deletes an installed model from `~/.turbospark` and drops its directory.
 #[no_mangle]
 pub unsafe extern "C" fn ts_model_delete(alias: *const c_char) -> c_int {

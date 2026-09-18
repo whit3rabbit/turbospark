@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Condvar, Mutex,
 };
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,167 @@ use crate::vae::decoded_to_rgb8;
 pub const IMAGE_CANCELLED: &str = "image generation cancelled";
 pub const IMAGE_ENGINE_REVISION: &str = "ig2-runtime-v1";
 pub const IMAGE_QUANTIZATION: &str = "four-bit-linear-weights-group-64";
+
+/// The categories used by the image admission and resource ledgers.
+///
+/// These are deliberately separate from `phys_footprint`: the latter is a
+/// process observation and includes allocator and driver state that this
+/// crate cannot attribute to a tensor or a kernel workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImageMemoryPlan {
+    /// Total packed payload bytes when all component weights are resident.
+    pub component_weights: u64,
+    /// Capacity of the largest component's two synchronous stream slots.
+    pub streamed_component_weights: u64,
+    pub conditioning: u64,
+    pub latents: u64,
+    pub activations: u64,
+    pub scratch: u64,
+    pub staging: u64,
+    pub in_flight_gpu: u64,
+    pub allocator_retention: u64,
+    pub largest_block: u64,
+    pub block_workspace: u64,
+}
+
+impl ImageMemoryPlan {
+    pub fn managed_bytes(self) -> u64 {
+        self.component_weights
+            .saturating_add(self.conditioning)
+            .saturating_add(self.latents)
+            .saturating_add(self.activations)
+            .saturating_add(self.scratch)
+            .saturating_add(self.staging)
+            .saturating_add(self.in_flight_gpu)
+            .saturating_add(self.allocator_retention)
+    }
+
+    /// The lower bound for the streamed execution represented by this plan.
+    /// It is intentionally not a whole-machine RAM claim.
+    pub fn streamed_lower_bound(self) -> u64 {
+        self.streamed_component_weights
+            .saturating_add(self.conditioning)
+            .saturating_add(self.latents)
+            .saturating_add(self.activations)
+            .saturating_add(self.scratch)
+            .saturating_add(self.staging)
+            .saturating_add(self.in_flight_gpu)
+            .saturating_add(self.allocator_retention)
+    }
+
+    pub fn resident_lower_bound(self) -> u64 {
+        self.managed_bytes()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageMemoryBudget {
+    pub max_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageBudgetError {
+    InvalidBudget,
+    LargestBlockDoesNotFit { required: u64, budget: u64 },
+    ManagedPlanDoesNotFit { required: u64, budget: u64 },
+}
+
+impl std::fmt::Display for ImageBudgetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidBudget => write!(f, "image memory budget must be nonzero"),
+            Self::LargestBlockDoesNotFit { required, budget } => write!(
+                f,
+                "image memory budget refused before execution: largest block and workspace require {required} bytes, budget is {budget}"
+            ),
+            Self::ManagedPlanDoesNotFit { required, budget } => write!(
+                f,
+                "image memory budget refused before execution: managed plan requires {required} bytes, budget is {budget}"
+            ),
+        }
+    }
+}
+
+pub fn admit_image_budget(
+    plan: ImageMemoryPlan,
+    budget: ImageMemoryBudget,
+    streamed: bool,
+) -> Result<(), ImageBudgetError> {
+    if budget.max_bytes == 0 {
+        return Err(ImageBudgetError::InvalidBudget);
+    }
+    let block_required = plan.largest_block.saturating_add(plan.block_workspace);
+    if block_required > budget.max_bytes {
+        return Err(ImageBudgetError::LargestBlockDoesNotFit {
+            required: block_required,
+            budget: budget.max_bytes,
+        });
+    }
+    let required = if streamed {
+        plan.streamed_lower_bound()
+    } else {
+        plan.resident_lower_bound()
+    };
+    if required > budget.max_bytes {
+        return Err(ImageBudgetError::ManagedPlanDoesNotFit {
+            required,
+            budget: budget.max_bytes,
+        });
+    }
+    Ok(())
+}
+
+/// Tracks consumers of a mapped component or staging slot.
+///
+/// A lease is not released until its owner has finished consuming the work.
+/// Backend code can therefore wait for idle during cancellation and teardown
+/// without guessing whether a dropped output still aliases a component.
+#[derive(Debug, Clone, Default)]
+pub struct ImageWorkTracker {
+    state: Arc<(Mutex<usize>, Condvar)>,
+}
+
+impl ImageWorkTracker {
+    pub fn begin(&self) -> ImageWorkLease {
+        let (lock, _) = &*self.state;
+        *lock.lock().expect("image work tracker mutex poisoned") += 1;
+        ImageWorkLease {
+            tracker: self.clone(),
+        }
+    }
+
+    pub fn wait_for_idle(&self) {
+        let (lock, ready) = &*self.state;
+        let mut outstanding = lock.lock().expect("image work tracker mutex poisoned");
+        while *outstanding != 0 {
+            outstanding = ready
+                .wait(outstanding)
+                .expect("image work tracker mutex poisoned");
+        }
+    }
+
+    fn finish(&self) {
+        let (lock, ready) = &*self.state;
+        let mut outstanding = lock.lock().expect("image work tracker mutex poisoned");
+        *outstanding = outstanding
+            .checked_sub(1)
+            .expect("image work tracker lease underflow");
+        if *outstanding == 0 {
+            ready.notify_all();
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ImageWorkLease {
+    tracker: ImageWorkTracker,
+}
+
+impl Drop for ImageWorkLease {
+    fn drop(&mut self) {
+        self.tracker.finish();
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +216,60 @@ impl CancellationToken {
 
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Request cancellation and wait until all registered consumers release
+    /// their leases. This is the teardown seam used by GPU and I/O owners.
+    pub fn cancel_and_wait(&self, work: &ImageWorkTracker) {
+        self.cancel();
+        work.wait_for_idle();
+    }
+}
+
+/// Accounting-only state machine for dense sequential two-slot streaming.
+/// A slot cannot be acquired twice until its consumer calls `release`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SequentialImageSlots {
+    in_use: [bool; 2],
+    live_bytes: u64,
+    peak_live_bytes: u64,
+}
+
+impl SequentialImageSlots {
+    pub fn acquire(&mut self, bytes: u64) -> Result<usize, &'static str> {
+        let slot = self
+            .in_use
+            .iter()
+            .position(|in_use| !in_use)
+            .ok_or("both image stream slots are still in use")?;
+        self.in_use[slot] = true;
+        self.live_bytes = self.live_bytes.saturating_add(bytes);
+        self.peak_live_bytes = self.peak_live_bytes.max(self.live_bytes);
+        Ok(slot)
+    }
+
+    pub fn release(&mut self, slot: usize, bytes: u64) -> Result<(), &'static str> {
+        let in_use = self
+            .in_use
+            .get_mut(slot)
+            .ok_or("image stream slot index is out of range")?;
+        if !*in_use {
+            return Err("image stream slot was released before acquisition");
+        }
+        *in_use = false;
+        self.live_bytes = self
+            .live_bytes
+            .checked_sub(bytes)
+            .ok_or("image stream live-byte accounting underflow")?;
+        Ok(())
+    }
+
+    pub fn live_bytes(self) -> u64 {
+        self.live_bytes
+    }
+
+    pub fn peak_live_bytes(self) -> u64 {
+        self.peak_live_bytes
     }
 }
 
@@ -121,6 +336,7 @@ pub struct ImageMetadata {
     pub scheduler_steps: u32,
     pub transformer_forwards: u32,
     pub guidance_scale: f32,
+    #[serde(rename = "modelID")]
     pub model_id: String,
     pub model_revision: String,
     pub component_revisions: BTreeMap<String, String>,
@@ -173,10 +389,30 @@ pub trait ImageBackend {
         cancellation: &CancellationToken,
         progress: &mut dyn FnMut(u32, u32),
     ) -> Result<Vec<f32>, String>;
+
+    /// Wait for consumers that outlive an individual backend stage.
+    ///
+    /// GPU-backed implementations must fence their submitted work before
+    /// returning from the stage itself. This hook closes the cancellation
+    /// seam for I/O or staging consumers registered across that stage.
+    fn wait_for_idle(&mut self) {}
 }
 
 /// Run one image through the staged lifecycle and return a complete PNG.
 pub fn generate<F: FnMut(ImageProgress)>(
+    backend: &mut dyn ImageBackend,
+    request: &ImageRequest,
+    cancellation: &CancellationToken,
+    on_progress: F,
+) -> Result<ImageResult, String> {
+    let result = generate_inner(backend, request, cancellation, on_progress);
+    if cancellation.is_cancelled() {
+        backend.wait_for_idle();
+    }
+    result
+}
+
+fn generate_inner<F: FnMut(ImageProgress)>(
     backend: &mut dyn ImageBackend,
     request: &ImageRequest,
     cancellation: &CancellationToken,
@@ -271,6 +507,23 @@ pub fn generate<F: FnMut(ImageProgress)>(
     Ok(ImageResult { png, metadata })
 }
 
+/// Admit an image plan before entering the generation lifecycle.
+///
+/// Callers that have a manifest-backed plan should use this seam instead of
+/// checking a budget after opening a component or scheduling GPU work.
+pub fn generate_with_memory_budget<F: FnMut(ImageProgress)>(
+    backend: &mut dyn ImageBackend,
+    request: &ImageRequest,
+    cancellation: &CancellationToken,
+    plan: ImageMemoryPlan,
+    budget: ImageMemoryBudget,
+    streamed: bool,
+    on_progress: F,
+) -> Result<ImageResult, String> {
+    admit_image_budget(plan, budget, streamed).map_err(|error| error.to_string())?;
+    generate(backend, request, cancellation, on_progress)
+}
+
 fn encode_png_with_metadata(
     rgb: &[u8],
     width: u32,
@@ -305,6 +558,7 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     fn request() -> ImageRequest {
         ImageRequest {
@@ -325,6 +579,7 @@ mod tests {
 
     struct TestBackend {
         cancel_at: Option<ImageStage>,
+        idle_waits: Option<Arc<AtomicUsize>>,
     }
 
     impl ImageBackend for TestBackend {
@@ -371,11 +626,20 @@ mod tests {
             }
             Ok(vec![0.0; 3 * 1024 * 1024])
         }
+
+        fn wait_for_idle(&mut self) {
+            if let Some(idle_waits) = &self.idle_waits {
+                idle_waits.fetch_add(1, Ordering::Relaxed);
+            }
+        }
     }
 
     #[test]
     fn generation_embeds_contract_metadata_and_stage_progress() {
-        let mut backend = TestBackend { cancel_at: None };
+        let mut backend = TestBackend {
+            cancel_at: None,
+            idle_waits: None,
+        };
         let cancellation = CancellationToken::new();
         let mut progress = Vec::new();
         let result = generate(&mut backend, &request(), &cancellation, |event| {
@@ -385,6 +649,9 @@ mod tests {
 
         assert_eq!(result.metadata.seed, 42);
         assert_eq!(result.metadata.scheduler.evaluation_count, IMAGE_STEPS);
+        let metadata = serde_json::to_value(&result.metadata).expect("metadata JSON");
+        assert_eq!(metadata["modelID"], "z-image-turbo");
+        assert!(metadata.get("modelId").is_none());
         assert!(result.png.starts_with(b"\x89PNG\r\n\x1a\n"));
         assert!(result
             .png
@@ -414,6 +681,7 @@ mod tests {
         ] {
             let mut backend = TestBackend {
                 cancel_at: Some(stage),
+                idle_waits: None,
             };
             let cancellation = CancellationToken::new();
             let cancel_for_png = cancellation.clone();
@@ -434,9 +702,93 @@ mod tests {
     fn cancellation_stops_before_transformer_stage() {
         let mut backend = TestBackend {
             cancel_at: Some(ImageStage::TextEncoder),
+            idle_waits: None,
         };
         let cancellation = CancellationToken::new();
         let result = generate(&mut backend, &request(), &cancellation, |_| {});
         assert!(matches!(result, Err(error) if error == IMAGE_CANCELLED));
+    }
+
+    #[test]
+    fn budget_refusal_happens_before_execution() {
+        let plan = ImageMemoryPlan {
+            component_weights: 80,
+            streamed_component_weights: 30,
+            conditioning: 10,
+            latents: 10,
+            activations: 20,
+            scratch: 5,
+            staging: 5,
+            in_flight_gpu: 5,
+            allocator_retention: 5,
+            largest_block: 60,
+            block_workspace: 15,
+        };
+        assert_eq!(plan.managed_bytes(), 140);
+        assert_eq!(plan.streamed_lower_bound(), 90);
+        assert!(admit_image_budget(plan, ImageMemoryBudget { max_bytes: 74 }, true).is_err());
+        assert!(admit_image_budget(plan, ImageMemoryBudget { max_bytes: 139 }, false).is_err());
+        assert!(admit_image_budget(plan, ImageMemoryBudget { max_bytes: 89 }, true).is_err());
+        assert!(admit_image_budget(plan, ImageMemoryBudget { max_bytes: 90 }, true).is_ok());
+
+        let mut backend = TestBackend {
+            cancel_at: None,
+            idle_waits: None,
+        };
+        let error = generate_with_memory_budget(
+            &mut backend,
+            &request(),
+            &CancellationToken::new(),
+            plan,
+            ImageMemoryBudget { max_bytes: 74 },
+            true,
+            |_| {},
+        )
+        .expect_err("generation must be refused before entering the backend");
+        assert!(error.contains("refused before execution"));
+    }
+
+    #[test]
+    fn two_slots_reject_early_reuse_and_bound_live_storage() {
+        let mut slots = SequentialImageSlots::default();
+        let first = slots.acquire(10).expect("first slot");
+        let second = slots.acquire(20).expect("second slot");
+        assert_eq!(
+            slots.acquire(1),
+            Err("both image stream slots are still in use")
+        );
+        assert_eq!(slots.peak_live_bytes(), 30);
+        slots.release(first, 10).expect("release first slot");
+        let reused = slots.acquire(7).expect("reuse only after release");
+        assert_eq!(reused, first);
+        slots.release(reused, 7).expect("release reused slot");
+        slots.release(second, 20).expect("release second slot");
+        assert_eq!(slots.live_bytes(), 0);
+    }
+
+    #[test]
+    fn cancellation_waits_for_registered_consumers() {
+        let work = ImageWorkTracker::default();
+        let lease = work.begin();
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            drop(lease);
+        });
+        let cancellation = CancellationToken::new();
+        cancellation.cancel_and_wait(&work);
+        worker.join().expect("consumer thread");
+        assert!(cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn generation_waits_for_backend_consumers_after_cancellation() {
+        let idle_waits = Arc::new(AtomicUsize::new(0));
+        let mut backend = TestBackend {
+            cancel_at: Some(ImageStage::Transformer),
+            idle_waits: Some(Arc::clone(&idle_waits)),
+        };
+        let result = generate(&mut backend, &request(), &CancellationToken::new(), |_| {});
+        assert!(matches!(result, Err(error) if error == IMAGE_CANCELLED));
+        assert_eq!(idle_waits.load(Ordering::Relaxed), 1);
     }
 }

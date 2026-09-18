@@ -44,6 +44,7 @@ crates/ffi/
 |   +-- server_model.rs     # ChatModel adapter over SessionCore, for server.rs
 |   +-- server_registry.rs  # the models a RUNNING server serves, and its event ring
 |   +-- telemetry.rs        # phase counters and peak footprint
+|   +-- image_session.rs    # verified image install, serialized generation, cancellation
 |   +-- testing.rs          # session_for_testing (scripted testing harness)
 |   +-- vision.rs           # Image data URL decoding & vision token prep
 |   \-- api/                # C ABI entry points (extern "C")
@@ -54,6 +55,7 @@ crates/ffi/
 |       +-- session.rs      # session lifecycle and introspection
 |       +-- generate.rs     # generation, prompt rendering, tokenization, window fit
 |       +-- models.rs       # catalog, recommendations, probe, install
+|       +-- image.rs        # native image session and owned PNG output
 |       \-- server.rs       # start / attach / detach / stop / info / poll_events
 \-- tests/
     \-- c_surface.rs        # the C entry points, through the `rlib` face

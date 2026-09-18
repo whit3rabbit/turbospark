@@ -84,6 +84,38 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
     }
 }
 
+/// A valid image-generation install. Image artifacts intentionally have a
+/// separate type and listing from text models.
+public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { alias }
+
+    public let alias: String
+    public let modelID: String
+    public let revision: String
+    public let path: String
+    public let width: UInt32
+    public let height: UInt32
+    public let schedulerSteps: UInt32
+
+    public init(
+        alias: String,
+        modelID: String,
+        revision: String,
+        path: String,
+        width: UInt32,
+        height: UInt32,
+        schedulerSteps: UInt32
+    ) {
+        self.alias = alias
+        self.modelID = modelID
+        self.revision = revision
+        self.path = path
+        self.width = width
+        self.height = height
+        self.schedulerSteps = schedulerSteps
+    }
+}
+
 /// What an install will cost, before it starts.
 public struct InstallCost: Decodable, Sendable, Equatable {
     public let downloadBytes: UInt64
@@ -112,6 +144,13 @@ public enum TurboSparkCatalog {
     /// What is installed in `~/.turbospark`.
     public static func installed() throws -> [InstalledModel] {
         try decode([InstalledModel].self, from: try takeString { ts_installed_json($0) })
+    }
+
+    /// Valid image-generation installs in the shared machine store.
+    public static func imageInstalled() throws -> [ImageInstalledModel] {
+        try decode(
+            [ImageInstalledModel].self,
+            from: try takeString { ts_image_installed_json($0) })
     }
 
     /// What installing `alias` will cost. Call this before `install` to show

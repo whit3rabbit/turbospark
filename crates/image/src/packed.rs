@@ -187,6 +187,48 @@ impl PackedTensorStore {
         &self.data_path
     }
 
+    /// Return the verified payload size without mapping or reading it.
+    pub fn payload_bytes(&self) -> Result<u64, String> {
+        fs::metadata(&self.data_path)
+            .map(|metadata| metadata.len())
+            .map_err(|e| format!("failed to stat packed image payload: {e}"))
+    }
+
+    /// Return the inclusive byte span containing a component block's tensors.
+    /// The span includes padding and any interleaved tensors because the
+    /// synchronous streamer reads one contiguous range per block.
+    pub fn prefix_span(&self, prefix: &str) -> Option<(u64, u64)> {
+        self.index
+            .tensors
+            .iter()
+            .filter(|(name, _)| name.as_str() == prefix || name.starts_with(&format!("{prefix}.")))
+            .fold(None, |range, (_, tensor)| {
+                let end = tensor.offset.checked_add(tensor.length)?;
+                Some(match range {
+                    Some((start, current_end)) => (start.min(tensor.offset), current_end.max(end)),
+                    None => (tensor.offset, end),
+                })
+            })
+    }
+
+    /// Read a checked byte range from the packed payload without mapping the
+    /// whole component. Streaming image blocks use this after `open` has
+    /// validated every tensor span and the payload hash.
+    pub(crate) fn read_payload_range(&self, offset: u64, length: usize) -> Result<Vec<u8>, String> {
+        let end = offset
+            .checked_add(length as u64)
+            .ok_or_else(|| "packed image payload range overflows".to_string())?;
+        let payload_len = fs::metadata(&self.data_path)
+            .map_err(|e| format!("failed to stat packed image payload: {e}"))?
+            .len();
+        if end > payload_len {
+            return Err(format!(
+                "packed image payload range {offset}..{end} exceeds {payload_len}"
+            ));
+        }
+        self.read_range(offset, length)
+    }
+
     pub fn shape(&self, name: &str) -> Option<&[usize]> {
         self.index
             .tensors

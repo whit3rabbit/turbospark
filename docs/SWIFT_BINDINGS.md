@@ -940,6 +940,13 @@ byte callback is *also* called concurrently from worker threads.
 
 ### The surface
 
+Image generation is a separate surface from token generation. `TsImageSession`
+opens a verified `.image.gturbo` install, `ts_image_generate` blocks on one
+serialized heavyweight job, stage callbacks borrow their text only for the
+callback, and the returned PNG must be released with `ts_image_buffer_free`.
+Swift copies the PNG into `Data` before releasing the native buffer. An image
+session must not be closed while its generation call is active.
+
 | function | notes |
 |---|---|
 | `ts_last_error(buf, cap)` | returns the message's own length, not bytes written; `buf` may be NULL to size |
@@ -978,6 +985,11 @@ byte callback is *also* called concurrently from worker threads.
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
 | `ts_embedding_encode_json(model_path, texts_json, out)` | standalone batch text embedding generation |
 | `ts_cosine_similarity(a, b, len)` | cosine similarity between two float vectors |
+| `ts_image_session_open(model_dir, out)` | open a verified `.image.gturbo` install |
+| `ts_image_session_close(s)` | close an image session when no job is running |
+| `ts_image_session_cancel(s)` | cancel image generation from any thread |
+| `ts_image_generate(s, options, cb, ud, png, len, metadata)` | blocking image job with stage callbacks, owned PNG bytes, and camelCase metadata |
+| `ts_image_buffer_free(bytes, len)` | release PNG bytes returned by `ts_image_generate` |
 | `ts_hf_token_get(out)` | read resolved HF token |
 | `ts_hf_token_info_json(out)` | read resolved HF token and origin source |
 | `ts_hf_token_set(token)` | save HF token to ~/.turbospark/hf_token |

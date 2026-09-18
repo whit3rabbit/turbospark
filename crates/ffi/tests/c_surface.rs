@@ -27,15 +27,15 @@ use tokenizer::MfTokenizer;
 use turbospark_ffi::{
     abi, session_for_testing, session_for_testing_named, ts_cosine_similarity,
     ts_embedding_encode_json, ts_generate, ts_hf_endpoint_get, ts_hf_endpoint_set,
-    ts_hf_token_clear, ts_hf_token_get, ts_hf_token_set, ts_hf_token_validate_json, ts_last_error,
-    ts_model_delete, ts_probe_json, ts_recommend_json, ts_repo_variants_json,
-    ts_server_attach_embedding_model, ts_server_attach_session, ts_server_detach_model,
-    ts_server_info_json, ts_server_poll_events_json, ts_server_start, ts_server_stop,
-    ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
-    ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
-    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
-    Server, Session, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING,
-    TS_EVENT_TOOL,
+    ts_hf_token_clear, ts_hf_token_get, ts_hf_token_set, ts_hf_token_validate_json,
+    ts_image_buffer_free, ts_image_session_open, ts_last_error, ts_model_delete, ts_probe_json,
+    ts_recommend_json, ts_repo_variants_json, ts_server_attach_embedding_model,
+    ts_server_attach_session, ts_server_detach_model, ts_server_info_json,
+    ts_server_poll_events_json, ts_server_start, ts_server_stop, ts_session_cancel,
+    ts_session_count_text_tokens, ts_session_count_tokens, ts_session_detokenize_json,
+    ts_session_fit_window_json, ts_session_info_json, ts_session_open, ts_session_render_prompt,
+    ts_session_tokenize_json, ts_string_free, ts_system_info_json, Server, Session, TsImageSession,
+    TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING, TS_EVENT_TOOL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -125,6 +125,25 @@ fn a_null_argument_is_an_error_rather_than_a_crash() {
         sink.events.lock().unwrap().is_empty(),
         "no generation should have run before the out-pointer was checked"
     );
+}
+
+#[test]
+fn image_open_and_buffer_ownership_have_the_same_c_guard_contract() {
+    let mut session: *mut TsImageSession = ptr::null_mut();
+    let code = unsafe { ts_image_session_open(ptr::null(), &mut session) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(session.is_null());
+    assert!(last_error().contains("modelDir"));
+
+    let missing = c("/definitely/not/a/turbospark-image-install");
+    let code = unsafe { ts_image_session_open(missing.as_ptr(), &mut session) };
+    assert_eq!(code, abi::TS_ERR_OPEN);
+    assert!(session.is_null());
+
+    let boxed = vec![1_u8, 2, 3].into_boxed_slice();
+    let len = boxed.len();
+    let ptr = Box::into_raw(boxed) as *mut u8;
+    unsafe { ts_image_buffer_free(ptr, len) };
 }
 
 #[test]
