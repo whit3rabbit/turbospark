@@ -94,6 +94,19 @@ final class ModelStorageDetectionTests: XCTestCase {
         XCTAssertEqual(ggufModel?.installBytes, 2048)
     }
 
+    func testProviderInspectionSeparatesRunnableAndUnsupportedArtifacts() throws {
+        let providerDir = tempDirectoryURL.appendingPathComponent("huggingface", isDirectory: true)
+        try FileManager.default.createDirectory(at: providerDir, withIntermediateDirectories: true)
+        try Data(repeating: 0x01, count: 16).write(to: providerDir.appendingPathComponent("model.gguf"))
+        try Data(repeating: 0x02, count: 16).write(to: providerDir.appendingPathComponent("model.safetensors"))
+        try Data("{}".utf8).write(to: providerDir.appendingPathComponent("config.json"))
+
+        let candidate = ModelStorageManager.inspectProvider(.huggingFace, path: providerDir.path)
+        XCTAssertEqual(candidate.supportedModelCount, 1)
+        XCTAssertEqual(candidate.unsupportedArtifactCount, 2)
+        XCTAssertTrue(candidate.statusText.contains("supported model"))
+    }
+
     func testFamilyInference() {
         XCTAssertEqual(ModelStorageManager.inferFamilyFromName("Gemma-4-26B-A4B-Q4"), "gemma4")
         XCTAssertEqual(ModelStorageManager.inferFamilyFromName("Qwen3-30B-A3B-Instruct"), "qwen3moe")
@@ -108,7 +121,8 @@ final class ModelStorageDetectionTests: XCTestCase {
         let settings = MacAppSettings(
             enableLMStudioDetection: true,
             lmStudioDirectory: "/Users/testuser/.lmstudio/models",
-            customModelDirectories: ["/Volumes/External/models", "/Users/testuser/gguf"]
+            customModelDirectories: ["/Volumes/External/models", "/Users/testuser/gguf"],
+            turboSparkStoreRoot: "/Volumes/Models/.turbospark"
         )
 
         let data = try JSONEncoder().encode(settings)
@@ -117,5 +131,6 @@ final class ModelStorageDetectionTests: XCTestCase {
         XCTAssertTrue(decoded.enableLMStudioDetection)
         XCTAssertEqual(decoded.lmStudioDirectory, "/Users/testuser/.lmstudio/models")
         XCTAssertEqual(decoded.customModelDirectories, ["/Volumes/External/models", "/Users/testuser/gguf"])
+        XCTAssertEqual(decoded.turboSparkStoreRoot, "/Volumes/Models/.turbospark")
     }
 }

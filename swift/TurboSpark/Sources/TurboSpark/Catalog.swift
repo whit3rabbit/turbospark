@@ -169,6 +169,14 @@ public struct InstallCost: Decodable, Sendable, Equatable {
     public let installBytes: UInt64
 }
 
+/// Result of relocating the managed TurboSpark store.
+public struct StoreRelocation: Decodable, Sendable, Equatable {
+    public let source: String
+    public let destination: String
+    public let bytes: UInt64
+    public let files: UInt64
+}
+
 /// One install-progress event.
 public enum InstallEvent: Sendable, Equatable {
     case stage(String)
@@ -183,6 +191,12 @@ public enum ImageInstallEvent: Sendable, Equatable {
     case finished(ImageInstalledModel)
 }
 
+/// Progress from a managed store relocation.
+public enum StoreRelocationEvent: Sendable, Equatable {
+    case bytes(done: UInt64, total: UInt64)
+    case finished(StoreRelocation)
+}
+
 /// Browsing, probing and installing models.
 ///
 /// Available on every platform, including ones that cannot then RUN a model:
@@ -190,6 +204,42 @@ public enum ImageInstallEvent: Sendable, Equatable {
 /// machine that cannot decode would be a restriction with no reason behind
 /// it.
 public enum TurboSparkCatalog {
+    /// The active process-local model store root.
+    public static func storeRoot() throws -> String {
+        try takeString { out in ts_store_root_get(out) }
+    }
+
+    /// Sets or clears the active process-local model store root. Passing nil
+    /// restores the environment-derived default.
+    public static func setStoreRoot(_ root: String?) throws {
+        try check(withOptionalCString(root) { ts_store_root_set($0) })
+    }
+
+    /// Relocates the managed store on a dedicated thread. The source is only
+    /// removed after the destination and install-record paths verify.
+    public static func relocateStore(to destination: String) -> AsyncThrowingStream<StoreRelocationEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let thread = Thread {
+                let box = StoreRelocationBox(continuation)
+                let userdata = Unmanaged.passRetained(box).toOpaque()
+                defer { Unmanaged<StoreRelocationBox>.fromOpaque(userdata).release() }
+                do {
+                    let json = try takeString { out in
+                        destination.withCString {
+                            ts_store_relocate($0, storeRelocationCallback, userdata, out)
+                        }
+                    }
+                    continuation.yield(.finished(try decode(StoreRelocation.self, from: json)))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            thread.name = "com.turbospark.store-relocation"
+            thread.start()
+        }
+    }
+
     /// The curated table, each row carrying whether it is installed.
     public static func available() throws -> [CatalogEntry] {
         try decode([CatalogEntry].self, from: try takeString { ts_catalog_json($0) })
@@ -589,6 +639,20 @@ private let imageInstallCallback: TsInstallCallback = { userdata, kind, text, le
     default:
         return
     }
+}
+
+private final class StoreRelocationBox: @unchecked Sendable {
+    let continuation: AsyncThrowingStream<StoreRelocationEvent, Error>.Continuation
+
+    init(_ continuation: AsyncThrowingStream<StoreRelocationEvent, Error>.Continuation) {
+        self.continuation = continuation
+    }
+}
+
+private let storeRelocationCallback: TsInstallCallback = { userdata, kind, _, _, done, total in
+    guard let userdata, kind == TS_INSTALL_BYTES else { return }
+    let box = Unmanaged<StoreRelocationBox>.fromOpaque(userdata).takeUnretainedValue()
+    box.continuation.yield(.bytes(done: done, total: total))
 }
 
 /// Calls `body` with a C string, or NULL when the value is absent.

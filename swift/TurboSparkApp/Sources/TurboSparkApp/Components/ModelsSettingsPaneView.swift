@@ -14,6 +14,8 @@ public struct ModelsSettingsPaneView: View {
     /// evaluation this view received for any reason
     /// (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
     @State private var lmStudioModelCount: Int = 0
+    @State private var showingStoreMigration = false
+    @State private var showingProviderDiscovery = false
 
     public init(model: AppModel) {
         self.model = model
@@ -27,13 +29,8 @@ public struct ModelsSettingsPaneView: View {
         ModelStorageManager.isLMStudioDirectoryPresent(customPath: model.lmStudioDirectory)
     }
 
-    /// The engine's own store. There is no setting for this on purpose: the
-    /// catalog installer on the Rust side writes here and the binding exposes
-    /// no destination, so a "Change..." button used to persist a path that
-    /// nothing installed to (`swift/docs/SWIFT_SETTINGS_AUDIT.md`). Extra folders
-    /// are SCANNED, not written, and live in the section below.
-    private var turboSparkStorePath: String {
-        ModelStorageManager.defaultTurboSparkModelsDirectory
+    private var turboSparkStoreRoot: String {
+        ModelStorageManager.defaultTurboSparkStoreRoot
     }
 
     public var body: some View {
@@ -62,6 +59,12 @@ public struct ModelsSettingsPaneView: View {
             }
             .padding(20)
         }
+        .sheet(isPresented: $showingStoreMigration) {
+            ModelStoreMigrationSheet(model: model)
+        }
+        .sheet(isPresented: $showingProviderDiscovery) {
+            ModelProviderDiscoverySheet(model: model)
+        }
     }
 
     // MARK: - TurboSpark Primary Storage
@@ -71,37 +74,46 @@ public struct ModelsSettingsPaneView: View {
                 Label { Text("TurboSpark Models Storage", bundle: .module) } icon: { Image(systemName: "cylinder.split.1x2") }
                     .themedFont(.base, weight: .semibold)
                 Spacer()
-                Text("Install Destination", bundle: .module)
-                    .settingsControl("Install Destination", pane: .models, timing: .immediate)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
+                Button {
+                    showingStoreMigration = true
+                } label: {
+                    Label { Text("Move Store...", bundle: .module) } icon: { Image(systemName: "externaldrive") }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .settingsControl("Move Model Store", pane: .models, timing: .immediate)
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "folder.fill")
-                        .foregroundStyle(Color.accentColor)
-                    Text(turboSparkStorePath)
-                        .themedCode(.base)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
+                Text(turboSparkStoreRoot)
+                    .themedCode(.small)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                storagePathRow(label: "Text", path: ModelStorageManager.defaultTurboSparkModelsDirectory)
+                storagePathRow(label: "Image", path: ModelStorageManager.defaultTurboSparkImageModelsDirectory)
+                storagePathRow(label: "Audio", path: ModelStorageManager.defaultTurboSparkAudioModelsDirectory)
 
+                HStack {
                     Button {
-                        ModelStorageManager.revealInFinder(path: turboSparkStorePath)
+                        ModelStorageManager.revealInFinder(path: turboSparkStoreRoot)
                     } label: {
                         Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "arrow.up.right.square") }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("Opens the TurboSpark models directory in Finder")
+                    .help("Opens the TurboSpark store in Finder")
+                    Spacer()
+                    Button {
+                        showingProviderDiscovery = true
+                    } label: {
+                        Label { Text("Detect Model Libraries", bundle: .module) } icon: { Image(systemName: "magnifyingglass") }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
-                .padding(10)
-                .background(.appSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                Text("Catalog installs and Hugging Face pulls always land here. To run models kept elsewhere, add their folders under Additional Model Folders below; they are scanned in place, never copied.", bundle: .module)
+                Text("Catalog installs and future text, image, and audio installs use this shared root. Other folders are scanned in place and are never copied automatically.", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
@@ -110,6 +122,25 @@ public struct ModelsSettingsPaneView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
         }
+    }
+
+    private func storagePathRow(label: String, path: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder.fill")
+                .foregroundStyle(Color.accentColor)
+            Text(label)
+                .themedFont(.small, weight: .medium)
+                .frame(width: 52, alignment: .leading)
+            Text(path)
+                .themedCode(.tiny)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+        }
+        .padding(8)
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
     // MARK: - LM Studio Integration

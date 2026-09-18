@@ -14,7 +14,7 @@ it out.
 Two stores hold everything. `State/MacAppSettings.swift` writes
 `settings.json` and `Theme/AppearanceSettings.swift` writes
 `appearance.json`, both under `AppStorageRoot`
-(`swift/docs/SWIFT_STORAGE.md`). Fifteen tabs edit them.
+(`swift/docs/storage.md`). Fifteen tabs edit them.
 
 The 2026-09-10 scope, theme library and control-search pass is documented in
 [SWIFT_SETTINGS_SCOPE_AND_THEMES.md](SWIFT_SETTINGS_SCOPE_AND_THEMES.md),

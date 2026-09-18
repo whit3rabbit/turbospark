@@ -367,7 +367,7 @@ keeps resolving.
 
 13. All app state lives in three JSON files, and a decode failure used to
     be silently fatal to the file's content. Moved to
-    `swift/docs/SWIFT_STORAGE.md`.
+    `swift/docs/storage.md`.
 
 14. See Gotcha 12.
 
@@ -626,7 +626,7 @@ keeps resolving.
 
 37. The test suite overwrote a user's chat archive, and the only symptom
     was a chat that would not stay deleted. Moved to
-    `swift/docs/SWIFT_STORAGE.md`.
+    `swift/docs/storage.md`.
 
 38. **AN INCREMENTAL `swift build` THAT DID NOTHING PRINTS THE SAME
     `Build complete!` AS ONE THAT SUCCEEDED.** A run that compiles emits
@@ -636,11 +636,11 @@ keeps resolving.
 
 39. `AppModel().someProperty == someDefault` tests `MacAppSettings`'s
     default, not the property declaration. Moved to
-    `swift/docs/SWIFT_STORAGE.md`.
+    `swift/docs/storage.md`.
 
 40. `AppStorageRoot` covers the app's stores and not the engine's, so a
     test reaching `TurboSparkCatalog` reads real user data. Moved to
-    `swift/docs/SWIFT_STORAGE.md`.
+    `swift/docs/storage.md`.
 
 41. **TWO THINGS THAT LOOK LIKE FAILURES AND ARE NOT, WHEN MUTATION-CHECKING
     SWIFT.** A Swift TRAP (`Int(1e300)`, an out-of-range slice) aborts the
@@ -668,7 +668,7 @@ keeps resolving.
     the fix and do not delete the case.
 
 43. Which directories a test may write to is a three-way answer, and only
-    two of them are written down. Moved to `swift/docs/SWIFT_STORAGE.md`.
+    two of them are written down. Moved to `swift/docs/storage.md`.
 
 44. **THREE MECHANICS OF THE APP SUITE, EACH ONE BUILD CYCLE'S WORTH.**
     `swift test --filter SuiteName/testCaseName` runs ONE case in ~0.3 s,
@@ -947,7 +947,7 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_GOALS.md` | the `/goal` loop: the stop-seam evaluator, deferral + idle check-ins, stall pause, restore rules |
 | `swift/docs/SWIFT_MESSAGE_EDITING.md` | message retry, edit and branch |
 | `swift/docs/SWIFT_GHOST_MODE.md` | temporary (ghost) chats: the two layers, the three rules that must not break |
-| `swift/docs/SWIFT_STORAGE.md` | app JSON stores, the modality-separated engine model store, `ModelStorageManager`, `AppStorageRoot` test isolation, and which directories tests may write to |
+| `swift/docs/storage.md` | app JSON stores, the configurable modality-separated engine model store, move wizard, provider discovery, `ModelStorageManager`, `AppStorageRoot` test isolation, and which directories tests may write to |
 | `swift/docs/SWIFT_CONTEXT_RING.md` | the composer's context-usage indicator; the system prompt as one builder, three consumers |
 | `swift/docs/SWIFT_CHAT_SEARCH.md` | the Cmd+K search dialog: what is searched, ghost exclusion, matching semantics |
 | `swift/docs/SWIFT_MODEL_HUB.md` | install, the model hub's badges and filters, `activeLoadGuard`, selecting/opening/unloading, server multi-model attach |

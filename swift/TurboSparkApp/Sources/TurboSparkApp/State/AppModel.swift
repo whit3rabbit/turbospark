@@ -673,6 +673,8 @@ public final class AppModel: ObservableObject {
     @Published public var lmStudioDirectory: String = ""
     /// Additional custom directories to scan for models without copying.
     @Published public var customModelDirectories: [String] = []
+    /// Explicit TurboSpark store root. Empty uses TURBOSPARK_HOME or ~/.turbospark.
+    @Published public var turboSparkStoreRoot: String = ""
 
     // Installation State
     /// Whether a model download and installation task is currently running.

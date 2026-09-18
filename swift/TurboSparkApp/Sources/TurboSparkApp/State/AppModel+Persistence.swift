@@ -26,6 +26,9 @@ extension AppModel {
     /// paths from disk.
     func loadSettings() {
         let settings = MacAppSettingsFileStore.load()
+        let configuredStoreRoot = settings.turboSparkStoreRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        try? TurboSparkCatalog.setStoreRoot(configuredStoreRoot.isEmpty ? nil : configuredStoreRoot)
+        self.turboSparkStoreRoot = configuredStoreRoot
         self.maxContextTokens = Self.clampedSetting(
             settings.contextTokens, upperBound: Int(UInt32.max))
         // Not merely clamped: an out-of-set slot count is refused by
@@ -183,6 +186,7 @@ extension AppModel {
             enableLMStudioDetection: enableLMStudioDetection,
             lmStudioDirectory: lmStudioDirectory,
             customModelDirectories: customModelDirectories,
+            turboSparkStoreRoot: turboSparkStoreRoot,
             commandAdvisoryVeto: CommandGate.vetoEnabled,
             guardrailsMode: guardrailsMode.rawValue,
             modelReasoningDefaults: modelReasoningDefaults,

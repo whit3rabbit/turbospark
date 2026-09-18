@@ -121,6 +121,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var lmStudioDirectory: String
     /// User-configured custom model storage folder paths.
     public var customModelDirectories: [String]
+    /// Explicit TurboSpark store root. Empty keeps the environment default.
+    public var turboSparkStoreRoot: String
     /// Whether the local command classifier may veto an ALLOWLISTED command,
     /// sending it to the approval sheet.
     ///
@@ -256,6 +258,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         enableLMStudioDetection: Bool = true,
         lmStudioDirectory: String = "",
         customModelDirectories: [String] = [],
+        turboSparkStoreRoot: String = "",
         commandAdvisoryVeto: Bool = false,
         guardrailsMode: String = "select",
         modelReasoningDefaults: [String: String] = [:],
@@ -320,6 +323,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.enableLMStudioDetection = enableLMStudioDetection
         self.lmStudioDirectory = lmStudioDirectory
         self.customModelDirectories = customModelDirectories
+        self.turboSparkStoreRoot = turboSparkStoreRoot
         self.commandAdvisoryVeto = commandAdvisoryVeto
         self.guardrailsMode = guardrailsMode
         self.loadGuard = loadGuard
@@ -428,6 +432,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.enableLMStudioDetection = c.decodeLenient(Bool.self, forKey: .enableLMStudioDetection, fallback: true)
         self.lmStudioDirectory = c.decodeLenient(String.self, forKey: .lmStudioDirectory, fallback: "")
         self.customModelDirectories = c.decodeLenient([String].self, forKey: .customModelDirectories, fallback: [])
+        self.turboSparkStoreRoot = c.decodeLenient(String.self, forKey: .turboSparkStoreRoot, fallback: "")
         self.commandAdvisoryVeto = c.decodeLenient(Bool.self, forKey: .commandAdvisoryVeto, fallback: false)
         self.guardrailsMode = c.decodeLenient(String.self, forKey: .guardrailsMode, fallback: "select")
         self.loadGuard = c.decodeLenient(String.self, forKey: .loadGuard, fallback: "relaxed")

@@ -34,8 +34,26 @@ in the text namespace because they are accessories to text models.
 
 Existing flat installs remain readable for compatibility: legacy text and
 vision paths under `models/`, plus legacy `<alias>.image.gturbo` image paths.
-There is no automatic migration because these directories can contain
-multi-gigabyte artifacts. New installs always use the modality directories.
+New installs always use the modality directories. The Swift app exposes a
+Settings move wizard for the managed root. It copies and verifies the whole
+managed `models/` tree, registry, catalog override, and Hugging Face token,
+then removes the old managed entries only after the destination is verified.
+The destination must be empty, and the move is disabled while a model is
+loaded, generating, or installing. Provider-owned folders are never moved by
+this operation.
+
+The app persists a configured root in `MacAppSettings.turboSparkStoreRoot`
+and applies it to the Rust binding at launch. The binding uses a process-local
+override, so changing the app setting does not mutate `TURBOSPARK_HOME` for
+child processes. Clearing the setting restores the environment/default root.
+
+The Models Settings pane also detects conventional Hugging Face, LM Studio,
+and Ollama locations. Detection is read-only until the user adds a result:
+supported GGUF and GTurbo paths become scan roots, LM Studio is enabled as an
+in-place library, and Hugging Face safetensors or Ollama blob stores are
+reported as unsupported artifacts rather than copied or presented as runnable
+models. External drives and arbitrary folders use the same Additional Model
+Folders picker and are scanned in place.
 
 `InstalledModel.modality` defaults to `text` when decoding an older registry
 row. A legacy row marked `kind: "image"` is excluded from the text index, so

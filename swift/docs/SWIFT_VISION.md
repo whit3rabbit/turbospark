@@ -46,7 +46,7 @@ Each read as the model ignoring the image, all found by writing the tests.
   the prompt is rebuilt from the transcript on every agent step, so a
   picture held only in the composer is sent on step one and silently
   dropped on step two. It decodes with `decodeIfPresent` and a default
-  (`swift/docs/SWIFT_STORAGE.md`'s rule).
+  (`swift/docs/storage.md`'s rule).
 - `executeGenerationTurn`'s `guard !msg.content.isEmpty` predates images and
   drops an image-only turn whole. An image-only turn has no text and is
   still a turn.

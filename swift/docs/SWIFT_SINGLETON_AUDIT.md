@@ -10,7 +10,7 @@ The referenced roadmap task finished the batched GEMV A/B. The current
 earlier engine entries require further hardware measurements or model
 quality investigation. The cron verification and timer repair are already
 present, with mutation results and full-suite limitations recorded in
-[SWIFT_STORAGE.md](SWIFT_STORAGE.md#cron-stores-and-background-polling).
+[storage.md](storage.md#cron-stores-and-background-polling).
 They should not be reimplemented because the roadmap still lists them.
 
 This pass surveyed app-owned `static let shared` / `static var shared`

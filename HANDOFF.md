@@ -65,7 +65,7 @@ the actual root cause.
 **A store seam is not a concurrency seam.** `AppStorageRoot` makes a test's
 writes land somewhere private and says nothing about a `.shared` whose
 behaviour other code is still driving. Full write-up in
-`swift/docs/SWIFT_STORAGE.md`, closing section.
+`swift/docs/storage.md`, closing section.
 
 **"Passes under `--filter`, fails in a full run" names the mechanism.** It
 is not ordinary order-sensitivity. It says something else in the process is
