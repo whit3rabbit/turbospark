@@ -34,15 +34,6 @@ let package = Package(
                 .linkedFramework("Metal"),
                 .linkedFramework("Foundation"),
                 .linkedFramework("QuartzCore"),
-                // Rust's staticlib contains the panic personality in a
-                // separate std archive member that may precede the FFI
-                // members which reference it. Force-loading this one archive
-                // lets ld resolve that dependency when SwiftPM links a test
-                // bundle or app.
-                .unsafeFlags([
-                    "-Xlinker", "-force_load",
-                    "-Xlinker", "Sources/CTurboSpark/libturbospark_ffi.a",
-                ]),
             ]
         ),
 
@@ -56,7 +47,11 @@ let package = Package(
                 // `unsafeFlags` resolves relative to the package being built.
                 // Placed on the test target so it does not leak as an invalid
                 // relative search path to downstream consumers like TurboSparkApp.
-                .unsafeFlags(["-LSources/CTurboSpark"])
+                .unsafeFlags([
+                    "-LSources/CTurboSpark",
+                    "-Xlinker", "-force_load",
+                    "-Xlinker", "Sources/CTurboSpark/libturbospark_ffi.a",
+                ])
             ]
         ),
     ]

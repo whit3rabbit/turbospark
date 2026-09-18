@@ -33,6 +33,15 @@ mkdir -p "$dest"
 cp "$lib" "$dest/libturbospark_ffi.a"
 cp "$root/crates/ffi/include/turbospark.h" "$dest/turbospark.h"
 
+# The binding package links only this archive, so its global Rust runtime
+# symbol must remain visible. The app links Syntext's second Rust archive and
+# opts into localization through TURBOSPARK_LOCALIZE_RUST_SYMBOLS.
+if [ "${TURBOSPARK_LOCALIZE_RUST_SYMBOLS:-0}" = 1 ]; then
+  printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
+  nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
+  rm -f "$dest/.hide_symbols"
+fi
+
 # **SwiftPM DOES NOT TREAT THE ARCHIVE AS A BUILD INPUT, so without this the
 # test target links the PREVIOUS staticlib and reports on code that is no
 # longer in the tree.** The `-L` path arrives as an unsafe linker flag, which

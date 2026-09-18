@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib compile-strings swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -60,6 +60,12 @@ catalog-guard:
 swift-lib:
 	./scripts/swift-lib.sh
 
+# The app links Syntext's Rust archive as well as TurboSpark's. Keep symbol
+# localization out of `swift-lib`, because the binding package needs the
+# runtime definition to remain global for its own linker.
+swift-lib-app:
+	TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1 ./scripts/swift-lib.sh
+
 # Compiles Localization/Localizable.xcstrings into the .lproj resources the
 # app actually reads. `swift build`/`swift run` never do this themselves --
 # only Xcode's own build phase compiles a String Catalog, and this package
@@ -93,13 +99,13 @@ swift-test-real: swift-lib
 	  TURBOSPARK_TEST_IMAGE=$(IMAGE) \
 	  TURBOSPARK_TEST_IMAGE_MODEL=$(IMAGE_MODEL) swift test
 
-swift-app-build: swift-lib compile-strings
+swift-app-build: swift-lib-app compile-strings
 	cd swift/TurboSparkApp && swift build
 
-swift-app-release: swift-lib compile-strings
+swift-app-release: swift-lib-app compile-strings
 	cd swift/TurboSparkApp && swift build -c release
 
-swift-app: swift-lib compile-strings
+swift-app: swift-lib-app compile-strings
 	cd swift/TurboSparkApp && swift run TurboSparkApp
 
 swift-demo: swift-app
@@ -132,4 +138,3 @@ clean-dist:
 	rm -rf dist
 
 clean: clean-cargo clean-swift clean-dist
-

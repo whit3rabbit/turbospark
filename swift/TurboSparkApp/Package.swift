@@ -30,7 +30,11 @@ let package = Package(
                 // is correct when its tests link and wrong for everyone
                 // else, and the path below is this package's view of the
                 // same directory.
-                .unsafeFlags(["-L../TurboSpark/Sources/CTurboSpark"])
+                .unsafeFlags([
+                    "-L../TurboSpark/Sources/CTurboSpark",
+                    "-Xlinker", "-force_load",
+                    "-Xlinker", "../TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a",
+                ])
             ]
         ),
         .testTarget(
@@ -41,7 +45,11 @@ let package = Package(
                 .product(name: "Syntext", package: "syntext")
             ],
             linkerSettings: [
-                .unsafeFlags(["-L../TurboSpark/Sources/CTurboSpark"])
+                .unsafeFlags([
+                    "-L../TurboSpark/Sources/CTurboSpark",
+                    "-Xlinker", "-force_load",
+                    "-Xlinker", "../TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a",
+                ])
             ]
         )
     ]

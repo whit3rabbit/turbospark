@@ -152,11 +152,14 @@ duplicate symbol '_rust_eh_personality' in libsyntext.a and libturbospark_ffi.a
 ```
 
 ### The Fix
-In `scripts/swift-lib.sh`, immediately after copying `libturbospark_ffi.a`, the build script runs:
+When staging the archive for `TurboSparkApp`, the app build sets
+`TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1`; `scripts/swift-lib.sh` then runs:
 ```bash
-printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
-nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
-rm -f "$dest/.hide_symbols"
+if [ "${TURBOSPARK_LOCALIZE_RUST_SYMBOLS:-0}" = 1 ]; then
+  printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
+  nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
+  rm -f "$dest/.hide_symbols"
+fi
 ```
 `nmedit -R` changes `_rust_eh_personality` in `libturbospark_ffi.a` into a static (local)
 symbol. The symbol remains fully functional for exception handling within `turbospark_ffi`
