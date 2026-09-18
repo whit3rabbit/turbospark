@@ -244,6 +244,22 @@ final class SlashParityTests: XCTestCase {
         XCTAssertTrue(html.contains("<pre><code class=\"lang-swift\">let x = 1</code></pre>"))
     }
 
+    func testHTMLExportEscapesFenceLanguageAttributes() {
+        var chat = AppChat(title: "Unsafe fence")
+        chat.messages = [
+            AppChatMessage(
+                role: .assistant,
+                content: "```\" contenteditable autofocus onfocus=\"fetch('secret')\npayload\n```")
+        ]
+
+        let html = AppChatExport.html(for: chat, modelAlias: nil)
+
+        XCTAssertTrue(html.contains(
+            "<pre><code class=\"lang-&quot; contenteditable autofocus "
+                + "onfocus=&quot;fetch(&#39;secret&#39;)\">payload</code></pre>"))
+        XCTAssertFalse(html.contains("class=\"lang-\" contenteditable"))
+    }
+
     func testHTMLExportFormatMetadata() {
         let format = AppChatExportFormat.html
         XCTAssertEqual(format.fileExtension, "html")
