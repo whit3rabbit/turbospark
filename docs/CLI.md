@@ -31,7 +31,7 @@ Inspired by oMLX and Unsloth workflows, `turbospark` provides a single unified t
 | | `turbospark stop` | Stop running background server daemon |
 | | `turbospark restart [options]` | Restart background server daemon |
 | | `turbospark status` | Inspect background daemon status, port, endpoint, and health check |
-| **Agents** | `turbospark start <agent>` | Connect coding agent (`claude`, `codex`, `opencode`, `hermes`, `openclaw`, `dsh`) to local server |
+| **Agents** | `turbospark start <agent> --model <m>` | Launch a coding agent (`claude`, `codex`, `opencode`, `grok`, `gemini`, `hermes`, `openclaw`, `dsh`) against the local server, starting or restarting the daemon for the named model first. `turbospark <model> <agent>` is the same launch model-first |
 | **Models** | `turbospark list` | List catalog models, marking installed ones (`--filter TEXT`) |
 | | `turbospark pull <alias\|--repo>` | Install model into store |
 | | `turbospark info <alias>` | Inspect model details and gate targets |
@@ -105,7 +105,7 @@ turbospark serve --model-dir ~/models --api-key your-secret-key
 turbospark serve --model-dir ~/models --paged-ssd-cache-dir ~/.omlx/cache --hot-cache-max-size 20% --mcp-config mcp.json
 ```
 
-### Unsloth compatibility
+### Quick start (Unsloth style)
 
 ```sh
 # Quick interactive chat
@@ -113,12 +113,54 @@ turbospark run gemma4
 
 # Quick one-shot prompt
 turbospark run gemma4 "Explain quantum physics in three sentences"
-
-# Connect coding agents to local server (Unsloth Start style)
-turbospark start claude
-turbospark start codex
-turbospark start opencode
 ```
+
+### Coding-agent launchers
+
+Launch an external agent CLI pointed at the local TurboSpark server, the way
+opencodex points Codex and Claude Code at its proxy: the daemon is started or
+restarted for the named model, the launcher waits for `GET /health` to
+answer, then the agent is exec'd with stdio inherited and its exit status
+propagated.
+
+```sh
+# Model-first form: binary, then model, then the agent CLI.
+turbospark gemma4 claude
+turbospark gemma4 claude -- --continue        # args after -- reach the agent verbatim
+
+# Explicit form (same launch).
+turbospark start claude --model gemma4
+turbospark start codex --model gemma4 --port 9000
+
+# Print the exact command, env, and endpoint without touching anything.
+turbospark start claude --model gemma4 --dry-run
+
+# Connect to whatever the daemon is already serving (no restart).
+turbospark start claude
+```
+
+Agent flags (`--model`, `--port`, `--dry-run`) are intercepted by the
+launcher; everything after `--` reaches the agent untouched, so an
+agent-side `--model` stays reachable that way. `--model` takes an install
+path or catalog alias and is required when no server is running; when a
+daemon IS running and serves a DIFFERENT model, it is restarted on the same
+port for the named one (announced, never silent). A nonexistent install is
+refused before anything is spawned.
+
+Per-agent wiring:
+
+| Agent | Mechanism |
+|---|---|
+| `claude` | `--settings` overlay carries `ANTHROPIC_BASE_URL`, gateway model discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`), and the model slots (`ANTHROPIC_MODEL`, the OPUS/SONNET/HAIKU tier defaults, `ANTHROPIC_SMALL_FAST_MODEL`) set to `claude-turbospark-<model-id>`. The credential travels in the child env as `ANTHROPIC_API_KEY`, never in a process argument, and is skipped entirely when your own `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is exported (setting both triggers Claude Code's auth-conflict warning) |
+| `codex` | `-c` config overrides spell a `[model_providers.turbospark]` table on the command line (`model_provider`, `base_url`, `env_key`, `wire_api="chat"`) plus `-m <model-id>`, so `~/.codex/config.toml` is never written and there is nothing to restore. `TURBOSPARK_API_KEY` rides in the child env |
+| everything else | `OPENAI_BASE_URL`/`OPENAI_API_KEY` env (the generic OpenAI-compatible pair) |
+
+The endpoint is the daemon's port from `~/.turbospark/run/server.meta`
+(default 8080). Credentials: `TURBOSPARK_API_KEY` from the environment is
+handed to the agent when set; otherwise the placeholder `local` is used,
+which a loopback server without `--api-key` accepts (it serves unsecured).
+A launch against a server the launcher did not start and cannot verify says
+so rather than pretending the model is known.
 
 ## `turbospark-check`
 

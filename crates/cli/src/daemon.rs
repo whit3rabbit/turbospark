@@ -129,6 +129,63 @@ fn extract_port(args: &[String]) -> u16 {
     8080
 }
 
+/// The value following `name` in an argument list, e.g. the install after
+/// `--model`. First occurrence wins.
+fn flag_value(args: &[String], name: &str) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == name {
+            if let Some(value) = args.get(i + 1) {
+                return Some(value.clone());
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// A running daemon's own record of itself, read from `run/server.meta`
+/// with the pid verified live.
+pub struct RunningServer {
+    pub port: u16,
+    /// The `--model` argument the daemon was started with, as passed (an
+    /// alias or a path, not resolved). `None` for the scripted-tokenizer mode.
+    pub model: Option<String>,
+}
+
+/// The running daemon, or `None` when no pid file survives liveness (a dead
+/// pid cleans up its own pid and meta files, matching [`get_running_pid`]).
+pub fn running_server() -> Option<RunningServer> {
+    // The call itself is the gate: a dead pid cleans up its own pid and
+    // meta files and returns None.
+    get_running_pid()?;
+    let text = fs::read_to_string(meta_file()).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    let port = value["port"].as_u64()? as u16;
+    let args = value["args"]
+        .as_array()?
+        .iter()
+        .filter_map(|a| a.as_str().map(str::to_string))
+        .collect::<Vec<String>>();
+    let model = flag_value(&args, "--model");
+    Some(RunningServer { port, model })
+}
+
+/// The last lines of the server log, for an error message that names what
+/// went wrong rather than a file to go read.
+pub fn log_tail() -> String {
+    fs::read_to_string(log_file())
+        .unwrap_or_default()
+        .lines()
+        .rev()
+        .take(10)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn server_args_and_api_key(args: &[String]) -> (Vec<String>, Option<String>) {
     let mut server_args = Vec::with_capacity(args.len());
     let mut api_key = None;

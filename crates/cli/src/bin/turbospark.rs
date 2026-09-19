@@ -3,7 +3,7 @@
 //! Provides an intuitive and cohesive CLI compatible with oMLX and Unsloth workflows:
 //! - Interactive chat and quick prompt runner (`run`)
 //! - Foreground and background managed server (`serve`, `start`, `stop`, `restart`, `status`)
-//! - Coding agent connectors (`start claude`, `start codex`, etc.)
+//! - Coding agent connectors (`start claude`, `turbospark gemma4 claude`)
 //! - Model catalog and management (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`)
 //! - Benchmark harness (`bench`)
 //! - Image generation (`image generate`)
@@ -34,9 +34,21 @@ SERVER LIFECYCLE (oMLX style):
     restart [OPTIONS]              restart background server daemon
     status                         check server daemon status and health
 
-AGENTS (Unsloth Start style):
-    start <AGENT> [OPTIONS]        connect coding agents to local server:
-                                   claude, codex, opencode, hermes, openclaw, dsh
+AGENTS (opencodex style):
+    start <AGENT> [FLAGS] [-- AGENT_ARGS...]
+                                   connect a coding agent to the local server,
+                                   starting or restarting the daemon for the
+                                   requested model first:
+                                   claude, codex, opencode, grok, gemini,
+                                   hermes, openclaw, dsh
+    <MODEL> <AGENT> [AGENT_ARGS]   the same launch, model first:
+                                   turbospark gemma4 claude
+
+    Agent flags: --model INSTALL-OR-ALIAS (required when no server is
+    running; restarts a running daemon that serves a different model),
+    --port N (for a newly started daemon), --dry-run (print the launch
+    without touching anything). Arguments after -- pass to the agent
+    verbatim, so an agent-side --model stays reachable that way.
 
 MODEL MANAGEMENT (Unsloth & oMLX style):
     list [--filter TEXT]           list curated models, marking installed ones
@@ -237,6 +249,16 @@ fn main() -> ExitCode {
         }
         "bench" => execute_peer("turbospark-bench", rest),
         other => {
+            // `turbospark <MODEL> <AGENT> ...` is `start <AGENT> --model
+            // <MODEL> ...` with the arguments swapped. Only an AGENT in the
+            // second position triggers it, so `turbospark <model> <prompt>`
+            // stays an unknown-command error rather than becoming a launch.
+            if let Some(agent_name) = rest.first().filter(|a| agent::is_agent(a.as_str())) {
+                let mut start_args =
+                    vec![agent_name.clone(), "--model".to_string(), other.to_string()];
+                start_args.extend_from_slice(&rest[1..]);
+                return handle_start(&start_args);
+            }
             eprintln!("unknown command: {other}\n\n{USAGE}");
             ExitCode::from(2)
         }
