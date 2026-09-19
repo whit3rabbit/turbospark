@@ -4,7 +4,7 @@
 answer two different questions, and knowing which one you are asking saves a
 lot of time:
 
-- **The catalog** says what has been run here. Twenty-three rows, each naming a
+- **The catalog** says what has been run here. Twenty-four rows, each naming a
   repository and a revision that were streamed and generated on real hardware,
   with the gate targets that assert it.
 - **The probe** says what could be run here. It reads headers, costs KB and
@@ -14,6 +14,15 @@ lot of time:
 - **`recommend`** puts the two together and asks the question you probably
   came with: what should *this* machine run? See
   [below](#what-should-this-machine-run).
+
+Qwen3-VL is represented by the `qwen3_vl` family -- the trunk of the
+multimodal checkpoint, running as a text model (the vision tower is excluded
+at repack; the family's deepstack injection is open work):
+
+```sh
+turbospark-model pull qwen3vl-4b
+turbospark-check --model qwen3vl-4b --messages-file p.json
+```
 
 Qwen2/Qwen2.5 is represented by the `qwen2` family. The currently cataloged
 real artifact is the 4-bit MLX/safetensors checkpoint:

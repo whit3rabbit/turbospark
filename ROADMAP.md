@@ -9,8 +9,14 @@ All completed work, historical milestones, and landed features have been removed
 ## Current Status
 
 - **Test Suite**: Counts and gating conventions live in [docs/TESTING.md](docs/TESTING.md). A fresh `cargo test --workspace` passed on 2026-09-17 with no failures; this includes the two `turbospark-bench --test vision_sidecar_opener` cases, which now pass against the current 27-block synthetic tower. `cargo fmt --check`, full workspace Clippy, the Swift package suite (78 tests, 17 expected real-model skips), the focused app image suite (9/9), the debug app build, and the signed release app bundle are green. The broader app XCTest suite still has 34 failures in concurrent non-image work, including system-prompt/date injection, tool catalog parity, font propagation, folder import, and agent advertisement; these are not IG4 image failures.
-- **Architectures**: 13 declared `ModelFamily` variants. Dense `qwen3` GGUF execution is verified on 0.6B Q8_0. Dense Qwen2/Qwen2.5 now has a real MLX/HF 4-bit install and greedy plus sampled CLI smokes. MiniMax-M2 GGUF execution is implemented, but repetitive low-temperature smokes block release and catalog promotion. `deepseekV4Flash` remains scaffolded. The full support matrix lives in [docs/MODEL_FAMILY.md](docs/MODEL_FAMILY.md).
-- **Vision**: Dense Qwen GDN (`qwen35`, upstream `qwen3_5`) has real-gated still-image support through the CLI, server, FFI, and Swift-facing APIs, including the verified standalone vision sidecar. Qwen GDN MoE (`qwen35moe`) shares the classifier, writer, and sequential runtime path but remains structurally supported and unverified. The other 11 registered families are text-only for images. The Qwen3-VL trunk is not registered; its Phase 0 scope remains open in [docs/QWEN3VL_PHASE0.md](docs/QWEN3VL_PHASE0.md).
+- **Architectures**: 15 declared `ModelFamily` variants. The fifteenth,
+  `qwen3_vl`, landed 2026-09-18: the Qwen3-VL trunk runs the shared Llama
+  flow, the pinned `mlx-community/Qwen3-VL-4B-Instruct-4bit` install passes
+  real greedy and sampled CLI smokes with frozen quality (17.3463) and
+  memory (793 MiB at 4096) gates, and the catalog row `qwen3vl-4b` is
+  `verified`. Text-only intake; the deepstack injection is the open vision
+  half (`DEVIATIONS.md`'s `qwen3_vl` section). Dense `qwen3` GGUF execution is verified on 0.6B Q8_0. Dense Qwen2/Qwen2.5 now has a real MLX/HF 4-bit install and greedy plus sampled CLI smokes. MiniMax-M2 GGUF execution is implemented, but repetitive low-temperature smokes block release and catalog promotion. `deepseekV4Flash` remains scaffolded. The full support matrix lives in [docs/MODEL_FAMILY.md](docs/MODEL_FAMILY.md).
+- **Vision**: Dense Qwen GDN (`qwen35`, upstream `qwen3_5`) has real-gated still-image support through the CLI, server, FFI, and Swift-facing APIs, including the verified standalone vision sidecar. Qwen GDN MoE (`qwen35moe`) shares the classifier, writer, and sequential runtime path but remains structurally supported and unverified. The other 12 registered families are text-only for images, including `Qwen3Vl` (landed 2026-09-18 text-first: its tower is excluded at repack and the deepstack injection seam is the family's open vision work; [docs/QWEN3VL_PHASE0.md](docs/QWEN3VL_PHASE0.md)).
 
 ---
 
@@ -216,13 +222,43 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   - `crates/catalog/src/models.json` (only after a pinned artifact is verified)
   - `docs/VISION.md`, `docs/MODEL_FAMILY.md`
 
-#### 9b. Qwen3-VL Trunk and Deepstack Bring-up
-- **Objective**: Turn the Phase 0 findings in [docs/QWEN3VL_PHASE0.md](docs/QWEN3VL_PHASE0.md) into a registered `qwen3_vl` / `qwen3_vl_text` family only after resolving RoPE scope, deepstack fusion, checkpoint naming, and the 2B/4B artifact contract.
-- **Why Open**: The tower is close to the existing Qwen vision implementation, but the dense GQA trunk and deepstack injection are new numeric paths. The required tower, full-model, memory, quality, and cross-engine gates have not run.
+#### 9b. Qwen3-VL Trunk and Deepstack Bring-up [TEXT LANDED 2026-09-18; vision open]
+
+- **Landed (text)**: `ModelFamily::Qwen3Vl` (wire string `qwen3_vl`) is
+  registered across model-io, repack, catalog, runtime, bench, FFI and
+  Swift. The trunk is the shared Llama flow's third family (per-head q/k
+  norms + dense FFN, per `RealLlamaState`); the Phase 0 open items are
+  closed (full rotary; deepstack = raw add after trunk layers 0/1/2; naming
+  re-verified on the pinned revision, which also exposed a STALE SHARD INDEX
+  now defended against in `crates/catalog/src/stream.rs`). Real artifact:
+  `mlx-community/Qwen3-VL-4B-Instruct-4bit` @ 2fd8dacb streamed to
+  `~/.turbospark/models/text/qwen3vl-4b.gturbo`; greedy + sampled smokes
+  coherent with EndOfTurn; quality gate frozen at perplexity 17.3463 with
+  two-process digest agreement; memory oracle frozen at 793 MiB peak (4096
+  context, +0.02 MiB replay growth; TWO of three protocol cases -- sampled
+  medium-review does not terminate on this checkpoint, a documented
+  checkpoint property, tinyllama precedent). Catalog row `qwen3vl-4b` is
+  `verified` with the rot-guard byte figure. Synthetic gates: 8 parser
+  tests, 6 runtime tests (mutation-checked). GGUF intake refused by design
+  (`qwen4_exp`'s reasoning). Record: `DEVIATIONS.md`'s `qwen3_vl` section.
+- **Why Open (vision half)**: the checkpoint ships the SigLIP-class tower
+  this port already runs for `qwen3_5` PLUS three deepstack mergers whose
+  outputs raw-add into trunk layers 0/1/2's residuals at image positions.
+  That injection seam (mRoPE triples walk + per-layer adds), the tower
+  sidecar writer carrying the 18 merger tensors, and the four vision gates
+  have not run; text-only intake excludes all of it at repack.
+- **Owed (measurements)**: a cross-engine KL row (the `kld_mlx_vlm.py`
+  instrument is the reference; no CHECKPOINTS entry yet) and a
+  `scripts/power.sh` row, both unscheduled like every sibling's second-row
+  measurement. The frozen quality + oracle pair is what `verified` stands
+  on.
 - **Files to Touch / Create**:
-  - `crates/model-io/src/arch_config/family.rs`
-  - `crates/repack/src/`
-  - `crates/runtime/src/families/`, `crates/runtime/src/vision/`
+  - `crates/runtime/src/vision/` (deepstack injection)
+  - `crates/repack/src/gemma4_checkpoint/vision.rs` (18 resident tensors)
+  - `crates/repack/src/qwen36_config.rs` (`parse_vision_config` deepstack fields)
+  - `crates/catalog/src/stream.rs` (`stream_vision_sidecar` family arm)
+  - `crates/runtime/tests/` (tower + deepstack parity arms)
+
 
 #### 10. `spark2_5` Follow-ups (the bring-up itself has LANDED)
 - **Status**: the family landed in `2a1f1fc` (2026-09-09) and is not open work. `crates/runtime/src/families/spark/`, `crates/model-io/src/arch_baselines/spark.rs`, the GGUF names and config arms, the two new Metal kernels, the dialect and a catalog row all exist, and BOTH real-model gates are frozen from real runs on 2026-09-08: `spark_memory_oracle` at 575 MiB measured (ceiling 700, tok/s floor 32.0) and `spark_quality_gate` at perplexity 12.6162. The install sits at `~/.turbospark/models/spark25.gturbo`. Bring-up facts are in `docs/SPARK_PHASE0.md`.
@@ -402,6 +438,7 @@ Re-derived from `ls ~/models` and `ls ~/.turbospark/models` on **2026-09-17** (a
 | `qwen25-7b-4bit.gturbo` | 4.0G | RE-STREAMED 2026-09-17. Qwen2.5 quality, memory, CLI, and MLX cross-engine KL gates pass; catalog row is `verified` |
 | `dsv2lite-16b.gturbo` | 16G | RE-STREAMED 2026-09-17 by the concurrent DeepSeek2 bring-up; keep its ownership and gate record with that work |
 | `qwen3moe.gturbo` | 17G | RE-STREAMED 2026-09-17. `qwen3moe_{quality_gate,memory_oracle}` reproduced; same-GGUF llama.cpp KL row already frozen |
+| `qwen3vl-4b.gturbo` | 2.1G | STREAMED 2026-09-18. `qwen3vl_{quality_gate,memory_oracle}` frozen (17.3463; 793 MiB at 4096, two-case oracle); catalog row `qwen3vl-4b` `verified`. Env key `TURBOSPARK_QWEN3VL_INSTALL_DIR` |
 
 **Missing from disk** (re-pull before the dependent item can run; ornith9b, bonsai27b and tinyllama were re-pulled 2026-09-16 and removed from this list):
 - `museglimmer-30b.gturbo` (15G) -- museGlimmer steering probe + gates

@@ -128,6 +128,16 @@ TURBOSPARK_QWEN38_INSTALL_DIR=~/models/qwen38-27b.gturbo \
 TURBOSPARK_QWEN38_INSTALL_DIR=~/models/qwen38-27b.gturbo \
   cargo test -p turbospark-bench --test qwen38_quality_gate --release -- --ignored --nocapture
 
+# The FIFTEENTH family's two gates (dense, MLX INT4, the llama flow's third
+# family). The oracle drives TWO of three protocol cases: sampled at the
+# protocol's temperature, this checkpoint's medium-review answer had not
+# terminated by 3,072 new tokens (greedy ends it at 683) -- a checkpoint
+# verbosity property recorded in the oracle file, tinyllama precedent.
+TURBOSPARK_QWEN3VL_INSTALL_DIR=~/.turbospark/models/text/qwen3vl-4b.gturbo \
+  cargo test -p turbospark-bench --test qwen3vl_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_QWEN3VL_INSTALL_DIR=~/.turbospark/models/text/qwen3vl-4b.gturbo \
+  cargo test -p turbospark-bench --test qwen3vl_quality_gate --release -- --ignored --nocapture
+
 # Its two gates. NOTE the perplexity is NOT comparable to `qwen38_quality_gate`'s
 # as a quantization result even though the two share an architecture: one is
 # prism-ml's QAT checkpoint and the other Qwen's release, so a TRAINING

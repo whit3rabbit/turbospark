@@ -1,6 +1,19 @@
 # Qwen3-VL-4B Phase 0 findings (`qwen3_vl` / `qwen3_vl_text`)
 
-**Scope: write, do not build.** This is Part D of the vision memory sidecar
+**UPDATE 2026-09-18: the family LANDED, text-first.** `ModelFamily::Qwen3Vl`
+is registered, runs the shared Llama flow, and the pinned 4B checkpoint
+streams, smokes, and carries frozen quality and memory gates (catalog row
+`qwen3vl-4b`, `verified`). The open items in section 5 are now ANSWERED:
+RoPE scope is FULL (the reference constructs the rotary at the whole head
+dim; text positions collapse the mRoPE sections), deepstack's fusion is a
+RAW ADD after trunk layers 0/1/2 (read off mlx-vlm's
+`_deepstack_process`), and the pinned revision's naming was re-verified (its
+own `model.safetensors.index.json` turned out to be stale, which cost the
+first pull a 404 and is now defended in the stream path). The vision half --
+tower plus deepstack injection -- remains open work, recorded in
+`DEVIATIONS.md`'s `qwen3_vl` section.
+
+**Original scope: write, do not build.** This is Part D of the vision memory sidecar
 feature (`docs/VISION.md`) -- a fact-finding pass that scopes whether a small
 Qwen3-VL bring-up is worth doing, before any code is written. Nothing in
 `crates/` changed as a result of this page. Read `docs/NEW_MODEL.md` before

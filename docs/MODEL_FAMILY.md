@@ -112,6 +112,15 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     `language_model.*` install namespace). The pinned Qwen2.5 7B 4-bit MLX
     checkpoint is the real artifact currently exercised; unquantized BF16/FP16
     safetensors conversion is not part of this contract.
+  - `"qwen3_vl"` / `"qwen3_vl_text"` -> `ModelFamily::Qwen3Vl` (the Qwen3-VL
+    trunk: dense full-attention GQA with per-head Q/K norms, a TIED head, and
+    FULL rotary over an independent 128-wide `head_dim`, running the shared
+    Llama flow). The pinned `mlx-community/Qwen3-VL-4B-Instruct-4bit`
+    checkpoint streams, passes real greedy and sampled smokes, and has frozen
+    quality and memory gates. NOTE the exact-equality hazard this row sits
+    beside: `qwen3` (dense) and `qwen3_vl` share their first six characters,
+    and a prefix match would collapse two different families. Text-only
+    intake; see the vision table below for the deepstack boundary.
   - Muse Glimmer and `qwen4_exp` are HF-ONLY in the registry: published GGUF
     conversions of both now exist (`muse-glimmer` and `qwen4exp`,
     witnessed off unsloth's conversions, 2026-09-06 -- note the third
@@ -175,13 +184,14 @@ specific "recognized, needs X" refusal.
 | --- | --- | :---: | :---: | :---: | :---: | ---: |
 | **Gemma 4 26B-A4B** (`gemma4`) | SWA/Full Attention, MoE (128 experts, top-8), Tied Embeddings | **Full Support** | **Full Support** | Full Support | Full Support | **~2.1 GiB RAM** |
 | **Qwen 3.6 35B-A3B** (`qwen35moe`) | Gated-DeltaNet Linear Attention + MoE (256 experts, top-8) | **Full Support** | **Full Support** | Full Support | Full Support | **~1.6 GiB RAM** |
-| **DeepSeek V2-Lite / V3 line** (`deepseek2`, confirmed; the same string also reports Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3) | Multi-head Latent Attention (MLA, absorbed form over a compressed 576-half cache), DeepSeek MoE | **Implemented** (V2-Lite witness; low-temperature generation coherent and deterministic, cross-engine logits vs llama.cpp still diverge from position 1 on -- [Phase 0](DEEPSEEK2_PHASE0.md)) | *Planned* | Full Support | Full Support | ~3.6 GiB slot cache at 16 slots; KV 243 MiB at 8192 (compressed) |
+| **DeepSeek V2-Lite / V3 line** (`deepseek2`, confirmed; the same string also reports Kimi K2.5/K2.6, GLM-4.7-Flash and Mistral-Large-3) | Multi-head Latent Attention (MLA, absorbed form over a compressed 576-half cache), DeepSeek MoE | **Full Support** (V2-Lite witness; rope-pairing numerics closed against llama.cpp on identical bytes 2026-09-17, catalog promoted to `runs`, and the frozen release gates landed -- quality 14.3688 + digests, oracle 4,103 MiB. [Phase 0](DEEPSEEK2_PHASE0.md)) | *Planned* | Full Support | Full Support | ~3.6 GiB slot cache at 16 slots; KV 243 MiB at 8192 (compressed) |
 | **DeepSeek V4 Flash / Pro** (`deepseek4`, witnessed 2026-09-06) | MLA, hyper connections, SWA (window 128), 256-384 experts top-6; the Flash variant carries a VISION tower | *Scaffolded* (`DeepseekV4Flash`) | *Scaffolded* | Full Support | Not supported (absent from mlx-lm, checked 2026-09-08) | *TBD* |
 | **Mixtral 8x7B / 8x22B** (`llama` + `expert_count`) | Plain GQA attention + MoE (8 experts, top-2), no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 2, Mistral 7B, TinyLlama** (`llama`, dense) | Standard Dense Transformer, GQA | **Full Support** (ROADMAP M4) | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Qwen3 dense** (`qwen3`) | Plain GQA, per-head Q/K norm, dense SwiGLU, tied or untied head | GGUF implemented; 0.6B Q8_0 gates passed | Not assessed | [Implemented](https://github.com/ggml-org/llama.cpp/blob/e5a8d439cef31f27fad6938233da10dae1ba5631/src/models/qwen3.cpp) | [Implemented](https://github.com/ml-explore/mlx-lm/blob/745352405f0909540760fd9b9ff16d933fd9c82b/mlx_lm/models/qwen3.py) | [0.6B measurement only](MINIMAX_M2_PHASE0.md#shared-flow-regression-checks); dense |
 | **Qwen2 / Qwen2.5 dense** (`qwen2`) | Standard full-attention GQA, Q/K/V projection biases, no Q/K norm, dense SwiGLU, Qwen2 RMS epsilon 1e-6 | HF/MLX 4-bit intake and shared-flow execution are real-artifact tested; greedy and sampled CLI smokes pass. GGUF `qwen2` intake parses supported shapes, but the pinned Q3_K_M witness is header-only until a Q3_K resident kernel exists | Not assessed | Full Support | Full Support | *No frozen baseline; dense* |
+| **Qwen3-VL 4B** (`qwen3_vl`) | Dense full-attention GQA, per-head Q/K norm, dense SwiGLU, TIED head, full rotary over `head_dim` 128 (independent of hidden 2560), mRoPE sections [24, 20, 20] (text-only inert) | **Full Support** (MLX intake; frozen quality 17.3463 + 793 MiB memory rows; greedy and sampled CLI smokes pass). GGUF intake refused: real GGUFs exist but the converter's tower naming is unparsed here | Not assessed | Full Support | Full Support | **~793 MiB RAM** at 4096 context (dense; KV-dominated) |
 | **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
 | **Qwen3.8-Flash-Next / REAP-288** (`qwen4_exp`, HF only) | Fine-grained MoE (288-512 experts, top-10), GDN + sigmoid-gated norm, QSA block-sparse attention, PLE n-gram head, hyper-connections | **Full Support** | *Planned* | Full Support (`qwen4exp`) | Not supported (absent from mlx-lm, checked 2026-09-08) | **~2.5 GiB RAM** (oracle peak at the 2,048 bench window; the 68G install streams) |
 | **Llama 3.1 / 3.2 / 3.3** (`llama`, dense) | The above plus LEARNED RoPE frequency scaling, which ships as a TENSOR (`rope_freqs.weight`) and has no kernel input here | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
@@ -294,6 +304,7 @@ means image support.
 | `Gemma4` | **Text-only** | Its vision tensors are excluded at repack. SigLIP-class support remains a roadmap item. |
 | `MuseGlimmer` | **Text-only** | Vision tower, adapter, and projection tensors are excluded at repack. |
 | `Qwen4Exp` | **Text-only** | VLM configuration is recognized, but only the text tower is ingested and executed. |
+| `Qwen3Vl` | **Text-only** | The checkpoint ships a SigLIP-class tower this port already runs for `qwen3_5`, PLUS three deepstack mergers (intermediate block outputs 5/11/17 merged and raw-added into trunk layers 0-2's residuals -- the one genuinely new injection seam, read off mlx-vlm's reference). Both are excluded at repack this pass; the deepstack bring-up is the family's open vision work (`docs/QWEN3VL_PHASE0.md`). |
 | `DeepseekV4Flash` | **Text-only** | The family is scaffolded and its witnessed checkpoint carries a vision tower, but this port has no executable intake or runtime vision path. |
 | `Llama`, `Qwen3Moe`, `Qwen3Dense`, `Qwen2Dense`, `GptOss`, `Spark25`, `MiniMaxM2` | **Text-only** | No image tower is implemented for these families. |
 

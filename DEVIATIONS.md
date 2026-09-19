@@ -2051,6 +2051,57 @@ catalog records that artifact as `qwen25-7b-4bit` with status `runs`.
   Qwen2-VL, split GGUF, and native unquantized BF16/FP16 safetensors
   conversion remain outside this bring-up.
 
+## `qwen3_vl` (the fifteenth family), landed text-first with the vision seam open (2026-09-18)
+
+The Qwen3-VL trunk runs through the shared Llama flow as the third family on
+it: per-head Q/K norms (the `Qwen3Moe`/`Qwen3Dense` arm), the dense FFN, a
+TIED head, an independent `head_dim` 128 against hidden 2560, full rotary at
+theta 5e6, RMS epsilon 1e-6. The pinned
+`mlx-community/Qwen3-VL-4B-Instruct-4bit` checkpoint streams, passes real
+greedy and sampled CLI smokes, and carries frozen quality (perplexity
+17.3463) and memory (793 MiB at 4096) gates; the catalog row is
+`qwen3vl-4b`, status `verified`.
+
+- **RoPE scope, settled rather than assumed.** The config is silent on any
+  partial factor; the reference (`mlx-vlm`'s `Qwen3VLTextRotaryEmbedding`)
+  constructs the rotary at the FULL head dim, which is what silence means
+  (AGENTS.md Gotcha 39). The checkpoint declares mRoPE
+  (`mrope_interleaved: true`, sections [24, 20, 20]), but on TEXT positions
+  the reference gives every token `t == h == w` and the three sections
+  collapse, bit-identical to full-width `rope_proportional_neox` -- so the
+  text-only flow needs no mRoPE kernel at all, and the baseline carries
+  `partial_rotary_factor: 1.0` with `rope_neox_subdim: false` (the shared
+  Llama flow refuses subdim rope outside MiniMax).
+- **Deepstack is read, not built.** The checkpoint's three deepstack mergers
+  (`vision_tower.deepstack_merger_list.{0,1,2}`, 18 tensors) turn block
+  5/11/17 outputs into `[merged, out_hidden]` rows that are RAW-ADDED into
+  the trunk residual at image-token positions after trunk layers 0, 1 and 2
+  (`mx.array.at[].add`, no gate, no scale -- read off mlx-vlm's
+  `Qwen3VLModel._deepstack_process`, not inferred). Both the mergers and the
+  tower are `ExcludedMultimodal` at repack this pass, the
+  `muse_glimmer`/`qwen4_exp` precedent for a VLM family. The injection seam
+  needs the mRoPE triples walk plus a per-layer add after 0/1/2, and it is
+  the family's open vision work (`docs/QWEN3VL_PHASE0.md`).
+- **GGUF intake is refused by design.** Real Qwen3-VL GGUFs exist (llama.cpp
+  has carried the architecture), and the refusal is `qwen4_exp`'s reason, not
+  "no file to read": this port ingests the MLX safetensors, and a converter's
+  tower naming is unparsed here, so `gguf_names` maps nothing for the family
+  and `gguf_config` refuses it by name.
+- **The stale-index trap, now defended.** The pinned repo's own
+  `model.safetensors.index.json` names two shards from an earlier upload
+  while the repository carries one consolidated `model.safetensors`; the
+  first pull died on a 404 for a shard the publisher deleted. Shard
+  resolution (`crates/catalog/src/stream.rs`'s `shard_names` and
+  `fetch_prefixed_shards`) now cross-checks every index-derived name against
+  the repository's real file list before requesting it, and falls back to
+  the single-file convention when the index describes nothing that exists.
+- **The memory oracle drives TWO of the three protocol cases.** Sampled at
+  the frozen protocol's temperature, this checkpoint's `medium-review`
+  answer stays coherent and on-topic but had not terminated by 3,072 new
+  tokens, while greedy ends the same case cleanly at 683 -- a checkpoint
+  verbosity property, recorded in the oracle file on the tinyllama
+  precedent. The shared validity gate's refusal is what surfaced it.
+
 ## deepseek2 (DeepSeek V2-Lite, the tenth running family), landed 2026-09-17
 
 The `deepseek2` architecture bring-up (MLA + fine-grained MoE, witness
