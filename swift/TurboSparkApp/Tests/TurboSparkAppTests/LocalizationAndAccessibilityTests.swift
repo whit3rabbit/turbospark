@@ -187,8 +187,6 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
         XCTAssertFalse(normalTheme.isHighContrast)
         XCTAssertTrue(highContrastTheme.isHighContrast)
         XCTAssertGreaterThanOrEqual(highContrastTheme.contrast, 95.0)
-        XCTAssertEqual(highContrastTheme.borderStrokeOpacity, 0.85)
-        XCTAssertLessThan(normalTheme.borderStrokeOpacity, 0.85)
     }
 
     func testResolvedAppThemeReduceTransparency() {

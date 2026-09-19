@@ -207,13 +207,13 @@ process rather than error.
 | Field | Finding | Disposition |
 |---|---|---|
 | `dockIcon` | Persisted and rendered with no picker anywhere. | Picker added. |
-| `reduceMotion` | Honoured by `RootView`'s pane transitions only; two other surfaces read the system flag directly. | Both read the app preference now. |
+| `reduceMotion` | Honoured by `RootView`'s pane transitions only; two other surfaces read the system flag directly. | Both read the app preference now. A third surface (`ImageComposerView`) had regressed to the raw `\.accessibilityReduceMotion` flag and was converted 2026-09-19; a sweep confirmed it was the only direct reader not funneling through `shouldReduceMotion(systemReduceMotion:)`. |
 | per-mode font rows | `setUIFont`/`setCodeFont` write both configs, so a per-mode font was never representable. | Rows removed. One set of font controls. |
 | theme Import | A non-theme clipboard silently applied the TurboSpark preset. | Reports "Not a theme," changes nothing. |
 | `installedFamilies()` | Enumerated `NSFontManager` on every injector body pass, once per streamed token. | Memoized. |
 | reset | No way back to the factory theme short of hand-editing `appearance.json`; `resetTextSize()` covered sizes only. | `resetToDefaults()` (2026-09-07) restores every published field from a zero-arg `AppearanceArchive()` behind a confirmation dialog at the bottom of the pane; `testResetToDefaultsRestoresEveryField` moves all eleven fields off their defaults first so a partial reset cannot pass. |
 | `translucentSidebar`, `usePointerCursors`, `statusBarViewMode`, `diffMarkers`, `contrast`, the three hex colors | Each has a control and a reader. | No action. |
-| `ResolvedAppTheme.borderStrokeOpacity`, `.background`, `.textSize` | Zero callers. | Left in place; the font conversion is the likely consumer. |
+| `ResolvedAppTheme.borderStrokeOpacity`, `.background`, `.textSize` | Zero callers. | The promised consumer never arrived: the 09-08 font conversion consumed none of the three. `.background` picked up a real reader anyway (`AppThemeColor`'s `.page` case); `borderStrokeOpacity` and `.textSize` were DELETED 2026-09-19 together with the four test assertions that pinned their math, since a test over a dead accessor tests the accessor. Re-add on the day a call site exists. |
 
 ### The default preset is Spark Blue, and a preset must not alias the default
 
@@ -312,6 +312,41 @@ if the mechanism matters.
 Cleared after checking, so nobody re-derives them: the Profiles caption
 about isolation is accurate, `/v1/embeddings` is a real listed route, and
 every control in the Safety and Permissions panes reaches a consumer.
+
+### The 2026-09-19 re-run (full sweep)
+
+Every `MacAppSettings` field, every pane-control write, and every
+appearance field re-traced by the section 5 method. All wired. The parts
+worth recording so they are not re-derived:
+
+- **Twelve fields are mirror-followers, not direct readers.** Persistence
+  copies them into an AppModel property of a DIFFERENT name, so a plain
+  accessor grep reads them as dead and only following the mirror settles
+  it: `autoCompact` to `autoCompactEnabled` (the `AppChatCompaction`
+  guard), `actionFusion` / `observationPack` / `evidenceReducer` /
+  `todoBoundaryCompaction` to their `*Enabled` twins (the
+  `AppModel+AgentEfficiency` guards), `activeSystemPromptID` /
+  `activePersonalityID` to `selected*` (prompt assembly in
+  `AppModel+Tools`), `serverEmbeddingModel` to `serverEmbeddingModelInput`
+  (read at server start), plus `soulPrompt` (Soul + prompt assembly) and
+  `serverFavorites`. The audit doc's field-by-field table from 09-06
+  predates most of these mirrors.
+- **The server chain was verified THROUGH the ABI, not to the Swift call
+  edge.** `performServerStart` builds `ServerOptions` from
+  `serverCaptureText`, `serverEmbeddingModelInput`, `hfEndpointInput`,
+  `serverHost`, `serverAPIKeyInput`, `guardrailsMode`, the system prompt
+  and the reasoning level; `TurboSparkServer.start` encodes it to JSON for
+  `ts_server_start`; `crates/ffi/src/wire.rs` parses those keys and
+  `crates/server/src/real_model.rs` consumes `default_system` /
+  `default_reasoning`.
+- **Cron and Agents panes write through their systems**, not through
+  `model.` fields, which is why a `model.`-keyed extraction sees nothing:
+  the cron toggle is `CronScheduler.shared.setEnabled`, the agent toggle
+  writes `isEnabled`, which the agent registry filters on when resolving
+  an `agent` tool call.
+- **One wiring gap found and fixed**: `ImageComposerView` (the
+  `reduceMotion` row above).
+- **Two dead theme accessors deleted** (the table row above).
 
 ## 5. How to re-run this audit
 

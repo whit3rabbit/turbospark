@@ -26,7 +26,6 @@ public struct ResolvedAppTheme: Equatable, Sendable {
     public var contrast: Double
     public var uiFontDescriptor: AppFontDescriptor
     public var codeFontDescriptor: AppFontDescriptor
-    public var textSize: AppTextSize
     public var isHighContrast: Bool
     public var reduceTransparency: Bool
 
@@ -38,7 +37,6 @@ public struct ResolvedAppTheme: Equatable, Sendable {
         contrast: Double,
         uiFontDescriptor: AppFontDescriptor,
         codeFontDescriptor: AppFontDescriptor,
-        textSize: AppTextSize = .standard,
         isHighContrast: Bool = false,
         reduceTransparency: Bool = false
     ) {
@@ -49,7 +47,6 @@ public struct ResolvedAppTheme: Equatable, Sendable {
         self.contrast = contrast
         self.uiFontDescriptor = uiFontDescriptor
         self.codeFontDescriptor = codeFontDescriptor
-        self.textSize = textSize
         self.isHighContrast = isHighContrast
         self.reduceTransparency = reduceTransparency
     }
@@ -102,11 +99,6 @@ public struct ResolvedAppTheme: Equatable, Sendable {
     /// Secondary text that still clears WCAG AA at the configured contrast.
     public var metadataForeground: Color {
         (isHighContrast || contrast > 70) ? Color.primary.opacity(0.95) : Color.secondary
-    }
-
-    /// Stroke opacity for card and chip borders at the configured contrast.
-    public var borderStrokeOpacity: Double {
-        isHighContrast ? 0.85 : max(0.3, (contrast / 100.0) * 0.85)
     }
 
     /// Removes translucency from structural surfaces when macOS requests it.
@@ -188,7 +180,6 @@ public extension ResolvedAppTheme {
                 weight: .fromName(config.codeFontWeight),
                 size: codeSize,
                 isCode: true),
-            textSize: manager.textSize,
             isHighContrast: isHighContrast,
             reduceTransparency: reduceTransparency)
     }
@@ -227,7 +218,6 @@ public extension ResolvedAppTheme {
             family: AppFontCatalog.systemDefault, weight: .regular, size: 16, isCode: false),
         codeFontDescriptor: AppFontDescriptor(
             family: AppFontCatalog.systemDefault, weight: .regular, size: 12, isCode: true),
-        textSize: .standard,
         isHighContrast: false,
         reduceTransparency: false)
 }

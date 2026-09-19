@@ -410,21 +410,18 @@ final class AppearanceSettingsTests: XCTestCase {
             manager: manager, colorScheme: .light, installedFamilies: [])
         XCTAssertEqual(standardTheme.uiFontDescriptor.size, 14)
         XCTAssertEqual(standardTheme.codeFontDescriptor.size, 12)
-        XCTAssertEqual(standardTheme.textSize, .standard)
 
         manager.textSize = .large
         let largeTheme = ResolvedAppTheme.resolve(
             manager: manager, colorScheme: .light, installedFamilies: [])
         XCTAssertEqual(largeTheme.uiFontDescriptor.size, 16)
         XCTAssertEqual(largeTheme.codeFontDescriptor.size, 14)
-        XCTAssertEqual(largeTheme.textSize, .large)
 
         manager.textSize = .extraLarge
         let extraLargeTheme = ResolvedAppTheme.resolve(
             manager: manager, colorScheme: .light, installedFamilies: [])
         XCTAssertEqual(extraLargeTheme.uiFontDescriptor.size, 18)
         XCTAssertEqual(extraLargeTheme.codeFontDescriptor.size, 16)
-        XCTAssertEqual(extraLargeTheme.textSize, .extraLarge)
     }
 
     // MARK: - Font catalog
@@ -529,7 +526,7 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertLessThan(AppFontStep.base.factor, AppFontStep.large.factor)
     }
 
-    func testContrastDrivesMetadataAndBorderTreatment() {
+    func testContrastDrivesMetadataTreatment() {
         var low = ResolvedAppTheme.fallback
         low.contrast = 10
         var high = ResolvedAppTheme.fallback
@@ -537,10 +534,6 @@ final class AppearanceSettingsTests: XCTestCase {
 
         XCTAssertEqual(low.metadataForeground, Color.secondary)
         XCTAssertNotEqual(high.metadataForeground, Color.secondary)
-
-        // The floor keeps a border visible at contrast 0 rather than invisible.
-        XCTAssertEqual(low.borderStrokeOpacity, 0.3)
-        XCTAssertGreaterThan(high.borderStrokeOpacity, low.borderStrokeOpacity)
     }
 
     // MARK: - Bundled font registration
