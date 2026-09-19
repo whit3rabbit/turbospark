@@ -458,7 +458,7 @@ why `docs/MTP.md` is the wrong prior for it"), not the concatenation
 `qwen3_5`'s single `fc` tensor performs -- a different failure mode from the
 one Gotcha 16 warns about for that family, and `pre_fc_norm_hidden` is a
 PLAIN full-width (10240) norm, a THIRD norm shape in this family's own
-taxonomy (item 9) that appears nowhere else. Read `crates/runtime/CLAUDE.md`
+taxonomy (item 9) that appears nowhere else. Read `crates/runtime/AGENTS.md`
 Gotcha 16 for the GENERAL traps that recur on any MTP head (priming before
 first draft, rewind on rollback, centered-vs-plain norm dispatch getting
 mixed up costing 0/7168 accepted once already) -- but do not read it as a
@@ -474,7 +474,7 @@ section, above) reports it as a net win only against a PRUNED target pack
 and a net LOSS against the full 512-expert one, with acceptance-per-round
 falling as target residency shrinks -- none of which has been checked
 against THIS engine's own batched-verify cost model (Gotcha 19 in
-`crates/runtime/CLAUDE.md`: a rejected round on a recurrent trunk must
+`crates/runtime/AGENTS.md`: a rejected round on a recurrent trunk must
 snapshot and replay, and the probability of paying that rises sharply with
 block depth). Before wiring, re-derive whether a head this expensive clears
 the bar on THIS engine's rollback cost, not just on `pmlx`'s.
@@ -726,7 +726,7 @@ until the attention piece lands.
    refuses at warmup exactly as expected (2,940-token prompt over the
    2,048-token window). **The spread is wider than every other family in
    this repo's protocol table** -- roughly 25-60% case to case against the
-   few-percent spreads Gotcha 15 in `crates/bench/CLAUDE.md` records
+   few-percent spreads Gotcha 15 in `crates/bench/AGENTS.md` records
    elsewhere -- which is this family's routing profile rather than
    measurement noise: 288 experts at top-10 against a 16-slot cache means
    which experts are already resident when a case starts (left over from
@@ -854,7 +854,7 @@ apply, each reddening exactly its own cases: wrong row (`i` for
 `positions[i]`), dropped chunk offset, host forcing one chunk.
 
 **The tests were wrong twice before the mutations reddened anything, and
-both failures are worth carrying** (`crates/gpu/CLAUDE.md`'s entry has the
+both failures are worth carrying** (`crates/gpu/AGENTS.md`'s entry has the
 numbers):
 
 1. **Keys at magnitude 0.3 made the softmax near-uniform**, so the output
@@ -963,7 +963,7 @@ early) SURVIVES, and legitimately so: at exactly `top_k` complete blocks
 `select_blocks` keeps every block, the list is the identity, and the
 indexed kernel is bit-identical to the dense one on it. The boundary is
 unobservable in output and costs only the extra commit
-(`crates/runtime/CLAUDE.md` Gotcha 34).
+(`crates/runtime/AGENTS.md` Gotcha 34).
 
 ### Verified on the real install
 
@@ -1065,7 +1065,7 @@ single-row buffer left every token but the last in a micro-batch computing
 PLE from the WRONG token's n-gram embedding, silently -- caught by
 `real_forward_qwen4_chunked.rs`'s `the_chunk_boundary_does_not_move_the_logits`
 at chunk span 2, the first multi-token micro-batch the test tried. See
-`crates/runtime/CLAUDE.md` Gotcha 14's `qwen4_exp` paragraph for the full
+`crates/runtime/AGENTS.md` Gotcha 14's `qwen4_exp` paragraph for the full
 account.
 
 Verified byte-identical against sequential on the synthetic fixture
@@ -1138,7 +1138,7 @@ prompt), warmup discarded, AC power, through the new `turbospark-bench
 doing byte-identical work three times, spans **1.440x** on its own
 (46.08 to 66.37) and does so MONOTONICALLY, 66.37 then 48.59 then 46.08.
 That is a warming trend rather than noise, and it is larger than any effect
-this A/B could be looking for, so `crates/bench/CLAUDE.md` Gotcha 23's gate
+this A/B could be looking for, so `crates/bench/AGENTS.md` Gotcha 23's gate
 is not met and no magnitude here is quotable. The chunked arm is much
 tighter (1.064x), which is itself a hint about the mechanism rather than
 evidence for the feature.
@@ -1240,14 +1240,36 @@ remain unchanged. After all probes, smoke, gates and phase runs finished,
 logs and checkpoint metadata were saved and the task-created install was
 removed. Existing user models were retained.
 
+### Third attempt, six pairs (2026-09-18): the negative stands, the item is closed
+
+The pinned checkpoint was re-streamed from the same revision (see
+[the evidence](verification/qwen4-2026-09-18.json) for every number below,
+including the pull's transport deviation) and the interleaved A/B re-run
+with SIX pairs, two discarded warmups, and repeated short references on
+both ends. One environmental caveat: the sequence ran on BATTERY (both
+arms interleaved under the same power state, so the A/B discipline holds;
+the 2026-09-09 AC capture remains the absolute reference, and these
+absolute numbers read ~20% slower).
+
+Sequential prefill: 36.81 / 40.44 / 35.15 / 37.82 / 39.33 / 37.06 s (mean
+37.77, spread 5.29 s). Chunked: 35.55 / 38.12 / 35.39 / 38.07 / 38.86 /
+38.13 s (mean 37.35, spread 3.47 s). Mean saving 0.42 s, inside both
+spreads, and the per-pair signs FLIP 3/3. The phase buckets reproduce the
+2026-09-09 attribution at the new operating point: pread is 53.3% (seq) /
+53.9% (chunk) of forward total and effectively UNCHANGED between arms
+(means 22.39 s vs 22.42 s), and the long-minus-short increment is 51.8%
+pread. Three attempts (2026-09-05, 2026-09-09, 2026-09-18) now agree: at
+this checkpoint's routing profile the prefill is pread-bound and
+command-buffer batching has nothing to win. **A reproducible throughput
+gain is not merely unestablished; the structural reason is measured.**
+This item is closed as a measured negative.
+
 ### What remains
 
-- **A reproducible throughput gain** remains unestablished. The 2026-09-09
-  follow-up above completed the phase and repeated-reference measurements:
-  pread is about half the added forward cost, while the mean chunked saving
-  is smaller than the sequential reference spread. The older 2026-09-05
-  ratios also remain non-citable. Do not report either attempt as a frozen
-  speedup or change the benchmark window to obtain a different result.
+- **A reproducible throughput gain**: CLOSED 2026-09-18 as a measured
+  negative (third attempt, above). Do not re-open without a change that
+  touches the expert `pread` term itself; changing the benchmark window to
+  obtain a different result remains forbidden.
 
   Note WHICH INSTRUMENT that comparison needs. `turbospark-bench` grew a
   `--prefill-chunk` flag on 2026-09-05 and can now drive the chunked path
@@ -1261,14 +1283,119 @@ removed. Existing user models were retained.
   memory-oracle and quality-gate rows keep meaning what they say. Moving it
   to `PROTOCOL_MAX_CONTEXT` lets `long-synthesis` into the protocol and
   re-freezes every row of this family, a decision of its own.
-- A GPU top-k would remove the mid-layer commit (12 per token above budget);
-  not built, no evidence yet that it is the bottleneck.
+- A GPU top-k would remove the mid-layer commit (12 per token above budget).
+  **Profiled 2026-09-18, and the commit is now a MEASURED bottleneck; see
+  "The QSA host top-k profiled on real hardware" below.** The build is
+  justified by ROADMAP P2.1's decision rule and queued; it was not built in
+  that session, so it owes a re-pull of the install.
 - The chunked driver's family refusal in `turbospark-bench` (`--prefill-chunk`
   against an install whose family has no chunked driver) has never been read
   off a real run on this machine, because every install on disk answers
   `supports_chunked_prefill()` true and the one family that does not
   (`qwenGdnMoe`) has no install left here.
-- `crates/runtime/CLAUDE.md` Gotcha 33's one-line gap (the prefix-reuse
+- `crates/runtime/AGENTS.md` Gotcha 33's one-line gap (the prefix-reuse
   recurrent-state guard is missing a `real_qwen4.is_some()` arm) is still
   open and is unrelated to chunked prefill; inert today because nothing
   wires prefix reuse to this family yet.
+
+## Re-verification on a fresh install, and the QSA host top-k profiled (2026-09-18)
+
+The pinned checkpoint was re-streamed from
+`sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit@668f31bcc56bf9400e64c9463445eee47597c2d9`
+into the modality-separated store (`~/.turbospark/models/text/`) and every
+frozen row plus the four blocked ROADMAP items were re-run against it. All
+raw numbers, commands and the harness scripts live in
+[the evidence](verification/qwen4-2026-09-18.json). No production source
+changed; the two diagnostic builds used (the sequential-prefill patch and a
+pull-transport experiment) were applied and reverted, and the release
+binaries were rebuilt from clean sources.
+
+**The artifact is byte-faithful, proven three independent ways.** The
+quality gate reproduced perplexity 8.7224 and both frozen digests to the
+last character; the memory oracle read 2517 MiB against the 2521 MiB frozen
+row (both cases `endOfTurn`, 9.85/9.81 tok/s, replay +0.02 MiB); and
+`kv_quant_probe`'s per-width perplexities (+0.0278 / -0.0609 / +0.0315 /
++0.7081 at 3/3.5/4/2-bit) reproduce the 2026-09-09 readings to the fourth
+decimal, a deterministic quantization path over a re-streamed 68 GiB.
+
+**The KV4 sampled finding re-confirms, at identical token counts.** The
+2026-09-09 triple (KV4 sampled 542 / FP16 control 676 / KV4 greedy 499,
+all `EndOfTurn` at the 4096-window CLI pair) reproduced EXACTLY, and the
+KV4 sampled answer again opens by denying the prompt's premise ("Coastal
+wetlands do not reduce flood damage") while the matched FP16 control keeps
+it. Two installations, two source states, same shape: this remains a
+sampled answer-quality concern carried per `docs/TRUBOQUANT.md`, not a
+clean pass and not a proven general kernel regression.
+
+**`kv_quant_probe`'s footprint question is still unresolved, but the
+spread itself is now the phenomenon.** The repeated-off rows read 2516.7 /
+2546.1 / 2597.3 / 2665.7 MiB, a 149.0 MiB spread, double the 71.6 MiB of
+2026-09-09, and they trend upward across the probe's eight opens. The
+quantized peaks (+81.7 to +86.9 MiB over the first baseline) sit in the
+upper band but INSIDE the off range, so the probe's own rule holds: deltas
+within the reference spread are unresolved. What this run adds is a
+candidate cause the earlier entry said was missing: each open of the
+streamed 68 GiB install touches more resident pages than the last
+(phys_footprint counts the resident mapping on an MoE, AGENTS.md Gotcha
+19), and the warming tracks the probe's wall clock, not the KV width. An
+arm order that interleaves quantized widths BETWEEN the off rows would
+separate "quantized costs footprint" from "the run warmed up"; nobody has
+run it.
+
+**The pull's transport deviation, recorded as an observation.** Three
+HTTP/1.1-only production-binary pulls stalled at ~0.4 MB/s against the
+current `us.aws.cdn.hf.co` backends (whose DNS answer set now includes
+EC2 hosts showing millions of out-of-order packets), while single-stream
+`curl` to the same IP class ran 8.5-15 MB/s and the one pull allowed to
+negotiate HTTP/2 sustained 23-25 MB/s and completed in ~1h45. The
+completing walk ran a diagnostic build whose ONLY delta was removing
+`HttpRangeSource`'s `.http1_only()`, Gotcha 46's setting, measured when
+the bridge was CloudFront-only and worth 3.4x. n=1 per arm at different
+network moments, so this is NOT a refutation of Gotcha 46; it is a
+re-open trigger: the next multi-GB walk that crawls should A/B the flag
+before re-streaming anything else.
+
+### The QSA host top-k profiled on real hardware (2026-09-18)
+
+ROADMAP P2.1's decision rule, executed as written: interleaved
+`TURBOSPARK_QSA_FORCE_DENSE=1` vs unset through the production binary, on
+a 2,501-token prompt (450 past the 2,051 budget), `--max-context 4096`,
+warmup discarded, three pairs, `TURBOSPARK_PHASES=1`. The warmup ran on
+battery and was discarded; all six measured arms ran on AC.
+
+Decode (48 tokens per arm): sparse 4.72 / 4.86 / 4.80 s (10.17 / 9.88 /
+10.01 tok/s) against force-dense 4.43 / 4.46 / 4.39 s (10.83 / 10.76 /
+10.93 tok/s). **Force-dense is faster in 3/3 pairs**, by 0.29 / 0.40 /
+0.41 s per 48 tokens, 6.0 / 8.3 / 8.5 ms per decode token, ~7% of decode.
+Prefill shows the same direction (means 211.2 s sparse vs 206.1 s dense).
+Expert requests are byte-identical between arms (1,223,040 requests, 39.3%
+hits), so the delta is attention-path only.
+
+Attribution from the phase tables: the visible share lands in `cb1` wait, +4.90 / +1.29 / +2.52 ms per above-budget forward pass (498 of 2,548
+passes are above budget), i.e. ~0.24-0.4 ms per QSA-layer commit-and-wait
+across the 12 QSA layers, with the remainder of the arm delta in pread
+wall-overlap (same bytes requested, longer wall, because the mid-layer
+commits stall the encoder while the expert reads are in flight).
+
+The reading against the rule's own bar: the MoE router's host top-k costs
+0.13 ms/token and a GPU kernel there only relocated the sync (Do Not
+Revisit 7). The QSA commit costs ~0.24-0.4 ms PER COMMIT, twelve times per
+token, and the whole sparse apparatus is a net LOSS versus force-dense at
+~2.5K context. **The rule's build branch fires unambiguously**: build the
+kernel, and per the rule remove the WHOLE round trip, kernel-written
+sorted position list (the selection semantics of
+`compute::select_blocks`: top-`min(topk, complete)` by score with
+lower-index tie-break, ragged tail always selected, positions ascending),
+per-QSA-layer position buffers per the `attn.rs` safety note (the shared
+buffer is only safe because of the per-layer commit the kernel deletes),
+and a count-from-buffer dispatch for `attention_decode_indexed` (both
+FP16 and TurboQuant variants) since the host no longer knows the list
+length. The NaN guard on scores moves into the kernel or a debug readback;
+`compute::select_blocks` stays as the CPU oracle for parity. Below budget
+nothing changes, the frozen digests and `the_synthetic_flows_arithmetic_is_frozen` pin that, and both reproduced on this install the same day.
+
+Not built in this session (the session ended by removing the install per
+its own goal, and a numerics-critical kernel deserves better than a
+session tail): the item stays open in the ROADMAP with this profile as
+its completed first half, and the build owes a re-pull (~1h45 at the
+h2-observed rate, or ~50 min if the transport observation above holds).

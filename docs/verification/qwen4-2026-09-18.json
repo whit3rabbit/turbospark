@@ -1,0 +1,257 @@
+{
+ "date": "2026-09-18",
+ "purpose": "qwen4_exp ROADMAP re-verification on a freshly re-streamed qwen4-reap288 install: P0.3 chunked prefill, P0.4 KV4 smoke, P0.6 kv_quant_probe, P2.1 QSA force-dense profiling, plus the frozen quality/memory gate rows.",
+ "machine": "Apple M4 Max 36GB",
+ "install": {
+  "path": "~/.turbospark/models/text/qwen4-reap288.gturbo",
+  "source": "sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit@668f31bcc56bf9400e64c9463445eee47597c2d9",
+  "bytes": 73037455872,
+  "note": "streamed via `turbospark-model pull qwen4-reap288`. The completing walk ran a DIAGNOSTIC build whose only source delta was removing HttpRangeSource's `.http1_only()` (HTTP/2 allowed). Three HTTP/1.1-only production-binary attempts stalled at ~0.4 MB/s against the same us.aws.cdn.hf.co backends; single-stream curl to the same IP class ran 8.5-15 MB/s; the h2 walk sustained 23-25 MB/s. One observation each, different network moments: recorded as an observation about the current bridge backends, not a conclusion, and no production code changed."
+ },
+ "greedy_smoke": {
+  "footer": "stop=MaxTokens prefill=22tok/4.43s new=60tok decode=6.77s tok/s=8.858",
+  "note": "output matches docs/QWEN4_EXP.md's recorded greedy text"
+ },
+ "quality_gate": {
+  "result": "PASS",
+  "seconds": 240.69,
+  "perplexity": 8.7224,
+  "greedy_digest": "9f9ed49203dda1aad1b379eb503a3dd8b565d53ccc38ff417fb35e43ed9e0795",
+  "sampled_digest": "4cf6da5560936e306df09fa09bca7bd19950429e910cee2b66c93c8ed0335772",
+  "note": "all three frozen values exact on the freshly streamed install"
+ },
+ "memory_oracle": {
+  "result": "PASS",
+  "seconds": 362.26,
+  "session_peak_mib": 2517,
+  "ceiling_mib": 3000,
+  "cases": [
+   {
+    "case": "short-explanation",
+    "prefill": "62tok/7.51s",
+    "new": 403,
+    "stop": "endOfTurn",
+    "tok_s": 9.852
+   },
+   {
+    "case": "medium-review",
+    "prefill": "426tok/45.00s",
+    "new": 618,
+    "stop": "endOfTurn",
+    "tok_s": 9.812
+   }
+  ],
+  "replay_growth_mib": 0.02
+ },
+ "kv_quant_probe": {
+  "result": "assertions PASS; footprint deltas UNRESOLVED (within repeated-off range)",
+  "order": [
+   "off",
+   "off",
+   "off",
+   "3",
+   "3.5",
+   "4",
+   "2",
+   "off"
+  ],
+  "peaks_mib": [
+   2546.1,
+   2516.7,
+   2597.3,
+   2629.6,
+   2631.2,
+   2633.0,
+   2627.8,
+   2665.7
+  ],
+  "fp16": {
+   "n": 4,
+   "min_mib": 2516.7,
+   "max_mib": 2665.7,
+   "spread_mib": 149.0
+  },
+  "quantized_deltas_mib": {
+   "3": 83.5,
+   "3.5": 85.1,
+   "4": 86.9,
+   "2": 81.7
+  },
+  "ref_ppl": {
+   "off": 8.7224,
+   "3": 8.7502,
+   "3.5": 8.6615,
+   "4": 8.7539,
+   "2": 9.4305
+  },
+  "ppl_deltas": {
+   "3": 0.0278,
+   "3.5": -0.0609,
+   "4": 0.0315,
+   "2": 0.7081
+  },
+  "note": "per-width perplexities reproduce the 2026-09-09 readings to the fourth decimal on the fresh artifact. The repeated-off rows trend upward across the probe (2516.7 -> 2597.3 -> 2665.7): resident-page warming of the streamed 68 GiB install is the candidate cause of the spread itself; quantized peaks sit in the upper band but inside the off range."
+ },
+ "kv4_smokes": {
+  "settings": "context 4096, max-new 1024, 16 slots, speculation off",
+  "kv4_sampled": {
+   "stop": "EndOfTurn",
+   "new": 542,
+   "tok_s": 10.566,
+   "finding": "denies the prompt's wetlands premise: 'Coastal wetlands do not reduce flood damage'"
+  },
+  "fp16_sampled_control": {
+   "stop": "EndOfTurn",
+   "new": 676,
+   "tok_s": 10.207,
+   "finding": "keeps the premise; makes some unsupported specifics"
+  },
+  "kv4_greedy": {
+   "stop": "EndOfTurn",
+   "new": 499,
+   "tok_s": 10.795,
+   "finding": "readable"
+  },
+  "note": "token counts 542/676/499 reproduce the 2026-09-09 pair EXACTLY; the premise-denial finding re-confirms on the fresh artifact and current tree."
+ },
+ "chunked_prefill_ab": {
+  "power": "BATTERY (discharging) for the whole sequence; both arms interleaved under the same power state; AC capture 2026-09-09 remains the absolute reference",
+  "settings": "medium-review user-framed (426 tokens), context 2048, max-new 48, 16 slots, greedy seed 1, TURBOSPARK_PHASES=1, sequential arm via the recorded diagnostic TURBOSPARK_PREFILL_CHUNK=0 patch",
+  "warmups_discarded": 2,
+  "pairs": 6,
+  "seq_prefill_s": [
+   36.81,
+   40.44,
+   35.15,
+   37.82,
+   39.33,
+   37.06
+  ],
+  "chunk_prefill_s": [
+   35.55,
+   38.12,
+   35.39,
+   38.07,
+   38.86,
+   38.13
+  ],
+  "seq_forward_ms": [
+   40979,
+   44752,
+   39153,
+   42173,
+   43630,
+   41362
+  ],
+  "chunk_forward_ms": [
+   39680,
+   42086,
+   39650,
+   42231,
+   43137,
+   42502
+  ],
+  "seq_pread_ms": [
+   22222.0,
+   24439.2,
+   21074.6,
+   21845.2,
+   22893.3,
+   21860.6
+  ],
+  "chunk_pread_ms": [
+   21712.0,
+   22952.5,
+   21488.8,
+   22649.9,
+   23035.8,
+   22666.3
+  ],
+  "short_refs_forward_ms": [
+   12388,
+   11662,
+   11609,
+   12197
+  ],
+  "short_refs_pread_ms": [
+   7175.7,
+   6688.1,
+   6712.5,
+   6773.4
+  ],
+  "derived": {
+   "seq_prefill_mean_s": 37.77,
+   "chunk_prefill_mean_s": 37.35,
+   "prefill_spread_s": {
+    "seq": 5.29,
+    "chunk": 3.47
+   },
+   "mean_saving_s": 0.42,
+   "per_pair_signs": "3 favor chunk, 3 favor sequential",
+   "pread_share_of_forward": {
+    "seq": 0.533,
+    "chunk": 0.539
+   },
+   "pread_share_of_long_minus_short_increment": 0.518
+  },
+  "conclusion": "THIRD independent negative (2026-09-05, 2026-09-09, 2026-09-18): no reproducible chunked-prefill gain at this window; pread ~52-54% of forward and unchanged between arms."
+ },
+ "qsa_force_dense_ab": {
+  "settings": "2,501-token prompt (450 above the 2,051 budget), context 4096, max-new 48, 16 slots, greedy seed 1, TURBOSPARK_PHASES=1, production binary",
+  "power": "warmup on battery DISCARDED; all six measured arms on AC (charging)",
+  "pairs": [
+   {
+    "sparse_decode_s": 4.72,
+    "dense_decode_s": 4.43,
+    "sparse_tok_s": 10.174,
+    "dense_tok_s": 10.828
+   },
+   {
+    "sparse_decode_s": 4.86,
+    "dense_decode_s": 4.46,
+    "sparse_tok_s": 9.88,
+    "dense_tok_s": 10.759
+   },
+   {
+    "sparse_decode_s": 4.8,
+    "dense_decode_s": 4.39,
+    "sparse_tok_s": 10.009,
+    "dense_tok_s": 10.931
+   }
+  ],
+  "prefill_s": {
+   "sparse": [
+    207.42,
+    209.17,
+    217.02
+   ],
+   "dense": [
+    199.64,
+    205.28,
+    213.29
+   ]
+  },
+  "derived": {
+   "dense_faster_per_48_tokens_s": [
+    0.29,
+    0.4,
+    0.41
+   ],
+   "dense_faster_ms_per_decode_token": [
+    6.04,
+    8.33,
+    8.54
+   ],
+   "above_budget_forward_passes": 498,
+   "cb1_wait_delta_ms_per_above_budget_pass": [
+    4.9,
+    1.29,
+    2.52
+   ],
+   "expert_requests": "identical both arms (1,223,040 requests, 39.3% hits)"
+  },
+  "decision": "The sparse arm LOSES to force-dense at ~2.5K context in 3/3 pairs. The QSA commit round trip (~0.24-0.4 ms x 12 layers visible in cb1, plus pread-overlap perturbation) clearly exceeds the MoE router's 0.13 ms/token bar, so ROADMAP P2.1's decision rule fires its BUILD branch. The kernel (kernel-written sorted position list, per-QSA-layer position buffers, count-from-buffer indexed dispatch) is scoped and queued; NOT built in this session, and the install was removed after evidence capture per the session goal, so the build owes a re-pull."
+ },
+ "diagnostic_binaries_discarded": true,
+ "production_source_changes": "none (diagnostic patches applied and reverted; git diff clean; release binaries rebuilt from clean sources)"
+}

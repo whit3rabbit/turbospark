@@ -131,7 +131,7 @@ live network).
   f64 exp pass for the top-p normalizer, kept deliberately: an f32 exp
   would change the sampled stream. The reason it survived so long is that it is NOT INSIDE
   `produce`, so no phase bucket, GPU-busy attribution, or dispatch ranking
-  in this repo could see it (see `crates/selection/CLAUDE.md` and
+  in this repo could see it (see `crates/selection/AGENTS.md` and
   AGENTS.md Gotcha 23), and the greedy smoke passes `--temperature
   0.0001`, which is not exactly zero and so paid the same sort. The
   `MTLSharedEvent` overlap named here as a suspect was never the cause; it
@@ -1021,7 +1021,7 @@ live network).
   and the Harmony stop set. `RealForwardRunner::open` therefore refuses the
   family BY NAME and lists those four, rather than falling through to a
   neighbouring flow -- each of them produces fluent WRONG output rather
-  than an error, which is the failure mode `crates/runtime/CLAUDE.md`
+  than an error, which is the failure mode `crates/runtime/AGENTS.md`
   Gotcha 11 exists for. No real install has been walked; the fixture that
   exists (`SyntheticGgufShape::mxfp4()`) is Gemma-shaped with gpt-oss's
   block types, so it proves the routed pair dispatches inside a forward
@@ -1133,9 +1133,9 @@ live network).
   `--session-slots` pool
   (`crate::session_pool::SessionPool`) that fixes the cross-conversation
   KV-stomping hazard a single-runner server has and a per-session FFI
-  binding does not. See `crates/server/CLAUDE.md` Gotchas 31-32 and
-  `crates/runtime/CLAUDE.md` Gotcha 32.
-  `crates/runtime/CLAUDE.md` Gotcha 30 has the design and the three
+  binding does not. See `crates/server/AGENTS.md` Gotchas 31-32 and
+  `crates/runtime/AGENTS.md` Gotcha 32.
+  `crates/runtime/AGENTS.md` Gotcha 30 has the design and the three
   measured false starts.
 - **Throughput benchmark harness: implemented, in three modes.** The
   scripted default: `crates/bench`'s `turbospark-bench` runs the real
@@ -1198,7 +1198,7 @@ live network).
   inherits `RealForwardRunner`'s own scope -- the layer kinds that runner
   rejects. **Two items this sentence used to list have since landed and are
   recorded where they were done rather than here**: chunked prefill
-  (`--prefill-chunk`, wired 2026-08-26, `crates/cli/CLAUDE.md` Gotcha 7) and
+  (`--prefill-chunk`, wired 2026-08-26, `crates/cli/AGENTS.md` Gotcha 7) and
   KV reuse across chat turns (wired 2026-08-29, same file's Gotcha 14 --
   `--chat` no longer re-prefills from a reset cache).
 - `RawDecodeResult` carries ONE of the Swift original's three
@@ -1328,7 +1328,7 @@ live network).
   AS BYTES, so the lossless-repack rule is untouched: a logical row is a
   contiguous block run and a head-wide column group is a whole number of
   blocks, checked rather than assumed. See AGENTS.md Gotcha 33 and
-  `crates/repack/CLAUDE.md` Gotcha 7 for the measurements and the trap (the
+  `crates/repack/AGENTS.md` Gotcha 7 for the measurements and the trap (the
   convention belongs to an AXIS, so it reaches eight tensors and not the
   three a BF16 probe could compare).
   **THE PHASE G GATE IS MET FOR BOTH FAMILIES (2026-08-08).** The real
@@ -1513,7 +1513,7 @@ live network).
   generation it was waiting on: `ChatModel::run_completion` takes a
   `runtime::CancelFlag`, polled once per prefill and decoded token, that a
   dropped request sets (`crates/server/src/cancel.rs`,
-  `crates/server/CLAUDE.md` Gotcha 25). The lock itself is still held until
+  `crates/server/AGENTS.md` Gotcha 25). The lock itself is still held until
   that generation actually stops -- queued requests wait less, not zero --
   and cancelling is not an error: the run returns a normal result with
   `StopReason::Cancelled` and whatever it had generated, discarded silently
@@ -1559,7 +1559,7 @@ live network).
   gain matching flags: per-request penalties are a server-only concept here
   (a CLI process serves one request at a time and already has
   `--repetition-penalty`), and adding three more flags means the 5-place
-  rule (`crates/invocation/CLAUDE.md` Gotcha 1) three more times over for a
+  rule (`crates/invocation/AGENTS.md` Gotcha 1) three more times over for a
   knob nothing in this port's CLI workflow needs. That is narrower than
   `turbospark-invocation`'s fuller option set in the top_k/repetition_penalty
   sense above, but wider than plain OpenAI Chat Completions' own request
@@ -1605,7 +1605,7 @@ live network).
   and the rest of the run is emitted as plain text.
 
   **GUARDRAILS SIT ON TOP OF ALL OF THAT AND ARE ON BY DEFAULT**
-  (`--guardrails off` to disable; `crates/server/CLAUDE.md` Gotcha 18).
+  (`--guardrails off` to disable; `crates/server/AGENTS.md` Gotcha 18).
   `src/guardrails.rs` wraps `forge-guardrails` and does three things the
   decoder cannot: it RESCUES a call the decoder declined to parse out of the
   raw text (bare JSON, Qwen `<function=>` XML, Mistral `[TOOL_CALLS]`,
@@ -1873,7 +1873,7 @@ found by this sweep's server twin and fixed the same day: a NAMED block on a
 MoE install was refused for its missing MTP HEAD rather than for its
 architecture, so a GUI host was told to stream a 4.4 GB shard that cannot
 help. `auto` had the same install right, which is why only a named block could
-see it (`crates/runtime/CLAUDE.md` Gotcha 0).
+see it (`crates/runtime/AGENTS.md` Gotcha 0).
 
 **IT IS NOT BIT-IDENTICAL TO A SEQUENTIAL DECODE OVER A LONG GENERATION, and
 that claim used to be made.** A greedy speculative stream parts from a greedy

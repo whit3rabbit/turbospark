@@ -89,7 +89,7 @@ ONLY through a separate, more-parameterized opener
 protocol opener calls with `KvQuant::Off` explicitly -- the same
 structural guard `DraftPolicies` and `SteeringPolicy` already use so a new
 axis cannot reach a frozen memory-oracle or quality-gate row by accident
-(AGENTS.md Gotcha 35, `crates/bench/CLAUDE.md` Gotchas 4-5). Every family that existed when this
+(AGENTS.md Gotcha 35, `crates/bench/AGENTS.md` Gotchas 4-5). Every family that existed when this
 landed gained a `real_forward_<family>_kv_quant.rs` fixture-level suite.
 Spark landed later and initially lacked that coverage. The P0 follow-up
 below adds its seventh suite and real-install reading through the same
@@ -146,7 +146,7 @@ remaining wired families that had real installs on disk.**
 All five widths finite and deterministic (the test's own pass/fail
 criteria). **The perplexity column is not a quality reading on this
 install and should not be quoted as one**: this is the exact artifact
-`reference_ppl`'s own doc comment and `crates/bench/CLAUDE.md` Gotcha 13
+`reference_ppl`'s own doc comment and `crates/bench/AGENTS.md` Gotcha 13
 describe -- the probe's assistant prefix is empty, which is correct for
 Gemma/ChatML/Mistral/Qwen and "understates badly" for Harmony, whose
 generation prompt ends mid-frame before `<|channel|>`. A five-figure,
@@ -218,7 +218,7 @@ kv_cache.rs` sizes each layer's buffer from `kv_layer_strides`, and
 few hundred KiB cannot produce +137 MiB.
 
 The tempting replacement is one-time MSL pipeline compilation, which
-`crates/bench/CLAUDE.md` Gotcha 1 measures at +139.2 MiB, within a few MiB
+`crates/bench/AGENTS.md` Gotcha 1 measures at +139.2 MiB, within a few MiB
 of this cluster. **That does not survive the SHAPE of the data.** `bits`
 rides as a runtime uniform rather than a function constant
 (`crates/gpu/src/kv_quantize.rs` passes an empty `FunctionConstantValues`,
@@ -230,7 +230,7 @@ that goes DOWN.
 So the mechanism is unexplained, and the honest reason is that **the
 probe cannot separate it as written**: `off` runs exactly once, always
 first, and is never repeated, so there is no spread bound at all on a
-+/-135 MiB delta. `crates/bench/CLAUDE.md` Gotcha 23's "measure the
++/-135 MiB delta. `crates/bench/AGENTS.md` Gotcha 23's "measure the
 reference arm's own spread first" is not applied here. The discriminator
 is one line -- append a second `off` row to `rows` and reorder so `2` is
 not the first quantized open -- and until it runs, this number is neither
@@ -463,6 +463,44 @@ After the phase measurements documented in `QWEN4_EXP.md` completed, raw
 logs and checkpoint metadata were saved and only the task-created Qwen4
 install was removed. All pre-existing user installs were retained.
 
+### Qwen4 REAP-288 re-run on a fresh install (2026-09-18)
+
+The checkpoint was re-streamed from the same revision and the probe re-run
+identically (same row order, same window). Raw numbers in
+[the evidence](verification/qwen4-2026-09-18.json). Three things changed,
+and one did not:
+
+| width | peak MiB | delta from first off MiB | ref ppl |
+| --- | ---: | ---: | ---: |
+| off | 2546.1 | baseline | 8.7224 |
+| off | 2516.7 | -29.4 | 8.7224 |
+| off | 2597.3 | +51.2 | 8.7224 |
+| 3 | 2629.6 | +83.5 | 8.7502 |
+| 3.5 | 2631.2 | +85.1 | 8.6615 |
+| 4 | 2633.0 | +86.9 | 8.7539 |
+| 2 | 2627.8 | +81.7 | 9.4305 |
+| off | 2665.7 | +119.5 | 8.7224 |
+
+FP16 minimum/maximum/spread: **2516.7 / 2665.7 / 149.0 MiB**. The
+quantized peaks (+81.7 to +86.9 MiB) sit in the upper band but INSIDE the
+off range, so the deltas are unresolved by the probe's own rule -- the
+same verdict as 2026-09-09, now with a doubled spread. What the run adds
+is the candidate cause that entry said was missing: the off rows trend
+upward across the eight opens (2516.7 -> 2597.3 -> 2665.7), tracking the
+probe's wall clock and not the KV width -- resident-page warming of the
+streamed 68 GiB install, whose mapping phys_footprint counts (AGENTS.md
+Gotcha 19). An arm order interleaving quantized widths between the off
+rows would separate "quantized costs footprint" from "the run warmed up";
+nobody has run it.
+
+Two re-confirmations ride along. The per-width perplexities (+0.0278 /
+-0.0609 / +0.0315 / +0.7081) reproduce the 2026-09-09 readings to the
+fourth decimal on the fresh artifact, as do the KV4 CLI pair's token
+counts (KV4 sampled 542, FP16 control 676, KV4 greedy 499, all
+EndOfTurn), and the KV4 sampled answer again denies the wetlands premise
+while the matched FP16 control keeps it -- the finding re-confirms on a
+second installation and source state.
+
 ## The original assessment (2026-08-15)
 
 Kept for the record: this is what made KV quantization look like a bad
@@ -598,7 +636,7 @@ A V2-shaped 4-bit KV would need:
   addressing for a ring-buffered, GQA-shared, split-KV cache.
 - **New specialization axes done right.** Block format and group size
   would have to join `attention_constants_key` beside scale, ring
-  capacity, chunk count, and sinks (crates/gpu CLAUDE.md Gotcha 7), or
+  capacity, chunk count, and sinks (crates/gpu AGENTS.md Gotcha 7), or
   quantized dispatches silently reuse the FP16 pipeline, the exact trap
   AGENTS.md Gotcha 18 records for the ring capacity itself.
 - **A rotation stage if quality needs it**: a fixed random orthogonal

@@ -19,7 +19,7 @@ cd swift/TurboSparkApp && swift build && swift test
 
 Read `Executed N tests, with M failures`. Do not read swift-testing's
 `Test run with 0 tests in 0 suites passed`, which is the other harness and
-is what a `| tail` lands on (`swift/CLAUDE.md` Gotcha 44).
+is what a `| tail` lands on (`swift/AGENTS.md` Gotcha 44).
 
 `ROADMAP.md` Priority 0 items 6 to 9 are this work, in the tracker's own
 format and in the order to do them. Item 6 is the verification above and is
