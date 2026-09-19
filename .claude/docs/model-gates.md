@@ -160,6 +160,16 @@ TURBOSPARK_TERNARY_INSTALL_DIR=~/models/ternary27b.gturbo \
 TURBOSPARK_TERNARY_INSTALL_DIR=~/models/ternary27b.gturbo \
   cargo test -p turbospark-bench --test ternary_memory_oracle --release -- --ignored --nocapture
 
+# The Bonsai-2 line's two gates (2026-09-19, the HADAMARD-FOLDED checkpoint;
+# `docs/BONSAI2.md` is the contract's page). The install carries
+# `hadamard.bin` plus the manifest section; the frozen rows are the proof the
+# activation transforms are right -- a missing transform reads as fluent
+# output with a catastrophic perplexity, not as an error.
+TURBOSPARK_BONSAI2_INSTALL_DIR=~/.turbospark/models/text/bonsai2.gturbo \
+  cargo test -p turbospark-bench --test bonsai2_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_BONSAI2_INSTALL_DIR=~/.turbospark/models/text/bonsai2.gturbo \
+  cargo test -p turbospark-bench --test bonsai2_memory_oracle --release -- --ignored --nocapture
+
 # Their four gates. The 9B's oracle is what VERIFIED `protocol_parameters`'
 # `qwen3_5` row, which had been placed on the tokenizer's evidence alone and
 # said so: all three cases reach endOfTurn at the shared 4,096/1,024.
