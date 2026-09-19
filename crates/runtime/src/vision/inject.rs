@@ -138,7 +138,9 @@ impl PromptVision {
         // disagreement is not a runtime error later -- it is one image's
         // injection at another image's positions, which decodes fluently.
         let deepstack_len = embeddings.first().map(|e| e.deepstack.len()).unwrap_or(0);
-        if let Some(mismatched) = embeddings.iter().position(|e| e.deepstack.len() != deepstack_len)
+        if let Some(mismatched) = embeddings
+            .iter()
+            .position(|e| e.deepstack.len() != deepstack_len)
         {
             return refuse(format!(
                 "image {mismatched}: tower produced {} deepstack row set(s) against \
@@ -250,7 +252,7 @@ impl PromptVision {
         self.deepstack_buffers = self
             .deepstack
             .iter()
-            .map(|bytes| context.new_buffer_with_data(&(bytes.as_slice())))
+            .map(|bytes| context.new_buffer_with_data(bytes.as_slice()))
             .collect();
         Ok(())
     }

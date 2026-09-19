@@ -269,7 +269,7 @@ mod tests {
             vision_end_token_id: 248_054,
             image_token_id: 248_056,
             video_token_id: 248_057,
-        deepstack_visual_indexes: Vec::new(),
+            deepstack_visual_indexes: Vec::new(),
         }
     }
 

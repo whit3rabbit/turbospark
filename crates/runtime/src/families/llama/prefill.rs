@@ -133,25 +133,22 @@ impl RealForwardRunner {
         let (embed_blits, rope_positions, deepstack_rows, deepstack_buffers) =
             match self.prompt_vision.as_ref() {
                 Some(pv) => {
-                    let mut blits = Vec::with_capacity(m);
-                    let mut ropes = vec![crate::vision::RopePosition::Sequential; m];
+                    let blits: Vec<Option<Vec<u8>>> = (0..m)
+                        .map(|t| pv.row_for(start_position + t).map(<[u8]>::to_vec))
+                        .collect();
+                    let ropes: Vec<crate::vision::RopePosition> = (0..m)
+                        .map(|t| {
+                            let (a, b, c) = pv.rope_position(start_position + t);
+                            crate::vision::RopePosition::Triple(a, b, c)
+                        })
+                        .collect();
                     // Per token, the merged-row index every deepstack
                     // merger's rows share (the mergers all read the same
                     // image positions), `None` for a text position.
-                    let mut ds_rows = Vec::with_capacity(m);
-                    for t in 0..m {
-                        let position = start_position + t;
-                        blits.push(pv.row_for(position).map(<[u8]>::to_vec));
-                        let (a, b, c) = pv.rope_position(position);
-                        ropes[t] = crate::vision::RopePosition::Triple(a, b, c);
-                        ds_rows.push(pv.row_index_for(position));
-                    }
-                    (
-                        blits,
-                        ropes,
-                        ds_rows,
-                        pv.deepstack_buffers().to_vec(),
-                    )
+                    let ds_rows: Vec<Option<usize>> = (0..m)
+                        .map(|t| pv.row_index_for(start_position + t))
+                        .collect();
+                    (blits, ropes, ds_rows, pv.deepstack_buffers().to_vec())
                 }
                 // No image map: every position is an ordinary lookup at its
                 // own position, the engine this flow shipped as.
@@ -222,7 +219,8 @@ impl RealForwardRunner {
                 hidden,
             )?;
 
-            for t in 0..m {
+            for (t, rope_position) in rope_positions.iter().enumerate() {
+                let rope_position = *rope_position;
                 let position = start_position + t;
                 let x_off = (t * hidden * 2) as u64;
 
@@ -238,8 +236,17 @@ impl RealForwardRunner {
                 .map_err(gpu_err)?;
 
                 attn::encode_attention_block(
-                    context, &pass, weights, index, &arch, llama, scratch, kv, layer, position,
-                    rope_positions[t],
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    &arch,
+                    llama,
+                    scratch,
+                    kv,
+                    layer,
+                    position,
+                    rope_position,
                 )?;
 
                 // RAW residual add at this token's OWN row: this
@@ -296,8 +303,8 @@ impl RealForwardRunner {
             // dispatch per image position, from the GPU-resident rows
             // uploaded at `set_prompt_vision`; a text position adds nothing.
             if layer < deepstack_buffers.len() {
-                for t in 0..m {
-                    if let Some(row) = deepstack_rows[t] {
+                for (t, row) in deepstack_rows.iter().enumerate() {
+                    if let Some(row) = row {
                         gpu::encode_residual_add(
                             context,
                             &pass,

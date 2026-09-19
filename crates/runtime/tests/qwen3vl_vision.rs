@@ -126,7 +126,7 @@ fn preprocess_page(arch: &model_io::ArchConfig) -> turbospark_vision_io::Preproc
 /// The ids of one image prompt: text, the vision start, the pads, text.
 fn prompt_ids(merged_tokens: usize) -> Vec<i32> {
     let mut ids = vec![1000, 1001, 1002, VISION_START_ID];
-    ids.extend(std::iter::repeat(IMAGE_PAD_ID).take(merged_tokens));
+    ids.extend(std::iter::repeat_n(IMAGE_PAD_ID, merged_tokens));
     ids.extend([2000, 2001]);
     ids
 }
@@ -151,14 +151,17 @@ fn walk(runner: &mut RealForwardRunner, ids: &[i32]) -> Vec<u16> {
     let vocab = 151_936usize;
     let mut head = vec![f16::from_f32(0.0); vocab];
     for (position, &token) in ids.iter().enumerate() {
-        runner.produce(token, position, &mut head).expect("produces");
+        runner
+            .produce(token, position, &mut head)
+            .expect("produces");
     }
     head.into_iter().map(|v| v.to_bits()).collect()
 }
 
 /// Prefill the whole prompt through the chunked driver (the production
 /// site) and return its logits.
-fn chunked_walk(runner: &mut RealForwardRunner, ids: &[i32]) -> Vec<u16> {    let vocab = 151_936usize;
+fn chunked_walk(runner: &mut RealForwardRunner, ids: &[i32]) -> Vec<u16> {
+    let vocab = 151_936usize;
     let mut head = vec![f16::from_f32(0.0); vocab];
     let mut done = 0usize;
     while done < ids.len() {
@@ -212,7 +215,9 @@ fn the_deepstack_mergers_emit_three_distinct_row_sets() {
     let image = preprocess_page(&arch);
 
     let mut runner = open_install(&install);
-    let embedding = runner.encode_image(&image, &params).expect("the tower runs");
+    let embedding = runner
+        .encode_image(&image, &params)
+        .expect("the tower runs");
 
     let declared = arch.vision.deepstack_visual_indexes.len();
     assert_eq!(
@@ -279,10 +284,7 @@ fn the_deepstack_adds_move_the_trunks_logits() {
     // The clone. `packed_vision/` and `manifest.json` are hard-linked (never
     // patched); the resident bin is COPIED because that is where the
     // deepstack mergers live and what the patch writes.
-    let clone = std::env::temp_dir().join(format!(
-        "qwen3vl-vision-perturb-{}",
-        std::process::id()
-    ));
+    let clone = std::env::temp_dir().join(format!("qwen3vl-vision-perturb-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&clone);
     std::fs::create_dir_all(clone.join("packed_vision")).expect("clone dir");
     for file in ["manifest.json", "preprocessor_config.json", "config.json"] {
@@ -293,19 +295,28 @@ fn the_deepstack_adds_move_the_trunks_logits() {
     }
     for entry in std::fs::read_dir(install.join("packed_vision")).expect("packed_vision") {
         let entry = entry.expect("packed_vision entry");
-        std::fs::hard_link(entry.path(), clone.join("packed_vision").join(entry.file_name()))
-            .expect("hard-link packed_vision");
+        std::fs::hard_link(
+            entry.path(),
+            clone.join("packed_vision").join(entry.file_name()),
+        )
+        .expect("hard-link packed_vision");
     }
     // The dense install still carries an (empty) packed_experts layout the
     // open path loads; hard-link it like packed_vision.
     let _ = std::fs::create_dir_all(clone.join("packed_experts"));
     if let Ok(entries) = std::fs::read_dir(install.join("packed_experts")) {
         for entry in entries.flatten() {
-            let _ = std::fs::hard_link(entry.path(), clone.join("packed_experts").join(entry.file_name()));
+            let _ = std::fs::hard_link(
+                entry.path(),
+                clone.join("packed_experts").join(entry.file_name()),
+            );
         }
     }
-    std::fs::copy(install.join("model_weights.bin"), clone.join("model_weights.bin"))
-        .expect("copy the resident bin");
+    std::fs::copy(
+        install.join("model_weights.bin"),
+        clone.join("model_weights.bin"),
+    )
+    .expect("copy the resident bin");
 
     // Find one deepstack merger tensor and flip 32 bytes of it.
     let index = model_io::load_resident_index(&clone.join("model_weights.bin"))

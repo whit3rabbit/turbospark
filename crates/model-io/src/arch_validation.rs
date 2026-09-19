@@ -485,7 +485,9 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
     );
     check!(
         "visionDeepstackVisualIndexes",
-        a.vision_deepstack_visual_indexes.clone().unwrap_or_default(),
+        a.vision_deepstack_visual_indexes
+            .clone()
+            .unwrap_or_default(),
         e.vision.deepstack_visual_indexes
     );
     Ok(())

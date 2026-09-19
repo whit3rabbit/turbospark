@@ -1,5 +1,21 @@
 # Qwen3-VL-4B Phase 0 findings (`qwen3_vl` / `qwen3_vl_text`)
 
+**UPDATE 2026-09-19: the vision half LANDED.** The depth-24 tower plus its
+three deepstack mergers ingest combined and sidecar, the deepstack
+injection runs in the shared Llama flow (embed blit, mRoPE dispatch, the
+per-layer raw adds after trunk layers 0/1/2), and the gates ran on the real
+install: four in-repo deepstack gates (`crates/runtime/tests/
+qwen3vl_vision.rs`, including the byte-flip perturbation and the
+chunked-vs-sequential byte identity) and cross-engine parity for all SEVEN
+tower stages at cosine 0.99999+ (`scripts/vision_tower_probe.py` dumps the
+deepstack mergers too). The deepstack mergers carry the POST-SHUFFLE norm
+(`use_postshuffle_norm=True` -- norm width 4096 against the main merger's
+1024), which this page's section 1 described by shape and the bring-up
+confirmed against the reference's `PatchMerger`. `DEVIATIONS.md`'s
+`qwen3_vl` section and `docs/VISION.md`'s deepstack section own the record;
+what remains unscheduled is second-row measurement work (a KL row, a power
+row, a vision memory oracle).
+
 **UPDATE 2026-09-18: the family LANDED, text-first.** `ModelFamily::Qwen3Vl`
 is registered, runs the shared Llama flow, and the pinned 4B checkpoint
 streams, smokes, and carries frozen quality and memory gates (catalog row
@@ -9,9 +25,7 @@ dim; text positions collapse the mRoPE sections), deepstack's fusion is a
 RAW ADD after trunk layers 0/1/2 (read off mlx-vlm's
 `_deepstack_process`), and the pinned revision's naming was re-verified (its
 own `model.safetensors.index.json` turned out to be stale, which cost the
-first pull a 404 and is now defended in the stream path). The vision half --
-tower plus deepstack injection -- remains open work, recorded in
-`DEVIATIONS.md`'s `qwen3_vl` section.
+first pull a 404 and is now defended in the stream path).
 
 **Original scope: write, do not build.** This is Part D of the vision memory sidecar
 feature (`docs/VISION.md`) -- a fact-finding pass that scopes whether a small

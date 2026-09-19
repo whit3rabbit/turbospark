@@ -213,7 +213,16 @@ impl RealForwardRunner {
             .map_err(gpu_err)?;
 
             attn::encode_attention_block(
-                context, &pass, weights, index, arch, llama, scratch, kv, layer, position,
+                context,
+                &pass,
+                weights,
+                index,
+                arch,
+                llama,
+                scratch,
+                kv,
+                layer,
+                position,
                 rope_position,
             )?;
 

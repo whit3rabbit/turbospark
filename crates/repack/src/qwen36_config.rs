@@ -297,7 +297,9 @@ fn parse_qwen4_extensions(
 /// some kernel strides by, and a default would be this port inventing a number
 /// the checkpoint declined to state (AGENTS.md Gotcha 39). `mrope_section` is
 /// the one exception in SOURCE rather than in strictness: it is not in
-/// `vision_config` at all but in `text_config.rope_parameters`, because it
+/// `vision_config` at all but in the trunk's rope block -- under
+/// `text_config.rope_parameters` for the `qwen3_5` conversions and
+/// `text_config.rope_scaling` for the HF-native `qwen3_vl` one -- because it
 /// describes how the TRUNK consumes an image's positions rather than anything
 /// the tower computes.
 pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
@@ -691,9 +693,8 @@ mod vision_depth_tests {
 
     #[test]
     fn the_qwen3vl_tower_parses_with_its_deepstack_indexes() {
-        let vision =
-            parse_vision_config(&qwen3vl_vision_json(24, serde_json::json!([5, 11, 17])))
-                .expect("the 4B tower's config parses");
+        let vision = parse_vision_config(&qwen3vl_vision_json(24, serde_json::json!([5, 11, 17])))
+            .expect("the 4B tower's config parses");
         assert_eq!(vision.depth, 24);
         assert_eq!(vision.hidden_size, 1024);
         assert_eq!(vision.out_hidden_size, 2560);
@@ -715,7 +716,10 @@ mod vision_depth_tests {
     fn a_deepstack_index_past_the_depth_is_refused() {
         let err = parse_vision_config(&qwen3vl_vision_json(24, serde_json::json!([5, 24])))
             .expect_err("index 24 is past a depth-24 tower");
-        assert!(err.to_string().contains("outside this tower's depth"), "{err}");
+        assert!(
+            err.to_string().contains("outside this tower's depth"),
+            "{err}"
+        );
     }
 
     #[test]

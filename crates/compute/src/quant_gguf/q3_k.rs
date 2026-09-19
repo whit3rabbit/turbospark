@@ -54,7 +54,7 @@ pub fn q3_k_decode_scales(packed: &[u8], out: &mut [i32; 16]) {
     let tmp = aux[2];
     aux[2] = ((aux[0] >> 4) & KMASK2) | (((tmp >> 4) & KMASK1) << 4);
     aux[3] = ((aux[1] >> 4) & KMASK2) | (((tmp >> 6) & KMASK1) << 4);
-    aux[0] = (aux[0] & KMASK2) | (((tmp >> 0) & KMASK1) << 4);
+    aux[0] = (aux[0] & KMASK2) | ((tmp & KMASK1) << 4);
     aux[1] = (aux[1] & KMASK2) | (((tmp >> 2) & KMASK1) << 4);
     for (i, value) in out.iter_mut().enumerate() {
         let byte = (aux[i / 4] >> (8 * (i % 4))) & 0xFF;

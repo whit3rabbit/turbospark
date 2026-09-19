@@ -218,6 +218,23 @@ pub(crate) fn stream_mlx(
         }
     }
 
+    // The HF-native `model.visual.` spelling renames onto `vision_tower.`
+    // here, for the same three families `classify_for_family` buckets as
+    // `VisionTower` -- the SAME canonicalization `stream_vision_sidecar`
+    // already runs, so a combined walk and a sidecar walk cannot disagree
+    // about which spellings name a tower. A header carrying BOTH spellings
+    // is refused by `canonicalize_vision_header` itself; a text-only
+    // checkpoint (Ornith's declare-but-not-ship rule) carries neither and
+    // passes through untouched.
+    if matches!(
+        family,
+        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+    ) {
+        for header in &mut headers {
+            repack::canonicalize_vision_header(header).map_err(|e| e.to_string())?;
+        }
+    }
+
     // ROADMAP P2.9: a probe-driven pull of a combined VLM checkpoint keeps its
     // tower. `enable_requested_vision` above only fires on catalog-row intent,
     // which a `--repo` pull never has; the shard headers are the other half of
@@ -455,7 +472,11 @@ fn install_vision_preprocessor(
                 plan.weights
             )
         });
-    write_vision_preprocessor(&plan.weights, &dir.join("preprocessor_config.json"), fetched)
+    write_vision_preprocessor(
+        &plan.weights,
+        &dir.join("preprocessor_config.json"),
+        fetched,
+    )
 }
 
 /// The decision half of [`install_vision_preprocessor`], split so the
@@ -474,8 +495,9 @@ fn write_vision_preprocessor(
         return Ok(());
     }
     match fetched {
-        Ok(Some(bytes)) => std::fs::write(dest, bytes)
-            .map_err(|e| format!("writing {}: {e}", dest.display())),
+        Ok(Some(bytes)) => {
+            std::fs::write(dest, bytes).map_err(|e| format!("writing {}: {e}", dest.display()))
+        }
         Ok(None) => Err(format!(
             "{weights} ships a vision tower but no preprocessor_config.json; this port \
              cannot preprocess images for it, so the combined install is refused"
@@ -1045,6 +1067,27 @@ mod tests {
             // A config that could not back the tower the intent path already
             // enabled must not be consulted at all.
             "{\"text_config\": {}}",
+        )
+        .unwrap();
+        assert!(arch.vision.is_active());
+    }
+
+    /// The HF-native `model.visual.` spelling reaches the same combined
+    /// enablement, through the same canonicalization the sidecar walk runs.
+    #[test]
+    fn the_hf_native_spelling_enables_combined_vision_after_canonicalization() {
+        let plan = probe_plan();
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        let mut headers = [header_with(&["model.visual.blocks.0.norm1.weight"])];
+        for header in &mut headers {
+            repack::canonicalize_vision_header(header).unwrap();
+        }
+        enable_bytes_detected_vision(
+            &plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &headers,
+            &vision_config_text(),
         )
         .unwrap();
         assert!(arch.vision.is_active());

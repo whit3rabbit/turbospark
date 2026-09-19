@@ -895,6 +895,69 @@ Part D (a Qwen3-VL Phase 0 scoping document, `docs/QWEN3VL_PHASE0.md`) is
 deliberately documentation only, with no code: fact-finding for a future
 bring-up, not a bring-up.
 
+## The `qwen3_vl` deepstack seam (the second injection, 2026-09-19)
+
+`Qwen3Vl` is the second family with a live tower and the first with TWO
+injection points. The depth-24 tower is this page's tower one width down
+(hidden 1024, out 2560, 12 roles per block, the same merger structure), and
+everything above -- preprocessing, the patch-row layout, the 2-D rope, the
+position interpolation, the FP16 scoping, the sidecar format -- runs
+unchanged. What is new is the DEEPSTACK: three extra mergers
+(`vision_tower.deepstack_merger_list.{0,1,2}`, 18 resident tensors) whose
+outputs raw-add into the TRUNK residual at image positions after trunk
+layers 0, 1 and 2, in index order (`mlx-vlm`'s
+`Qwen3VLModel._deepstack_process`: `mx.array.at[].add` -- no gate, no scale,
+index `k`'s merger output belongs after trunk layer `k`, never after block
+`indexes[k]`).
+
+Three facts about the seam that are one mutation from a fluent wrong model:
+
+- **The deepstack merger's norm is the POST-SHUFFLE one**, the opposite of
+  the main merger's (`PatchMerger`, `use_postshuffle_norm=True`): the
+  reshape to `[merged, hidden * merge^2]` happens FIRST and the LayerNorm
+  runs on the concatenated 4096-wide row, where the main merger norms each
+  1024-wide patch row and reshapes after. The checkpoint's own shapes agree
+  (deepstack norm weight [4096], main merger norm weight [1024]), and the
+  runtime sizes every merger tensor from the config so a swap is refused
+  rather than read as a different number.
+- **The adds are GPU-side, between layer kernels.** The tower reads each
+  merger's output back to the host at capture, the rows upload once per
+  prompt into one `MetalBuffer` per declared merger, and each prefill site
+  (the chunked driver's post-layer loop AND `produce`'s dense arm) encodes
+  one `encode_residual_add` per image position after its layer's output
+  exists. A text position adds nothing; a decode position never adds.
+- **The sites are held to an EQUIVALENCE, not a review.**
+  `crates/runtime/tests/qwen3vl_vision.rs` requires the chunked driver and
+  the sequential walk to be byte-identical on a real image prompt, requires
+  the three emitted row sets to be pairwise distinct with the declared
+  geometry, and requires that flipping 32 bytes of one merger's resident
+  `fc2` MOVES the logits -- the perturbation proof that the adds are wired
+  to the merger's rows and not to a zero-filled buffer or the wrong slot.
+
+`parse_vision_config` reads the deepstack indexes (absent means empty, the
+reference config's own `default_factory`), a per-depth allowlist {24, 27}
+stands where the single depth-27 gate stood, and the mRoPE section is read
+from BOTH trunk spellings (`text_config.rope_parameters` for the
+`qwen3_5` conversions, `text_config.rope_scaling` for the HF-native
+`qwen3_vl` one). The qwen flows refuse a deepstack-declaring arch at open --
+the injection lives in the llama flow, the `qwen3_vl` trunk's flow, and a
+silent skip is competent output from a trunk that never saw the deep
+features.
+
+**Gates run on the real install (2026-09-19)**, the four-gate order with
+the stage-2 instrument extended to dump all three deepstack mergers:
+cross-engine, all seven stages agree at cosine 0.99999992 / 0.99999976 /
+0.99999660 / 0.99999413 (patch_embed / block_0 / block_23 / merger) and
+0.99999834 / 0.99999691 / 0.99999172 (deepstack mergers 0/1/2), against
+`mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacb`. Real image runs: the
+combined install AND the sidecar-attached text-only trunk describe the
+deterministic page correctly and identically at the same seed; the server
+route quotes the page's first line exactly. The MoE sibling
+(`mlx-community/Qwen3.6-35B-A3B-4bit`, same tower at depth 27, no
+deepstack) passed the same four-stage parity (cosine 0.99999995 /
+0.99999977 / 0.99999771 / 0.99999384) plus CLI and server image runs,
+which is the FIRST independent MoE vision gate.
+
 ## Current limitations and deferred work
 
 M-V0 through M-V9 are complete. The remaining work below is capability scope,

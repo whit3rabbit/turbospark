@@ -17,7 +17,7 @@ All completed work, historical milestones, and landed features have been removed
   memory (793 MiB at 4096) gates, and the catalog row `qwen3vl-4b` is
   `verified`. Text-only intake; the deepstack injection is the open vision
   half (`DEVIATIONS.md`'s `qwen3_vl` section). Dense `qwen3` GGUF execution is verified on 0.6B Q8_0. Dense Qwen2/Qwen2.5 runs three real artifacts end to end: the MLX/HF 4-bit install and both single-file GGUF conversions (the pinned official Q3_K_M on the Q3_K resident kernels, and a single-file Q4_K_M), each with frozen quality and memory rows. MiniMax-M2 GGUF execution is implemented, but repetitive low-temperature smokes block release and catalog promotion. `deepseekV4Flash` remains scaffolded. The full support matrix lives in [docs/MODEL_FAMILY.md](docs/MODEL_FAMILY.md).
-- **Vision**: Dense Qwen GDN (`qwen35`, upstream `qwen3_5`) has real-gated still-image support through the CLI, server, FFI, and Swift-facing APIs, including the verified standalone vision sidecar. Qwen GDN MoE (`qwen35moe`) shares the classifier, writer, and sequential runtime path but remains structurally supported and unverified. The other 12 registered families are text-only for images, including `Qwen3Vl` (landed 2026-09-18 text-first: its tower is excluded at repack and the deepstack injection seam is the family's open vision work; [docs/QWEN3VL_PHASE0.md](docs/QWEN3VL_PHASE0.md)).
+- **Vision**: Dense Qwen GDN (`qwen35`, upstream `qwen3_5`) has real-gated still-image support through the CLI, server, FFI, and Swift-facing APIs, including the verified standalone vision sidecar. Qwen GDN MoE (`qwen35moe`) is now real-gated too (2026-09-19): the first MoE vision artifact (`mlx-community/Qwen3.6-35B-A3B-4bit`, whose bytes carry the same 333-tensor tower) streams combined, reads a test page through the CLI and the server, and passes the four-stage mlx-vlm tower parity. `Qwen3Vl`'s deepstack vision landed the same day (2026-09-19): the depth-24 tower plus its three deepstack mergers ingest combined and sidecar, the tower emits three distinct row sets on the real bytes, the per-layer adds are perturbation-proven wired, the chunked and sequential prefill sites are byte-identical on an image prompt, and all seven tower stages agree with mlx-vlm at cosine 0.99999+. The other 12 registered families are text-only for images ([docs/QWEN3VL_PHASE0.md](docs/QWEN3VL_PHASE0.md), [docs/VISION.md](docs/VISION.md)).
 
 ---
 
@@ -217,19 +217,27 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 - **What Landed**: `turbospark-model pull-vision` is the supported production path for a standalone tower sidecar. It parses and verifies the tower, writes the sidecar, and is covered by real parity and memory evidence.
 - **Landed (2026-09-15)**: `stream_mlx` now detects a combined tower from the checkpoint's BYTES. After the shard headers are fetched, a `QwenGdnDense`/`QwenGdnMoe` pull whose headers carry `vision_tower.*` tensors enables `arch.vision` through the existing `parse_vision_config` plus hidden-size cross-check (`catalog::stream::enable_bytes_detected_vision`), and everything downstream -- classification, both writers, `packed_vision/`, the manifest, the runtime's `open_vision_tower` -- already worked. Catalog-row intent (`include_vision`) keeps its precedence and the config parser's text-only default stays: the Ornith declare-but-not-ship rule means the config alone can never decide. Tower bytes with an unparseable or hidden-size-mismatched config refuse the walk BY NAME rather than silently dropping a third of the tensors, which is the behavior this replaces.
 - **Evidence**: unit tests over the detection gate in `crates/catalog/src/stream.rs` (bytes-enable, config-declares-without-bytes stays text-only, refusal wordings, intent precedence, family gate mirroring `classify_for_family`), mutation-checked on both the enable and the bytes gate; the on-disk `vision-probe-qwen38` repo's real shard header (333 `vision_tower.` tensors) and `config.json` cross-checked against the existing combined install's manifest fields.
-- **Why Open (residual)**: a full end-to-end re-pull of a real vision repo through the new path has not been run (the on-disk probe repo is header-only); the HF-native `model.visual.` spelling remains sidecar-only in the combined walk, per its classify comment.
-- **Files to Touch**:
-  - `crates/catalog/src/stream.rs`
+- **Landed (2026-09-19, the residuals)**. Both closes ran on real bytes:
+  - **The end-to-end re-pull through the bytes-detection path**: `mlx-community/Qwen3.8-27B-4bit@3e6447f` re-streamed via `pull --repo` (a probe-driven plan, no catalog intent) to a 15.0 GiB combined install -- tower detected from the shard headers, `packed_vision/` 785 MB, `visionDepth: 27` in the manifest. One gap the re-pull EXPOSED is fixed in the same pass: `KNOWN_SIDECARS` is a tokenizer list and never named `preprocessor_config.json`, so a bytes-detected install opened, decoded text, and refused its first image ("declares no image preprocessing config"). `stream_mlx` now fetches that file by name whenever vision is enabled from bytes, refuses a tower whose repo ships none, and keeps the row-fetched copy when catalog intent already fetched it (`install_vision_preprocessor` + tests, mutation-checked). The re-pulled install then read the deterministic test page through the CLI image path, identifying the page's row structure, identifiers and keyword content.
+  - **The HF-native `model.visual.` spelling**: the combined walk now runs the SAME `canonicalize_vision_header` the sidecar walk runs, before bytes detection, on the three tower-capable families -- so a checkpoint spelling its tower `model.visual.*` enables, classifies, and ingests identically to the `vision_tower.*` spelling, and a header carrying both spellings is refused by the canonicalizer itself. Test: `the_hf_native_spelling_enables_combined_vision_after_canonicalization`.
+  - The walk's family gate widened to include `Qwen3Vl` (item 9b's combined arm uses it).
 
-#### 9a. Qwen GDN MoE Vision Validation
+#### 9a. Qwen GDN MoE Vision Validation [VERIFIED 2026-09-19]
 - **Objective**: Validate a real `qwen35moe` vision artifact through the combined and sidecar paths, including CLI, server, FFI, image-output, memory, and parity gates.
-- **Why Open**: The classifier, writer, and sequential `families/qwen/` runtime accept the shared tower shape, but no independent MoE real-model gate exists. The dense Qwen sidecar is not interchangeable because pairing uses the exact family identifier, and the MoE chunked-prefill path remains refused.
-- **Files to Touch / Create**:
-  - `crates/runtime/tests/` (MoE vision parity and real-backend arms)
-  - `crates/catalog/src/models.json` (only after a pinned artifact is verified)
+- **Landed (2026-09-19)**. The artifact question settled first, by header probe and not by download: `mlx-community/Qwen3.6-35B-A3B-4bit@38740b8` -- the SAME repo the text-only `qwen36` row streams -- carries 333 `vision_tower.*` tensors (851.8 MB, unquantized) in its first shard, a depth-27/hidden-1152 tower identical in shape to the dense one, with `out_hidden_size: 2048` equal to the MoE trunk's hidden size and `deepstack_visual_indexes: []`. The sibling Ornith repo, the known declare-but-not-ship negative, ships no tower bytes. No code changed for the MoE combined pull to work: the 2026-09-15 bytes-detection gate already named `QwenGdnMoe`, and the writer, classifier and runtime accepted it -- the item was validation, exactly as written. Evidence, all on the real install:
+  - **Combined pull**: 19.0 GiB streamed, `packed_vision/` present, `visionDepth: 27`, `preprocessor_config.json` fetched by the new bytes-path rule.
+  - **CLI**: greedy text smoke clean (EndOfTurn); greedy + sampled image prompts read the deterministic test page accurately (row structure, the literal identifiers `00012`/`00030`/`00048`, the page's own keyword list).
+  - **Server**: an OpenAI-route image request on the combined install returns a precise reading of the page.
+  - **Parity (stage 2)**: the four tower stages agree with mlx-vlm's `qwen3_vl` reference at cosine 0.99999995 / 0.99999977 / 0.99999771 / 0.99999384 (patch_embed / block_0 / block_26 / merger) -- the FIRST independent MoE vision gate.
+  - **Sidecar**: `pull-vision` wrote a standalone MoE tower sidecar (`qwen36-tower`, 333 tensors) that verifies and pairs with family `qwen36`/hidden 2048. The attach arm is unreachable for THIS artifact by construction: every pull of the repo now bytes-detects the tower, so no towerless MoE trunk of it exists to attach to -- the attach code path itself is the family-gated code the `qwen3vl` sidecar arms exercise.
+  - **Refusals verified in the same pass**: a llama-MoE chunked prefill with a vision map active refuses by name; the qwen flows refuse a deepstack-declaring arch at open (the injection lives in the llama flow alone).
+  - **Not done, recorded**: a frozen MoE vision MEMORY oracle (the `vision_memory_oracle` baselines are dense-qwen38-tied); a catalog row for the MoE vision install. Both are the second-row measurement work every sibling family schedules separately; peak RSS on the CLI image run measured 7.4 GB at the auto-resolved 262,144 context (KV-dominated), recorded here as a number with its window rather than a frozen gate.
+- **Files Touched**:
+  - `crates/catalog/src/stream.rs` (preprocessor fetch, canonicalization, single-file fallback)
+  - `scripts/fetch_vision_tower.py` (stale-index cross-check, shared with the catalog fix)
   - `docs/VISION.md`, `docs/MODEL_FAMILY.md`
 
-#### 9b. Qwen3-VL Trunk and Deepstack Bring-up [TEXT LANDED 2026-09-18; vision open]
+#### 9b. Qwen3-VL Trunk and Deepstack Bring-up [LANDED 2026-09-19: text + vision]
 
 - **Landed (text)**: `ModelFamily::Qwen3Vl` (wire string `qwen3_vl`) is
   registered across model-io, repack, catalog, runtime, bench, FFI and
@@ -248,23 +256,63 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
   `verified` with the rot-guard byte figure. Synthetic gates: 8 parser
   tests, 6 runtime tests (mutation-checked). GGUF intake refused by design
   (`qwen4_exp`'s reasoning). Record: `DEVIATIONS.md`'s `qwen3_vl` section.
-- **Why Open (vision half)**: the checkpoint ships the SigLIP-class tower
-  this port already runs for `qwen3_5` PLUS three deepstack mergers whose
-  outputs raw-add into trunk layers 0/1/2's residuals at image positions.
-  That injection seam (mRoPE triples walk + per-layer adds), the tower
-  sidecar writer carrying the 18 merger tensors, and the four vision gates
-  have not run; text-only intake excludes all of it at repack.
+- **Landed (vision, 2026-09-19)**: the deepstack injection is the family's
+  second seam and it runs end to end on the real bytes.
+  - **Intake**: `parse_vision_config` reads `deepstack_visual_indexes` (the
+    format's own default makes absence empty) and a per-depth allowlist
+    {24, 27}; the tower writer ingests the 18 merger tensors as residents
+    under `vision.deepstack_merger_list.{k}.*` whenever the config declares
+    indexes, and refuses declared-but-missing or shipped-but-undeclared by
+    name; `classify_for_family` buckets `Qwen3Vl`'s tower; the combined and
+    sidecar walks both accept the family. The combined install
+    (`qwen3vl-4b-vision`, 2.9 GiB) carries `visionDeepstackVisualIndexes:
+    [5, 11, 17]`; the standalone tower sidecar (`qwen3vl-tower`, 792.4 MB)
+    verifies and pairs with the text-only trunk.
+  - **Injection**: the deepstack merger is the main merger's structure with
+    the POST-SHUFFLE norm (`use_postshuffle_norm=True`, norm weight [4096]
+    vs the main merger's [1024] -- read off mlx-vlm's `PatchMerger`, not
+    assumed); its output raw-adds into the trunk residual at image
+    positions after trunk layers 0/1/2 in index order. The llama flow (the
+    family's trunk) gained the three things a second flow needs: the embed
+    blit at image positions (both sites -- chunked driver AND sequential
+    `produce`), the mRoPE `RopePosition` seam (KV slot and span stay raw;
+    `t == h == w` still takes the pre-existing kernel; decode positions
+    continue at `position + rope_delta`), and the per-layer adds from
+    GPU-resident rows uploaded once per prompt. `set_prompt_vision` refuses
+    a tower row-set count that disagrees with the config's declaration.
+  - **Gates, all passing on the real install** (`crates/runtime/tests/
+    qwen3vl_vision.rs`): the tower emits THREE DISTINCT deepstack row sets
+    with the declared geometry; flipping 32 bytes of one merger's `fc2`
+    moves the prefill logits (the add is wired, in both prefill sites); the
+    chunked driver and the sequential walk are byte-identical on an image
+    prompt; the position walk places the real page. Cross-engine (stage 2):
+    all SEVEN tower stages agree with mlx-vlm at cosine 0.99999992 /
+    0.99999976 / 0.99999660 / 0.99999413 (patch_embed / block_0 / block_23
+    / merger) and 0.99999834 / 0.99999691 / 0.99999172 (the three deepstack
+    mergers -- `scripts/vision_tower_probe.py` dumps them). Real image runs:
+    greedy and sampled CLI prompts on the combined install AND the
+    sidecar-attached text-only trunk describe the page correctly (the two
+    agree token for token at the same seed); the server route quotes the
+    page's first line exactly.
+  - **One parse fix the pulls forced**: `parse_vision_config` read the mRoPE
+    section only from `text_config.rope_parameters`; the HF-native
+    `qwen3_vl` conversion spells it `text_config.rope_scaling`. Both are
+    read now, and a tower with neither is refused by name.
 - **Owed (measurements)**: a cross-engine KL row (the `kld_mlx_vlm.py`
   instrument is the reference; no CHECKPOINTS entry yet) and a
   `scripts/power.sh` row, both unscheduled like every sibling's second-row
   measurement. The frozen quality + oracle pair is what `verified` stands
+  on for text; the vision evidence above is the vision release bar,
+  `vision_tower_parity` being the gate the dense sidecar's `verified` rests
   on.
-- **Files to Touch / Create**:
-  - `crates/runtime/src/vision/` (deepstack injection)
+- **Files Touched**:
+  - `crates/runtime/src/vision/` (deepstack injection, stages, resident
+    resolution)
+  - `crates/runtime/src/families/llama/` (embed blit, mRoPE seam, layer adds)
   - `crates/repack/src/gemma4_checkpoint/vision.rs` (18 resident tensors)
   - `crates/repack/src/qwen36_config.rs` (`parse_vision_config` deepstack fields)
   - `crates/catalog/src/stream.rs` (`stream_vision_sidecar` family arm)
-  - `crates/runtime/tests/` (tower + deepstack parity arms)
+  - `crates/runtime/tests/qwen3vl_vision.rs` (deepstack gates)
 
 
 #### 10. `spark2_5` Follow-ups (the bring-up itself has LANDED)
@@ -449,6 +497,12 @@ Re-derived from `ls ~/models` and `ls ~/.turbospark/models` on **2026-09-17** (a
 | `dsv2lite-16b.gturbo` | 16G | RE-STREAMED 2026-09-17 by the concurrent DeepSeek2 bring-up; keep its ownership and gate record with that work |
 | `qwen3moe.gturbo` | 17G | RE-STREAMED 2026-09-17. `qwen3moe_{quality_gate,memory_oracle}` reproduced; same-GGUF llama.cpp KL row already frozen |
 | `qwen3vl-4b.gturbo` | 2.1G | STREAMED 2026-09-18. `qwen3vl_{quality_gate,memory_oracle}` frozen (17.3463; 793 MiB at 4096, two-case oracle); catalog row `qwen3vl-4b` `verified`. Env key `TURBOSPARK_QWEN3VL_INSTALL_DIR` |
+| `qwen38-27b-vision-repull.gturbo` | 15G | STREAMED 2026-09-19 through the bytes-detection path (item 9's residual), image-gated on the CLI, then REMOVED per the session's space goal. Re-pull `pull --repo "mlx-community/Qwen3.8-27B-4bit@3e6447f082e89cc7f0bc6e5441afd38dfce760ff" --alias qwen38-27b-vision-repull` |
+| `qwen36-vision.gturbo` | 19G | STREAMED 2026-09-19 (9a's MoE vision artifact; CLI + server + tower-parity gated), then REMOVED. Re-pull `pull --repo "mlx-community/Qwen3.6-35B-A3B-4bit@38740b847e4cb78f352aba30aa41c76e08e6eb46" --alias qwen36-vision` |
+| `qwen36.gturbo` | 19G | RE-STREAMED 2026-09-19 (its bytes carry the tower, so the pull is combined), then REMOVED |
+| `qwen3vl-4b-vision.gturbo` | 2.9G | STREAMED 2026-09-19 (9b's combined deepstack install; all four real-install gates + 7-stage parity), then REMOVED. Re-pull `pull --repo "mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b" --alias qwen3vl-4b-vision` |
+| `qwen3vl-tower.gturbo-vision`, `qwen36-tower.gturbo-vision` | 0.8G, 0.9G | Sidecar towers STREAMED 2026-09-19 (`pull-vision`), attach- and parity-gated, then REMOVED |
+| `vision-probe-qwen3vl/`, `vision-probe-qwen36/` (in `~/.turbospark/`) | 0.8G each | Reference tower dumps for `vision_tower_probe.py` (mlx-vlm stage-2 parity), then REMOVED |
 
 **Missing from disk** (re-pull before the dependent item can run; ornith9b, bonsai27b and tinyllama were re-pulled 2026-09-16 and removed from this list):
 - `museglimmer-30b.gturbo` (15G) -- museGlimmer steering probe + gates

@@ -348,7 +348,9 @@ pub fn read_vision_entries(
                 Gemma4Error::UnknownTensor(format!("{name}: no deepstack merger index and suffix"))
             })?;
             let index: usize = index.parse().map_err(|_| {
-                Gemma4Error::UnknownTensor(format!("{name}: deepstack merger index is not a number"))
+                Gemma4Error::UnknownTensor(format!(
+                    "{name}: deepstack merger index is not a number"
+                ))
             })?;
             // An undeclared merger is an UNKNOWN NAME, not an extra one: the
             // runtime injects exactly `deepstack_visual_indexes.len()`

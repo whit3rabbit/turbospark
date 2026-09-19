@@ -2072,7 +2072,7 @@ single-file Q4_K_M GGUF (catalog `qwen25-7b-q4km`).
   experts would fail at the routed dispatch by name (no routed pair), the
   same weaker footing Q6_K and Q5_K stand on.
 
-## `qwen3_vl` (the fifteenth family), landed text-first with the vision seam open (2026-09-18)
+## `qwen3_vl` (the fifteenth family), landed text-first (2026-09-18) with the deepstack vision (2026-09-19)
 
 The Qwen3-VL trunk runs through the shared Llama flow as the third family on
 it: per-head Q/K norms (the `Qwen3Moe`/`Qwen3Dense` arm), the dense FFN, a
@@ -2093,16 +2093,23 @@ greedy and sampled CLI smokes, and carries frozen quality (perplexity
   text-only flow needs no mRoPE kernel at all, and the baseline carries
   `partial_rotary_factor: 1.0` with `rope_neox_subdim: false` (the shared
   Llama flow refuses subdim rope outside MiniMax).
-- **Deepstack is read, not built.** The checkpoint's three deepstack mergers
+- **Deepstack LANDED 2026-09-19 (previously the open vision work).** The
+  checkpoint's three deepstack mergers
   (`vision_tower.deepstack_merger_list.{0,1,2}`, 18 tensors) turn block
   5/11/17 outputs into `[merged, out_hidden]` rows that are RAW-ADDED into
   the trunk residual at image-token positions after trunk layers 0, 1 and 2
   (`mx.array.at[].add`, no gate, no scale -- read off mlx-vlm's
-  `Qwen3VLModel._deepstack_process`, not inferred). Both the mergers and the
-  tower are `ExcludedMultimodal` at repack this pass, the
-  `muse_glimmer`/`qwen4_exp` precedent for a VLM family. The injection seam
-  needs the mRoPE triples walk plus a per-layer add after 0/1/2, and it is
-  the family's open vision work (`docs/QWEN3VL_PHASE0.md`).
+  `Qwen3VLModel._deepstack_process`, not inferred). The mergers are built
+  with the POST-SHUFFLE norm (`use_postshuffle_norm=True`, norm width 4096
+  against the main merger's 1024) -- the one structural difference from the
+  main merger, and the one a structurally-similar copy would get wrong.
+  Everything runs: combined and sidecar intake, the tower's three row sets
+  on the real bytes, the llama flow's embed blit + mRoPE seam + per-layer
+  adds (chunked and sequential sites byte-identical), the byte-flip
+  perturbation proof, and all seven tower stages against mlx-vlm at cosine
+  0.99999+. Owed, unscheduled like every sibling's second-row measurement:
+  a cross-engine KL row and a power row; a vision MEMORY oracle (the frozen
+  text oracle stands). GGUF intake stays refused (below).
 - **GGUF intake is refused by design.** Real Qwen3-VL GGUFs exist (llama.cpp
   has carried the architecture), and the refusal is `qwen4_exp`'s reason, not
   "no file to read": this port ingests the MLX safetensors, and a converter's

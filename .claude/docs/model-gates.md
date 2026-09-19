@@ -138,6 +138,19 @@ TURBOSPARK_QWEN3VL_INSTALL_DIR=~/.turbospark/models/text/qwen3vl-4b.gturbo \
 TURBOSPARK_QWEN3VL_INSTALL_DIR=~/.turbospark/models/text/qwen3vl-4b.gturbo \
   cargo test -p turbospark-bench --test qwen3vl_quality_gate --release -- --ignored --nocapture
 
+# The qwen3_vl DEEPSTACK gates (vision half, 2026-09-19): the four in-repo
+# deepstack gates plus the seven-stage mlx-vlm parity, all on the combined
+# install (2.9 GiB, re-pull per ROADMAP's artifact table). The page is
+# `scripts/make_vision_test_page.py --size 1024 1280`; the dump comes from
+# `scripts/vision_tower_probe.py --mode dump` (it captures the three
+# deepstack mergers too).
+TURBOSPARK_QWEN3VL_VISION_INSTALL_DIR=~/.turbospark/models/text/qwen3vl-4b-vision.gturbo \
+TURBOSPARK_QWEN3VL_VISION_PAGE=~/.turbospark/vision-pages/page.png \
+  cargo test -p turbospark-runtime --test qwen3vl_vision --release -- --ignored --nocapture
+TURBOSPARK_QWEN38_VISION_INSTALL_DIR=~/.turbospark/models/text/qwen3vl-4b-vision.gturbo \
+TURBOSPARK_VISION_DUMP_DIR=/tmp/qwen3vl-vision-dump \
+  cargo test -p turbospark-runtime --test vision_tower_parity --release -- --ignored --nocapture the_tower_agrees
+
 # Its two gates. NOTE the perplexity is NOT comparable to `qwen38_quality_gate`'s
 # as a quantization result even though the two share an architecture: one is
 # prism-ml's QAT checkpoint and the other Qwen's release, so a TRAINING
