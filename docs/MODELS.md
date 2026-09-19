@@ -4,7 +4,7 @@
 answer two different questions, and knowing which one you are asking saves a
 lot of time:
 
-- **The catalog** says what has been run here. Twenty-four rows, each naming a
+- **The catalog** says what has been run here. Twenty-seven rows, each naming a
   repository and a revision that were streamed and generated on real hardware,
   with the gate targets that assert it.
 - **The probe** says what could be run here. It reads headers, costs KB and
@@ -24,19 +24,26 @@ turbospark-model pull qwen3vl-4b
 turbospark-check --model qwen3vl-4b --messages-file p.json
 ```
 
-Qwen2/Qwen2.5 is represented by the `qwen2` family. The currently cataloged
-real artifact is the 4-bit MLX/safetensors checkpoint:
+Qwen2/Qwen2.5 is represented by the `qwen2` family, and it runs on both
+intake paths. Three artifacts are cataloged and gated: the 4-bit MLX
+safetensors conversion, the official single-file Q3_K_M GGUF (whose attention
+and FFN projections run on the Q3_K resident kernels), and a single-file
+Q4_K_M GGUF:
 
 ```sh
 turbospark-model pull qwen25-7b-4bit
-turbospark-check --model qwen25-7b-4bit --prompt "Say hello in one sentence."
+turbospark-model pull qwen25-7b-q3km
+turbospark-model pull qwen25-7b-q4km
+turbospark-check --model qwen25-7b-q3km --messages-file /tmp/p.json
 ```
 
 This is not an "MLX GGUF" format. MLX checkpoints are safetensors and use
-the HF intake path. GGUF is a separate intake path: `qwen2` metadata is
-recognized and supported resident block types can be installed, but the
-pinned Qwen2.5 Q3_K_M GGUF currently stops at the header because Q3_K has no
-resident kernel in this port. Qwen2-MoE and Qwen2-VL are different families.
+the HF intake path; GGUF is the separate single-file intake path, and both
+are real-artifact gated for this family. The official
+`Qwen/Qwen2.5-7B-Instruct-GGUF` repo splits its Q4_K_M and Q8_0 into shards,
+and split GGUF is not supported by the dense qwen2 walk, so the Q4_K_M row
+streams mradermacher's single-file conversion of the same base checkpoint.
+Qwen2-MoE and Qwen2-VL are different families.
 
 ```sh
 turbospark-model list                    # the catalog

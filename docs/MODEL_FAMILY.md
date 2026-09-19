@@ -110,9 +110,10 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
   - `"qwen4_exp"` / `"qwen4_exp_text"` -> `ModelFamily::Qwen4Exp`
   - `"qwen2"` -> `ModelFamily::Qwen2Dense` (Qwen2/Qwen2.5 dense models;
     the MLX source namespace is normalized from `model.*` to the canonical
-    `language_model.*` install namespace). The pinned Qwen2.5 7B 4-bit MLX
-    checkpoint is the real artifact currently exercised; unquantized BF16/FP16
-    safetensors conversion is not part of this contract.
+    `language_model.*` install namespace). Three real artifacts are gated:
+    the pinned 4-bit MLX checkpoint, the official Q3_K_M GGUF, and a
+    single-file Q4_K_M GGUF; unquantized BF16/FP16 safetensors conversion is
+    not part of this contract.
   - `"qwen3_vl"` / `"qwen3_vl_text"` -> `ModelFamily::Qwen3Vl` (the Qwen3-VL
     trunk: dense full-attention GQA with per-head Q/K norms, a TIED head, and
     FULL rotary over an independent 128-wide `head_dim`, running the shared
@@ -191,7 +192,7 @@ specific "recognized, needs X" refusal.
 | **Llama 2, Mistral 7B, TinyLlama** (`llama`, dense) | Standard Dense Transformer, GQA | **Full Support** (ROADMAP M4) | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Qwen3 dense** (`qwen3`) | Plain GQA, per-head Q/K norm, dense SwiGLU, tied or untied head | GGUF implemented; 0.6B Q8_0 gates passed | Not assessed | [Implemented](https://github.com/ggml-org/llama.cpp/blob/e5a8d439cef31f27fad6938233da10dae1ba5631/src/models/qwen3.cpp) | [Implemented](https://github.com/ml-explore/mlx-lm/blob/745352405f0909540760fd9b9ff16d933fd9c82b/mlx_lm/models/qwen3.py) | [0.6B measurement only](MINIMAX_M2_PHASE0.md#shared-flow-regression-checks); dense |
-| **Qwen2 / Qwen2.5 dense** (`qwen2`) | Standard full-attention GQA, Q/K/V projection biases, no Q/K norm, dense SwiGLU, Qwen2 RMS epsilon 1e-6 | HF/MLX 4-bit intake and shared-flow execution are real-artifact tested; the pinned official Q3_K_M GGUF executes on the Q3_K resident kernels (perplexity 12.2878, stable digests, memory oracle), and a single-file Q4_K_M GGUF runs as the second artifact | Not assessed | Full Support | Full Support | *No frozen baseline; dense* |
+| **Qwen2 / Qwen2.5 dense** (`qwen2`) | Standard full-attention GQA, Q/K/V projection biases, no Q/K norm, dense SwiGLU, Qwen2 RMS epsilon 1e-6 | HF/MLX 4-bit intake and shared-flow execution are real-artifact tested; the pinned official Q3_K_M GGUF executes on the Q3_K resident kernels (perplexity 12.2878, stable digests, memory oracle), and a single-file Q4_K_M GGUF runs as the second artifact | Not assessed | Full Support | Full Support | **622-651 MiB at 8192, dense** (KV-dominated; MLX INT4 622, GGUF Q3_K_M 651, GGUF Q4_K_M 646) |
 | **Qwen3-VL 4B** (`qwen3_vl`) | Dense full-attention GQA, per-head Q/K norm, dense SwiGLU, TIED head, full rotary over `head_dim` 128 (independent of hidden 2560), mRoPE sections [24, 20, 20] (text-only inert) | **Full Support** (MLX intake; frozen quality 17.3463 + 793 MiB memory rows; greedy and sampled CLI smokes pass). GGUF intake refused: real GGUFs exist but the converter's tower naming is unparsed here | Not assessed | Full Support | Full Support | **~793 MiB RAM** at 4096 context (dense; KV-dominated) |
 | **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
 | **Qwen3.8-Flash-Next / REAP-288** (`qwen4_exp`, HF only) | Fine-grained MoE (288-512 experts, top-10), GDN + sigmoid-gated norm, QSA block-sparse attention, PLE n-gram head, hyper-connections | **Full Support** | *Planned* | Full Support (`qwen4exp`) | Not supported (absent from mlx-lm, checked 2026-09-08) | **~2.5 GiB RAM** (oracle peak at the 2,048 bench window; the 68G install streams) |
