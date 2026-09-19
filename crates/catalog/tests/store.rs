@@ -128,6 +128,37 @@ fn relocating_the_default_store_verifies_and_rewrites_install_paths() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn relocation_does_not_follow_a_destination_symlink_added_during_copy() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root("relocation-symlink-race");
+    let source = root.join("source");
+    let destination = root.join("destination");
+    let victim = root.join("victim");
+    let model = Store::new(&source).install_path("model");
+    std::fs::create_dir_all(&model).unwrap();
+    std::fs::write(model.join("weights.bin"), [1, 2, 3, 4]).unwrap();
+    std::fs::write(source.join("hf_token"), "secret").unwrap();
+    std::fs::write(&victim, "keep me").unwrap();
+
+    let mut planted = false;
+    set_default_root(Some(source.clone())).unwrap();
+    let outcome = turbospark_catalog::relocate_default_store(&destination, |_, _| {
+        if !planted {
+            symlink(&victim, destination.join("hf_token")).unwrap();
+            planted = true;
+        }
+    });
+    set_default_root(None).unwrap();
+
+    let error = outcome.unwrap_err();
+    assert!(error.contains("without replacing an existing entry"));
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+    assert!(source.join("hf_token").is_file());
+}
+
 #[test]
 fn legacy_flat_paths_remain_readable_by_their_modality() {
     let root = temp_root("legacy-paths");

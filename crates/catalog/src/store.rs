@@ -15,6 +15,7 @@
 //! rows whose directory has gone.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
@@ -148,7 +149,7 @@ fn copy_entry(
     let metadata = std::fs::symlink_metadata(source)
         .map_err(|e| format!("reading {}: {e}", source.display()))?;
     if metadata.is_dir() {
-        std::fs::create_dir_all(destination)
+        std::fs::create_dir(destination)
             .map_err(|e| format!("creating {}: {e}", destination.display()))?;
         let mut files = 0;
         for entry in
@@ -165,17 +166,28 @@ fn copy_entry(
         }
         Ok(files)
     } else if metadata.is_file() {
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("creating {}: {e}", parent.display()))?;
-        }
-        std::fs::copy(source, destination).map_err(|e| {
+        let mut input = std::fs::File::open(source)
+            .map_err(|e| format!("opening {}: {e}", source.display()))?;
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)
+            .map_err(|e| {
+                format!(
+                    "creating destination file {} without replacing an existing entry: {e}",
+                    destination.display()
+                )
+            })?;
+        std::io::copy(&mut input, &mut output).map_err(|e| {
             format!(
                 "copying {} to {}: {e}",
                 source.display(),
                 destination.display()
             )
         })?;
+        output
+            .set_permissions(metadata.permissions())
+            .map_err(|e| format!("setting permissions on {}: {e}", destination.display()))?;
         *copied_bytes += metadata.len();
         on_progress(*copied_bytes, total_bytes);
         Ok(1)
@@ -260,6 +272,17 @@ pub fn relocate_default_store(
             .map_err(|e| format!("creating destination {}: {e}", destination.display()))?;
     }
 
+    // The copy below deliberately creates every child instead of replacing
+    // one. Restricting the root first also prevents a different local user
+    // from adding entries after the emptiness check. Together these make an
+    // attacker-created destination symlink an error, never a write target.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("restricting destination {}: {e}", destination.display()))?;
+    }
+
     let total_bytes = managed_bytes(&source);
     let mut copied_bytes = 0;
     let mut source_cleanup_started = false;
@@ -298,7 +321,17 @@ pub fn relocate_default_store(
             })
             .collect();
         if !rewritten.is_empty() {
-            Store::new(&destination).write_rows(&rewritten)?;
+            let record_path = destination.join("installed.json");
+            let text = serde_json::to_string_pretty(&rewritten)
+                .map_err(|e| format!("serializing the install record: {e}"))?;
+            let mut record = std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&record_path)
+                .map_err(|e| format!("opening {} for rewrite: {e}", record_path.display()))?;
+            record
+                .write_all(text.as_bytes())
+                .map_err(|e| format!("writing {}: {e}", record_path.display()))?;
         }
         for row in &rewritten {
             if row.path.starts_with(&destination) && !row.path.is_dir() {
