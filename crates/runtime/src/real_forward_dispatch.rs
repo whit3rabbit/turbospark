@@ -5,24 +5,33 @@ use model_io::ResidentIndex;
 
 use crate::real_forward_layout::{
     DTYPE_GGUF_IQ1_M, DTYPE_GGUF_IQ1_S, DTYPE_GGUF_IQ2_S, DTYPE_GGUF_IQ2_XS, DTYPE_GGUF_IQ2_XXS,
-    DTYPE_GGUF_IQ3_S, DTYPE_GGUF_Q2_K, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K,
-    DTYPE_GGUF_Q8_0, DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE,
+    DTYPE_GGUF_IQ3_S, DTYPE_GGUF_Q2_K, DTYPE_GGUF_Q3_K, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K,
+    DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE,
 };
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{affine_group_size, entry, resident_matrix};
 
 pub(crate) use crate::real_forward_dispatch_moe::{encode_moe_phase1_any, encode_moe_phase2_any};
 
-fn validate_q4_k_embedding(
+/// Shape/size bounds for a block-quantized embedding table, shared by the
+/// Q4_K and Q3_K arms: the table must be `[vocab, hidden]`, `hidden` must
+/// tile whole superblocks, the byte run must be exactly `rows *
+/// row_bytes`, and the selected row must land inside it. A wrong stride or
+/// a hand-edited manifest fails here rather than reading a neighbouring
+/// token's row.
+fn validate_block_quant_embedding(
     e: &model_io::ResidentIndexEntry,
     name: &str,
     token: u32,
     hidden: u32,
+    block_elems: usize,
+    block_bytes: usize,
+    type_name: &str,
 ) -> Result<(), RealForwardError> {
     let (rows, cols, depth, planes) = e.shape;
     if cols != hidden || depth != 0 || planes != 0 {
         return Err(RealForwardError::Unsupported(format!(
-            "embedding table {name}: Q4_K shape {:?} does not match [vocab, {hidden}]",
+            "embedding table {name}: {type_name} shape {:?} does not match [vocab, {hidden}]",
             e.shape
         )));
     }
@@ -32,37 +41,56 @@ fn validate_q4_k_embedding(
         )));
     }
     let hidden = u64::from(hidden);
-    let block_elems = gpu::Q4_K_BLOCK_ELEMS as u64;
+    let block_elems = block_elems as u64;
     if hidden == 0 || hidden % block_elems != 0 {
         return Err(RealForwardError::Unsupported(format!(
-            "embedding table {name}: Q4_K width {hidden} is not a whole number of {block_elems}-element blocks"
+            "embedding table {name}: {type_name} width {hidden} is not a whole number of {block_elems}-element blocks"
         )));
     }
     let row_bytes = (hidden / block_elems)
-        .checked_mul(gpu::Q4_K_BLOCK_BYTES as u64)
+        .checked_mul(block_bytes as u64)
         .ok_or_else(|| {
             RealForwardError::Unsupported(format!(
-                "embedding table {name}: Q4_K row size overflows"
+                "embedding table {name}: {type_name} row size overflows"
             ))
         })?;
     let expected = u64::from(rows).checked_mul(row_bytes).ok_or_else(|| {
-        RealForwardError::Unsupported(format!("embedding table {name}: Q4_K table size overflows"))
+        RealForwardError::Unsupported(format!(
+            "embedding table {name}: {type_name} table size overflows"
+        ))
     })?;
     let selected_end = u64::from(token)
         .checked_add(1)
         .and_then(|row| row.checked_mul(row_bytes))
         .ok_or_else(|| {
             RealForwardError::Unsupported(format!(
-                "embedding table {name}: Q4_K selected row overflows"
+                "embedding table {name}: {type_name} selected row overflows"
             ))
         })?;
     if e.size_bytes != expected || selected_end > e.size_bytes {
         return Err(RealForwardError::Unsupported(format!(
-            "embedding table {name}: Q4_K packed size {} does not contain {rows}x{hidden} bytes ({expected}) or selected row {token}",
+            "embedding table {name}: {type_name} packed size {} does not contain {rows}x{hidden} bytes ({expected}) or selected row {token}",
             e.size_bytes
         )));
     }
     Ok(())
+}
+
+fn validate_q4_k_embedding(
+    e: &model_io::ResidentIndexEntry,
+    name: &str,
+    token: u32,
+    hidden: u32,
+) -> Result<(), RealForwardError> {
+    validate_block_quant_embedding(
+        e,
+        name,
+        token,
+        hidden,
+        gpu::Q4_K_BLOCK_ELEMS,
+        gpu::Q4_K_BLOCK_BYTES,
+        "Q4_K",
+    )
 }
 
 /// Dispatches the embedding lookup matching the table's dtype tag: 4 =
@@ -108,6 +136,7 @@ pub(crate) fn encode_embed_any(
         DTYPE_GGUF_Q8_0 => Some(gpu::Q8_0_BLOCK_ELEMS),
         DTYPE_GGUF_Q4_K => Some(gpu::Q4_K_BLOCK_ELEMS),
         DTYPE_GGUF_Q6_K => Some(gpu::Q6_K_BLOCK_ELEMS),
+        DTYPE_GGUF_Q3_K => Some(gpu::Q3_K_BLOCK_ELEMS),
         DTYPE_GGUF_IQ1_M => Some(gpu::IQ1_M_BLOCK_ELEMS),
         _ => None,
     };
@@ -132,6 +161,24 @@ pub(crate) fn encode_embed_any(
         DTYPE_GGUF_Q4_K => {
             validate_q4_k_embedding(e, name, token, hidden)?;
             gpu::encode_embed_lookup_q4_k(context, pass, table, out, token, hidden, embed_scale)
+                .map_err(RealForwardError::Gpu)
+        }
+        // Same bounds check the Q4_K arm makes, for the same reason: the
+        // stride arithmetic differs from every sibling (110-byte blocks),
+        // and a hand-edited manifest fails here rather than reading a
+        // neighbouring token's row. No real file keeps `token_embd` at Q3_K
+        // today; this is the Q6_K embed lookup's story again.
+        DTYPE_GGUF_Q3_K => {
+            validate_block_quant_embedding(
+                e,
+                name,
+                token,
+                hidden,
+                gpu::Q3_K_BLOCK_ELEMS,
+                gpu::Q3_K_BLOCK_BYTES,
+                "Q3_K",
+            )?;
+            gpu::encode_embed_lookup_q3_k(context, pass, table, out, token, hidden, embed_scale)
                 .map_err(RealForwardError::Gpu)
         }
         // ROADMAP Phase S's candidate puts `token_embd` in Q6_K and ties the
@@ -398,6 +445,30 @@ pub(crate) fn encode_gemv_any(
                 cols,
             };
             gpu::encode_dequant_q6_k_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
+        // The Dense Qwen2 roadmap item's block type: the pinned Qwen2.5
+        // Q3_K_M keeps every attention and FFN projection here, so this arm
+        // is the one a real Q3_K install runs on every token. Same shape as
+        // the Q8_0 arm; only the row-bytes function (110/256, against the
+        // 110/144 confusion with Q4_K) and the kernel differ, and the size
+        // check is what catches a tensor whose dtype tag and byte count
+        // disagree.
+        DTYPE_GGUF_Q3_K => {
+            let expected = gpu::q3_k_row_bytes(cols) * rows;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: Q3_K packed size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::Q3KResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+            };
+            gpu::encode_dequant_q3_k_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
         dtype @ (DTYPE_GGUF_IQ2_XXS | DTYPE_GGUF_IQ2_XS | DTYPE_GGUF_IQ1_S | DTYPE_GGUF_IQ3_S

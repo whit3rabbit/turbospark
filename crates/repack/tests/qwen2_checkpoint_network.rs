@@ -50,9 +50,10 @@ fn install_dir() -> PathBuf {
     dir
 }
 
-/// Header-only proof for the exact GGUF named in the roadmap. It records the
-/// current quantization boundary explicitly: `qwen2` is recognized, but this
-/// port parses Q3_K and does not yet execute it.
+/// Header-only proof for the exact GGUF named in the roadmap. Once recorded
+/// the quantization boundary (`qwen2` recognized, Q3_K parsed but not
+/// executed); the Q3_K resident kernels moved that line, so the header test
+/// now asserts the EXECUTABLE side of it.
 #[test]
 #[ignore = "network: reads the pinned Qwen2.5 Q3_K_M GGUF header"]
 fn the_pinned_qwen25_q3_k_m_header_resolves_and_exposes_the_quant_boundary() {
@@ -76,8 +77,9 @@ fn the_pinned_qwen25_q3_k_m_header_resolves_and_exposes_the_quant_boundary() {
         "the Q3_K_M artifact should carry at least one Q3_K tensor"
     );
     assert!(
-        !model_io::EXECUTABLE_GGUF_TYPES.contains(&"q3_k"),
-        "the test should stay red if Q3_K is accidentally claimed executable"
+        model_io::EXECUTABLE_GGUF_TYPES.contains(&"q3_k"),
+        "Q3_K gained resident kernels; if this ever flips back, the real \
+         stream below must be re-examined first"
     );
 }
 

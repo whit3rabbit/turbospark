@@ -127,22 +127,29 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
             );
         }
 
+        b = dense_ffn_tensor(
+            b,
+            &s,
+            &format!("blk.{l}.ffn_gate.weight"),
+            &[s.hidden, s.intermediate],
+            seed.wrapping_add(4),
+        );
+        b = dense_ffn_tensor(
+            b,
+            &s,
+            &format!("blk.{l}.ffn_up.weight"),
+            &[s.hidden, s.intermediate],
+            seed.wrapping_add(5),
+        );
+        b = dense_ffn_tensor(
+            b,
+            &s,
+            &format!("blk.{l}.ffn_down.weight"),
+            &[s.intermediate, s.hidden],
+            seed.wrapping_add(6),
+        );
+
         b = b
-            .q8_0_tensor(
-                &format!("blk.{l}.ffn_gate.weight"),
-                &[s.hidden, s.intermediate],
-                seed.wrapping_add(4),
-            )
-            .q8_0_tensor(
-                &format!("blk.{l}.ffn_up.weight"),
-                &[s.hidden, s.intermediate],
-                seed.wrapping_add(5),
-            )
-            .q8_0_tensor(
-                &format!("blk.{l}.ffn_down.weight"),
-                &[s.intermediate, s.hidden],
-                seed.wrapping_add(6),
-            )
             // Router: F32 in GGUF, where an MLX install carries INT8. Real
             // values rather than upcast BF16, because the repack quantizes
             // this one instead of narrowing it.
@@ -204,7 +211,10 @@ fn embed_tensor(
 ) -> GgufBuilder {
     match s.mix {
         QuantMix::Q8_0 => b.q8_0_tensor(name, dims, seed),
-        QuantMix::KQuant => b.q4_k_tensor(name, dims, seed),
+        // The real Q3_K_M keeps `token_embd` at Q4_K even while every
+        // attention and FFN projection is Q3_K, so the Q3K mixture shares
+        // the K-quant fixture's embedding.
+        QuantMix::KQuant | QuantMix::Q3K => b.q4_k_tensor(name, dims, seed),
         // The Phase S candidate keeps `token_embd` at Q6_K and ties the head
         // to it, which is what made `embed_lookup_q6_k` worth writing.
         QuantMix::Iq => b.q6_k_tensor(name, dims, seed),
@@ -227,7 +237,12 @@ fn expert_tensor(
 ) -> GgufBuilder {
     match (s.mix, gate_up, s.odd_expert_layer(layer)) {
         (QuantMix::Q8_0, _, _) => b.q8_0_tensor(name, dims, seed),
-        (QuantMix::KQuant, _, _) => b.q4_k_tensor(name, dims, seed),
+        // The Q3K mixture keeps its experts OFF Q3_K, which has no routed
+        // pair in this port: a resident-only type carrying experts would
+        // fail at the routed dispatch by design (Q6_K's footing), and the
+        // mixture exists to exercise the resident GEMV, not to manufacture
+        // that refusal.
+        (QuantMix::KQuant | QuantMix::Q3K, _, _) => b.q4_k_tensor(name, dims, seed),
         (QuantMix::Iq, true, false) => b.iq_tensor(name, 18, dims, seed),
         (QuantMix::Iq, true, true) => b.iq_tensor(name, 23, dims, seed),
         (QuantMix::Iq, false, false) => b.iq_tensor(name, 20, dims, seed),
@@ -241,7 +256,9 @@ fn expert_tensor(
 /// Q6_K, where a real `Q4_K_M` would carry it on `output.weight`. A Gemma
 /// fixture ties its embeddings and so has no such tensor, and the attention
 /// projections are the next place a resident GEMV reads every token. The IQ
-/// mixture leaves attention at Q8_0, as its candidate does.
+/// mixture leaves attention at Q8_0, as its candidate does. The Q3K mixture
+/// puts attention at Q3_K, which is where the real Q3_K_M carries it and
+/// therefore the hottest resident GEMV a Q3_K install has.
 fn attn_tensor(
     b: GgufBuilder,
     s: &SyntheticGgufShape,
@@ -251,6 +268,26 @@ fn attn_tensor(
 ) -> GgufBuilder {
     match s.mix {
         QuantMix::KQuant => b.q6_k_tensor(name, dims, seed),
+        QuantMix::Q3K => b.q3_k_tensor(name, dims, seed),
         QuantMix::Q8_0 | QuantMix::Iq | QuantMix::Mxfp4 => b.q8_0_tensor(name, dims, seed),
+    }
+}
+
+/// The dense FFN trio, where the Q3K mixture also carries Q3_K (the real
+/// Q3_K_M puts its FFN projections there too and this fixture has no other
+/// place to show the type on a wide matrix). Every other mixture leaves the
+/// dense FFN at Q8_0.
+fn dense_ffn_tensor(
+    b: GgufBuilder,
+    s: &SyntheticGgufShape,
+    name: &str,
+    dims: &[u64],
+    seed: u8,
+) -> GgufBuilder {
+    match s.mix {
+        QuantMix::Q3K => b.q3_k_tensor(name, dims, seed),
+        QuantMix::Q8_0 | QuantMix::KQuant | QuantMix::Iq | QuantMix::Mxfp4 => {
+            b.q8_0_tensor(name, dims, seed)
+        }
     }
 }

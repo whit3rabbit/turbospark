@@ -466,6 +466,62 @@
       "notes": "The pinned Qwen2.5 7B 4-bit MLX checkpoint streamed and passed real greedy and sampled CLI smokes, the Qwen2 quality gate (perplexity 12.4206, deterministic greedy and sampled digests), the Qwen2 memory oracle (622 MiB peak at 8192 context), and the MLX cross-engine KL gate (mean forward KL 0.0002923, 99th percentile 0.0022752, top-1 agreement 99.6546%). This is MLX safetensors intake, not GGUF. The qwen2 GGUF path is recognized, but the pinned Q3_K_M GGUF is header-only until a Q3_K resident kernel exists. Official ChatML sidecars may omit special-token ids for <think> and <tool_response>; the resolver treats those pairs as optional."
     },
     {
+      "alias": "qwen25-7b-q3km",
+      "name": "Qwen2.5 7B Instruct (GGUF Q3_K_M, official)",
+      "family": "qwen2",
+      "source": {
+        "kind": "gguf",
+        "repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+        "revision": "74ef91efd0899612867d6bb080ce5a2788ef6aa1",
+        "file": "qwen2.5-7b-instruct-q3_k_m.gguf"
+      },
+      "sidecars": {
+        "repo": "Qwen/Qwen2.5-7B-Instruct",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 3808391072,
+      "install_bytes": 3810000000,
+      "status": "runs",
+      "gates": [
+        "qwen2_checkpoint_network"
+      ],
+      "measured": [],
+      "notes": "The roadmap's pinned official single-file Q3_K_M GGUF, non-executable until the Q3_K resident kernels landed (Dense Qwen2 roadmap item). Carries Q3_K on every attention and FFN projection (53.8% of weights), Q4_K on the embedding table and remaining projections, Q6_K on output.weight, and three Q5_K tensors; every type dispatches. Its census is the first mixed Q3_K/Q5_K install this port runs."
+    },
+    {
+      "alias": "qwen25-7b-q4km",
+      "name": "Qwen2.5 7B Instruct (GGUF Q4_K_M, single file)",
+      "family": "qwen2",
+      "source": {
+        "kind": "gguf",
+        "repo": "mradermacher/Qwen2.5-7B-Instruct-GGUF",
+        "revision": "main",
+        "file": "Qwen2.5-7B-Instruct.Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "Qwen/Qwen2.5-7B-Instruct",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 4683074400,
+      "install_bytes": 4690000000,
+      "status": "runs",
+      "gates": [
+        "qwen2_checkpoint_network"
+      ],
+      "measured": [],
+      "notes": "The roadmap's second real Qwen2 GGUF artifact. The official repo splits its Q4_K_M and Q8_0 into two and three shards, and split GGUF is out of scope for the dense qwen2 walk, so the single-file mradermacher conversion of the same base checkpoint stands in: Q4_K on the projections and FFN, Q6_K on output.weight, F32 norms."
+    },
+    {
       "alias": "qwen36",
       "name": "Qwen 3.6 35B-A3B (MLX INT4, group 64)",
       "family": "qwen36",

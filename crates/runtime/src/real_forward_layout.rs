@@ -19,7 +19,7 @@ use crate::real_forward_types::RealForwardError;
 /// cannot see. Add to both lists when the writer gains a tag. It is spelled
 /// out of the NAMED constants below rather than as bare literals for the same
 /// reason: a literal list is what let one go missing.
-pub(crate) const GGUF_BLOCK_DTYPES: [u8; 16] = [
+pub(crate) const GGUF_BLOCK_DTYPES: [u8; 17] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -36,6 +36,7 @@ pub(crate) const GGUF_BLOCK_DTYPES: [u8; 16] = [
     DTYPE_GGUF_IQ3_S,
     DTYPE_GGUF_IQ2_S,
     DTYPE_GGUF_IQ1_M,
+    DTYPE_GGUF_Q3_K,
 ];
 /// GGUF Q8_0: a resident GEMV, an embedding lookup, and a routed-expert
 /// decode pair.
@@ -76,6 +77,12 @@ pub(crate) const DTYPE_GGUF_IQ1_S: u8 = 20;
 pub(crate) const DTYPE_GGUF_IQ3_S: u8 = 21;
 pub(crate) const DTYPE_GGUF_IQ2_S: u8 = 22;
 pub(crate) const DTYPE_GGUF_IQ1_M: u8 = 23;
+/// GGUF Q3_K (Dense Qwen2 roadmap item). A resident GEMV and an embedding
+/// lookup, no routed pair, on the Q6_K footing: the pinned Qwen2.5 Q3_K_M
+/// keeps every attention and FFN projection here, its embedding table at
+/// Q4_K and its head at Q6_K. Tag 24 mirrors the writer, and for the same
+/// displaced reason -- ggml's own Q3_K id is 11, which IQ4_NL took first.
+pub(crate) const DTYPE_GGUF_Q3_K: u8 = 24;
 /// The RAW (companion-less, unquantized) tag this port can read, and the only
 /// one: every consumer of an unquantized resident tensor -- `norm_view`,
 /// `read_bf16_host`, every kernel binding a `device const bfloat*` --
@@ -177,7 +184,7 @@ pub(crate) const DTYPE_INT2_AFFINE: u8 = 16;
 /// join this list, and a hypothetical install with MXFP4 attention passes the
 /// manifest gate and is stopped here -- which is the layering working, not a
 /// leak.
-pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 14] = [
+pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 15] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -192,6 +199,7 @@ pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 14] = [
     DTYPE_GGUF_IQ3_S,
     DTYPE_GGUF_IQ2_S,
     DTYPE_GGUF_IQ1_M,
+    DTYPE_GGUF_Q3_K,
 ];
 
 /// Which layout one routed sub-tensor uses.

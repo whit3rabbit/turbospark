@@ -64,6 +64,8 @@ mod dequant_iq_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q2_k_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_q3_k_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_q4_k_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q5_k_gemv;
@@ -192,6 +194,12 @@ pub use dequant_iq_gemv::{
 pub use dequant_q2_k_gemv::{
     dequant_q2_k_gemv, encode_dequant_q2_k_gemv_resident, q2_k_row_bytes, Q2KResidentMatrix,
     Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_q3_k_gemv::{
+    dequant_q3_k_gemv, dequant_q3_k_gemv_resident, encode_dequant_q3_k_gemv_resident,
+    encode_embed_lookup_q3_k, q3_k_row_bytes, Q3KResidentMatrix, Q3_K_BLOCK_BYTES,
+    Q3_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q4_k_gemv::{

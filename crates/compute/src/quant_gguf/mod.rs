@@ -32,11 +32,21 @@
 //! in `qh`. It is symmetric like Q8_0, with a fixed bias of 32 subtracted off
 //! the stored value rather than a per-sub-block min. Qwen 3.6's Q4_K_M ships
 //! exactly one Q6_K tensor (`output.weight`), which is why it is here.
+//!
+//! Q3_K is the fourth, and it is the one whose every "obvious" reading of a
+//! sibling is wrong: sixteen 16-element groups per superblock rather than
+//! eight 32-element ones, 2-bit levels whose SIGN comes from a separate
+//! high-bit run instead of an unsigned value with a min, sixteen 6-bit
+//! scales packed into twelve bytes through a four-word shuffle, and the f16
+//! super-scale as the LAST field (only Q2_K among the K-quants agrees).
 
 /// Pearson correlation helper for validating dequantized weight similarities.
 pub mod pearson;
 /// Q2_K block quantization (256-element superblocks, 16 sub-blocks, asymmetric 2-bit weights).
 pub mod q2_k;
+/// Q3_K block quantization (256-element superblocks, 16 groups of 16, signed
+/// 2-bit levels through a high-bit run, packed 6-bit scales, super-scale last).
+pub mod q3_k;
 /// Q4_K block quantization (256-element superblocks, 8 sub-blocks, asymmetric 4-bit weights).
 pub mod q4_k;
 /// Q5_K block quantization (256-element superblocks, 8 sub-blocks, 5-bit weights with min scale).
@@ -50,6 +60,10 @@ pub use pearson::pearson;
 pub use q2_k::{
     dequant_q2_k_gemv, dequantize_q2_k, quantize_q2_k, Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
     Q2_K_SUB_ELEMS,
+};
+pub use q3_k::{
+    dequant_q3_k_gemv, dequantize_q3_k, q3_k_decode_scales, quantize_q3_k, Q3_K_BLOCK_BYTES,
+    Q3_K_BLOCK_ELEMS, Q3_K_SUB_ELEMS,
 };
 pub use q4_k::{
     dequant_q4_k_gemv, dequantize_q4_k, quantize_q4_k, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS,

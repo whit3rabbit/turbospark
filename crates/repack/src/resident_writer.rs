@@ -134,10 +134,18 @@ pub const DTYPE_GGUF_IQ3_S: u8 = 21;
 pub const DTYPE_GGUF_IQ2_S: u8 = 22;
 /// GGUF IQ1_M block dtype tag.
 pub const DTYPE_GGUF_IQ1_M: u8 = 23;
+/// GGUF Q3_K block dtype tag (Dense Qwen2 roadmap item). Tag 24 rather than
+/// ggml's own type id 11 -- unlike Q5_K's deliberate match -- because 11 was
+/// taken by IQ4_NL before this existed; the K-quant tags that match their
+/// ggml ids predate the IQ ones that displaced them. Kernels: a resident
+/// GEMV and an embedding lookup, no routed pair (the pinned Qwen2.5 Q3_K_M
+/// keeps its experts -- there are none, it is dense -- and every routed slot
+/// would be a new file's problem, on Q6_K's footing).
+pub const DTYPE_GGUF_Q3_K: u8 = 24;
 
 /// Every GGUF block dtype tag, for consumers that need to reject the whole
 /// family in one check rather than enumerate it and drift.
-pub const GGUF_BLOCK_DTYPES: [u8; 15] = [
+pub const GGUF_BLOCK_DTYPES: [u8; 16] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -153,6 +161,7 @@ pub const GGUF_BLOCK_DTYPES: [u8; 15] = [
     DTYPE_GGUF_IQ3_S,
     DTYPE_GGUF_IQ2_S,
     DTYPE_GGUF_IQ1_M,
+    DTYPE_GGUF_Q3_K,
 ];
 
 /// One named raw tensor (a norm vector, a scalar like `router.scale`):

@@ -98,6 +98,22 @@ impl GgufBuilder {
         self.tensor(name, 14, dims, data)
     }
 
+    /// Push a Q3_K tensor (256-element superblocks, 110 bytes each). The real
+    /// Qwen2.5 Q3_K_M keeps its attention and FFN projections here. The
+    /// fixture encoder writes a plain max-fit fit rather than ggml's
+    /// `make_qx_quants` search, for the same reason the Q4_K helper's does:
+    /// layout-exact, encoder-quality-simple.
+    pub fn q3_k_tensor(self, name: &str, dims: &[u64], seed: u8) -> Self {
+        let elements: u64 = dims.iter().product();
+        assert!(
+            dims[0] % 256 == 0,
+            "{name}: rows of {} elements do not tile 256-element Q3_K superblocks",
+            dims[0]
+        );
+        let data = compute::quantize_q3_k(&Self::small_weights(elements, seed));
+        self.tensor(name, 11, dims, data)
+    }
+
     /// Push an IQ tensor: IQ3_XXS (18), IQ4_NL (20) or IQ4_XS (23).
     ///
     /// UNLIKE EVERY OTHER TENSOR HELPER HERE, this does not quantize a weight

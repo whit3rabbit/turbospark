@@ -58,6 +58,15 @@ pub enum QuantMix {
     /// with the Phase S candidate's. What it proves is that the MXFP4 pair
     /// dispatches and decodes inside a whole forward pass.
     Mxfp4,
+    /// What a real `Q3_K_M` does: the attention projections and the dense
+    /// FFN at Q3_K, the embedding table and the routed experts at Q4_K, the
+    /// rest Q8_0 -- the pinned Qwen2.5 Q3_K_M's census over a Gemma-shaped
+    /// carrier, since a dense fixture has no routed slot to show the mixture
+    /// on. Q3_K has a resident GEMV and an embedding lookup and NO routed
+    /// pair, so its experts deliberately stay on a type with one.
+    /// Needs [`SyntheticGgufShape::k_quant`]'s dimensions, since a Q3_K row
+    /// also tiles 256 elements.
+    Q3K,
 }
 
 impl Default for SyntheticGgufShape {
@@ -143,6 +152,16 @@ impl SyntheticGgufShape {
             moe_intermediate: 32,
             mix: QuantMix::Mxfp4,
             ..Self::default()
+        }
+    }
+
+    /// The Q3_K mixture, at [`k_quant`]'s dimensions: Q3_K is a 256-element
+    /// superblock type like Q4_K and Q6_K, so it needs exactly the same
+    /// widening.
+    pub fn q3_k() -> Self {
+        Self {
+            mix: QuantMix::Q3K,
+            ..Self::k_quant()
         }
     }
 

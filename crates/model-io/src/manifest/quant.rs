@@ -59,9 +59,17 @@ const QUANT_2BIT_GROUP_SIZE: i64 = 128;
 /// `RealForwardRunner`'s `EXECUTABLE_GGUF_DTYPES`, which reads RESIDENT
 /// tensors, deliberately omits it, and its doc explains why the two are twins
 /// rather than copies.
-pub const EXECUTABLE_GGUF_TYPES: [&str; 15] = [
+///
+/// Q3_K (Dense Qwen2 roadmap item) joins on Q6_K's footing, with one addition:
+/// a resident GEMV and an embedding lookup, no routed pair. The pinned
+/// official Qwen2.5 Q3_K_M GGUF keeps its attention and FFN projections at
+/// Q3_K, its embedding table at Q4_K and its head at Q6_K, so a routed pair
+/// is nothing any real file asks for; an install that carried Q3_K experts
+/// passes this gate and fails at the routed dispatch, by name -- the same
+/// weaker footing Q6_K and Q5_K stand on.
+pub const EXECUTABLE_GGUF_TYPES: [&str; 16] = [
     "q8_0", "q4_k", "q5_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs", "mxfp4", "q2_k", "iq2_xxs",
-    "iq2_xs", "iq1_s", "iq3_s", "iq2_s", "iq1_m",
+    "iq2_xs", "iq1_s", "iq3_s", "iq2_s", "iq1_m", "q3_k",
 ];
 
 /// Accepts a quant block iff every slot's shape has kernels behind it.

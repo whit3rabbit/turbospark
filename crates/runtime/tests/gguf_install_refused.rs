@@ -6,7 +6,9 @@
 //! embedding lookup and the routed-expert decode pair behind them; Q6_K has a
 //! resident GEMV and an embedding lookup; IQ3_XXS, IQ4_XS and IQ4_NL have a
 //! resident GEMV each plus the half of the routed pair their real file asks
-//! for. Those six OPEN. Q4_0 has nothing and still refuses.
+//! for. Q3_K (Dense Qwen2 roadmap item) has a resident GEMV and an embedding
+//! lookup, on the Q6_K footing. Those seven OPEN. Q4_0 has nothing and still
+//! refuses.
 //!
 //! Both directions are asserted here, and the refusal is checked twice over,
 //! because a single gate is a single point of failure for a whole class of
@@ -238,6 +240,29 @@ fn the_phase_s_iq_mixture_decodes() {
 #[test]
 fn the_mxfp4_expert_mixture_decodes() {
     decodes(SyntheticGgufShape::mxfp4());
+}
+
+/// The Dense Qwen2 roadmap item's block type, inside a whole forward pass:
+/// attention projections and the dense FFN at Q3_K, the embedding table and
+/// the routed experts at Q4_K -- the pinned Qwen2.5 Q3_K_M's census on a
+/// Gemma-shaped carrier. Every resident GEMV that a real Q3_K install runs
+/// per token is a Q3_K one here, which is what makes this the mixture to
+/// decode rather than a single-type fixture.
+#[test]
+fn a_q3_k_mixture_gguf_install_opens() {
+    let (dir, arch) = gguf_install(SyntheticGgufShape::q3_k());
+
+    match RealForwardRunner::open(&dir, arch) {
+        Ok(_) => {}
+        Err(e) => panic!("a Q3_K-mixture GGUF install must open now that its kernels exist: {e}"),
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_q3_k_mixture_gguf_install_decodes() {
+    decodes(SyntheticGgufShape::q3_k());
 }
 
 /// The other half of that asymmetry, which no other block type can express:

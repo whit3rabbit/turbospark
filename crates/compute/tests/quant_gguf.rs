@@ -12,12 +12,13 @@
 //! merely too small.
 
 use turbospark_compute::{
-    dequant_q2_k_gemv, dequant_q4_k_gemv, dequant_q5_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv,
-    dequantize_q2_k, dequantize_q4_k, dequantize_q5_k, dequantize_q6_k, dequantize_q8_0, pearson,
-    quantize_q2_k, quantize_q4_k, quantize_q6_k, quantize_q8_0, Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
-    Q2_K_SUB_ELEMS, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q5_K_BLOCK_BYTES,
-    Q5_K_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS, Q8_0_BLOCK_BYTES,
-    Q8_0_BLOCK_ELEMS,
+    dequant_q2_k_gemv, dequant_q3_k_gemv, dequant_q4_k_gemv, dequant_q5_k_gemv, dequant_q6_k_gemv,
+    dequant_q8_0_gemv, dequantize_q2_k, dequantize_q3_k, dequantize_q4_k, dequantize_q5_k,
+    dequantize_q6_k, dequantize_q8_0, f16_to_f32, pearson, q3_k_decode_scales, quantize_q2_k,
+    quantize_q3_k, quantize_q4_k, quantize_q6_k, quantize_q8_0, Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
+    Q2_K_SUB_ELEMS, Q3_K_BLOCK_BYTES, Q3_K_BLOCK_ELEMS, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS,
+    Q4_K_SUB_ELEMS, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS,
+    Q6_K_SUB_ELEMS, Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
 
 /// Deterministic weights spanning both signs and several magnitudes, so a
@@ -610,5 +611,215 @@ fn q5_k_gemv_matches_dequantize_then_dot() {
         .sum();
     for v in got {
         assert!((v - want).abs() <= want.abs() * 1e-6 + 1e-6);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Q3_K (Dense Qwen2 roadmap item). The pinned Qwen2.5 Q3_K_M GGUF carries it
+// on every attention and FFN projection.
+// ---------------------------------------------------------------------------
+
+// ggml quantized these bytes and decoded these floats
+// (`scripts/ggml_q3_k_oracle.c`). Under `generated/` for the same reason the
+// Q5_K oracle is: every top-level file in `tests/` is its own test binary.
+include!("generated/quant_gguf_q3_k_oracle.rs");
+
+/// The one test that can catch this decoder and its author sharing a
+/// misreading, because ggml produced BOTH sides of it. Q3_K has more
+/// plausible wrong readings than any sibling (super-scale last, `e % 32`
+/// high-bit bytes with the BIT picked by `e / 32`, sixteen scales shuffled
+/// through four words, signed 2-bit levels), which is exactly the shape of
+/// bug this comparison exists for. Compared with `==` and not a tolerance:
+/// the arithmetic is grouped exactly as ggml groups it (`d * (sc - 32)`
+/// first, then `that * level`), so any difference at all is a real one.
+#[test]
+fn q3_k_decodes_exactly_what_ggml_decodes() {
+    let got = dequantize_q3_k(&Q3_K_ORACLE_BYTES, Q3_K_ORACLE_FLOATS.len());
+    assert_eq!(got.len(), Q3_K_ORACLE_FLOATS.len());
+    for (i, (&g, &want)) in got.iter().zip(Q3_K_ORACLE_FLOATS.iter()).enumerate() {
+        assert_eq!(g, want, "element {i} disagrees with ggml");
+    }
+}
+
+/// The oracle spans two superblocks so that block 1 cannot be decoded with
+/// block 0's scales and still pass. Asserted rather than assumed, since a
+/// shorter fixture would silently weaken the test above.
+#[test]
+fn the_q3_k_oracle_covers_more_than_one_superblock() {
+    assert_eq!(Q3_K_ORACLE_BYTES.len() % Q3_K_BLOCK_BYTES, 0);
+    assert!(Q3_K_ORACLE_BYTES.len() / Q3_K_BLOCK_BYTES >= 2);
+    assert_eq!(
+        Q3_K_ORACLE_FLOATS.len(),
+        Q3_K_ORACLE_BYTES.len() / Q3_K_BLOCK_BYTES * Q3_K_BLOCK_ELEMS
+    );
+}
+
+/// A cleared high bit means the stored level is NEGATIVE (`level - 4`), and
+/// a symmetric-quant habit carried over from Q6_K reads it unsigned. Without
+/// the subtraction every decoded weight is non-negative, so the presence of
+/// negatives in ggml's own decode is the cheap witness.
+#[test]
+fn q3_k_reconstructs_negative_weights() {
+    let got = dequantize_q3_k(&Q3_K_ORACLE_BYTES, Q3_K_ORACLE_FLOATS.len());
+    assert!(got.iter().any(|&v| v < 0.0), "no negative weights decoded");
+    assert!(got.iter().any(|&v| v > 0.0));
+}
+
+/// The high-bit run is indexed by `e % 32` with the BIT chosen by `e / 32`.
+/// Reading the byte by `e / 32` and the bit by `e % 32` -- the transposed
+/// habit, and the natural one if a sibling's per-sub-block mask is assumed --
+/// moves the decode on this real data. Asserted on the oracle rather than a
+/// hand-built block, because the transposed reading is exactly the kind of
+/// wrong a hand-built fixture written by the same author would not catch.
+#[test]
+fn transposing_the_high_bit_indexing_moves_the_decode() {
+    let got = dequantize_q3_k(&Q3_K_ORACLE_BYTES, Q3_K_ORACLE_FLOATS.len());
+    let mut transposed = vec![0f32; Q3_K_ORACLE_FLOATS.len()];
+    let mut scales = [0i32; 16];
+    for b in 0..Q3_K_ORACLE_FLOATS.len() / Q3_K_BLOCK_ELEMS {
+        let base = b * Q3_K_BLOCK_BYTES;
+        let d = f16_to_f32(u16::from_le_bytes([
+            Q3_K_ORACLE_BYTES[base + 108],
+            Q3_K_ORACLE_BYTES[base + 109],
+        ]));
+        let hmask = &Q3_K_ORACLE_BYTES[base..base + 32];
+        let qs = &Q3_K_ORACLE_BYTES[base + 32..base + 96];
+        q3_k_decode_scales(&Q3_K_ORACLE_BYTES[base + 96..base + 108], &mut scales);
+
+        for e in 0..Q3_K_BLOCK_ELEMS {
+            let half = e / 128;
+            let j = (e % 128) / 32;
+            let rem = e % 32;
+            let q = (qs[half * 32 + rem] >> (2 * j)) & 3;
+            // Transposed indexing: byte e / 32, bit e % 32
+            let high_bit_set = (hmask[4 * half + j] & (1 << (rem % 8))) != 0;
+            let level = i32::from(q) - if high_bit_set { 0 } else { 4 };
+            let dl = d * scales[8 * half + 2 * j + (rem / 16)] as f32;
+            transposed[b * Q3_K_BLOCK_ELEMS + e] = dl * level as f32;
+        }
+    }
+    assert_ne!(
+        got, transposed,
+        "transposed high-bit indexing must produce a different decode"
+    );
+}
+
+/// The super-scale is the LAST field of the block, not the first. Decoding
+/// with the Q4_K-style leading d is byte-aligned and length-correct -- the
+/// block is still 110 bytes -- so only the comparison against ggml can catch
+/// it, and this test pins the witness: bytes 108..110 hold a sane positive
+/// f16 and bytes 0..2 of a high-bit run do not.
+#[test]
+fn the_super_scale_is_the_last_field() {
+    let d_last = u16::from_le_bytes([Q3_K_ORACLE_BYTES[108], Q3_K_ORACLE_BYTES[109]]);
+    let d = f16_to_f32(d_last);
+    assert!(
+        d > 0.0 && d < 1.0,
+        "the trailing f16 should be the super-scale, got {d}"
+    );
+    let got = dequantize_q3_k(&Q3_K_ORACLE_BYTES, Q3_K_ORACLE_FLOATS.len());
+    assert_ne!(
+        got[0], 0.0,
+        "element 0 decodes nonzero with the scale read from the end"
+    );
+}
+
+/// ggml's real quantizer really does emit all four 2-bit level values and
+/// both high-bit states, i.e. this oracle cannot pass a decoder that only
+/// understands the positive half. (Gotcha 48's rule: assert the fixture
+/// discriminates.)
+#[test]
+fn the_q3_k_oracle_exercises_every_level_value() {
+    let mut seen = [false; 4];
+    let mut cleared = 0;
+    let mut set = 0;
+    for (block, values) in Q3_K_ORACLE_BYTES.chunks_exact(Q3_K_BLOCK_BYTES).enumerate() {
+        let hmask = &values[0..32];
+        let qs = &values[32..96];
+        for e in 0..Q3_K_BLOCK_ELEMS {
+            let half = e / 128;
+            let j = (e % 128) / 32;
+            let rem = e % 32;
+            let q = (qs[half * 32 + rem] >> (2 * j)) & 3;
+            seen[q as usize] = true;
+            if hmask[e % 32] & (1 << (4 * half + j)) != 0 {
+                set += 1;
+            } else {
+                cleared += 1;
+            }
+        }
+        let _ = block;
+    }
+    assert!(seen.iter().all(|&s| s), "levels seen: {seen:?}");
+    assert!(cleared > 0 && set > 0, "cleared {cleared}, set {set}");
+}
+
+/// The fixture encoder round-trips within one quantization step: the levels
+/// are derived by reading the packed scales BACK, so the only drift is a
+/// level boundary landing differently against the same step.
+#[test]
+fn q3_k_round_trip_stays_inside_one_step() {
+    let n = Q3_K_BLOCK_ELEMS * 2;
+    let x = weights(n, 2026);
+    let packed = quantize_q3_k(&x);
+    assert_eq!(packed.len(), n / Q3_K_BLOCK_ELEMS * Q3_K_BLOCK_BYTES);
+    let got = dequantize_q3_k(&packed, n);
+    // Two levels of rounding (6-bit scale, then the max-fit), so the bound
+    // is one reconstructed step per element plus the step's own f16 error.
+    let max_step = x
+        .chunks(Q3_K_BLOCK_ELEMS)
+        .flat_map(|block| {
+            (0..16).map(move |g| {
+                let group = &block[g * 16..(g + 1) * 16];
+                let max_pos = group.iter().fold(0f32, |a, &v| a.max(v));
+                let max_neg = group.iter().fold(0f32, |a, &v| a.max(-v));
+                (max_pos / 3.0).max(max_neg / 4.0)
+            })
+        })
+        .fold(0f32, f32::max);
+    for (i, (&g, &want)) in got.iter().zip(x.iter()).enumerate() {
+        assert!(
+            (g - want).abs() <= max_step * 1.01 + 1e-6,
+            "element {i}: {g} vs {want}, step {max_step}"
+        );
+    }
+}
+
+/// Negative weights survive the fixture encoder: the signed-level habit is
+/// the part of Q3_K most likely to be dropped by a symmetric port habit.
+#[test]
+fn q3_k_fixture_encoder_reconstructs_negative_weights() {
+    let n = Q3_K_BLOCK_ELEMS;
+    let x = weights(n, 77);
+    let got = dequantize_q3_k(&quantize_q3_k(&x), n);
+    assert!(got.iter().any(|&v| v < 0.0));
+}
+
+#[test]
+fn an_all_zero_q3_k_superblock_dequantizes_to_zeros() {
+    let packed = vec![0u8; Q3_K_BLOCK_BYTES];
+    assert!(dequantize_q3_k(&packed, Q3_K_BLOCK_ELEMS)
+        .iter()
+        .all(|&v| v == 0.0));
+    let encoded = quantize_q3_k(&vec![0.0; Q3_K_BLOCK_ELEMS]);
+    assert!(dequantize_q3_k(&encoded, Q3_K_BLOCK_ELEMS)
+        .iter()
+        .all(|&v| v == 0.0));
+}
+
+#[test]
+fn q3_k_gemv_matches_a_dequantize_then_multiply() {
+    let n = Q3_K_BLOCK_ELEMS * 2;
+    let x = weights(n, 91);
+    let rows: Vec<Vec<u8>> = (0..3).map(|r| quantize_q3_k(&weights(n, 40 + r))).collect();
+    let refs: Vec<&[u8]> = rows.iter().map(|r| r.as_slice()).collect();
+    let got = dequant_q3_k_gemv(&refs, &x, n);
+    for (i, row) in refs.iter().enumerate() {
+        let want: f32 = dequantize_q3_k(row, n)
+            .iter()
+            .zip(x.iter())
+            .map(|(w, xv)| w * xv)
+            .sum();
+        assert!((got[i] - want).abs() <= want.abs() * 1e-6 + 1e-6);
     }
 }
