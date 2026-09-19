@@ -333,11 +333,18 @@ impl RealForwardRunner {
             // (`num_experts == 0`). `RealLlamaState` carries both switches
             // already; `qwen3` is simply the first checkpoint to exercise
             // them together (`docs/QWEN3_PHASE0.md`).
+            //
+            // `qwen3_vl` joins as the THIRD on this flow: it is `qwen3`'s
+            // exact switch combination (per-head q/k norms, dense FFN) plus
+            // TIED embeddings and a 128 head dim independent of the hidden
+            // width -- shapes, not behaviour. Facts:
+            // `docs/QWEN3VL_PHASE0.md`.
             model_io::ModelFamily::Llama
             | model_io::ModelFamily::Qwen3Moe
             | model_io::ModelFamily::Qwen3Dense
             | model_io::ModelFamily::Qwen2Dense
-            | model_io::ModelFamily::MiniMaxM2 => {
+            | model_io::ModelFamily::MiniMaxM2
+            | model_io::ModelFamily::Qwen3Vl => {
                 runner.real_llama = Some(crate::families::llama::RealLlamaState::build(
                     &mut runner.context,
                     &runner.weights,

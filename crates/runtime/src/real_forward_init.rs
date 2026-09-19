@@ -530,6 +530,7 @@ mod tests {
         ModelFamily::Qwen3Dense,
         ModelFamily::MiniMaxM2,
         ModelFamily::Qwen2Dense,
+        ModelFamily::Qwen3Vl,
         // Refused deliberately: mapped residency over the compressed MLA
         // cache has no mapped arm in the deepseek2 dispatch, and the family
         // opens fine on the streamed path.

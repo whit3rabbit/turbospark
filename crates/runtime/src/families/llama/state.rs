@@ -175,14 +175,21 @@ impl RealLlamaState {
         // apart by their tensor names.
         let qk_norm = match arch.family {
             ModelFamily::MiniMaxM2 => QkNorm::Projection,
-            ModelFamily::Qwen3Moe | ModelFamily::Qwen3Dense => QkNorm::PerHead,
+            // `qwen3_vl` norms q and k per head exactly as dense `qwen3`
+            // does (`self_attn.{q,k}_norm.weight`, `[head_dim]`, before
+            // RoPE); the tensors sit under the same names this flow's
+            // per-head arm already reads.
+            ModelFamily::Qwen3Moe | ModelFamily::Qwen3Dense | ModelFamily::Qwen3Vl => {
+                QkNorm::PerHead
+            }
             _ => QkNorm::None,
         };
         let rms_eps = match arch.family {
             ModelFamily::MiniMaxM2
             | ModelFamily::Qwen2Dense
             | ModelFamily::Qwen3Moe
-            | ModelFamily::Qwen3Dense => 1e-6,
+            | ModelFamily::Qwen3Dense
+            | ModelFamily::Qwen3Vl => 1e-6,
             _ => 1e-5,
         };
         let qkv_bias = arch.family == ModelFamily::Qwen2Dense;
