@@ -82,7 +82,7 @@ cargo test -p turbospark-invocation
 
    **This is the first `auto` on an axis that is NOT throughput-only.** The
    slot count cannot move a digest (output is byte-identical across
-   8/16/24/32 since `crates/runtime/CLAUDE.md` Gotcha 8's fix), where a context window
+   8/16/24/32 since `crates/runtime/AGENTS.md` Gotcha 8's fix), where a context window
    decides how much KV is allocated and how long a prompt is admitted. What
    licenses the sensing default anyway is the resolver's rule that an install
    declaring no trained context resolves to `DEFAULT_MAX_CONTEXT` -- which is
@@ -94,4 +94,4 @@ cargo test -p turbospark-invocation
 
 3. **Some flags here are parsed, validated, printed and consumed by NOTHING.** `--rdadvise` round-trips through `InvocationRequest` and `main.rs`'s resolved-request block, and no binary reads it. Grep for `request.<field>` outside `main.rs` before building a new flag, or a `TURBOSPARK_*` seam, for something that may already have a surface -- chunked prefill was wired to an env var in 2026-08-16 and `--prefill-chunk` was found afterwards, in the printed block, in the same unwired state `--rdadvise` is still in.
 
-   `--prefill-chunk` itself is no longer an example of this: it was wired 2026-08-26 (`crates/cli/CLAUDE.md` Gotcha 7). `resolve_chunk_tokens` in `crates/cli/src/generate/mod.rs` reads `request.prefill_chunk.resolved()` and feeds the chunked prefill path only when `session.runner.supports_chunked_prefill()` says the install's family can serve it, else falls back to the sequential path silently -- so finding an unconsumed flag is still not the end of the question, but the resolution here was a capability check rather than a new `PrefillChunk` off-state variant.
+   `--prefill-chunk` itself is no longer an example of this: it was wired 2026-08-26 (`crates/cli/AGENTS.md` Gotcha 7). `resolve_chunk_tokens` in `crates/cli/src/generate/mod.rs` reads `request.prefill_chunk.resolved()` and feeds the chunked prefill path only when `session.runner.supports_chunked_prefill()` says the install's family can serve it, else falls back to the sequential path silently -- so finding an unconsumed flag is still not the end of the question, but the resolution here was a capability check rather than a new `PrefillChunk` off-state variant.

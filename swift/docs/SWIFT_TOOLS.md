@@ -1050,5 +1050,5 @@ guardrails once and keeps them, so reporting the live setting would claim
 a change that did not happen. A server started before the value was
 tracked reports `unknown`, not `on`. `.select` resolves to ON for a server
 (it means "decide per project or per chat," and a server request has
-neither). See root `CLAUDE.md` Gotcha 24 for the OTHER thing this app
+neither). See root `AGENTS.md` Gotcha 24 for the OTHER thing this app
 calls "guardrails" (memory-loading tiers, not tool calls).

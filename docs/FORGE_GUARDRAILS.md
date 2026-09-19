@@ -173,7 +173,7 @@ writing in. That is why `run_guarded` takes the whole
 `ChatCompletionRequest` rather than the already-planned prompt.
 
 **The budget is ONE.** The real backend serializes requests behind a mutex
-(one `RealForwardRunner` per process, `crates/server/CLAUDE.md` Gotcha 1),
+(one `RealForwardRunner` per process, `crates/server/AGENTS.md` Gotcha 1),
 so a second generation doubles the worst-case mutex hold. A ladder of
 escalating nudges is available in `forge-guardrails` and deliberately not
 taken. When the budget is spent the LAST generation is returned as it
@@ -262,7 +262,7 @@ alternative does nothing for the client that motivated the feature (Claude
 Code sends `stream: true` WITH tools), and a `forge-guardrails-proxy` in
 front would buffer identically. The condition is keyed on the REQUEST
 carrying tools, which is the same shape as the two conditions in
-`crates/server/CLAUDE.md` Gotchas 7 and 12.
+`crates/server/AGENTS.md` Gotchas 7 and 12.
 
 **The chunk ORDER out of the buffered path is a correctness condition, not
 a style choice.** Anthropic's `StreamingTranslator` is a state machine over
@@ -365,7 +365,7 @@ Measured result on `~/models/gemma4.gturbo`, both halves of the cycle:
 
 The Anthropic endpoint carries the same call as a `tool_use` block with
 `stop_reason: tool_use`. The worked `curl` for it is in
-`crates/server/CLAUDE.md` Gotcha 8.
+`crates/server/AGENTS.md` Gotcha 8.
 
 ### Testing a retry needs a backend that answers twice
 
@@ -414,13 +414,13 @@ repair layer. Full list in `DEVIATIONS.md`.
   retry decision, but the model is free to emit whatever it emits.
 - **`turbospark-check` has no tool calling at all**, by construction rather
   than omission: it builds its decoder with an empty allowlist and has no
-  way to run a tool. See `crates/cli/CLAUDE.md` Gotcha 4.
+  way to run a tool. See `crates/cli/AGENTS.md` Gotcha 4.
 
 ## See also
 
-- `crates/server/CLAUDE.md` Gotcha 18 -- the implementation gotchas, including
+- `crates/server/AGENTS.md` Gotcha 18 -- the implementation gotchas, including
   the traps above stated as rules.
-- `crates/server/CLAUDE.md` Gotchas 7, 8, 12, 14 -- the underlying tool-call
+- `crates/server/AGENTS.md` Gotchas 7, 8, 12, 14 -- the underlying tool-call
   path this layer sits on.
 - `docs/TOOL_CALLING.md` -- the per-family coverage table across all three
   implementations, and the rescue strategies added beside this crate

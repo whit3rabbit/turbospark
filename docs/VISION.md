@@ -258,7 +258,7 @@ That merger figure was AT the reference's own FP16-vs-FP32 floor of
 0.999993 for this tower, not above it -- with no gap left to attribute, on
 the assumption that everything upstream of the merger was already exact.
 
-**RE-MEASURED 2026-09-07 after AGENTS.md/CLAUDE.md B7** (the tower's RoPE
+**RE-MEASURED 2026-09-07 after AGENTS.md/AGENTS.md B7** (the tower's RoPE
 angle table stopped being narrowed to FP16 before the GPU dispatch -- the
 angle at pair 0 equals the raw patch coordinate and this checkpoint's real
 80x64 grid reaches into the tens, where FP16's step was a real, measurable
@@ -907,7 +907,7 @@ first-cut scope line, since the injection in `produce.rs` was the family's
 only embedding call site -- so the one family with a tower could not chunk
 the prompts that need it most. A real page is over a thousand merged tokens
 of a ~1,300-token prompt. `families/qwen/prefill.rs` mirrors both halves
-now, the blit and the mRoPE angle, and `crates/runtime/CLAUDE.md` Gotchas
+now, the blit and the mRoPE angle, and `crates/runtime/AGENTS.md` Gotchas
 14 and 27 carry the design. `TURBOSPARK_BATCHED_GEMV` plus an image prompt
 is still refused, about the ANGLE rather than the embedding.
 

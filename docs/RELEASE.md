@@ -111,7 +111,7 @@ a tag pushed without it never reaches the build.
 ## The app bundle and the DMG
 
 `swift build` emits a bare executable and a resource bundle side by side;
-there is no Xcode project here (`swift/CLAUDE.md` Gotcha 12). Two scripts
+there is no Xcode project here (`swift/AGENTS.md` Gotcha 12). Two scripts
 close that gap, and CI calls exactly these, so a local `make dmg` and a
 release build the same thing:
 

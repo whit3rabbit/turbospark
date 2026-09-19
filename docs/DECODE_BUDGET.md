@@ -191,7 +191,7 @@ wired pages cannot be evicted: the OS squeezes everything else. The two
 claims that looked contradictory are both true: `phys_footprint` does not
 count the mapping (the process ledger shows it as 1.4 MB of clean
 "mapped file"; AGENTS.md Gotcha 40), and Metal's `newBufferWithBytesNoCopy`
-wires it (`crates/model-io` CLAUDE.md Gotcha 1). "Not counted" never
+wires it (`crates/model-io` AGENTS.md Gotcha 1). "Not counted" never
 meant "reclaimable". Consequence: budget a dense install's full disk size
 in physical RAM -- a 16 GB machine is hard-blocked from this model, not
 gracefully degraded, and the catalog row's "budget its size on disk in

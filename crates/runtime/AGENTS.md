@@ -61,6 +61,11 @@ crates/runtime/
 |   |   \-- weights.rs          # Encoder weights container, BF16 and 8-bit affine loaders
 |   +-- families/               # Model-family-specific decode implementations
 |   |   +-- mod.rs              # Re-exports model family submodules
+|   |   +-- deepseek2/          # DeepSeek-V2 MLA decode flow
+|   |   |   +-- mod.rs          # Entry point & layer loop
+|   |   |   +-- attn.rs         # MLA absorbed attention decode
+|   |   |   +-- moe.rs          # DeepSeek V2 MoE routed pass
+|   |   |   \-- state.rs        # RealDeepSeek2State initialization
 |   |   +-- gemma4/             # Gemma 4 decode flow
 |   |   |   +-- mod.rs          # Gemma 4 entry point & shared expert branch
 |   |   |   +-- attn.rs         # Attention block & router GEMV pass
@@ -125,6 +130,12 @@ crates/runtime/
 |   |   |   +-- moe.rs          # Gated MoE: INT8 router GEMV + routed pass
 |   |   |   +-- ple.rs          # The PLE n-gram chain (see Gotcha 14's host-write trap)
 |   |   |   \-- state.rs        # RealQwen4State: QSA positions, PLE tails, widened rows
+|   |   +-- spark/              # Spark-X2.5-4B decode flow
+|   |   |   +-- mod.rs          # Entry point & layer loop
+|   |   |   +-- attn.rs         # Per-class RoPE and headwise gate
+|   |   |   +-- mlp.rs          # Dense MLP block
+|   |   |   +-- prefill.rs      # Spark chunked prefill
+|   |   |   \-- state.rs        # RealSparkState initialization
 |   |   \-- synthetic/          # Synthetic fallback decode flow
 |   |       +-- mod.rs          # Synthetic entry point & host MoE FFN
 |   |       \-- layer.rs        # Synthetic layer encoder
@@ -158,11 +169,13 @@ crates/runtime/
     +-- real_forward_llama_kv_quant.rs # llama TurboQuant KV-cache quantization tests
     +-- real_forward_llama_moe_chunked.rs # MoE Llama chunked prefill tests
     +-- real_forward_llama_steered.rs # Llama directional steering integration tests
+    +-- real_forward_minimax.rs # MiniMax-M2 split-GGUF decode tests
     +-- real_forward_muse.rs    # Real forward tests for Muse Glimmer flow
     +-- real_forward_museglimmer_chunked.rs # Muse Glimmer chunked prefill tests
     +-- real_forward_museglimmer_kv_quant.rs # Muse Glimmer TurboQuant KV-cache quantization tests
     +-- real_forward_museglimmer_steered.rs # Muse Glimmer directional steering tests
     +-- real_forward_qwen.rs    # RealForwardRunner Qwen 3.6 decode tests
+    +-- real_forward_qwen2.rs   # RealForwardRunner Qwen 2 dense decode tests
     +-- real_forward_qwen35.rs  # The DENSE, ONE-BIT half of the same flow
     +-- real_forward_qwen35_batched_onset.rs # Batched verify onset consistency tests
     +-- real_forward_qwen35_chunked.rs # Qwen 3.5 chunked prefill tests
@@ -171,10 +184,13 @@ crates/runtime/
     +-- real_forward_qwen35_mtp.rs # MTP speculative decoding integration tests
     +-- real_forward_qwen35_steered_batched.rs # Batched steered forward tests
     +-- real_forward_qwen3moe.rs# The same flow under the Qwen3-MoE family tag
+    +-- real_forward_qwen3vl.rs # Qwen3-VL decode and steering integration tests
     +-- real_forward_qwen4.rs   # RealForwardRunner qwen4_exp (Qwen3.8-Flash-Next) decode tests
     +-- real_forward_qwen4_chunked.rs # qwen4_exp chunked prefill tests (the SEVENTH flow)
     +-- real_forward_qwen4_kv_quant.rs # qwen4_exp TurboQuant KV-cache quantization tests
     +-- real_forward_qwen_moe_batched.rs # The BATCHED routed verify vs M sequential produce
+    +-- real_forward_spark.rs   # Spark-X2.5-4B forward pass decode tests
+    +-- real_forward_spark_kv_quant.rs # Spark-X2.5-4B TurboQuant KV-cache quantization tests
     +-- session_pool.rs         # Session-pool swap/park mechanics (Gotcha 32)
     +-- speculative.rs          # Speculative decoding loop integration tests
     +-- vision_chunked_synthetic.rs # Chunked-driver vs sequential vision injection equivalence
@@ -362,7 +378,7 @@ cargo test -p turbospark-runtime
 
     **THE FOURTH FLOW, THE MoE HALF OF `families/llama/`, LANDED THE SAME DAY AND IS THE SIMPLER OF THE TWO** (no shared expert, no router bias, no ring at all -- this architecture has no sliding-window layers, full stop). `prefill_chunk_real_llama_moe` (`families/llama/moe_prefill.rs`) is the same per-layer-`cb1`-plus-per-token-routed-loop shape, and `families/llama/moe.rs`'s `encode_llama_layer_moe` gained the same `RoutedSlot` parameter, `routed_blobs_banks` plumbing and `x_off`/bank-offset threading `encode_gemma4_layer_routed_moe` already has, returning the bound cache slots for the next token's `protect` set. `RealLlamaState::router_logits_f32` and `moe_x` widened the same way `RealGptOssState`'s did. **This is the pair that proves Step 1 needs no new kernel for ANY layout**: both drivers dispatch through `encode_moe_phase1_any` / `encode_moe_phase2_any`, the same layout-agnostic calls the sequential decode path already uses (Affine, GGUF Q4_K/Q6_K, MXFP4), so widening two more families cost zero new Metal code -- only the batched routed KERNEL (steps 2/3, `TURBOSPARK_ROUTED_BATCH`) stays INT4-affine-only and unwired for either. Verified byte-identical against sequential on the synthetic fixture (`real_forward_llama_moe_chunked.rs`, chunk-span sweep, a cache-too-small-to-pipeline case on a separate 2-expert/top-2 shape so top-k selects both experts every token and nothing ever misses after the first load, and a decode-continuation case) and on the real `Qwen/Qwen3-30B-A3B-GGUF` install pulled fresh for this verification (no install of this family's checkpoint remained on disk; `CLAUDE.local.md`'s old `qwen3moe-gguf.gturbo` reference had gone stale): greedy and sampled stdout md5-identical against a pre-change binary.
 
-    **THE SIXTH FLOW, THE DENSE HALF OF THE QWEN LINEAR-ATTENTION FAMILY, LANDED 2026-08-29 AND IS NEITHER OF THE TWO SHAPES ABOVE.** `families/qwen/prefill.rs`'s `prefill_chunk_real_qwen_dense` serves `qwenGdnDense` (`qwen38-27b.gturbo`). The obvious precedent looked like `families/qwen/batched.rs` -- the M-row GEMM machinery this family already built for the MTP/DFlash2 verify pass -- and that is the WRONG one to copy: it implements steps 2-6 (GEMVs become GEMMs), sized for tiny drafter block depths and allocated only when a drafter is open. This driver is Step 1 again, same shape as dense `llama`'s and `muse_glimmer`'s: loop the EXISTING per-token kernels (`attn::encode_linear_block` for the gated-DeltaNet mask-2 layers, `attn::encode_full_attention_block` for the mask-1 ones, `dense::encode_qwen_layer_dense` for the FFN) inside a micro-batch, one command buffer for the whole thing since a dense layer has no router readback. **No new kernel, and -- a first among the Step-1 drivers -- no new buffer either**: every per-token intermediate the trunk's sequential flow already owns (`qwen.moe_x`, `qwen.h2`, the GDN scratch fields) is single-row and GPU-only, safe to reuse across tokens under commit-order execution (Gotcha 8 in `crates/gpu/CLAUDE.md`), exactly like `llama.moe_x`/`h2`.
+    **THE SIXTH FLOW, THE DENSE HALF OF THE QWEN LINEAR-ATTENTION FAMILY, LANDED 2026-08-29 AND IS NEITHER OF THE TWO SHAPES ABOVE.** `families/qwen/prefill.rs`'s `prefill_chunk_real_qwen_dense` serves `qwenGdnDense` (`qwen38-27b.gturbo`). The obvious precedent looked like `families/qwen/batched.rs` -- the M-row GEMM machinery this family already built for the MTP/DFlash2 verify pass -- and that is the WRONG one to copy: it implements steps 2-6 (GEMVs become GEMMs), sized for tiny drafter block depths and allocated only when a drafter is open. This driver is Step 1 again, same shape as dense `llama`'s and `muse_glimmer`'s: loop the EXISTING per-token kernels (`attn::encode_linear_block` for the gated-DeltaNet mask-2 layers, `attn::encode_full_attention_block` for the mask-1 ones, `dense::encode_qwen_layer_dense` for the FFN) inside a micro-batch, one command buffer for the whole thing since a dense layer has no router readback. **No new kernel, and -- a first among the Step-1 drivers -- no new buffer either**: every per-token intermediate the trunk's sequential flow already owns (`qwen.moe_x`, `qwen.h2`, the GDN scratch fields) is single-row and GPU-only, safe to reuse across tokens under commit-order execution (Gotcha 8 in `crates/gpu/AGENTS.md`), exactly like `llama.moe_x`/`h2`.
 
     **The GDN recurrent state is the one thing no other Step-1 driver has to reason about, and it resolves for free.** `encode_linear_block`'s decode-shaped kernels advance `qwen.gdn.state_buffer(layer)` in place with no position argument, so calling it once per token, strictly in order, within one layer's inner loop before the next layer starts, reproduces sequential decode's math exactly -- Gotcha 4's constraint, satisfied by construction rather than by new machinery. It is also why cross-chunk continuity needs no handoff: the state buffer is the one sequential decode already reads and writes, so a prompt spanning several `prefill_chunk` calls carries it forward automatically.
 
@@ -1278,7 +1294,7 @@ cargo test -p turbospark-runtime
     that moves `kv`, gated on `self.real_qwen.as_mut()` so a non-GDN
     family's `SessionSlot::gdn` stays `None` throughout. **This family is
     also where the two refusals `try_reuse_prefix` already carries
-    (`crates/runtime/CLAUDE.md` Gotcha 30's `real_qwen.is_some()` check)
+    (`crates/runtime/AGENTS.md` Gotcha 30's `real_qwen.is_some()` check)
     interact with pooling in a way worth knowing**: that check refuses ANY
     rewind unconditionally on a GDN family, so `try_reuse_prefix` can only
     ever succeed there via the `back == 0` exact-continuation path -- the

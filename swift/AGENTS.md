@@ -14,7 +14,7 @@ incident detail; the table at the bottom says which page owns which area
 Keep code, comments and docs ASCII: no emojis and no em dashes (project
 rule).
 
-Read `crates/ffi/CLAUDE.md` first when the change crosses the boundary.
+Read `crates/ffi/AGENTS.md` first when the change crosses the boundary.
 Its Gotchas 1, 2, 7, 8, 9 and 10 are the Rust half of Gotchas 1, 2, 4, 5
 and 6 here, and neither half makes sense alone. `docs/SWIFT_BINDINGS.md`
 documents the ABI contract itself.
@@ -65,6 +65,7 @@ swift/
     |   |                            # ServerMetricsStore and ServerEndpointCatalog
     |   |                            # are pure and are what the tests reach
     |   +-- Presentation/            # markdown render, docx/xlsx/pdf extract
+    |   +-- Images/                  # ImagesSectionView (image generation)
     |   +-- Components/              # AppearanceSettingsPaneView (+ ThemeConfigCard,
     |   |                            # AppearancePreferencesCard), McpSettingsPaneView,
     |   |                            # ModelsSettingsPaneView (+ CustomModelFoldersSection),
@@ -92,7 +93,7 @@ swift/
     |   |   +-- Terminal/            # TerminalTools (schemas only), plus
     |   |   |                        # ShellCommandRunner, BackgroundShellManager,
     |   |   |                        # ShellCwdTracker, ShellOutputFormatting
-    |   |   \-- Tasks/ Planning/ Projects/ Automation/
+    |   |   \-- Tasks/ Planning/ Projects/ Automation/ Memory/
     |   \-- Resources/               # app-prompts.json, Logos/ (Bundle.module)
     \-- Tests/TurboSparkAppTests/    # Unit tests covering appearance settings,
                                      # MCP client engine, project MCP detection,
@@ -278,7 +279,7 @@ keeps resolving.
    the C layer's one-generation-at-a-time contract by construction. The
    `@unchecked Sendable` on the type and on the `Handle` wrapper rests on
    that confinement plus the header's statement that `ts_session_cancel` is
-   an atomic store safe from any thread (`crates/ffi/CLAUDE.md` Gotcha 1).
+   an atomic store safe from any thread (`crates/ffi/AGENTS.md` Gotcha 1).
    Do not "modernize" this into an actor.
 
 2. **A SwiftPM `-L` FLAG IS RESOLVED AGAINST THE PACKAGE BEING BUILT, NOT THE
@@ -449,10 +450,8 @@ keeps resolving.
     `showsLeadingDivider:`, because with memory and CPU gone it can be first
     in the strip.
 
-    The rail carries five sections since 2026-08-30 (Chat, Files,
-    Installed, Discover, Server); Server was APPENDED at the last shortcut
-    rather than inserted, so the four that existed keep the numbers anyone
-    has already learned. `testEverySectionHasAUniqueTitleAndShortcut`
+    The rail carries six sections (Chat: 1, Images: 2, Files: 3, Installed: 4,
+    Discover: 5, Server: 6); `testEverySectionHasAUniqueTitleAndShortcut`
     guards a missing or duplicated tooltip.
 
     **THE WINDOW DEFAULTS TO THE SCREEN'S FULL VISIBLE FRAME AND REMEMBERS
@@ -938,9 +937,12 @@ Each page carries its own "read this before" list at the top.
 | Page | Covers |
 |---|---|
 | `swift/docs/SWIFT_TOOLS.md` | tool execution, containment, permissions, hooks, MCP, subagents, adding or removing a tool |
+| `swift/docs/SWIFT_TOOL_CATALOG.md` | full reference catalog: all built-in tools, parameters, schemas, permission matrix, and patterns |
 | `swift/docs/SWIFT_AGENT_MODE.md` | the `.agentAuto` permission mode: the classifier contract, routing rules, hard gates, fallback counters, hints |
 | `swift/docs/SWIFT_PLUGINS.md` | the plugin system: manifest, contributions, enable cascade, marketplace |
 | `swift/docs/SWIFT_SKILLS.md` | skills: architecture, scopes, file layout, marketplace |
+| `swift/docs/SWIFT_CONTEXT_REFERENCES.md` | typed `@` context references (`@diff`, `@staged`, `@git:N`, `@url:`, `@file:`, `@folder:`), resolution, sensitive-path and SSRF gates |
+| `swift/docs/SWIFT_PROFILES.md` | user profiles: registry, Default-user contract, shared vs per-profile storage, save-and-relaunch switching |
 | `swift/docs/SWIFT_MEMORY.md` | auto-memory: the per-project directory, the index, the `memory` tool, the `#` quick-save |
 | `swift/docs/SWIFT_COMPACTION.md` | context compaction: trigger, boundary, summarizer, the ghost rule |
 | `swift/docs/SWIFT_TURN_PIPELINE.md` | the message queue, steer delivery at step boundaries, system reminders |
@@ -949,6 +951,9 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_GHOST_MODE.md` | temporary (ghost) chats: the two layers, the three rules that must not break |
 | `swift/docs/storage.md` | app JSON stores, the configurable modality-separated engine model store, move wizard, provider discovery, `ModelStorageManager`, `AppStorageRoot` test isolation, and which directories tests may write to |
 | `swift/docs/SWIFT_CONTEXT_RING.md` | the composer's context-usage indicator; the system prompt as one builder, three consumers |
+| `swift/docs/SYSTEM_PROMPT.md` | system prompt architecture: section ordering, dynamic capabilities, system reminders, token budgets |
+| `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, live file buffer, and dual-staticlib symbol localization |
+| `swift/docs/SWIFT_SINGLETON_AUDIT.md` | singleton audit: lifecycle, concurrency safety, shared vs profile instances |
 | `swift/docs/SWIFT_CHAT_SEARCH.md` | the Cmd+K search dialog: what is searched, ghost exclusion, matching semantics |
 | `swift/docs/SWIFT_MODEL_HUB.md` | install, the model hub's badges and filters, `activeLoadGuard`, selecting/opening/unloading, server multi-model attach |
 | `swift/docs/SWIFT_SESSION_CAPABILITIES.md` | reading capabilities off `session.info`: reasoning, tool calling, steering |

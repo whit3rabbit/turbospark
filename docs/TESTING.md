@@ -272,7 +272,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 #    orders V heads differently and stores -exp(A_log). Checks every tensor
 #    on that axis on every layer, and with TURBOSPARK_QWEN_PATCH=1 rewrites
 #    them in place, which is how a whole-model coherence test costs seconds
-#    instead of a ~21-minute repack. Numbers in crates/repack/CLAUDE.md
+#    instead of a ~21-minute repack. Numbers in crates/repack/AGENTS.md
 #    Gotcha 7; the trap that made this eight tensors rather than three is
 #    AGENTS.md Gotcha 33.
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \

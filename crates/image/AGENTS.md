@@ -159,7 +159,7 @@ cargo test -p turbospark-image --test metal_parity -- --ignored --nocapture
 8. **THE CLI SURFACE LIVES IN `crates/cli`, AND ITS SECRET RULES APPLY
    HERE.** `turbospark-image` is `crates/cli/src/bin/image.rs`; flag
    conventions and the no-secrets-in-argv rules are recorded in
-   `crates/cli/CLAUDE.md` Gotchas 16 and 17. Image-specific flags follow
+   `crates/cli/AGENTS.md` Gotchas 16 and 17. Image-specific flags follow
    the same five-place rule as every other CLI flag.
 
 9. **COMPONENT MMAP DROPS MUST DRAIN PENDING WORK BEFORE UNMAPPING.**

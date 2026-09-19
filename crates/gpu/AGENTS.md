@@ -30,16 +30,22 @@ crates/gpu/
 |   +-- rms_norm.rs                 # RMSNorm dispatches (no-scale, BF16, per-head)
 |   +-- rope.rs                     # RoPE positional embedding dispatch
 |   +-- dequant_1bit_gemv.rs        # MLX 1-bit affine GEMV pair (port-local, ROADMAP's 1-bit entry)
+|   +-- dequant_1bit_gemm_batch.rs  # Batched 1-bit affine GEMM dispatch
 |   +-- dequant_2bit_gemv.rs        # MLX 2-bit affine GEMV + lookup (port-local, ROADMAP's ternary entry)
+|   +-- dequant_2bit_gemm_batch.rs  # Batched 2-bit affine GEMM dispatch
 |   +-- dequant_int4_gemv.rs        # INT4 SIMD GEMV dispatches (resident & streamed)
 |   +-- dequant_int4_batch.rs       # The M-ROW batched INT4 GEMM (ROADMAP Phase D2); see its header for the two register-file dead ends
-|   +-- dequant_iq_gemv.rs          # IQ3_XXS / IQ4_NL / IQ4_XS codebook GEMV (Phase S)
+|   +-- dequant_iq_gemv.rs          # IQ codebook GEMV (IQ1_S through IQ4_NL, Phase S)
 |   +-- dequant_int8_gemv.rs        # INT8 SIMD GEMV dispatches (resident & streamed)
+|   +-- dequant_q2_k_gemv.rs        # GGUF Q2_K SIMD GEMV dispatch
+|   +-- dequant_q3_k_gemv.rs        # GGUF Q3_K SIMD GEMV dispatch
 |   +-- dequant_q4_k_gemv.rs        # GGUF Q4_K SIMD GEMV + embed lookup (port-local, Phase G)
 |   +-- dequant_q5_k_gemv.rs        # GGUF Q5_K SIMD GEMV (port-local, Phase M2)
 |   +-- dequant_q6_k_gemv.rs        # GGUF Q6_K SIMD GEMV dispatch (port-local, Phase G)
 |   +-- moe_gguf/                   # GGUF routed-expert decode pairs (Q8_0, K-quants, IQ, MXFP4)
 |   +-- dequant_q8_0_gemv.rs        # GGUF Q8_0 SIMD GEMV dispatch (port-local, Phase G)
+|   +-- minimax_router.rs           # MiniMax-M2 FP32 sigmoid routing kernel dispatch
+|   +-- mla.rs                      # DeepSeek V2 MLA absorbed attention and projection dispatches
 |   +-- resident_metal.rs           # ResidentGpuWeights mmap zero-copy MTLBuffer wrapper
 |   +-- dispatch_profile.rs         # Intra-command-buffer dispatch profiler
 |   +-- device_memory.rs            # MTLDevice recommendedMaxWorkingSetSize & name
@@ -69,17 +75,21 @@ crates/gpu/
 |       +-- dequant_int4_mma.metal  # INT4 simdgroup_matrix MMA shader source (dead end)
 |       +-- dequant_int8.metal      # INT8 dequantization GEMV shader source
 |       +-- dequant_iq.metal        # GGUF IQ-codebook GEMV shader source
+|       +-- dequant_iq_lowbit_tables.metal # Sub-3-bit IQ codebook lookup tables
+|       +-- dequant_q2_k.metal      # GGUF Q2_K dequantization GEMV shader source
+|       +-- dequant_q3_k.metal      # GGUF Q3_K dequantization GEMV shader source
 |       +-- dequant_q4_k.metal      # GGUF Q4_K dequantization GEMV + embedding lookup
 |       +-- dequant_q5_k.metal      # GGUF Q5_K dequantization GEMV (after dequant_q4_k.metal)
 |       +-- dequant_q6_k.metal      # GGUF Q6_K dequantization GEMV shader source
 |       +-- moe_gguf.metal          # GGUF MoE decode pairs (after moe.metal + dequant_q4_k.metal)
 |       +-- dequant_q8_0.metal      # GGUF Q8_0 dequantization GEMV shader source
 |       +-- dflash_conv.metal       # DFlash2 grouped depthwise conv shader source
-|       +-- kv_quantize_tq.metal    # TurboQuant KV commit quantization shader source (port-local)
 |       +-- gdn.metal               # Gated-DeltaNet (Qwen 3.6 linear attention) shader source
 |       +-- hyper.metal             # qwen4_exp's hyper-connection mix shader source (port-local)
 |       +-- kv_quantize_tq.metal    # TurboQuant K/V row quantization shader source (port-local)
 |       +-- logit.metal             # Logit softcap and softmax shader source
+|       +-- minimax_router.metal    # MiniMax-M2 sigmoid router shader source
+|       +-- mla.metal               # DeepSeek V2 MLA absorbed attention and projections
 |       +-- moe.metal               # MoE router GEMV and phase 1/2 shader source
 |       +-- moe_prefill_batch.metal # Batched MoE prefill GEMV shader source
 |       +-- moe_prefill_batch_gguf.metal # The MXFP4 batched pair (after the moe_gguf chain)
@@ -96,7 +106,9 @@ crates/gpu/
     +-- attention_sinks.rs
     +-- attention_swa.rs
     +-- attention_tq_parity.rs
+    +-- dequant_1bit_gemm_parity.rs
     +-- dequant_1bit_gemv_parity.rs
+    +-- dequant_2bit_gemm_parity.rs
     +-- dequant_2bit_gemv_parity.rs
     +-- dequant_int4_gemm_parity.rs
     +-- dequant_int4_gemv_parity.rs
@@ -119,8 +131,11 @@ crates/gpu/
     +-- gemv_bandwidth_bench.rs
     +-- hyper_connection_parity.rs
     +-- kv_cache.rs
+    +-- kv_cache_quant.rs
     +-- kv_quantize_parity.rs
     +-- logit_softmax_parity.rs
+    +-- minimax_router.rs
+    +-- mla_parity.rs
     +-- moe_decode.rs
     +-- moe_gguf_parity.rs
     +-- moe_prefill_batch_bench.rs
@@ -399,7 +414,7 @@ crates/gpu/
   `alpha` -- and full strength is the natural value to reach for, since making
   it usable is the mode's whole purpose. Both mutations were checked and both
   redden only their own cases.
-- `vision.rs` + `shaders/vision.metal`: the `qwen3_5` vision tower's six kernels (ROADMAP M-V2) -- `vision_layer_norm_fp16`, `vision_gelu_tanh_fp16` / `vision_gelu_erf_fp16`, `vision_rope_2d_fp16`, `vision_attention_bidir_fp16`, `vision_matmul_fp16`, `vision_residual_add_fp16`. PORT-LOCAL; their contract is `turbospark_compute::vision`. **They have a PRODUCTION CALLER since M-V4** -- `crates/runtime/src/vision/` dispatches all six per image, and the whole tower reads cosine 0.99999801 against mlx-vlm at the merger (re-measured 2026-09-07 after AGENTS.md/CLAUDE.md B7 stopped narrowing the RoPE angle table to FP16; the 2026-08-28 baseline of 0.99999334 sat AT that reference's own FP16-vs-FP32 floor and is now superseded, `docs/VISION.md`). So these are live rather than scaffolding, and a change to any of them owes that gate as well as the per-kernel parity cases. **FIVE THINGS TO READ BEFORE TOUCHING THEM.**
+- `vision.rs` + `shaders/vision.metal`: the `qwen3_5` vision tower's six kernels (ROADMAP M-V2) -- `vision_layer_norm_fp16`, `vision_gelu_tanh_fp16` / `vision_gelu_erf_fp16`, `vision_rope_2d_fp16`, `vision_attention_bidir_fp16`, `vision_matmul_fp16`, `vision_residual_add_fp16`. PORT-LOCAL; their contract is `turbospark_compute::vision`. **They have a PRODUCTION CALLER since M-V4** -- `crates/runtime/src/vision/` dispatches all six per image, and the whole tower reads cosine 0.99999801 against mlx-vlm at the merger (re-measured 2026-09-07 after AGENTS.md/AGENTS.md B7 stopped narrowing the RoPE angle table to FP16; the 2026-08-28 baseline of 0.99999334 sat AT that reference's own FP16-vs-FP32 floor and is now superseded, `docs/VISION.md`). So these are live rather than scaffolding, and a change to any of them owes that gate as well as the per-kernel parity cases. **FIVE THINGS TO READ BEFORE TOUCHING THEM.**
   **Every weight is `half`, not `bfloat`**, alone in this crate. The tower is signed off at FP16 end to end (`docs/VISION_PHASE0.md`): its checkpoints ship F16, the extreme-page probe puts peak activations at 13.8% of FP16's ceiling with a factor of 7.3 in hand, and INT4 was measured and REJECTED on OCR quality. The two types are the same WIDTH, so binding a BF16 tensor here passes every length check and reads the bytes as a different number.
   **LayerNorm reduces TWICE** (mean, then variance about that mean) rather than using the one-pass `E[x^2] - E[x]^2` identity. That identity cancels catastrophically when the mean is large relative to the spread, which is this tower's NORMAL condition rather than an edge case: block 26 runs at absmax 9,024 with rms 145.
   **The two GELUs are separate KERNELS, never one with a mode uniform** -- Gotcha 1's trap, and here it would make the tower's two activations one function. **Metal ships no `erf`**, which reads like it should (`metal_math` has every other libm name); the series is written out as the same Abramowitz-Stegun 7.1.26 the CPU reference uses, deliberately the same approximation so the parity bound measures FP32-vs-FP64 and FP16 storage rather than a gap between rival expansions.

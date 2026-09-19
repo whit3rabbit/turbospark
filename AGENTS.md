@@ -1,12 +1,23 @@
 # AGENTS.md
 
-CLAUDE.md is a symlink to this file.
-
 Conventions, gotchas, and commands for working in this Rust workspace,
 a behavior-compatible port of the Mference Swift inference engine (see
 `ROADMAP.md` for the forward roadmap and descope record, and
 `DEVIATIONS.md` for what is scaffolded rather than fully wired). Keep all code, comments, and docs
 ASCII: no emojis and no em dashes (project rule).
+
+## LLM Agent Notice: Per-Crate and Swift App AGENTS.md
+
+Notice for AI agents and LLMs: Each crate under `crates/` and the Swift application under `swift/` has its own dedicated, localized `AGENTS.md` file.
+
+When working in or modifying code within a specific crate (e.g. `crates/runtime/`, `crates/gpu/`, `crates/server/`, etc.) or the Swift app (`swift/`), you MUST consult and adhere to that component's localized `AGENTS.md` file before proposing or making changes. Local `AGENTS.md` files define:
+- Crate-specific architecture, module breakdown, and dataflow
+- Mandatory localized gotchas, invariants, and edge cases
+- Specialized test, benchmark, and build commands
+- Platform, hardware, and kernel constraints
+
+Do not assume this root `AGENTS.md` contains all localized rules. See [Per-Crate Documentation](#per-crate-documentation) below for the complete directory of component `AGENTS.md` files.
+
 
 ## Where the depth lives
 
@@ -29,7 +40,7 @@ read the page before proposing the thing it refutes.
 | `docs/MTP.md` | the MTP head: architecture and measured facts, nothing projected | changing the head |
 | `docs/BATCHED_PREFILL.md` | the batched prefill driver, its seams and its dead ends | touching that driver |
 | `docs/NEW_MODEL.md` | end-to-end checklist for wiring a new model family | starting one |
-| `docs/CLI.md` | every flag on all three binaries, incl. the steering walkthrough | adding or changing a flag |
+| `docs/CLI.md` | every flag and subcommand across all binaries, incl. the steering walkthrough | adding or changing a flag |
 | `docs/MODELS.md` | the catalog, the probe, `pull`, how to add a row | touching `models.json` |
 | `docs/GTURBO.md` | the `.gturbo` install format this port reads and writes | changing the writer |
 | `docs/MODEL_FAMILY.md` | GGUF `general.architecture` and HF `model_type` tables | adding an architecture row |
@@ -112,7 +123,7 @@ refactor of a family flow is a numerics change until a real model says
 otherwise: `5279c88` split `real_forward_qwen.rs` into `families/qwen/`,
 picked up a Gemma sandwich norm on the way, and shipped a Qwen whose
 reference perplexity read 255,409 against a frozen 6.2536, with the whole
-workspace suite green (`crates/runtime/CLAUDE.md` Gotcha 11). Run the gates
+workspace suite green (`crates/runtime/AGENTS.md` Gotcha 11). Run the gates
 per FAMILY the change touches, not once for the workspace.
 
 **NEW FAMILY SUPPORT IS A CROSS-LAYER CHANGE.** A family is not supported when
@@ -299,7 +310,7 @@ make swift-test-real MODEL=~/models/gemma4.gturbo
 # the refusal path was covered by nothing until it existed. Point it at a MoE
 # or sub-4-bit install; the tests CHECK that it is one, because a merely
 # headless dense install passes every other line while re-testing a case
-# already covered (`crates/ffi/CLAUDE.md` Gotcha 11).
+# already covered (`crates/ffi/AGENTS.md` Gotcha 11).
 make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
                      BLOCKED=~/models/ornith35b.gturbo
 
@@ -311,7 +322,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
 # attachment, and a phase-counter inspector.
 #
 # Both `make` targets depend on `swift-lib`, which touches every `.swift` file
-# in both packages (`swift/CLAUDE.md` Gotcha 3), so each one pays a full Swift
+# in both packages (`swift/AGENTS.md` Gotcha 3), so each one pays a full Swift
 # rebuild. Iterating on SwiftUI alone, call SwiftPM directly and skip it:
 # `cd swift/TurboSparkApp && swift run TurboSparkApp`.
 make swift-app
@@ -320,7 +331,7 @@ make swift-demo
 # The RELEASE artifacts, and the only way to get a real `.app` out of this
 # tree: `swift build` emits a bare executable, so the Info.plist, the bundle
 # identifier and the resource-bundle copy all live in the script rather than
-# in an Xcode project (`swift/CLAUDE.md` Gotcha 12). `dmg` additionally MOUNTS
+# in an Xcode project (`swift/AGENTS.md` Gotcha 12). `dmg` additionally MOUNTS
 # what it built and asserts the contents, because `hdiutil create` exits 0
 # over an incomplete staging directory. Both land in `dist/` (gitignored) and
 # both are what `.github/workflows/release.yml` calls, so a local run and a
@@ -458,7 +469,7 @@ curl -sN localhost:8080/api/chat -H 'content-type: application/json' \
 claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080","ANTHROPIC_API_KEY":"unused","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"true","CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT":"1"}}' \
   --model claude-turbospark-<canonical-model-id>
 
-# TOOL-CALL GUARDRAILS, on by DEFAULT (`crates/server/CLAUDE.md` Gotcha 18).
+# TOOL-CALL GUARDRAILS, on by DEFAULT (`crates/server/AGENTS.md` Gotcha 18).
 # Rescues a call the decoder could not parse out of the raw text, checks a
 # call's arguments against the schema the request itself sent, and re-asks
 # ONCE with a nudge. Over `forge-guardrails` at `default-features = false`:
@@ -565,10 +576,10 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
 
 2. Runtime knobs are validated against const allowed-value sets, and a default
    drifting out of its own set is a compile error rather than a runtime
-   surprise. Moved to [crates/core/CLAUDE.md](crates/core/CLAUDE.md) Gotcha 1.
+   surprise. Moved to [crates/core/AGENTS.md](crates/core/AGENTS.md) Gotcha 1.
 
 3. FP16 is the `half` crate, BF16 is a hand-rolled bit-shift pair. Do not hand-roll FP16. Moved to
-   [crates/compute/CLAUDE.md](crates/compute/CLAUDE.md) Gotcha 1.
+   [crates/compute/AGENTS.md](crates/compute/AGENTS.md) Gotcha 1.
 
 4. Token ids cross crate boundaries as signed 32-bit integers
    (`pub type TokenId = i32`). Keep that interchange width when wiring
@@ -582,7 +593,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    never commit it.
 
 7. `crates/cli` (`turbospark-check`) is the process entry point over `turbospark-invocation`'s pure parse. Moved to
-   [crates/cli/CLAUDE.md](crates/cli/CLAUDE.md) Gotcha 11.
+   [crates/cli/AGENTS.md](crates/cli/AGENTS.md) Gotcha 11.
 
 8. **A PLATFORM CLAIM NOBODY RUNS IS A COMMENT, NOT A GATE.** `crates/gpu`
    is meant to be `#[cfg(target_os = "macos")]` throughout, so a non-macOS
@@ -607,7 +618,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    from that list is a bug in the crate rather than an accepted limitation.
 
    The kernel inventory lives in
-   [crates/gpu/CLAUDE.md](crates/gpu/CLAUDE.md); `DEVIATIONS.md` has the
+   [crates/gpu/AGENTS.md](crates/gpu/AGENTS.md); `DEVIATIONS.md` has the
    wired versus unwired list.
 
 9. `crates/model-io`, `crates/streaming` and `crates/ffi` are the three
@@ -662,8 +673,8 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     (`TURBOSPARK_SHARED_CB`, `TURBOSPARK_ROUTED_PIPELINE`,
     `TURBOSPARK_DISPATCH_PROFILE`), the expert-cache slot policy and the
     synthetic install builders are documented where they live:
-    [crates/runtime/CLAUDE.md](crates/runtime/CLAUDE.md) Gotchas 3, 7 and
-    13, and [crates/repack/CLAUDE.md](crates/repack/CLAUDE.md) Gotchas 1 and
+    [crates/runtime/AGENTS.md](crates/runtime/AGENTS.md) Gotchas 3, 7 and
+    13, and [crates/repack/AGENTS.md](crates/repack/AGENTS.md) Gotchas 1 and
     3 for what synthetic fixtures can and cannot prove. Expert
     prefetch and speculation are a measured dead end; see `DEVIATIONS.md`
     before re-deriving them.
@@ -707,7 +718,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     another session's refactor wastes several.
 
 14. Adding one flag to `crates/invocation` touches FIVE places, and a missing parser arm is a runtime panic rather than a compile error. Moved to
-    [crates/invocation/CLAUDE.md](crates/invocation/CLAUDE.md) Gotcha 1.
+    [crates/invocation/AGENTS.md](crates/invocation/AGENTS.md) Gotcha 1.
 
 15. `families/gemma4/mod.rs`'s per-token function interleaves
     `let real = self.real.as_ref()` bindings with `&mut self` calls. A new
@@ -768,7 +779,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     128` is the proof.
 
 19. `phys_footprint` counts the resident weight mapping, and the slot term dominates it. Moved to
-    [crates/bench/CLAUDE.md](crates/bench/CLAUDE.md) Gotcha 1.
+    [crates/bench/AGENTS.md](crates/bench/AGENTS.md) Gotcha 1.
 
 20. **The FIRST timed run after a build is a cold GPU, and it is not a
     baseline.** `TURBOSPARK_PHASES=1`'s `gpu busy` buckets come from
@@ -802,7 +813,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     SHORT prompt and a long generation, so the divisor is decode.
 
 22. Record the power source next to any absolute number, and never A/B across sessions. The axis that moves is THERMAL HEADROOM, not energy. Moved to
-    [crates/bench/CLAUDE.md](crates/bench/CLAUDE.md) Gotcha 3.
+    [crates/bench/AGENTS.md](crates/bench/AGENTS.md) Gotcha 3.
 
 23. **Every profiling surface in this repo measures the inside of
     `produce`. The decode loop is bigger than that.** `TURBOSPARK_PHASES=1`,
@@ -840,13 +851,13 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     `32^-0.5` is not (it cost a red test in the Qwen session).
 
 25. `gdn_qk_norm` and `gdn_gated_norm` are correct at EXACTLY 128 threads per threadgroup. Moved to
-    [crates/gpu/CLAUDE.md](crates/gpu/CLAUDE.md) Gotcha 5.
+    [crates/gpu/AGENTS.md](crates/gpu/AGENTS.md) Gotcha 5.
 
 26. Qwen's `linear_attn.A_log` and `dt_bias` carry NO `.weight` suffix, and its routed marker differs from Gemma's. Moved to
-    [crates/repack/CLAUDE.md](crates/repack/CLAUDE.md) Gotcha 15.
+    [crates/repack/AGENTS.md](crates/repack/AGENTS.md) Gotcha 15.
 
 27. A layer's routed slots dispatch in the ROUTER'S RANKING, because slot order is summation order. Moved to
-    [crates/runtime/CLAUDE.md](crates/runtime/CLAUDE.md) Gotcha 8.
+    [crates/runtime/AGENTS.md](crates/runtime/AGENTS.md) Gotcha 8.
 
 28. **Thermal pressure silently rewrites BOTH throughput and energy, and
     nothing in the standing gate looks at it.** Every existing harness
@@ -954,8 +965,8 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
 
     The per-type kernel matrix, the transcode decisions and the
     V-head convention live in
-    [crates/repack/CLAUDE.md](crates/repack/CLAUDE.md) Gotchas 4, 6, 7, 9
-    and 17, and in [crates/model-io/CLAUDE.md](crates/model-io/CLAUDE.md).
+    [crates/repack/AGENTS.md](crates/repack/AGENTS.md) Gotchas 4, 6, 7, 9
+    and 17, and in [crates/model-io/AGENTS.md](crates/model-io/AGENTS.md).
 
 30. **A routed expert row can be ALL ZEROS in a real checkpoint, and
     `pearson` returns 0.0 on a constant input by design.** Measured
@@ -993,10 +1004,10 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     the matcher, not the data. Compare per row or per channel there.
 
 32. `PassEncoder` ends encoding on drop, and that is load-bearing rather than tidy. Moved to
-    [crates/gpu/CLAUDE.md](crates/gpu/CLAUDE.md) Gotcha 6.
+    [crates/gpu/AGENTS.md](crates/gpu/AGENTS.md) Gotcha 6.
 
 33. A source-convention difference belongs to an AXIS, not to the tensors you could compare. Moved to
-    [crates/repack/CLAUDE.md](crates/repack/CLAUDE.md) Gotcha 7.
+    [crates/repack/AGENTS.md](crates/repack/AGENTS.md) Gotcha 7.
 
 34. **A cross-engine comparison needs the BACKEND matched, not just the
     bytes, and getting it wrong reads as a defect in your own engine.**
@@ -1192,10 +1203,10 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     the window, which is why `run_oracle_at_context` prints it.
 
 41. CHAT FRAMING IS A PROPERTY OF THE CHECKPOINT, and the dialect is not evidence about it. Moved to
-    [crates/tokenizer/CLAUDE.md](crates/tokenizer/CLAUDE.md) Gotcha 1.
+    [crates/tokenizer/AGENTS.md](crates/tokenizer/AGENTS.md) Gotcha 1.
 
 42. A routed sub-tensor is not always a matrix, and not everything in an expert blob is a quantization scheme. Moved to
-    [crates/repack/CLAUDE.md](crates/repack/CLAUDE.md) Gotcha 16.
+    [crates/repack/AGENTS.md](crates/repack/AGENTS.md) Gotcha 16.
 
 43. **`powermetrics` MEASURES THE MACHINE, NOT YOUR PROCESS, AND THE
     THERMAL CHECK CANNOT SEE THE DIFFERENCE.** Gotcha 28 is about pressure
@@ -1281,7 +1292,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     `crates/cli/src/generate.rs` did not.
 
 45. A writer may only record a tag some reader honours; the walk NARROWS every unquantized tensor to BF16. Moved to
-    [crates/repack/CLAUDE.md](crates/repack/CLAUDE.md) Gotcha 9.
+    [crates/repack/AGENTS.md](crates/repack/AGENTS.md) Gotcha 9.
 
 46. **XET IS A TRANSFER LAYER, NOT A FORMAT, AND EVERY REAL INSTALL HERE WAS
     ALREADY STREAMED THROUGH IT.** Researched 2026-08-14. Hugging Face replaced
@@ -1449,10 +1460,10 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     two dialects that have one do not spell it with the same kind of token.
 
 50. A NORMALIZATION CONVENTION IS A PROPERTY OF THE TENSOR, NOT OF THE FAMILY, and one model can use two. Moved to
-    [crates/gpu/CLAUDE.md](crates/gpu/CLAUDE.md) Gotcha 10.
+    [crates/gpu/AGENTS.md](crates/gpu/AGENTS.md) Gotcha 10.
 
 51. Every test in a perturbation-style fixture file can be self-relative, and then the file catches almost nothing. Moved to
-    [crates/runtime/CLAUDE.md](crates/runtime/CLAUDE.md) Gotcha 23.
+    [crates/runtime/AGENTS.md](crates/runtime/AGENTS.md) Gotcha 23.
 
 52. **A DIALECT PROBE KEYED ON "SPECIFIC-LOOKING" TOKENS IS A COINCIDENCE
     WAITING FOR ITS SECOND CHECKPOINT, and the probe that broke had a comment
@@ -1500,7 +1511,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     tracked so a `,` or `)` inside `'...'` cannot end an argument early.
 
 54. A cache that already deduplicates makes a "union" saving vanish. Do not reach for the expert-union plan. Moved to
-    [crates/runtime/CLAUDE.md](crates/runtime/CLAUDE.md) Gotcha 14.
+    [crates/runtime/AGENTS.md](crates/runtime/AGENTS.md) Gotcha 14.
 
 55. **THE CHECKPOINT'S TRAINED CONTEXT IS INSTALL METADATA, NOT AN
     `ArchConfig` FIELD, AND THAT IS A DECISION ABOUT WHAT VALIDATION IS FOR.**
@@ -1824,7 +1835,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     is cheap to falsify.
 
 63. A frozen digest that stops reproducing is not necessarily a regression: bisect to AND INCLUDING the commit that wrote it. Moved to
-    [crates/bench/CLAUDE.md](crates/bench/CLAUDE.md) Gotcha 24.
+    [crates/bench/AGENTS.md](crates/bench/AGENTS.md) Gotcha 24.
 
 64. **`ALLOWED_CACHE_SLOTS` SAYS A SLOT COUNT IS LEGAL; IT SAYS NOTHING ABOUT
     WHETHER CHUNKED PREFILL CAN PLACE IT.** `--expert-cache-slots 8` on the
@@ -2012,27 +2023,27 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
 
 ## Per-Crate Documentation
 
-When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas. The Swift tree is not a crate and has one too:
+When working on code inside a specific crate or the Swift app, refer to that component's `AGENTS.md` file for component-specific architecture, key modules, dev commands, and localized gotchas:
 
-- [`crates/bench/CLAUDE.md`](crates/bench/CLAUDE.md): Throughput benchmark harness, mach memory sampler, frozen protocol, memory oracle test rules.
-- [`crates/catalog/CLAUDE.md`](crates/catalog/CLAUDE.md): the curated model table, the header-only Hugging Face probe, the install driver, and the `~/.turbospark` store.
-- [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md): CLI binaries (`turbospark-check`, `turbospark-model`), process entry point, real model smoke tests, interactive chat REPL.
-- [`crates/compute/CLAUDE.md`](crates/compute/CLAUDE.md): CPU reference kernels (RmsNorm, RoPE, Attention, Quant), numerical ground truth for GPU tests.
-- [`crates/core/CLAUDE.md`](crates/core/CLAUDE.md): Shared primitives (`TokenId`, `LogitValue`), runtime configuration, allowed sets, chunk sizing.
-- [`crates/ffi/CLAUDE.md`](crates/ffi/CLAUDE.md): the C ABI for native GUI hosts, its ownership and threading contract, and the Swift package over it.
-- [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md): macOS Metal context, pipeline caches, MSL shaders, KV cache, zero-copy weights, profiling flags.
-- [`crates/image/CLAUDE.md`](crates/image/CLAUDE.md): the Z-Image-Turbo pipeline, packed component installs, the CPU reference and Metal image backends, and the opt-in parity gates.
-- [`crates/invocation/CLAUDE.md`](crates/invocation/CLAUDE.md): Pure CLI argument parser, `InvocationRequest`, 5-place rule for adding new flags.
-- [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md): Manifest validation, architecture baselines, packed expert layout, mmap resident weight index.
-- [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md): Safetensors header parsing, ranged HTTP downloads, `.gturbo` writer, synthetic model builders.
-- [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md): Raw completion generation loop, `LogitProducer` contract, `RealForwardRunner` decode engine.
-- [`crates/selection/CLAUDE.md`](crates/selection/CLAUDE.md): Candidate token selection, temperature/top-k/top-p shaping, repetition penalty, logits contract.
-- [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md): the `turbospark-server` HTTP server (OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, `/v1/models`), Axum handlers, SSE streaming, `anyllm_translate` wire types.
-- [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md): Routed expert `pread` streamer, LFU/LRU slot cache policy, chunked reads on a persistent `read_pool`, macOS `F_RDADVISE` hints.
-- [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md): Tokenizer wrapper (`MfTokenizer`), chat dialects, Jinja template rendering, stop matcher, fixture token IDs.
-- [`crates/vision-io/CLAUDE.md`](crates/vision-io/CLAUDE.md): portable vision preprocessing -- PIL-bicubic smart resize, patchify's transposed inner order, the three position tables, and the mlx-vlm oracle fixtures.
-- [`crates/window-fit/CLAUDE.md`](crates/window-fit/CLAUDE.md): Pure conversation window fitting (`fit_conversation_window`), turn dropping logic.
-- [`swift/CLAUDE.md`](swift/CLAUDE.md): the two SwiftPM packages over `crates/ffi` -- the binding's serial-queue-not-actor cancel design, the staging step every Swift build depends on, and the macOS app's state layer, tool execution and on-disk stores. Read it WITH `crates/ffi/CLAUDE.md`: the two halves of the boundary are documented on opposite sides of it and neither is complete alone.
+- [`crates/bench/AGENTS.md`](crates/bench/AGENTS.md): Throughput benchmark harness, mach memory sampler, frozen protocol, memory oracle test rules.
+- [`crates/catalog/AGENTS.md`](crates/catalog/AGENTS.md): the curated model table, the header-only Hugging Face probe, the install driver, and the `~/.turbospark` store.
+- [`crates/cli/AGENTS.md`](crates/cli/AGENTS.md): CLI binaries (`turbospark`, `turbospark-check`, `turbospark-model`, `turbospark-image`, `turbospark-mlx-pack`), process entry points, real model smoke tests, interactive chat REPL.
+- [`crates/compute/AGENTS.md`](crates/compute/AGENTS.md): CPU reference kernels (RmsNorm, RoPE, Attention, Quant), numerical ground truth for GPU tests.
+- [`crates/core/AGENTS.md`](crates/core/AGENTS.md): Shared primitives (`TokenId`, `LogitValue`), runtime configuration, allowed sets, chunk sizing.
+- [`crates/ffi/AGENTS.md`](crates/ffi/AGENTS.md): the C ABI for native GUI hosts, its ownership and threading contract, and the Swift package over it.
+- [`crates/gpu/AGENTS.md`](crates/gpu/AGENTS.md): macOS Metal context, pipeline caches, MSL shaders, KV cache, zero-copy weights, profiling flags.
+- [`crates/image/AGENTS.md`](crates/image/AGENTS.md): the Z-Image-Turbo pipeline, packed component installs, the CPU reference and Metal image backends, and the opt-in parity gates.
+- [`crates/invocation/AGENTS.md`](crates/invocation/AGENTS.md): Pure CLI argument parser, `InvocationRequest`, 5-place rule for adding new flags.
+- [`crates/model-io/AGENTS.md`](crates/model-io/AGENTS.md): Manifest validation, architecture baselines, packed expert layout, mmap resident weight index.
+- [`crates/repack/AGENTS.md`](crates/repack/AGENTS.md): Safetensors header parsing, ranged HTTP downloads, `.gturbo` writer, synthetic model builders.
+- [`crates/runtime/AGENTS.md`](crates/runtime/AGENTS.md): Raw completion generation loop, `LogitProducer` contract, `RealForwardRunner` decode engine.
+- [`crates/selection/AGENTS.md`](crates/selection/AGENTS.md): Candidate token selection, temperature/top-k/top-p shaping, repetition penalty, logits contract.
+- [`crates/server/AGENTS.md`](crates/server/AGENTS.md): the `turbospark-server` HTTP server (OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, `/v1/models`), Axum handlers, SSE streaming, `anyllm_translate` wire types.
+- [`crates/streaming/AGENTS.md`](crates/streaming/AGENTS.md): Routed expert `pread` streamer, LFU/LRU slot cache policy, chunked reads on a persistent `read_pool`, macOS `F_RDADVISE` hints.
+- [`crates/tokenizer/AGENTS.md`](crates/tokenizer/AGENTS.md): Tokenizer wrapper (`MfTokenizer`), chat dialects, Jinja template rendering, stop matcher, fixture token IDs.
+- [`crates/vision-io/AGENTS.md`](crates/vision-io/AGENTS.md): portable vision preprocessing -- PIL-bicubic smart resize, patchify's transposed inner order, the three position tables, and the mlx-vlm oracle fixtures.
+- [`crates/window-fit/AGENTS.md`](crates/window-fit/AGENTS.md): Pure conversation window fitting (`fit_conversation_window`), turn dropping logic.
+- [`swift/AGENTS.md`](swift/AGENTS.md): the two SwiftPM packages over `crates/ffi` -- the binding's serial-queue-not-actor cancel design, the staging step every Swift build depends on, and the macOS app's state layer, tool execution and on-disk stores. Read it WITH `crates/ffi/AGENTS.md`: the two halves of the boundary are documented on opposite sides of it and neither is complete alone.
 
 ## Layout
 
@@ -2042,7 +2053,7 @@ Workspace directory structure and crate layout:
 .
 +-- Cargo.lock         # lockfile committed for reproducible workspace builds
 +-- Cargo.toml         # workspace manifest declaring members and workspace metadata
-+-- AGENTS.md          # developer guide and gotchas (CLAUDE.md is a symlink to this)
++-- AGENTS.md          # workspace developer guide and gotchas (each crate and swift/ has its own AGENTS.md)
 +-- CHANGELOG.md       # project changelog and release notes
 +-- CLAUDE.local.md    # local developer notes (gitignored)
 +-- DEVIATIONS.md      # scaffolded vs fully wired feature inventory
@@ -2055,10 +2066,11 @@ Workspace directory structure and crate layout:
 +-- crates
 |   +-- bench          # turbospark-bench binary & harness (throughput benchmark)
 |   +-- catalog        # the model catalog, the HF probe & the install driver
-|   +-- cli            # turbospark-check & turbospark-model binaries (process entry points)
+|   +-- cli            # turbospark, turbospark-check, turbospark-model, turbospark-image binaries
 |   +-- compute        # CPU reference kernels & compute strategy marker
 |   +-- core           # shared primitives (TokenId, LogitValue), allowed runtime-knob sets, chunking
 |   +-- gpu            # Metal pipeline cache & GPU kernel dispatches (macOS only)
+|   +-- image          # Z-Image-Turbo pipeline, packed component installs, CPU and Metal image backends
 |   +-- invocation     # CLI argument parsing, request assembly & exit status routing
 |   +-- model-io       # manifest validation, packed-expert layout, resident index & mmap
 |   +-- repack         # safetensors + GGUF header parsing, ranged downloads, int4/8 repack, gturbo writer
@@ -2072,7 +2084,7 @@ Workspace directory structure and crate layout:
 |   \-- window-fit     # deterministic conversation-window fitting & turn dropping
 +-- swift
 |   +-- TurboSpark     # SwiftPM package wrapping crates/ffi (session class on a
-|   |                  # serial queue -- NOT an actor, see swift/CLAUDE.md
+|   |                  # serial queue -- NOT an actor, see swift/AGENTS.md
 |   |                  # Gotcha 1 -- plus AsyncStream and the catalog)
 |   \-- TurboSparkApp  # SwiftUI chat app; verifies the binding end to end
 +-- scripts
@@ -2135,7 +2147,7 @@ two hours of bisection instead.
 vector numbering was DERIVED from two correct facts about llama.cpp and came
 out one block off, under an honest `UNVERIFIED` that made it look
 measured-open rather than reasoned-and-wrong; the refutation was internal from
-the first commit (`crates/repack/CLAUDE.md` Gotcha 11). Check a derived
+the first commit (`crates/repack/AGENTS.md` Gotcha 11). Check a derived
 convention against the line that IMPLEMENTS it -- brew ships llama.cpp's
 headers to `/opt/homebrew/include` and its sources are one
 `raw.githubusercontent.com` fetch away, so this class of question costs no

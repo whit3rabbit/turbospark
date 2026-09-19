@@ -432,7 +432,7 @@ Carried over from the Swift protocol, worth repeating:
   no user occupies, and `F_NOCACHE` prevents retention without evicting, so
   a blob already faulted in stays resident and needs `sudo purge` beside it.
   Confirm from `bytes_physical`, never from the flag
-  (`crates/streaming/CLAUDE.md` Gotcha 8). Measured on the real Gemma 4
+  (`crates/streaming/AGENTS.md` Gotcha 8). Measured on the real Gemma 4
   install at 16 slots: warm reads 0.0 MiB/token physical against 274.9
   requested, and `F_NOCACHE` after a purge reads 274.9 of 274.9 (1.00x).
 

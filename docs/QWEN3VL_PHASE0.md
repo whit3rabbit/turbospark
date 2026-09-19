@@ -178,7 +178,7 @@ plane sizes rather than trusting a packed shape directly):
 `self_attn.q_norm.weight` and `self_attn.k_norm.weight`, each shape `[128]`
 (the head dim) -- the SAME per-head-norm-before-rope shape
 `families/llama/`'s `Qwen3Moe` arm already implements
-(`crates/runtime/CLAUDE.md`'s `families/llama/` entry: "it norms q and k
+(`crates/runtime/AGENTS.md`'s `families/llama/` entry: "it norms q and k
 PER HEAD before RoPE"). A `qwen3_vl_text` decode flow is that arm's
 attention block plus the DENSE half's plain gated FFN (`mlp.gate_proj` /
 `mlp.up_proj` / `silu_mul` / `mlp.down_proj`, already how this port's

@@ -99,7 +99,7 @@ summary that said "unknown (probe it)".
 With no architecture read there is no expert stride, `Auto` divides by
 nothing and returns `DEFAULT_CACHE_SLOTS`, so the pane showed "Expert
 Slots: 16 slots" -- an answer arrived at BY IGNORANCE that is
-indistinguishable from a measured 16 (root `CLAUDE.md` Gotcha 58). The card
+indistinguishable from a measured 16 (root `AGENTS.md` Gotcha 58). The card
 now branches on `fitIsKnown`, every cell is guarded on being non-zero, and
 the unsized state shows only what the CATALOG states plus the command that
 would produce the rest.
@@ -171,7 +171,7 @@ Added 2026-08-30 (`TurboSparkServer`, `AppModel+Server.swift`).
 `AppModel.server` OUTLIVES `AppModel.session` unless something stops it
 first, and that something is every caller that clears `session`. A
 `TurboSparkServer` holds its own reference to the engine on the Rust side
-(`crates/ffi/CLAUDE.md` Gotcha 13's whole design), so `session = nil` alone
+(`crates/ffi/AGENTS.md` Gotcha 13's whole design), so `session = nil` alone
 does not stop a server started against it -- the model stays resident and
 the server keeps answering requests for a model the UI no longer shows as
 loaded. `open(_:)`, `unloadModel()` and `setModelURL(_:)` call
@@ -249,7 +249,7 @@ carries no route the engine cannot serve, pinned by
 listed now that `crates/server/src/embeddings.rs` exists behind
 `--embedding-model`. And there is no time-to-first-token chart, because
 nothing inside a generation can measure one
-(`crates/server/CLAUDE.md` Gotcha 29); the pane shows prefill, decode and
+(`crates/server/AGENTS.md` Gotcha 29); the pane shows prefill, decode and
 the queue instead.
 
 `state#28`: a failed server start left `serverStopRequested` latched, so

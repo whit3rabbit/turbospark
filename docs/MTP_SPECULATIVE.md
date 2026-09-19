@@ -362,7 +362,7 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    throughput axis, never a correctness one) with norms through
    `narrow_raw_to_bf16`. `manifest.json` gains an optional `mtpHead` block
    where absent means "no head" (Gotcha 39's rule). **Fixture before
-   download**, per `crates/repack/CLAUDE.md` Gotcha 8.
+   download**, per `crates/repack/AGENTS.md` Gotcha 8.
    **Done.** With one correction worth carrying: the ingest landed in the
    non-streamed writer alone, and every real install goes through the
    streamed one. The first stream that asked for a head wrote a

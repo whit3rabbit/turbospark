@@ -1227,7 +1227,7 @@ different reference engines. Batched-vs-cached expert routing and reduce
 order under non-associative FP addition is the entire difference. It follows
 that the absolute numbers here are not comparable to the 9B's 0.000138 and
 were never going to be; the RATIO to the floor is what transfers, and on that
-axis both families are fine. `crates/bench/CLAUDE.md` Gotcha 8 states the
+axis both families are fine. `crates/bench/AGENTS.md` Gotcha 8 states the
 rule; this pair is the demonstration.
 
 **THE BACKEND FLOOR IS NOT MEASURED, AND THE REASON WAS MEASURED RATHER THAN

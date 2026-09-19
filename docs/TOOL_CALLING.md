@@ -122,7 +122,7 @@ what the text looks like AFTER this engine's own decode.
 ## Adding a native dialect
 
 `docs/NEW_MODEL.md` is the end-to-end checklist;
-`crates/tokenizer/CLAUDE.md` Gotcha 11 names the four exhaustive matches a
+`crates/tokenizer/AGENTS.md` Gotcha 11 names the four exhaustive matches a
 new `ChatDialect` variant touches. A native tier needs a real install to
 smoke-test against -- that is the bar that keeps the tier honest, and the
 reason the four families below it are rescue-only.

@@ -67,7 +67,7 @@ that reading is "the opposite of what the mode does". It is what the mode does.
 Renaming `.auto` to `Ask before tools` would give two modes labels that both
 promise a prompt, and only one of them would give you one. `.auto` is also the
 default for projectless chats, and this repo has already shipped a permissive
-permission default by accident once (`swift/CLAUDE.md` Gotcha 28). A label that
+permission default by accident once (`swift/AGENTS.md` Gotcha 28). A label that
 overstates how much the app asks is the wrong direction for that specific
 setting.
 

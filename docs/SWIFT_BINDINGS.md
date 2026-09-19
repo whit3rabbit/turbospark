@@ -1322,7 +1322,7 @@ every message with the 11.6x prefill win sitting unreachable one file away.
 
 ## See also
 
-- [`crates/ffi/CLAUDE.md`](../crates/ffi/CLAUDE.md): the crate's own
+- [`crates/ffi/AGENTS.md`](../crates/ffi/AGENTS.md): the crate's own
   gotchas, including why the cancel flag sits where it does and why the
   header is hand-written
 - [`crates/ffi/include/turbospark.h`](../crates/ffi/include/turbospark.h):

@@ -38,11 +38,14 @@ crates/ffi/
 |   |   +-- catalog.rs      # catalog_json, installed_json, delete, install_bytes
 |   |   +-- control_vector.rs # control_vector_info_json
 |   |   +-- fit.rs          # context_ladder_json, recommend_json
+|   |   +-- image_install.rs # curated image catalog and install entry points
 |   |   +-- install.rs      # install, install_repo
 |   |   \-- probe.rs        # probe_json, repo_variants_json
+|   +-- heavy.rs            # process-wide serialization for heavyweight GPU workloads
 |   +-- server.rs           # the in-process HTTP server: background thread, tokio runtime, lifecycle
 |   +-- server_model.rs     # ChatModel adapter over SessionCore, for server.rs
 |   +-- server_registry.rs  # the models a RUNNING server serves, and its event ring
+|   +-- server_transport.rs # body-byte counters and optional bounded previews
 |   +-- telemetry.rs        # phase counters and peak footprint
 |   +-- image_session.rs    # verified image install, serialized generation, cancellation
 |   +-- testing.rs          # session_for_testing (scripted testing harness)
@@ -258,7 +261,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
    it at instead.
 
    The refusal case is also this crate's regression guard for the wrong-cause
-   bug fixed the same day (`crates/runtime/CLAUDE.md` Gotcha 0): a named block
+   bug fixed the same day (`crates/runtime/AGENTS.md` Gotcha 0): a named block
    on a MoE install used to be refused for its missing HEAD rather than its
    architecture, which on a GUI surface is a message telling someone to
    download 4.4 GB that cannot help.
@@ -271,7 +274,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     loader then refuses, in the one place a user cannot see the two disagree.
     Neither call can detect the mismatch, so nothing here will ever raise it;
     the Swift side keeps one `AppModel.activeLoadGuard` accessor for exactly
-    that reason (`swift/CLAUDE.md` Gotcha 25).
+    that reason (`swift/AGENTS.md` Gotcha 25).
 
     Absent, `null` and `{}` all mean `relaxed` on both calls, which is what
     this ABI did before the option existed and what every frozen footprint row
@@ -420,7 +423,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     `ts_session_close` on the session it came from frees only the caller's
     handle. A host that drops its own reference without detaching keeps the
     weights, the KV cache and the compiled Metal pipelines resident with
-    nothing in its UI still showing the model as loaded. `swift/CLAUDE.md`
+    nothing in its UI still showing the model as loaded. `swift/AGENTS.md`
     Gotcha 26 is the app-side half.
 
     **DETACHING DOWN TO ONE MODEL RE-ENABLES THE FALLBACK, which is worth
@@ -479,20 +482,20 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     no frozen row"), so this file now does too. Safe unconditionally: a
     family this cannot help (recurrent state, a sliding-window ring past its
     slack) silently returns 0 reused tokens rather than erroring
-    (`crates/runtime/CLAUDE.md` Gotcha 30), so the floor is "no worse than
+    (`crates/runtime/AGENTS.md` Gotcha 30), so the floor is "no worse than
     before", never a new failure mode.
 
     `generate/` separately routes `(Engine::Real(runner), None)` through
     `run_raw_completion_chunked_cancellable` at `foundation::DEFAULT_CHUNK_SIZE`
     whenever `runner.supports_chunked_prefill()` -- the SAME predicate
-    `crates/server/CLAUDE.md` Gotcha 19 documents for `RealChatModel`, added
+    `crates/server/AGENTS.md` Gotcha 19 documents for `RealChatModel`, added
     here because this crate had simply never been wired to it (unlike prefix
     reuse, there was no historical reason: chunked-vs-sequential is a
     STANDING byte-identity guarantee this crate did not need to re-prove, only
     to reach). **Gated on `image_parts.is_empty()` as well**, matching
-    `crates/server/CLAUDE.md` Gotcha 21's own discipline: the vision-capable
+    `crates/server/AGENTS.md` Gotcha 21's own discipline: the vision-capable
     family's chunked driver refuses an open image prompt BY NAME
-    (`crates/runtime/CLAUDE.md` Gotcha 14), so composing the two on a call
+    (`crates/runtime/AGENTS.md` Gotcha 14), so composing the two on a call
     this crate's own `attach_images` already handles separately would turn an
     image turn that used to succeed into one that fails, on a family whose
     general chunked-prefill support has nothing to do with whether THIS call
@@ -541,7 +544,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     `an_out_of_set_expert_cache_slot_count_is_refused_before_the_model_is_read`
     exercise it with no install on the machine. That test asserts the LEGAL
     values still get past the option check as well, or the guard would pass by
-    refusing everything -- a gate that cannot fail (`swift/CLAUDE.md`
+    refusing everything -- a gate that cannot fail (`swift/AGENTS.md`
     Gotcha 22).
 
     **A DOCUMENTED CONTRACT IS NOT AN ENFORCED ONE.** Reach for the header

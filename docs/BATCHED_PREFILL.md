@@ -540,9 +540,9 @@ So this is one phase followed by an optional one, rather than a fork:
    `turbospark-check`, an A/B seam beside `TURBOSPARK_SHARED_CB` and
    `TURBOSPARK_ROUTED_PIPELINE`; that env var's contract is unchanged (still
    hard-fails on an unsupported family). **`--prefill-chunk` IS wired now
-   (2026-08-26, `crates/cli/CLAUDE.md` Gotcha 7, `crates/runtime/CLAUDE.md`'s
+   (2026-08-26, `crates/cli/AGENTS.md` Gotcha 7, `crates/runtime/AGENTS.md`'s
    `TURBOSPARK_PREFILL_CHUNK` bullet), and the server dispatches automatically
-   too, with no per-request flag** (`crates/server/CLAUDE.md` Gotcha 19).
+   too, with no per-request flag** (`crates/server/AGENTS.md` Gotcha 19).
    Neither routes through the chunked driver on an install it can't serve
    -- both check `RealForwardRunner::supports_chunked_prefill()`, the same
    predicate the driver's own refusal uses, and fall back to the sequential
@@ -554,7 +554,7 @@ So this is one phase followed by an optional one, rather than a fork:
    What it does, and the rest of this entry is the design rather than a
    plan: per chunk it advances M KV rows, the position by M, and
    commit-and-waits exactly as the per-token path does
-   (`crates/runtime/CLAUDE.md` Gotcha 2 states the analogous contract for
+   (`crates/runtime/AGENTS.md` Gotcha 2 states the analogous contract for
    `produce_prefill`). On a family with recurrent state the GDN chain is
    sequential by definition and steps M times inside the chunk.
 
@@ -607,7 +607,7 @@ So this is one phase followed by an optional one, rather than a fork:
    past the 2026-08-26 default-on and dense-llama work: it is real new-kernel
    engineering (a new function-constant axis, per-row online-softmax state
    generalized to M rows, and real register-pressure risk per
-   `dequant_int4_gemm_simd`'s spill history in `crates/gpu/CLAUDE.md`),
+   `dequant_int4_gemm_simd`'s spill history in `crates/gpu/AGENTS.md`),
    not a small increment to attempt alongside a flag-wiring pass.
 
    Note steps 2 and 3 carry a constraint step 1 does not: a batched routed
@@ -620,7 +620,7 @@ So this is one phase followed by an optional one, rather than a fork:
 6. ~~**Batch the RESIDENT GEMVs**~~ -- landed behind
    `TURBOSPARK_BATCHED_GEMV=1`, and numbered SIXTH rather than inserted
    before step 4 because these numbers are cited from `ROADMAP.md`,
-   `crates/runtime/CLAUDE.md` and a comment in `moe_batch.rs`, and
+   `crates/runtime/AGENTS.md` and a comment in `moe_batch.rs`, and
    renumbering would rot all three. It is independent of steps 4 and 5 and
    could have been done at any point after step 1.
 
@@ -899,7 +899,7 @@ byte-identical against sequential on the synthetic fixture (chunk-span
 sweep `[1, 2, 3, 4, 7, 11]`, including a span that crosses the sliding
 window) and on the real `~/models/museglimmer-30b.gturbo` install: greedy
 and sampled stdout md5-identical against a pre-change binary, at 40 new
-tokens each (`crates/runtime/CLAUDE.md` Gotcha 14).
+tokens each (`crates/runtime/AGENTS.md` Gotcha 14).
 
 **THE MoE HALF OF `families/llama/` AND `gpt-oss` LANDED FOURTH AND FIFTH
 (2026-08-27), AND NEITHER NEEDED STEPS 2/3 EITHER.** Both replicate Step 1
@@ -945,7 +945,7 @@ against `~/.turbospark/models/gptoss-20b.gturbo` (greedy and sampled stdout
 md5-identical against a pre-change binary, prefill dropping from 7.56s to
 3.79s on a 75-token prompt now that chunking engages), the MoE half of
 `llama` against a freshly-pulled `Qwen/Qwen3-30B-A3B-GGUF` install (see
-`crates/runtime/CLAUDE.md` Gotcha 14 for the exact md5s).
+`crates/runtime/AGENTS.md` Gotcha 14 for the exact md5s).
 
 **THE DENSE HALF OF THE QWEN LINEAR-ATTENTION FLOW LANDED SIXTH
 (2026-08-29), `qwenGdnDense` (`qwen38-27b.gturbo`), AND IT IS NEITHER OF THE
@@ -964,7 +964,7 @@ buffer either** -- the first family so far where that is true even of the
 per-token scratch, because every intermediate the trunk's sequential flow
 already owns (`qwen.moe_x`, `qwen.h2`, the GDN scratch fields) is a
 single-row GPU-only buffer safe to reuse per token under commit-order
-execution, exactly the property `crates/gpu/CLAUDE.md` Gotcha 8 already
+execution, exactly the property `crates/gpu/AGENTS.md` Gotcha 8 already
 established for the other two Step-1-shaped drivers.
 
 The one open question this family has that no other Step-1 driver does is
@@ -973,7 +973,7 @@ needing new machinery: `encode_linear_block`'s decode-shaped kernels advance
 `qwen.gdn.state_buffer(layer)` in place with no position argument at all,
 so calling it once per token, strictly in increasing order, within one
 layer's inner loop before moving to the next layer, reproduces sequential
-decode's math exactly -- `crates/runtime/CLAUDE.md` Gotcha 4's constraint
+decode's math exactly -- `crates/runtime/AGENTS.md` Gotcha 4's constraint
 satisfied by construction. It is also what makes cross-chunk continuity
 free: the state buffer is the one sequential decode already reads and
 writes, so a prompt spanning several `prefill_chunk` calls carries it
@@ -983,7 +983,7 @@ forward automatically, with no state to hand between calls.
 record its refusal as one of two. The driver mirrors both halves of
 `produce.rs`'s vision handling now -- the tower-row blit and the mRoPE
 angle -- so it is the family's second embedding call site, exactly what
-`crates/runtime/CLAUDE.md` Gotcha 27 predicted a chunked driver would
+`crates/runtime/AGENTS.md` Gotcha 27 predicted a chunked driver would
 create. What replaced the refusal there is a by-name refusal of
 `TURBOSPARK_BATCHED_GEMV` PLUS an image, about the ANGLE rather than the
 embedding: `encode_full_attention_block_batched` rotates at the raw
@@ -1654,7 +1654,7 @@ nothing either, matching dense qwen's precedent.
 **PLE is where the real bug was, and it generalizes.** Four buffers needed
 the familiar M-row widening for the familiar reasons. A fifth, PLE's
 `ngram_emb`, needed it for a reason the standing rule does not cover. The
-rule this document and `crates/runtime/CLAUDE.md` both state is *what decides
+rule this document and `crates/runtime/AGENTS.md` both state is *what decides
 which buffers need a per-token row is who WRITES them, not who reads them*,
 and it is about GPU dispatches: command buffers on one queue execute in
 commit order, so a GPU-only intermediate is safe to reuse across a chunk's

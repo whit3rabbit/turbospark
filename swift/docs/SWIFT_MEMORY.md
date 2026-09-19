@@ -178,5 +178,5 @@ the transcript, not the store.
   the memory store, so it never modifies a file inside the user's
   repository unbidden.
 - **No CLAUDE.md-family discovery upgrade.** `ProjectRuleDetector` still
-  snapshots AGENTS.md/CLAUDE.md at project creation; CC's per-directory
+  snapshots AGENTS.md/AGENTS.md at project creation; CC's per-directory
   walk with `rules/` dirs and `@path` imports is a separate future feature.

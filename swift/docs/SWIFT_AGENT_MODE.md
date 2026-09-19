@@ -147,7 +147,7 @@ soft asks through `AgentModeRouting`; a classifier allow runs, a block
 refuses with the same message the main loop feeds its model, and an
 unavailable verdict refuses exactly as before (fail closed: unattended).
 A classifier allow deliberately skips the positive terminal allowlist gate
-(`swift/CLAUDE.md` Gotcha 29) on that return: it is a context-aware
+(`swift/AGENTS.md` Gotcha 29) on that return: it is a context-aware
 verdict, strictly more scrutiny than the allowlist it replaces.
 
 ## Settings

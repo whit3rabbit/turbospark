@@ -143,7 +143,7 @@ under `Fonts/`, exactly as `Resources/Logos/*.svg` do (measured in both the
 `.build` bundle and the shipped `.app`). That also rules out an
 `Info.plist` `ATSApplicationFontsPath`, which only looks directly under
 `Contents/Resources` and never inside the nested `.bundle` -- and which
-`swift run` has no plist for anyway (`swift/CLAUDE.md` Gotcha 12).
+`swift run` has no plist for anyway (`swift/AGENTS.md` Gotcha 12).
 Register through `CTFontManagerRegisterFontsForURL` at `.process` scope
 instead.
 

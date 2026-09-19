@@ -3,10 +3,10 @@
 The primary command-line interface is the unified `turbospark` binary, alongside specialized standalone binaries and a benchmark harness:
 
 - `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`, `image`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
-- `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/CLAUDE.md`](../crates/cli/CLAUDE.md).
+- `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/AGENTS.md`](../crates/cli/AGENTS.md).
 - `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`. Image installs use `~/.turbospark/models/image`, and audio is reserved at `~/.turbospark/models/audio`. See [`docs/MODELS.md`](MODELS.md).
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
-- `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/CLAUDE.md`](../crates/server/CLAUDE.md).
+- `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
 `--help` and `--version` are available globally across all binaries.
@@ -436,7 +436,7 @@ See [`docs/BENCHMARKING.md`](BENCHMARKING.md) for background and baseline number
 | `--speculative` | `off\|auto`, or block size `> 0` | `off` | speculative decoding (defaults off to preserve sampled protocol numbers) |
 | `--speculative-drafter` | `auto\|mtp\|dflash` | `auto` | drafter to drive under `--speculative` |
 | `--shaping` | `protocol\|greedy` | `protocol` | `protocol` uses the protocol's fixed temperature/top-k/top-p; `greedy` samples argmax |
-| `--kv-bits` | `off\|2\|3\|3.5\|4` | `off` | TurboQuant KV-cache quantization width; OFF BY DEFAULT so every frozen memory-oracle and quality-gate row in this crate stays valid without the flag (see `crates/bench/CLAUDE.md` and AGENTS.md Gotcha 35) |
+| `--kv-bits` | `off\|2\|3\|3.5\|4` | `off` | TurboQuant KV-cache quantization width; OFF BY DEFAULT so every frozen memory-oracle and quality-gate row in this crate stays valid without the flag (see `crates/bench/AGENTS.md` and AGENTS.md Gotcha 35) |
 
 ```sh
 # Run full protocol benchmark against Gemma 4

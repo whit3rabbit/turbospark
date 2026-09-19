@@ -18,10 +18,13 @@ crates/catalog/
 +-- src/
 |   +-- lib.rs                  # Library root and re-exports
 |   +-- models.json             # The curated table, embedded with include_str!
+|   +-- image_models.json       # Curated Diffusers image sources table
 |   +-- entry.rs                # CatalogEntry, Source, Sidecars, SourceKind, Status
 |   +-- catalog.rs              # Load embedded + merge a user override, lookup
+|   +-- gguf_source.rs          # Shared header-only split GGUF discovery
 |   +-- hf.rs                   # HF API file list, resolve URLs, small-file GET, HF_TOKEN
 |   +-- auth.rs                 # HF_TOKEN resolution (explicit/env/store/cache), whoami-v2 validation
+|   +-- image.rs                # Curated Diffusers image sources and download pipeline
 |   +-- vision.rs               # Resolve an installed vision-tower sidecar by (family, hidden_size)
 |   +-- probe/
 |   |   +-- mod.rs          # Dispatcher and sidecar check
@@ -86,6 +89,8 @@ crates/catalog/
 - `install.rs`: the shape every install-writing `crates/repack/tests/*_network.rs` file
   repeat, written once, with the step order inverted (see Gotcha 1).
 - `store.rs`: `Store::resolve`'s ORDER is the load-bearing part; see Gotcha 2.
+- `gguf_source.rs`: Shared header-only split GGUF shard discovery for probe and installation (`load`).
+- `image.rs`: `ImageCatalog` and `ImageCatalogEntry` for curated Diffusers image models (`image_models.json`), managing required files validation and download.
 - `vision.rs`: `resolve_vision_sidecar` finds the ONE installed vision-tower
   row pairing with a `(family, hidden_size)`, reading back through
   `model_io::load_vision_sidecar` for every candidate rather than trusting
@@ -163,7 +168,7 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
 5. **F32/F16/BF16 must not be checked against `EXECUTABLE_GGUF_TYPES`.** They
    are transcoded at repack time and reach no dispatch, so checking them marks
    every real candidate blocked -- which is exactly what
-   `scopes_the_dense_llama_candidates`' first run did (`crates/repack/CLAUDE.md`
+   `scopes_the_dense_llama_candidates`' first run did (`crates/repack/AGENTS.md`
    Gotcha 5). `TypeShare` carries `transcoded` beside `executable` so the
    output can say "transcoded at repack" rather than "has kernels", because
    the second states something false about this port and is the version that
@@ -197,7 +202,7 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
    16 GB machine wrong in one direction (it runs, and the slot policy's floor
    exists for exactly that machine) or a 27 GB one wrong in the other.
 
-   **The resident core is in `mapped`, which contradicts `crates/bench/CLAUDE.md` Gotcha 1
+   **The resident core is in `mapped`, which contradicts `crates/bench/AGENTS.md` Gotcha 1
    and matches every frozen peak.** That gotcha says
    `newBufferWithBytesNoCopy` pins the mapped range into `phys_footprint`;
    Gemma 4 reads 2,175 MiB against a 1.26 GiB core plus 1.5 GiB of slot cache

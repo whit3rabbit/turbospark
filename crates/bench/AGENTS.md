@@ -20,8 +20,12 @@ crates/bench/
 +-- tests/
 |   +-- accept_length_probe.rs # Speculative accept length probe
 |   +-- batched_forward_probe.rs # Batched forward numerical equivalence probe
+|   +-- bonsai_memory_oracle.rs # Memory oracle for Bonsai-27B (1-bit)
+|   +-- bonsai_quality_gate.rs  # Quality gate for Bonsai-27B (1-bit)
 |   +-- dflash2_accept_length_probe.rs # The BLOCK drafter's sweep, plus the losslessness floor
 |   +-- dflash2_bisect_probe.rs # Localizes a broken drafter; one runner, one variable
+|   +-- dsv2_memory_oracle.rs   # Memory oracle for DeepSeek V2 family
+|   +-- dsv2_quality_gate.rs    # Quality gate for DeepSeek V2 family
 |   +-- gguf_nondeterminism_probe.rs # Repeated warm greedy runs must produce ONE output
 |   +-- gptoss_memory_oracle.rs # Memory oracle for gpt-oss-20b, at 8192 context AND a 3072 budget
 |   +-- gptoss_quality_gate.rs  # Quality gate for gpt-oss-20b; pins the template's date
@@ -29,9 +33,13 @@ crates/bench/
 |   +-- kv_quant_probe.rs   # --kv-bits on a real checkpoint: footprint delta, perplexity, determinism (docs/TRUBOQUANT.md)
 |   +-- logit_dump.rs       # Full-vocab logit dump for the cross-engine KLD (scripts/kld{,_llamacpp,_mlx_affine}.py)
 |   +-- mapped_expert_probe.rs # What phys_footprint charges for an mmap Metal wrapped and the GPU read
+|   +-- mapped_residency_eviction.rs # Mapped expert residency eviction probe
 |   +-- memory_oracle.rs    # Memory oracle asserting peak footprint ceiling & steady state (Gemma 4)
 |   +-- mference_bench.rs   # Benchmark harness integration smoke test
+|   +-- minimax_memory_oracle.rs # Memory oracle for MiniMax-M2 family
+|   +-- minimax_quality_gate.rs  # Quality gate for MiniMax-M2 family
 |   +-- mistral_memory_oracle.rs # Memory oracle for the DENSE llama family, at 8192 context
+|   +-- mistral_quality_gate.rs  # Quality gate for Mistral family
 |   +-- mtp_accept_length_probe.rs # MTP head as drafter: accepted vs the block table's break-even
 |   +-- mtp_generation_gate.rs  # MTP speculative generation gate
 |   +-- mtp_head_probe.rs    # What the head predicts, when the probe above reads zero
@@ -45,22 +53,37 @@ crates/bench/
 |   +-- quality_common/     # Shared quality gate evaluation helpers (mod.rs)
 |   +-- quality_gate.rs     # Quality gate integration test (Gemma 4)
 |   +-- quality_sensitivity.rs # Proof the gate sees quantization damage (Gemma 4)
+|   +-- qwen2_dense_common/ # Shared helpers for Qwen 2 Dense family
+|   +-- qwen2_dense_memory_oracle.rs # Memory oracle for Qwen 2 Dense family
+|   +-- qwen2_dense_quality_gate.rs  # Quality gate for Qwen 2 Dense family
 |   +-- qwen36_memory_oracle.rs # Memory oracle for Qwen 3.6 family
 |   +-- qwen36_quality_gate.rs  # Quality gate for Qwen 3.6 family
 |   +-- qwen38_memory_oracle.rs # Memory oracle for Qwen3.8-27B (`qwen35`), the family's FIRST
 |   +-- qwen38_quality_gate.rs  # Quality gate for Qwen3.8-27B; no assistant prefix, and see its header for why
+|   +-- qwen3_dense_common/ # Shared helpers for Qwen 3 Dense family
+|   +-- qwen3_dense_memory_oracle.rs # Memory oracle for Qwen 3 Dense family
+|   +-- qwen3_dense_quality_gate.rs  # Quality gate for Qwen 3 Dense family
 |   +-- qwen3moe_memory_oracle.rs # Memory oracle for Qwen3-30B-A3B (`qwen3moe`)
 |   +-- qwen3moe_quality_gate.rs  # Quality gate for Qwen3-30B-A3B
+|   +-- qwen3vl_common/     # Shared helpers for Qwen3-VL family
+|   +-- qwen3vl_memory_oracle.rs # Memory oracle for Qwen3-VL family
+|   +-- qwen3vl_quality_gate.rs  # Quality gate for Qwen3-VL family
 |   +-- qwen4exp_memory_oracle.rs # Memory oracle for qwen4_exp (Qwen3.8-Flash-Next), 2 of 3 cases, 2048 context
 |   +-- qwen4exp_qsa_probe.rs # qwen4_exp QSA above the indexer budget: sparse vs force-dense KL, on the real install
 |   +-- qwen4exp_quality_gate.rs  # Quality gate for qwen4_exp; frozen row, see docs/QWEN4_EXP.md
 |   +-- rollback_probe.rs   # RollbackPoint state restoration probe
+|   +-- spark_memory_oracle.rs # Memory oracle for Spark-X2.5-4B family
+|   +-- spark_quality_gate.rs  # Quality gate for Spark-X2.5-4B family
 |   +-- steering_probe.rs   # Live steering: inert at alpha 0, and a real edit above the floor
 |   +-- steering_sweep.rs   # Which alpha is usable: steered output scored under the UNSTEERED model
 |   +-- ternary_memory_oracle.rs # Its oracle; the peak is Qwen3.8's on HALF the weights (Gotcha 40)
 |   +-- ternary_quality_gate.rs # Quality gate for Ternary-Bonsai-27B (2-bit), the same family's third checkpoint
+|   +-- tinyllama_memory_oracle.rs # Memory oracle for TinyLlama family
+|   +-- tinyllama_quality_gate.rs  # Quality gate for TinyLlama family
 |   +-- vision_logit_dump.rs # Vision model cross-engine logit dump
 |   +-- vision_memory_oracle.rs # Memory oracle for vision models
+|   +-- vision_oracle_rounds/ # Multi-round conversation fixtures for vision memory oracle
+|   +-- vision_sidecar_memory_oracle.rs # Memory oracle for vision sidecar architecture
 |   \-- vision_sidecar_opener.rs # open_model_runner_with_context_and_vision_sidecar on synthetic installs (no real model needed)
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures

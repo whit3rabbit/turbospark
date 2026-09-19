@@ -26,7 +26,7 @@ decode flow, the head, the memory model and the quality gates do not know
 where the bytes came from.
 So if you are adding a source rather than an architecture, read Phase 1,
 Phase 2 and Phase 7 and skip the rest. The differences are marked "source:" below, and
-the record is `crates/repack/CLAUDE.md` Gotchas 4 to 7 plus `AGENTS.md`
+the record is `crates/repack/AGENTS.md` Gotchas 4 to 7 plus `AGENTS.md`
 Gotchas 29, 30 and 33. The one thing that axis adds and this one does not
 have is that a source can be right about every name and still wrong about
 what a tensor means (Gotcha 33).
@@ -160,7 +160,7 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       wrong answer, which is Phase 0's field-by-field vetting doing its job,
       not a bug to work around quietly.
       **If you have to widen the ceiling, do not dispatch every family at
-      the new width.** `crates/gpu/CLAUDE.md` Gotcha 13 has the full
+      the new width.** `crates/gpu/AGENTS.md` Gotcha 13 has the full
       account: the naive fix (mask a fixed dispatch, the way
       `moe_phase2_down_reduce_k8_mxfp4` already does for `gpt-oss`'s
       top-4-of-32) would have DOUBLED phase-2's GPU cost on every top_k=8
@@ -729,7 +729,7 @@ byte figure pasted back into the row.
 | Output changed after a kernel tweak | Function constant missing from the pipeline cache key |
 | Babble on an instruction-tuned model with `--prompt` | Not a decode bug: `--prompt` does no templating; use `--messages-file` or `--chat` |
 | Footprint explodes, output correct | Routed-expert marker unrecognized: every expert became a resident tensor (Gotcha 26) |
-| `open()` refuses with "top_k N exceeds the M-slot MoE kernels" | The checkpoint's `top_k_experts` exceeds `gpu::MAX_STREAMED_EXPERTS`, the vendored INT4-affine decode kernel's fixed reduce width -- a kernel capacity limit, not a bug (Phase 0's "top_k_experts against the decode kernel" bullet, `crates/gpu/CLAUDE.md` Gotcha 13). Widen by sizing the dispatch and reduce loop to the checkpoint's OWN `top_k`, never by dispatching every family at a new fixed width -- that doubles phase-2 cost for every pre-existing family whose `top_k` used to equal the old ceiling exactly |
+| `open()` refuses with "top_k N exceeds the M-slot MoE kernels" | The checkpoint's `top_k_experts` exceeds `gpu::MAX_STREAMED_EXPERTS`, the vendored INT4-affine decode kernel's fixed reduce width -- a kernel capacity limit, not a bug (Phase 0's "top_k_experts against the decode kernel" bullet, `crates/gpu/AGENTS.md` Gotcha 13). Widen by sizing the dispatch and reduce loop to the checkpoint's OWN `top_k`, never by dispatching every family at a new fixed width -- that doubles phase-2 cost for every pre-existing family whose `top_k` used to equal the old ceiling exactly |
 | Manifest never validates, several extension fields mismatch at once | They were omitted and resolved against the GEMMA baseline (Gotcha 24); or a float field is not a binary fraction |
 | Second generation differs from the first | `reset()` rewound the KV cache but not the recurrent state |
 | Output differs between two `--expert-cache-slots` values | A BUG since 2026-08-08: the flow is dispatching routed slots in an order the expert cache can reach, so phase 2's reduce order follows cache state (AGENTS.md Gotcha 27). Dispatch in router rank |

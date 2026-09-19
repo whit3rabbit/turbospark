@@ -13,7 +13,7 @@ check, or a steering control.
 Under automatic sizing nothing was asked for. Read `maxContext` and
 `expertCacheSlots` off `session.info` and never off the `OpenOptions` that
 produced it; no footprint or throughput figure is readable without the
-slot count (root `CLAUDE.md` Gotchas 36 and 58). Speculation follows the
+slot count (root `AGENTS.md` Gotchas 36 and 58). Speculation follows the
 same rule: `info.speculation.block != nil` IS the "is it on" test, there is
 no second flag that could disagree, and `drafter` is non-nil exactly when
 `block` is. Non-nil is a statement about the SESSION, not about the next
@@ -70,7 +70,7 @@ instance worth carrying: it DOES frame tool calls, as an
 `<atem:function_calls>` block, and this engine has no parser for it, so the
 decoder routes them to the REASONING stream and a caller sees nothing.
 Grepping for the markup finds it; grepping for the parser does not. A
-family name cannot answer a question about a DIALECT (root `CLAUDE.md`
+family name cannot answer a question about a DIALECT (root `AGENTS.md`
 Gotcha 37's shape).
 
 **`native == false` is not a reason to hide a tool control.** It marks the
@@ -134,4 +134,4 @@ not `on`. `.select` resolves to ON for a server (it means "decide per
 project or per chat", and a server request has neither).
 
 This is a different "guardrails" from the memory-loading kind: see root
-`CLAUDE.md` Gotcha 24 for the naming collision.
+`AGENTS.md` Gotcha 24 for the naming collision.

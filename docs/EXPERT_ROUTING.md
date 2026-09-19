@@ -142,7 +142,7 @@ against figures nothing in the script can see:
 
 | quantity | recorded | this simulation |
 |---|---|---|
-| misses per layer, 32 slots | 1.3 (`crates/streaming/CLAUDE.md` Gotcha 3) | 1.23 decode-only, 1.37 all-pass |
+| misses per layer, 32 slots | 1.3 (`crates/streaming/AGENTS.md` Gotcha 3) | 1.23 decode-only, 1.37 all-pass |
 | bytes per token, 32 slots | 125 MiB (same Gotcha) | 118 MiB decode-only, 132 MiB all-pass |
 | hit rate, 32 slots | ~84% (this page, above) | 84.6% decode-only |
 
@@ -163,7 +163,7 @@ Decode only (prefill warms the cache but is excluded, per AGENTS.md Gotcha
 ### Three findings
 
 **The ceiling is large enough to be worth chasing.** At 32 slots the misses
-are 118 MiB/token, which `crates/streaming/CLAUDE.md` Gotcha 3 times at
+are 118 MiB/token, which `crates/streaming/AGENTS.md` Gotcha 3 times at
 5.26 ms for its own 125 MiB at that same slot count. Read that against a
 decode step AT 32 SLOTS and not against this capture's 36.6 tok/s, which was
 taken at the pinned 16 (Gotcha 58's rule: a frozen number belongs to its
@@ -239,7 +239,7 @@ needed anyway.
 **The second half of the trade is what kind of cost the read is.** colibri
 spends bandwidth to hide NVMe LATENCY, which is a good trade when a demand
 read blocks. This engine's expert read is a page-cache memcpy at ~23.8 GiB/s
-(`crates/streaming/CLAUDE.md` Gotcha 3), so the cost is BANDWIDTH, on a
+(`crates/streaming/AGENTS.md` Gotcha 3), so the cost is BANDWIDTH, on a
 unified-memory machine where the GPU's matmuls are competing for it. Buying
 overlap with 1.03x to 1.85x the bytes is the wrong direction.
 
@@ -261,7 +261,7 @@ latency and raises the miss rate, which is both of the terms above at once.
 The probe stays wired for exactly that re-measurement.
 
 **THAT CONDITION IS NOW CREATABLE ON DEMAND, AND WHICH ONE A RUN WAS IN IS
-NOW READABLE.** Both were prose until 2026-08-29 (`crates/streaming/CLAUDE.md`
+NOW READABLE.** Both were prose until 2026-08-29 (`crates/streaming/AGENTS.md`
 Gotchas 8 and 3): nothing in the tree could establish the disk-bound arm, and
 nothing could say afterwards whether it had been established, which is the
 same gap AGENTS.md Gotcha 28 records for thermal pressure and Gotcha 43 for

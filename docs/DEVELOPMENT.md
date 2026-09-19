@@ -212,7 +212,7 @@ frozen 6.2536 with the whole workspace suite green.
 - `package-macos` builds the app bundle and the DMG. It is push-to-main only.
 
 So a Swift break reaches you on a push to main rather than on the PR. That
-job's SDK is also not the one on your machine. `swift/CLAUDE.md` Gotcha 45
+job's SDK is also not the one on your machine. `swift/AGENTS.md` Gotcha 45
 has the three failure modes this has already produced. The short version:
 build the app locally before merging anything that touches Swift, and read
 `make app-bundle` as the closest local approximation of that job.
@@ -268,17 +268,16 @@ make clean                       # all three
 | Swift changes appear to have no effect | SwiftPM relinked the previous `.a`; run `make swift-lib` |
 | `cargo test` hung at 0% CPU after a build | Gatekeeper verifying test binaries; see above |
 | A compile error in a crate you did not touch | Probably not yours. Check mtimes before debugging it |
-| CI red on Swift, green locally | The packaging job's SDK, not your change. `swift/CLAUDE.md` Gotcha 45 |
+| CI red on Swift, green locally | The packaging job's SDK, not your change. `swift/AGENTS.md` Gotcha 45 |
 
 ## Where to go next
 
 - [`AGENTS.md`](../AGENTS.md) -- the working guide: conventions, the
-  verification policy in full, and the gotcha list. `CLAUDE.md` is a symlink
-  to it.
+  verification policy in full, and the gotcha list.
 - [`swift/README.md`](../swift/README.md) and
-  [`swift/CLAUDE.md`](../swift/CLAUDE.md) -- the Swift half in detail.
+  [`swift/AGENTS.md`](../swift/AGENTS.md) -- the Swift half in detail.
 - [`docs/TESTING.md`](TESTING.md), [`docs/BENCHMARKING.md`](BENCHMARKING.md),
   [`docs/RELEASE.md`](RELEASE.md), [`docs/CLI.md`](CLI.md),
   [`docs/MODELS.md`](MODELS.md), [`docs/ENV.md`](ENV.md).
-- Each crate has its own `CLAUDE.md` with the architecture and the gotchas
+- Each crate has its own `AGENTS.md` with the architecture and the gotchas
   that live there. Read it before changing that crate.

@@ -124,7 +124,7 @@ fires on three at threshold 0.5, and `python3 -m pytest tests/ -q` scores
 | 0.90 to 0.99 | 1 of 18 |
 
 Enabling the veto therefore reddens a passing test and buys no detection. This
-is the same shape as `swift/CLAUDE.md` Gotcha 29 one level out: a denylist over
+is the same shape as `swift/AGENTS.md` Gotcha 29 one level out: a denylist over
 a string bound for `/bin/zsh -c` is the wrong shape, and a learned denylist is
 still a denylist.
 

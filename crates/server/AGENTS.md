@@ -63,6 +63,7 @@ crates/server/
     +-- chat_completions.rs     # Integration tests for the OpenAI endpoint
     +-- completions.rs          # Integration tests for /v1/completions, incl. the not-templated assertion
     +-- embeddings_api.rs       # Integration tests for /v1/embeddings and the Ollama embedding routes
+    +-- generation_queue.rs     # FIFO generation queue admission tests
     +-- guardrails.rs           # Rescue/validate/retry end to end, both endpoints, no model
     +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
     +-- images.rs               # Integration tests for vision and image endpoints
@@ -73,6 +74,7 @@ crates/server/
     +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
     +-- registry.rs             # routing by model id, and the single-model fallback
     +-- responses.rs            # Integration tests for /v1/responses, incl. the exact SSE event-order assertion
+    +-- server_cli.rs           # CLI argument handling and binding integration tests
     +-- streaming_error_framing.rs  # A mid-stream failure is framed as an SSE/NDJSON error event, never a bare drop
     +-- system_prompt.rs        # The deployment-wide default system prompt, and what suppresses it per endpoint
     \-- fixtures/               # Test tokenizer fixtures for integration tests
@@ -345,7 +347,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    one genuinely needed no flag: those three are policy choices an operator
    might want to disable, where prefill shape is a pure throughput axis with
    the SAME losslessness guarantee `crates/cli`'s `--prefill-chunk` wiring
-   relies on (`crates/runtime/CLAUDE.md` Gotcha 14's byte-identity contract),
+   relies on (`crates/runtime/AGENTS.md` Gotcha 14's byte-identity contract),
    so there is nothing for a flag to trade off.
 
    Checked ORDER matters: speculation is resolved first (its own `match` arm
@@ -745,7 +747,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     `unsupported_openai_fields_are_reported_on_the_degradation_header`
     was repointed at `logprobs` (still genuinely unsupported) so the test
     keeps discriminating instead of asserting a warning that no longer
-    fires. See `crates/selection/CLAUDE.md`'s matching Gotcha for the
+    fires. See `crates/selection/AGENTS.md`'s matching Gotcha for the
     sampler-side semantics (generated-suffix-only penalties, min-p's
     composition order, the `[-2, 2]`/`[0, 1)` bounds) -- this crate's half
     of the change is wiring, not policy.
@@ -851,7 +853,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     include the queue; subtracting gives the wait. A field named `ttftMs`
     filled from `prefillSeconds` would read as the first number and be the
     second. Token counts come off `RawDecodeResult` and never off a count of
-    deltas -- `swift/CLAUDE.md` Gotcha 7 is the worked example of how far
+    deltas -- `swift/AGENTS.md` Gotcha 7 is the worked example of how far
     apart those two are.
 
     A request the guardrails re-asked emits TWO `Generated` events. That is
@@ -901,7 +903,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     GUARDRAILS, AND DEFAULTS OFF.** Added 2026-09-01 (ROADMAP.md section 4).
     `RealChatModel::open`
     calls `RealForwardRunner::set_prefix_reuse` once, right after the runner
-    opens -- the mechanism itself (`crates/runtime/CLAUDE.md` Gotcha 30) is
+    opens -- the mechanism itself (`crates/runtime/AGENTS.md` Gotcha 30) is
     unmodified and was already wired into `run_raw_completion_chunked`, which
     is the loop this server actually takes for any chunked-prefill-capable
     family (Gotcha 19).
@@ -930,7 +932,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     **THERE IS NO SERVER-SIDE STDERR LINE THE WAY THE CLI'S `--chat` HAS ONE,
     SO `ServerEvent::Generated` CARRIES `reusedPrefixTokens` INSTEAD.** The
     CLI's `[prefix-reuse] N/M` line exists because this class of feature has
-    already shipped silently inert once (`crates/runtime/CLAUDE.md` Gotcha
+    already shipped silently inert once (`crates/runtime/AGENTS.md` Gotcha
     30: "measured in the real chat REPL at 0/33 ... through two rounds of
     apparently-working implementation"). A server has no equivalent terminal
     an operator is watching, so the observable has to travel with whatever
@@ -950,7 +952,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     sense its own default would assert against a different configuration than
     the one it was written for. The vision test's `false` is additionally
     inert rather than merely conservative -- `set_prompt_vision` taints
-    `kv_prefix` on every call (`crates/runtime/CLAUDE.md` Gotcha 30's own
+    `kv_prefix` on every call (`crates/runtime/AGENTS.md` Gotcha 30's own
     taint list), so that path could not reuse a prefix whatever the flag said.
 
 32. **`--session-slots` (ROADMAP section 4's Option 3) IS THE FLAG THAT
@@ -974,7 +976,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     at a time, which is why it is the only caller of the new form. The
     session-pool MECHANISM itself (`SessionSlot`/`SessionPool`, the swap in
     `RealForwardRunner::select_session`, the park-and-promote in `reset()`)
-    lives entirely in `crates/runtime`; see `crates/runtime/CLAUDE.md`
+    lives entirely in `crates/runtime`; see `crates/runtime/AGENTS.md`
     Gotcha 32 for its design and for the two real bugs a real-install test
     found in it (a destructive shallow-match rewind, then an
     overly-strict discriminator that undid the pool's own correct swap
@@ -1014,7 +1016,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 
     **Observability follows `reused_prefix_tokens`'s exact precedent, one
     field over**: `RawDecodeResult::session_slot_evicted` (set inside
-    `crate::session_pool`'s `reset()` path, `crates/runtime/CLAUDE.md`
+    `crate::session_pool`'s `reset()` path, `crates/runtime/AGENTS.md`
     Gotcha 32) reaches `ServerEvent::Generated.sessionSlotEvicted` through
     the same `ReportingModel` choke point `reused_prefix_tokens` already
     uses. It answers a narrower and more actionable question than "is

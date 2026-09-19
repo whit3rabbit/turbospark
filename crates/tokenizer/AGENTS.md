@@ -16,6 +16,7 @@ crates/tokenizer/
 |   +-- dialect/                    # Resolves dialect special tokens and chat formatting rules
 |   |   +-- mod.rs                  # ChatDialect enum & public API
 |   |   +-- config.rs               # DialectConfig table & properties
+|   |   +-- minimax.rs              # MiniMax-M2 dialect and token resolution
 |   |   +-- resolve.rs              # Special token probing & dialect resolution
 |   |   \-- resolvers.rs            # Per-dialect token resolution routines
 |   +-- chat_template/              # Per-dialect text chat renderers (the FALLBACK path)
@@ -35,6 +36,7 @@ crates/tokenizer/
 |   |   +-- chatml.rs               # ChatML thought & tool parsing
 |   |   +-- deepseek.rs             # DeepSeek tool parsing
 |   |   +-- harmony.rs              # Harmony channel & reasoning parser
+|   |   +-- mistral.rs              # Mistral tool call parser
 |   |   \-- muse.rs                 # Muse Glimmer recipient-frame parser
 |   +-- json_value.rs               # JSON value helper types for tool parameter encoding
 |   +-- reasoning.rs                # Reasoning effort configuration and parameter definitions
@@ -42,6 +44,7 @@ crates/tokenizer/
 |   \-- tool_call/                  # Dialect-specific tool call DSL parsers
 |       +-- mod.rs                  # Module root for tool call parsers
 |       +-- gemma.rs                # Gemma tool call DSL parser
+|       +-- mistral.rs              # Mistral tool call DSL parser
 |       +-- qwen.rs                 # Qwen tool call DSL parser
 |       \-- deepseek.rs             # DeepSeek tool call DSL parser
 \-- tests/
@@ -53,6 +56,8 @@ crates/tokenizer/
     +-- installed_template.rs       # Checkpoint template beats dialect; per-family agreement guard
     +-- jinja_chat_template.rs      # Jinja template rendering unit tests
     +-- llama3_dialect.rs           # Llama-3 dialect resolution & fallback renderer tests
+    +-- minimax_dialect.rs          # MiniMax-M2 dialect resolution & formatting tests
+    +-- mistral_tool_calls.rs       # Mistral tool call DSL and structured decoder tests
     +-- reasoning_effort.rs         # Reasoning effort parameter parsing and template tests
     +-- structured_decoder.rs       # Streaming structured decoder unit tests
     +-- tool_call_support.rs        # Links tool_call_support to what each decoder arm can emit
@@ -400,7 +405,7 @@ cargo test -p turbospark-tokenizer
 15. **THE JINJA COMPAT SHIM SCANS BYTES OF PROSE, SO IT OWES TWO PROPERTIES.**
     `jinja_compat.rs::parenthesize_conditional_kwargs` walks the template as
     bytes, and templates are mostly multibyte prose (Spark 2.5's ships a
-    `{#- 0826版本 -#}` comment and fullwidth-bar markers). The scan must only
+    non-ASCII version comment like `{#- 0826<banben> -#}` and fullwidth-bar markers). The scan must only
     ever slice at `{` block boundaries -- `{` is ASCII, so `i` stays on a
     char boundary and whole-span copies are safe; a rewrite that advances by
     "one character" computed from a byte turns every non-ASCII byte it

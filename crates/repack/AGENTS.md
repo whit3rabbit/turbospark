@@ -72,10 +72,13 @@ crates/repack/
 |   |   \-- ggml.rs                 # ggml_type_block: block size and byte size per type
 |   +-- gguf_names/                 # GGUF tensor names -> canonical HF-style names
 |   |   +-- mod.rs                  # Name mapping router and types
+|   |   +-- deepseek2.rs            # DeepSeek-V2 MLA GGUF tensor name mappings
 |   |   +-- gemma4.rs               # Gemma 4 GGUF tensor name mappings
 |   |   +-- gpt_oss.rs              # gpt-oss GGUF tensor name mappings
 |   |   +-- llama.rs                # Llama/Mixtral GGUF tensor name mappings
-|   |   \-- qwen.rs                 # Qwen GGUF tensor name mappings
+|   |   +-- minimax.rs              # MiniMax-M2 GGUF tensor name mappings
+|   |   +-- qwen.rs                 # Qwen GGUF tensor name mappings
+|   |   \-- spark.rs                # Spark-X2.5-4B GGUF tensor name mappings
 |   +-- gguf_config/                # GGUF metadata -> ArchConfig (arch_from_gguf)
 |   |   +-- mod.rs                  # arch_from_gguf entry point
 |   |   +-- attention.rs            # Attention & head dimension resolvers
@@ -87,14 +90,22 @@ crates/repack/
 |   |   +-- plan.rs                 # Tensor classification & layer planning
 |   |   +-- transcode.rs            # Resident F32 transcode & V-head conventions
 |   |   +-- conventions.rs          # V-head layout conventions and RoPE unpermutation
+|   |   +-- sizing.rs               # Slot sizing and footprint calculations
 |   |   \-- manifest.rs             # GGUF manifest quantization spec generator
+|   +-- gguf_set.rs                 # Multi-shard GGUF set header fetch and reader
 |   +-- synthetic_gguf/             # In-memory GGUF writer for fixtures
 |   |   +-- mod.rs                  # Module root and re-exports
 |   |   +-- builder/                # GgufBuilder and GGUF value serialization
 |   |   +-- gemma4.rs               # SyntheticGgufShape, QuantMix & build_synthetic_gemma4_gguf
 |   |   +-- gemma4_shape.rs         # SyntheticGgufShape and QuantMix helper types
-|   |   \-- gptoss.rs               # SyntheticGptOssShape: the M5 layer's SHAPE, not just its types
+|   |   +-- gptoss.rs               # SyntheticGptOssShape: the M5 layer's SHAPE, not just its types
+|   |   +-- minimax.rs              # SyntheticMiniMaxShape for split-GGUF MiniMax-M2 fixtures
+|   |   \-- qwen2.rs                # SyntheticQwen2Shape for GGUF Qwen2 fixtures
+|   +-- synthetic_deepseek2.rs      # Synthetic DeepSeek-V2 MLA install generator
+|   +-- synthetic_spark.rs          # Synthetic Spark-X2.5-4B install generator
+|   +-- qwen2_config.rs             # Qwen 2 dense config.json -> ArchConfig parser
 |   +-- qwen36_config.rs            # Qwen 3.6 config.json -> ArchConfig (parse_qwen_gdn_moe_config)
+|   +-- qwen3vl_config.rs           # Qwen3-VL config parser and stream writer
 |   +-- museglimmer_config.rs       # Muse Glimmer config.json -> ArchConfig parser
 |   +-- trained_context.rs          # Trained context resolution from checkpoint metadata
 |   +-- hf_checkpoint.rs            # Hugging Face Llama checkpoint converter
@@ -104,6 +115,7 @@ crates/repack/
     +-- arch_registry.rs            # Architecture string registry unit tests
     +-- arch_registry_network.rs    # Live architecture registry witness validator (ignored)
     +-- control_vector_file.rs      # Control vector GGUF file parsing integration tests
+    +-- deepseek2_gguf.rs           # DeepSeek V2 GGUF name mapping & metadata tests
     +-- dflash2_checkpoint_network.rs # Real DFlash2 drafter checkpoint streamed repack (ignored)
     +-- gemma4_checkpoint.rs        # Gemma 4 repack pipeline unit tests
     +-- gemma4_checkpoint_network.rs# Real Gemma 4 checkpoint download integration test (ignored)
@@ -119,7 +131,7 @@ crates/repack/
     +-- gguf_iq_network.rs          # IQ3_XXS/IQ4_NL/IQ4_XS vs the Phase S candidate, by correlation (ignored)
     +-- gguf_llama_rope_patch.rs    # The rotary pair convention: in-place diagnostic + the walk's inverse (ignored)
     +-- gguf_mixtral_install_network.rs # Same for the real Mixtral Q4_K_M, plus the two DENSE llama installs (ignored)
-    +-- gguf_names.rs               # GGUF name mapping, both families
+    +-- gguf_names.rs               # GGUF name mapping, all families
     +-- gguf_norm_convention_probe.rs # GGUF install's resident BF16 core vs the MLX install's (ignored)
     +-- gguf_q4_k_network.rs        # Q4_K dequant vs the real Qwen Q4_K_M, by correlation (ignored)
     +-- gguf_qwen3moe_install_network.rs # Same for the real Qwen3-30B-A3B Q4_K_M, the FINE-GRAINED MoE (ignored)
@@ -127,10 +139,12 @@ crates/repack/
     +-- gguf_qwen_core_probe.rs     # A GGUF install's resident core vs the MLX one, tensor by tensor (ignored)
     +-- gguf_qwen_install_network.rs# Same for the real Qwen Q4_K_M, the mixed-block-type case (ignored)
     +-- gguf_qwen_quant_probe.rs    # The same question for the QUANTIZED V-head tensors, by correlation (ignored)
+    +-- gguf_set.rs                 # Multi-shard GGUF set parser unit tests
     +-- gturbo_writer.rs            # .gturbo layout writer unit tests
     +-- hf_checkpoint.rs            # HF Llama converter unit tests
     +-- hf_checkpoint_network.rs    # Real HF checkpoint download integration test (ignored)
     +-- install_verifier.rs         # Install verifier unit tests
+    +-- minimax_network.rs          # MiniMax-M2 network verification test (ignored)
     +-- mtp_graft.rs                # resident_reader + graft_qwen_gdn_dense_mtp_head: MTP head onto an on-disk install
     +-- mtp_head_network.rs         # The MTP head's inventory off the official BF16 header (ignored)
     +-- mtp_install_fidelity_network.rs # MTP head install fidelity vs official weights (ignored)
@@ -142,11 +156,17 @@ crates/repack/
     +-- ornith_install_network.rs   # Ornith GGUF install streamer (ignored)
     +-- ornith_mlx_install_network.rs # Ornith MLX install streamer (ignored)
     +-- ornith_tensor_probe.rs      # Ornith tensor layout and dtype probe (ignored)
+    +-- qwen2_checkpoint_network.rs # Qwen 2 checkpoint download test (ignored)
+    +-- qwen2_config.rs             # Qwen 2 config parser tests
+    +-- qwen2_header.rs             # Qwen 2 safetensors header tests
     +-- qwen35_checkpoint_network.rs# The REAL Bonsai-27B 1-bit checkpoint, streamed (ignored)
     +-- qwen35_config.rs            # parse_qwen_gdn_dense_config vs the pinned qwen3_5 baseline, BOTH checkpoints
     +-- qwen36_checkpoint_network.rs# Real Qwen 3.6 checkpoint download integration test (ignored)
     +-- qwen36_config.rs            # parse_qwen_gdn_moe_config vs the pinned Qwen 3.6 baseline
     +-- qwen38_checkpoint_network.rs# The REAL Qwen3.8-27B INT4 checkpoint, streamed (ignored)
+    +-- qwen38_gsq_rco_iq2_xs_allocation.rs # IQ2_XS allocation and layout test
+    +-- qwen38_gsq_rco_iq2_xs_network.rs # Real Qwen3.8 IQ2_XS download integration test (ignored)
+    +-- qwen3vl_config.rs           # Qwen3-VL config parser unit tests
     +-- qwen4_classify.rs           # classify_for_family vs qwen4_exp's real tensor-name inventory (pattern-complete)
     +-- qwen4_config.rs             # parse_qwen4_exp_config vs both published qwen4_exp checkpoints
     +-- qwen4_manifest_roundtrip.rs # qwen4_exp's manifest fields through all three consumers: writer, validator, peeker
@@ -160,7 +180,8 @@ crates/repack/
     +-- synthetic_qwen35.rs         # The dense 1-bit install, end to end through the walk
     +-- synthetic_qwen35_vision.rs  # M-V3 stage 1: the vision tower through both writers, and the BF16->FP16 arm
     +-- ternary_checkpoint_network.rs# The REAL Ternary-Bonsai-27B 2-bit checkpoint, streamed (ignored)
-    \-- vision_sidecar.rs           # The vision-tower sidecar: a tower installed as its own <alias>.gturbo-vision/ dir
+    +-- vision_sidecar.rs           # The vision-tower sidecar: a tower installed as its own <alias>.gturbo-vision/ dir
+    \-- zimage_mlx_source_network.rs # Z-Image-Turbo MLX source test (ignored)
 ```
 
 ## Key Modules

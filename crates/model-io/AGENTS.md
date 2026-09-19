@@ -22,15 +22,19 @@ crates/model-io/
 |   |   +-- config.rs           # ArchConfig struct definition
 |   |   +-- family.rs           # ModelFamily enum & family resolution
 |   |   \-- sub_configs.rs      # LinearAttentionConfig, RopeScalingConfig, etc.
-|   +-- arch_baselines/         # Canonical baselines (Gemma 4, Qwen 3.6, DeepSeek-V4, Muse Glimmer)
+|   +-- arch_baselines/         # Canonical baselines (Gemma 4, Qwen 3.6, DeepSeek, Spark, MiniMax)
 |   |   +-- mod.rs              # known_architecture/all_known_architectures & re-exports
 |   |   +-- deepseek.rs         # DeepSeek-V4 baseline
+|   |   +-- deepseek2.rs        # DeepSeek-V2 MLA baselines
 |   |   +-- gemma.rs            # Gemma 4 baseline
 |   |   +-- gpt_oss.rs          # gpt-oss baseline
 |   |   +-- llama.rs            # Llama/Mixtral baseline
+|   |   +-- minimax.rs          # MiniMax-M2 split-GGUF baseline
 |   |   +-- muse_glimmer.rs     # Muse Glimmer 30B dense baseline
-|   |   \-- qwen.rs             # Qwen dense/MoE, qwen3moe & qwen4_exp baselines
+|   |   +-- qwen.rs             # Qwen dense/MoE, qwen3moe & qwen4_exp baselines
+|   |   \-- spark.rs            # Spark-X2.5-4B baseline
 |   +-- arch_validation.rs      # Structural validation rules for architecture configs
+|   +-- cgroup.rs               # Linux cgroup memory limit probe (scaffolding)
 |   +-- encoder_config.rs       # BERT/XLM-RoBERTa encoder config.json schema
 |   +-- context_policy.rs       # MaxContext, kv_bytes_for_context, largest_context_within
 |   +-- context_policy_tests.rs # Unit tests for context policy resolution
@@ -56,7 +60,9 @@ crates/model-io/
     +-- install_receipt.rs      # Install receipt parsing unit tests
     +-- manifest.rs             # Manifest JSON decoding & baseline validation tests
     +-- packed_experts_layout.rs# Layout decoding unit tests
+    +-- resident_buffer.rs      # Zero-copy mmap buffer tests
     +-- resident_index.rs       # Binary resident index parsing tests
+    +-- safetensors.rs          # Safetensors file reading unit tests
     +-- sha256.rs               # SHA-256 verification unit tests
     \-- vision_sidecar.rs       # Vision sidecar format unit tests
 ```
@@ -87,7 +93,7 @@ crates/model-io/
   dependency is macOS-only). The alternative was a second copy of the KV
   formula in a crate that could not see the first; see `context_policy`'s own
   doc for why a second copy gets the sliding-window ring wrong. Their gotchas
-  are `crates/runtime/CLAUDE.md` 13 and 15, which stayed there with the flows
+  are `crates/runtime/AGENTS.md` 13 and 15, which stayed there with the flows
   that consume them.
 - `arch_config/sub_configs.rs`: also `VisionConfig` (ROADMAP M-V3), following `LinearAttentionConfig` with a `NONE` and an `is_active()` reading `depth > 0`. **It describes what an INSTALL carries, not what the checkpoint's `vision_config` declares**, which is why `crates/repack`'s family config parsers leave it `NONE` and a separate `parse_vision_config` exists: five published `qwen3_5`-family checkpoints declare the identical tower and one of them ships none of it (`crates/repack` Gotcha 12). Every field is an integer count or a token id on purpose -- `arch_validation` compares manifest floats with `!=` against a ~1-ULP parser, so a non-binary-fraction float here could not round-trip (Gotcha 24 in AGENTS.md). `head_dim` is DERIVED (`hidden_size / num_heads`) rather than stored, because the checkpoint declares no such key and storing one would invent a third source for a value with two.
 - `packed_experts_layout.rs`: Decodes `packed_experts/layout.json` for streamed MoE layouts. **The subdirectory is a PARAMETER since ROADMAP M-V3** (`load_from`, with `load` as a thin wrapper): the vision tower's `packed_vision/layout.json` carries this exact schema -- one `LayerLayout`, `experts` = the tower's blocks, free-form roles with a dtype each -- so it decodes here rather than through a second parser. A second copy would be a second place for the `expert_stride` fallback, the per-layer stride ceiling and the missing-entry check to drift, and Gotcha 2 is already about one of those being got wrong. `expert_stride` exists at TWO levels and they mean different things: `PackedExpertsLayout::expert_stride` is the model-wide maximum (what `manifest.json` declares and what a slot is sized from), while `LayerLayout::expert_stride` is what that layer's file is actually padded to. Address or size a layer with the second, never the first -- see Gotcha 2.

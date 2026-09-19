@@ -424,7 +424,7 @@ port's own SHAPE FLOOR.** `produce_batched` and `produce` differ by 6.2e-8 to
 1.5e-5 nats with the argmax agreeing on every row, against a dense
 batched-vs-cached shape floor of **7.4e-6** measured on MLX for this same
 architecture, and against **1.57e-5**, this repo's own cross-engine result for
-the family, published as "no detectable kernel gap" (`crates/bench/CLAUDE.md`
+the family, published as "no detectable kernel gap" (`crates/bench/AGENTS.md`
 Gotcha 8). Every engine's batched and cached passes disagree by about this
 much -- that disagreement is precisely what `scripts/kld.py` measures, by
 running the REFERENCE twice.
@@ -858,7 +858,7 @@ allocating no DFlash2 state -- while reporting a note that names
 such an install, which is not a default anyone would choose if asked. The
 MTP head keeps its `auto` because its measurement is the opposite way up.
 `crates/cli`'s `resolve_drafter` owns the split and
-`crates/cli/CLAUDE.md` Gotcha 10 states the contract.
+`crates/cli/AGENTS.md` Gotcha 10 states the contract.
 
 **A NOTE ON WHAT A COMPARISON CAN AND CANNOT SETTLE.** Sections 1-4 are
 facts about the model and both references agree on them, so a disagreement

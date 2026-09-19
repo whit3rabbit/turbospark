@@ -21,6 +21,7 @@ crates/streaming/
 |   +-- read_pool.rs        # Process-wide pool of parked reader threads for parallel pread
 |   +-- rdadvice.rs         # macOS F_RDADVISE kernel hint wrapper (unsafe)
 |   +-- disk_io.rs          # physical-disk-read probe + F_NOCACHE seam, ExpertIoStats (unsafe)
+|   +-- linux_uring.rs      # Linux io_uring + O_DIRECT read source scaffolding
 |   +-- stream_layout.rs    # Expert blob offset and byte layout calculation helpers
 |   \-- error.rs            # StreamingError enum definition
 \-- tests/

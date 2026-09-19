@@ -42,7 +42,7 @@ keeps reading what it always read. Rules that keep it sane:
   ForEach identity; following the activated version's id would rebuild the
   row mid-navigation.
 - The field is read with `decodeLossyArray` in the tolerant decoder, per
-  the Gotcha 13 rule on this struct (`swift/CLAUDE.md`): an archive written
+  the Gotcha 13 rule on this struct (`swift/AGENTS.md`): an archive written
   before the field existed must decode, not quarantine.
 
 Ghost chats get all of this for free: the vault payload stores

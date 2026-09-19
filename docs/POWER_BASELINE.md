@@ -53,7 +53,7 @@ the other one.
 
 **A chunked row is a NEW row, not a re-freeze of an old one.** This is the
 same rule the mapped-residency seam already carries in
-`crates/bench/CLAUDE.md` Gotcha 1: an arm that changes which code path runs
+`crates/bench/AGENTS.md` Gotcha 1: an arm that changes which code path runs
 produces a row that belongs beside its predecessor rather than replacing
 it. Chunked prefill is the DEFAULT for the CLI and the server, so a chunked
 row is arguably the more representative one for a user, and that is an

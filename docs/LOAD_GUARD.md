@@ -131,7 +131,7 @@ statement sequence it did before. `balanced` and `efficiency` watch both.
 **It does not unload anything, and that is a contract rather than an
 omission.** The engine caps its own decode rate; it does not close sessions,
 because it does not own them. The FFI's handle belongs to the caller
-(`crates/ffi/CLAUDE.md` Gotcha 1), and a session that destroyed itself would
+(`crates/ffi/AGENTS.md` Gotcha 1), and a session that destroyed itself would
 leave every host holding a dead pointer it never asked to be given.
 
 What the engine does instead is REPORT, in two places:

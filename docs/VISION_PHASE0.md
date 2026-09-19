@@ -28,7 +28,7 @@ Checkpoints probed: `prism-ml/Bonsai-27B-mlx-1bit` (1-bit) and
 `mlx-community/Qwen3.8-27B-4bit` (INT4). Their `vision_config`,
 `chat_template.jinja`, `tokenizer_config.json` and `preprocessor_config.json`
 are identical; the two differ only in the trunk's quantization, consistent
-with `crates/model-io/CLAUDE.md`'s existing note that both share one
+with `crates/model-io/AGENTS.md`'s existing note that both share one
 baseline.
 
 **The `mlx-community/Qwen3.8-27B-4bit` tower is now ALSO installable on its
@@ -225,7 +225,7 @@ int(head_dim * partial_rotary_factor) = 64`, matching the port's existing
 `ropeNeoxSubdim`/`partial_rotary_factor=0.25` baseline field exactly
 (`crates/model-io/src/arch_config/family.rs:68`, `qwen_gdn_dense_27b()`).
 
-**`crates/model-io/CLAUDE.md`'s `arch_baselines/qwen.rs` entry already
+**`crates/model-io/AGENTS.md`'s `arch_baselines/qwen.rs` entry already
 states this is settled**: `rope_type: "default"` makes `mlx_lm` (the
 text-only reference) apply plain, non-mrope RoPE, ignoring
 `mrope_section` entirely -- confirmed here by reading the mlx-vlm

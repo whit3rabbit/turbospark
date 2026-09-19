@@ -1,11 +1,12 @@
 # turbospark-cli
 
-THREE process entry points. `turbospark-check` parses `argv` using
+FOUR process entry points. `turbospark-check` parses `argv` using
 `turbospark-invocation`, applies exit status and output stream routing, and
 drives GPU token generation (`RealForwardRunner`) on macOS.
 `turbospark-model` is the catalog and download surface, backed by
-`turbospark-catalog`. `turbospark` is a unified oMLX/Unsloth-style front end
-that execs the other two (plus `turbospark-server` and `turbospark-bench`,
+`turbospark-catalog`. `turbospark-image` is the image generation and packing CLI
+surface backed by `turbospark-image`. `turbospark` is a unified oMLX/Unsloth-style front end
+that execs the other peer binaries (plus `turbospark-server` and `turbospark-bench`,
 found beside its own executable or on `PATH`) and adds
 `run`/`serve`/`start`/`stop`/`restart`/`status`/`bench` plus coding-agent
 connectors (`agent.rs`, `daemon.rs`).
@@ -14,7 +15,7 @@ connectors (`agent.rs`, `daemon.rs`).
 
 ```
 crates/cli/
-+-- Cargo.toml              # Crate manifest, declaring THREE binaries
++-- Cargo.toml              # Crate manifest, declaring FOUR binaries
 +-- src/
 |   +-- main.rs             # turbospark-check process entry point
 |   +-- generate/           # Non-interactive text & chat template generation driver
@@ -28,16 +29,20 @@ crates/cli/
 |   \-- bin/
 |       +-- turbospark.rs   # turbospark: unified front end, execs the peer binaries
 |       +-- model.rs        # turbospark-model: argv, subcommand parse, exit codes
+|       +-- image.rs        # turbospark-image: image generation and packing CLI
 |       \-- model_cmd/
-|           +-- mod.rs      # The nine subcommands
+|           +-- mod.rs      # Subcommands implementation
 |           +-- auth.rs     # auth: Hugging Face token inspect/set/clear
+|           +-- image_source.rs # Diffusers image source resolution
 |           +-- progress.rs # Download progress rendering
 |           \-- render.rs   # Printing. No decisions.
 \-- tests/
     +-- mference_check.rs   # CLI flag parse & exit status integration tests
     +-- real_generation.rs  # End-to-end real generation integration tests
     +-- model_cli.rs        # turbospark-model argument surface & exit codes
-    \-- turbospark_cli.rs   # turbospark unified-binary argument surface & exit codes
+    +-- image_cli.rs        # turbospark-image argument surface & exit codes
+    +-- turbospark_cli.rs   # turbospark unified-binary argument surface & exit codes
+    \-- zimage_mlx_install_network.rs # Z-Image-Turbo install verification (ignored)
 ```
 
 ## Key Modules
@@ -49,7 +54,8 @@ crates/cli/
 - `daemon.rs`: the background server daemon (`start`, `stop`, `restart`, `status`) behind `turbospark start|stop|restart|status`. An `flock`-held lock over `<TURBOSPARK_HOME>/run/daemon.lock` closes the race between two near-simultaneous `start` calls; PID and metadata live in `run/server.pid` and `run/server.meta`.
 - `bin/turbospark.rs`: the unified front end (`turbospark`). Dispatches `run` to `turbospark-check` (mapping a bare model/prompt onto `--model`/`--chat`/`--prompt`), `serve` to `turbospark-server`, `bench` to `turbospark-bench`, the `turbospark-model` verbs straight through, and `start`/`stop`/`restart`/`status` to `daemon.rs` (or to `agent.rs` when `start`'s first argument names a known agent). Finds each peer binary beside its own executable, falling back to `PATH`.
 - `bin/model.rs`: `turbospark-model`'s argv parse and exit-code mapping. **A second binary rather than subcommands on `turbospark-check`, and that is a decision**: `turbospark-invocation` is a pure, flat option parser whose contract is "`--model` is required and exactly one mode flag is set", with a five-place rule for every new flag and a hardcoded option-count assertion. A subcommand grammar does not belong in it, and bending it into one would put a required `--model` in front of a command whose entire job is that there is no model yet. Two exit codes, and a script doing `probe X && pull X` depends on the difference: 2 for a malformed invocation, 1 for a run that was asked for correctly and did not work.
-- `bin/model_cmd/`: the nine subcommands (`list`, `info`, `probe`, `recommend`, `pull`, `pull-vision`, `path`, `rm`, `auth`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.
+- `bin/image.rs`: `turbospark-image` CLI for image generation and packing (`generate` and `pack` subcommands) using the `turbospark-image` pipeline and native Metal on macOS.
+- `bin/model_cmd/`: the subcommands (`list`, `info`, `probe`, `recommend`, `pull`, `pull-vision`, `path`, `rm`, `auth`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.
 
 ## Development & Test Commands
 
@@ -147,7 +153,7 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    `llama` (Mistral/Llama 2-3.x dense and Mixtral/`qwen3moe` MoE),
    `muse_glimmer`, `gpt-oss`, the dense half of `families/qwen/`, and
    `qwen4_exp`. The one holdout is the MoE half of `families/qwen/`
-   (`qwenGdnMoe`, e.g. Ornith 35B). `crates/runtime/CLAUDE.md` Gotcha 14 has
+   (`qwenGdnMoe`, e.g. Ornith 35B). `crates/runtime/AGENTS.md` Gotcha 14 has
    each family's landing date, and ROADMAP.md's PF-02 section has what's
    still unserved and why.
 
@@ -350,7 +356,7 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
     so unconditionally.** `run()` calls `session.runner.set_prefix_reuse(true)`
     right after `open_session`, so each turn continues from the previous
     turn's KV wherever the re-rendered transcript agrees with the ids that
-    built it (`crates/runtime/CLAUDE.md` Gotcha 30). Measured on the real
+    built it (`crates/runtime/AGENTS.md` Gotcha 30). Measured on the real
     Gemma 4 install over three turns: 0/17, then 13/33, then 29/49 tokens
     continued, with stdout byte-identical to the same session run with reuse
     off. The un-reused remainder is the generation-prompt suffix, which the

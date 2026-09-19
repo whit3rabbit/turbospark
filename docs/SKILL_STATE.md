@@ -175,7 +175,7 @@ If it is ever wanted, it is clean and singular:
 exactly two decode loops (`crates/runtime/src/raw_completion.rs:312` and the
 speculative verify path), and a mask over the working buffer between the
 finiteness check and the repetition penalty would be contained. Two traps are
-already documented in that crate's CLAUDE.md and apply directly: `select` runs
+already documented in that crate's AGENTS.md and apply directly: `select` runs
 per token at full vocabulary (V=262144 on Gemma 4) OUTSIDE every profiler
 bucket, so a mask pass is a throughput change that must be measured with
 `tests/host_sampler_cost.rs`'s instruments (precedent: a full sort here cost
@@ -212,7 +212,7 @@ Three candidate homes, in order of fit:
 ## Interaction with prefix KV reuse
 
 Prefix reuse is a longest-common-prefix mechanism keyed on fed token ids
-(`crates/runtime/src/kv_prefix.rs`, `crates/runtime/CLAUDE.md` Gotcha 30). It
+(`crates/runtime/src/kv_prefix.rs`, `crates/runtime/AGENTS.md` Gotcha 30). It
 landed on `main` in `a7274a3`, one day after this page first described it as
 unimplemented; nothing below was re-measured against it, so read this section
 as the arithmetic of the two mechanisms rather than as a reading of the
@@ -420,7 +420,7 @@ default, so the append-only path is byte-identical when the toggle is unset.
 - `AppModel+Generation.swift`: the one branch, at the context assembly, plus
   the patch merge on turn finish.
 - `AppProject.skillStateEnabled` and `AppChat.skillState`, both with tolerant
-  decoding (swift/CLAUDE.md Gotcha 13), and a toggle in project settings.
+  decoding (swift/AGENTS.md Gotcha 13), and a toggle in project settings.
 
 **The schema is generic rather than per domain**, which is a departure from
 the paper and a considered one. The paper authors a schema per domain and

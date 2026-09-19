@@ -46,7 +46,7 @@ throughput, measured below at 1.72% of decode with all 64 layers steered and
 | 7 | the throughput cost | **LANDED**; -1.72% at all 64 layers, -0.75% at 26, `renorm` free |
 | 8 | llama.cpp interop | **LANDED**; the numbering was OFF BY ONE and is corrected, no measurement here moves |
 | 9 | a fifth family (Gemma 4) and its chunked prefill driver | **LANDED**; found `encode_steering`/`encode_resid_capture` hardcoded the edited row at offset 0, fixed with an `x_off` parameter, mutation-checked on the real chunked path |
-| 10 | the sixth and seventh flows (`gpt-oss`, `muse_glimmer`) | **LANDED** on synthetic fixtures, mutation-checked, and **BOTH NOW MEASURED ON A REAL INSTALL** since 2026-08-25 (below). `muse_glimmer`: null control byte-identical, memory oracle clean, but at the time of that measurement the probe's single-position divergence check did not clear its (`qwen3_5`-borrowed) floor at the prompts tried, despite real coefficients and CLI-visible divergence over a generation. `gpt-oss`: the same pattern, one step sharper -- the null control passed on both instruments, the probe's single-position check missed for a now-EXACT reason (the position it measured is Harmony's near-fixed `<|channel|>` token, decoded and confirmed rather than guessed), and the edit was visibly real once generation ran past that token: coherent, differently-worded output at alpha 0.3, and a DIFFERENT failure mode from `qwen38-27b`'s at alpha 1.0 (an unresolved reasoning loop rather than an immediate collapse). **The single-position check itself is now FIXED, generally** (arm 2 asserts on a windowed teacher-forced KL trace rather than one position -- see "Open, and stated as open" below and `crates/bench/CLAUDE.md` Gotcha 25); re-captured with a fresh direction on each real install the same day, arm 2 now PASSES on both: museGlimmer's window max reads 11440x its floor (against 0x at the old single position), gpt-oss's reads 33x (against 0x at a position confirmed to decode to `<|channel|>` on both engines) |
+| 10 | the sixth and seventh flows (`gpt-oss`, `muse_glimmer`) | **LANDED** on synthetic fixtures, mutation-checked, and **BOTH NOW MEASURED ON A REAL INSTALL** since 2026-08-25 (below). `muse_glimmer`: null control byte-identical, memory oracle clean, but at the time of that measurement the probe's single-position divergence check did not clear its (`qwen3_5`-borrowed) floor at the prompts tried, despite real coefficients and CLI-visible divergence over a generation. `gpt-oss`: the same pattern, one step sharper -- the null control passed on both instruments, the probe's single-position check missed for a now-EXACT reason (the position it measured is Harmony's near-fixed `<|channel|>` token, decoded and confirmed rather than guessed), and the edit was visibly real once generation ran past that token: coherent, differently-worded output at alpha 0.3, and a DIFFERENT failure mode from `qwen38-27b`'s at alpha 1.0 (an unresolved reasoning loop rather than an immediate collapse). **The single-position check itself is now FIXED, generally** (arm 2 asserts on a windowed teacher-forced KL trace rather than one position -- see "Open, and stated as open" below and `crates/bench/AGENTS.md` Gotcha 25); re-captured with a fresh direction on each real install the same day, arm 2 now PASSES on both: museGlimmer's window max reads 11440x its floor (against 0x at the old single position), gpt-oss's reads 33x (against 0x at a position confirmed to decode to `<|channel|>` on both engines) |
 | 11 | Swift bindings and demo GUI integration | **LANDED**; full steering options in `turbospark-ffi` wire types / `turbospark.h`, `swift/TurboSpark` (`OpenOptions`, `SessionInfo.Steering`), and `swift/TurboSparkApp` status footer |
 | 12 | a CAPABILITY report and a preset UI | **LANDED**; `steering.supported`/`reason` over the ABI from the same predicate the open refuses with, `ts_control_vector_info_json` for a pre-open shape check, and named presets with a compatibility check plus a reload prompt in `swift/TurboSparkApp` |
 
@@ -345,7 +345,7 @@ this target is 64 x 5120 floats, 1.25 MB against a 14 GB install. A repack is
 
 **It makes the A/B possible in one process**, which is the whole measurement
 story. A baked model cannot be compared against itself, and every KL floor
-this repo trusts (`crates/bench/CLAUDE.md` Gotcha 8) is built by running one
+this repo trusts (`crates/bench/AGENTS.md` Gotcha 8) is built by running one
 engine two ways.
 
 ## The edit
@@ -979,7 +979,7 @@ several hundred test binaries this session had just built. The check that
 licensed the run anyway is three IDENTICAL arms taken before it: 22.227 /
 22.254 / 22.233, a spread of **0.12%** against an expected effect of a few
 percent. Spotlight is CPU-bound and decode here is GPU-bound, which is exactly
-what `crates/bench/CLAUDE.md` Gotcha 43 says survives that kind of
+what `crates/bench/AGENTS.md` Gotcha 43 says survives that kind of
 contamination. Measure the reference arm's spread and decide from it; four
 earlier sessions declined this run on the load average alone, and the load
 average was answering a different question.
@@ -1586,7 +1586,7 @@ that file -- fails, and does so on every combination tried:
 even less appropriate here than the doc already flags it as being.**
 museGlimmer is dense, so the borrowed dense floor was at least the right
 kind of quantity, merely unverified for that checkpoint. `gpt-oss` is
-MoE (32 experts, top-4), and per `crates/bench/CLAUDE.md` Gotcha 8 an MoE
+MoE (32 experts, top-4), and per `crates/bench/AGENTS.md` Gotcha 8 an MoE
 shape floor runs orders of magnitude above a dense one (`qwen3moe`'s own
 is ~0.00135). So the comparison here is not just unverified, it is very
 likely the wrong order of magnitude for this architecture -- meaning even
@@ -1600,7 +1600,7 @@ yet and building it was out of scope here.
 `steering_probe.rs` now resolves a real `MOE_SHAPE_FLOOR_NATS = 0.00135`
 (`qwen3moe`, llama.cpp batched vs cached) whenever `ArchConfig.num_experts >
 0`, rather than always checking against the dense `qwen3_5` number
-(`crates/bench/CLAUDE.md` Gotcha 25). Re-run against `gpt-oss` with the fix
+(`crates/bench/AGENTS.md` Gotcha 25). Re-run against `gpt-oss` with the fix
 in place, the probe correctly prints `MoE shape floor 1.35e-3 nats` and the
 steered KL still reads ~1.6e-9 nats -- `0x` even the wider, correct floor.
 So the floor genuinely was wrong (a threshold off by over two orders of
@@ -1826,7 +1826,7 @@ but two single-vector edits composed.
   the fix does not detect pinning, it refuses to trust any single entry, so
   the position where real content diverges is what the max finds instead,
   with no per-dialect branch anywhere in the new code
-  (`crates/bench/CLAUDE.md` Gotcha 25). Both the prompt-final KL and the
+  (`crates/bench/AGENTS.md` Gotcha 25). Both the prompt-final KL and the
   window's max (with its position and the decoded argmax token on both
   sides) are printed, so a template-pinned entry stays visible for
   diagnosis even though it no longer decides the verdict alone. Backward-safe
@@ -1867,7 +1867,7 @@ but two single-vector edits composed.
   assertion itself was unaffected throughout, since it compares the
   unformatted `f64`s directly; only the human-readable line was wrong.
 - ~~**No Llama-3 chat dialect, so no Llama-3 checkpoint runs here at all.**~~
-  **LANDED 2026-08-24, `ChatDialect::Llama3`** (`crates/tokenizer/CLAUDE.md`
+  **LANDED 2026-08-24, `ChatDialect::Llama3`** (`crates/tokenizer/AGENTS.md`
   Gotcha 10). `detect_dialect` used to fall through to Gemma for a table
   carrying `<|begin_of_text|>` / `<|start_header_id|>` / `<|eot_id|>` and
   nothing else, and `resolve_gemma` then failed on a missing `<pad>` --
