@@ -167,16 +167,26 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
     /// becoming two rows for one file. No `try?` on the way: that combination
     /// is a compiler warning, since none of it throws (Gotcha 27).
     public static func standardize(_ path: String) -> String {
-        URL(fileURLWithPath: path).standardizedFileURL.path
+        if ManagedAssetStore.assetID(from: path) != nil { return path }
+        return URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
     /// A text-backed artifact has no file and can never gain one.
     public var isTextBacked: Bool { path == nil }
 
-    public var url: URL? { path.map { URL(fileURLWithPath: $0) } }
+    public var url: URL? {
+        guard let path else { return nil }
+        if ManagedAssetStore.assetID(from: path) != nil {
+            return try? ManagedAssetStore.shared.materializedURL(for: path)
+        }
+        return URL(fileURLWithPath: path)
+    }
 
     public var fileName: String {
         guard let path else { return title }
+        if let descriptor = try? ManagedAssetStore.shared.descriptor(for: path) {
+            return descriptor.fileName
+        }
         return (path as NSString).lastPathComponent
     }
 
@@ -204,6 +214,9 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
     /// the file from outside this app.
     public var existsOnDisk: Bool {
         guard let path else { return false }
+        if ManagedAssetStore.assetID(from: path) != nil {
+            return (try? ManagedAssetStore.shared.descriptor(for: path)) != nil
+        }
         return FileManager.default.fileExists(atPath: path)
     }
 

@@ -215,7 +215,9 @@ extension AppModel {
                     ChatMessage(
                         role: msg.role,
                         content: content,
-                        images: msg.imagePaths.map(ChatImage.path)))
+                        images: msg.imagePaths.map {
+                            ChatImage.path(AppStorageRoot.resolveStoredPath($0))
+                        }))
             }
             if !msg.content.isEmpty {
                 conversationParts.append(msg.content)

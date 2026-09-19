@@ -40,6 +40,9 @@ public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
     /// The source file location, when the import recorded one.
     public var sourceURL: URL? {
         guard let sourcePath, !sourcePath.isEmpty else { return nil }
+        if ManagedAssetStore.assetID(from: sourcePath) != nil {
+            return try? ManagedAssetStore.shared.materializedURL(for: sourcePath)
+        }
         return URL(fileURLWithPath: sourcePath)
     }
 
@@ -567,8 +570,13 @@ public enum AppChatFileStore {
     /// `save()` overwrites this file whole and atomically, so reporting alone
     /// left the user's conversations gone by the time anyone read the log.
     public static func load() -> AppChatArchive {
-        AppJSONStore.load(AppChatArchive.self, from: archiveFileURL, label: "chat archive")
-            ?? AppChatArchive.empty()
+        do {
+            return try ProfileRepository.shared.loadChatArchive(legacyURL: archiveFileURL)
+                ?? AppChatArchive.empty()
+        } catch {
+            AppJSONStore.recordReadFailure(label: "Chat archive", error: error)
+            return AppChatArchive.empty()
+        }
     }
 
     /// Persists the chat archive to disk atomically.
@@ -577,6 +585,10 @@ public enum AppChatFileStore {
     /// swallowed: this used to be two `try?`s, so a full disk or an
     /// uncreatable directory lost the whole session on quit with no sign.
     public static func save(_ archive: AppChatArchive) {
-        AppJSONStore.save(archive, to: archiveFileURL, label: "Chat archive")
+        do {
+            try ProfileRepository.shared.saveChatArchive(archive)
+        } catch {
+            AppJSONStore.recordWriteFailure(label: "Chat archive", error: error)
+        }
     }
 }

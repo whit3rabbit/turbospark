@@ -38,8 +38,7 @@ enum AttachmentImporter {
         guard !urls.isEmpty else { return Outcome(importedCount: 0, failures: []) }
 
         let outcomes = await Task.detached(priority: .userInitiated) {
-            urls.map { url -> (URL, Int?, Result<ExtractedPromptDocument, Error>) in
-                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int
+            urls.map { url -> (URL, Result<(ExtractedPromptDocument, ManagedAssetDescriptor), Error>) in
                 // **A PICTURE IS NOT EXTRACTED, IT IS CARRIED BY PATH.**
                 // `DocumentTextExtractor` throws `unsupportedFormat` on every
                 // image type, which is correct for its own job and is why
@@ -49,19 +48,26 @@ enum AttachmentImporter {
                 if AppPromptAttachment.imageFileExtensions.contains(
                     url.pathExtension.lowercased())
                 {
-                    return (
-                        url, size,
-                        .success(
-                            ExtractedPromptDocument(
+                    do {
+                        let document = ExtractedPromptDocument(
                                 fileName: url.lastPathComponent,
                                 formatLabel: "Image",
                                 text: "",
-                                wasTruncated: false)))
+                                wasTruncated: false)
+                        let asset = try ManagedAssetStore.shared.store(
+                            fileURL: url, fileName: document.fileName)
+                        return (url, .success((document, asset)))
+                    } catch {
+                        return (url, .failure(error))
+                    }
                 }
                 do {
-                    return (url, size, .success(try DocumentTextExtractor.extract(from: url)))
+                    let document = try DocumentTextExtractor.extract(from: url)
+                    let asset = try ManagedAssetStore.shared.store(
+                        fileURL: url, fileName: document.fileName)
+                    return (url, .success((document, asset)))
                 } catch {
-                    return (url, size, .failure(error))
+                    return (url, .failure(error))
                 }
             }
         }.value
@@ -71,9 +77,10 @@ enum AttachmentImporter {
         var importedIDs: [UUID] = []
         var overContextCount = 0
         let freeTokens = max(0, model.resolvedContextTokens - model.maxNewTokens)
-        for (url, size, outcome) in outcomes {
+        for (url, outcome) in outcomes {
             switch outcome {
-            case .success(let document):
+            case .success(let pair):
+                let (document, asset) = pair
                 // Context awareness at import time: the same chars/4 price
                 // the context ring charges, compared against the window
                 // minus the generation reserve. A warning, not a gate --
@@ -89,8 +96,8 @@ enum AttachmentImporter {
                     formatLabel: document.formatLabel,
                     extractedText: document.text,
                     wasTruncatedDuringExtraction: document.wasTruncated,
-                    sourcePath: url.path,
-                    sourceByteSize: size)
+                    sourcePath: asset.storedReference,
+                    sourceByteSize: Int(asset.byteCount))
                 if allowDuringSubmission {
                     model.appendPromptAttachmentDuringSubmission(attachment, toChatID: chatID)
                 } else {

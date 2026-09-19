@@ -37,7 +37,7 @@ struct ImageGalleryCarousel: View {
                     .keyboardShortcut(.cancelAction)
             }
             if let artifact {
-                if let path = artifact.path, let image = NSImage(contentsOfFile: path) {
+                if let url = artifact.url, let image = NSImage(contentsOf: url) {
                     Image(nsImage: image).resizable().scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 12))

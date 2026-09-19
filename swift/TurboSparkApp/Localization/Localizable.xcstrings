@@ -163757,7 +163757,7 @@
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "%lld im\u00e1genes"
+                  "value": "%lld imágenes"
                 }
               }
             }
@@ -163841,13 +163841,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "1 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435"
+                  "value": "1 изображение"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439: %lld"
+                  "value": "Изображений: %lld"
                 }
               }
             }
@@ -163859,13 +163859,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "1\u679a\u306e\u753b\u50cf"
+                  "value": "1枚の画像"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "%lld\u679a\u306e\u753b\u50cf"
+                  "value": "%lld枚の画像"
                 }
               }
             }
@@ -163877,13 +163877,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "\uc774\ubbf8\uc9c0 1\uac1c"
+                  "value": "이미지 1개"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "\uc774\ubbf8\uc9c0 %lld\uac1c"
+                  "value": "이미지 %lld개"
                 }
               }
             }
@@ -163895,13 +163895,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "1 \u5f20\u56fe\u50cf"
+                  "value": "1 张图像"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "%lld \u5f20\u56fe\u50cf"
+                  "value": "%lld 张图像"
                 }
               }
             }
@@ -163913,13 +163913,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "1 \u5f35\u5f71\u50cf"
+                  "value": "1 張影像"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "%lld \u5f35\u5f71\u50cf"
+                  "value": "%lld 張影像"
                 }
               }
             }
@@ -163931,13 +163931,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "\u0635\u0648\u0631\u0629 \u0648\u0627\u062d\u062f\u0629"
+                  "value": "صورة واحدة"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "\u0627\u0644\u0635\u0648\u0631: %lld"
+                  "value": "الصور: %lld"
                 }
               }
             }
@@ -163949,13 +163949,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "\u05ea\u05de\u05d5\u05e0\u05d4 \u05d0\u05d7\u05ea"
+                  "value": "תמונה אחת"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "%lld \u05ea\u05de\u05d5\u05e0\u05d5\u05ea"
+                  "value": "%lld תמונות"
                 }
               }
             }
@@ -163967,13 +163967,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "1 \u091b\u0935\u093f"
+                  "value": "1 छवि"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "%lld \u091b\u0935\u093f\u092f\u093e\u0901"
+                  "value": "%lld छवियाँ"
                 }
               }
             }
@@ -164021,13 +164021,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "1 g\u00f6rsel"
+                  "value": "1 görsel"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "%lld g\u00f6rsel"
+                  "value": "%lld görsel"
                 }
               }
             }
@@ -164039,13 +164039,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "1 \u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u043d\u044f"
+                  "value": "1 зображення"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "\u0417\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u044c: %lld"
+                  "value": "Зображень: %lld"
                 }
               }
             }
@@ -164075,13 +164075,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "1 h\u00ecnh \u1ea3nh"
+                  "value": "1 hình ảnh"
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "%lld h\u00ecnh \u1ea3nh"
+                  "value": "%lld hình ảnh"
                 }
               }
             }
@@ -166053,6 +166053,661 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tampilkan di Finder"
+          }
+        }
+      }
+    },
+    "Coding agents": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "وكلاء البرمجة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coding-Agents"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coding agents"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agentes de código"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents de code"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "סוכני קידוד"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कोडिंग एजेंट"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agen coding"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agenti di coding"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コーディングエージェント"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "코딩 에이전트"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coding-agents"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agenci kodowania"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agentes de código"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кодинг-агенты"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kodningsagenter"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kodlama ajanları"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кодинг-агенти"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent lập trình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编码代理"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "編碼代理"
+          }
+        }
+      }
+    },
+    "Launch Claude Code": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تشغيل Claude Code"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code starten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch Claude Code"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Iniciar Claude Code"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lancer Claude Code"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפעלת Claude Code"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code लॉन्च करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Luncurkan Claude Code"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avvia Claude Code"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code を起動"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code 실행"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code starten"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uruchom Claude Code"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Iniciar Claude Code"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запустить Claude Code"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starta Claude Code"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Code'u başlat"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запустити Claude Code"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khởi chạy Claude Code"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启动 Claude Code"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "啟動 Claude Code"
+          }
+        }
+      }
+    },
+    "Launch Codex": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تشغيل Codex"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex starten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch Codex"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Iniciar Codex"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lancer Codex"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפעלת Codex"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex लॉन्च करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Luncurkan Codex"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avvia Codex"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex を起動"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 실행"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex starten"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uruchom Codex"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Iniciar Codex"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запустить Codex"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starta Codex"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex'i başlat"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запустити Codex"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khởi chạy Codex"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启动 Codex"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "啟動 Codex"
+          }
+        }
+      }
+    },
+    "Opens Terminal and launches the agent against the background server; it is started or reused as needed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يفتح الطرفية ويشغّل الوكيل على الخادم في الخلفية؛ يُبدأ الخادم أو يُعاد استخدامه حسب الحاجة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Öffnet Terminal und startet den Agenten gegen den Hintergrundserver; dieser wird bei Bedarf gestartet oder wiederverwendet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens Terminal and launches the agent against the background server; it is started or reused as needed."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abre Terminal y lanza el agente contra el servidor en segundo plano; se inicia o se reutiliza según sea necesario."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvre Terminal et lance l'agent contre le serveur en arrière-plan ; celui-ci est démarré ou réutilisé selon les besoins."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "פותח את המסוף ומפעיל את הסוכן מול השרת ברקע; השרת מופעל או מנוצל מחדש לפי הצורך."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "टर्मिनल खोलता है और बैकग्राउंड सर्वर के विरुद्ध एजेंट लॉन्च करता है; आवश्यकतानुसार सर्वर शुरू या पुनः उपयोग किया जाता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Membuka Terminal dan meluncurkan agent ke server latar belakang; server dijalankan atau digunakan kembali sesuai kebutuhan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apre Terminale e lancia l'agente contro il server in background; viene avviato o riutilizzato secondo necessità."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ターミナルを開き、バックグラウンドサーバーに対してエージェントを起動します。サーバーは必要に応じて起動または再利用されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "터미널을 열고 백그라운드 서버에 대해 에이전트를 실행합니다. 서버는 필요에 따라 시작되거나 재사용됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opent Terminal en start de agent tegen de achtergrondserver; die wordt indien nodig gestart of hergebruikt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otwiera Terminal i uruchamia agenta na serwerze w tle; serwer jest w razie potrzeby uruchamiany lub ponownie wykorzystywany."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abre o Terminal e inicia o agente no servidor em segundo plano; ele é iniciado ou reutilizado conforme necessário."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открывает Терминал и запускает агента через фоновый сервер; он запускается или переиспользуется при необходимости."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Öppnar Terminal och startar agenten mot bakgrundsservern; den startas eller återanvänds vid behov."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminal'i açar ve aracıyı arka plan sunucusuna karşı başlatır; sunucu gerektiğinde başlatılır veya yeniden kullanılır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відкриває Термінал і запускає агента через фоновий сервер; він запускається або повторно використовується за потреби."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mở Terminal và khởi chạy agent với máy chủ nền; máy chủ được khởi động hoặc tái sử dụng khi cần."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开“终端”并针对后台服务器启动该代理；服务器会按需启动或复用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打開「終端機」並針對背景伺服器啟動該代理；伺服器會視需要啟動或重複使用。"
+          }
+        }
+      }
+    },
+    "turbospark CLI not found": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يتم العثور على واجهة سطر الأوامر turbospark"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turbospark-CLI nicht gefunden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turbospark CLI not found"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se encontró la CLI de turbospark"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CLI turbospark introuvable"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "כלי שורת הפקודה turbospark לא נמצא"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turbospark CLI नहीं मिली"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CLI turbospark tidak ditemukan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CLI turbospark non trovata"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turbospark CLI が見つかりません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turbospark CLI를 찾을 수 없습니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turbospark CLI niet gevonden"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie znaleziono CLI turbospark"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CLI do turbospark não encontrada"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CLI turbospark не найдена"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turbospark CLI hittades inte"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "turbospark CLI bulunamadı"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CLI turbospark не знайдено"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không tìm thấy CLI turbospark"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到 turbospark 命令行工具"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "找不到 turbospark 命令列工具"
           }
         }
       }

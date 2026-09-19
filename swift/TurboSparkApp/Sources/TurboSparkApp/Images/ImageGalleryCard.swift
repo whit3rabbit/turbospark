@@ -74,8 +74,8 @@ struct ImageGalleryCard: View {
         .task(id: artifact.contentKey) {
             // Decode a thumbnail once per revision, not the full PNG on each progress tick.
             thumbnail = nil
-            guard let path = artifact.path,
-                  let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+            guard let url = artifact.url,
+                  let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceThumbnailMaxPixelSize: 600,
@@ -106,8 +106,8 @@ struct ImageGalleryActions: View {
         }
         .disabled(!artifact.existsOnDisk)
         Button {
-            if let path = artifact.path {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            if let url = artifact.url {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
             }
         } label: {
             Label { Text("Show in Finder", bundle: .module) } icon: { Image(systemName: "folder") }
@@ -120,13 +120,13 @@ struct ImageGalleryActions: View {
     }
 
     private func export() {
-        guard let path = artifact.path else { return }
+        guard let url = artifact.url else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = URL(fileURLWithPath: path).lastPathComponent
+        panel.nameFieldStringValue = artifact.fileName
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
-            try Data(contentsOf: URL(fileURLWithPath: path)).write(to: destination, options: .atomic)
+            try Data(contentsOf: url).write(to: destination, options: .atomic)
         } catch { model.showToast(error.localizedDescription, style: .error) }
     }
 }

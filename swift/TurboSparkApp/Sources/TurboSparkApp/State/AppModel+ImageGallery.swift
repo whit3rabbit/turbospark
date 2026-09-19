@@ -15,6 +15,16 @@ extension AppModel {
         var paths: Set<String> = []
         for artifact in savedImageArtifacts where ids.contains(artifact.id) {
             guard let path = artifact.path else { continue }
+            if ManagedAssetStore.assetID(from: path) != nil {
+                do {
+                    try ManagedAssetStore.shared.release(reference: path)
+                    paths.insert(path)
+                    removed.insert(artifact.id)
+                } catch {
+                    showToast(error.localizedDescription, style: .error)
+                }
+                continue
+            }
             let url = URL(fileURLWithPath: path).standardizedFileURL
             guard url.deletingLastPathComponent().resolvingSymlinksInPath() == directory else {
                 showToast(String(localized: "Only images saved by this profile can be removed.", bundle: .module), style: .error)
@@ -40,7 +50,7 @@ extension AppModel {
             }
             for messageIndex in chats[chatIndex].messages.indices {
                 chats[chatIndex].messages[messageIndex].imagePaths.removeAll {
-                    paths.contains(AppStorageRoot.resolveStoredPath($0))
+                    paths.contains($0) || paths.contains(AppStorageRoot.resolveStoredPath($0))
                 }
             }
         }

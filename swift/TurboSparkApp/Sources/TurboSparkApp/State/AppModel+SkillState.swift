@@ -92,7 +92,9 @@ extension AppModel {
                 ChatMessage(
                     role: .user,
                     content: task.content,
-                    images: task.imagePaths.map(ChatImage.path)))
+                    images: task.imagePaths.map {
+                        ChatImage.path(AppStorageRoot.resolveStoredPath($0))
+                    }))
         }
 
         let state = storedSkillState(chatIndex: chatIndex) ?? AppSkillState()

@@ -107,13 +107,14 @@ extension AppModel {
         guard var job = imageJob, let result = job.result else { return false }
         guard job.savedPath == nil else { return true }
         guard chats.contains(where: { $0.id == job.chatID }) else { return false }
-        let directory = AppStorageRoot.subdirectory("image-artifacts")
-        let url = directory.appendingPathComponent("\(job.id.uuidString).png")
         do {
-            try result.png.write(to: url, options: .atomic)
-            job.savedPath = url.standardizedFileURL.path
+            let asset = try ManagedAssetStore.shared.store(
+                data: result.png,
+                fileName: "\(job.id.uuidString).png",
+                mimeType: "image/png")
+            job.savedPath = asset.storedReference
             imageJob = job
-            registerSavedImage(job: job, path: url)
+            registerSavedImage(job: job, asset: asset)
             return true
         } catch {
             showToast("Could not save image: \(error.localizedDescription)", style: .error)
@@ -210,26 +211,25 @@ extension AppModel {
         }
     }
 
-    private func registerSavedImage(job: AppImageJob, path: URL) {
+    private func registerSavedImage(job: AppImageJob, asset: ManagedAssetDescriptor) {
         let now = Date()
         guard let index = chats.firstIndex(where: { $0.id == job.chatID }) else { return }
         let artifact = AppArtifact(
             chatID: job.chatID,
-            path: path.path,
+            path: asset.storedReference,
             title: "Generated image",
             origin: .imageGeneration,
             createdAt: now,
             updatedAt: now,
-            lastKnownByteSize: (try? FileManager.default.attributesOfItem(atPath: path.path)[.size] as? Int),
-            lastKnownModified: (try? FileManager.default.attributesOfItem(atPath: path.path)[.modificationDate] as? Date),
+            lastKnownByteSize: Int(asset.byteCount),
+            lastKnownModified: now,
             imageRequest: AppImageRequest(options: job.options)
         )
         AppArtifact.upsert(artifact, into: &chats[index].artifacts)
-        let storedPath = "image-artifacts/\(job.id.uuidString).png"
         let assistant = AppChatMessage(
             role: .assistant,
             content: "Generated image, seed \(job.options.seed).",
-            imagePaths: [storedPath])
+            imagePaths: [asset.storedReference])
         chats[index].messages.append(assistant)
         chats[index].updatedAt = now
         persistChats()
