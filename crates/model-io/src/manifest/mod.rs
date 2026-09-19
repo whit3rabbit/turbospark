@@ -9,7 +9,10 @@ use std::path::Path;
 
 pub(crate) use quant::validate_quant;
 pub use quant::EXECUTABLE_GGUF_TYPES;
-pub use types::{Manifest, ManifestArch, ManifestFileEntry, ManifestQuant, ManifestQuantSlot};
+pub use types::{
+    Manifest, ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns,
+    ManifestQuant, ManifestQuantSlot,
+};
 
 use crate::arch_baselines::all_known_architectures;
 use crate::arch_config::{ArchConfig, ModelFamily};
@@ -137,6 +140,59 @@ pub fn validate(m: &Manifest, expected: &ArchConfig) -> Result<(), ModelError> {
                 });
             }
         }
+    }
+    if let Some(h) = &m.hadamard {
+        validate_hadamard(h)?;
+        if !m.files.contains_key("hadamard.bin") {
+            return Err(ModelError::MissingFile {
+                name: "hadamard.bin".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Light structural checks on the Hadamard section. The runtime re-checks
+/// what it consumes (every folded width resolves to a sign vector, the
+/// butterfly fits the threadgroup); this catches a hand-edited or truncated
+/// section before the weights are mapped.
+fn validate_hadamard(h: &ManifestHadamard) -> Result<(), ModelError> {
+    let block = h.block;
+    if block <= 0 || (block & (block - 1)) != 0 || block > 4096 {
+        return Err(ModelError::IndexCorrupt {
+            detail: format!(
+                "manifest.hadamard.block {block} is not a butterfly width this port compiles \
+                 (power of two, 512..=4096 on the real contract)"
+            ),
+        });
+    }
+    if h.signs.is_empty() {
+        return Err(ModelError::IndexCorrupt {
+            detail: "manifest.hadamard.signs is empty".to_string(),
+        });
+    }
+    for s in &h.signs {
+        if s.width <= 0 || s.width % block != 0 {
+            return Err(ModelError::IndexCorrupt {
+                detail: format!(
+                    "manifest.hadamard sign width {} is not a positive multiple of block {block}",
+                    s.width
+                ),
+            });
+        }
+        if s.bytes != s.width as u64 * 4 {
+            return Err(ModelError::IndexCorrupt {
+                detail: format!(
+                    "manifest.hadamard sign width {} declares {} bytes; F32 signs are width*4",
+                    s.width, s.bytes
+                ),
+            });
+        }
+    }
+    if h.folded.is_empty() && h.inverse.is_empty() {
+        return Err(ModelError::IndexCorrupt {
+            detail: "manifest.hadamard carries no folded and no inverse entries".to_string(),
+        });
     }
     Ok(())
 }

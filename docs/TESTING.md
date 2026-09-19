@@ -1,6 +1,10 @@
 # Testing
 
-What the suite covers, how it is gated, and how to run each part.
+This page maps tests to the claims they can support. Start with the default
+workspace gate. Add a real-install, hardware, quality, or cross-engine gate
+when the change can affect that claim. The current benchmark protocol lives
+in [BENCHMARKING.md](BENCHMARKING.md); frozen results live in
+[BENCHMARKS.md](BENCHMARKS.md).
 
 ## The default suite
 
@@ -8,18 +12,11 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-1,435 tests as of 2026-08-29, plus 188 that are `#[ignore]`d, re-counted
-2026-09-19 (see below). The two dates differ because only the second is
-greppable: the first needs a build and was not re-derived on 2026-09-10. **Re-count before quoting either number.** Both were stale by more
-than 2x when this line was last corrected (they read 458 and 18, unchanged
-since 2026-08-08 while eleven families and phases landed), and nothing goes
-red when they rot: a count is prose. The one-liners that produce them are
-`cargo test --workspace` for the first and, for the second,
-`rg '^\s*#\[ignore' crates --glob '**/tests/*.rs' | wc -l`. On macOS this includes every Metal test, which needs a real
-Metal-capable device and Xcode's `metal` toolchain
-(`xcrun -sdk macosx metal`). On Linux `crates/gpu` compiles to nothing and
-the GPU-dependent test files compile away with it, so the same command
-stays green.
+The default suite is intentionally not summarized by a checked-in test
+count. Counts become stale without making the suite fail. Run the command to
+see the current result. On macOS, Metal tests need a Metal-capable device and
+Xcode's `metal` toolchain (`xcrun -sdk macosx metal`). On Linux,
+`crates/gpu` compiles to an empty shell and GPU-dependent tests compile away.
 
 The full pre-handoff gate:
 
@@ -52,7 +49,7 @@ cargo clippy --workspace --tests
 | `server` | OpenAI-compatible endpoint shapes, full-response and SSE, the `--model` argument parser, and (gated) the real `RealForwardRunner` backend end to end. |
 | `bench` | Protocol constants and footer format, the memory sampler, and the binary's black-box output. Its gated targets carry the quality axis: per-install perplexity and golden digests, the damage-sensitivity proof, and the logit dump feeding the cross-engine KLD. |
 
-### `gpt-oss`: kernels tested, flow not yet written (ROADMAP M5)
+### `gpt-oss`: kernels tested, end-to-end flow not yet written
 
 The family's four kernel-level differences each have a parity target, and
 each is held against a reference **written out from ggml's own source
@@ -83,7 +80,7 @@ There is no end-to-end test of the gpt-oss LAYER, because
 `crates/runtime/src/families/gptoss/` does not exist yet. The fixture that
 does exist is Gemma-shaped with gpt-oss's block types.
 
-### The plain-GQA-plus-MoE flow: the `llama` and `qwen3moe` families
+### The plain-GQA-plus-MoE flow: `llama` and `qwen3moe`
 
 One decode flow, two families, so the tests come in pairs at the cheap end and
 stay separate at the expensive one. Four levels, and the split between them is

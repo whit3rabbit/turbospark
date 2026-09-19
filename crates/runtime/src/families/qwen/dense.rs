@@ -69,6 +69,15 @@ pub(crate) fn encode_qwen_layer_dense(
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
 
+    // Per NAME: on a folded checkpoint the gate/up pair reads the caller's
+    // transformed post-attention norm (they share its width and sign vector);
+    // `down_proj`'s input is the FFN activation at `inter` width and gets its
+    // own transform below, at its own call site.
+    let gate_name = prefixed_layer_tensor(prefix, layer, "mlp.gate_proj.weight");
+    let ffn_input = match qwen.hadamard.as_ref() {
+        Some(h) if h.is_folded(&gate_name) => (&h.moe_x_h, 0),
+        _ => (&qwen.moe_x, 0),
+    };
     for (suffix, out) in [
         ("mlp.gate_proj.weight", &scratch.ffn_gate),
         ("mlp.up_proj.weight", &scratch.ffn_up),
@@ -81,7 +90,7 @@ pub(crate) fn encode_qwen_layer_dense(
             &prefixed_layer_tensor(prefix, layer, suffix),
             inter,
             hidden,
-            (&qwen.moe_x, 0),
+            ffn_input,
             (out, 0),
         )?;
     }
@@ -101,15 +110,31 @@ pub(crate) fn encode_qwen_layer_dense(
     )
     .map_err(gpu_err)?;
 
+    let down_name = prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight");
+    let down_input = match qwen.hadamard.as_ref() {
+        Some(h) if h.is_folded(&down_name) => {
+            h.transform(
+                context,
+                pass,
+                (&scratch.ffn_act, 0),
+                (&h.ffn_act_h, 0),
+                1,
+                inter as u32,
+                true,
+            )?;
+            (&h.ffn_act_h, 0)
+        }
+        _ => (&scratch.ffn_act, 0),
+    };
     encode_gemv_any(
         context,
         pass,
         weights,
         index,
-        &prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight"),
+        &down_name,
         hidden,
         inter,
-        (&scratch.ffn_act, 0),
+        down_input,
         (&qwen.h2, 0),
     )?;
 

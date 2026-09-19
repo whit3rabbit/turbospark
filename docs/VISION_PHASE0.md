@@ -1,7 +1,7 @@
-# Vision Phase 0 findings (qwen3_5 vision tower)
+# Qwen3.5 vision tower: pinned checkpoint facts
 
-Fact-finding for the vision bring-up (see the approved plan at milestone
-M-V0). The numbered items below were read off real checkpoint headers, real
+This is a historical evidence record for the vision bring-up. The numbered
+items below were read off real checkpoint headers, real
 config files, and the vendored `mlx-vlm` reference source at `../mlx-v/mlx-vlm`
 -- at the time they were written, with no model weights downloaded and no
 forward pass run.

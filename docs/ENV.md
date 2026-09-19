@@ -1,9 +1,10 @@
-# Environment Variables in TurboSpark
+# Environment variables in TurboSpark
 
-This document lists every environment variable recognized by TurboSpark components:
-the CLI tools (`turbospark-check`, `turbospark-model`, `turbospark-bench`), the
-HTTP server (`turbospark-server`), the macOS desktop application (`TurboSparkApp`),
-the Swift bindings (`TurboSpark`), and the underlying Rust runtime crates.
+This page lists the environment variables recognized by the CLI tools, HTTP
+server, macOS app, Swift bindings, and Rust runtime. All TurboSpark variables
+use the `TURBOSPARK_*` prefix. Prefer command-line flags when a flag exists;
+use environment variables for test fixtures, diagnostics, and process-wide
+defaults.
 
 All TurboSpark-specific environment variables use the `TURBOSPARK_*` prefix.
 
@@ -103,6 +104,11 @@ The integration tests and benchmark oracle suites (`turbospark-bench`, `turbospa
 - `TURBOSPARK_GEMMA4_INSTALL_DIR`: Local Gemma 4 install directory.
 - `TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR`: Local Gemma 4 GGUF repack directory.
 - `TURBOSPARK_GEMMA4_IQ_INSTALL_DIR`: Local Gemma 4 IQ-quantized install directory.
+- `TURBOSPARK_QWEN2_INSTALL_DIR`: Local Qwen2/Qwen2.5 install directory (repack streaming test).
+- `TURBOSPARK_QWEN2_DENSE_INSTALL_DIR`: Local Qwen2/Qwen2.5 install directory (bench oracles and logit dump).
+- `TURBOSPARK_QWEN2_GGUF_Q3KM_INSTALL_DIR`: Local Qwen2.5 GGUF Q3_K_M install directory.
+- `TURBOSPARK_QWEN2_GGUF_Q4KM_INSTALL_DIR`: Local Qwen2.5 GGUF Q4_K_M install directory.
+- `TURBOSPARK_QWEN3_DENSE_INSTALL_DIR`: Local dense Qwen3 (0.6B regression) install directory.
 - `TURBOSPARK_QWEN35_INSTALL_DIR`: Local Qwen 3.5 install directory.
 - `TURBOSPARK_QWEN36_INSTALL_DIR`: Local Qwen 3.6 install directory.
 - `TURBOSPARK_QWEN36_GGUF_INSTALL_DIR`: Local Qwen 3.6 GGUF repack directory.
@@ -110,23 +116,33 @@ The integration tests and benchmark oracle suites (`turbospark-bench`, `turbospa
 - `TURBOSPARK_QWEN38_MTP_INSTALL_DIR`: Local Qwen 3.8 MTP install directory.
 - `TURBOSPARK_QWEN38_DFLASH2_INSTALL_DIR`: Local Qwen 3.8 DFlash2 install directory.
 - `TURBOSPARK_QWEN38_VISION_INSTALL_DIR`: Local Qwen 3.8 Vision install directory.
+- `TURBOSPARK_QWEN38_TRUNK_INSTALL_DIR`: Local text-trunk install directory paired with a standalone vision tower sidecar.
 - `TURBOSPARK_QWEN3MOE_INSTALL_DIR`: Local Qwen MoE install directory.
+- `TURBOSPARK_QWEN3VL_INSTALL_DIR`: Local Qwen3-VL text-trunk install directory.
+- `TURBOSPARK_QWEN3VL_VISION_INSTALL_DIR`: Local Qwen3-VL combined deepstack vision install directory.
+- `TURBOSPARK_QWEN4EXP_INSTALL_DIR`: Local Qwen3.8-Flash-Next REAP-288 install directory.
 - `TURBOSPARK_MISTRAL_INSTALL_DIR`: Local Mistral install directory.
 - `TURBOSPARK_MIXTRAL_INSTALL_DIR`: Local Mixtral install directory.
 - `TURBOSPARK_DENSE_LLAMA_INSTALL_DIR`: Local Dense Llama install directory.
 - `TURBOSPARK_GPTOSS_INSTALL_DIR`: Local GPT-OSS install directory.
 - `TURBOSPARK_MUSEGLIMMER_INSTALL_DIR`: Local MuseGlimmer install directory.
+- `TURBOSPARK_DSV2_INSTALL_DIR`: Local DeepSeek-V2-Lite install directory.
+- `TURBOSPARK_MINIMAX_INSTALL_DIR`: Local MiniMax-M2 install directory.
+- `TURBOSPARK_SPARK_INSTALL_DIR`: Local Spark-X2.5-4B install directory.
+- `TURBOSPARK_BONSAI2_INSTALL_DIR`: Local Bonsai-2 (Hadamard-folded ternary) install directory.
+- `TURBOSPARK_TERNARY_INSTALL_DIR`: Local ternary quantized model install directory.
 - `TURBOSPARK_MTP_INSTALL_DIR`: General MTP test install directory.
 - `TURBOSPARK_DFLASH2_INSTALL_DIR`: General DFlash2 test install directory.
 - `TURBOSPARK_ORNITH35B_INSTALL_DIR`: Local Ornith 35B install directory.
 - `TURBOSPARK_ORNITH35B_GGUF_INSTALL_DIR`: Local Ornith 35B GGUF install directory.
 - `TURBOSPARK_ORNITH9B_INSTALL_DIR`: Local Ornith 9B install directory.
-- `TURBOSPARK_TERNARY_INSTALL_DIR`: Local ternary quantized model install directory.
-- `TURBOSPARK_IQ3_INSTALL_DIR`: Local IQ3 quantized model install directory.
+- `TURBOSPARK_KV_QUANT_INSTALL_DIR`: Local install directory for the KV quantization probe.
 
 ### Logit Dump, Parity, and Vision Fixtures
 - `TURBOSPARK_LOGIT_DUMP_DIR`: Directory containing baseline logit dumps for cross-engine KL divergence verification.
 - `TURBOSPARK_LOGIT_DUMP_COLD`: Set to evaluate cold start logit consistency.
+- `TURBOSPARK_IMAGE_INSTALL_DIR`: Local image-generation install directory (Z-Image fixtures).
+- `TURBOSPARK_ZIMAGE_MLX_INSTALL_DIR`: Local MLX Z-Image-Turbo install directory (parity fixtures).
 - `TURBOSPARK_VISION_PAGE`: Path to single image file for vision backend test runs.
 - `TURBOSPARK_VISION_DUMP_DIR`: Output directory for dumped vision embeddings.
 - `TURBOSPARK_VISION_KLD_DIR`: Directory containing reference vision logits for KL divergence tests.

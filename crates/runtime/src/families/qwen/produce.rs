@@ -91,18 +91,56 @@ impl RealForwardRunner {
             .and_then(|pv| pv.row_for(position))
         {
             Some(row) => gpu::write_buffer_bytes(&self.scratch.x, 0, row),
-            None => encode_embed_any(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                embed_name,
-                (&self.scratch.x, 0),
-                token as u32,
-                hidden as u32,
-                vocab,
-                1.0,
-            )?,
+            None => {
+                // A folded embedding stores its rows in the rotated basis
+                // (`docs/BONSAI2.md`): dequantize into the plan's landing row,
+                // then run the INVERSE transform into the stream. The vision
+                // blit arm above is deliberately untouched -- a tower row is
+                // an original-basis activation, and the stream stays in the
+                // original basis everywhere by construction.
+                let plan_embed = self
+                    .real_qwen
+                    .as_ref()
+                    .and_then(|q| q.hadamard.as_ref())
+                    .filter(|h| h.is_inverse("language_model.model.embed_tokens.weight"));
+                match plan_embed {
+                    Some(h) => {
+                        encode_embed_any(
+                            &mut self.context,
+                            &pass,
+                            &self.weights,
+                            &self.index,
+                            embed_name,
+                            (&h.embed_row, 0),
+                            token as u32,
+                            hidden as u32,
+                            vocab,
+                            1.0,
+                        )?;
+                        h.transform(
+                            &mut self.context,
+                            &pass,
+                            (&h.embed_row, 0),
+                            (&self.scratch.x, 0),
+                            1,
+                            hidden as u32,
+                            false,
+                        )?;
+                    }
+                    None => encode_embed_any(
+                        &mut self.context,
+                        &pass,
+                        &self.weights,
+                        &self.index,
+                        embed_name,
+                        (&self.scratch.x, 0),
+                        token as u32,
+                        hidden as u32,
+                        vocab,
+                        1.0,
+                    )?,
+                }
+            }
         }
         // Resolved ONCE per token, before the borrow split below hands
         // `self`'s fields out piecewise. `Sequential` with no image prompt set,
@@ -177,6 +215,21 @@ impl RealForwardRunner {
                 RMS_EPS,
             )
             .map_err(gpu_err)?;
+            // The folded entries reading this norm share one input width and
+            // one sign vector, so ONE forward transform serves them all; the
+            // unquantized `in_proj_a`/`in_proj_b` keep reading `scratch.normed`
+            // raw (their weights are original-basis F32).
+            if let Some(h) = qwen.hadamard.as_ref() {
+                h.transform(
+                    context,
+                    &pass,
+                    (&scratch.normed, 0),
+                    (&h.normed_h, 0),
+                    1,
+                    hidden as u32,
+                    true,
+                )?;
+            }
 
             if arch.layer_is_linear(layer) {
                 encode_linear_block(context, &pass, weights, index, arch, qwen, scratch, layer)?;
@@ -238,6 +291,17 @@ impl RealForwardRunner {
                 RMS_EPS,
             )
             .map_err(gpu_err)?;
+            if let Some(h) = qwen.hadamard.as_ref() {
+                h.transform(
+                    context,
+                    &pass,
+                    (&qwen.moe_x, 0),
+                    (&h.moe_x_h, 0),
+                    1,
+                    hidden as u32,
+                    true,
+                )?;
+            }
 
             // THE DENSE HALF DIVERGES HERE AND NOWHERE ELSE. Everything above
             // -- embedding, both norms, both attention blocks, the raw
@@ -388,6 +452,24 @@ impl RealForwardRunner {
             } else {
                 "language_model.lm_head.weight".to_string()
             };
+            // A folded head reads the transformed final norm. The tied-head
+            // case resolves through the same folded/inverse manifest lists as
+            // the untied one, by its own name.
+            let head_input = match qwen.hadamard.as_ref() {
+                Some(h) if h.is_folded(&head_name) => {
+                    h.transform(
+                        context,
+                        &pass,
+                        (&scratch.normed, 0),
+                        (&h.normed_h, 0),
+                        1,
+                        hidden as u32,
+                        true,
+                    )?;
+                    (&h.normed_h, 0)
+                }
+                _ => (&scratch.normed, 0),
+            };
             encode_gemv_any(
                 context,
                 &pass,
@@ -396,7 +478,7 @@ impl RealForwardRunner {
                 &head_name,
                 vocab,
                 hidden,
-                (&scratch.normed, 0),
+                head_input,
                 (&scratch.logits, 0),
             )?;
         } else {

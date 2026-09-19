@@ -138,6 +138,23 @@ impl RealForwardRunner {
             ));
         }
         if self.batched_gemv_prefill {
+            // A folded install's input transforms are wired into the
+            // per-token encoders only: the batched arm's M-row GEMMs would
+            // consume untransformed rows. Refused by name, the same doctrine
+            // as the dtype refusal below -- never silently looped, never
+            // silently untransformed.
+            if self
+                .real_qwen
+                .as_ref()
+                .is_some_and(|q| q.hadamard.is_some())
+            {
+                return Err(RealForwardError::Unsupported(
+                    "TURBOSPARK_BATCHED_GEMV is not wired for a hadamard-folded install: the \
+                     M-row inputs would need the activation transforms the per-token encoders \
+                     carry. Unset it to chunk this prompt"
+                        .to_string(),
+                ));
+            }
             // Refused by name rather than looped when INT4-affine weights are
             // absent, so an install with INT8 weights on the dense HALF of
             // THIS SAME ARCHITECTURE (which have no batched kernel at all)
@@ -324,6 +341,12 @@ impl RealForwardRunner {
         // No `sqrt(hidden)` embedding scale, matching the sequential flow:
         // `RealQwenState::build` refuses an install that declares
         // `embeddingScaledBySqrtHidden`.
+        //
+        // A folded embedding dequantizes into the plan's landing row and
+        // takes the INVERSE transform into `scratch.x` per row, mirroring
+        // `produce.rs`'s single-row pair; the vision blit arm is untouched,
+        // a tower row being an original-basis activation.
+        let hadamard = self.real_qwen.as_ref().and_then(|q| q.hadamard.as_ref());
         for (t, &token) in tokens.iter().enumerate() {
             match self
                 .prompt_vision
@@ -331,18 +354,45 @@ impl RealForwardRunner {
                 .and_then(|pv| pv.row_for(start_position + t))
             {
                 Some(row) => gpu::write_buffer_bytes(&self.scratch.x, t * hidden * 2, row),
-                None => encode_embed_any(
-                    &mut self.context,
-                    &pass,
-                    &self.weights,
-                    &self.index,
-                    embed_name,
-                    (&self.scratch.x, (t * hidden * 2) as u64),
-                    token as u32,
-                    hidden as u32,
-                    vocab,
-                    1.0,
-                )?,
+                None => match hadamard
+                    .filter(|h| h.is_inverse("language_model.model.embed_tokens.weight"))
+                {
+                    Some(h) => {
+                        encode_embed_any(
+                            &mut self.context,
+                            &pass,
+                            &self.weights,
+                            &self.index,
+                            embed_name,
+                            (&h.embed_row, 0),
+                            token as u32,
+                            hidden as u32,
+                            vocab,
+                            1.0,
+                        )?;
+                        h.transform(
+                            &mut self.context,
+                            &pass,
+                            (&h.embed_row, 0),
+                            (&self.scratch.x, (t * hidden * 2) as u64),
+                            1,
+                            hidden as u32,
+                            false,
+                        )?;
+                    }
+                    None => encode_embed_any(
+                        &mut self.context,
+                        &pass,
+                        &self.weights,
+                        &self.index,
+                        embed_name,
+                        (&self.scratch.x, (t * hidden * 2) as u64),
+                        token as u32,
+                        hidden as u32,
+                        vocab,
+                        1.0,
+                    )?,
+                },
             }
         }
 
@@ -443,7 +493,7 @@ impl RealForwardRunner {
 
         if want_head {
             super::prefill_layers::encode_qwen_dense_chunk_head(
-                context, &pass, weights, index, scratch, &arch, embed_name, hidden, vocab, m,
+                context, &pass, weights, index, scratch, qwen, &arch, embed_name, hidden, vocab, m,
             )?;
             // No softcap: `RealQwenState::build` refuses an install that
             // declares one, matching the sequential flow.

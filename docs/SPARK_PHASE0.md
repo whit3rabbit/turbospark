@@ -1,4 +1,4 @@
-# Spark-X2.5 Phase 0: facts
+# Spark-X2.5: pinned facts and bring-up scope
 
 Phase 0 fact-finding for `spark2_5` (Spark-X2.5-4B), following
 `docs/NEW_MODEL.md`. Every fact here was read off a real artifact, and the

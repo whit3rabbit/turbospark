@@ -65,6 +65,13 @@ pub enum Gemma4Bucket {
         /// The buffer's leaf name.
         field: &'static str,
     },
+    /// A prism Hadamard contract's sign vector (`*.signs` under
+    /// `language_model.`, the Bonsai-2 line). SEPARATE FROM
+    /// [`Self::LmResident`] for the n-gram reason one level up: the fallback
+    /// would narrow each F32 +/-1 vector to BF16 and file it into the
+    /// resident set as a weight nothing reads, while the actual consumer --
+    /// the install's `hadamard.bin` -- went unwritten.
+    HadamardSign,
     /// Tensor not matching known language model or multimodal patterns.
     Unknown,
 }
@@ -364,6 +371,11 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
             if let Some(bucket) = classify_qwen4_ngram(name) {
                 return bucket;
             }
+        }
+        // A prism Hadamard sign vector, before the LmResident fallback that
+        // would otherwise claim it (see [`Gemma4Bucket::HadamardSign`]).
+        if name.ends_with(".signs") {
+            return Gemma4Bucket::HadamardSign;
         }
         let looks_routed = name.contains(routed_marker(family));
         if looks_routed && is_dense_family(family) {

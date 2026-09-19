@@ -1,17 +1,12 @@
-# qwen4_exp (Qwen3.8-Flash-Next): bring-up lessons learned, Phase 0 onward
+# qwen4_exp (Qwen3.8-Flash-Next): implementation status and evidence
 
-`docs/QWEN4_PHASE0.md` is fact-finding only: the checkpoint's config, tensor
-layout, and two independent references cross-checked, with no weights
-downloaded and no forward pass run. This page picks up where that one stops
-and carries everything since: intake, the decode flow, the memory policy,
-the router/shared-expert-gate dtype bug that blocked every real install
-until 2026-09-04, and the first successful real-hardware decode this family
-has ever produced. Read this page before touching `families/qwen4/`,
-`crates/repack/src/gemma4_checkpoint/`'s safetensors write path, or
-continuing this family's bring-up; read `docs/QWEN4_PHASE0.md` first if the
-question is about the checkpoint's shape rather than the port's behavior.
+`docs/QWEN4_PHASE0.md` records the checkpoint contract. This page records the
+implementation contract: intake, decode, memory policy, real-install
+failures, and the evidence that closed them. Read it before changing
+`families/qwen4/` or the safetensors write path. Read the Phase 0 page first
+when the question is about checkpoint shape rather than runtime behavior.
 
-## Timeline
+## Evidence map
 
 | Date | Landed | Commit(s) |
 |---|---|---|

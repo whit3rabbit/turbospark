@@ -175,6 +175,19 @@ pub(crate) fn encode_qwen_dense_layer_per_token_prefill(
             RMS_EPS,
         )
         .map_err(gpu_err)?;
+        // The folded twin of `produce.rs`'s norm-site transforms, on the same
+        // single-row plan buffers the per-token arm norms into.
+        if let Some(h) = qwen.hadamard.as_ref() {
+            h.transform(
+                context,
+                pass,
+                (&scratch.normed, 0),
+                (&h.normed_h, 0),
+                1,
+                hidden as u32,
+                true,
+            )?;
+        }
 
         if is_linear {
             // Mask-2: gated DeltaNet.
@@ -217,6 +230,17 @@ pub(crate) fn encode_qwen_dense_layer_per_token_prefill(
             RMS_EPS,
         )
         .map_err(gpu_err)?;
+        if let Some(h) = qwen.hadamard.as_ref() {
+            h.transform(
+                context,
+                pass,
+                (&qwen.moe_x, 0),
+                (&h.moe_x_h, 0),
+                1,
+                hidden as u32,
+                true,
+            )?;
+        }
 
         dense::encode_qwen_layer_dense(
             context,
@@ -248,6 +272,7 @@ pub(crate) fn encode_qwen_dense_chunk_head(
     weights: &gpu::ResidentGpuWeights,
     index: &ResidentIndex,
     scratch: &DecodeScratch,
+    qwen: &RealQwenState,
     arch: &ArchConfig,
     embed_name: &str,
     hidden: usize,
@@ -278,6 +303,23 @@ pub(crate) fn encode_qwen_dense_chunk_head(
     } else {
         "language_model.lm_head.weight".to_string()
     };
+    // The folded-head twin of `produce.rs`'s head site: one forward
+    // transform between the final norm and the GEMV.
+    let head_input = match qwen.hadamard.as_ref() {
+        Some(h) if h.is_folded(&head_name) => {
+            h.transform(
+                context,
+                pass,
+                (&scratch.normed, 0),
+                (&h.normed_h, 0),
+                1,
+                hidden as u32,
+                true,
+            )?;
+            (&h.normed_h, 0)
+        }
+        _ => (&scratch.normed, 0),
+    };
     crate::real_forward_dispatch::encode_gemv_any(
         context,
         pass,
@@ -286,7 +328,7 @@ pub(crate) fn encode_qwen_dense_chunk_head(
         &head_name,
         vocab,
         hidden,
-        (&scratch.normed, 0),
+        head_input,
         (&scratch.logits, 0),
     )
 }

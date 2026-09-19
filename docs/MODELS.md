@@ -1,27 +1,33 @@
-# Getting a model: the catalog, the probe, and `pull`
+# Getting a model: catalog, probe, and `pull`
 
-`turbospark-model` finds, inspects and installs models. It has two halves that
-answer two different questions, and knowing which one you are asking saves a
-lot of time:
+Use `turbospark-model` to find, inspect, and install models. The catalog and
+probe answer different questions:
 
-- **The catalog** says what has been run here. Twenty-seven rows, each naming a
-  repository and a revision that were streamed and generated on real hardware,
-  with the gate targets that assert it.
-- **The probe** says what could be run here. It reads headers, costs KB and
-  seconds, and decides: architecture, block types or affine width, expert
-  granularity, tokenizer sidecars. This is the half that scales past the
-  table.
-- **`recommend`** puts the two together and asks the question you probably
-  came with: what should *this* machine run? See
-  [below](#what-should-this-machine-run).
+- **The catalog** lists repositories and revisions that have real evidence in
+  this tree, with the gate targets that assert each row.
+- **The probe** estimates whether a checkpoint could run here. It reads
+  headers, costs KB and seconds, and checks architecture, block types or
+  affine width, expert granularity, and tokenizer sidecars.
+- **`recommend`** combines the two and ranks catalog entries for this
+  machine. See [What should this machine run?](#what-should-this-machine-run).
 
 Qwen3-VL is represented by the `qwen3_vl` family -- the trunk of the
-multimodal checkpoint, running as a text model (the vision tower is excluded
-at repack; the family's deepstack injection is open work):
+multimodal checkpoint. The catalog row streams the text trunk and is what the
+frozen gates assert. The same pinned repo's shard bytes also carry the
+depth-24 vision tower plus its three deepstack mergers, and image input is
+verified end to end on that combined install (2026-09-19); the mechanics
+live in [`VISION.md`](VISION.md). The text-trunk row:
 
 ```sh
 turbospark-model pull qwen3vl-4b
 turbospark-check --model qwen3vl-4b --messages-file p.json
+```
+
+The verified combined multimodal install is re-pulled from the pinned
+revision by name:
+
+```sh
+turbospark-model pull --repo "mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b" --alias qwen3vl-4b-vision
 ```
 
 Qwen2/Qwen2.5 is represented by the `qwen2` family, and it runs on both

@@ -14,7 +14,7 @@
 
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::families::qwen::{layer_tensor, BatchedScratch};
+use crate::families::qwen::{layer_tensor, BatchedScratch, HadamardPlan};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_utils::entry;
 
@@ -83,6 +83,11 @@ pub(crate) struct RealQwenState {
     /// It is never allocated BESIDE a drafter's copy: the chunked driver
     /// refuses an open drafter by name, so at most one of the two exists.
     pub(crate) batched_prefill: Option<BatchedScratch>,
+    /// The Hadamard-folded weight contract's plan (the Bonsai-2 line), built
+    /// only when the manifest carries a `hadamard` section. `None` on every
+    /// install written before the contract existed, which makes every
+    /// consumer site byte-identical to its pre-contract code.
+    pub(crate) hadamard: Option<HadamardPlan>,
 }
 
 impl RealQwenState {
@@ -91,6 +96,7 @@ impl RealQwenState {
         weights: &gpu::ResidentGpuWeights,
         index: &ResidentIndex,
         arch: &ArchConfig,
+        hadamard: Option<(&model_io::ManifestHadamard, &[u8])>,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
         // DENSE AND MoE ARE BOTH THIS FLOW. The two are mutually exclusive
@@ -265,11 +271,30 @@ impl RealQwenState {
         let router_ones = context.new_output_buffer(ones.len() as u64);
         gpu::write_buffer_bytes(&router_ones, 0, &ones);
 
-        let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         let q_dim = (arch.num_heads * head_dim) as usize;
         let qkv_dim = shape.qkv_dim() as usize;
         let value_dim = shape.value_dim() as usize;
         let v_heads = shape.num_v_heads as usize;
+        // The folded-weight plan, built BEFORE the scratch closure below so
+        // the two never hold `context` at once. `value_dim` rather than a
+        // second `q_dim` is deliberate: the two coincide on the real
+        // checkpoint (24 heads of 256; 48 v-heads of 128) but describe
+        // different tensors, and the scratch pairs with the BLOCK that
+        // consumes it, not with a width.
+        let hadamard = match hadamard {
+            Some((section, signs_bytes)) => Some(HadamardPlan::build(
+                context,
+                section,
+                signs_bytes,
+                index,
+                hidden,
+                q_dim,
+                arch.intermediate_size as usize,
+                value_dim,
+            )?),
+            None => None,
+        };
+        let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
             gdn: gpu::GdnStateManager::new(context.device(), arch),
             shape,
@@ -294,6 +319,7 @@ impl RealQwenState {
             h2: halfs(hidden),
             shared_gate_logit: halfs(1),
             batched_prefill: None,
+            hadamard,
         })
     }
 

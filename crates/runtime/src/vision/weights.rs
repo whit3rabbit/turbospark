@@ -229,9 +229,8 @@ impl VisionResident {
         shape: &VisionShape,
         m: usize,
     ) -> Result<Vec<DeepstackMergerWeights>, RealForwardError> {
-        let name = |k: usize, tail: &str| {
-            format!("{VISION_PREFIX}{DEEPSTACK_MERGER_PREFIX}{k}.{tail}")
-        };
+        let name =
+            |k: usize, tail: &str| format!("{VISION_PREFIX}{DEEPSTACK_MERGER_PREFIX}{k}.{tail}");
         let mut mergers = Vec::with_capacity(shape.deepstack.len());
         for k in 0..shape.deepstack.len() {
             mergers.push(DeepstackMergerWeights {

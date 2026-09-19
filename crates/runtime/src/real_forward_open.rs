@@ -49,8 +49,39 @@ impl RealForwardRunner {
             return Err(RealForwardError::Unsupported(reason));
         }
 
-        model_io::load_manifest(dir, &expecting, model_io::DEFAULT_MAX_BYTES)
+        let manifest = model_io::load_manifest(dir, &expecting, model_io::DEFAULT_MAX_BYTES)
             .map_err(RealForwardError::Model)?;
+        // The Hadamard contract's sign vectors live in a sibling file, read
+        // whole and uploaded once by the state build below. Read HERE, beside
+        // the manifest, so a missing or truncated file refuses at open with
+        // the install's name in the message.
+        let hadamard_signs = match &manifest.hadamard {
+            Some(_) => Some(std::fs::read(dir.join("hadamard.bin")).map_err(|e| {
+                RealForwardError::Unsupported(format!(
+                    "{} declares a hadamard section but its hadamard.bin could not be \
+                         read: {e}",
+                    dir.display()
+                ))
+            })?),
+            None => None,
+        };
+        // The section is consumed by the qwen flow's state build alone. A
+        // folded checkpoint of any OTHER family would open here with its
+        // transforms silently skipped -- fluent wrong output, the failure
+        // mode this port refuses wherever a family boundary is crossed.
+        if manifest.hadamard.is_some()
+            && !matches!(
+                expecting.family,
+                model_io::ModelFamily::QwenGdnMoe | model_io::ModelFamily::QwenGdnDense
+            )
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "install {} carries a hadamard section for the {:?} family, whose flow has \
+                 no folded-weight support",
+                dir.display(),
+                expecting.family
+            )));
+        }
         let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
             .map_err(RealForwardError::Model)?;
 
@@ -254,11 +285,19 @@ impl RealForwardRunner {
             // differs, so `qwen3_5` is the DENSE half of this flow and not a
             // sixth one. `RealQwenState` carries the split, off `num_experts`.
             model_io::ModelFamily::QwenGdnMoe | model_io::ModelFamily::QwenGdnDense => {
+                let hadamard = match (&manifest.hadamard, hadamard_signs.as_deref()) {
+                    (Some(section), Some(bytes)) => Some((section, bytes)),
+                    (Some(_), None) | (None, Some(_)) => unreachable!(
+                        "hadamard.bin is read exactly when the manifest declares the section"
+                    ),
+                    (None, None) => None,
+                };
                 runner.real_qwen = Some(crate::families::qwen::RealQwenState::build(
                     &mut runner.context,
                     &runner.weights,
                     &runner.index,
                     &runner.arch,
+                    hadamard,
                 )?);
                 // The speculative drafter, and it builds NOTHING unless a
                 // depth was asked for -- so an install that has a head is
@@ -326,6 +365,27 @@ impl RealForwardRunner {
                     mtp_policy,
                     gdn_shape,
                 )?;
+                // A folded trunk's drafter would need its OWN transforms at
+                // every drafter weight input, and no folded drafter artifact
+                // exists to wire against (every prism conversion drops
+                // `mtp.*`, so the real checkpoints this contract covers have
+                // no head at all). Refusing the combination names the gap
+                // instead of verifying against untransformed drafter weights.
+                if runner
+                    .real_qwen
+                    .as_ref()
+                    .expect("built above")
+                    .hadamard
+                    .is_some()
+                    && (runner.real_mtp.is_some() || runner.real_dflash.is_some())
+                {
+                    return Err(RealForwardError::Unsupported(
+                        "a hadamard-folded install cannot serve a speculative drafter: the \
+                         drafter's own weight inputs would need the same transforms, and no \
+                         folded drafter artifact exists (every prism conversion drops mtp.*)"
+                            .to_string(),
+                    ));
+                }
             }
             // One flow for all three: `qwen3moe` is the same layer graph
             // with per-head q/k norms, and dense `qwen3` is that SAME

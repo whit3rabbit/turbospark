@@ -1,6 +1,6 @@
-# Qwen3-VL-4B Phase 0 findings (`qwen3_vl` / `qwen3_vl_text`)
+# Qwen3-VL-4B: support status and pinned evidence (`qwen3_vl` / `qwen3_vl_text`)
 
-**UPDATE 2026-09-19: the vision half LANDED.** The depth-24 tower plus its
+**Current vision status.** The depth-24 tower plus its
 three deepstack mergers ingest combined and sidecar, the deepstack
 injection runs in the shared Llama flow (embed blit, mRoPE dispatch, the
 per-layer raw adds after trunk layers 0/1/2), and the gates ran on the real
@@ -16,7 +16,7 @@ confirmed against the reference's `PatchMerger`. `DEVIATIONS.md`'s
 what remains unscheduled is second-row measurement work (a KL row, a power
 row, a vision memory oracle).
 
-**UPDATE 2026-09-18: the family LANDED, text-first.** `ModelFamily::Qwen3Vl`
+**Current text-model status.** `ModelFamily::Qwen3Vl`
 is registered, runs the shared Llama flow, and the pinned 4B checkpoint
 streams, smokes, and carries frozen quality and memory gates (catalog row
 `qwen3vl-4b`, `verified`). The open items in section 5 are now ANSWERED:
@@ -27,11 +27,10 @@ RAW ADD after trunk layers 0/1/2 (read off mlx-vlm's
 own `model.safetensors.index.json` turned out to be stale, which cost the
 first pull a 404 and is now defended in the stream path).
 
-**Original scope: write, do not build.** This is Part D of the vision memory sidecar
-feature (`docs/VISION.md`) -- a fact-finding pass that scopes whether a small
-Qwen3-VL bring-up is worth doing, before any code is written. Nothing in
-`crates/` changed as a result of this page. Read `docs/NEW_MODEL.md` before
-turning this into an actual bring-up.
+**Original scope.** This page began as Part D of the vision memory sidecar
+feature (`docs/VISION.md`), a fact-finding pass that scoped whether a small
+Qwen3-VL bring-up was worth doing. The implementation now lives in the
+runtime and model-family guides; this page remains the checkpoint evidence.
 
 **The headline finding: most of this is not new work.** The vision tower is
 the SAME architecture this port already ships two checkpoints against

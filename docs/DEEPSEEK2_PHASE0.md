@@ -1,10 +1,10 @@
-# `deepseek2` Phase 0: pinned facts for the MLA bring-up
+# `deepseek2`: pinned architecture facts and bring-up gates
 
-The fact-finding record for bringing up the `deepseek2` architecture
-(DeepSeek V2 / V3 line: Multi-head Latent Attention plus fine-grained MoE).
-Written before implementation, per `docs/NEW_MODEL.md` Phase 0, and updated
-only with measured corrections. Every number here was read off one of the
-sources below, not derived from a formula or remembered.
+This is the evidence record for the `deepseek2` architecture, the DeepSeek V2
+and V3 line with Multi-head Latent Attention and fine-grained MoE. It captures
+the pinned contract, implementation gates, and measured corrections. Every
+number below comes from one of the named sources, not from a remembered
+formula.
 
 ## Sources
 

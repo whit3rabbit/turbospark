@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::arch_config::VisionConfig;
 
@@ -420,4 +420,48 @@ pub struct Manifest {
     pub num_layers: i64,
     /// Stride in bytes per expert in stream storage.
     pub expert_stride: u64,
+    /// Prism Hadamard-folded weight contract (the Bonsai-2 line), present only
+    /// on installs whose quantized weights live in a signed block-Hadamard
+    /// rotated basis. Absent on every install written before it existed, which
+    /// is the correct default: no transform, weights consumed as stored.
+    #[serde(default)]
+    pub hadamard: Option<ManifestHadamard>,
+}
+
+/// One sign vector of the Hadamard contract: a `width`-long run of +/-1 F32
+/// values inside the install's sibling `hadamard.bin` file.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestHadamardSigns {
+    /// Activation width this vector applies to. Every folded entry whose
+    /// input width is this value shares the vector (verified equal across
+    /// modules on the real checkpoint).
+    pub width: i64,
+    /// Byte offset of the run inside `hadamard.bin`.
+    pub offset: u64,
+    /// Byte length of the run; `width * 4` (F32).
+    pub bytes: u64,
+}
+
+/// The Hadamard-folded weight contract: quantized matrices stored as
+/// `W' = W * diag(signs) * H_block` (Hadamard butterflies over `block`-sized
+/// segments of the input axis), so the RUNTIME transforms activations, not
+/// weights -- the forward transform on every folded entry's input, and the
+/// inverse transform on the embedding's dequantized rows (the one entry whose
+/// OUTPUT is the rotated activation). `hadamard.bin` carries the sign vectors
+/// beside `model_weights.bin`, keyed from this section.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestHadamard {
+    /// Butterfly block width in elements. Every folded input width must be a
+    /// multiple of this.
+    pub block: i64,
+    /// One sign vector per distinct folded input width.
+    pub signs: Vec<ManifestHadamardSigns>,
+    /// Resident entry names whose INPUT activations carry the forward
+    /// transform before the matmul.
+    pub folded: Vec<String>,
+    /// Resident entry names whose OUTPUT rows carry the inverse transform
+    /// after dequantize. The embedding, on the one real checkpoint.
+    pub inverse: Vec<String>,
 }

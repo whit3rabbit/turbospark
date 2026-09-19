@@ -287,9 +287,24 @@ pub(crate) fn stream_mlx(
         ModelFamily::QwenGdnMoe => repack::write_qwen_gdn_moe_install_streamed(
             dir, &arch, &model_id, &shards, &quant, report,
         ),
-        ModelFamily::QwenGdnDense => repack::write_qwen_gdn_dense_install_streamed(
-            dir, &arch, &model_id, &shards, &quant, report,
-        ),
+        ModelFamily::QwenGdnDense => {
+            // The Hadamard-folded contract (the Bonsai-2 line) rides the same
+            // config.json: a config whose modules declare transformed bases
+            // routes to the contract-carrying walk, and the folded walk
+            // itself refuses a checkpoint with `.signs` tensors that arrived
+            // here without one -- so the two entry points cannot be confused
+            // silently, whichever way a future row is misdeclared.
+            let hadamard = repack::parse_prism_hadamard(&config_text)
+                .map_err(|e| format!("parsing the hadamard contract: {e}"))?;
+            match hadamard {
+                Some(contract) => repack::write_qwen_gdn_dense_install_streamed_with_hadamard(
+                    dir, &arch, &model_id, &shards, &quant, &contract, report,
+                ),
+                None => repack::write_qwen_gdn_dense_install_streamed(
+                    dir, &arch, &model_id, &shards, &quant, report,
+                ),
+            }
+        }
         // MISSING THIS ARM IS THE WORST OF THE THREE (`docs/NEW_MODEL.md`
         // Phase 7): the probe would say RUNNABLE, the sidecars would fetch
         // and verify, and it would die at the top of the stream.

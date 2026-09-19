@@ -1,6 +1,10 @@
 # CLI reference
 
-The primary command-line interface is the unified `turbospark` binary, alongside specialized standalone binaries and a benchmark harness:
+Use `turbospark` for normal model, server, agent, and image workflows. Use a
+specialized binary when you need a lower-level check or benchmark. Run
+`--help` for the exact flags supported by the checkout you are using.
+
+The binaries are:
 
 - `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`, `image`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
 - `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/AGENTS.md`](../crates/cli/AGENTS.md).
@@ -9,9 +13,9 @@ The primary command-line interface is the unified `turbospark` binary, alongside
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
-`--help` and `--version` are available globally across all binaries.
-
-This page documents every flag and command.
+`--help` and `--version` are available globally across all binaries. This
+page documents the stable command shapes and links to the deeper subsystem
+guides.
 
 ## `turbospark` (unified CLI)
 
@@ -19,7 +23,7 @@ This page documents every flag and command.
 turbospark <command> [flags...]
 ```
 
-Inspired by oMLX and Unsloth workflows, `turbospark` provides a single unified tool:
+`turbospark` provides one entry point for the common workflows:
 
 ### Commands
 
@@ -154,6 +158,20 @@ Per-agent wiring:
 | `claude` | `--settings` overlay carries `ANTHROPIC_BASE_URL`, gateway model discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`), and the model slots (`ANTHROPIC_MODEL`, the OPUS/SONNET/HAIKU tier defaults, `ANTHROPIC_SMALL_FAST_MODEL`) set to `claude-turbospark-<model-id>`. The credential travels in the child env as `ANTHROPIC_API_KEY`, never in a process argument, and is skipped entirely when your own `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is exported (setting both triggers Claude Code's auth-conflict warning) |
 | `codex` | `-c` config overrides spell a `[model_providers.turbospark]` table on the command line (`model_provider`, `base_url`, `env_key`, `wire_api="chat"`) plus `-m <model-id>`, so `~/.codex/config.toml` is never written and there is nothing to restore. `TURBOSPARK_API_KEY` rides in the child env |
 | everything else | `OPENAI_BASE_URL`/`OPENAI_API_KEY` env (the generic OpenAI-compatible pair) |
+
+The codex overrides are read-only with respect to disk: codex parses
+`-c key=value` pairs out of argv into an in-memory config tree for that one
+invocation (dotted keys create the nested tables; CLI values outrank
+`config.toml` for the run), and nothing is persisted -- verified against
+`codex-rs`' own `config_override.rs`, whose doc reads "Override a
+configuration value that would otherwise be loaded from
+`~/.codex/config.toml`". No backup or restoration step is needed, and the
+user's own config stays authoritative for every other codex session.
+(Codex's own writes to `~/.codex` -- `auth.json`, session history -- are
+its normal operation, not this launcher's mutation.) The contrast is
+opencodex, which DOES edit the file and therefore carries a journal +
+backup + restore mechanism; the `-c` route makes that machinery
+unnecessary.
 
 The endpoint is the daemon's port from `~/.turbospark/run/server.meta`
 (default 8080). Credentials: `TURBOSPARK_API_KEY` from the environment is
@@ -725,6 +743,6 @@ All runtime environment variables use the `TURBOSPARK_*` prefix.
 
 The integration tests and benchmark oracle suites (`turbospark-bench`, `turbospark-repack`) recognize dedicated environment variables to point at local `.gturbo` model directories or control vectors:
 
-- Model install directories: `TURBOSPARK_GEMMA4_INSTALL_DIR`, `TURBOSPARK_QWEN36_INSTALL_DIR`, `TURBOSPARK_QWEN3MOE_INSTALL_DIR`, `TURBOSPARK_MISTRAL_INSTALL_DIR`, `TURBOSPARK_GPTOSS_INSTALL_DIR`, `TURBOSPARK_MUSEGLIMMER_INSTALL_DIR`, `TURBOSPARK_QWEN38_DFLASH2_INSTALL_DIR`, `TURBOSPARK_MTP_INSTALL_DIR`, `TURBOSPARK_ORNITH35B_INSTALL_DIR`, `TURBOSPARK_ORNITH9B_INSTALL_DIR`, `TURBOSPARK_QWEN35_INSTALL_DIR`, `TURBOSPARK_TERNARY_INSTALL_DIR`, `TURBOSPARK_IQ3_INSTALL_DIR`.
+- Model install directories: one `TURBOSPARK_<MODEL>_INSTALL_DIR` per gated artifact (the complete list is section 6 of [`ENV.md`](ENV.md)); for example `TURBOSPARK_GEMMA4_INSTALL_DIR`, `TURBOSPARK_QWEN36_INSTALL_DIR`, `TURBOSPARK_QWEN3VL_VISION_INSTALL_DIR`.
 - Logit dump and KLD comparison: `TURBOSPARK_LOGIT_DUMP_DIR`, `TURBOSPARK_LOGIT_DUMP_COLD`.
 - Steering sweep suite: `TURBOSPARK_PROBE_INSTALL_DIR`, `TURBOSPARK_STEERING_VECTOR`, `TURBOSPARK_STEERING_ALPHAS`, `TURBOSPARK_STEERING_BANDS`, `TURBOSPARK_STEERING_MODE`, `TURBOSPARK_CONTROL_VECTOR`, `TURBOSPARK_FOREIGN_CONTROL_VECTOR`.

@@ -58,7 +58,13 @@ pub(crate) fn encode_linear_block(
             &z_w,
             &a_w,
             &b_w,
-            (&scratch.normed, 0),
+            // The fused INT4 path serves one CALLER per tensor set, all four
+            // folded together on the checkpoints that reach it, so the
+            // transformed input is right for all four or none.
+            match qwen.hadamard.as_ref() {
+                Some(h) => (&h.normed_h, 0),
+                None => (&scratch.normed, 0),
+            },
             (&qwen.gdn_qkv_raw, 0),
             (&qwen.gdn_z, 0),
             (&qwen.gdn_a, 0),
@@ -67,6 +73,15 @@ pub(crate) fn encode_linear_block(
         .map_err(gpu_err)?;
     } else {
         for (suffix, rows, out) in in_proj {
+            // Per NAME, not per layer: on a folded checkpoint the qkv and z
+            // projections read the transformed norm while the unquantized
+            // `in_proj_a`/`in_proj_b` (original-basis F32 in the real
+            // checkpoint) read the raw one.
+            let plan = qwen.hadamard.as_ref();
+            let x = match plan {
+                Some(h) if h.is_folded(&name(suffix)) => (&h.normed_h, 0),
+                _ => (&scratch.normed, 0),
+            };
             encode_gemv_any(
                 context,
                 pass,
@@ -75,7 +90,7 @@ pub(crate) fn encode_linear_block(
                 &name(suffix),
                 rows,
                 hidden,
-                (&scratch.normed, 0),
+                x,
                 (out, 0),
             )?;
         }
@@ -136,15 +151,31 @@ pub(crate) fn encode_linear_block(
         1,
     )
     .map_err(gpu_err)?;
+    let out_proj_name = name("out_proj.weight");
+    let out_proj_input = match qwen.hadamard.as_ref() {
+        Some(h) if h.is_folded(&out_proj_name) => {
+            h.transform(
+                context,
+                pass,
+                (&qwen.gdn_out, 0),
+                (&h.gdn_out_h, 0),
+                1,
+                value_dim as u32,
+                true,
+            )?;
+            (&h.gdn_out_h, 0)
+        }
+        _ => (&qwen.gdn_out, 0),
+    };
     encode_gemv_any(
         context,
         pass,
         weights,
         index,
-        &name("out_proj.weight"),
+        &out_proj_name,
         hidden,
         value_dim,
-        (&qwen.gdn_out, 0),
+        out_proj_input,
         (&scratch.o, 0),
     )
 }
@@ -205,6 +236,13 @@ pub(crate) fn encode_full_attention_block(
 
     let (k_buf, k_off) = kv_write_target(kv, scratch, KvHalf::K, layer, position);
     let (v_buf, v_off) = kv_write_target(kv, scratch, KvHalf::V, layer, position);
+    // Every projection reading the input norm shares one width and one sign
+    // vector on a folded checkpoint, so the caller's single forward
+    // transform (`produce.rs`) serves q/k/v alike.
+    let normed_input = match qwen.hadamard.as_ref() {
+        Some(h) if h.is_folded(&name("q_proj.weight")) => (&h.normed_h, 0),
+        _ => (&scratch.normed, 0),
+    };
     encode_gemv_any(
         context,
         pass,
@@ -213,7 +251,7 @@ pub(crate) fn encode_full_attention_block(
         &name("q_proj.weight"),
         2 * q_dim,
         hidden,
-        (&scratch.normed, 0),
+        normed_input,
         (&qwen.q_packed, 0),
     )?;
     gpu::encode_split_q_gate(
@@ -238,7 +276,7 @@ pub(crate) fn encode_full_attention_block(
             &name(suffix),
             kv_dim,
             hidden,
-            (&scratch.normed, 0),
+            normed_input,
             out,
         )?;
     }
@@ -353,15 +391,31 @@ pub(crate) fn encode_full_attention_block(
         q_dim as u32,
     )
     .map_err(gpu_err)?;
+    let o_proj_name = name("o_proj.weight");
+    let o_proj_input = match qwen.hadamard.as_ref() {
+        Some(h) if h.is_folded(&o_proj_name) => {
+            h.transform(
+                context,
+                pass,
+                (&scratch.attn_out, 0),
+                (&h.attn_out_h, 0),
+                1,
+                q_dim as u32,
+                true,
+            )?;
+            (&h.attn_out_h, 0)
+        }
+        _ => (&scratch.attn_out, 0),
+    };
     encode_gemv_any(
         context,
         pass,
         weights,
         index,
-        &name("o_proj.weight"),
+        &o_proj_name,
         hidden,
         q_dim,
-        (&scratch.attn_out, 0),
+        o_proj_input,
         (&scratch.o, 0),
     )
 }

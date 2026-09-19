@@ -1,7 +1,8 @@
 # Development
 
-Setting up, building, testing, and running this repository. Start here on day
-one. The pages linked below are the depth.
+Use this page to build, test, and run TurboSpark. For the full documentation
+map, see [docs/README.md](README.md). For benchmark and evidence rules, see
+[BENCHMARKING.md](BENCHMARKING.md) and [TESTING.md](TESTING.md).
 
 This tree is two halves that build in one direction. A Rust workspace
 (`crates/`) is the engine. A C ABI over it (`crates/ffi`) is compiled to a
@@ -10,8 +11,8 @@ binding and `swift/TurboSparkApp` is the macOS app. **Nothing Swift here builds
 until the Rust half has been built and STAGED**, and that staging step is the
 single most common way a first build fails. It has its own section below.
 
-Keep code, comments, and docs ASCII: no emojis and no em dashes (project
-rule).
+Keep code, comments, and docs ASCII. The project does not use emojis or em
+dashes.
 
 ## Prerequisites
 
@@ -274,6 +275,7 @@ make clean                       # all three
 
 - [`AGENTS.md`](../AGENTS.md) -- the working guide: conventions, the
   verification policy in full, and the gotcha list.
+- [`docs/README.md`](README.md) -- the documentation map and evidence labels.
 - [`swift/README.md`](../swift/README.md) and
   [`swift/AGENTS.md`](../swift/AGENTS.md) -- the Swift half in detail.
 - [`docs/TESTING.md`](TESTING.md), [`docs/BENCHMARKING.md`](BENCHMARKING.md),

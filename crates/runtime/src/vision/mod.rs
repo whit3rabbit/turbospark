@@ -693,18 +693,14 @@ impl VisionTower {
                 // host readback needs the GPU done even on the mapped arm
                 // (which skips the per-block wait when nobody is reading).
                 if let Some(k) = self.shape.deepstack.iter().position(|&i| i == n) {
-                    let merger = self
-                        .resident
-                        .deepstack_mergers
-                        .get(k)
-                        .ok_or_else(|| {
-                            RealForwardError::Unsupported(format!(
-                                "deepstack block {n} is slot {k} of {} resolved mergers; the \
+                    let merger = self.resident.deepstack_mergers.get(k).ok_or_else(|| {
+                        RealForwardError::Unsupported(format!(
+                            "deepstack block {n} is slot {k} of {} resolved mergers; the \
                                  install's resident index is missing the merger this config \
                                  declares",
-                                self.resident.deepstack_mergers.len()
-                            ))
-                        })?;
+                            self.resident.deepstack_mergers.len()
+                        ))
+                    })?;
                     let pass = context.begin_pass();
                     stages::encode_deepstack_merger(
                         context,

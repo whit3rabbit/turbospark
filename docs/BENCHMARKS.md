@@ -1,12 +1,26 @@
-# Benchmarks: this port against the Swift original
+# Benchmarks: current evidence and parity records
 
-One machine, one model install, one session, both engines. Every other
-figure in this repo and in `docs/BENCHMARKING.md` is this port measured
-against its own past self; this is the parity number.
+This page holds frozen measurement rows, not a release log. The headline
+comparison is one machine, one model install, one protocol, and both engines.
+Other rows measure TurboSpark against its own past states or isolate one
+runtime component. Read the provenance table before comparing numbers.
 
-Reproduce with `scripts/parity.sh`. Read `docs/BENCHMARKING.md` for the
-harness itself (the three `turbospark-bench` modes, the memory oracle, and
-how memory is sampled).
+Reproduce the Swift comparison with `scripts/parity.sh`. Read
+[`BENCHMARKING.md`](BENCHMARKING.md) for the harness, memory oracle, and
+sampling rules.
+
+## How to read this page
+
+- Decode throughput is decode-only tokens per second. It is not end-to-end
+  latency.
+- Prefill rows are not comparable when the engines use different batching or
+  chunking strategies. Keep the scope difference beside the row.
+- `phys_footprint` is the headline memory counter. RSS is a secondary signal.
+- Quality rows require a pinned install, prompt or corpus, token budget, and
+  gate definition. A CPU result or synthetic fixture cannot close a Metal or
+  real-install gate.
+- Dated measurements remain when they explain a decision or protect against a
+  regression. They are evidence records, not current defaults.
 
 Image creation is a separate staged workload, not a text-model throughput
 row. Its pinned Z-Image-Turbo benchmark record, including full-image wall time,
@@ -60,7 +74,7 @@ against 510/691/565 here) because the two samplers walk different RNG
 streams. Both stop at `endOfTurn` on coherent text, and tok/s is a rate,
 so this does not bias the comparison.
 
-### What this replaces, and why the first number was so wrong
+### Why the earlier parity number was low
 
 The first parity run on this hardware (same script, same install, six
 days' worth of the same code) measured **0.64 to 0.67 of Swift**, and
@@ -423,7 +437,7 @@ Which also settles the width question in the direction the flat row
 predicted: the remaining prefill gap is the kernel, and this is the first
 bite out of it that cost no memory.
 
-### The reference curve, measured rather than inferred (2026-08-29)
+### Reference curve: measured, not inferred
 
 Every number in the three bullets above about mlx-lm's `c(M)` was a READING
 of one data point at M=512, extrapolated. `scripts/mlx_qmm_reference.py` runs
@@ -813,7 +827,7 @@ The same corpus gives perplexity `12.4206` for this port, `12.4167` for MLX
 cached, and `12.4165` for MLX batched. The full machine-readable report is
 [`qwen25-kld-2026-09-17.json`](verification/qwen25-kld-2026-09-17.json).
 
-#### The two GGUF artifacts, frozen 2026-09-19
+#### The two GGUF artifacts
 
 The Q3_K resident kernels (Dense Qwen2 roadmap item) brought the family's
 GGUF side onto the same footing, and both single-file artifacts carry frozen
@@ -1383,7 +1397,7 @@ Cost, for planning: ~3 min to build the mlx fork from source, ~7 min for the
 4.78 GB reference download, ~24 s for both arms plus the KL. The port's dump
 is 72 s and 271 MiB.
 
-### Sub-4-bit candidate survey (ROADMAP Phase S)
+### Sub-4-bit candidate survey
 
 This is not a measurement of this port. This port cannot ingest IQ3_XXS, so there
 is no arm for it here; llama.cpp runs the candidate and this port's frozen
@@ -1442,7 +1456,7 @@ port has yet to write. And the win is a mixture, not "3-bit experts":
 level higher, which is exactly why the file is 9.10 GiB of experts rather
 than a true 3-bit 7 GiB.
 
-### The 3-bit install, measured (ROADMAP Phase S)
+### The 3-bit install
 
 The section above measured llama.cpp on the candidate, because this port
 could not ingest it. It can now. Everything below is this port's own IQ3_XXS
@@ -1524,7 +1538,7 @@ expert bytes per miss was an energy claim and the measurement refutes it
 at this size. Full rows and the cross-session caveat:
 `docs/POWER_BASELINE.md`, "The 3-bit install". ROADMAP dead end 12.
 
-### The sixth family: `gpt-oss-20b` MXFP4 (ROADMAP M5)
+### `gpt-oss-20b` MXFP4
 
 Not a parity claim. Swift has no GGUF intake, so every number here is this
 port measuring itself. Measured 2026-08-12 on AC, release, 16 expert-cache
@@ -1983,7 +1997,7 @@ speculation switched off.
 
 **QUALIFIED 2026-08-20, ON A DIFFERENT DRAFTER AND FAMILY.** That claim is this probe's, at ITS generation length, and the DFlash2 work found the limit it cannot see: byte-identity to a sequential decode holds for a few hundred tokens and then fails, because a batched verify row differs from a one-row decode pass in the last bits, so the streams part at the first near-tie. Nobody has re-run THIS probe long enough to say whether the same happens here; the mechanism is shared, so assume it does until measured. What survives exactly either way is that every BLOCK SIZE produces the same text. **The cause named here until 2026-08-21 was wrong** -- it blamed `dequant_int4_gemm_simd` against `dequant_int4_gemv_simd`, read off the shaders rather than measured, and those two agree BIT-FOR-BIT on data proven able to see a reassociation. Measured in nats the divergence is this port's own SHAPE FLOOR (1e-5 with the argmax agreeing, against 7.4e-6 for MLX's batched-vs-cached on the same architecture), i.e. the very quantity the floors elsewhere on this page measure. See `docs/DFLASH2.md`.
 
-### DFlash2, the block drafter, measured 2026-08-19
+### DFlash2 block drafter
 
 Not a parity claim, and not the same question as the row above: that one
 prices a drafter this port did not have, from published accept lengths. This

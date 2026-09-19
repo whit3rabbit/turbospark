@@ -20,6 +20,7 @@ pub struct StreamingGturboWriter {
     experts_per_layer: usize,
     layout_layers: Vec<serde_json::Value>,
     quant: Option<serde_json::Value>,
+    hadamard: Option<serde_json::Value>,
 }
 
 impl StreamingGturboWriter {
@@ -36,6 +37,7 @@ impl StreamingGturboWriter {
             experts_per_layer,
             layout_layers: Vec::new(),
             quant: None,
+            hadamard: None,
         })
     }
 
@@ -44,6 +46,15 @@ impl StreamingGturboWriter {
     /// manifests are rejected by the loader without it.
     pub fn set_quant(&mut self, quant: serde_json::Value) {
         self.quant = Some(quant);
+    }
+
+    /// The prism Hadamard contract's manifest section for
+    /// `manifest.json -> hadamard` (the Bonsai-2 line). `hadamard.bin` must
+    /// already be on disk in the install directory when
+    /// [`Self::finish_streaming`] runs, because the manifest builder hashes
+    /// every file it lists.
+    pub fn set_hadamard(&mut self, hadamard: serde_json::Value) {
+        self.hadamard = Some(hadamard);
     }
 
     /// Writes one layer of expert blobs directly to disk and records its layout entry.
@@ -143,10 +154,14 @@ impl StreamingGturboWriter {
             self.expert_stride,
             num_layers,
             self.experts_per_layer,
+            self.hadamard.is_some(),
             &self.dir,
         )?;
         if let Some(quant) = self.quant {
             manifest_json["quant"] = quant;
+        }
+        if let Some(hadamard) = self.hadamard {
+            manifest_json["hadamard"] = hadamard;
         }
         std::fs::write(
             &manifest_path,

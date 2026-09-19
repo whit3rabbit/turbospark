@@ -15,6 +15,7 @@ mod classify;
 mod config;
 mod dflash;
 mod expert_blobs;
+mod hadamard;
 mod manifest_quant;
 mod mtp;
 mod narrow;
@@ -33,6 +34,7 @@ pub use config::{
     Gemma4Quant, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
 };
 pub use expert_blobs::{expert_stride_from_headers, plan_one_expert_layer};
+pub use hadamard::{parse_prism_hadamard, PrismHadamard};
 pub use manifest_quant::{gemma4_manifest_quant, manifest_quant, manifest_quant_for};
 pub use narrow::{
     convert_raw_to_fp16, narrow_raw_to_bf16, pass_through_packed, pass_through_packed_qwen2,
@@ -80,6 +82,7 @@ pub fn write_gemma4_install_streamed(
             model_id,
             shards,
             quant,
+            None,
             &mut progress,
         )
     })();
@@ -97,6 +100,7 @@ fn write_gemma4_install_streamed_in_place(
     model_id: &str,
     shards: &Gemma4Shards<'_>,
     quant: &Gemma4Quant,
+    hadamard: Option<&hadamard::PrismHadamard>,
     mut progress: impl FnMut(&str),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let plan = orchestrate::classify_all(shards, arch)?;
@@ -260,6 +264,37 @@ fn write_gemma4_install_streamed_in_place(
     let arch = vision::vision_arch_for_manifest(arch, ingest_vision);
     let arch = arch.as_ref();
 
+    // THE HADAMARD SIGNS (the Bonsai-2 line), read and written HERE, before
+    // `finish_streaming` builds the manifest: `build_manifest_json` hashes
+    // every file it lists, so `hadamard.bin` has to be on disk by then (the
+    // vision tower's comment above, for the same reason). A checkpoint
+    // carrying `.signs` tensors without a parsed contract is refused rather
+    // than silently written sign-less -- an install like that would open,
+    // generate fluent garbage, and never say why.
+    let hadamard_section = match (hadamard, plan.hadamard_signs.is_empty()) {
+        (None, true) => None,
+        (Some(contract), _) => {
+            let (blob, section) = hadamard::read_hadamard(shards, contract)?;
+            progress(&format!(
+                "read {} hadamard sign vectors ({} bytes) for {} folded + {} inverse modules",
+                section["signs"].as_array().map(Vec::len).unwrap_or(0),
+                blob.len(),
+                contract.folded.len(),
+                contract.inverse.len(),
+            ));
+            std::fs::write(dir.join("hadamard.bin"), &blob)
+                .map_err(|e| Gemma4Error::Config(format!("hadamard.bin: {e}")))?;
+            Some(section)
+        }
+        (None, false) => {
+            return Err(Box::new(Gemma4Error::Config(format!(
+                "the checkpoint carries {} `.signs` tensors but the walk was given no \
+                 hadamard contract; parse one with parse_prism_hadamard",
+                plan.hadamard_signs.len()
+            ))))
+        }
+    };
+
     if plan.routed.is_empty() {
         // A DENSE INSTALL STILL NEEDS ITS QUANT BLOCK, which is why this
         // goes through the streaming writer at zero layers rather than
@@ -276,6 +311,9 @@ fn write_gemma4_install_streamed_in_place(
         // all, and without which the whole manifest gate never runs.
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
         writer.set_quant(manifest_quant_for(quant, arch.family, false));
+        if let Some(section) = &hadamard_section {
+            writer.set_hadamard(section.clone());
+        }
         writer.finish_streaming(arch, model_id, |w| {
             crate::resident_writer::write_resident_weights_bin_mixed(&resident.entries, w)
         })?;
@@ -520,7 +558,42 @@ pub fn write_qwen_gdn_dense_install_streamed(
             arch.family.as_str()
         ))));
     }
-    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+    write_gemma4_install_streamed_in_place(dir, arch, model_id, shards, quant, None, progress)
+}
+
+/// [`write_qwen_gdn_dense_install_streamed`] for a HADAMARD-FOLDED
+/// checkpoint (the Bonsai-2 line): `hadamard` carries the contract parsed
+/// off the same `config.json` the caller parsed the arch and quantization
+/// out of, and the walk reads the checkpoint's `.signs` tensors into the
+/// install's `hadamard.bin` plus the manifest section the runtime plan is
+/// built from. A checkpoint carrying `.signs` tensors and a `None` contract
+/// is refused by the walk itself, so the two entry points cannot be confused
+/// silently.
+pub fn write_qwen_gdn_dense_install_streamed_with_hadamard(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    hadamard: &PrismHadamard,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::QwenGdnDense {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen_gdn_dense_install_streamed_with_hadamard needs arch.family = qwen35, \
+             got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed_in_place(
+        dir,
+        arch,
+        model_id,
+        shards,
+        quant,
+        Some(hadamard),
+        progress,
+    )
 }
 
 /// Dense Qwen2/Qwen2.5 install write through the shared MLX checkpoint walk.

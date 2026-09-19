@@ -245,6 +245,7 @@ fn describe(bucket: &Gemma4Bucket) -> String {
         Gemma4Bucket::ExcludedMultimodal => "excluded".to_string(),
         Gemma4Bucket::MtpHead => "mtp".to_string(),
         Gemma4Bucket::DflashDrafter => "dflash".to_string(),
+        Gemma4Bucket::HadamardSign => "hadamard-sign".to_string(),
         Gemma4Bucket::VisionTower => "vision".to_string(),
         Gemma4Bucket::Unknown => "unknown".to_string(),
     }

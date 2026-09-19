@@ -168,9 +168,8 @@ impl RealForwardRunner {
                 produced, declared
             )));
         }
-        let mut prompt_vision = crate::vision::PromptVision::new(
-            embeddings, positions, prompt_len, hidden,
-        )?;
+        let mut prompt_vision =
+            crate::vision::PromptVision::new(embeddings, positions, prompt_len, hidden)?;
         // The deepstack rows' GPU twins, uploaded once per prompt rather
         // than re-written per micro-batch. A no-op for a tower without
         // deepstack.

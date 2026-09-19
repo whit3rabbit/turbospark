@@ -1,16 +1,15 @@
 # Benchmarking
 
-How to measure this port's throughput and memory, and how the numbers
-compare to the Swift original (`../Mference`, public at
-<https://github.com/drumih/turbo-fieldfare>; `docs/BENCHMARKS.md` there).
+Use this page to run and interpret TurboSpark benchmarks. The only text-model
+throughput result comparable with the Swift original is the real-install
+protocol in [`BENCHMARKS.md`](BENCHMARKS.md). The scripted and synthetic modes
+are diagnostic instruments, not product-performance claims.
 
-For the measured head-to-head against Swift on one machine, see
-[`BENCHMARKS.md`](BENCHMARKS.md) (2026-08-07: decode at parity within 1
-percent on an M4 Max, same install; peak footprint 2 to 5 percent lower;
-prefill the one remaining gap, and a known scope difference).
-`scripts/parity.sh` reproduces it, and `scripts/phasediff.sh` diffs the
-two engines' decode phase splits bucket by bucket. Everything else in this
-file is this port measuring itself.
+Run the parity harness with `scripts/parity.sh`. Use
+`scripts/phasediff.sh` to compare decode phase buckets. Keep the model,
+install, hardware, build mode, protocol, counter definition, and limitations
+beside every result. A benchmark without those fields is a timing sample, not
+a frozen row.
 
 Everything here lives in `crates/bench`: the `turbospark-bench` binary, a
 small library the binary and the oracle test share, and
@@ -257,7 +256,7 @@ everywhere would be 922,746,880 bytes. This runs in the normal suite, so a
 regression in KV sizing fails in milliseconds instead of waiting on a
 multi-minute oracle run.
 
-## Current measured state (2026-08-06)
+## Current measured state
 
 Apple M4 Max 36 GB, real `gemma4.gturbo` install. All cases stop
 `endOfTurn`; the oracle passes. The `after` columns are two runs taken

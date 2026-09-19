@@ -1,21 +1,12 @@
 # Power baseline
 
-Watts and joules-per-token over the frozen community protocol, on AC and on
-battery. ROADMAP Phase P1.
+This page records watts and joules per token over the frozen benchmark
+protocol, on AC and battery. It is a TurboSpark-only measurement record, not
+a Swift parity claim.
 
-Seven installs have rows here now: Gemma 4 26B-A4B (INT4 and 3-bit),
-Qwen 3.6 35B-A3B, Qwen3-30B-A3B, gpt-oss-20b, Muse Glimmer 30B and
-Ornith-1.5 35B-A3B. This line read "both real installs" until 2026-08-22,
-which was true of the Phase P1 capture it was written for and had been
-wrong for five sections; **re-count it before quoting it**, since nothing
-goes red when a count rots.
-
-This is not a parity claim. Swift was never measured for power, here or
-upstream, so there is no second engine in any table below; this is the
-port measuring itself, like the quality gates. `docs/BENCHMARKS.md` holds
-the Swift comparison and a summary of these numbers;
-`docs/BENCHMARKING.md` documents the harness alongside the other bench
-modes.
+Swift was not measured for power, so no table below compares engines.
+`docs/BENCHMARKS.md` holds the Swift comparison, and
+`docs/BENCHMARKING.md` documents the shared harness.
 
 Reproduce with `scripts/power.sh`. It needs root, because `powermetrics`
 does. `LABEL` must match the actual power source; the script refuses to

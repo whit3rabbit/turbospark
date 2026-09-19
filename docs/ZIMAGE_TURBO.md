@@ -1,4 +1,4 @@
-# Z-Image-Turbo: image-model bring-up record
+# Z-Image-Turbo: current implementation and evidence
 
 Status: IG0, IG1, IG2, IG3, and IG4 are closed for the pinned 1024-by-1024
 case. The checked image format, local and remote packers, macOS Metal backend,

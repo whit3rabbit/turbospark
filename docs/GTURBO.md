@@ -332,6 +332,6 @@ During model execution:
 ## 6. Document References
 
 - Upstream System Design: [`turbo-fieldfare SYSTEM_DESIGN.md`](https://github.com/drumih/turbo-fieldfare/blob/main/docs/SYSTEM_DESIGN.md)
-- Benchmark Parity & Measurements: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
-- Repack Crate: [`crates/repack/README.md`](crates/repack/README.md)
-- Model-IO Crate: [`crates/model-io/README.md`](crates/model-io/README.md)
+- Benchmark Parity & Measurements: [`BENCHMARKS.md`](BENCHMARKS.md)
+- Repack Crate: [`crates/repack/README.md`](../crates/repack/README.md)
+- Model-IO Crate: [`crates/model-io/README.md`](../crates/model-io/README.md)

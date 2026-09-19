@@ -47,9 +47,15 @@ mod attention_tq;
 mod bytes;
 #[cfg(target_os = "macos")]
 mod context;
+// Both batch-GEMM modules import `metal`/`half` unconditionally, so on a
+// non-macOS build they must compile to nothing like their GEMV siblings --
+// leaving the gate off here broke the cross-target check from the day the
+// modules landed (AGENTS.md/CLAUDE.md Gotcha 8: a mod without its gate).
+#[cfg(target_os = "macos")]
 mod dequant_1bit_gemm_batch;
 #[cfg(target_os = "macos")]
 mod dequant_1bit_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_2bit_gemm_batch;
 #[cfg(target_os = "macos")]
 mod dequant_2bit_gemv;
@@ -88,6 +94,10 @@ mod gdn_shape;
 #[cfg(target_os = "macos")]
 mod gdn_state;
 #[cfg(target_os = "macos")]
+mod gemv_bf16;
+#[cfg(target_os = "macos")]
+mod hadamard;
+#[cfg(target_os = "macos")]
 mod hyper_connection;
 #[cfg(target_os = "macos")]
 mod kv_cache;
@@ -101,6 +111,7 @@ mod kv_quantize;
 mod logit_softmax;
 #[cfg(target_os = "macos")]
 mod mla;
+#[cfg(target_os = "macos")]
 mod moe_decode;
 #[cfg(target_os = "macos")]
 mod moe_gguf;
@@ -242,6 +253,12 @@ pub use gdn::{
 };
 #[cfg(target_os = "macos")]
 pub use gdn_state::{GdnSnapshot, GdnStateManager};
+#[cfg(target_os = "macos")]
+pub use gemv_bf16::{encode_bf16_gemv_resident, Bf16ResidentMatrix};
+#[cfg(target_os = "macos")]
+pub use hadamard::{
+    encode_hadamard_fwht, hadamard_shape_error, HADAMARD_MAX_BLOCK, HADAMARD_THREADS,
+};
 #[cfg(target_os = "macos")]
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]

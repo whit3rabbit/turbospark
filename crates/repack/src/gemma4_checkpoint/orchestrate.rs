@@ -162,6 +162,12 @@ pub struct ClassifiedNames<'a> {
     /// head's two reasons plus a third of its own: the drafter also has
     /// rank-3 tensors (`base_kernel`), which no trunk arm accepts at all.
     pub dflash_bases: Vec<&'a str>,
+    /// The prism Hadamard contract's sign vectors ([`super::classify::Gemma4Bucket::HadamardSign`]),
+    /// kept out of `resident_bases` because their destination is the
+    /// install's `hadamard.bin`, not the resident weight region -- and
+    /// because the resident walk would narrow each F32 +/-1 vector to BF16
+    /// on the way past.
+    pub hadamard_signs: Vec<&'a str>,
     /// The vision tower's tensors (ROADMAP M-V3), kept out of
     /// `resident_bases` for the head's two reasons and a third that is
     /// sharper here than for either drafter.
@@ -206,6 +212,7 @@ pub fn classify_all<'a>(
     let mut excluded: Vec<String> = Vec::new();
     let mut mtp_bases: Vec<&str> = Vec::new();
     let mut dflash_bases: Vec<&str> = Vec::new();
+    let mut hadamard_signs: Vec<&str> = Vec::new();
     let mut vision_bases: Vec<&str> = Vec::new();
     let mut routed: BTreeMap<usize, BTreeMap<&'static str, &str>> = BTreeMap::new();
     let mut ngram_shards: BTreeMap<usize, BTreeMap<&'static str, &str>> = BTreeMap::new();
@@ -243,6 +250,7 @@ pub fn classify_all<'a>(
             Gemma4Bucket::ExcludedMultimodal => excluded.push(name.clone()),
             Gemma4Bucket::MtpHead => mtp_bases.push(name),
             Gemma4Bucket::DflashDrafter => dflash_bases.push(name),
+            Gemma4Bucket::HadamardSign => hadamard_signs.push(name),
             Gemma4Bucket::VisionTower => vision_bases.push(name),
             // The n-gram table's shards and hashing buffers, kept out of
             // `resident_bases` for the reason every other family-specific
@@ -299,6 +307,7 @@ pub fn classify_all<'a>(
         excluded,
         mtp_bases,
         dflash_bases,
+        hadamard_signs,
         vision_bases,
         ngram_shards,
         ngram_meta,

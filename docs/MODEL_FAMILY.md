@@ -1,6 +1,12 @@
-# Supported Model Families & Architecture Detection
+# Supported model families and architecture detection
 
-This document describes how `turbospark` detects, registers, and executes supported large language model families, how automatic architecture detection works during GGUF and Hugging Face downloads, and provides a parity comparison against upstream engines like `llama.cpp`, `mlx-lm`, and `turbo-fieldfare`.
+This page defines the supported model-family boundary. It explains how
+`turbospark` detects, registers, and executes families from GGUF and Hugging
+Face sources, then points to the evidence behind each support status.
+
+The support matrix is the current summary. The family records and benchmark
+pages contain the detailed contracts, negative findings, and reproduction
+commands.
 
 ---
 
@@ -100,12 +106,19 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     these two rows are why**: `qwen3_5` and `qwen3_5_moe` are one suffix
     apart, so a prefix match resolves every dense checkpoint to the MoE
     family -- a baseline with 256 experts and a decode flow with a router in
-    it, i.e. fluent wrong output rather than an error. Three published
-    checkpoints report `qwen3_5`: `prism-ml/Bonsai-27B-mlx-1bit`,
-    `Qwen/Qwen3.8-27B` and `prism-ml/Ternary-Bonsai-27B-mlx-2bit`, at 1, 4
-    and 2 bits, and they share one `ArchConfig` exactly. The last two needed
-    no field, no kernel-independent change and no decode flow, only their
-    own affine width.
+    it, i.e. fluent wrong output rather than an error. Four published
+    checkpoints report `qwen3_5` (or resolve to it through
+    `text_config.model_type`): `prism-ml/Bonsai-27B-mlx-1bit`,
+    `Qwen/Qwen3.8-27B`, `prism-ml/Ternary-Bonsai-27B-mlx-2bit` and
+    `prism-ml/Ternary-Bonsai-2-27B-mlx-2bit`, at 1, 4, 2 and 2 bits, and
+    they share one `ArchConfig` exactly. The last two needed no field, no
+    kernel-independent change and no decode flow, only their own affine
+    width. The FOURTH renames its root `model_type` to
+    `prism_hadamard_qwen35` -- unknown to this table -- and resolves through
+    the `text_config` fallthrough, which is what the root-then-text_config
+    probe order exists for; it also ships every quantized matrix in a
+    signed block-Hadamard-rotated basis, which is NOT a config question:
+    `docs/BONSAI2.md` is the contract's page.
   - `"muse_glimmer"` / `"muse_glimmer_text"` -> `ModelFamily::MuseGlimmer`
   - `"qwen4_exp"` / `"qwen4_exp_text"` -> `ModelFamily::Qwen4Exp`
   - `"qwen2"` -> `ModelFamily::Qwen2Dense` (Qwen2/Qwen2.5 dense models;
@@ -194,7 +207,7 @@ specific "recognized, needs X" refusal.
 | **Qwen3 dense** (`qwen3`) | Plain GQA, per-head Q/K norm, dense SwiGLU, tied or untied head | GGUF implemented; 0.6B Q8_0 gates passed | Not assessed | [Implemented](https://github.com/ggml-org/llama.cpp/blob/e5a8d439cef31f27fad6938233da10dae1ba5631/src/models/qwen3.cpp) | [Implemented](https://github.com/ml-explore/mlx-lm/blob/745352405f0909540760fd9b9ff16d933fd9c82b/mlx_lm/models/qwen3.py) | [0.6B measurement only](MINIMAX_M2_PHASE0.md#shared-flow-regression-checks); dense |
 | **Qwen2 / Qwen2.5 dense** (`qwen2`) | Standard full-attention GQA, Q/K/V projection biases, no Q/K norm, dense SwiGLU, Qwen2 RMS epsilon 1e-6 | HF/MLX 4-bit intake and shared-flow execution are real-artifact tested; the pinned official Q3_K_M GGUF executes on the Q3_K resident kernels (perplexity 12.2878, stable digests, memory oracle), and a single-file Q4_K_M GGUF runs as the second artifact | Not assessed | Full Support | Full Support | **622-651 MiB at 8192, dense** (KV-dominated; MLX INT4 622, GGUF Q3_K_M 651, GGUF Q4_K_M 646) |
 | **Qwen3-VL 4B** (`qwen3_vl`) | Dense full-attention GQA, per-head Q/K norm, dense SwiGLU, TIED head, full rotary over `head_dim` 128 (independent of hidden 2560), mRoPE sections [24, 20, 20] (live for images via the mRoPE dispatch; text positions collapse to plain RoPE) | **Full Support** (MLX intake; frozen quality 17.3463 + 793 MiB memory rows; greedy and sampled CLI smokes pass). GGUF intake refused: real GGUFs exist but the converter's tower naming is unparsed here | **Verified images (2026-09-19)**: the depth-24 tower plus three deepstack mergers ingest combined and sidecar; the per-layer adds are perturbation-proven and all seven tower stages agree with mlx-vlm at cosine 0.99999+; CLI, server, and sidecar-attach image runs read a test page correctly | Full Support | Full Support | **~793 MiB RAM** at 4096 context (dense; KV-dominated) |
-| **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
+| **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B / Ternary-Bonsai-2-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head; Bonsai-2 additionally stores every quantized matrix in a signed block-Hadamard-rotated basis the engine un-rotates at activation time | **Full Support** (Bonsai-2: MLX 2-bit intake only; the line's GGUFs use prism's custom `PTQ1_0`/`PQ2_0` types, which vanilla llama.cpp also refuses) | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note; identical across all four widths) |
 | **Qwen3.8-Flash-Next / REAP-288** (`qwen4_exp`, HF only) | Fine-grained MoE (288-512 experts, top-10), GDN + sigmoid-gated norm, QSA block-sparse attention, PLE n-gram head, hyper-connections | **Full Support** | *Planned* | Full Support (`qwen4exp`) | Not supported (absent from mlx-lm, checked 2026-09-08) | **~2.5 GiB RAM** (oracle peak at the 2,048 bench window; the 68G install streams) |
 | **Llama 3.1 / 3.2 / 3.3** (`llama`, dense) | The above plus LEARNED RoPE frequency scaling, which ships as a TENSOR (`rope_freqs.weight`) and has no kernel input here | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
@@ -228,7 +241,7 @@ with provenance on every entry -- is the subsection below. Bring-up SCOPING
 (what to build next, and in what order) stays a ROADMAP priority question
 and is deliberately not answered on this page.
 
-### The mlx-lm model census, 2026-09-08
+### Model-family candidate census
 
 The systematic version of the paragraph above: every model implementation
 in mlx-lm's `mlx_lm/models/` directory, enumerated 2026-09-08 (129 files,
@@ -270,10 +283,14 @@ experts top-2 at ffn 32768: the Mixtral-unstreamable shape at 4x the
 size). `diffusion-gemma` is likewise witnessed upstream and out of class
 here: a block-diffusion generation LOOP, not a decode flow.
 
-The census above is dated 2026-09-08 and predates the Qwen2 landing. As of
+The census above is dated 2026-09-08 and predates three landings. As of
 2026-09-13, `qwen2` belongs in the running-in-both-engines class for the
 MLX/HF text path; since 2026-09-19 it runs in BOTH engines on real GGUF
 artifacts as well (the pinned official Q3_K_M and a single-file Q4_K_M).
+`qwen3_vl` belongs there too: mlx-lm carries the model file the census
+counted among the tower gaps, and since 2026-09-18 the trunk runs here as
+the fifteenth family with the tower and deepstack verified on real images
+(vision table below).
 
 Two structural readings fall out of the census:
 
@@ -311,7 +328,7 @@ means image support.
 | `Qwen4Exp` | **Text-only** | VLM configuration is recognized, but only the text tower is ingested and executed. |
 | `Qwen3Vl` | **Verified images with deepstack (2026-09-19)** | The depth-24 SigLIP-class tower PLUS three deepstack mergers (block outputs 5/11/17, post-shuffle-normed, raw-added into trunk layers 0-2's residuals at image positions) ingest combined and sidecar; the llama flow's two prefill sites are byte-identical on an image prompt; perturbation-proven adds; all seven tower stages agree with mlx-vlm at cosine 0.99999+. |
 | `DeepseekV4Flash` | **Text-only** | The family is scaffolded and its witnessed checkpoint carries a vision tower, but this port has no executable intake or runtime vision path. |
-| `Llama`, `Qwen3Moe`, `Qwen3Dense`, `Qwen2Dense`, `GptOss`, `Spark25`, `MiniMaxM2` | **Text-only** | No image tower is implemented for these families. |
+| `Llama`, `Qwen3Moe`, `Qwen3Dense`, `Qwen2Dense`, `GptOss`, `Spark25`, `MiniMaxM2`, `Deepseek2` | **Text-only** | No image tower is implemented for these families. |
 
 `Real-gated` means an image was encoded and changed generated output on a real
 install. `Structural, unverified` means the shared code accepts the family and
@@ -320,19 +337,23 @@ needed for a release claim. `Text-only` also describes the current behavior of
 the request surfaces: they may validate or report an image, but the image does
 not reach the model.
 
-The current real gate covers Qwen3.8 dense. It supports still images only, on
-the macOS Metal runtime. CLI image prompts require `--messages-file` or
-`--chat`; raw `--prompt --image` has no chat-template marker. The server accepts
-base64 data URLs on both OpenAI and Anthropic endpoints, refuses remote URLs,
-and uses its sequential image path. The FFI and Swift-facing path accepts image
-parts and sidecar options, while scripted and non-macOS sessions cannot encode
-an image. `qwen3_vl` is not registered; its unresolved trunk and deepstack
-questions remain scoped in [`docs/QWEN3VL_PHASE0.md`](QWEN3VL_PHASE0.md).
+Three families carry a real image gate: `QwenGdnDense` (Qwen3.8 dense, the
+first), `QwenGdnMoe` (tower parity verified 2026-09-19), and `Qwen3Vl`
+(registered 2026-09-18 as the fifteenth family, with the trunk, tower, and
+deepstack gates frozen; the phase record is
+[`QWEN3VL_PHASE0.md`](QWEN3VL_PHASE0.md)). All of them support still images
+only, on the macOS Metal runtime. CLI image prompts require `--messages-file`
+or `--chat`; raw `--prompt --image` has no chat-template marker. The server
+accepts base64 data URLs on both OpenAI and Anthropic endpoints, refuses
+remote URLs, and uses its sequential image path. The FFI and Swift-facing
+path accepts image parts and sidecar options, while scripted and non-macOS
+sessions cannot encode an image.
 
 The nearest implemented-family gap is Gemma 4 vision (`gemma4_unified`), whose
 text half already runs here and whose roughly 815 vision tensors are dropped
-at repack today. The nearest shared-path evidence gap is a real Qwen GDN MoE
-vision install.
+at repack today. The shared-path Qwen GDN MoE gap closed on 2026-09-19; what
+remains for that family is measurement work, a frozen vision memory oracle and
+a catalog row, not an execution path.
 
 ---
 
@@ -359,9 +380,10 @@ and native tool-call parsing remain deferred.
 `turbospark` follows a clean, strongly-typed Rust implementation of the same pattern:
 - **Architecture Registry** (`crates/repack/src/arch_registry.rs`): the string tables, split into what runs and what is merely recognized. llama.cpp's `llm_arch` enum conflates the two because every variant it names has a graph builder; here they are separate, so a recognized-but-unported architecture is a better error rather than a half-wired family.
 - **`ModelFamily` Enum** (`crates/model-io/src/arch_config/family.rs`):
-  `ModelFamily::ALL` is the authoritative discriminator list, including
-  `Spark25` for `spark2_5`. `DeepseekV4Flash` remains declared and scaffolded,
-  without a baseline. The planned strings deliberately
+  `ModelFamily::ALL` is the authoritative discriminator list, fifteen
+  variants since the `Qwen3Vl` landing and including `Spark25` for
+  `spark2_5`. `DeepseekV4Flash` remains the one declared-and-scaffolded
+  variant, without a baseline. The planned strings deliberately
   get NO variant: `known_architecture` is exhaustive and `arch_validation`
   compares its result field by field, so a placeholder would validate
   installs against invented numbers (`arch_registry.rs`'s own doc).
@@ -369,7 +391,7 @@ and native tool-call parsing remain deferred.
 **One architecture string can cover two models, and support is then partial in a way no table column expresses.** `llama` is both Mixtral and dense Llama; only the MoE half has a decode flow, and nothing in the architecture string says which half a file is -- only `expert_count` does. So the registry calls `llama` supported, and `RealForwardRunner::open` refuses the dense half by name. A parity matrix row per MODEL rather than per string is the honest rendering, which is why the two rows above are split.
 - **Baseline Specifications** (`crates/model-io/src/arch_baselines.rs`): Provides compile-time defaults for behavioral architecture flags missing from GGUF metadata.
 - **Tensor Mapping Engine** (`crates/repack/src/gguf_names.rs`): Maps GGUF tensor naming conventions to canonical parameter names.
-- **Dedicated Metal Forward Passes** (`crates/runtime/src/families/<family>/`): Each family owns an optimized Metal execution flow tuned for its layer graph; seven of them carry a chunked-prefill driver (all but the MoE half of `qwenGdnMoe`).
+- **Dedicated Metal Forward Passes** (`crates/runtime/src/families/<family>/`): Each family owns an optimized Metal execution flow tuned for its layer graph, and several variants share one flow: the llama flow carries `Llama` (its MoE half and dense refused-at-open siblings), `Qwen3Moe`, `Qwen3Dense`, `Qwen2Dense`, `Qwen3Vl` and `MiniMaxM2`, while the qwen flow carries the two GDN siblings. Every variant but two has a chunked-prefill driver: the MoE half of `qwenGdnMoe` and `Deepseek2` deliberately do not (the sequential path serves deepseek2; `supports_chunked_prefill` in `real_forward_api.rs` and the `prefill_chunk` dispatch in `real_forward_traits.rs` name the wiring).
 
 ---
 
@@ -381,7 +403,7 @@ To add a new model family to `turbospark`:
    is recognition only: it changes the error message and nothing else.
 2. Register the new variant in `ModelFamily` (`crates/model-io/src/arch_config.rs`).
 3. Add baseline specs in `arch_baselines.rs`.
-4. Follow the 7-phase step-by-step checklist in [`docs/NEW_MODEL.md`](docs/NEW_MODEL.md).
+4. Follow the step-by-step checklist in [`NEW_MODEL.md`](NEW_MODEL.md).
 
 Steps 2 and 3 belong to the bring-up, not to step 1. A `ModelFamily` variant
 with an invented baseline is worse than no variant: `known_architecture` is
@@ -418,6 +440,6 @@ bring-up wrote. Both numbers come off the GGUF header before any download
 - The mlx-lm model census (2026-09-08) and the witnessed candidate strings: section 2 above
 - Per-model vision inventory: the 2026-09-06 mlx-vlm audit, pruned from ROADMAP.md on 2026-09-07 (`git show 3d58b83^:ROADMAP.md`, section 14); the one running tower's mechanics: [`docs/VISION.md`](VISION.md)
 - Installing a model, and probing one that is not listed: [`docs/MODELS.md`](MODELS.md)
-- Architecture Bring-up Guide: [`docs/NEW_MODEL.md`](docs/NEW_MODEL.md)
-- `.gturbo` Format Specification: [`docs/GTURBO.md`](docs/GTURBO.md)
-- Benchmark Parity & Measurements: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
+- Architecture Bring-up Guide: [`NEW_MODEL.md`](NEW_MODEL.md)
+- `.gturbo` Format Specification: [`GTURBO.md`](GTURBO.md)
+- Benchmark Parity & Measurements: [`BENCHMARKS.md`](BENCHMARKS.md)

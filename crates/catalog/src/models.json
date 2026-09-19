@@ -977,6 +977,47 @@
       "notes": "Dense, so it streams nothing and its counted footprint is 661.6 MiB on 7.6 GB of weights -- but a dense model's weights are mapped and NOT counted, so budget its size on disk in free RAM. Ships merges.txt and NO generation_config.json, the exact inverse of qwen38-27b."
     },
     {
+      "alias": "bonsai2",
+      "name": "Ternary-Bonsai 2 27B (MLX affine 2-bit, group 128, Hadamard-folded)",
+      "family": "qwen35",
+      "source": {
+        "kind": "mlx",
+        "repo": "prism-ml/Ternary-Bonsai-2-27B-mlx-2bit",
+        "revision": "3f926b415992eaa2ae9dd7b573706494d6bbf787",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 8595477990,
+      "install_bytes": 7600000000,
+      "status": "verified",
+      "gates": [
+        "bonsai2_quality_gate",
+        "bonsai2_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 660,
+          "decode_tok_s_min": 12.041,
+          "decode_tok_s_max": 13.199,
+          "measured_on": "2026-09-19",
+          "source": "this port, freeze run + assert run, AC"
+        }
+      ],
+      "notes": "The Bonsai-2 line: same dense qwen3_5 architecture as ternary27b, with every quantized matrix stored in a signed block-Hadamard-rotated basis (block 1024). The install carries hadamard.bin plus a manifest section; the engine transforms activations at run time. Ships generation_config.json and NO vocab.json/merges.txt. Requires an engine with hadamard support; an older binary refuses the manifest section or the .signs tensors by name."
+    },
+    {
       "alias": "tinyllama",
       "name": "TinyLlama 1.1B Chat v1.0 (GGUF Q6_K, dense)",
       "family": "llama",

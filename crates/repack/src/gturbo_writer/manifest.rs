@@ -25,6 +25,7 @@ pub(crate) fn build_manifest_json(
     expert_stride: u64,
     num_layers: usize,
     experts_per_layer: usize,
+    hadamard_present: bool,
     dir: &Path,
 ) -> Result<serde_json::Value, WriterError> {
     let mut files = serde_json::Map::new();
@@ -38,11 +39,20 @@ pub(crate) fn build_manifest_json(
     } else {
         &[]
     };
+    // The prism Hadamard contract's sign vectors, keyed the same way: on the
+    // caller having written the section, so a walk that set `hadamard` but
+    // never wrote the file fails HERE (missing file) rather than at open.
+    let hadamard: &[&str] = if hadamard_present {
+        &["hadamard.bin"]
+    } else {
+        &[]
+    };
     for relative in ["model_weights.bin", "packed_experts/layout.json"]
         .into_iter()
         .map(String::from)
         .chain((0..num_layers).map(|l| format!("packed_experts/layer_{l:02}.bin")))
         .chain(vision.iter().map(|s| String::from(*s)))
+        .chain(hadamard.iter().map(|s| String::from(*s)))
     {
         let path = dir.join(&relative);
         // Streamed rather than read whole: `model_weights.bin` alone can be

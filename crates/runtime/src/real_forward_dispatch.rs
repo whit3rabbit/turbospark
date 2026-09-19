@@ -6,7 +6,7 @@ use model_io::ResidentIndex;
 use crate::real_forward_layout::{
     DTYPE_GGUF_IQ1_M, DTYPE_GGUF_IQ1_S, DTYPE_GGUF_IQ2_S, DTYPE_GGUF_IQ2_XS, DTYPE_GGUF_IQ2_XXS,
     DTYPE_GGUF_IQ3_S, DTYPE_GGUF_Q2_K, DTYPE_GGUF_Q3_K, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K,
-    DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE,
+    DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE, DTYPE_RAW_BF16,
 };
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{affine_group_size, entry, resident_matrix};
@@ -498,6 +498,27 @@ pub(crate) fn encode_gemv_any(
             };
             gpu::encode_dequant_iq_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
+        }
+        // UNQUANTIZED BF16 matrix (tag 1 narrowed at repack, AGENTS.md
+        // Gotcha 45). The reader the Bonsai-2 line needed for its F32-shipped
+        // `linear_attn.in_proj_a`/`in_proj_b`: every earlier install
+        // quantized them, so this arm never had a live caller until now. No
+        // companion planes; the size check is the whole shape assertion.
+        DTYPE_RAW_BF16 => {
+            let expected = rows * cols * 2;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: BF16 size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::Bf16ResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+            };
+            gpu::encode_bf16_gemv_resident(context, pass, &w, x, y).map_err(RealForwardError::Gpu)
         }
         // Named rather than defaulted. This arm used to be `_ => int4`,
         // which meant any future dtype tag was read as INT4-affine: no

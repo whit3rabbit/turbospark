@@ -33,7 +33,8 @@
 //! stream failing at some tensor offset.
 
 use turbospark_repack::{
-    parse_gemma4_quantization, parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config,
+    parse_gemma4_quantization, parse_prism_hadamard, parse_qwen_gdn_dense_config,
+    parse_qwen_gdn_moe_config,
 };
 
 /// 64 layers, gated-DeltaNet everywhere except every 4th
@@ -158,6 +159,34 @@ fn qwen38_config_json() -> String {
     .to_string()
 }
 
+/// The `prism-ml/Ternary-Bonsai-2-27B-mlx-2bit` config (the HADAMARD line):
+/// the SAME architecture a fourth time, in a rotated weight basis.
+///
+/// Three real differences from the ternary file above, and none reaches an
+/// `ArchConfig` field. The root `model_type` renames to
+/// `prism_hadamard_qwen35` -- unknown to `SUPPORTED_HF`, so resolution falls
+/// through to `text_config.model_type`, which is still `qwen3_5_text`; that
+/// fallthrough is exactly what `config_json_resolution`'s two-step probe is
+/// for. The `quantization` object MOVES from `text_config` to the root and
+/// gains `mode: "affine"`. And `eos_token_id` joins Qwen3.8's 248044 while
+/// `mtp_num_hidden_layers` drops to 0 -- both inert, which the baseline
+/// assertion below proves rather than assumes.
+fn bonsai2_config_json() -> String {
+    serde_json::json!({
+        "schema_version": 2,
+        "model_type": "prism_hadamard_qwen35",
+        "text_config": text_config_with_eos(248_044),
+        "vision_config": {"depth": 27},
+        "quantization": {"bits": 2, "group_size": 128, "mode": "affine"},
+        "hadamard_config": "hadamard.json",
+        "requires_runtime": "runtime/artifact.py",
+        "tensor_namespace": "mlx-vlm-qwen3_5",
+        "base_model_type": "qwen3_5",
+        "components": {"text": true, "vision": true, "mtp": false}
+    })
+    .to_string()
+}
+
 #[test]
 fn parses_the_production_config_into_the_pinned_baseline() {
     let arch = parse_qwen_gdn_dense_config(&config_json()).expect("config parses");
@@ -187,6 +216,7 @@ fn every_published_checkpoint_parses_to_one_baseline() {
     let bonsai = parse_qwen_gdn_dense_config(&config_json()).expect("bonsai config parses");
     let qwen38 = parse_qwen_gdn_dense_config(&qwen38_config_json()).expect("qwen3.8 config parses");
     let ternary = parse_qwen_gdn_dense_config(&ternary_config_json()).expect("ternary parses");
+    let bonsai2 = parse_qwen_gdn_dense_config(&bonsai2_config_json()).expect("bonsai2 parses");
 
     assert_eq!(bonsai, model_io::qwen_gdn_dense_27b());
     assert_eq!(qwen38, model_io::qwen_gdn_dense_27b());
@@ -196,6 +226,36 @@ fn every_published_checkpoint_parses_to_one_baseline() {
         "the published qwen3_5 checkpoints must share one architecture"
     );
     assert_eq!(bonsai, ternary, "ternary is Bonsai at a different width");
+    assert_eq!(
+        bonsai, bonsai2,
+        "bonsai2 is the same architecture in a rotated basis; no shape key moved"
+    );
+}
+
+/// The FOURTH checkpoint's root `model_type` is unknown to `SUPPORTED_HF`
+/// (`prism_hadamard_qwen35`), so family resolution rides on the two-step
+/// probe falling through to `text_config.model_type`. Mutating the INNER
+/// string away must leave the file resolving to NOTHING -- which is what
+/// proves the fallthrough is load-bearing for this family, and that a future
+/// publisher renaming the inner string reddens here rather than in a
+/// multi-GB stream's open error.
+#[test]
+fn bonsai2_resolves_only_through_the_text_config() {
+    let root: serde_json::Value =
+        serde_json::from_str(&bonsai2_config_json()).expect("fixture parses");
+    assert_eq!(
+        turbospark_repack::config_json_family(&root),
+        Some(model_io::ModelFamily::QwenGdnDense),
+        "the hadamard root string must resolve through text_config"
+    );
+
+    let mut mutated = root.clone();
+    mutated["text_config"]["model_type"] = serde_json::json!("qwen3_5_text_renamed");
+    assert_eq!(
+        turbospark_repack::config_json_family(&mutated),
+        None,
+        "with the inner string renamed nothing vouches for this file any more"
+    );
 }
 
 /// The quantization SPEC is where the checkpoints really differ, and each is a
@@ -308,4 +368,95 @@ fn attention_scale_is_the_reference_head_dim_power() {
     let back: f64 = serde_json::from_str(&serde_json::to_string(&arch.attention_scale).unwrap())
         .expect("round trips");
     assert_eq!(back, arch.attention_scale);
+}
+
+/// The Hadamard contract parses out of the Bonsai-2 config and translates
+/// module paths to ENGINE names -- `lm_head` to
+/// `language_model.lm_head.weight`, `model.embed_tokens` (the one
+/// `embedding: true` module) into the INVERSE list, everything else folded.
+/// The module list here is the real one's SHAPE trimmed to one of each kind.
+#[test]
+fn the_hadamard_contract_parses_to_engine_names() {
+    let config = serde_json::json!({
+        "model_type": "prism_hadamard_qwen35",
+        "text_config": text_config(),
+        "quantization": {"bits": 2, "group_size": 128, "mode": "affine"},
+        "hadamard_config": "hadamard.json",
+        "modules": [
+            {"path": "lm_head", "block": 1024, "embedding": false, "dtype": "float16"},
+            {"path": "model.embed_tokens", "block": 1024, "embedding": true, "dtype": "float16"},
+            {"path": "model.layers.0.mlp.gate_proj", "block": 1024, "embedding": false, "dtype": "float16"}
+        ]
+    })
+    .to_string();
+    let contract = parse_prism_hadamard(&config)
+        .expect("contract parses")
+        .expect("present");
+    assert_eq!(contract.block, 1024);
+    assert_eq!(
+        contract.folded,
+        vec![
+            "language_model.lm_head.weight".to_string(),
+            "language_model.model.layers.0.mlp.gate_proj.weight".to_string(),
+        ]
+    );
+    assert_eq!(
+        contract.inverse,
+        vec!["language_model.model.embed_tokens.weight".to_string()]
+    );
+}
+
+/// A config with no packed modules is not a folded checkpoint, and the
+/// parser answers `None` rather than an empty contract.
+#[test]
+fn a_config_without_modules_is_not_folded() {
+    assert_eq!(parse_prism_hadamard(&config_json()).expect("parses"), None);
+}
+
+/// The all-or-nothing rule: one packed module at block 0 amid transformed
+/// ones is refused, because a module reading the RAW activation while its
+/// siblings read the rotated one is exactly the shape the shared-transform
+/// wiring cannot express.
+#[test]
+fn a_block_zero_module_amid_folded_ones_is_refused() {
+    let config = serde_json::json!({
+        "model_type": "prism_hadamard_qwen35",
+        "modules": [
+            {"path": "lm_head", "block": 1024, "embedding": false},
+            {"path": "model.layers.0.mlp.down_proj", "block": 0, "embedding": false}
+        ]
+    })
+    .to_string();
+    // The refusal must come from the ALL-OR-NOTHING rule itself, not from the
+    // width-set check downstream (which also rejects block 0, and would have
+    // made this test a survivor when the arm above was mutated off). The
+    // message names the contract; assert it, so this case pins WHICH guard
+    // fired.
+    let err = parse_prism_hadamard(&config).expect_err("must be refused");
+    let text = format!("{err:?}");
+    assert!(text.contains("all-or-nothing"), "{text}");
+}
+
+/// One block per checkpoint: a module declaring a different width against
+/// the rest is refused, as is a width outside the bundled runtime's set.
+#[test]
+fn mismatched_and_unknown_block_widths_are_refused() {
+    let two_blocks = serde_json::json!({
+        "model_type": "prism_hadamard_qwen35",
+        "modules": [
+            {"path": "lm_head", "block": 1024, "embedding": false},
+            {"path": "model.layers.0.mlp.gate_proj", "block": 512, "embedding": false}
+        ]
+    })
+    .to_string();
+    assert!(parse_prism_hadamard(&two_blocks).is_err());
+
+    let odd_block = serde_json::json!({
+        "model_type": "prism_hadamard_qwen35",
+        "modules": [
+            {"path": "lm_head", "block": 1000, "embedding": false},
+        ]
+    })
+    .to_string();
+    assert!(parse_prism_hadamard(&odd_block).is_err());
 }

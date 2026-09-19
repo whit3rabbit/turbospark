@@ -240,6 +240,7 @@ pub(crate) fn write_gturbo_install_impl(
         expert_stride,
         layers.len(),
         experts_per_layer,
+        false,
         dir,
     )?;
     std::fs::write(
@@ -282,7 +283,7 @@ pub fn write_gturbo_install_with_resident_index(
     std::fs::write(&weights_path, resident_weights_bin).map_err(|e| io_err(&weights_path, e))?;
 
     let manifest_path = dir.join("manifest.json");
-    let manifest_json = build_manifest_json(arch, model_id, 0, 0, 0, dir)?;
+    let manifest_json = build_manifest_json(arch, model_id, 0, 0, 0, false, dir)?;
     std::fs::write(
         &manifest_path,
         serde_json::to_vec_pretty(&manifest_json).unwrap(),

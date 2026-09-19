@@ -1,10 +1,11 @@
-# MiniMax-M2: Phase 0
+# MiniMax-M2: support status and pinned evidence
 
-Status, 2026-09-10: GGUF intake and text execution implemented, and the pinned
-Q4_K_M install completed. Synthetic Metal inference, the real memory oracle,
-and greedy/sampled short-answer EOS checks pass. The standard low-temperature
-coastal-wetlands smokes repeat reasoning and exhaust 400 tokens. These failures
-block release; there is no catalog row or accepted MiniMax performance baseline.
+Current status: GGUF intake and text execution are implemented, and the pinned
+Q4_K_M install completes intake. Synthetic Metal inference, the real memory
+oracle, and greedy/sampled short-answer EOS checks pass. The standard
+low-temperature coastal-wetlands smokes repeat reasoning and exhaust 400
+tokens. Those failures block release, so there is no catalog row or accepted
+MiniMax performance baseline.
 
 ## Witness and scope
 

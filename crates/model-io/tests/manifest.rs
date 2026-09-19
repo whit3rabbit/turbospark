@@ -105,6 +105,84 @@ fn toy_manifest_json() -> String {
     .to_string()
 }
 
+/// The prism Hadamard section: absent by default (every install written
+/// before the contract), accepted with its file entry when structurally
+/// sound, and refused with the file named when the walk wrote the section
+/// but not `hadamard.bin`.
+#[test]
+fn the_hadamard_section_is_optional_and_must_carry_its_file() {
+    let dir = tempfile_dir();
+    let base = toy_manifest_json();
+    // Absent: the toy manifest loads as it always did.
+    write_manifest(dir.path(), &base);
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    assert!(manifest.hadamard.is_none());
+
+    // Present with the file listed: accepted, and the fields round-trip.
+    let with_section = base.replace(
+        "\"expertStride\": 4096",
+        "\"expertStride\": 4096,\"hadamard\": {\"block\": 1024,\"signs\": [{\"width\": 1024,\"offset\": 0,\"bytes\": 4096}],\"folded\": [\"lm_head.weight\"],\"inverse\": [\"embed.weight\"]}",
+    );
+    let with_section = with_section.replace(
+        "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},",
+        "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},\"hadamard.bin\": {\"size\": 1, \"sha256\": \"h\"},",
+    );
+    write_manifest(dir.path(), &with_section);
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    let hadamard = manifest.hadamard.expect("section round-trips");
+    assert_eq!(hadamard.block, 1024);
+    assert_eq!(hadamard.signs.len(), 1);
+    assert_eq!(hadamard.folded, vec!["lm_head.weight".to_string()]);
+    assert_eq!(hadamard.inverse, vec!["embed.weight".to_string()]);
+
+    // Present WITHOUT the file entry: refused by name.
+    let without_file = toy_manifest_json().replace(
+        "\"expertStride\": 4096",
+        "\"expertStride\": 4096,\"hadamard\": {\"block\": 1024,\"signs\": [{\"width\": 1024,\"offset\": 0,\"bytes\": 4096}],\"folded\": [\"lm_head.weight\"],\"inverse\": []}",
+    );
+    write_manifest(dir.path(), &without_file);
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    assert!(matches!(err, ModelError::MissingFile { .. }), "{err:?}");
+}
+
+/// The section's structural checks: a non-power-of-two block, a sign width
+/// that is not a multiple of the block, and a bytes field that is not
+/// width*4 are each refused by name of the field that moved.
+#[test]
+fn a_structurally_broken_hadamard_section_is_refused() {
+    let good = toy_manifest_json().replace(
+        "\"expertStride\": 4096",
+        "\"expertStride\": 4096,\"hadamard\": {\"block\": 1024,\"signs\": [{\"width\": 1024,\"offset\": 0,\"bytes\": 4096}],\"folded\": [\"lm_head.weight\"],\"inverse\": []}",
+    ).replace(
+        "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},",
+        "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},\"hadamard.bin\": {\"size\": 1, \"sha256\": \"h\"},",
+    );
+
+    let cases: [(&str, &str); 3] = [
+        ("block", "\"block\": 1000,"),
+        ("width multiple", "\"width\": 1000,"),
+        ("bytes", "\"bytes\": 4097,"),
+    ];
+    for (what, replacement) in cases {
+        let broken = match (what, replacement) {
+            ("block", rep) => good.replace("\"block\": 1024,", rep),
+            ("width multiple", rep) => good.replace("\"width\": 1024,", rep),
+            ("bytes", rep) => good.replace("\"bytes\": 4096", rep),
+            _ => unreachable!(),
+        };
+        let dir = tempfile_dir();
+        write_manifest(dir.path(), &broken);
+        let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024)
+            .err()
+            .unwrap_or_else(|| panic!("{what}: section must be refused"));
+        let text = format!("{err:?}");
+        assert!(
+            text.contains("IndexCorrupt"),
+            "{what}: expected an IndexCorrupt refusal, got {text}"
+        );
+    }
+}
+
 #[test]
 fn load_succeeds_for_a_matching_toy_manifest() {
     let dir = tempfile_dir();
