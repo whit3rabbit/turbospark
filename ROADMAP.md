@@ -299,13 +299,36 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
     section only from `text_config.rope_parameters`; the HF-native
     `qwen3_vl` conversion spells it `text_config.rope_scaling`. Both are
     read now, and a tower with neither is refused by name.
-- **Owed (measurements)**: a cross-engine KL row (the `kld_mlx_vlm.py`
-  instrument is the reference; no CHECKPOINTS entry yet) and a
-  `scripts/power.sh` row, both unscheduled like every sibling's second-row
-  measurement. The frozen quality + oracle pair is what `verified` stands
-  on for text; the vision evidence above is the vision release bar,
-  `vision_tower_parity` being the gate the dense sidecar's `verified` rests
-  on.
+- **Measurements (2026-09-19, both captured)**:
+  - **Power row** (`scripts/power.sh`, user-run): short-explanation decode
+    ~0.321 J/token at ~32 W / ~87.5 tok/s, all Nominal (unconstrained; no
+    `COOLING=max` owed), pairs to 4.5%; prefill mean REFUSED as a 2-3-sample
+    windowing artifact; the protocol is text-only so the row prices the
+    trunk. `docs/POWER_BASELINE.md` owns the table; per-arm TSV at
+    `docs/verification/power-qwen3vl-4b-2026-09-19.tsv`.
+  - **Cross-engine KL row** (`kld_mlx_vlm.py`, which gained the
+    `qwen3vl-4b-vision` and `qwen36-vision` CHECKPOINTS entries): the
+    four-step run (reference prepare, shape floor, port dump, compare) on
+    the deepstack install reads **forward-KL mean 0.050020 nats at 94.14%
+    top-1** over all 1,297 positions, with the **image span at 0.050428
+    nats / 94.14% over its 1,280 positions** -- no excess over the prompt
+    mean, so neither the deepstack adds nor the mRoPE angles diverge where
+    they act. The **shape floor is 1.895233 nats** (the reference against
+    ITSELF, batched vs cached), so the port-vs-reference divergence sits
+    ~0.026x the floor; port-vs-CACHED reads 1.868467 nats, i.e. the shape
+    term, not an engine gap. Evidence:
+    `docs/verification/kld_mlx_vlm-qwen3vl-2026-09-19.json`. (The sibling
+    qwen38 TEXT row's 0.000788 nats is not comparable as a scale reference:
+    different instrument, 1,280-position image prefill, and a 4B trunk.)
+  - The four `qwen3vl_vision` gates and the seven-stage parity were
+    RE-RUN from the recorded commands after the session's commits and
+    reproduce exactly (4/4 pass; parity table identical to the last
+    printed digit). The `qwen36-vision` CHECKPOINTS entry is in place for
+    when a MoE KL row is scheduled; none is owed by 9a.
+  - The frozen quality + oracle pair is what `verified` stands on for text;
+    the vision evidence above is the vision release bar,
+    `vision_tower_parity` being the gate the dense sidecar's `verified`
+    rests on.
 - **Files Touched**:
   - `crates/runtime/src/vision/` (deepstack injection, stages, resident
     resolution)
@@ -460,8 +483,9 @@ Verification sweeps, cross-engine KL proofs, and power captures.
 #### 3. Power Profile Sweep Across Remaining Catalog Rows
 - **Ternary row CAPTURED (2026-09-15, 23:41 UTC)**: `ternary27b.gturbo` under `power.sh 2`, clean machine (contamination floor 101 mW), but **every measured phase reached Heavy** -- a governed capture with no unconstrained window to contrast. Publishable: short-explanation decode ~31 W, ~2.95 J/token, ~10.4 tok/s, pairs reproducing to 0.4%. Long-synthesis is heat-soak documentation, not a row (p1 prefill 2.2x p2's wall time on identical work; 80.9% spread). Recorded with per-arm rows in `docs/POWER_BASELINE.md`. Owed on this install: a `COOLING=max` rerun for the un-governed point, ideally in one session with a `qwen38-27b` capture -- that pairing is the clean same-architecture 2-bit-vs-4-bit comparison this capture cannot be.
 - **Qwen38 row CAPTURED (2026-09-16, 02:04 UTC)**: clean machine (170 mW floor). Long-synthesis decode reproduces to **0.2%** -- ~26.2 W, ~1.507 J/token, ~17.4 tok/s, the tightest multi-pair row on the page and the 4-bit leg of the same-architecture pairing (ternary 2-bit reads ~2.95 J/token at ~10.4 tok/s all-Heavy). Two means REFUSED and recorded per-arm: medium-review p2 ran Heavy and 33% faster than Moderate p1 (label and throughput disagree; unexplained), and short-explanation decodes more expensively than long (arithmetically its cpu_W gap; why the CPU drew 2-4x more is the residual). `docs/POWER_BASELINE.md` has both tables.
-- **Owed on the pairing**: the `COOLING=max` ternary rerun (ideally one session with a qwen38 arm). **Staged 2026-09-19**: both installs re-pulled and walk-verified (`ternary27b.gturbo`, `qwen38-27b.gturbo`), the capture command prepared (`LABEL=ac COOLING=max MODEL=<install> scripts/power.sh 2`, one session, bonsai2 as a third arm); it needs the user's sudo for powermetrics and is the one remaining step. `ornith9b` and `ornith35b` remain MISSING FROM DISK and block their rows.
+- **Owed on the pairing**: the ternary `COOLING=max` arm CAPTURED 2026-09-19 (one three-install session; ternary completed clean: all-Nominal, short decode ~3.35 J/token at ~45.7 W / 13.35 tok/s, pairs to 1.4% -- `docs/POWER_BASELINE.md`; the direction correction vs the governed row is recorded there too: the old Heavy row was the flattering one). The session's TAIL IS OWED: the qwen38 `COOLING=max` arm (what makes the pairing same-condition; the uncooled 1.507 J/tok row stands meanwhile) and the bonsai2 first row were REFUSED by the harness's own preflight when a concurrent Swift build started mid-session. Re-run `/tmp/bonsai2_power_session2.sh` on a quiet machine. `ornith9b` and `ornith35b` remain MISSING FROM DISK and block their rows.
 - **Preflight that both 2026-09-15/16 captures satisfied, and the next one must too** (per `docs/POWER_BASELINE.md` and AGENTS.md Gotchas 22/28/43): AC power (`pmset -g ps`), a quiet machine (the contamination-floor line warns above 2,000 mW; both captures read 101/170 mW), two pairs per case, and `COOLING=max` for a saturating install -- which ternary turned out to BE, so the rerun carries it. One install is one command: `LABEL=ac MODEL=<install> scripts/power.sh 2` (sudo, ~12 min); rows land in `docs/POWER_BASELINE.md` beside the uncooled baseline, per-arm TSV into `docs/verification/`.
+- **Qwen3-VL row CAPTURED (2026-09-19, 20:16 UTC)**: `qwen3vl-4b-vision.gturbo` under `power.sh 2`, clean machine (453 mW floor), all runs Nominal -- an unconstrained row, no `COOLING=max` owed. Short-explanation decode reproduces to **4.5%**: ~32 W, ~0.321 J/token, ~87.5 tok/s -- the cheapest J/token and highest throughput on the page (a 4B dense trunk; qwen38's 27B reads ~1.507 J/token at ~17.4 tok/s). Prefill mean REFUSED: the 0.52 s phase integrates 2-3 samples at the 200 ms interval, so the 37.8% spread is windowing quantization, recorded per-arm in `docs/POWER_BASELINE.md`. The protocol is text-only, so the row prices the TRUNK (tower idle). Medium-review not run: this checkpoint's sampled answer does not terminate (the frozen oracle records it).
 - **DESCOPED (user decision, 2026-09-16): the ornith35b-vs-qwen36 same-session J/tok A/B** -- it wanted ~37 GB of re-pulls (ornith35b 18 GB + qwen36 ~19 GB) for one comparison row; the existing separate rows stand, with their cross-session caveat. This also leaves P4.1's qwen36 KL row without a scheduled pull (its checkpoint row stays pinned in `scripts/kld_mlx_affine.py`; re-open by pulling the install + reference).
 - **Still Open**: the ornith9b re-pull (8.9 GB -- its gates exist with frozen rows and cannot run until it lands) and the ornith35b re-pull (18 GB, same state, unscheduled), the rate-cap sweep (`ARMS=default,30,20,15,10` under `COOLING=max` on gemma4) still owed from the 2026-09-10 entry, and the `COOLING=max` ternary rerun from above.
 
@@ -477,7 +501,7 @@ Re-derived from `ls ~/models` and `ls ~/.turbospark/models` on **2026-09-17** (a
 |---|---|---|
 | `gemma4.gturbo` | 13G | PINNED: smoke, memory oracle, sensitivity proof, mapped residency |
 | `qwen38-27b.gturbo` | 14G | RE-STREAMED 2026-09-15 (pinned index SHA verified). Backs `qwen38_{quality_gate,memory_oracle}`, the qwen38 KL row (P4.1, closed), steering probes, power row CAPTURED 2026-09-16 (P4.3) |
-| `ternary27b.gturbo` | 7.1G | RE-PULLED 2026-09-19 (walk verified against pinned constants). `ternary_{quality_gate,memory_oracle}`; power row CAPTURED 2026-09-15, governed/all-Heavy (P4.3, `docs/POWER_BASELINE.md`); `COOLING=max` rerun STAGED (see P4.3) |
+| `ternary27b.gturbo` | 7.1G | RE-PULLED 2026-09-19 (walk verified against pinned constants). `ternary_{quality_gate,memory_oracle}`; power rows: 2026-09-15 governed/all-Heavy AND 2026-09-19 COOLING=max all-Nominal (P4.3, `docs/POWER_BASELINE.md`) |
 | `bonsai2.gturbo` | 7.6G (`~/.turbospark/models/text/`) | STREAMED 2026-09-19. `bonsai2_{quality_gate,memory_oracle}` [NEW files, P4.2] frozen and asserted: perplexity 5.8134, peak 660 MiB. The Hadamard-folded Bonsai-2 line (`docs/BONSAI2.md`) |
 | `gptoss-20b.gturbo` | 11G | `gptoss_{quality_gate,memory_oracle}`, steering probes (the multi-direction arms ran here), mapped residency |
 | `mistral7b-dense.gturbo` | 4.1G | `mistral_memory_oracle`; quality gate frozen 2026-09-15 (P4.2) |
@@ -503,7 +527,7 @@ Re-derived from `ls ~/models` and `ls ~/.turbospark/models` on **2026-09-17** (a
 | `qwen38-27b-vision-repull.gturbo` | 15G | STREAMED 2026-09-19 through the bytes-detection path (item 9's residual), image-gated on the CLI, then REMOVED per the session's space goal. Re-pull `pull --repo "mlx-community/Qwen3.8-27B-4bit@3e6447f082e89cc7f0bc6e5441afd38dfce760ff" --alias qwen38-27b-vision-repull` |
 | `qwen36-vision.gturbo` | 19G | STREAMED 2026-09-19 (9a's MoE vision artifact; CLI + server + tower-parity gated), then REMOVED. Re-pull `pull --repo "mlx-community/Qwen3.6-35B-A3B-4bit@38740b847e4cb78f352aba30aa41c76e08e6eb46" --alias qwen36-vision` |
 | `qwen36.gturbo` | 19G | RE-STREAMED 2026-09-19 (its bytes carry the tower, so the pull is combined), then REMOVED |
-| `qwen3vl-4b-vision.gturbo` | 2.9G | STREAMED 2026-09-19 (9b's combined deepstack install; all four real-install gates + 7-stage parity), then REMOVED. Re-pull `pull --repo "mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b" --alias qwen3vl-4b-vision` |
+| `q3vl-4b-vision.gturbo` | 2.9G | STREAMED 2026-09-19 (9b's combined deepstack install; all four real-install gates + 7-stage parity), re-pulled 2026-09-19 and now ON DISK backing the 9b KL + power rows; remove when those are superseded |
 | `qwen3vl-tower.gturbo-vision`, `qwen36-tower.gturbo-vision` | 0.8G, 0.9G | Sidecar towers STREAMED 2026-09-19 (`pull-vision`), attach- and parity-gated, then REMOVED |
 | `vision-probe-qwen3vl/`, `vision-probe-qwen36/` (in `~/.turbospark/`) | 0.8G each | Reference tower dumps for `vision_tower_probe.py` (mlx-vlm stage-2 parity), then REMOVED |
 

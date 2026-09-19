@@ -799,10 +799,88 @@ clean -- `qwen38-27b` (4-bit, same architecture, install on disk since
 
 ### Still owed on this install
 
-A `COOLING=max` capture, for the unconstrained point this capture could not
-produce (the museglimmer precedent says pinned fans read BETTER J/token, so
-expect the number to move down, and per that section's rule the cooled row
-publishes beside this one, never instead of it).
+~~A `COOLING=max` capture, for the unconstrained point this capture could not
+produce.~~ DONE 2026-09-19, section above; its prediction about the direction
+of the J/token move is corrected there too.
+
+## Ternary-Bonsai 27B: the COOLING=max un-governed point (2026-09-19)
+
+The rerun the 2026-09-15 section owed, and the ternary half of ROADMAP P4.3's
+same-architecture pairing. `LABEL=ac COOLING=max
+MODEL=~/models/ternary27b.gturbo scripts/power.sh 2`, rev `0bba0866` dirty,
+re-pulled install (manifest sha
+`e058c06efa10d29db9cdb5d1b5e8d85f46a8e962f70a329726b789d535afb476`), 2 pairs,
+200 ms, all three cases, arms `default`, 19:17 UTC. Fans pinned 3565/3589 ->
+5777 RPM before the first sample and restored after. Contamination floor
+**160 mW** over 9,696 samples: clean. **Every measured row read Nominal** --
+the un-governed point, which is what the rerun existed to produce. Per-arm
+rows and provenance archived at
+`docs/verification/power-ternary27b-2026-09-19-cooling-max.tsv` and
+`...-system.txt`.
+
+### The row that reproduces
+
+Short-explanation decode, both pairs Nominal:
+
+| | p1 | p2 | spread |
+| --- | ---: | ---: | ---: |
+| watts | 46.42 | 44.88 | 3.4% |
+| J/token | 3.4001 | 3.3082 | 1.4% |
+| tok/s | 13.350 | 13.344 | 0.04% |
+
+Prefill pairs read 3.5841 against 3.3795 J/token (5.7%). So the publishable
+sentence: **short-explanation decode on the 2-bit dense install, UN-governed
+under pinned fans, reads ~45.7 W and ~3.35 J/token at ~13.35 tok/s,
+reproducing to 1.4% (tok/s to 0.04%).** Publish beside the 2026-09-15
+governed row, never instead of it: fans pinned is an upper-headroom operating
+point no user occupies.
+
+### The two captures answer each other, and the direction is the finding
+
+| short-explanation decode | governed (09-15, all Heavy) | un-governed (09-19, Nominal, fans pinned) |
+| --- | ---: | ---: |
+| watts | ~31.1 | ~45.7 |
+| J/token | ~2.95 | ~3.35 |
+| tok/s | ~10.4 | ~13.35 |
+
+The un-governed point is +28% throughput at +13.6% J/token. The museglimmer
+section predicted the cooled J/token would move DOWN; it moved UP, and the
+reason is that this comparison is not that one: museglimmer compared
+cooled-auto against unconstrained-auto (both free-running clocks, where
+cooling removes leakage), while this compares cooled-Nominal against
+Heavy-governed -- and governance itself was the J/token discount. Gotcha 28's
+direction trap, seen from the other side: the throttled arm reads slower AND
+more energy-efficient per token, so the OLD governed row was the flattering
+one, and any cross-condition comparison against it overstates the 2-bit
+install's efficiency.
+
+The same correction re-reads the qwen38 pairing below: against the clean
+ternary point, 2-bit reads ~2.2x the J/token of the 4-bit leg (3.35 vs
+1.507) at ~77% of its throughput (13.35 vs 17.4) -- not "~2x at ~40%", which
+is what a Heavy ternary against a free-running qwen38 suggested. The
+remaining caveat is symmetry: the qwen38 row was captured UNCOOLED, so its
+COOLING=max rerun (same session as this one's script intended; refused by a
+concurrent Swift build, see below) is what completes the clean pairing.
+
+### What still does not reproduce
+
+Medium-review decode spread 33.4% across pairs (p1 4.1167 against p2 2.9384
+J/token; p2's cpu_W halved mid-capture) and long-synthesis decode 52.8% (p2
+5.1355 against p1 2.9905; its prefill drew 29 W of CPU against p1's 1.5 W).
+Long-synthesis is heat-soak documentation again, even under pinned fans -- 209
+s of prefill soaks the SOC regardless of airflow -- and the medium spread has
+no Nominal/Heavy story to blame this time. Read rows.tsv per arm; the summary
+warned on both and the mean describes neither.
+
+### Interrupted session note
+
+The script that ran this capture was a three-install session (ternary ->
+qwen38 -> bonsai2, one thermal condition). The ternary capture completed
+clean; the qwen38 capture was then REFUSED by the harness's own preflight --
+a concurrent Swift release build had started (swift-frontend, 14 threads) and
+`another model process is running; results would be contaminated` is exactly
+the right refusal. The bonsai2 arm did not run either. The remaining two
+captures are the owed tail of this session.
 
 ## Qwen3.8-27B 4-bit: the pairing row, and two refused means (2026-09-16)
 
@@ -868,6 +946,55 @@ quantitative on one architecture. The caveat from the ternary section
 stands but shrinks: the thermal states differ (all-Heavy against mixed),
 so the clean version is still the `COOLING=max` ternary rerun, ideally in
 one session with a qwen38 arm for the paired reading.
+
+## Qwen3-VL-4B (deepstack vision install): the cheapest row on the page (2026-09-19)
+
+ROADMAP 9b's power row, on the combined `qwen3vl-4b-vision.gturbo` install
+(`mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacb`, manifest sha
+`abef5dec968cfd06a37a36e1ba37f27341da7a43e867f7bcb9dccb8bb6cb819c`).
+`LABEL=ac MODEL=... CASES="short-explanation" scripts/power.sh 2`, rev
+`0bba0866` dirty, M4 Max 36 GB, macOS 26.6.2, 2 pairs, 200 ms, cooling
+`auto`, 20:16 UTC. Contamination floor **453 mW** over 202 samples: clean.
+Per-arm rows and provenance archived at
+`docs/verification/power-qwen3vl-4b-2026-09-19.tsv` and `...-system.txt`.
+
+**The protocol is text-only; the row prices the TRUNK.** `turbospark-bench`
+drives the standard protocol cases, so the vision tower and the deepstack
+injection are idle the whole capture -- this row says what the 4B dense
+llama-flow trunk costs per token, and nothing about an image run's energy.
+Only `short-explanation` ran: this checkpoint's sampled `medium-review`
+answer does not terminate (the frozen memory oracle records it, tinyllama
+precedent), so that case is unusable here by the checkpoint's own behavior.
+
+### The decode row that reproduces
+
+552-token decode, 58-token prefill, every run Nominal -- no governed window
+anywhere, so unlike the ternary capture this row is unconstrained on its own
+chassis:
+
+| | p1 | p2 | spread |
+| --- | ---: | ---: | ---: |
+| decode W | 32.12 | 31.90 | 0.7% |
+| decode J/token | 0.3280 | 0.3135 | 4.5% |
+| decode tok/s | 87.5 | 87.5 | ~0.04% |
+| prefill J/token | 0.2358 | 0.3456 | REFUSED |
+
+**~32 W and ~0.321 J/token at ~87.5 tok/s is this install's decode cost** --
+the cheapest J/token and the highest throughput of any row on this page
+(qwen38 4-bit reads ~1.507 J/token at ~17.4 tok/s; this is a 4B dense trunk
+against a 27B one, so the ratio is the model-size story, not a kernel one).
+GPU-dominated as expected for a big-model GEMV loop: gpu_W ~30.3-30.6
+against cpu_W ~1.5-2.0, E% 74-79.
+
+### The refused prefill mean, and why it is a windowing artifact
+
+The summary warned 37.8% prefill spread across identical work. The rows say
+why: p2's prefill integrated only ~3 samples over its 0.52-second window at
+the 200 ms interval (the script's own second warning), so sample
+quantization dominates a phase this short. Recorded per-arm, not averaged;
+a prefill row for this install would need a shorter interval or a
+longer-prompt case, and neither is owed -- the 58-token protocol prefill is
+not the interesting energy question for a 4B trunk.
 
 ## Battery, and what differs
 

@@ -83,6 +83,22 @@ CHECKPOINTS = {
         "revision": "3e6447f082e89cc7f0bc6e5441afd38dfce760ff",
         "model_type": "qwen3_5",
     },
+    # The qwen3_vl deepstack install (ROADMAP 9b): the KL row is the one
+    # instrument that sees the SECOND injection seam end to end, because it
+    # compares full-model logits after the deepstack adds and the mRoPE
+    # angles, where the tower parity stops at the merger's output.
+    "qwen3vl-4b-vision": {
+        "repo": "mlx-community/Qwen3-VL-4B-Instruct-4bit",
+        "revision": "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b",
+        "model_type": "qwen3_vl",
+    },
+    # The MoE vision artifact (ROADMAP 9a): the dense KL row cannot stand in
+    # for it -- same tower shape, different trunk and family identifier.
+    "qwen36-vision": {
+        "repo": "mlx-community/Qwen3.6-35B-A3B-4bit",
+        "revision": "38740b847e4cb78f352aba30aa41c76e08e6eb46",
+        "model_type": "qwen3_5_moe",
+    },
 }
 
 DEFAULT_QUESTION = "Transcribe the text in this image."
