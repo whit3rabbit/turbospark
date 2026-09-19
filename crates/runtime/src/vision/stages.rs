@@ -173,3 +173,83 @@ pub(crate) fn encode_merger(
     )
     .map_err(gpu_err)
 }
+
+/// `out = fc2(gelu_erf(fc1(norm(x viewed as merged rows))))` for ONE
+/// deepstack merger.
+///
+/// # The norm is the POST-SHUFFLE one, the opposite of [`encode_merger`]'s
+///
+/// The reference builds the deepstack mergers with `use_postshuffle_norm=True`
+/// (`mlx_vlm/models/qwen3_vl/vision.py`): the reshape to
+/// `[-1, hidden * merge^2]` happens FIRST and the LayerNorm runs on the
+/// concatenated row, where the main merger norms per patch row and reshapes
+/// after. Same bytes in, a DIFFERENT function out -- norming the wrong width
+/// is fluent-wrong in exactly the way `docs/VISION.md`'s "Six things" section
+/// catalogs. `x` here is `s.x` read as `[merged, merger_in]`, which costs
+/// nothing: the patch rows are emitted in merge-window order, so the view is
+/// the same bytes reinterpreted.
+///
+/// The erf GELU matches the main merger (`nn.GELU()`, no `approx`), and the
+/// result lands in `s.out`, the main merger's own output buffer -- the
+/// deepstack mergers run MID-LOOP, each is read back to the host before
+/// `s.out` is next written, and the main merger's final output is the last
+/// thing written, so the reuse never overlaps a live value.
+pub(crate) fn encode_deepstack_merger(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    merger: &super::weights::DeepstackMergerWeights,
+    s: &VisionScratch,
+    shape: &VisionShape,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let merger_in = shape.merger_input();
+
+    gpu::encode_vision_layer_norm(
+        context,
+        pass,
+        (&s.x, 0),
+        (weights.buffer(), weights.gpu_offset(merger.norm_w)),
+        (weights.buffer(), weights.gpu_offset(merger.norm_b)),
+        (&s.normed, 0),
+        s.merged as u32,
+        merger_in as u32,
+        VISION_LAYER_NORM_EPS,
+    )
+    .map_err(gpu_err)?;
+
+    gpu::encode_vision_matmul(
+        context,
+        pass,
+        (&s.normed, 0),
+        (weights.buffer(), weights.gpu_offset(merger.fc1_w)),
+        Some((weights.buffer(), weights.gpu_offset(merger.fc1_b))),
+        (&s.m1, 0),
+        s.merged as u32,
+        merger_in as u32,
+        merger_in as u32,
+    )
+    .map_err(gpu_err)?;
+
+    gpu::encode_vision_gelu(
+        context,
+        pass,
+        (&s.m1, 0),
+        (s.merged * merger_in) as u32,
+        gpu::GeluKind::Erf,
+    )
+    .map_err(gpu_err)?;
+
+    gpu::encode_vision_matmul(
+        context,
+        pass,
+        (&s.m1, 0),
+        (weights.buffer(), weights.gpu_offset(merger.fc2_w)),
+        Some((weights.buffer(), weights.gpu_offset(merger.fc2_b))),
+        (&s.out, 0),
+        s.merged as u32,
+        merger_in as u32,
+        shape.out_hidden as u32,
+    )
+    .map_err(gpu_err)
+}

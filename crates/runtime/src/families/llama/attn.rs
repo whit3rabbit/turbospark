@@ -24,6 +24,7 @@ pub(crate) fn encode_attention_block(
     kv: &gpu::KvCacheManager,
     layer: usize,
     position: usize,
+    rope_position: crate::vision::RopePosition,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
@@ -129,14 +130,47 @@ pub(crate) fn encode_attention_block(
 
     // One theta for every layer: this architecture publishes `rope.freq_base`
     // and no `freq_base_swa`, so `arch_from_gguf` sets both fields from it.
+    //
+    // The mRoPE arm is `qwen3_vl`'s image positions and is the SAME
+    // construction `families/qwen/attn.rs` runs for its tower, one flow over:
+    // `position` keeps its KV-slot and attention-span jobs either way and
+    // only the ANGLE moves, `t == h == w` still takes the pre-existing kernel
+    // below, and the interleaved kernel shares `apply_neox_pair` with
+    // `encode_rope_neox_subdim` -- at `rotated_pairs * 2 == head_dim`
+    // (qwen3_vl's FULL rotary, `partial_rotary_factor` 1.0) its pair
+    // structure is `rope_proportional_neox`'s exactly, which is what makes
+    // the degenerate arm a bit-identity here too.
+    let mrope = match rope_position {
+        crate::vision::RopePosition::Sequential => None,
+        crate::vision::RopePosition::Triple(t, h, w) if t == h && h == w => None,
+        crate::vision::RopePosition::Triple(t, h, w) => Some((t as u32, h as u32, w as u32)),
+    };
+    let scalar = match rope_position {
+        crate::vision::RopePosition::Sequential => position as u32,
+        crate::vision::RopePosition::Triple(t, _, _) => t as u32,
+    };
+    let section = arch.vision.mrope_section;
     let theta = arch.full_rope_theta as f32;
     for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
-        if arch.rope_neox_subdim {
+        if let Some(positions) = mrope {
+            gpu::encode_rope_mrope_interleaved(
+                context,
+                pass,
+                data,
+                positions,
+                heads,
+                head_dim,
+                llama.rotated_pairs * 2,
+                (section[0] as u32, section[1] as u32, section[2] as u32),
+                theta,
+            )
+            .map_err(gpu_err)?;
+        } else if arch.rope_neox_subdim {
             gpu::encode_rope_neox_subdim(
                 context,
                 pass,
                 data,
-                position as u32,
+                scalar,
                 heads,
                 head_dim,
                 llama.rotated_pairs * 2,
@@ -148,7 +182,7 @@ pub(crate) fn encode_attention_block(
                 context,
                 pass,
                 data,
-                position as u32,
+                scalar,
                 heads,
                 head_dim,
                 llama.rotated_pairs,
@@ -237,6 +271,8 @@ impl crate::real_forward::RealForwardRunner {
         )
         .map_err(gpu_err)?;
 
+        // The MoE chunked driver serves no vision-capable family (the
+        // qwen3_vl trunk is dense), so its angle is always the raw position.
         encode_attention_block(
             &mut self.context,
             pass,
@@ -248,6 +284,7 @@ impl crate::real_forward::RealForwardRunner {
             &self.kv,
             layer,
             position,
+            crate::vision::RopePosition::Sequential,
         )?;
 
         // RAW residual add, matching the sequential flow: this

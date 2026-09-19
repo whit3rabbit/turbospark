@@ -223,6 +223,9 @@ pub(crate) fn stream_mlx(
     // which a `--repo` pull never has; the shard headers are the other half of
     // the answer and they are in hand by this line.
     enable_bytes_detected_vision(plan, family, &mut arch, &headers, &config_text)?;
+    if arch.vision.is_active() {
+        install_vision_preprocessor(plan, dir, client)?;
+    }
 
     // A separate repository carrying a multi-token-prediction head this
     // artifact's own conversion drops (`docs/MTP_SPECULATIVE.md` step 1).
@@ -311,9 +314,12 @@ fn enable_requested_vision(
     if !plan.include_vision {
         return Ok(());
     }
-    if family != ModelFamily::QwenGdnDense {
+    if !matches!(
+        family,
+        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+    ) {
         return Err(format!(
-            "{}: combined vision ingestion is only wired for qwen35 dense models",
+            "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE              and qwen3_vl trunks",
             plan.alias
         ));
     }
@@ -367,7 +373,10 @@ fn enable_bytes_detected_vision(
     // enabled tower under a family that buckets the prefix as
     // `ExcludedMultimodal` would write a manifest declaring tensors the
     // install does not carry).
-    if !matches!(family, ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe) {
+    if !matches!(
+        family,
+        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+    ) {
         return Ok(());
     }
     let carries_tower = headers.iter().any(|h| {
@@ -414,6 +423,67 @@ fn enable_bytes_detected_vision(
     Ok(())
 }
 
+/// Fetch the checkpoint's `preprocessor_config.json` into an install whose
+/// tower was enabled from BYTES (ROADMAP P2.9 residual).
+///
+/// A catalog row's `include_vision` intent carries the file in its own
+/// sidecar list, fetched before the walk runs; a probe-driven `--repo` pull
+/// has no row, and `KNOWN_SIDECARS` is a tokenizer list that has never named
+/// the preprocessor config. Without this the install opens, decodes text,
+/// and refuses its first image with "this install declares no image
+/// preprocessing config" -- a combined install that cannot see was exactly
+/// the silent-drop class the bytes detection replaced, one file over.
+///
+/// **A 404 REFUSES RATHER THAN WARNS.** The bytes detection has already
+/// established the tower is real, and `vision_dir()` names this file as the
+/// one place every image consumer reads, so an install without it is a
+/// booby trap: refuse by name and let the walk's staging directory go away.
+/// Any other transport failure says so (an unauthenticated gated repo is the
+/// `probe`'s own 401 case, not a missing file).
+fn install_vision_preprocessor(
+    plan: &InstallPlan,
+    dir: &Path,
+    client: &Client,
+) -> Result<(), String> {
+    let fetched = client
+        .get_optional(&plan.weights.file_url("preprocessor_config.json"))
+        .map_err(|e| {
+            format!(
+                "fetching preprocessor_config.json from {}: {e}. If this is a gated \
+                 repository refusing an unauthenticated request rather than a missing \
+                 file, export HF_TOKEN and re-run.",
+                plan.weights
+            )
+        });
+    write_vision_preprocessor(&plan.weights, &dir.join("preprocessor_config.json"), fetched)
+}
+
+/// The decision half of [`install_vision_preprocessor`], split so the
+/// keep-existing, 404-refusal and write paths are testable without a
+/// transport. The fetch itself happens unconditionally in the caller: the
+/// file is KB-scale, and deciding from the fetch result keeps the
+/// exists-check and the bytes in one place.
+fn write_vision_preprocessor(
+    weights: &crate::hf::RepoRef,
+    dest: &Path,
+    fetched: Result<Option<Vec<u8>>, String>,
+) -> Result<(), String> {
+    if dest.is_file() {
+        // The catalog-intent path fetched it with the rest of the row's
+        // sidecars; keep those bytes rather than second-guessing them.
+        return Ok(());
+    }
+    match fetched {
+        Ok(Some(bytes)) => std::fs::write(dest, bytes)
+            .map_err(|e| format!("writing {}: {e}", dest.display())),
+        Ok(None) => Err(format!(
+            "{weights} ships a vision tower but no preprocessor_config.json; this port \
+             cannot preprocess images for it, so the combined install is refused"
+        )),
+        Err(e) => Err(e),
+    }
+}
+
 /// The multi-token-prediction head's shard(s), read from a repository
 /// SEPARATE from the trunk and filtered down to its `mtp.`-prefixed tensors
 /// alone.
@@ -444,11 +514,15 @@ fn fetch_mtp_shards(
         cancel,
     )
     .map_err(|e| {
-        // Preserve the original wording for the "nothing matched" case,
-        // which named the head explicitly rather than a generic prefix
-        // list -- nothing tests the string today, but a caller reading a
-        // failed `pull --reuse-trunk-from` error deserves the specific one.
-        if e.contains("declares no tensor under") {
+        // Preserve the head-specific wording for the "nothing matched"
+        // cases, which name the head rather than a generic prefix list --
+        // nothing tests the string today, but a caller reading a failed
+        // `pull --reuse-trunk-from` error deserves the specific one. The
+        // second form is the single-file fallback's ("model.safetensors
+        // carries no tensor under ... after filtering"), reached when the
+        // index named nothing that survived `retain_existing_shard_names`
+        // and the consolidated file carries no head either.
+        if e.contains("declares no tensor under") || e.contains("carries no tensor under") {
             format!("{mtp} declares no mtp.* tensor; the catalog row's mtp source is wrong")
         } else {
             e
@@ -551,14 +625,20 @@ pub(crate) fn fetch_prefixed_shards(
                 shard_names.insert(file.to_string());
             }
             None => {
-                return Err(format!(
-                    "{repo} declares no tensor under {prefixes:?} {}; pass an explicit file",
-                    if indexed.is_some() {
-                        "in its shard index"
-                    } else {
-                        "and has no shard index"
-                    }
-                ));
+                // The single-file convention, the same fallback
+                // [`shard_names`] makes for the trunk: the repo may carry
+                // one consolidated `model.safetensors` that NO index names
+                // -- because it ships none (`Qwen/Qwen3-VL-4B-Instruct`) or
+                // because its index describes an earlier sharding pass and
+                // every name it lists was just dropped as stale
+                // (`mlx-community/Qwen3-VL-4B-Instruct-4bit`, the same repo
+                // `retain_existing_shard_names` was written for). The
+                // prefix filter cannot consult the single file's header
+                // before this point, so the caller's own
+                // "no `VISION_PREFIX` tensor after canonicalization"
+                // refusal is what catches a repo whose one file carries no
+                // tower.
+                shard_names.insert("model.safetensors".to_string());
             }
         }
     }
@@ -639,6 +719,9 @@ pub(crate) fn stream_vision_sidecar(
         }
         ModelFamily::Qwen4Exp => {
             repack::parse_qwen4_exp_config(&config_text).map_err(|e| e.to_string())
+        }
+        ModelFamily::Qwen3Vl => {
+            repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
         }
         other => Err(format!(
             "{} has no safetensors intake here, so its vision tower cannot be read either",
@@ -779,7 +862,10 @@ pub(crate) fn shard_names(plan: &InstallPlan, client: &Client) -> Result<Vec<Str
 
 #[cfg(test)]
 mod tests {
-    use super::{enable_bytes_detected_vision, enable_requested_vision, shard_names_for_prefixes};
+    use super::{
+        enable_bytes_detected_vision, enable_requested_vision, shard_names_for_prefixes,
+        write_vision_preprocessor,
+    };
     use crate::{Catalog, InstallPlan};
     use model_io::ModelFamily;
     use repack::{SafetensorsHeader, TensorInfo, VISION_PREFIX};
@@ -982,6 +1068,70 @@ mod tests {
                 arch.family.as_str()
             );
         }
+    }
+
+    /// A bytes-enabled tower lands with its preprocessor config beside the
+    /// install, the file `vision_dir()` names as the one place every image
+    /// consumer reads.
+    #[test]
+    fn a_bytes_enabled_tower_writes_the_preprocessor_config() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-preprocessor-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("preprocessor_config.json");
+        write_vision_preprocessor(
+            &crate::hf::RepoRef::new("example/vlm", "main"),
+            &dest,
+            Ok(Some(b"{\"patch_size\": 16}".to_vec())),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"{\"patch_size\": 16}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_tower_without_a_preprocessor_config_refuses_by_name() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-preprocessor-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("preprocessor_config.json");
+        let err = write_vision_preprocessor(
+            &crate::hf::RepoRef::new("example/vlm", "main"),
+            &dest,
+            Ok(None),
+        )
+        .unwrap_err();
+        assert!(err.contains("preprocessor_config.json"), "{err}");
+        assert!(!dest.is_file(), "a refusal must not leave a partial file");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The catalog-intent path fetches the file with the row's own sidecars;
+    /// the bytes-path helper must keep those bytes rather than overwrite.
+    #[test]
+    fn an_existing_preprocessor_config_is_kept() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-preprocessor-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("preprocessor_config.json");
+        std::fs::write(&dest, b"row-fetched").unwrap();
+        write_vision_preprocessor(
+            &crate::hf::RepoRef::new("example/vlm", "main"),
+            &dest,
+            Ok(Some(b"bytes-path".to_vec())),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"row-fetched");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

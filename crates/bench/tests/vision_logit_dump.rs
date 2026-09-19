@@ -376,6 +376,7 @@ fn dump_text_and_image_logits() {
             merged_tokens: shape[0],
             out_hidden: shape[1],
             grid: header.grid,
+            deepstack: Vec::new(),
         }
     } else {
         runner

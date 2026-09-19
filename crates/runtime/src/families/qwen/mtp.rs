@@ -53,8 +53,9 @@ pub(crate) use super::mtp_state::MtpState;
 use super::mtp_state::{
     FC, FINAL_NORM, PRE_FC_NORM_EMBEDDING, PRE_FC_NORM_HIDDEN, TRUNK_FINAL_NORM,
 };
+use crate::vision::RopePosition;
 use crate::families::qwen::{
-    dense, encode_full_attention_block, prefixed_layer_tensor, QkNormConvention, RopePosition,
+    dense, encode_full_attention_block, prefixed_layer_tensor, QkNormConvention,
     MTP_PREFIX, RMS_EPS,
 };
 use crate::real_forward::{RealForwardError, RealForwardRunner};

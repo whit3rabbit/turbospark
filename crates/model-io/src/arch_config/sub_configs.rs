@@ -138,7 +138,7 @@ impl LinearAttentionConfig {
 /// floats with `!=` against a serde_json parser accurate to ~1 ULP, so a
 /// non-binary-fraction float here could not round-trip (AGENTS.md Gotcha 24).
 /// Everything the tower needs is an integer count or a token id.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VisionConfig {
     /// Transformer blocks in the tower. ZERO is the inactive sentinel and is
     /// unambiguous: a real tower cannot have none.
@@ -172,6 +172,23 @@ pub struct VisionConfig {
     /// from the vision block; it describes how the TRUNK consumes image
     /// positions, and it is here because nothing else carries it.
     pub mrope_section: [i64; 3],
+    /// Block indices whose outputs feed the DEEPSTACK mergers
+    /// (`vision_config.deepstack_visual_indexes`), raw-added into the trunk
+    /// residual at image positions after trunk layers `0..len` respectively
+    /// (mlx-vlm `qwen3_vl/language.py::_deepstack_process`; index `k`'s
+    /// merger output belongs after trunk layer `k`, NOT after block
+    /// `indexes[k]`). EMPTY on every `qwen3_5` checkpoint, where the key is
+    /// present but `[]`; absent means the same thing, because the format's
+    /// own default is an empty list (`qwen3_vl/config.py`'s
+    /// `default_factory`), not a sibling's answer (AGENTS.md Gotcha 39).
+    ///
+    /// A `Vec` rather than a fixed array on purpose: the count is the
+    /// checkpoint's choice of merger count (three on `qwen3_vl`-4B), and the
+    /// trunk layers it injects after are `0..len`, so a second checkpoint
+    /// with a different count is a data change here and not a schema
+    /// migration. This drops `Copy` from the struct; `ArchConfig` is
+    /// `Clone` already and every by-value use was `VisionConfig::NONE`.
+    pub deepstack_visual_indexes: Vec<i64>,
     /// `<|vision_start|>`.
     pub vision_start_token_id: i64,
     /// `<|vision_end|>`.
@@ -196,6 +213,7 @@ impl VisionConfig {
         num_position_embeddings: 0,
         out_hidden_size: 0,
         mrope_section: [0, 0, 0],
+        deepstack_visual_indexes: Vec::new(),
         vision_start_token_id: 0,
         vision_end_token_id: 0,
         image_token_id: 0,

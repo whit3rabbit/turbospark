@@ -45,7 +45,7 @@ mod stages;
 mod weights;
 
 pub use budget::{PixelBudget, VisionBudgetTooSmall};
-pub use inject::PromptVision;
+pub use inject::{PromptVision, RopePosition};
 
 use std::path::Path;
 
@@ -98,6 +98,23 @@ pub struct VisionEmbedding {
     /// The patch grid the rows came from, carried so a caller can check a
     /// span length against it rather than recomputing the merge arithmetic.
     pub grid: turbospark_vision_io::GridThw,
+    /// The deepstack mergers' outputs, one per `VisionShape::deepstack`
+    /// entry, in that order: entry `k` is injected after TRUNK layer `k` at
+    /// this image's positions. Each carries `merged_tokens * out_hidden`
+    /// values -- the same merge geometry and output width as `rows` -- and
+    /// EMPTY for a tower without deepstack (every `qwen3_5` tower).
+    ///
+    /// Host rows for the same reason `rows` is: the trunk-side add writes
+    /// per-position rows from host-visible storage.
+    pub deepstack: Vec<DeepstackRows>,
+}
+
+/// One deepstack merger's output rows, `merged_tokens * out_hidden` FP16
+/// bits. A named struct rather than a bare `Vec<u16>` so a caller cannot
+/// confuse an injection's rows with the main embedding's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeepstackRows {
+    pub rows: Vec<u16>,
 }
 
 /// The residual stream at three points inside the tower, for the
@@ -121,6 +138,10 @@ pub struct VisionStages {
     pub block_first: Vec<u16>,
     /// After the last block, before the merger.
     pub block_last: Vec<u16>,
+    /// Each deepstack merger's output, in the config's index order; EMPTY
+    /// for a tower without deepstack. Same merge geometry as the merger
+    /// stage's own rows, `[merged, out_hidden]` FP16 bits.
+    pub deepstack: Vec<Vec<u16>>,
 }
 
 /// The tower: its streamer, its weights, and the position table.
@@ -558,6 +579,8 @@ impl VisionTower {
         let pos = stages::pos_embed_rows(&self.pos_table, &table, &self.shape)?;
 
         gpu::autorelease_pool(|| {
+            let mut deepstack_out: Vec<DeepstackRows> =
+                Vec::with_capacity(self.shape.deepstack.len());
             let s = VisionScratch::allocate(
                 context,
                 &self.shape,
@@ -660,6 +683,48 @@ impl VisionTower {
                 if let Some(o) = self.overflow.as_mut() {
                     o.check_block(n, &s.x, wide)?;
                 }
+
+                // A deepstack block's output feeds its own merger INSTEAD of
+                // being carried anywhere: the block loop's residual in `s.x`
+                // keeps running, the merger reads it, and the merger's
+                // `[merged, out_hidden]` result is read back to the host,
+                // where the trunk's prefill adds it after layer `k`. The
+                // merger gets its own pass with its own wait, because the
+                // host readback needs the GPU done even on the mapped arm
+                // (which skips the per-block wait when nobody is reading).
+                if let Some(k) = self.shape.deepstack.iter().position(|&i| i == n) {
+                    let merger = self
+                        .resident
+                        .deepstack_mergers
+                        .get(k)
+                        .ok_or_else(|| {
+                            RealForwardError::Unsupported(format!(
+                                "deepstack block {n} is slot {k} of {} resolved mergers; the \
+                                 install's resident index is missing the merger this config \
+                                 declares",
+                                self.resident.deepstack_mergers.len()
+                            ))
+                        })?;
+                    let pass = context.begin_pass();
+                    stages::encode_deepstack_merger(
+                        context,
+                        &pass,
+                        self.sidecar_weights.as_ref().unwrap_or(weights),
+                        merger,
+                        &s,
+                        &self.shape,
+                    )?;
+                    pass.commit_and_wait();
+                    let count = s.merged * self.shape.out_hidden;
+                    let ds_rows: Vec<u16> = gpu::read_buffer_f16(&s.out, 0, count)
+                        .into_iter()
+                        .map(|v| v.to_bits())
+                        .collect();
+                    if let Some(c) = capture.as_mut() {
+                        c.deepstack.push(ds_rows.clone());
+                    }
+                    deepstack_out.push(DeepstackRows { rows: ds_rows });
+                }
             }
 
             let pass = context.begin_pass();
@@ -684,6 +749,7 @@ impl VisionTower {
                     merged_tokens: s.merged,
                     out_hidden: self.shape.out_hidden,
                     grid: image.grid,
+                    deepstack: deepstack_out,
                 },
                 capture,
             ))

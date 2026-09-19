@@ -74,6 +74,10 @@ pub fn tiny_vision_config() -> VisionConfig {
         // fixture's bytes depends on it, and inventing a different one would
         // make the fixture disagree with every published file for no reason.
         mrope_section: [11, 11, 10],
+        // The published qwen3_5 checkpoints' value: the key present and
+        // empty. A deepstack-bearing synthetic fixture is a qwen3_vl question
+        // and this one is not that fixture.
+        deepstack_visual_indexes: Vec::new(),
         vision_start_token_id: 248_053,
         vision_end_token_id: 248_054,
         image_token_id: 248_056,

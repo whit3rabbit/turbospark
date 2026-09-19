@@ -22,7 +22,9 @@ use crate::real_forward_types::RealForwardError;
 /// merger construct.
 pub(crate) const VISION_LAYER_NORM_EPS: f32 = 1e-6;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+// No `Copy`: the deepstack indexes are a `Vec`. Every use was `&self.shape`
+// or a field read, which `Clone` serves.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct VisionShape {
     pub(crate) depth: usize,
     pub(crate) hidden: usize,
@@ -46,6 +48,14 @@ pub(crate) struct VisionShape {
     /// conversion (Part B3), which needs `patch_size * merge` the same way
     /// `turbospark_vision_io::PreprocessParams::spatial_factor` does.
     pub(crate) patch_size: usize,
+    /// Block indices whose outputs feed the deepstack mergers, as usize,
+    /// ascending, each below [`Self::depth`]. EMPTY for a tower without
+    /// deepstack (every `qwen3_5` tower); `[5, 11, 17]` on the `qwen3_vl`-4B
+    /// tower. The merger at slot `k` of `VisionResident::deepstack_mergers`
+    /// belongs to [`Self::deepstack`][`k`], and its output is injected after
+    /// TRUNK layer `k` -- the injection depth is the slot order, never the
+    /// block index.
+    pub(crate) deepstack: Vec<usize>,
 }
 
 impl VisionShape {
@@ -140,6 +150,17 @@ impl VisionShape {
             )));
         }
 
+        let mut deepstack = Vec::with_capacity(vision.deepstack_visual_indexes.len());
+        for &idx in &vision.deepstack_visual_indexes {
+            if idx < 0 || idx >= vision.depth {
+                return Err(unsupported(format!(
+                    "deepstack_visual_indexes holds {idx}, outside this tower's depth of {}",
+                    vision.depth
+                )));
+            }
+            deepstack.push(idx as usize);
+        }
+
         Ok(Self {
             depth,
             hidden,
@@ -152,6 +173,7 @@ impl VisionShape {
             pos_rows,
             pos_side,
             patch_size: patch,
+            deepstack,
         })
     }
 }

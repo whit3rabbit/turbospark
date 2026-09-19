@@ -328,12 +328,19 @@ fn compare_stages_against_dump(
         .expect("encode");
 
     let last = format!("block_{}", depth - 1);
-    let arms: [(&str, Vec<f32>); 4] = [
-        ("patch_embed", to_f32(&stages.patch_embed)),
-        ("block_0", to_f32(&stages.block_first)),
-        (last.as_str(), to_f32(&stages.block_last)),
-        ("merger", to_f32(&embedding.rows)),
+    let mut arms: Vec<(String, Vec<f32>)> = vec![
+        ("patch_embed".to_string(), to_f32(&stages.patch_embed)),
+        ("block_0".to_string(), to_f32(&stages.block_first)),
+        (last, to_f32(&stages.block_last)),
+        ("merger".to_string(), to_f32(&embedding.rows)),
     ];
+    // The deepstack mergers, when the tower has them (`qwen3_vl`): compared
+    // at the SAME bar, because a second injection seam that read the wrong
+    // merger or the wrong block's rows is exactly as fluent as a wrong
+    // main merger.
+    for (k, ds) in stages.deepstack.iter().enumerate() {
+        arms.push((format!("deepstack_merger_{k}"), to_f32(ds)));
+    }
 
     // `worst/absmax` is REPORTED and not gated. It is the honest companion to
     // the cosine on a tensor with outlier features: the worst absolute error

@@ -272,6 +272,13 @@ def mode_dump(mx, args, VisionModel, VisionConfig, Qwen3VLImageProcessor):
         h = blk(h, cu_seqlens=cu, rotary_pos_emb=rope)
         if i == 0:
             keep("block_0", h)
+        # The DEEPSTACK mergers (`qwen3_vl`'s second injection seam): one
+        # per declared index, run on the block output the way the tower's
+        # own forward does, so the Rust side can compare each merger's
+        # `[merged, out_hidden]` rows at the same bar as the main merger.
+        if i in model.deepstack_visual_indexes:
+            k = model.deepstack_visual_indexes.index(i)
+            keep(f"deepstack_merger_{k}", model.deepstack_merger_list[k](h))
         if i == last:
             keep(f"block_{last}", h)
     keep("merger", model.merger(h))

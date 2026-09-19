@@ -483,5 +483,10 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         a.vision_video_token_id.unwrap_or(0),
         e.vision.video_token_id
     );
+    check!(
+        "visionDeepstackVisualIndexes",
+        a.vision_deepstack_visual_indexes.clone().unwrap_or_default(),
+        e.vision.deepstack_visual_indexes
+    );
     Ok(())
 }

@@ -28,7 +28,7 @@ use super::config::Gemma4Error;
 use super::narrow::convert_raw_to_fp16;
 use super::shards::{shape4, Gemma4Shards, GTURBO_PAGE_BYTES};
 use crate::gturbo_writer::{ExpertBlob, LayerBlobs, SubTensor};
-use crate::qwen36_config::SUPPORTED_VISION_DEPTH;
+use crate::qwen36_config::SUPPORTED_VISION_DEPTHS;
 use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
 /// One block's twelve sub-tensors: `(role in the blob, suffix in the
@@ -89,10 +89,36 @@ pub const RESIDENT_TENSORS: [&str; 9] = [
     "merger.linear_fc2.bias",
 ];
 
+/// The `vision_tower.deepstack_merger_list.{k}.*` tensors, resident like the
+/// main merger's nine. Six per merger (the main merger's structure minus
+/// nothing: norm/fc1/fc2, each weight+bias), one merger per
+/// `vision_config.deepstack_visual_indexes` entry -- 18 tensors on the
+/// `qwen3_vl`-4B tower's three. Written ONLY when the config declares
+/// indexes, per `vision_should_ingest`'s artifact-versus-config rule applied
+/// one level down: a checkpoint that ships merger tensors without declaring
+/// them falls into the unknown-name refusal, and one that declares indexes
+/// without shipping the tensors is refused as MISSING rather than silently
+/// injecting nothing.
+///
+/// The suffixes are shared with the main merger's names under
+/// [`RESIDENT_TENSORS`], so the runtime resolves a deepstack merger with the
+/// same six-role table at a different prefix.
+pub const DEEPSTACK_MERGER_PREFIX: &str = "deepstack_merger_list.";
+pub const DEEPSTACK_MERGER_SUFFIXES: [&str; 6] = [
+    "norm.weight",
+    "norm.bias",
+    "linear_fc1.weight",
+    "linear_fc1.bias",
+    "linear_fc2.weight",
+    "linear_fc2.bias",
+];
+
 /// The tower's ingest: streamed blocks, resident non-block tensors, and what
 /// the FP16 conversion cost.
 pub struct VisionRead {
-    /// The nine resident entries, all [`crate::DTYPE_FP16`].
+    /// The resident entries: the nine main tensors plus, when the config
+    /// declares deepstack indexes, six tensors per merger, all
+    /// [`crate::DTYPE_FP16`].
     pub entries: Vec<ResidentEntrySpec>,
     /// The 27 blocks as one `LayerBlobs` at layer 0.
     pub blocks: LayerBlobs,
@@ -209,9 +235,9 @@ pub fn read_vision_entries(
             vision.depth
         ))
     })?;
-    if vision.depth != SUPPORTED_VISION_DEPTH {
+    if !SUPPORTED_VISION_DEPTHS.contains(&vision.depth) {
         return Err(Gemma4Error::Config(format!(
-            "vision depth {} is unsupported; expected {SUPPORTED_VISION_DEPTH}",
+            "vision depth {} is unsupported; expected one of {SUPPORTED_VISION_DEPTHS:?}",
             vision.depth
         )));
     }
@@ -220,7 +246,7 @@ pub fn read_vision_entries(
     // before allocating the per-block buckets. This pass is intentionally
     // independent of `depth`: malformed metadata cannot make its memory use
     // proportional to an attacker-controlled number.
-    let mut present_blocks = [false; SUPPORTED_VISION_DEPTH as usize];
+    let mut present_blocks = vec![false; depth];
     for &name in vision_bases {
         let Some(rest) = name
             .strip_prefix(VISION_PREFIX)
@@ -266,6 +292,26 @@ pub fn read_vision_entries(
     }
     let mut resident_names: Vec<Option<&str>> = vec![None; RESIDENT_TENSORS.len()];
 
+    // The deepstack mergers, when the config declares any. Bucketed with the
+    // same all-slots-or-refuse discipline as the blocks, and the merger count
+    // is the INDEX COUNT (`vision.deepstack_visual_indexes.len()`), so a
+    // checkpoint shipping `deepstack_merger_list.3.*` against three declared
+    // indexes is an unknown name, not a fourth merger.
+    let deepstack_len = vision.deepstack_visual_indexes.len();
+    let mut deepstack_names: Vec<Vec<Option<&str>>> = Vec::with_capacity(deepstack_len);
+    for _ in 0..deepstack_len {
+        let mut roles = Vec::new();
+        roles
+            .try_reserve_exact(DEEPSTACK_MERGER_SUFFIXES.len())
+            .map_err(|e| {
+                Gemma4Error::Config(format!(
+                    "cannot allocate deepstack merger role buckets: {e}"
+                ))
+            })?;
+        roles.resize(DEEPSTACK_MERGER_SUFFIXES.len(), None);
+        deepstack_names.push(roles);
+    }
+
     for &name in vision_bases {
         let tail = name.strip_prefix(VISION_PREFIX).ok_or_else(|| {
             Gemma4Error::UnknownTensor(format!("{name} was classified as a vision tensor but does not carry the {VISION_PREFIX} prefix"))
@@ -295,6 +341,41 @@ pub fn read_vision_entries(
                 return Err(Gemma4Error::ShapeMismatch {
                     tensor: name.to_string(),
                     detail: format!("two tensors for block {index} role {suffix}"),
+                });
+            }
+        } else if let Some(rest) = tail.strip_prefix(DEEPSTACK_MERGER_PREFIX) {
+            let (index, suffix) = rest.split_once('.').ok_or_else(|| {
+                Gemma4Error::UnknownTensor(format!("{name}: no deepstack merger index and suffix"))
+            })?;
+            let index: usize = index.parse().map_err(|_| {
+                Gemma4Error::UnknownTensor(format!("{name}: deepstack merger index is not a number"))
+            })?;
+            // An undeclared merger is an UNKNOWN NAME, not an extra one: the
+            // runtime injects exactly `deepstack_visual_indexes.len()`
+            // mergers, so bytes beyond that would be written, hashed, and
+            // never read.
+            if index >= deepstack_len {
+                return Err(Gemma4Error::UnknownTensor(format!(
+                    "{name}: deepstack merger {index} is past the {} the config declares",
+                    if deepstack_len == 0 {
+                        "zero mergers".to_string()
+                    } else {
+                        format!("{deepstack_len} mergers")
+                    }
+                )));
+            }
+            let role = DEEPSTACK_MERGER_SUFFIXES
+                .iter()
+                .position(|s| *s == suffix)
+                .ok_or_else(|| {
+                    Gemma4Error::UnknownTensor(format!(
+                        "{name}: {suffix} is not one of a deepstack merger's six tensors"
+                    ))
+                })?;
+            if deepstack_names[index][role].replace(name).is_some() {
+                return Err(Gemma4Error::ShapeMismatch {
+                    tensor: name.to_string(),
+                    detail: format!("two tensors for deepstack merger {index} role {suffix}"),
                 });
             }
         } else {
@@ -338,6 +419,16 @@ pub fn read_vision_entries(
             )));
         }
     }
+    for (index, roles) in deepstack_names.iter().enumerate() {
+        for (role, name) in roles.iter().enumerate() {
+            if name.is_none() {
+                return Err(Gemma4Error::MissingTensor(format!(
+                    "{VISION_PREFIX}{DEEPSTACK_MERGER_PREFIX}{index}.{}",
+                    DEEPSTACK_MERGER_SUFFIXES[role]
+                )));
+            }
+        }
+    }
 
     let mut lossy_conversion = Vec::new();
 
@@ -356,6 +447,29 @@ pub fn read_vision_entries(
             bytes: converted.bytes,
             shape: resident_shape(&t.shape),
         }));
+    }
+
+    // The deepstack mergers, resident behind their own prefix level. Written
+    // AFTER the main nine so a hexdump of the resident region reads tower
+    // order: the main merger, then the three injections in index order.
+    for (index, roles) in deepstack_names.iter().enumerate() {
+        for (role, name) in roles.iter().enumerate() {
+            let name = name.expect("checked above");
+            let t = shards.info(name)?;
+            let converted = convert_raw_to_fp16(name, &t.dtype, shards.read(name)?)?;
+            if converted.lossy > 0 {
+                lossy_conversion.push((name.to_string(), converted.lossy));
+            }
+            entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                name: format!(
+                    "{VISION_INSTALL_PREFIX}{DEEPSTACK_MERGER_PREFIX}{index}.{}",
+                    DEEPSTACK_MERGER_SUFFIXES[role]
+                ),
+                dtype: converted.dtype,
+                bytes: converted.bytes,
+                shape: resident_shape(&t.shape),
+            }));
+        }
     }
 
     // The blocks. One `ExpertBlob` each, sub-tensors in `BLOCK_ROLES` order.
@@ -421,9 +535,8 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "config.json invalid: vision depth {} is unsupported; expected {}",
-                i64::MAX,
-                27
+                "config.json invalid: vision depth {} is unsupported; expected one of [24, 27]",
+                i64::MAX
             )
         );
     }

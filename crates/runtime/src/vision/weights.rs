@@ -85,6 +85,31 @@ pub(crate) struct VisionResident {
     /// port has no gather kernel, so the table is read to host once at open
     /// and blended there. See `stages::pos_embed_rows`.
     pub(crate) pos_embed_host: usize,
+    /// One entry per deepstack merger, in `VisionShape::deepstack` order:
+    /// merger `k`'s output is injected after TRUNK layer `k`. EMPTY for a
+    /// tower whose config declares no deepstack indexes.
+    pub(crate) deepstack_mergers: Vec<DeepstackMergerWeights>,
+}
+
+/// One deepstack merger's six resident offsets.
+///
+/// The same six roles as the main merger, with one structural difference the
+/// offsets alone cannot show: the reference builds the deepstack mergers with
+/// `use_postshuffle_norm=True` (`mlx_vlm/models/qwen3_vl/vision.py`), so the
+/// norm is sized `hidden * merge^2` and runs on the CONCATENATED
+/// `[merged, merger_input]` rows, where the main merger norms per patch row
+/// and reshapes after. The checkpoint's own shapes agree (the deepstack norm
+/// weight is [4096] where the main one is [1024] on the 4B tower), and
+/// `resolve` sizes every entry from [`VisionShape`] so a tensor at the wrong
+/// width is refused rather than read as a different number.
+#[derive(Debug, Clone)]
+pub(crate) struct DeepstackMergerWeights {
+    pub(crate) norm_w: u64,
+    pub(crate) norm_b: u64,
+    pub(crate) fc1_w: u64,
+    pub(crate) fc1_b: u64,
+    pub(crate) fc2_w: u64,
+    pub(crate) fc2_b: u64,
 }
 
 /// Resolve a `vision.`-prefixed resident tensor to its GPU byte offset,
@@ -126,6 +151,12 @@ fn fp16_view(
 /// [`BLOCK_ROLES`]' reason. `the_resident_prefix_matches_the_writers` pins the
 /// agreement.
 pub(crate) use crate::real_forward_layout::VISION_PREFIX;
+
+/// The deepstack mergers' name level under [`VISION_PREFIX`].
+///
+/// `turbospark_repack`'s `VISION_DEEPSTACK_MERGER_PREFIX`, restated for the
+/// same reason; `the_deepstack_prefix_matches_the_writers` pins it.
+pub(crate) const DEEPSTACK_MERGER_PREFIX: &str = "deepstack_merger_list.";
 
 impl VisionResident {
     /// Resolve all nine off the resident index.
@@ -180,7 +211,39 @@ impl VisionResident {
             )?,
             merger_fc2_b: fp16_view(index, &name("merger.linear_fc2.bias"), shape.out_hidden)?,
             pos_embed_host,
+            deepstack_mergers: Self::resolve_deepstack(index, shape, m)?,
         })
+    }
+
+    /// Resolve one [`DeepstackMergerWeights`] per declared index.
+    ///
+    /// DECLARED MEANS REQUIRED: a config that names deepstack indexes against
+    /// an install missing the merger tensors is refused here rather than
+    /// injecting nothing, because a tower that silently skips its deepstack
+    /// produces a competent-but-wrong trunk -- the exact failure class the
+    /// all-slots refusals exist for. The widths are the POST-SHUFFLE ones
+    /// (`use_postshuffle_norm=True`): the norm runs on `merger_input` rows,
+    /// not on `hidden` rows like the main merger's.
+    fn resolve_deepstack(
+        index: &ResidentIndex,
+        shape: &VisionShape,
+        m: usize,
+    ) -> Result<Vec<DeepstackMergerWeights>, RealForwardError> {
+        let name = |k: usize, tail: &str| {
+            format!("{VISION_PREFIX}{DEEPSTACK_MERGER_PREFIX}{k}.{tail}")
+        };
+        let mut mergers = Vec::with_capacity(shape.deepstack.len());
+        for k in 0..shape.deepstack.len() {
+            mergers.push(DeepstackMergerWeights {
+                norm_w: fp16_view(index, &name(k, "norm.weight"), m)?,
+                norm_b: fp16_view(index, &name(k, "norm.bias"), m)?,
+                fc1_w: fp16_view(index, &name(k, "linear_fc1.weight"), m * m)?,
+                fc1_b: fp16_view(index, &name(k, "linear_fc1.bias"), m)?,
+                fc2_w: fp16_view(index, &name(k, "linear_fc2.weight"), shape.out_hidden * m)?,
+                fc2_b: fp16_view(index, &name(k, "linear_fc2.bias"), shape.out_hidden)?,
+            });
+        }
+        Ok(mergers)
     }
 }
 
@@ -282,6 +345,7 @@ mod tests {
             pos_rows: 16,
             pos_side: 4,
             patch_size: 16,
+            deepstack: Vec::new(),
         }
     }
 

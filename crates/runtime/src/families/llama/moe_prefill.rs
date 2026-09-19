@@ -142,6 +142,19 @@ impl RealForwardRunner {
                 "token id {bad} outside vocab {vocab}"
             )));
         }
+        // REFUSED BY NAME rather than silently prefilled as text: this
+        // driver has no embed blit and no deepstack adds, so an image prompt
+        // here would fill every placeholder run with the pad token's own
+        // embedding and answer vaguely about a page it never saw. No family
+        // on the llama MoE arm pairs a vision sidecar today; the guard is
+        // what keeps that true if one ever does.
+        if arch.vision.is_active() || self.prompt_vision.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "this llama MoE chunked driver has no image injection: the embed blit and \
+                 deepstack adds exist in the dense driver (the qwen3_vl trunk) alone"
+                    .to_string(),
+            ));
+        }
 
         // `banks == 1` does not make every slot count safe here: see
         // `routed_pipeline_banks`'s doc and AGENTS.md Gotcha 64.

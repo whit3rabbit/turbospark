@@ -67,7 +67,8 @@ pub use gemma4_checkpoint::{
     Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan,
     NgramTableSpec, NgramTableWriter, VisionRead, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE,
     AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES, MTP_PREFIX, VISION_BLOCK_ROLES,
-    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
+    VISION_DEEPSTACK_MERGER_PREFIX, VISION_DEEPSTACK_MERGER_SUFFIXES, VISION_INSTALL_PREFIX,
+    VISION_PREFIX, VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,

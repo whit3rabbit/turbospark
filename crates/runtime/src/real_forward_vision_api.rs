@@ -153,9 +153,29 @@ impl RealForwardRunner {
         // `scratch.x`. A checkpoint whose two disagree is the case worth
         // catching, and reading the config for both sides would not catch it.
         let hidden = self.arch.hidden_size as usize;
-        self.prompt_vision = Some(crate::vision::PromptVision::new(
+        // The tower's row sets must match what this arch DECLARES: a tower
+        // with deepstack returning none (or the reverse) would make the
+        // trunk's per-layer adds silently skip or run short -- competent
+        // output from a trunk that never saw the deep features. The count is
+        // the config's, so the two sides can only disagree on an install or
+        // a tower that is wrong in a way worth naming.
+        let declared = self.arch.vision.deepstack_visual_indexes.len();
+        let produced = embeddings.first().map(|e| e.deepstack.len()).unwrap_or(0);
+        if produced != declared {
+            return Err(RealForwardError::Unsupported(format!(
+                "the tower produced {} deepstack row set(s) against the {} this install's \
+                 config declares",
+                produced, declared
+            )));
+        }
+        let mut prompt_vision = crate::vision::PromptVision::new(
             embeddings, positions, prompt_len, hidden,
-        )?);
+        )?;
+        // The deepstack rows' GPU twins, uploaded once per prompt rather
+        // than re-written per micro-batch. A no-op for a tower without
+        // deepstack.
+        prompt_vision.attach_deepstack_buffers(&mut self.context)?;
+        self.prompt_vision = Some(prompt_vision);
         // A placeholder span carries the same token ids whatever picture
         // filled it, so a state that consumed one is not described by its
         // ids and must never be reused (`crate::kv_prefix`'s TAINT). Without

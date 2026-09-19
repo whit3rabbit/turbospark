@@ -312,6 +312,7 @@ mod tests {
             pos_rows: 48 * 48,
             pos_side: 48,
             patch_size: 16,
+            deepstack: Vec::new(),
         }
     }
 

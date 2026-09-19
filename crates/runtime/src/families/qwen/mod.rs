@@ -21,7 +21,7 @@ mod produce;
 mod state;
 mod verify_layers;
 
-pub(crate) use attn::{encode_full_attention_block, QkNormConvention, RopePosition};
+pub(crate) use attn::{encode_full_attention_block, QkNormConvention};
 /// Re-exported for `real_forward_rollback`'s retaining rollback, whose
 /// replay half lives beside the verify encoders it mirrors.
 pub(crate) use batched_layers::replay_linear_state_batched;

@@ -695,7 +695,7 @@ fn repacks_the_real_qwen38_27b_checkpoint_with_its_vision_tower() {
     );
     assert_eq!(vision.num_position_embeddings, 2304, "a 48x48 grid");
     assert_eq!(vision.mrope_section, [11, 11, 10]);
-    arch.vision = vision;
+    arch.vision = vision.clone();
 
     // The role table accounts for the whole tower: 27 blocks x 12 roles plus
     // the 9 non-block tensors is exactly 333. Arithmetic rather than a

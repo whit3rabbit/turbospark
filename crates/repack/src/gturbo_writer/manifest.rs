@@ -161,6 +161,16 @@ pub(crate) fn build_manifest_json(
             "visionEndTokenId": arch.vision.vision_end_token_id,
             "visionImageTokenId": arch.vision.image_token_id,
             "visionVideoTokenId": arch.vision.video_token_id,
+            // Written only when non-empty, so every install whose tower has
+            // no deepstack serializes the same manifest it always did and an
+            // empty list stays indistinguishable from the absence that
+            // `vision_deepstack_visual_indexes.unwrap_or_default` resolves
+            // to the same way.
+            "visionDeepstackVisualIndexes": if arch.vision.deepstack_visual_indexes.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(arch.vision.deepstack_visual_indexes)
+            },
             // **THE HOLE THE COMMENT HERE USED TO DESCRIBE IS NOW CLOSED, and
             // it was closed by a family arriving rather than by anyone finding
             // it.** Every `ca*` and `hc*` field was VALIDATED and written by

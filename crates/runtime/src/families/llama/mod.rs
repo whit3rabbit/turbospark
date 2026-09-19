@@ -98,21 +98,61 @@ impl RealForwardRunner {
 
         let embed_name = "language_model.model.embed_tokens.weight";
 
+        // Decode positions continue PAST the prompt, so an image prompt's
+        // rope angle is `position + rope_delta` (degenerate `(p, p, p)`),
+        // never the raw cache index -- the same rule the qwen flow's
+        // produce path runs, and the reason this seam exists on the llama
+        // flow at all. KV slot and span stay the raw `position`.
+        let rope_position = match self.prompt_vision.as_ref() {
+            Some(pv) => {
+                let (t, h, w) = pv.rope_position(position);
+                crate::vision::RopePosition::Triple(t, h, w)
+            }
+            None => crate::vision::RopePosition::Sequential,
+        };
+        // This position's deepstack injection, resolved before the field
+        // split below: `(buffer per declared merger, this position's merged
+        // row)`. The chunked driver precomputes the same pair per token; a
+        // sequentially-walked image prompt must get the same adds HERE, or
+        // the two embed sites disagree (the equivalence
+        // `tests/qwen3vl_vision.rs` holds both to).
+        let (deepstack_buffers, deepstack_row) = match self.prompt_vision.as_ref() {
+            Some(pv) => (pv.deepstack_buffers().to_vec(), pv.row_index_for(position)),
+            None => (Vec::new(), None),
+        };
+
         let mut pass = self.context.begin_pass_labeled("cb1 (attn+router)");
         // No `sqrt(hidden)` embedding scale: that is Gemma's, and this
         // architecture's manifest says so (`embeddingScaledBySqrtHidden`).
-        encode_embed_any(
-            &mut self.context,
-            &pass,
-            &self.weights,
-            &self.index,
-            embed_name,
-            (&self.scratch.x, 0),
-            token as u32,
-            hidden as u32,
-            vocab,
-            1.0,
-        )?;
+        //
+        // An image-pad position of a sequentially-walked prompt blits the
+        // tower's row INSTEAD of the lookup, the second site
+        // `crate` Gotcha 27 documents for the qwen flow and the llama
+        // flow's own twin. The host write lands before this pass's commit,
+        // which is what makes it visible to every dispatch below. Text
+        // positions -- including every decode step, whose positions are past
+        // the last span -- take the table exactly as before.
+        match self
+            .prompt_vision
+            .as_ref()
+            .and_then(|pv| pv.row_for(position))
+        {
+            Some(row) => {
+                gpu::write_buffer_bytes(&self.scratch.x, 0, row);
+            }
+            None => encode_embed_any(
+                &mut self.context,
+                &pass,
+                &self.weights,
+                &self.index,
+                embed_name,
+                (&self.scratch.x, 0),
+                token as u32,
+                hidden as u32,
+                vocab,
+                1.0,
+            )?,
+        }
 
         let (
             context,
@@ -174,6 +214,7 @@ impl RealForwardRunner {
 
             attn::encode_attention_block(
                 context, &pass, weights, index, arch, llama, scratch, kv, layer, position,
+                rope_position,
             )?;
 
             // RAW residual add. Gemma normalizes the attention output before
@@ -239,6 +280,22 @@ impl RealForwardRunner {
                 // question from having two answers.
                 encode_steering(context, &pass, scratch, steering, layer, hidden, 1, 0)?;
                 encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, 0)?;
+                // Merger `layer`'s rows raw-add at an image position after
+                // the layer's output exists, the produce twin of the chunked
+                // driver's post-layer loop -- same slot order, same buffer,
+                // the reference's `h = layer(h)` then `_deepstack_process`.
+                if layer < deepstack_buffers.len() {
+                    if let Some(row) = deepstack_row {
+                        gpu::encode_residual_add(
+                            context,
+                            &pass,
+                            (&scratch.x, 0),
+                            (&deepstack_buffers[layer], (row * hidden * 2) as u64),
+                            hidden as u32,
+                        )
+                        .map_err(gpu_err)?;
+                    }
+                }
                 continue;
             }
 

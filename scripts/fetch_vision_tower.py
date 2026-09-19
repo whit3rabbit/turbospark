@@ -156,6 +156,21 @@ def main() -> None:
         if error.code != 404:
             raise
         shards = ["model.safetensors"]
+    else:
+        # THE INDEX IS A CLAIM, NOT A FACT (docs/QWEN3VL_PHASE0.md section
+        # 0): mlx-community/Qwen3-VL-4B-Instruct-4bit's own index names two
+        # shards from an earlier upload while the repo carries one
+        # consolidated model.safetensors, so every index-derived name 404s.
+        # Cross-check against the repository's real file list, drop the
+        # stale names, and fall back to the single-file convention when
+        # nothing survives -- the same order the catalog's stream path runs.
+        with urllib.request.urlopen(
+            f"https://huggingface.co/api/models/{repo}", timeout=60
+        ) as listing:
+            files = {s["rfilename"] for s in json.load(listing).get("siblings", [])}
+        shards = [s for s in shards if s in files]
+        if not shards:
+            shards = ["model.safetensors"]
 
     if not shards:
         raise ValueError("no vision_tower.* tensors found in the index")

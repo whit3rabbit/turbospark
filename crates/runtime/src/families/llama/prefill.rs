@@ -124,24 +124,77 @@ impl RealForwardRunner {
 
         let embed_name = "language_model.model.embed_tokens.weight";
 
+        // Vision: resolve everything the pass needs off `prompt_vision`
+        // BEFORE the field split below hands `&mut self.context` out. Rows
+        // are copied (the blit is a byte copy anyway), rope triples are
+        // `Copy`, and the deepstack buffers clone a retain handle -- none of
+        // them keep a borrow of `self` alive across the split. The same
+        // precompute pattern `families/qwen/prefill.rs` runs for its driver.
+        let (embed_blits, rope_positions, deepstack_rows, deepstack_buffers) =
+            match self.prompt_vision.as_ref() {
+                Some(pv) => {
+                    let mut blits = Vec::with_capacity(m);
+                    let mut ropes = vec![crate::vision::RopePosition::Sequential; m];
+                    // Per token, the merged-row index every deepstack
+                    // merger's rows share (the mergers all read the same
+                    // image positions), `None` for a text position.
+                    let mut ds_rows = Vec::with_capacity(m);
+                    for t in 0..m {
+                        let position = start_position + t;
+                        blits.push(pv.row_for(position).map(<[u8]>::to_vec));
+                        let (a, b, c) = pv.rope_position(position);
+                        ropes[t] = crate::vision::RopePosition::Triple(a, b, c);
+                        ds_rows.push(pv.row_index_for(position));
+                    }
+                    (
+                        blits,
+                        ropes,
+                        ds_rows,
+                        pv.deepstack_buffers().to_vec(),
+                    )
+                }
+                // No image map: every position is an ordinary lookup at its
+                // own position, the engine this flow shipped as.
+                None => {
+                    let no_blits: Vec<Option<Vec<u8>>> = vec![None; m];
+                    let no_ropes = vec![crate::vision::RopePosition::Sequential; m];
+                    (no_blits, no_ropes, Vec::new(), Vec::new())
+                }
+            };
+
         let pass = self.context.begin_pass_labeled("llama dense chunk cb");
         // No `sqrt(hidden)` embedding scale, matching the sequential flow:
         // this architecture's manifest declares `embeddingScaledBySqrtHidden`
         // false and `RealLlamaState::build` refuses an install that says
         // otherwise.
         for (t, &token) in tokens.iter().enumerate() {
-            encode_embed_any(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                embed_name,
-                (&self.scratch.x, (t * hidden * 2) as u64),
-                token as u32,
-                hidden as u32,
-                vocab,
-                1.0,
-            )?;
+            match &embed_blits[t] {
+                // An image-pad position blits the tower's FP16 row INSTEAD
+                // of encoding a lookup -- the placeholder id carries no
+                // meaning, so blending the table's row under it would mix a
+                // text embedding into every patch. The write is a host write
+                // into shared storage landing BEFORE the single commit at
+                // the end of this pass, which is what makes it visible to
+                // every dispatch below (`crate` Gotcha 27's argument, one
+                // flow over).
+                Some(row) => {
+                    gpu::write_buffer_bytes(&self.scratch.x, t * hidden * 2, row);
+                }
+                None => {
+                    encode_embed_any(
+                        &mut self.context,
+                        &pass,
+                        &self.weights,
+                        &self.index,
+                        embed_name,
+                        (&self.scratch.x, (t * hidden * 2) as u64),
+                        token as u32,
+                        hidden as u32,
+                        vocab,
+                        1.0,
+                    )?;
+                }
+            }
         }
 
         let (context, weights, index, scratch, kv, llama, resid_capture, steering) = (
@@ -186,6 +239,7 @@ impl RealForwardRunner {
 
                 attn::encode_attention_block(
                     context, &pass, weights, index, &arch, llama, scratch, kv, layer, position,
+                    rope_positions[t],
                 )?;
 
                 // RAW residual add at this token's OWN row: this
@@ -232,6 +286,28 @@ impl RealForwardRunner {
                 // steering off).
                 encode_steering(context, &pass, scratch, steering, layer, hidden, 1, x_off)?;
                 encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, x_off)?;
+            }
+
+            // DEEPSTACK: merger `layer`'s rows raw-add at this chunk's image
+            // positions once the whole layer has run -- the reference adds
+            // to the layer's OUTPUT (`h = layer(h)` then
+            // `_deepstack_process`), and injection depth `layer` is merger
+            // `layer`'s slot, never block `indexes[layer]`'s. One add
+            // dispatch per image position, from the GPU-resident rows
+            // uploaded at `set_prompt_vision`; a text position adds nothing.
+            if layer < deepstack_buffers.len() {
+                for t in 0..m {
+                    if let Some(row) = deepstack_rows[t] {
+                        gpu::encode_residual_add(
+                            context,
+                            &pass,
+                            (&scratch.x, (t * hidden * 2) as u64),
+                            (&deepstack_buffers[layer], (row * hidden * 2) as u64),
+                            hidden as u32,
+                        )
+                        .map_err(gpu_err)?;
+                    }
+                }
             }
         }
 

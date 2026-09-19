@@ -122,9 +122,13 @@ pub fn parse_qwen4_exp_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     parse_qwen_family_config(json, ModelFamily::Qwen4Exp)
 }
 
-/// The only vision-tower depth supported by the current Qwen 3.5 kernels and
-/// packed layout. All published checkpoints use this depth.
-pub(crate) const SUPPORTED_VISION_DEPTH: i64 = 27;
+/// The vision-tower depths the current Qwen tower kernels and packed layout
+/// support: 27 is every published `qwen3_5` / `qwen3_5_moe` tower, 24 is the
+/// `qwen3_vl`-4B tower. The tower walk itself is depth-parametrized (blocks
+/// stream as one "layer" of `depth` blobs); this list is the set of depths
+/// some real checkpoint has been read against, so a tower of an unseen depth
+/// refuses at parse rather than streaming into an unpackaged layout.
+pub(crate) const SUPPORTED_VISION_DEPTHS: [i64; 2] = [24, 27];
 
 /// Parses `qwen4_exp`'s hyper-connection, indexer and PLE blocks.
 ///
@@ -314,14 +318,23 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
     // exists: without it the trunk cannot place an image token's three
     // positions, and mRoPE degenerating to plain RoPE is precisely the silent
     // wrong answer (`docs/VISION_PHASE0.md` item 2).
+    //
+    // TWO PUBLISHER SPELLINGS of the same block, read like
+    // `canonicalize_vision_header`'s two tower spellings: the `qwen3_5`
+    // conversions carry `text_config.rope_parameters.mrope_section` and the
+    // HF-native `qwen3_vl` conversion carries
+    // `text_config.rope_scaling.mrope_section`. A tower whose trunk declares
+    // neither is refused by name.
     let section = tc
         .get("rope_parameters")
         .and_then(|r| r.get("mrope_section"))
+        .or_else(|| tc.get("rope_scaling").and_then(|r| r.get("mrope_section")))
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| {
             Gemma4Error::Config(
-                "a vision_config with no text_config.rope_parameters.mrope_section; the trunk \
-                 cannot place image tokens without it"
+                "a vision_config with no text_config.rope_parameters.mrope_section or \
+                 text_config.rope_scaling.mrope_section; the trunk cannot place image tokens \
+                 without it"
                     .to_string(),
             )
         })?;
@@ -338,6 +351,29 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
             .ok_or_else(|| Gemma4Error::Config("mrope_section entry is not an integer".into()))?;
     }
 
+    // Optional, and ABSENT MEANS EMPTY: the reference config's own default
+    // is `default_factory=list` (`qwen3_vl/config.py`), so silence is the
+    // format's answer and not a sibling's (AGENTS.md Gotcha 39). Every
+    // published `qwen3_5` tower declares the key with `[]`.
+    let deepstack_visual_indexes = match vc.get("deepstack_visual_indexes") {
+        Some(v) => {
+            let list = v.as_array().ok_or_else(|| {
+                Gemma4Error::Config("vision_config.deepstack_visual_indexes is not an array".into())
+            })?;
+            let mut indexes = Vec::with_capacity(list.len());
+            for entry in list {
+                let idx = entry.as_i64().ok_or_else(|| {
+                    Gemma4Error::Config(
+                        "vision_config.deepstack_visual_indexes holds a non-integer".into(),
+                    )
+                })?;
+                indexes.push(idx);
+            }
+            indexes
+        }
+        None => Vec::new(),
+    };
+
     let vision = VisionConfig {
         depth: i("depth")?,
         hidden_size: i("hidden_size")?,
@@ -350,6 +386,7 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
         num_position_embeddings: i("num_position_embeddings")?,
         out_hidden_size: i("out_hidden_size")?,
         mrope_section,
+        deepstack_visual_indexes,
         // Token ids live at the ROOT, beside the wrapper rather than inside
         // either config: they belong to the tokenizer's vocabulary, which the
         // text and vision halves share.
@@ -359,11 +396,29 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
         video_token_id: root_i(root, "video_token_id")?,
     };
 
-    if vision.depth != SUPPORTED_VISION_DEPTH {
+    if !SUPPORTED_VISION_DEPTHS.contains(&vision.depth) {
         return Err(Gemma4Error::Config(format!(
-            "vision depth {} is unsupported; expected {SUPPORTED_VISION_DEPTH}",
+            "vision depth {} is unsupported; expected one of {SUPPORTED_VISION_DEPTHS:?}",
             vision.depth
         )));
+    }
+    // Every index names a block of THIS tower, and no block feeds two
+    // mergers: a repeated index would run the same features through two
+    // different mergers into two different trunk layers, which no published
+    // checkpoint does and no reference implementation could mean.
+    let mut seen = std::collections::BTreeSet::new();
+    for &idx in &vision.deepstack_visual_indexes {
+        if idx < 0 || idx >= vision.depth {
+            return Err(Gemma4Error::Config(format!(
+                "deepstack_visual_indexes holds {idx}, outside this tower's depth of {}",
+                vision.depth
+            )));
+        }
+        if !seen.insert(idx) {
+            return Err(Gemma4Error::Config(format!(
+                "deepstack_visual_indexes holds {idx} twice"
+            )));
+        }
     }
 
     // Two consistency checks the fields cannot make individually, both of
@@ -610,6 +665,66 @@ mod vision_depth_tests {
         .to_string()
     }
 
+    fn qwen3vl_vision_json(depth: i64, deepstack: serde_json::Value) -> String {
+        serde_json::json!({
+            "text_config": {"rope_parameters": {"mrope_section": [24, 20, 20]}},
+            "vision_config": {
+                "depth": depth,
+                "hidden_size": 1024,
+                "intermediate_size": 4096,
+                "num_heads": 16,
+                "patch_size": 16,
+                "temporal_patch_size": 2,
+                "in_channels": 3,
+                "spatial_merge_size": 2,
+                "num_position_embeddings": 2304,
+                "out_hidden_size": 2560,
+                "deepstack_visual_indexes": deepstack
+            },
+            "vision_start_token_id": 151652,
+            "vision_end_token_id": 151653,
+            "image_token_id": 151655,
+            "video_token_id": 151656
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn the_qwen3vl_tower_parses_with_its_deepstack_indexes() {
+        let vision =
+            parse_vision_config(&qwen3vl_vision_json(24, serde_json::json!([5, 11, 17])))
+                .expect("the 4B tower's config parses");
+        assert_eq!(vision.depth, 24);
+        assert_eq!(vision.hidden_size, 1024);
+        assert_eq!(vision.out_hidden_size, 2560);
+        assert_eq!(vision.mrope_section, [24, 20, 20]);
+        assert_eq!(vision.deepstack_visual_indexes, vec![5, 11, 17]);
+        assert_eq!(vision.merger_input_dim(), 4096);
+    }
+
+    #[test]
+    fn an_absent_deepstack_key_means_empty_and_not_a_siblings_answer() {
+        // The KEY ABSENT, not `[]`: the reference config's own default is an
+        // empty list, so silence is the format's answer (AGENTS.md Gotcha
+        // 39). Same value as every qwen3_5 tower that declares `[]`.
+        let vision = parse_vision_config(&vision_json(27)).expect("parses");
+        assert!(vision.deepstack_visual_indexes.is_empty());
+    }
+
+    #[test]
+    fn a_deepstack_index_past_the_depth_is_refused() {
+        let err = parse_vision_config(&qwen3vl_vision_json(24, serde_json::json!([5, 24])))
+            .expect_err("index 24 is past a depth-24 tower");
+        assert!(err.to_string().contains("outside this tower's depth"), "{err}");
+    }
+
+    #[test]
+    fn a_repeated_deepstack_index_is_refused() {
+        let err = parse_vision_config(&qwen3vl_vision_json(24, serde_json::json!([5, 5])))
+            .expect_err("two mergers reading one block is ambiguous");
+        assert!(err.to_string().contains("twice"), "{err}");
+    }
+
     #[test]
     fn vision_depth_is_bounded_at_the_untrusted_config_boundary() {
         let error = parse_vision_config(&vision_json(i64::MAX))
@@ -617,9 +732,8 @@ mod vision_depth_tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "config.json invalid: vision depth {} is unsupported; expected {}",
-                i64::MAX,
-                27
+                "config.json invalid: vision depth {} is unsupported; expected one of [24, 27]",
+                i64::MAX
             )
         );
     }

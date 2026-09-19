@@ -284,6 +284,12 @@ pub struct ManifestArch {
     pub vision_image_token_id: Option<i64>,
     #[serde(default)]
     pub vision_video_token_id: Option<i64>,
+    /// The deepstack merger block indices. Absent on every install written
+    /// before the field existed, which is exactly what an EMPTY list means
+    /// (`VisionConfig`'s own default), so `Option` + `unwrap_or_default`
+    /// resolves silence and explicit-`[]` to the same value.
+    #[serde(default)]
+    pub vision_deepstack_visual_indexes: Option<Vec<i64>>,
 }
 
 impl ManifestArch {
@@ -317,6 +323,10 @@ impl ManifestArch {
             vision_end_token_id: self.vision_end_token_id.unwrap_or(0),
             image_token_id: self.vision_image_token_id.unwrap_or(0),
             video_token_id: self.vision_video_token_id.unwrap_or(0),
+            deepstack_visual_indexes: self
+                .vision_deepstack_visual_indexes
+                .clone()
+                .unwrap_or_default(),
         }
     }
 }

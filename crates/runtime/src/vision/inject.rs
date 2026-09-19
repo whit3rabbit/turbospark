@@ -34,6 +34,30 @@ use turbospark_vision_io::{ImageSpan, MropePositions};
 use super::VisionEmbedding;
 use crate::real_forward_types::RealForwardError;
 
+/// Which angle an attention block rotates one position by.
+///
+/// DEFINED HERE rather than in the `qwen` flow that built it first, because
+/// the `llama` flow's `qwen3_vl` trunk consumes the same seam: both families
+/// rotate by a `(t, h, w)` triple on an image prompt and by the raw position
+/// otherwise, and a second copy of the enum one family over would be
+/// AGENTS.md Gotcha 61's duplicate-allowlist shape.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RopePosition {
+    /// Rotate by the `position` argument. Every caller before ROADMAP M-V5,
+    /// and every caller on a text-only prompt.
+    Sequential,
+    /// Rotate by this `(t, h, w)`, which an image prompt's own position table
+    /// supplies ([`PromptVision::rope_position`]).
+    ///
+    /// **`t == h == w` here still takes the EXISTING kernel**, and that is the
+    /// whole dispatch rule. It is a property of the DATA rather than a
+    /// classification of the token: `get_rope_index` gives every text token of
+    /// a mixed prompt the same number in all three slots, so the divergence
+    /// test IS the "is this an image pad" test, with nothing extra to plumb
+    /// and nothing to get out of step.
+    Triple(i32, i32, i32),
+}
+
 /// One prompt's image rows and position table.
 #[derive(Debug, Clone)]
 pub struct PromptVision {
@@ -54,6 +78,23 @@ pub struct PromptVision {
     /// Added to a position past the prompt to get its rope position. Usually
     /// NEGATIVE, because an image spends far fewer positions than tokens.
     rope_delta: i32,
+    /// The deepstack mergers' rows, one entry per declared index, each
+    /// `total_merged * out_hidden` FP16 values as little-endian bytes -- the
+    /// same byte form [`Self::rows`] is in, and the same row width, because
+    /// a deepstack merger's output width is the trunk's hidden size too.
+    /// EMPTY for a tower without deepstack.
+    deepstack: Vec<Vec<u8>>,
+    /// The deepstack rows' GPU-resident twins, one [`gpu::MetalBuffer`] per
+    /// [`Self::deepstack`] entry, uploaded by the runner at
+    /// `set_prompt_vision` time so the trunk's per-layer adds bind GPU
+    /// storage directly instead of re-writing bytes every micro-batch.
+    /// Populated after construction (`attach_deepstack_buffers`); EMPTY
+    /// until then and always for a tower without deepstack.
+    ///
+    /// Dropped WITH the map: `clear_prompt_vision` and `reset()` free the
+    /// buffers through ordinary `Drop`, which is the right lifetime for
+    /// storage that only the injection this map describes reads.
+    deepstack_buffers: Vec<gpu::MetalBuffer>,
 }
 
 impl PromptVision {
@@ -92,6 +133,21 @@ impl PromptVision {
         let mut prefix = Vec::with_capacity(embeddings.len());
         let mut last_end = 0usize;
 
+        // The deepstack halves must agree across every image: one declared
+        // merger count, one row count per image, one output width. A
+        // disagreement is not a runtime error later -- it is one image's
+        // injection at another image's positions, which decodes fluently.
+        let deepstack_len = embeddings.first().map(|e| e.deepstack.len()).unwrap_or(0);
+        if let Some(mismatched) = embeddings.iter().position(|e| e.deepstack.len() != deepstack_len)
+        {
+            return refuse(format!(
+                "image {mismatched}: tower produced {} deepstack row set(s) against \
+                 {deepstack_len} from image 0",
+                embeddings[mismatched].deepstack.len()
+            ));
+        }
+        let mut deepstack: Vec<Vec<u8>> = vec![Vec::new(); deepstack_len];
+
         for (i, (embedding, span)) in embeddings.iter().zip(positions.spans.iter()).enumerate() {
             if embedding.out_hidden != hidden_size {
                 return refuse(format!(
@@ -114,6 +170,20 @@ impl PromptVision {
                     embedding.merged_tokens,
                     embedding.out_hidden
                 ));
+            }
+            for (k, ds) in embedding.deepstack.iter().enumerate() {
+                if ds.rows.len() != embedding.merged_tokens * embedding.out_hidden {
+                    return refuse(format!(
+                        "image {i}: deepstack row set {k} carries {} value(s) for {} x {}",
+                        ds.rows.len(),
+                        embedding.merged_tokens,
+                        embedding.out_hidden
+                    ));
+                }
+                deepstack[k].reserve(ds.rows.len() * 2);
+                for value in &ds.rows {
+                    deepstack[k].extend_from_slice(&value.to_le_bytes());
+                }
             }
             // Sorted and disjoint is what makes the binary search in
             // `row_for` correct. The walk produces them that way; checked
@@ -161,12 +231,59 @@ impl PromptVision {
             prefix,
             triples: positions.triples.clone(),
             rope_delta: positions.rope_delta,
+            deepstack,
+            deepstack_buffers: Vec::new(),
         })
+    }
+
+    /// Upload the deepstack rows to GPU storage, one buffer per declared
+    /// merger. Called by the runner at `set_prompt_vision` time, AFTER
+    /// [`Self::new`] has validated every row count; a no-op when the tower
+    /// has no deepstack.
+    pub(crate) fn attach_deepstack_buffers(
+        &mut self,
+        context: &mut gpu::MetalContext,
+    ) -> Result<(), RealForwardError> {
+        if !self.deepstack_buffers.is_empty() {
+            return Ok(());
+        }
+        self.deepstack_buffers = self
+            .deepstack
+            .iter()
+            .map(|bytes| context.new_buffer_with_data(&(bytes.as_slice())))
+            .collect();
+        Ok(())
+    }
+
+    /// Deepstack merger `k`'s GPU rows, or `None` before
+    /// `attach_deepstack_buffers` ran (which no production caller can see:
+    /// `set_prompt_vision` attaches before installing the map).
+    #[allow(dead_code)]
+    pub(crate) fn deepstack_buffer(&self, k: usize) -> Option<&gpu::MetalBuffer> {
+        self.deepstack_buffers.get(k)
+    }
+
+    /// Every deepstack buffer, in injection order. The llama dense prefill
+    /// clones the retain handles out before its field split.
+    pub(crate) fn deepstack_buffers(&self) -> &[gpu::MetalBuffer] {
+        &self.deepstack_buffers
     }
 
     /// The FP16 row to blit at `position`, or `None` for a text position,
     /// where the trunk does its ordinary embedding lookup.
     pub(crate) fn row_for(&self, position: usize) -> Option<&[u8]> {
+        let row = self.row_index_for(position)?;
+        let start = row * self.row_bytes;
+        Some(&self.rows[start..start + self.row_bytes])
+    }
+
+    /// The merged-row INDEX that `position` blits, across all spans, or
+    /// `None` for a text position.
+    ///
+    /// The deepstack adds are the second consumer: they add from GPU
+    /// buffers laid out in the same concatenated order, so both consumers
+    /// must compute the same index, which is why one function answers both.
+    pub(crate) fn row_index_for(&self, position: usize) -> Option<usize> {
         // The last span starting at or before `position`. Spans are disjoint
         // and sorted, so at most one can contain it.
         let i = self
@@ -177,9 +294,7 @@ impl PromptVision {
         if position >= span.start + span.len {
             return None;
         }
-        let row = self.prefix[i] + (position - span.start);
-        let start = row * self.row_bytes;
-        Some(&self.rows[start..start + self.row_bytes])
+        Some(self.prefix[i] + (position - span.start))
     }
 
     /// The `(t, h, w)` this position occupies.

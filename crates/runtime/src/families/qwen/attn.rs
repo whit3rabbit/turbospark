@@ -2,6 +2,10 @@
 
 use model_io::{ArchConfig, ResidentIndex};
 
+// Re-exported one level up for this family's callers; DEFINED in `crate::vision`
+// since the `llama` flow's `qwen3_vl` trunk consumes the same seam.
+pub(crate) use crate::vision::RopePosition;
+
 use crate::families::qwen::{layer_tensor, prefixed_layer_tensor, RealQwenState, RMS_EPS};
 use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward::RealForwardError;
@@ -173,27 +177,6 @@ pub(crate) enum QkNormConvention {
 /// KV slot index and the `position + 1` attention span, and neither moves for
 /// an image. Only the ANGLE differs, which is what lets vision reach this
 /// family without touching the cache at all.
-///
-/// A parameter rather than a field on `RealQwenState`, following
-/// [`QkNormConvention`]'s precedent one call site over: the MTP head runs
-/// through this same function and has no prompt of its own to index.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum RopePosition {
-    /// Rotate by the `position` argument. Every caller before ROADMAP M-V5,
-    /// and every caller on a text-only prompt.
-    Sequential,
-    /// Rotate by this `(t, h, w)`, which an image prompt's own position table
-    /// supplies (`vision::PromptVision::rope_position`).
-    ///
-    /// **`t == h == w` here still takes the EXISTING kernel**, and that is the
-    /// whole dispatch rule. It is a property of the DATA rather than a
-    /// classification of the token: `get_rope_index` gives every text token of
-    /// a mixed prompt the same number in all three slots, so the divergence
-    /// test IS the "is this an image pad" test, with nothing extra to plumb
-    /// and nothing to get out of step.
-    Triple(i32, i32, i32),
-}
-
 /// Mask-1 layer: gated full attention.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_full_attention_block(

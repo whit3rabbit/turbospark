@@ -45,7 +45,9 @@ pub use orchestrate::{
 pub use shards::{Gemma4Shards, GTURBO_PAGE_BYTES};
 pub use vision::{
     read_vision_entries, vision_arch_for_manifest, vision_should_ingest, VisionRead,
-    BLOCK_ROLES as VISION_BLOCK_ROLES, RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
+    BLOCK_ROLES as VISION_BLOCK_ROLES, DEEPSTACK_MERGER_PREFIX as VISION_DEEPSTACK_MERGER_PREFIX,
+    DEEPSTACK_MERGER_SUFFIXES as VISION_DEEPSTACK_MERGER_SUFFIXES,
+    RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
 };
 
 use std::path::{Path, PathBuf};

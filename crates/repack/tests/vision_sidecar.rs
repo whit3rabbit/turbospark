@@ -268,6 +268,7 @@ fn tiny_test_vision() -> model_io::VisionConfig {
         vision_end_token_id: 0,
         image_token_id: 0,
         video_token_id: 0,
+        deepstack_visual_indexes: Vec::new(),
     }
 }
 

@@ -110,6 +110,19 @@ impl RealQwenState {
                 arch.num_experts, arch.top_k_experts
             ));
         }
+        // The deepstack injection lives in the LLAMA flow (the qwen3_vl
+        // trunk). A qwen3_5-family tower declaring deepstack mergers would
+        // run here and silently skip every one of them -- competent output
+        // from a trunk that never saw the picture's deep features -- so an
+        // arch this flow cannot inject is refused at open, the same
+        // shape the qwen35 chunked driver's batched-GEMV refusal takes.
+        if !arch.vision.deepstack_visual_indexes.is_empty() {
+            return unsupported(format!(
+                "this install's vision tower declares {} deepstack merger(s), which no qwen \
+                 flow injects; deepstack belongs to the qwen3_vl trunk (the shared llama flow)",
+                arch.vision.deepstack_visual_indexes.len()
+            ));
+        }
         if arch.ffn_sandwich_norms
             || arch.router_scaled
             || arch.embedding_scaled_by_sqrt_hidden

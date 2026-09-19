@@ -428,19 +428,23 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // THE VISION TOWER (ROADMAP M-V3), and it must come BEFORE the drop list
     // below, which matches the same prefix for every family.
     //
-    // `matches!` over two variants rather than `==` one, and that is AGENTS.md
-    // Gotcha 61 applied rather than quoted: `qwen35` and `qwen35moe` share
-    // this file, and three separate `== ModelFamily::QwenGdnMoe` conditions
-    // elsewhere were each a latent bug for exactly as long as no dense
-    // checkpoint existed to exercise them. Both halves of this architecture
-    // ship the identical 333-tensor tower.
+    // `matches!` over variants rather than `==` one, and that is AGENTS.md
+    // Gotcha 61 applied rather than quoted: `qwen35`, `qwen35moe` and
+    // `qwen3_vl` share this file, and separate `==` conditions elsewhere were
+    // each a latent bug for exactly as long as no sibling existed to exercise
+    // them. All three families ship the SigLIP-class tower the runtime runs
+    // (the dense and MoE halves the identical 333-tensor one; `qwen3_vl` the
+    // depth-24 tower plus its 18 deepstack merger tensors).
     //
     // Gemma 4 and `muse_glimmer` keep `ExcludedMultimodal` on the same string:
     // this port has no kernels for their towers, and ingesting one because the
     // prefix matched would write an install carrying weights nothing can
     // dispatch.
     if name.starts_with(VISION_PREFIX)
-        && matches!(family, ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe)
+        && matches!(
+            family,
+            ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+        )
     {
         return Gemma4Bucket::VisionTower;
     }
