@@ -948,6 +948,7 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_TURN_PIPELINE.md` | the message queue, steer delivery at step boundaries, system reminders |
 | `swift/docs/SWIFT_GOALS.md` | the `/goal` loop: the stop-seam evaluator, deferral + idle check-ins, stall pause, restore rules |
 | `swift/docs/SWIFT_MESSAGE_EDITING.md` | message retry, edit and branch |
+| `swift/docs/SWIFT_PASTE_HANDLING.md` | large pastes: the 4,000-char chip conversion, suppression of programmatic draft writes, the head+tail transcript gate, over-window truncation |
 | `swift/docs/SWIFT_GHOST_MODE.md` | temporary (ghost) chats: the two layers, the three rules that must not break |
 | `swift/docs/storage.md` | app JSON stores, the configurable modality-separated engine model store, move wizard, provider discovery, `ModelStorageManager`, `AppStorageRoot` test isolation, and which directories tests may write to |
 | `swift/docs/SWIFT_CONTEXT_RING.md` | the composer's context-usage indicator; the system prompt as one builder, three consumers |

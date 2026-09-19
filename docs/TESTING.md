@@ -183,9 +183,12 @@ TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
 
 # Real ~4.28 GB Qwen2.5 MLX checkpoint download plus full repack. The target
-# also contains a cheap MLX header gate and a pinned Q3_K_M GGUF header gate.
-# The MLX install is the real Qwen2 artifact currently exercised end to end;
-# there is no Qwen2 memory or quality baseline yet.
+# also contains a cheap MLX header gate and the pinned Q3_K_M GGUF gates: a
+# header gate, a full 3.5 GB Q3_K_M stream, and a 4.4 GB single-file Q4_K_M
+# stream. All three real Qwen2 artifacts have frozen quality and memory rows
+# (see qwen2_dense_quality_gate / qwen2_dense_memory_oracle; the GGUF rows
+# take TURBOSPARK_QWEN2_GGUF_Q3KM_INSTALL_DIR /
+# TURBOSPARK_QWEN2_GGUF_Q4KM_INSTALL_DIR).
 TURBOSPARK_QWEN2_INSTALL_DIR=~/models/qwen25-7b-4bit.gturbo \
   cargo test -p turbospark-repack --test qwen2_checkpoint_network --release -- --ignored --nocapture
 

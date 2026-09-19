@@ -162,12 +162,14 @@ struct OutputPaneView: View {
     }
 
     private var placeholder: some View {
-        ScrollView {
-            WelcomeHeroView(model: model)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.vertical, 24)
+        GeometryReader { proxy in
+            ScrollView(.vertical) {
+                WelcomeHeroView(model: model)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: proxy.size.height)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var transcript: some View {

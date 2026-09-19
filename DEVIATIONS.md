@@ -2027,29 +2027,50 @@ upstream code rather than a fork or a fresh conversion.
   stock binary is built; the keyed `CHECKPOINTS` table needs one row.
 
 
-## `qwen2` / `qwen2.5` (the thirteenth family), landed with a format boundary
+## `qwen2` / `qwen2.5` (the thirteenth family), released across all three artifacts (2026-09-19)
 
 The dense Qwen2 path is implemented through the shared Llama flow. It carries
 Q/K/V projection biases, Qwen2's 1e-6 RMS epsilon, and no per-head Q/K norm.
-The pinned `mlx-community/Qwen2.5-7B-Instruct-4bit` checkpoint streamed into a
-real install on 2026-09-13 and passed greedy and sampled CLI smokes. The
-catalog records that artifact as `qwen25-7b-4bit` with status `runs`.
+Three real artifacts are gated: the pinned
+`mlx-community/Qwen2.5-7B-Instruct-4bit` install (perplexity 12.4206, memory
+oracle, MLX cross-engine KL; catalog `qwen25-7b-4bit`, status `verified`), the
+pinned official single-file Q3_K_M GGUF (catalog `qwen25-7b-q3km`), and a
+single-file Q4_K_M GGUF (catalog `qwen25-7b-q4km`).
 
 - **HF/MLX intake is the exercised path.** The source is MLX safetensors, not
   GGUF. Its `model.*` names are normalized to the canonical
   `language_model.*` install namespace, and its F16 4-bit companion planes
   are narrowed to the BF16 resident format. The official ChatML sidecars load
   without inventing missing `<think>` or `<tool_response>` token ids.
-- **GGUF intake is recognized but not equally proven.** The `qwen2` GGUF
-  architecture and tensor names are parsed, and the shared flow has the
-  supported resident block paths. The pinned official Qwen2.5 Q3_K_M GGUF
-  passes the header contract but cannot execute because Q3_K has no resident
-  kernel in this port. A real Q4_K or Q8_0 Qwen2 GGUF still needs a streamed
-  install and end-to-end smoke.
-- **Evidence is not a baseline.** There is no Qwen2 memory oracle, quality
-  gate, cross-engine KLD row, or frozen performance measurement yet. Qwen2-MoE,
-  Qwen2-VL, split GGUF, and native unquantized BF16/FP16 safetensors
-  conversion remain outside this bring-up.
+- **Q3_K resident kernels (2026-09-19) closed the GGUF gap.** The kernel set
+  is a resident GEMV and an embedding lookup -- no routed pair, the Q6_K
+  footing, because the real file is dense. The CPU reference
+  (`compute::quant_gguf::q3_k`) is anchored to ggml itself by a generated
+  oracle (`scripts/ggml_q3_k_oracle.c` against brew libggml), the Metal
+  kernel is held to the reference by `dequant_q3_k_gemv_parity.rs`, and the
+  block layout has three traps worth restating: the f16 super-scale is the
+  LAST field (only Q2_K agrees), the high-bit sign run is indexed `e % 32`
+  with the BIT chosen by `e / 32`, and the sixteen 6-bit scales are shuffled
+  out of twelve bytes through ggml's four-word aux trick with a cleared bit
+  SUBTRACTING 4 from the 2-bit level. The pinned official Q3_K_M (Q3_K
+  attention and FFN, Q4_K embedding, Q6_K head, three Q5_K tensors) streams,
+  passes greedy and sampled CLI smokes, and freezes quality (perplexity
+  12.2878 with stable digests; the 8-slot constrained digest equals the
+  16-slot one) and memory (651 MiB peak at 8192 context, +0.02 MiB replay)
+  rows. The Q3_K_M install was removed after the gates froze, per the
+  session's space goal.
+- **The second GGUF artifact is a single-file conversion, not the official
+  split.** The official repo splits its Q4_K_M into two shards and its Q8_0
+  into three, and split GGUF is out of scope for the dense qwen2 walk, so
+  `mradermacher/Qwen2.5-7B-Instruct-GGUF`'s single-file Q4_K_M (same base
+  checkpoint, Q4_K + Q6_K + F32 only) streams and freezes quality
+  (perplexity 11.6563 with stable digests, 1.00x at 8 slots) and memory
+  rows. Removed after the gates froze, same goal.
+- **Still outside, and each is its own validation.** Larger Qwen2 checkpoints
+  (the 72B line), Qwen2-MoE, Qwen2-VL, split GGUF, and native unquantized
+  BF16/FP16 safetensors conversion remain unvalidated here. Q3_K routed
+  experts would fail at the routed dispatch by name (no routed pair), the
+  same weaker footing Q6_K and Q5_K stand on.
 
 ## `qwen3_vl` (the fifteenth family), landed text-first with the vision seam open (2026-09-18)
 

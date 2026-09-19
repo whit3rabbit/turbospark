@@ -925,7 +925,8 @@ fn a_dense_llama_gguf_installs_and_its_manifest_loads() {
 
 /// Qwen2 keeps the ordinary dense Llama layer layout but adds Q/K/V biases.
 /// This fixture proves the GGUF name table, F32-to-BF16 resident transcode,
-/// and dense manifest path together before a real Q3_K_M stream is attempted.
+/// and dense manifest path together; the real Q3_K_M stream it preceded now
+/// runs and its gates are frozen.
 #[test]
 fn a_qwen2_gguf_installs_with_qkv_biases() {
     let (bytes, _) = turbospark_repack::build_synthetic_qwen2_gguf();

@@ -18,39 +18,20 @@ public final class WelcomeCharacterAssetCache {
     }
 }
 
-/// One suggestion on the empty state.
-///
-/// The old version put four raw prompt strings on the screen ("Write a
-/// high-performance Rust function") as bare capsules. A first-time user
-/// cannot tell from those whether the app can read their files, whether it
-/// needs a model loaded, or what a good prompt looks like -- so each card now
-/// carries the invitation AND what it will actually do. `prompt` is what
-/// lands in the composer; `title` and `detail` are what the user reads.
-struct WelcomeSuggestion: Identifiable {
-    let id = UUID()
-    let systemImage: String
-    let title: String
-    let detail: String
-    let prompt: String
-}
-
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// The empty-state hero: mascot, greeting, composer, and three ways in.
+/// The empty-state hero: mascot, greeting, composer, and model loader.
 ///
 /// Redesign notes:
 ///
-/// - The three rows stagger in (`tsEntrance`) rather than appearing at once,
-///   so opening a chat reads as the app waking up. Total stagger is 0.16s;
-///   past about 0.25s it starts to feel like a loading screen.
+/// - The rows stagger in (`tsEntrance`) rather than appearing at once,
+///   so opening a chat reads as the app waking up.
 /// - The mascot idles (`TSIdlingSparkView`) with a glow that picks up the
 ///   theme accent, which is what ties the character to the rest of the
 ///   chrome instead of leaving it a floating sticker.
 /// - The subhead names the product's actual promise ("Everything here runs on
 ///   your Mac") instead of asking "How can I help you today?", which is the
 ///   one line every assistant already says.
-/// - Suggestions are cards with an icon and a description. Same four ideas,
-///   trimmed to three so the row does not wrap at the sidebar-open width.
 ///
 /// Everything here still respects reduce-motion through the `TS*` helpers.
 @MainActor
@@ -58,24 +39,6 @@ public struct WelcomeHeroView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     public let size: CGFloat
-
-    private static let suggestions: [WelcomeSuggestion] = [
-        WelcomeSuggestion(
-            systemImage: "chevron.left.forwardslash.chevron.right",
-            title: "Explain a codebase",
-            detail: "Point it at a folder and ask what lives where.",
-            prompt: "Explain how this project works"),
-        WelcomeSuggestion(
-            systemImage: "wand.and.stars",
-            title: "Write a function",
-            detail: "Give it a signature; get an implementation.",
-            prompt: "Write a high-performance Rust function"),
-        WelcomeSuggestion(
-            systemImage: "rectangle.on.rectangle",
-            title: "Review a design",
-            detail: "Paste a SwiftUI view and ask for a critique.",
-            prompt: "Design a clean SwiftUI component"),
-    ]
 
     public init(model: AppModel, size: CGFloat = 92) {
         self.model = model
@@ -99,16 +62,10 @@ public struct WelcomeHeroView: View {
             }
             .frame(maxWidth: 700)
             .tsEntrance(delay: 0.08)
-
-            if model.promptText.isEmpty {
-                suggestionCards
-                    .tsEntrance(delay: 0.16)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
         }
-        .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
         .padding(.vertical, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // A soft accent wash behind the hero, plus a scattering of tiny
         // dots in dark mode for a "night sky" backdrop. This is the only
         // place in the app with a gradient; it exists to stop the empty
@@ -119,13 +76,12 @@ public struct WelcomeHeroView: View {
                 starfieldOverlay
                 RadialGradient(
                     colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.07), .clear],
-                    center: UnitPoint(x: 0.5, y: 0.26),
+                    center: UnitPoint(x: 0.5, y: 0.45),
                     startRadius: 0,
                     endRadius: 460)
             }
             .allowsHitTesting(false)
         }
-        .animation(TSMotion.pane, value: model.promptText.isEmpty)
     }
 
     /// Fixed sparkle positions for the dark-mode backdrop: (x fraction, y
@@ -209,75 +165,5 @@ public struct WelcomeHeroView: View {
         withAnimation(TSMotion.select) {
             currentGreeting = alternatives.randomElement() ?? pool.randomElement()
         }
-    }
-
-    private var suggestionCards: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("START HERE", bundle: .module)
-                .font(theme.ui(.tiny, weight: .semibold))
-                .tracking(1.0)
-                .foregroundStyle(.tertiary)
-                .padding(.leading, 2)
-                .accessibilityHidden(true)
-
-            // Grid rather than FlowLayout: three equal cards should stay
-            // equal, and `FlowLayout` sizes each child to its content, which
-            // made the old pills a ragged row of three different widths.
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3),
-                spacing: 9
-            ) {
-                ForEach(Self.suggestions) { suggestion in
-                    suggestionCard(suggestion)
-                }
-            }
-        }
-        .frame(maxWidth: 700)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Suggested prompts")
-    }
-
-    private func suggestionCard(_ suggestion: WelcomeSuggestion) -> some View {
-        Button {
-            withAnimation(TSMotion.select) {
-                model.writePromptTextDirectly(suggestion.prompt)
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 7) {
-                Image(systemName: suggestion.systemImage)
-                    .font(theme.ui(.small, weight: .semibold))
-                    .foregroundStyle(theme.accent)
-                    .frame(width: 24, height: 24)
-                    .background(theme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .accessibilityHidden(true)
-
-                Text(suggestion.title)
-                    .font(theme.ui(.small, weight: .semibold))
-                    .foregroundStyle(.appText)
-                    .lineLimit(1)
-
-                Text(suggestion.detail)
-                    .font(theme.ui(.tiny))
-                    .foregroundStyle(.appSecondary)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(TurboSparkTheme.surfaceColor)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    }
-            }
-            .contentShape(.rect(cornerRadius: 13))
-        }
-        .buttonStyle(TSPressScaleStyle(scale: 0.975))
-        .tsHoverLift(scale: 1.02)
-        .help("Insert this prompt into the composer")
-        .accessibilityLabel("\(suggestion.title): \(suggestion.detail)")
-        .accessibilityHint("Puts this prompt in the composer so you can edit it")
     }
 }

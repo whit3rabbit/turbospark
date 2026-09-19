@@ -59,7 +59,7 @@ pub fn gguf_q4_k_m_install_dir() -> std::path::PathBuf {
     let (dir, arch) = pinned(
         "TURBOSPARK_QWEN2_GGUF_Q4KM_INSTALL_DIR",
         "Qwen2.5 7B GGUF Q4_K_M",
-        4_679_677_824,
+        4_676_502_528,
     );
     assert_eq!(
         (

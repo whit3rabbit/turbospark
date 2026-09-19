@@ -784,12 +784,27 @@ catalog download, progress, cancellation, model selection, generation, and
 gallery behavior. The remaining opt-in gate is real runtime verification
 against a retained verified image install.
 
-Add a top-level `Images` destination with `Create` and `Gallery` tabs,
-compatible installed-model selection, a prompt, stage progress, Stop, result
-preview, Save, and Regenerate. Use the submitted prompt directly in v1; do not
-silently run a text-model prompt enhancer or include the entire conversation as
-conditioning. Regenerate reuses the recorded request and seed; changing the
-seed is explicit. Gallery thumbnails open a previous/next carousel.
+The `Images` destination has `Create` and `Organize` tabs. Both show saved
+outputs with prompt reuse, export, regeneration, and Move to Trash actions.
+Create keeps its prompt bar at the bottom; Settings expands below it and moves
+the composer up. Model and quantization are separate controls, with Z-Image
+Turbo exports grouped together. Organize adds prompt search and bulk selection.
+Thumbnails open a previous/next carousel; missing files retain a removable row.
+
+New requests default to one image at the selected install's default size.
+Z-Image Turbo currently permits only 1024-by-1024, so the size control explains
+that limit instead of offering unsupported dimensions. Selecting two to four
+images runs single-image requests serially under one coordinator admission,
+with successive seeds and unchanged native dimensions. Each result saves before
+the next request starts; cancellation or save failure stops the remainder.
+An unsaved result stays visible with Save and Remove actions and blocks another
+request until resolved. Move to Trash only touches this profile's generated
+image directory and removes the matching artifact and transcript image paths
+only after a successful move (or when the file is already missing).
+
+The submitted prompt is used directly, without a text-model prompt enhancer or
+conversation history. Regenerate reuses the recorded request and seed with the
+currently selected image install; changing the seed is explicit.
 
 Capture the originating chat ID and job identity when submitting. Switching
 chats cannot redirect events or results. Serialize heavyweight jobs across

@@ -68,9 +68,10 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
   - `"qwen2"` -> `ModelFamily::Qwen2Dense` (standard full-attention GQA
     with Q/K/V projection biases; the dense flow carries the Qwen2 RMS
     epsilon and refuses Qwen2 sliding-window configs). GGUF architecture
-    recognition is format-independent, but the resident block type still
-    decides whether a file runs: the pinned Q3_K_M witness is parse-only
-    because this port has no Q3_K resident kernel.
+    recognition is format-independent, and the resident block type decides
+    whether a file runs: the pinned official Q3_K_M witness executes since
+    the Q3_K resident kernels landed (2026-09-19), with the Q4_K_M
+    single-file conversion as the second real GGUF artifact.
   - `"gpt-oss"` -> `ModelFamily::GptOss` (MXFP4 experts, attention sinks)
   - `"spark2_5"` -> `ModelFamily::Spark25` (fused QKV, per-class RoPE,
     headwise output gate; GGUF intake, HF safetensors intake deferred)
@@ -190,7 +191,7 @@ specific "recognized, needs X" refusal.
 | **Llama 2, Mistral 7B, TinyLlama** (`llama`, dense) | Standard Dense Transformer, GQA | **Full Support** (ROADMAP M4) | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Qwen3 dense** (`qwen3`) | Plain GQA, per-head Q/K norm, dense SwiGLU, tied or untied head | GGUF implemented; 0.6B Q8_0 gates passed | Not assessed | [Implemented](https://github.com/ggml-org/llama.cpp/blob/e5a8d439cef31f27fad6938233da10dae1ba5631/src/models/qwen3.cpp) | [Implemented](https://github.com/ml-explore/mlx-lm/blob/745352405f0909540760fd9b9ff16d933fd9c82b/mlx_lm/models/qwen3.py) | [0.6B measurement only](MINIMAX_M2_PHASE0.md#shared-flow-regression-checks); dense |
-| **Qwen2 / Qwen2.5 dense** (`qwen2`) | Standard full-attention GQA, Q/K/V projection biases, no Q/K norm, dense SwiGLU, Qwen2 RMS epsilon 1e-6 | HF/MLX 4-bit intake and shared-flow execution are real-artifact tested; greedy and sampled CLI smokes pass. GGUF `qwen2` intake parses supported shapes, but the pinned Q3_K_M witness is header-only until a Q3_K resident kernel exists | Not assessed | Full Support | Full Support | *No frozen baseline; dense* |
+| **Qwen2 / Qwen2.5 dense** (`qwen2`) | Standard full-attention GQA, Q/K/V projection biases, no Q/K norm, dense SwiGLU, Qwen2 RMS epsilon 1e-6 | HF/MLX 4-bit intake and shared-flow execution are real-artifact tested; the pinned official Q3_K_M GGUF executes on the Q3_K resident kernels (perplexity 12.2878, stable digests, memory oracle), and a single-file Q4_K_M GGUF runs as the second artifact | Not assessed | Full Support | Full Support | *No frozen baseline; dense* |
 | **Qwen3-VL 4B** (`qwen3_vl`) | Dense full-attention GQA, per-head Q/K norm, dense SwiGLU, TIED head, full rotary over `head_dim` 128 (independent of hidden 2560), mRoPE sections [24, 20, 20] (text-only inert) | **Full Support** (MLX intake; frozen quality 17.3463 + 793 MiB memory rows; greedy and sampled CLI smokes pass). GGUF intake refused: real GGUFs exist but the converter's tower naming is unparsed here | Not assessed | Full Support | Full Support | **~793 MiB RAM** at 4096 context (dense; KV-dominated) |
 | **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
 | **Qwen3.8-Flash-Next / REAP-288** (`qwen4_exp`, HF only) | Fine-grained MoE (288-512 experts, top-10), GDN + sigmoid-gated norm, QSA block-sparse attention, PLE n-gram head, hyper-connections | **Full Support** | *Planned* | Full Support (`qwen4exp`) | Not supported (absent from mlx-lm, checked 2026-09-08) | **~2.5 GiB RAM** (oracle peak at the 2,048 bench window; the 68G install streams) |
@@ -270,20 +271,23 @@ here: a block-diffusion generation LOOP, not a decode flow.
 
 The census above is dated 2026-09-08 and predates the Qwen2 landing. As of
 2026-09-13, `qwen2` belongs in the running-in-both-engines class for the
-MLX/HF text path, with the GGUF Q3_K limitation recorded in the matrix above.
+MLX/HF text path; since 2026-09-19 it runs in BOTH engines on real GGUF
+artifacts as well (the pinned official Q3_K_M and a single-file Q4_K_M).
 
 Two structural readings fall out of the census:
 
 - **Dense families remain a substantial gap.** Dense `qwen3` now has a
   GGUF execution path and a verified 0.6B Q8_0 regression checkpoint, and
-  dense Qwen2/Qwen2.5 now has both GGUF and MLX/HF intake through the shared
-  Llama flow. The pinned Qwen2.5 MLX artifact streams and passes real greedy
-  and sampled CLI smokes, and is listed as a `runs` catalog row. Its memory
-  and quality gates remain open; the pinned Q3_K_M GGUF is parse-only until a
-  Q3_K resident kernel exists. Dense Gemma (`gemma3`/`gemma2`/`gemma3n`) remains
-  unported here, and `deepseek2`'s MLA is now implemented (V2-Lite witness;
-  the Kimi/GLM checkpoints remain future witnesses with their own slot
-  arithmetic per AGENTS.md Gotcha 36).
+  dense Qwen2/Qwen2.5 has both GGUF and MLX/HF intake through the shared
+  Llama flow. All three of its real artifacts are gated: the pinned MLX
+  INT4 install (perplexity 12.4206, memory oracle, MLX cross-engine KL),
+  the pinned official Q3_K_M GGUF (perplexity 12.2878 over its Q3_K
+  projections, stable digests, memory oracle at 650 MiB peak), and a
+  single-file Q4_K_M GGUF. Larger Qwen2 checkpoints and derivatives
+  (Qwen2-MoE, Qwen2-VL, split GGUF) are separate validations. Dense Gemma
+  (`gemma3`/`gemma2`/`gemma3n`) remains unported here, and `deepseek2`'s
+  MLA is now implemented (V2-Lite witness; the Kimi/GLM checkpoints remain
+  future witnesses with their own slot arithmetic per AGENTS.md Gotcha 36).
   MiniMax-M2's top-8-of-256 structure motivated its streaming bring-up;
   that structure alone makes no measured footprint or throughput claim.
 - **A class this engine has no machinery for at all.** The recurrent and

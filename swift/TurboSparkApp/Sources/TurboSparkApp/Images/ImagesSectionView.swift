@@ -100,11 +100,11 @@ struct ImagesSectionView: View {
 
     @ViewBuilder
     private var gallery: some View {
-        if artifacts.isEmpty && model.imageJob?.result == nil {
+        if artifacts.isEmpty && (organizing || model.imageJob?.result == nil || model.imageJob?.savedPath != nil) {
             VStack(spacing: 14) {
                 Image(systemName: organizing ? "square.grid.2x2" : "photo.badge.plus")
                     .themedFont(.hero).foregroundStyle(.appAccent)
-                Text(organizing ? "No images found" : "Make room for your imagination", bundle: .module)
+                Text(organizing ? "No images found" : "Create your first image", bundle: .module)
                     .themedFont(.title2, weight: .semibold)
                 Text(organizing ? "Your saved images appear here." : "Describe an idea below. Your images will be saved here automatically.", bundle: .module)
                     .themedFont(.small).foregroundStyle(.appSecondary)

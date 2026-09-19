@@ -48,10 +48,15 @@ enum PromptPastePolicy {
         current: String,
         threshold: Int = attachmentThreshold
     ) -> Split? {
-        // Cheap gate first: character-count growth below the threshold can
-        // never qualify, whatever the edit was (typing, autocomplete,
-        // deletions).
-        guard current.count - previous.count >= threshold else { return nil }
+        // Cheap gates first: a change that cannot hide a threshold-sized
+        // insert never needs the scan. Growth below the threshold covers
+        // typing, autocomplete, and deletions; a LARGE PREVIOUS draft also
+        // scans, because pasting OVER a selection can shrink the draft
+        // while still inserting thousands of characters. After a
+        // conversion the draft stays near the threshold, so the scan cost
+        // per keystroke there is bounded and small.
+        guard current.count - previous.count >= threshold || previous.count >= threshold
+        else { return nil }
 
         let oldBytes = Array(previous.utf8)
         let newBytes = Array(current.utf8)

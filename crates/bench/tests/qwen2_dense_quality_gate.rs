@@ -21,6 +21,14 @@ const Q3KM_BASELINES: &[quality_common::ChipQuality] = &[quality_common::ChipQua
     source: "this port, 2026-09-19, Qwen2.5-7B Instruct GGUF Q3_K_M, M4 Max, 8192 context",
 }];
 
+const Q4KM_BASELINES: &[quality_common::ChipQuality] = &[quality_common::ChipQuality {
+    brand_substr: "Apple M4 Max",
+    perplexity: 11.6563,
+    greedy_digest: "fa25559cee5a189215eca63744feaac42646f6739e3f7262d213dad34ef3ece8",
+    sampled_digest: "6747602313beabe500d386a9b9abcb250a67edf44cd2271a7e2586d7dc30aa18",
+    source: "this port, 2026-09-19, Qwen2.5-7B Instruct GGUF Q4_K_M, M4 Max, 8192 context",
+}];
+
 #[test]
 #[ignore = "needs pinned Qwen2.5 7B MLX INT4 install and release build"]
 fn qwen2_dense_quality_and_determinism() {
@@ -43,6 +51,20 @@ fn qwen2_dense_gguf_q3km_quality_and_determinism() {
     quality_common::run_quality_gate_full(
         &qwen2_dense_common::gguf_q3_k_m_install_dir(),
         Q3KM_BASELINES,
+        "",
+        8192,
+        Some(8),
+    );
+}
+
+/// The roadmap's second real Qwen2 GGUF artifact: Q4_K and Q6_K kernels only,
+/// on the single-file conversion the official repo does not publish.
+#[test]
+#[ignore = "needs the single-file Qwen2.5 7B GGUF Q4_K_M install and release build"]
+fn qwen2_dense_gguf_q4km_quality_and_determinism() {
+    quality_common::run_quality_gate_full(
+        &qwen2_dense_common::gguf_q4_k_m_install_dir(),
+        Q4KM_BASELINES,
         "",
         8192,
         Some(8),

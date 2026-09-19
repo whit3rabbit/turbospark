@@ -163,6 +163,7 @@ extension AppModel {
                     self.imageBatchIndex = index + 1
                     self.imageJob = AppImageJob(
                         chatID: chatID, options: request, status: .generating)
+                    var saved = false
                     for try await event in session.generate(request) {
                         try Task.checkCancellation()
                         switch event {
@@ -181,11 +182,12 @@ extension AppModel {
                             guard self.saveImage() else {
                                 throw TurboSparkError(code: .generate, message: "Could not save image")
                             }
+                            saved = true
                         case .cancelled:
                             throw CancellationError()
                         }
                     }
-                    guard self.imageJob?.savedPath != nil else {
+                    guard saved else {
                         throw TurboSparkError(code: .generate, message: "No image was returned")
                     }
                 }
@@ -222,7 +224,7 @@ extension AppModel {
             lastKnownModified: (try? FileManager.default.attributesOfItem(atPath: path.path)[.modificationDate] as? Date),
             imageRequest: AppImageRequest(options: job.options)
         )
-        let row = AppArtifact.upsert(artifact, into: &chats[index].artifacts)
+        AppArtifact.upsert(artifact, into: &chats[index].artifacts)
         let storedPath = "image-artifacts/\(job.id.uuidString).png"
         let assistant = AppChatMessage(
             role: .assistant,
@@ -231,6 +233,5 @@ extension AppModel {
         chats[index].messages.append(assistant)
         chats[index].updatedAt = now
         persistChats()
-        _ = row
     }
 }

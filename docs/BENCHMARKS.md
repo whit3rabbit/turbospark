@@ -813,6 +813,29 @@ The same corpus gives perplexity `12.4206` for this port, `12.4167` for MLX
 cached, and `12.4165` for MLX batched. The full machine-readable report is
 [`qwen25-kld-2026-09-17.json`](verification/qwen25-kld-2026-09-17.json).
 
+#### The two GGUF artifacts, frozen 2026-09-19
+
+The Q3_K resident kernels (Dense Qwen2 roadmap item) brought the family's
+GGUF side onto the same footing, and both single-file artifacts carry frozen
+rows in `qwen2_dense_{quality_gate,memory_oracle}`:
+
+| Artifact | Perplexity | Digests | Memory oracle (8192 ctx) |
+| --- | ---: | --- | ---: |
+| official Q3_K_M GGUF (`qwen25-7b-q3km`) | 12.2878 | stable; 8-slot digest = 16-slot | 651 MiB peak, +0.02 MiB replay |
+| single-file Q4_K_M GGUF (`qwen25-7b-q4km`) | 11.6563 | stable; 1.00x at 8 slots | see the oracle file's frozen row |
+
+The ordering is the expected one: the Q4_K_M conversion (~4.8 bits effective)
+scores best, the MLX INT4 group-64 install (4.4 bpw, plus a TRAINING
+separation -- MLX group quantization against a different encoder) sits
+between, and the Q3_K_M's ~3.4-bit effective superblocks score worst of the
+three while remaining fully coherent. All three readings are one frozen
+protocol on one machine; the GGUF oracle readings were taken on battery and
+say so in their frozen `source` lines. Both installs were removed after the
+gates froze (session space goal); re-pull with `turbospark-model pull`.
+There is no cross-engine row for either GGUF artifact: `kld_llamacpp.py`
+exists and brew llama.cpp 4.x is installed, so a llama.cpp KL row is the
+cheapest future strengthening of this section.
+
 Caveats. One corpus, one family, one machine. mlx-lm returns bfloat16,
 whose 8 mantissa bits are strictly coarser than this port's f16 storage at
 these softcapped magnitudes, so there is no f16 storage floor to subtract
