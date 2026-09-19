@@ -22,6 +22,7 @@ CLAUDE.local.md
 .zcode/
 .codex/
 .agents/
+.turbospark/
 
 # scripts/kld_llamacpp.py imports scripts/kld.py, so running it byte-compiles
 # a sibling module here.
