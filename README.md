@@ -1,6 +1,10 @@
 # TurboSpark
 
+** This is a early work in progress. Expect bugs and breaking changes **
+
 TurboSpark is a native macOS app and Rust workspace for running local language models on Apple Silicon. Its main advantage is fine-grained Mixture-of-Experts (MoE) streaming: routed expert weights stay on SSD until they are needed, so supported large MoE models can run with a small bounded memory footprint.
+
+I built it as a hobby/side project as an alternative to LM Studio but there are other projects like Unsloth Desktop which are a lot more refined.
 
 The app provides desktop chat and agent tools. The Rust crates provide the Metal inference engine, model installer, command-line tools, HTTP server, and Swift/C bindings.
 
@@ -104,18 +108,50 @@ The default server listens on `127.0.0.1:8080` and provides `/v1/chat/completion
 
 ## Supported models
 
-The catalog in [`crates/catalog/src/models.json`](crates/catalog/src/models.json) is the source of truth. Use `turbospark-model list` for current aliases and evidence status.
+TurboSpark supports 15 declared model families (DeepSeek-V4-Flash is still scaffolded-only), and MoE checkpoints are the headline: only each expert's always-needed core sits in RAM while routed experts stream from SSD on demand, so a 13 GB model runs in about 2 GB of memory. Recent additions include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288, Qwen3-VL 4B with image input, DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
 
-| Family | Catalog checkpoints |
-| --- | --- |
-| Gemma 4 | MLX INT4, GGUF Q8_0, and UD-Q3_K_M/IQ3 sub-4-bit builds |
-| Qwen 3.6 and Ornith-1.5 35B-A3B | MLX INT4 and Q4_K_M/Q8_0 GGUF builds |
-| Qwen 3.5/3.8 dense | MLX INT4, MTP, vision, Bonsai 1-bit, and Ternary-Bonsai 2-bit builds |
-| Qwen3-MoE | Qwen3-30B-A3B Q4_K_M |
-| Qwen3.8-Flash-Next | REAP-288 MLX INT4 |
-| gpt-oss | gpt-oss 20B MXFP4 |
-| DeepSeek V2 | DeepSeek-V2-Lite 16B Q8_0 GGUF |
-| Other supported families | Muse Glimmer, Qwen3-VL, Spark-X2.5, Mistral, TinyLlama, and related catalog rows |
+The catalog in [`crates/catalog/src/models.json`](crates/catalog/src/models.json) is the source of truth. Use `turbospark-model list` for current aliases and evidence status, and `turbospark-model recommend` to rank these for your machine.
+
+### MoE checkpoints (experts stream from disk)
+
+RAM while running is the measured peak from the frozen memory oracles on a 36 GB M4 Max with 16 expert-cache slots, at the listed context. This is the number to budget against: it is the whole working set. A dash means no frozen RAM row is published for that install yet; `turbospark-model info <alias>` carries its evidence status.
+
+| Model | Quant | Format | Disk | RAM while running |
+| --- | --- | --- | ---: | ---: |
+| Qwen 3.6 35B-A3B | INT4 (group 64) | MLX | ~18 GB | ~1.6 GB @ 4k ctx |
+| Qwen 3.6 35B-A3B | Q4_K_M | GGUF | ~21 GB | - |
+| Ornith-1.5 35B-A3B | INT4 (group 64) | MLX | ~20 GB | - |
+| Ornith-1.5 35B-A3B | Q8_0 | GGUF | ~38 GB | - |
+| Qwen3.8-Flash-Next REAP-288 | INT4 | MLX | ~74 GB | ~2.5 GB @ 2k ctx |
+| Qwen3-30B-A3B | Q4_K_M | GGUF | ~19 GB | ~2.7 GB @ 4k ctx |
+| Gemma 4 26B-A4B | INT4 (group 64) | MLX | ~13 GB | ~2.1 GB @ 4k ctx |
+| Gemma 4 26B-A4B | UD-Q3_K_M (IQ3 experts) | GGUF | ~13 GB | ~1.9 GB @ 4k ctx |
+| Gemma 4 26B-A4B | Q8_0 | GGUF | ~27 GB | - |
+| gpt-oss 20B | MXFP4 | GGUF | ~12 GB | ~5.4 GB @ 8k ctx |
+| DeepSeek-V2-Lite 16B (MLA) | Q8_0 | GGUF | ~17 GB | ~4.1 GB @ 8k ctx |
+| Mixtral 8x7B | Q4_K_M | GGUF | ~29 GB | ~55 GB slot cache @ 16 slots: needs a big machine |
+
+Expert granularity decides that RAM column, not model size: Qwen3-30B-A3B splits its experts smallest here but has 48 layers of them, while gpt-oss's 32 experts are individually huge, and Mixtral's 8 blob-sized experts cannot stream usefully at all. See the slot arithmetic in [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md) before picking by parameter count.
+
+### Dense checkpoints (weights stay memory-mapped)
+
+Dense models do not stream, so budget roughly the on-disk size plus KV and scratch that grow with context. The small "peak footprint" numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for these rows are a leak sentinel, not a capacity number: mapped weights do not appear in them.
+
+| Model | Quant | Format | Disk | Notes |
+| --- | --- | --- | ---: | --- |
+| Qwen3.8 27B | INT4 (group 64) | MLX | ~15 GB | MTP and DFlash2 speculative decode; optional vision tower (~16 GB combined, or a ~1 GB tower sidecar) |
+| Bonsai 27B | 1-bit affine (group 128) | MLX | ~4 GB | the Qwen3.8 27B line at 1 bit |
+| Ternary-Bonsai 27B | 2-bit affine (group 128) | MLX | ~8 GB | |
+| Ternary-Bonsai 2 27B | 2-bit affine, Hadamard-folded | MLX | ~8 GB | newest of the line |
+| Ornith-1.5 9B | Q8_0 | GGUF | ~10 GB | |
+| Qwen2.5 7B Instruct | INT4 / Q3_K_M / Q4_K_M | MLX + GGUF | ~4-5 GB | |
+| Qwen3-VL 4B Instruct | INT4 (group 64) | MLX | ~2.3 GB | text trunk; image input via the combined deepstack install (~2.9 GB) |
+| Muse Glimmer 30B | INT4 (group 64) | MLX | ~16 GB | |
+| Spark-X2.5 4B | Q4_K_M | GGUF | ~2.6 GB | |
+| Mistral 7B Instruct v0.3 | Q4_K_M | GGUF | ~4.4 GB | |
+| TinyLlama 1.1B Chat | Q6_K | GGUF | ~0.9 GB | |
+
+Vision intake is per-family: the Qwen GDN dense and MoE flows and the Qwen3-VL trunk carry the implemented tower today, and the other rows are text-only. See [`docs/VISION.md`](docs/VISION.md).
 
 New checkpoints are not automatically supported just because their architecture name matches. The catalog probe checks the checkpoint header, tokenizer sidecars, tensor types, and memory shape before installation. Read [`docs/MODELS.md`](docs/MODELS.md) before adding a model outside the catalog.
 
