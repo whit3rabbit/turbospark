@@ -17,6 +17,10 @@ struct ServerAdvancedSettingsView: View {
 
     private var isRunning: Bool { model.server != nil }
 
+    /// Read per body: the launch buttons need the CLI's absolute path
+    /// anyway, so availability and the command come from one lookup.
+    private var cliURL: URL? { AgentTerminalLaunch.findCLI() }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if isRunning {
@@ -172,7 +176,87 @@ struct ServerAdvancedSettingsView: View {
                 .disabled(isRunning)
             }
 
+            codingAgents
 
+        }
+    }
+
+    /// Launch Claude Code / Codex in Terminal against this server's
+    /// configuration.
+    ///
+    /// **NOT DISABLED WHILE `isRunning`.** The launch routes through the
+    /// `turbospark start <agent>` CLI launcher, which manages the
+    /// background DAEMON: it reuses one serving the same model, restarts
+    /// one serving a different model (announced in the Terminal output),
+    /// or starts one when none runs. A running IN-APP server is a
+    /// different process the CLI cannot see -- with one up and no daemon,
+    /// launching starts a daemon for the model, which pays the model's
+    /// memory a second time. The help text says where the launch lands;
+    /// the Terminal output says which of the three happened.
+    private var codingAgents: some View {
+        field(
+            "Coding agents",
+            help: "Opens Terminal and launches the agent against the background server; it is started or reused as needed."
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Button {
+                        launchAgent("claude")
+                    } label: {
+                        Label {
+                            Text("Launch Claude Code", bundle: .module)
+                        } icon: {
+                            Image(systemName: "terminal")
+                        }
+                    }
+                    .disabled(cliURL == nil)
+
+                    Button {
+                        launchAgent("codex")
+                    } label: {
+                        Label {
+                            Text("Launch Codex", bundle: .module)
+                        } icon: {
+                            Image(systemName: "terminal")
+                        }
+                    }
+                    .disabled(cliURL == nil)
+                }
+                if cliURL == nil {
+                    Label(
+                        "turbospark CLI not found",
+                        systemImage: "exclamationmark.triangle")
+                        .themedFont(.tiny)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    /// The model argument is the first model the IN-APP server serves,
+    /// under its catalog alias when one exists; with nothing served the
+    /// flag is omitted and the CLI connects to whatever the daemon is
+    /// already serving (or refuses, saying so, when none runs). The pinned
+    /// port rides along so a daemon started BY the launch lands on the
+    /// port this pane manages; 0 (automatic) is omitted, matching
+    /// `ServerDaemonLaunch`.
+    private func launchAgent(_ agent: String) {
+        guard let cli = cliURL else { return }
+        let modelArgument = model.serverModelRows.first?.displayName
+        let command = TurboSparkAgent.cliLaunchCommand(
+            for: agent,
+            binaryPath: cli.path,
+            modelArgument: modelArgument,
+            port: model.serverPinnedPort == 0 ? nil : model.serverPinnedPort)
+        guard let command else { return }
+        do {
+            try AgentTerminalLaunch.openInTerminal(command: command)
+            model.showToast("Opening Terminal...", style: .info)
+        } catch {
+            AgentTerminalLaunch.copyToClipboard(command)
+            model.showToast(
+                "Could not open Terminal: \(error.localizedDescription). The command was copied to the clipboard instead.",
+                style: .error)
         }
     }
 

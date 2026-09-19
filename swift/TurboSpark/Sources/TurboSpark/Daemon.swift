@@ -61,7 +61,9 @@ public enum TurboSparkDaemon {
 
 /// Coding agent connectors matching `turbospark start <agent>`.
 public struct TurboSparkAgent: Sendable {
-    public static let supportedAgents = ["claude", "codex", "opencode", "hermes", "openclaw", "dsh"]
+    public static let supportedAgents = [
+        "claude", "codex", "opencode", "grok", "gemini", "hermes", "openclaw", "dsh",
+    ]
 
     public static func isAgent(_ name: String) -> Bool {
         supportedAgents.contains(name.lowercased())
@@ -80,6 +82,15 @@ public struct TurboSparkAgent: Sendable {
     /// `canonicalModelID` to launch Claude Code with that backend's
     /// discovery alias. Omit it when the caller has no attached model to
     /// select yet; discovery is still enabled for `/model`.
+    ///
+    /// **CODEX DOES NOT READ `OPENAI_BASE_URL`.** Its custom-provider
+    /// mechanism is a `[model_providers.<id>]` config table, which the
+    /// `-c` overrides below spell on the command line: an in-memory
+    /// override of `~/.codex/config.toml` for this one invocation, never a
+    /// write to the file, so there is nothing to back up or restore -- the
+    /// user's own config stays authoritative for every other codex run.
+    /// The key rides `TURBOSPARK_API_KEY`, the env the table's `env_key`
+    /// names, keeping it out of codex's argv as well.
     public static func launchCommand(
         for agent: String,
         host: String = "127.0.0.1",
@@ -101,7 +112,21 @@ public struct TurboSparkAgent: Sendable {
                 + " && printf '%s' \(settings) > \"$settings_file\""
                 + " && claude --settings \"$settings_file\"\(modelArgument))"
         case "codex":
-            return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey)) && codex"
+            // Each value is one `-c` argument, single-quoted because the
+            // values themselves carry TOML's double quotes. `wire_api` is
+            // "chat" because /v1/chat/completions is the wire this server
+            // exercises end to end.
+            let overrides = [
+                "model_provider=\"turbospark\"",
+                "model_providers.turbospark.name=\"TurboSpark\"",
+                "model_providers.turbospark.base_url=\"\(baseURL)\"",
+                "model_providers.turbospark.env_key=\"TURBOSPARK_API_KEY\"",
+                "model_providers.turbospark.wire_api=\"chat\"",
+            ]
+            let modelArgument = canonicalModelID.map { " -m \(shellDoubleQuoted($0))" } ?? ""
+            return "export TURBOSPARK_API_KEY=\(shellDoubleQuoted(apiKey)) && codex "
+                + overrides.map { "-c \(shellSingleQuoted($0))" }.joined(separator: " ")
+                + modelArgument
         case "opencode":
             return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey)) && opencode"
         case "hermes", "openclaw", "dsh":
@@ -109,6 +134,43 @@ public struct TurboSparkAgent: Sendable {
         default:
             return "export OPENAI_BASE_URL=\(base) && export OPENAI_API_KEY=\(shellDoubleQuoted(apiKey))"
         }
+    }
+
+    /// The `turbospark start <agent>` command a GUI launch button hands to
+    /// Terminal.app. Unlike `launchCommand` (a self-contained paste for one
+    /// already-running server), this routes through the CLI launcher so the
+    /// daemon is started or model-switched before the agent execs, with the
+    /// launcher's own per-agent wiring.
+    ///
+    /// `binaryPath` is spelled as the ABSOLUTE path found at button-enable
+    /// time, so the command does not depend on the login shell's PATH; the
+    /// agent binary itself is still resolved by the launcher inside that
+    /// shell, whose PATH is the user's own.
+    public static func cliLaunchCommand(
+        for agent: String,
+        binaryPath: String,
+        modelArgument: String? = nil,
+        port: UInt16? = nil
+    ) -> String? {
+        guard isAgent(agent) else { return nil }
+        var tokens = [shellDoubleQuoted(binaryPath), "start", agent]
+        if let modelArgument, !modelArgument.isEmpty {
+            tokens += ["--model", shellDoubleQuoted(modelArgument)]
+        }
+        if let port {
+            tokens += ["--port", String(port)]
+        }
+        return tokens.joined(separator: " ")
+    }
+
+    /// Wraps a shell command in the AppleScript that opens it in a new
+    /// Terminal.app window. AppleScript string literals escape exactly two
+    /// characters: the backslash and the closing double quote.
+    public static func terminalDoScript(command: String) -> String {
+        let escaped = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "tell application \"Terminal\" to do script \"\(escaped)\""
     }
 
     /// Escapes for a POSIX double-quoted string: backslash first, then the

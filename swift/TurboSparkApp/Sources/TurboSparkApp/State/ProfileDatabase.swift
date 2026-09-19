@@ -103,12 +103,65 @@ final class ProfileDatabase: @unchecked Sendable {
             try bind(Date().timeIntervalSince1970, at: 3, to: statement)
             try stepDone(statement)
         }
+        if key.hasPrefix("memory:file:") {
+            let body = String(data: payload, encoding: .utf8) ?? ""
+            try withStatement(
+                """
+                INSERT INTO memory(id, scope, title, body, updated_at, payload_version, payload)
+                VALUES(?1, ?2, ?3, ?4, ?5, 1, ?6)
+                ON CONFLICT(id) DO UPDATE SET body=excluded.body,
+                    updated_at=excluded.updated_at, payload=excluded.payload
+                """) { statement in
+                try bind(key, at: 1, to: statement)
+                try bind(key.contains("/projects/") ? "project" : "profile", at: 2, to: statement)
+                try bind(key.split(separator: "/").last.map(String.init), at: 3, to: statement)
+                try bind(body, at: 4, to: statement)
+                try bind(Date().timeIntervalSince1970, at: 5, to: statement)
+                try bind(payload, at: 6, to: statement)
+                try stepDone(statement)
+            }
+            try withStatement("DELETE FROM memory_fts WHERE memory_id = ?1") { statement in
+                try bind(key, at: 1, to: statement)
+                try stepDone(statement)
+            }
+            try withStatement(
+                "INSERT INTO memory_fts(memory_id, title, body) VALUES(?1, ?2, ?3)"
+            ) { statement in
+                try bind(key, at: 1, to: statement)
+                try bind(key.split(separator: "/").last.map(String.init), at: 2, to: statement)
+                try bind(body, at: 3, to: statement)
+                try stepDone(statement)
+            }
+        } else if key.contains("settings") {
+            try withStatement(
+                """
+                INSERT INTO profile_settings(key, payload_version, payload, updated_at)
+                VALUES(?1, 1, ?2, ?3)
+                ON CONFLICT(key) DO UPDATE SET payload=excluded.payload,
+                    updated_at=excluded.updated_at
+                """) { statement in
+                try bind(key, at: 1, to: statement)
+                try bind(payload, at: 2, to: statement)
+                try bind(Date().timeIntervalSince1970, at: 3, to: statement)
+                try stepDone(statement)
+            }
+        }
     }
 
     func deleteRecord(key: String) throws {
         try withStatement("DELETE FROM private_records WHERE key = ?1") { statement in
             try bind(key, at: 1, to: statement)
             try stepDone(statement)
+        }
+        if key.hasPrefix("memory:file:") {
+            try withStatement("DELETE FROM memory WHERE id = ?1") { statement in
+                try bind(key, at: 1, to: statement)
+                try stepDone(statement)
+            }
+            try withStatement("DELETE FROM memory_fts WHERE memory_id = ?1") { statement in
+                try bind(key, at: 1, to: statement)
+                try stepDone(statement)
+            }
         }
     }
 
@@ -154,6 +207,7 @@ final class ProfileDatabase: @unchecked Sendable {
                 let payload = try encoder.encode(chat)
                 if try chatPayload(id: chat.id.uuidString) != payload {
                     try upsertChat(chat, payload: payload)
+                    try replaceNormalizedChildren(for: chat, encoder: encoder)
                     try updateSearchIndex(for: chat)
                 }
             }
@@ -311,8 +365,92 @@ final class ProfileDatabase: @unchecked Sendable {
             );
             CREATE INDEX IF NOT EXISTS chats_project_updated
                 ON chats(project_id, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS messages(
+                id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                ordinal INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                payload_version INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS messages_chat_ordinal ON messages(chat_id, ordinal);
+            CREATE TABLE IF NOT EXISTS alternates(
+                id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                message_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                payload_version INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS drafts(
+                chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+                text TEXT NOT NULL,
+                payload_version INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS projects(
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                payload_version INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS attachments(
+                id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                asset_id TEXT,
+                file_name TEXT NOT NULL,
+                extracted_text TEXT NOT NULL,
+                payload_version INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS artifacts(
+                id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                asset_id TEXT,
+                title TEXT NOT NULL,
+                payload_version INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory(
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                title TEXT,
+                body TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                payload_version INTEGER NOT NULL,
+                payload BLOB
+            );
+            CREATE TABLE IF NOT EXISTS embeddings(
+                id TEXT PRIMARY KEY,
+                memory_id TEXT REFERENCES memory(id) ON DELETE CASCADE,
+                model TEXT NOT NULL,
+                vector BLOB NOT NULL,
+                payload_version INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS todos(
+                id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                ordinal INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                payload_version INTEGER NOT NULL,
+                payload BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS profile_settings(
+                key TEXT PRIMARY KEY,
+                payload_version INTEGER NOT NULL,
+                payload BLOB NOT NULL,
+                updated_at REAL NOT NULL
+            );
             CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(
                 chat_id UNINDEXED,
+                title,
+                body,
+                tokenize='unicode61'
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+                memory_id UNINDEXED,
                 title,
                 body,
                 tokenize='unicode61'
@@ -385,6 +523,86 @@ final class ProfileDatabase: @unchecked Sendable {
             try bind(chat.title, at: 2, to: statement)
             try bind(body, at: 3, to: statement)
             try stepDone(statement)
+        }
+    }
+
+    private func replaceNormalizedChildren(for chat: AppChat, encoder: JSONEncoder) throws {
+        let chatID = chat.id.uuidString
+        for table in ["alternates", "messages", "drafts", "attachments", "artifacts", "todos"] {
+            try withStatement("DELETE FROM \(table) WHERE chat_id = ?1") { statement in
+                try bind(chatID, at: 1, to: statement)
+                try stepDone(statement)
+            }
+        }
+        try withStatement(
+            "INSERT INTO drafts(chat_id, text, payload_version, payload) VALUES(?1, ?2, 1, ?3)"
+        ) { statement in
+            try bind(chatID, at: 1, to: statement)
+            try bind(chat.draft, at: 2, to: statement)
+            try bind(try encoder.encode(chat.draftAttachments), at: 3, to: statement)
+            try stepDone(statement)
+        }
+        for (ordinal, message) in chat.messages.enumerated() {
+            try withStatement(
+                "INSERT INTO messages(id, chat_id, ordinal, role, created_at, payload_version, payload) VALUES(?1, ?2, ?3, ?4, ?5, 1, ?6)"
+            ) { statement in
+                try bind(message.id.uuidString, at: 1, to: statement)
+                try bind(chatID, at: 2, to: statement)
+                try bind(Int64(ordinal), at: 3, to: statement)
+                try bind(message.role.rawValue, at: 4, to: statement)
+                try bind(message.createdAt.timeIntervalSince1970, at: 5, to: statement)
+                try bind(try encoder.encode(message), at: 6, to: statement)
+                try stepDone(statement)
+            }
+            for (alternateOrdinal, alternate) in message.alternates.enumerated() {
+                try withStatement(
+                    "INSERT INTO alternates(id, chat_id, message_id, ordinal, payload_version, payload) VALUES(?1, ?2, ?3, ?4, 1, ?5)"
+                ) { statement in
+                    try bind(alternate.id.uuidString, at: 1, to: statement)
+                    try bind(chatID, at: 2, to: statement)
+                    try bind(message.id.uuidString, at: 3, to: statement)
+                    try bind(Int64(alternateOrdinal), at: 4, to: statement)
+                    try bind(try encoder.encode(alternate), at: 5, to: statement)
+                    try stepDone(statement)
+                }
+            }
+        }
+        for attachment in chat.draftAttachments {
+            try withStatement(
+                "INSERT INTO attachments(id, chat_id, asset_id, file_name, extracted_text, payload_version, payload) VALUES(?1, ?2, ?3, ?4, ?5, 1, ?6)"
+            ) { statement in
+                try bind(attachment.id.uuidString, at: 1, to: statement)
+                try bind(chatID, at: 2, to: statement)
+                try bind(attachment.sourcePath.flatMap(ManagedAssetStore.assetID(from:)), at: 3, to: statement)
+                try bind(attachment.fileName, at: 4, to: statement)
+                try bind(attachment.extractedText, at: 5, to: statement)
+                try bind(try encoder.encode(attachment), at: 6, to: statement)
+                try stepDone(statement)
+            }
+        }
+        for artifact in chat.artifacts {
+            try withStatement(
+                "INSERT INTO artifacts(id, chat_id, asset_id, title, payload_version, payload) VALUES(?1, ?2, ?3, ?4, 1, ?5)"
+            ) { statement in
+                try bind(artifact.id.uuidString, at: 1, to: statement)
+                try bind(chatID, at: 2, to: statement)
+                try bind(artifact.path.flatMap(ManagedAssetStore.assetID(from:)), at: 3, to: statement)
+                try bind(artifact.title, at: 4, to: statement)
+                try bind(try encoder.encode(artifact), at: 5, to: statement)
+                try stepDone(statement)
+            }
+        }
+        for (ordinal, todo) in chat.todos.enumerated() {
+            try withStatement(
+                "INSERT INTO todos(id, chat_id, ordinal, status, payload_version, payload) VALUES(?1, ?2, ?3, ?4, 1, ?5)"
+            ) { statement in
+                try bind(todo.id, at: 1, to: statement)
+                try bind(chatID, at: 2, to: statement)
+                try bind(Int64(ordinal), at: 3, to: statement)
+                try bind(todo.status, at: 4, to: statement)
+                try bind(try encoder.encode(todo), at: 5, to: statement)
+                try stepDone(statement)
+            }
         }
     }
 
@@ -492,6 +710,12 @@ final class ProfileDatabase: @unchecked Sendable {
 
     private func bind(_ value: Double, at index: Int32, to statement: OpaquePointer) throws {
         guard sqlite3_bind_double(statement, index, value) == SQLITE_OK else {
+            throw DatabaseError.bind(errorMessage)
+        }
+    }
+
+    private func bind(_ value: Int64, at index: Int32, to statement: OpaquePointer) throws {
+        guard sqlite3_bind_int64(statement, index, value) == SQLITE_OK else {
             throw DatabaseError.bind(errorMessage)
         }
     }

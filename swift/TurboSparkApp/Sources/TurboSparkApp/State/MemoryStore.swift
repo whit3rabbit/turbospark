@@ -69,6 +69,10 @@ public final class MemoryStore {
         self.injectedBase = base
     }
 
+    private var usesVault: Bool {
+        injectedBase == nil && ProfileRepository.shared.isAvailable
+    }
+
     // MARK: - Paths
 
     /// The user-scope memory root for this run's profile.
@@ -119,7 +123,9 @@ public final class MemoryStore {
             .appendingPathComponent("projects", isDirectory: true)
             .appendingPathComponent(MemoryStore.projectKey(forProjectRoot: root), isDirectory: true)
             .appendingPathComponent("memory", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if !usesVault {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
         return dir
     }
 
@@ -133,6 +139,20 @@ public final class MemoryStore {
     /// against the file's mtime so a per-turn prompt assembly does not
     /// re-read a file that did not change.
     public func loadIndex(forProjectRoot root: URL) -> String {
+        if usesVault {
+            let key = vaultKey(projectRoot: root, fileName: "MEMORY.md")
+            if let data = (try? ProfileRepository.shared.rawRecord(key: key)) ?? nil,
+               let text = String(data: data, encoding: .utf8) {
+                return text
+            }
+            let legacy = indexURL(forProjectRoot: root)
+            if let data = try? Data(contentsOf: legacy),
+               let text = String(data: data, encoding: .utf8) {
+                try? ProfileRepository.shared.saveRawRecord(data, key: key)
+                return text
+            }
+            return ""
+        }
         let url = indexURL(forProjectRoot: root)
         lock.lock()
         defer { lock.unlock() }
@@ -238,7 +258,10 @@ public final class MemoryStore {
         let dir = directory(forProjectRoot: projectRoot)
         let fileURL = dir.appendingPathComponent(name + ".md")
         let fileName = name + ".md"
-        let created = !FileManager.default.fileExists(atPath: fileURL.path)
+        let key = vaultKey(projectRoot: projectRoot, fileName: fileName)
+        let created = usesVault
+            ? (((try? ProfileRepository.shared.rawRecord(key: key)) ?? nil) == nil)
+            : !FileManager.default.fileExists(atPath: fileURL.path)
         // One line, whatever the model sent: a description carrying newlines
         // would both break the frontmatter and smuggle index rows in.
         let oneLineDescription = description
@@ -253,7 +276,11 @@ public final class MemoryStore {
         ---
         """
         let document = frontmatter + "\n\n" + body.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
-        try document.write(to: fileURL, atomically: true, encoding: .utf8)
+        if usesVault {
+            try ProfileRepository.shared.saveRawRecord(Data(document.utf8), key: key)
+        } else {
+            try document.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
 
         let indexText = loadIndex(forProjectRoot: projectRoot)
         let updated = MemoryStore.upsertingIndexLine(
@@ -270,7 +297,13 @@ public final class MemoryStore {
             ])
         }
         let fileURL = directory(forProjectRoot: projectRoot).appendingPathComponent(name + ".md")
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        let key = vaultKey(projectRoot: projectRoot, fileName: name + ".md")
+        if usesVault,
+           let data = (try? ProfileRepository.shared.rawRecord(key: key)) ?? nil,
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        guard !usesVault, FileManager.default.fileExists(atPath: fileURL.path) else {
             throw NSError(domain: "TurboSparkMemory", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "No memory named '\(name)' exists. Use action \"read\" with no name to see the index."
             ])
@@ -288,8 +321,13 @@ public final class MemoryStore {
             ])
         }
         let fileURL = directory(forProjectRoot: projectRoot).appendingPathComponent(name + ".md")
-        let existed = FileManager.default.fileExists(atPath: fileURL.path)
-        if existed {
+        let key = vaultKey(projectRoot: projectRoot, fileName: name + ".md")
+        let existed = usesVault
+            ? (((try? ProfileRepository.shared.rawRecord(key: key)) ?? nil) != nil)
+            : FileManager.default.fileExists(atPath: fileURL.path)
+        if usesVault, existed {
+            try ProfileRepository.shared.deleteRecord(key: key)
+        } else if existed {
             try FileManager.default.removeItem(at: fileURL)
         }
         let indexText = loadIndex(forProjectRoot: projectRoot)
@@ -302,6 +340,11 @@ public final class MemoryStore {
     // MARK: - Internals
 
     private func writeIndex(_ text: String, forProjectRoot root: URL) throws {
+        if usesVault {
+            try ProfileRepository.shared.saveRawRecord(
+                Data(text.utf8), key: vaultKey(projectRoot: root, fileName: "MEMORY.md"))
+            return
+        }
         let url = indexURL(forProjectRoot: root)
         try text.write(to: url, atomically: true, encoding: .utf8)
         let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? nil
@@ -317,5 +360,9 @@ public final class MemoryStore {
         lock.lock()
         defer { lock.unlock() }
         indexCache.removeAll()
+    }
+
+    private func vaultKey(projectRoot: URL, fileName: String) -> String {
+        "memory:file:projects/\(Self.projectKey(forProjectRoot: projectRoot))/memory/\(fileName)"
     }
 }

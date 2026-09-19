@@ -139,7 +139,7 @@ extension AppModel {
     public func persistSettingsDebounced() {
         settingsPersistDebounceTask?.cancel()
         settingsPersistDebounceTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled, let self else { return }
             self.settingsPersistDebounceTask = nil
             self.persistSettings()
@@ -460,7 +460,7 @@ extension AppModel {
 ///
 /// `applicationShouldTerminateAfterLastWindowClosed` is true, so the view tree
 /// can already be gone when the notification arrives -- and with it the
-/// 400 ms draft debounce, which is the most recent thing the user typed.
+/// 300 ms draft debounce, which is the most recent thing the user typed.
 ///
 /// `unloadModel()` bails on `guard !generating`, so quitting mid-turn skipped
 /// the whole flush including both persists.

@@ -24,10 +24,13 @@ public final class ProfileMemoryStore {
 
     public var fileURL: URL { directory.appendingPathComponent("MEMORY.md") }
     public var indexURL: URL { directory.appendingPathComponent(".embeddings.json") }
+    private var usesVault: Bool { injectedBase == nil && ProfileRepository.shared.isAvailable }
+    private let memoryKey = "memory:file:profile/MEMORY.md"
+    private let indexKey = "memory:file:profile/.embeddings.json"
 
     public func load() -> String {
         lock.lock(); defer { lock.unlock() }
-        return (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
+        return loadUnlocked()
     }
 
     @discardableResult
@@ -38,7 +41,9 @@ public final class ProfileMemoryStore {
         formatter.formatOptions = [.withInternetDateTime, .withColonSeparatorInTime, .withColonSeparatorInTimeZone]
         let entry = "\n- [\(formatter.string(from: timestamp))] \(value.replacingOccurrences(of: "\n", with: " "))\n"
         lock.lock(); defer { lock.unlock() }
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !usesVault {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
         let old = loadUnlocked()
         try atomicWrite(old.isEmpty ? entry.trimmingCharacters(in: .newlines) + "\n" : old + entry)
         return value
@@ -68,16 +73,27 @@ public final class ProfileMemoryStore {
 
     public func write(_ text: String) throws {
         lock.lock(); defer { lock.unlock() }
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !usesVault {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
         try atomicWrite(text)
     }
 
-    public func clearIndex() { try? fileManager.removeItem(at: indexURL) }
+    public func clearIndex() {
+        if usesVault { try? ProfileRepository.shared.deleteRecord(key: indexKey) }
+        else { try? fileManager.removeItem(at: indexURL) }
+    }
 
-    public var hasIndex: Bool { fileManager.fileExists(atPath: indexURL.path) }
+    public var hasIndex: Bool {
+        if usesVault { return ((try? ProfileRepository.shared.rawRecord(key: indexKey)) ?? nil) != nil }
+        return fileManager.fileExists(atPath: indexURL.path)
+    }
 
     public var indexedModel: String? {
-        guard let data = try? Data(contentsOf: indexURL),
+        let stored: Data? = usesVault
+            ? ((try? ProfileRepository.shared.rawRecord(key: indexKey)) ?? nil)
+            : try? Data(contentsOf: indexURL)
+        guard let data = stored,
               let index = try? JSONDecoder().decode(ProfileMemoryEmbeddingIndex.self, from: data)
         else { return nil }
         return index.model
@@ -97,11 +113,15 @@ public final class ProfileMemoryStore {
             sourceHash: hash,
             rows: zip(documents, vectors).map { .init(text: $0.0, vector: $0.1) })
         let data = try JSONEncoder().encode(index)
-        try data.write(to: indexURL, options: .atomic)
+        if usesVault { try ProfileRepository.shared.saveRawRecord(data, key: indexKey) }
+        else { try data.write(to: indexURL, options: .atomic) }
     }
 
     public func semanticSearch(_ query: String, modelPath: String, limit: Int = 5) async -> [String] {
-        guard let data = try? Data(contentsOf: indexURL),
+        let stored: Data? = usesVault
+            ? ((try? ProfileRepository.shared.rawRecord(key: indexKey)) ?? nil)
+            : try? Data(contentsOf: indexURL)
+        guard let data = stored,
               let index = try? JSONDecoder().decode(ProfileMemoryEmbeddingIndex.self, from: data),
               index.model == modelPath,
               index.sourceHash == sourceHash(for: load()) else { return lexicalSearch(query, limit: limit) }
@@ -113,9 +133,27 @@ public final class ProfileMemoryStore {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    private func loadUnlocked() -> String { (try? String(contentsOf: fileURL, encoding: .utf8)) ?? "" }
+    private func loadUnlocked() -> String {
+        if usesVault {
+            if let data = (try? ProfileRepository.shared.rawRecord(key: memoryKey)) ?? nil,
+               let text = String(data: data, encoding: .utf8) {
+                return text
+            }
+            if let data = try? Data(contentsOf: fileURL),
+               let text = String(data: data, encoding: .utf8) {
+                try? ProfileRepository.shared.saveRawRecord(data, key: memoryKey)
+                return text
+            }
+            return ""
+        }
+        return (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
+    }
 
     private func atomicWrite(_ text: String) throws {
+        if usesVault {
+            try ProfileRepository.shared.saveRawRecord(Data(text.utf8), key: memoryKey)
+            return
+        }
         let temporary = fileURL.appendingPathExtension("tmp-\(UUID().uuidString)")
         try text.write(to: temporary, atomically: true, encoding: .utf8)
         if fileManager.fileExists(atPath: fileURL.path) { try fileManager.removeItem(at: fileURL) }

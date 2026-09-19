@@ -15,18 +15,26 @@ import Foundation
 /// its stores stay at the machine root and its user-scope content stays in the
 /// shared `~/.turbospark` tree, so nothing migrates and every installation
 /// that predates profiles already is one.
-public struct UserProfile: Codable, Equatable, Identifiable {
+public struct UserProfile: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var name: String
     public var createdAt: Date
+    /// Public registry hint only. Private display names live in SQLCipher.
+    public var isProtected: Bool
 
-    public init(id: String = UUID().uuidString, name: String, createdAt: Date = Date()) {
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        createdAt: Date = Date(),
+        isProtected: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
+        self.isProtected = isProtected
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, createdAt }
+    private enum CodingKeys: String, CodingKey { case id, name, createdAt, isProtected }
 
     /// Tolerant like every store (`swift/CLAUDE.md` Gotcha 13): a row missing
     /// a field decodes as defaults rather than failing the whole registry.
@@ -35,6 +43,7 @@ public struct UserProfile: Codable, Equatable, Identifiable {
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Untitled"
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        isProtected = try container.decodeIfPresent(Bool.self, forKey: .isProtected) ?? false
     }
 }
 
@@ -221,7 +230,9 @@ public enum UserProfileStore {
         let trimmed = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw MutationError.emptyName }
         guard !isReservedName(trimmed) else { throw MutationError.reservedName }
-        guard !registry.profiles.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame })
+        guard profile.isProtected || !registry.profiles.contains(where: {
+            !$0.isProtected && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+        })
         else { throw MutationError.duplicateName }
         var named = profile
         named.name = trimmed
@@ -242,7 +253,8 @@ public enum UserProfileStore {
         }
         guard !isReservedName(trimmed) else { throw MutationError.reservedName }
         guard !registry.profiles.contains(where: {
-            $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+            $0.id != id && !$0.isProtected
+                && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
         })
         else { throw MutationError.duplicateName }
         registry.profiles[index].name = trimmed
