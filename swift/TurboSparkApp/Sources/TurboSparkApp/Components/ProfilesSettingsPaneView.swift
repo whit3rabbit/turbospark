@@ -8,8 +8,23 @@ import SwiftUI
 /// door: export reads the profile's own folder and import restores into a
 /// NEW identity, so neither one can damage the profile this run belongs to.
 struct ProfilesSettingsPaneView: View {
+    private enum SecuritySheet: String, Identifiable {
+        case protect
+        case changePassphrase
+        case disableProtection
+
+        var id: String { rawValue }
+    }
+
+    private enum ExactBackupSheet: String, Identifiable {
+        case export
+        case restore
+        var id: String { rawValue }
+    }
+
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
+    @ObservedObject private var vaultCoordinator = ProfileVaultCoordinator.shared
 
     @State private var newProfileName: String = ""
     @State private var renameTarget: UserProfile?
@@ -20,10 +35,27 @@ struct ProfilesSettingsPaneView: View {
     @State private var exportSelection: Set<String> = []
     @State private var importOffer: AppModel.ProfileBackupImportOffer?
     @State private var importName: String = ""
+    @State private var securitySheet: SecuritySheet?
+    @State private var currentPassphrase = ""
+    @State private var newPassphrase = ""
+    @State private var confirmPassphrase = ""
+    @State private var enableQuickUnlock = true
+    @State private var securityBusy = false
+    @State private var securityError: String?
+    @State private var exactBackupSheet: ExactBackupSheet?
+    @State private var exactBackupURL: URL?
+    @State private var exactBackupPassphrase = ""
+    @State private var exactBackupConfirmation = ""
+    @State private var exactRestoreName = "Imported Profile"
+    @State private var exactBackupError: String?
+    @State private var plaintextConfirmed = false
+    @State private var exportAuthenticationPassphrase = ""
+    @State private var exportError: String?
 
     var body: some View {
         Form {
             usersSection
+            securitySection
             addSection
             restoreSection
             notesSection
@@ -38,6 +70,12 @@ struct ProfilesSettingsPaneView: View {
         }
         .sheet(item: $exportTarget) { profile in
             exportSheet(profile)
+        }
+        .sheet(item: $securitySheet) { mode in
+            securitySheetView(mode)
+        }
+        .sheet(item: $exactBackupSheet) { mode in
+            exactBackupSheetView(mode)
         }
         .confirmationDialog(
             "Delete Profile",
@@ -186,10 +224,12 @@ struct ProfilesSettingsPaneView: View {
     /// ellipsis menu so neither surface can drift from the other.
     @ViewBuilder
     private func profileActions(_ profile: UserProfile) -> some View {
-        Button {
-            renameTarget = profile
-            renameText = profile.name
-        } label: { Text("Rename...", bundle: .module) }
+        if !profile.isProtected || profile.id == model.currentProfile.id {
+            Button {
+                renameTarget = profile
+                renameText = profile.name
+            } label: { Text("Rename...", bundle: .module) }
+        }
         exportBackupAction(profile)
         if profile.id != model.currentProfile.id {
             Button(role: .destructive) {
@@ -207,17 +247,33 @@ struct ProfilesSettingsPaneView: View {
         exportBackupAction(UserProfileStore.defaultProfile)
     }
 
-    /// One shared Export Backup button so every menu surface offers the same
-    /// action for the same profile. It opens the category sheet; the archive
-    /// only runs after the sheet's Continue.
+    /// Private vault exports require the profile to be the active, unlocked
+    /// one. An inactive profile may be protected and its key is deliberately
+    /// unavailable to this process.
+    @ViewBuilder
     private func exportBackupAction(_ profile: UserProfile) -> some View {
-        Button {
-            exportSelection = ProfileBackup.allCategoryIDs
-            exportTarget = profile
-        } label: { Text("Export Backup...", bundle: .module) }
-        .disabled(model.profileBackupInFlight)
-        .settingsControl("Export Backup...", pane: .profiles, timing: .immediate)
-        .help("Writes this user's settings, chats, skills, and tools to a .zip backup")
+        if profile.id == model.currentProfile.id {
+            Button {
+                exactBackupPassphrase = ""
+                exactBackupConfirmation = ""
+                exactBackupError = nil
+                exactBackupSheet = .export
+            } label: { Text("Export Encrypted Backup...", bundle: .module) }
+            .disabled(model.profileBackupInFlight)
+            .settingsControl("Export Backup...", pane: .profiles, timing: .immediate)
+            Button {
+                exportSelection = OpenProfileExport.allCategoryIDs
+                plaintextConfirmed = false
+                exportAuthenticationPassphrase = ""
+                exportError = nil
+                exportTarget = profile
+            } label: { Text("Export Open ZIP...", bundle: .module) }
+            .disabled(model.profileBackupInFlight)
+            .help("Writes explicitly selected private data to a plaintext ZIP")
+        } else {
+            Button("Switch to Export") {}
+                .disabled(true)
+        }
     }
 
     private var addSection: some View {
@@ -235,6 +291,171 @@ struct ProfilesSettingsPaneView: View {
             .settingsControl("Add a User", pane: .profiles, timing: .immediate)
     }
 
+    private var securitySection: some View {
+        Section(header: Text("Profile Privacy", bundle: .module)) {
+            LabeledContent("Private storage", value: vaultCoordinator.isProtected ? "Protected" : "Encrypted locally")
+            if vaultCoordinator.isProtected {
+                Toggle(isOn: Binding(
+                    get: { vaultCoordinator.quickUnlockEnabled },
+                    set: updateQuickUnlock
+                )) {
+                    Text("Touch ID or Mac login", bundle: .module)
+                }
+                .disabled(securityBusy || !vaultCoordinator.canUseQuickUnlock)
+
+                HStack {
+                    Button {
+                        beginSecuritySheet(.changePassphrase)
+                    } label: { Text("Change Passphrase...", bundle: .module) }
+                    Button(role: .destructive) {
+                        beginSecuritySheet(.disableProtection)
+                    } label: { Text("Disable Protection...", bundle: .module) }
+                    Spacer()
+                    Button {
+                        vaultCoordinator.lockNow()
+                    } label: {
+                        Label("Lock Now", systemImage: "lock")
+                    }
+                }
+            } else {
+                Button {
+                    beginSecuritySheet(.protect)
+                } label: {
+                    Label("Protect This Profile...", systemImage: "lock.shield")
+                }
+            }
+
+            Text("Protection covers chats, projects, private settings, managed attachments, and generated images. Models, skills, plugins, hooks, external project files, and tool executables remain ordinary files. FileVault is still recommended for whole-disk protection.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+        }
+    }
+
+    private func beginSecuritySheet(_ mode: SecuritySheet) {
+        currentPassphrase = ""
+        newPassphrase = ""
+        confirmPassphrase = ""
+        enableQuickUnlock = vaultCoordinator.canUseQuickUnlock
+        securityError = nil
+        securitySheet = mode
+    }
+
+    private func updateQuickUnlock(_ enabled: Bool) {
+        securityBusy = true
+        Task {
+            do {
+                try await vaultCoordinator.setQuickUnlock(enabled: enabled)
+            } catch {
+                model.showToast(error.localizedDescription, style: .error, duration: 8)
+            }
+            securityBusy = false
+        }
+    }
+
+    private func securitySheetView(_ mode: SecuritySheet) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(securitySheetTitle(mode))
+                .font(theme.ui(.title3, weight: .semibold))
+
+            if mode != .protect {
+                SecureField("Current passphrase", text: $currentPassphrase)
+                    .textFieldStyle(.roundedBorder)
+            }
+            if mode != .disableProtection {
+                SecureField(mode == .protect ? "Recovery passphrase" : "New passphrase", text: $newPassphrase)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("Confirm passphrase", text: $confirmPassphrase)
+                    .textFieldStyle(.roundedBorder)
+                Text("Use at least 15 characters. Spaces and pasted passphrases are allowed.", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+            }
+            if mode == .protect, vaultCoordinator.canUseQuickUnlock {
+                Toggle("Enable Touch ID or Mac login", isOn: $enableQuickUnlock)
+            }
+            if mode == .disableProtection {
+                Text("The vault remains encrypted, but its key will be stored locally without requiring authentication.", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+            }
+            if let securityError {
+                Text(securityError)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button {
+                    securitySheet = nil
+                } label: { Text("Cancel", bundle: .module) }
+                .keyboardShortcut(.cancelAction)
+                Button(role: mode == .disableProtection ? .destructive : nil) {
+                    applySecurityChange(mode)
+                } label: {
+                    Text(securityActionTitle(mode))
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(securityBusy || !securityFormIsValid(mode))
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private func securitySheetTitle(_ mode: SecuritySheet) -> String {
+        switch mode {
+        case .protect: return "Protect This Profile"
+        case .changePassphrase: return "Change Recovery Passphrase"
+        case .disableProtection: return "Disable Profile Protection"
+        }
+    }
+
+    private func securityActionTitle(_ mode: SecuritySheet) -> String {
+        switch mode {
+        case .protect: return "Protect Profile"
+        case .changePassphrase: return "Change Passphrase"
+        case .disableProtection: return "Disable Protection"
+        }
+    }
+
+    private func securityFormIsValid(_ mode: SecuritySheet) -> Bool {
+        switch mode {
+        case .protect:
+            return newPassphrase.count >= ProfileVaultCrypto.minimumPassphraseLength
+                && newPassphrase == confirmPassphrase
+        case .changePassphrase:
+            return !currentPassphrase.isEmpty
+                && newPassphrase.count >= ProfileVaultCrypto.minimumPassphraseLength
+                && newPassphrase == confirmPassphrase
+        case .disableProtection:
+            return !currentPassphrase.isEmpty
+        }
+    }
+
+    private func applySecurityChange(_ mode: SecuritySheet) {
+        securityBusy = true
+        securityError = nil
+        Task {
+            do {
+                switch mode {
+                case .protect:
+                    try await vaultCoordinator.protect(
+                        passphrase: newPassphrase, quickUnlock: enableQuickUnlock)
+                case .changePassphrase:
+                    try await vaultCoordinator.changePassphrase(
+                        current: currentPassphrase, replacement: newPassphrase)
+                case .disableProtection:
+                    try await vaultCoordinator.disableProtection(passphrase: currentPassphrase)
+                }
+                securitySheet = nil
+                model.showToast("Profile privacy settings updated.")
+            } catch {
+                securityError = error.localizedDescription
+            }
+            securityBusy = false
+        }
+    }
+
     private func addProfile() {
         let name = newProfileName
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -246,16 +467,27 @@ struct ProfilesSettingsPaneView: View {
         Section(header: Text("Restore a Backup", bundle: .module)) {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
+                    if let url = model.pickEncryptedProfileBackup() {
+                        exactBackupURL = url
+                        exactBackupPassphrase = ""
+                        exactBackupConfirmation = ""
+                        exactRestoreName = "Imported Profile"
+                        exactBackupError = nil
+                        exactBackupSheet = .restore
+                    }
+                } label: { Text("Restore Encrypted Backup...", bundle: .module) }
+                .disabled(model.profileBackupInFlight)
+                Button {
                     Task {
                         if let offer = await model.pickProfileBackupForImport() {
                             importOffer = offer
                             importName = offer.suggestedName
                         }
                     }
-                } label: { Text("Import Backup...", bundle: .module) }
+                } label: { Text("Import Legacy ZIP...", bundle: .module) }
                 .disabled(model.profileBackupInFlight)
-                .help("Restores a profile backup (.zip) as a new user")
-                Text("A backup comes back as a new user with a fresh identity and a name of its own, even when it was exported from the Default user. Keychain-stored hook secrets are not part of a backup.", bundle: .module)
+                .help("Restores a version 1 plaintext profile backup")
+                Text("Encrypted backups restore as locked profiles with a fresh identity. Legacy version 1 ZIP restore remains available for older archives. Keychain items are never included.", bundle: .module)
                     .font(theme.ui(.small))
                     .foregroundStyle(.appSecondary)
             }
@@ -305,18 +537,18 @@ struct ProfilesSettingsPaneView: View {
 
     // MARK: - Export sheet
 
-    /// Choose what the backup carries. Every category starts selected; the
-    /// Continue button hands the selection to the save panel and the archive.
+    /// The portable export is intentionally separate from exact backup. Its
+    /// contents are readable by any ZIP tool and therefore plaintext.
     private func exportSheet(_ profile: UserProfile) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("What to Include in This Backup", bundle: .module)
+            Text("Export a Plaintext ZIP", bundle: .module)
                 .font(theme.ui(.title3, weight: .semibold))
                 .settingsControl(
                     "What to Include in This Backup", pane: .profiles, timing: .immediate)
             Text("Backing up \"\(profile.name)\"", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
-            ForEach(ProfileBackup.categories) { category in
+            ForEach(OpenProfileExport.categories) { category in
                 Toggle(isOn: Binding(
                     get: { exportSelection.contains(category.id) },
                     set: { isOn in
@@ -332,7 +564,7 @@ struct ProfilesSettingsPaneView: View {
             }
             HStack(spacing: 12) {
                 Button {
-                    exportSelection = ProfileBackup.allCategoryIDs
+                    exportSelection = OpenProfileExport.allCategoryIDs
                 } label: { Text("Select All", bundle: .module) }
                 .buttonStyle(.link)
                 Button {
@@ -341,9 +573,20 @@ struct ProfilesSettingsPaneView: View {
                 .buttonStyle(.link)
                 Spacer()
             }
-            Text("SOUL and personality are stored with Settings. Keychain-stored hook secrets never travel, and the Default user's downloaded models and install registry are never part of a backup.", bundle: .module)
+            Toggle("I understand this ZIP is not encrypted", isOn: $plaintextConfirmed)
+            if vaultCoordinator.isProtected,
+               !hasRecentProfileAuthentication {
+                SecureField("Recovery passphrase", text: $exportAuthenticationPassphrase)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Text("The ZIP contains only the selected categories. It never fetches remote URLs or includes Keychain secrets, models, skills, plugins, hooks, tools, external repositories, or referenced external files.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
+            if let exportError {
+                Text(exportError)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.red)
+            }
             HStack {
                 Spacer()
                 Button {
@@ -351,18 +594,94 @@ struct ProfilesSettingsPaneView: View {
                 } label: { Text("Cancel", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
                 Button {
-                    let target = exportTarget
                     let selection = exportSelection
-                    exportTarget = nil
-                    if let target {
-                        model.runProfileBackupExport(target, included: selection)
+                    Task {
+                        if vaultCoordinator.isProtected, !hasRecentProfileAuthentication {
+                            guard await vaultCoordinator.authenticateRecently(
+                                with: exportAuthenticationPassphrase) else {
+                                exportError = "Authentication failed."
+                                return
+                            }
+                        }
+                        exportTarget = nil
+                        model.runOpenProfileExport(included: selection)
                     }
                 } label: { Text("Continue", bundle: .module) }
                 .keyboardShortcut(.defaultAction)
+                .disabled(!plaintextConfirmed)
             }
         }
         .padding(20)
         .frame(width: 380)
+    }
+
+    private var hasRecentProfileAuthentication: Bool {
+        guard let date = vaultCoordinator.lastAuthenticationAt else { return false }
+        return Date().timeIntervalSince(date) < 300
+    }
+
+    private func exactBackupSheetView(_ mode: ExactBackupSheet) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(mode == .export ? "Export Encrypted Backup" : "Restore Encrypted Backup")
+                .font(theme.ui(.title3, weight: .semibold))
+            if mode == .restore {
+                TextField("Profile name", text: $exactRestoreName)
+                    .textFieldStyle(.roundedBorder)
+            }
+            SecureField(mode == .export ? "Export password" : "Backup password",
+                        text: $exactBackupPassphrase)
+                .textFieldStyle(.roundedBorder)
+            if mode == .export {
+                SecureField("Confirm export password", text: $exactBackupConfirmation)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Text(mode == .export
+                 ? "Use at least 15 characters. The backup contains an authenticated SQLCipher snapshot and encrypted managed assets. The device Keychain item is excluded."
+                 : "The restored profile remains protected by this password. Its private name and content stay encrypted.")
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+            if let exactBackupError {
+                Text(exactBackupError)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button {
+                    exactBackupSheet = nil
+                    exactBackupURL = nil
+                } label: { Text("Cancel", bundle: .module) }
+                .keyboardShortcut(.cancelAction)
+                Button {
+                    if mode == .export {
+                        exactBackupSheet = nil
+                        model.runEncryptedProfileBackupExport(passphrase: exactBackupPassphrase)
+                    } else if let exactBackupURL,
+                              model.importEncryptedProfileBackup(
+                                exactBackupURL,
+                                named: exactRestoreName,
+                                passphrase: exactBackupPassphrase) {
+                        exactBackupSheet = nil
+                        self.exactBackupURL = nil
+                    }
+                } label: {
+                    Text(mode == .export ? "Choose Destination..." : "Restore")
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!exactBackupFormIsValid(mode))
+            }
+        }
+        .padding(20)
+        .frame(width: 430)
+    }
+
+    private func exactBackupFormIsValid(_ mode: ExactBackupSheet) -> Bool {
+        guard exactBackupPassphrase.count >= ProfileVaultCrypto.minimumPassphraseLength else {
+            return false
+        }
+        if mode == .export { return exactBackupPassphrase == exactBackupConfirmation }
+        return !exactRestoreName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && exactBackupURL != nil
     }
 
     /// Category labels as literal keys: existing catalog entries ("Settings",
@@ -373,6 +692,8 @@ struct ProfilesSettingsPaneView: View {
         switch id {
         case "settings": Text("Settings", bundle: .module)
         case "chats": Text("Chat history", bundle: .module)
+        case "generated-images": Text("Generated images", bundle: .module)
+        case "attachments": Text("Attachments", bundle: .module)
         case "projects": Text("Projects", bundle: .module)
         case "models": Text("Model favorites and scan paths", bundle: .module)
         case "mcp": Text("MCP servers and marketplaces", bundle: .module)

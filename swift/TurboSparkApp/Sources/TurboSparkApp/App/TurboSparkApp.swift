@@ -75,7 +75,7 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct TurboSparkApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: ForegroundAppDelegate
-    @StateObject private var model = AppModel()
+    @StateObject private var vaultCoordinator = ProfileVaultCoordinator.shared
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
@@ -105,7 +105,13 @@ struct TurboSparkApp: App {
     var body: some Scene {
         let currentLanguage = AppLanguage.resolve(languageRawValue)
         Window("TurboSpark", id: "main") {
-            RootView(model: model)
+            Group {
+                if let model = vaultCoordinator.model {
+                    RootView(model: model)
+                } else {
+                    ProfileUnlockView(coordinator: vaultCoordinator)
+                }
+            }
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
@@ -115,6 +121,7 @@ struct TurboSparkApp: App {
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
         .commands {
+            if let model = vaultCoordinator.model {
             // Menu-bar chrome takes its text from `Text(_:bundle:)` labels
             // rather than bare `LocalizedStringKey`s: the string catalog lives
             // in `Bundle.module`, and the key-only initializers
@@ -444,6 +451,7 @@ struct TurboSparkApp: App {
                     Text("Language", bundle: .module)
                 }
             }
+            }
         }
 
         Settings {
@@ -451,24 +459,31 @@ struct TurboSparkApp: App {
             // theme has to be injected again here or every view in this window
             // reads `ResolvedAppTheme.fallback` -- the light defaults -- while
             // the window itself renders dark.
-            AppSettingsView(model: model)
-                .appThemed()
-                .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
-                .environment(\.locale, currentLanguage.locale)
-                .environment(\.layoutDirection, currentLanguage.layoutDirection)
+            Group {
+                if let model = vaultCoordinator.model {
+                    AppSettingsView(model: model)
+                        .appThemed()
+                } else {
+                    ProfileUnlockView(coordinator: vaultCoordinator)
+                }
+            }
+            .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
+            .environment(\.locale, currentLanguage.locale)
+            .environment(\.layoutDirection, currentLanguage.layoutDirection)
         }
 
         MenuBarExtra(
             "TurboSpark",
-            systemImage: model.server != nil ? "bolt.fill" : "bolt",
+            systemImage: vaultCoordinator.model?.server != nil ? "bolt.fill" : "bolt",
             // Guard writes to prevent an infinite re-render loop: MenuBarExtra
             // on macOS writes back its insertion state on each scene graph evaluation.
             // Directly passing $model.showMenuBarItem fires objectWillChange on
             // unchanged values and spins the main thread at 100% CPU.
             isInserted: Binding(
-                get: { model.showMenuBarItem },
+                get: { vaultCoordinator.model?.showMenuBarItem ?? false },
                 set: { newValue in
-                    if model.showMenuBarItem != newValue {
+                    if let model = vaultCoordinator.model,
+                       model.showMenuBarItem != newValue {
                         model.showMenuBarItem = newValue
                     }
                 }
@@ -478,8 +493,10 @@ struct TurboSparkApp: App {
             // its own theme applies here, and the menu bar's own text and
             // icons were reading `ResolvedAppTheme.fallback` for the life of
             // the feature (swift/docs/SWIFT_SETTINGS_AUDIT.md item 7).
-            ServerMenuDashboardView(model: model)
-                .appThemed()
+            if let model = vaultCoordinator.model {
+                ServerMenuDashboardView(model: model)
+                    .appThemed()
+            }
         }
         .menuBarExtraStyle(.window)
     }

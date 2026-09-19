@@ -106,6 +106,9 @@ public enum AppStorageRoot {
     /// relative path so a profile's archive never hardcodes its root; older
     /// absolute paths and remote URLs retain their existing meaning.
     public static func resolveStoredPath(_ path: String) -> String {
+        if ManagedAssetStore.assetID(from: path) != nil {
+            return (try? ManagedAssetStore.shared.materializedURL(for: path).path) ?? ""
+        }
         let expanded = (path as NSString).expandingTildeInPath
         if expanded.hasPrefix("/") || URL(string: expanded)?.scheme != nil {
             return expanded
@@ -174,6 +177,14 @@ public enum AppJSONStore {
         _ type: T.Type, from url: URL, label: String,
         decoder: JSONDecoder = JSONDecoder()
     ) -> T? {
+        if let key = ProfileRepository.protectedRecordKey(for: url) {
+            do {
+                return try ProfileRepository.shared.load(type, key: key, legacyURL: url)
+            } catch {
+                recordReadFailure(label: label, error: error)
+                return nil
+            }
+        }
         let data: Data
         do {
             data = try Data(contentsOf: url)
@@ -212,6 +223,15 @@ public enum AppJSONStore {
         _ value: T, to url: URL, label: String,
         encoder: JSONEncoder = JSONEncoder()
     ) -> Bool {
+        if let key = ProfileRepository.protectedRecordKey(for: url) {
+            do {
+                try ProfileRepository.shared.save(value, key: key)
+                return true
+            } catch {
+                recordWriteFailure(label: label, error: error)
+                return false
+            }
+        }
         do {
             let data = try encoder.encode(value)
             try data.write(to: url, options: .atomic)
@@ -222,6 +242,18 @@ public enum AppJSONStore {
             FileHandle.standardError.write("TurboSpark: \(message)\n".data(using: .utf8)!)
             return false
         }
+    }
+
+    static func recordReadFailure(label: String, error: Error) {
+        let message = "\(label) could not be read: \(error.localizedDescription)"
+        lastReadError = message
+        FileHandle.standardError.write("TurboSpark: \(message)\n".data(using: .utf8)!)
+    }
+
+    static func recordWriteFailure(label: String, error: Error) {
+        let message = "\(label) could not be saved: \(error.localizedDescription)"
+        lastWriteError = message
+        FileHandle.standardError.write("TurboSpark: \(message)\n".data(using: .utf8)!)
     }
 
     /// Moves an unreadable file aside, returning where it went.

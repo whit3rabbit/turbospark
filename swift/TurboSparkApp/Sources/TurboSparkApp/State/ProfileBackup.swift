@@ -77,6 +77,8 @@ enum ProfileBackup {
             "granted_folders.json", "input_history.json",
         ]),
         Category(id: "chats", ownedTopLevelNames: ["chats_archive.json"]),
+        Category(id: "generated-images", ownedTopLevelNames: ["image-artifacts"]),
+        Category(id: "attachments", ownedTopLevelNames: ["managed-attachments"]),
         Category(id: "projects", ownedTopLevelNames: ["projects_archive.json"]),
         Category(id: "models", ownedTopLevelNames: [
             "model_organization.json", "excluded_scan_paths.json",
@@ -108,12 +110,12 @@ enum ProfileBackup {
     }()
 
     /// Whether a top-level entry belongs in an export with `included`
-    /// selected. An entry NO category owns always travels: the table above
-    /// is a description of the known stores, not an allowlist, so an
-    /// unknown file is backed up rather than silently dropped.
+    /// selected. A partial export is a strict allowlist: unknown future data
+    /// does not silently cross the user's category boundary. A whole-profile
+    /// export still carries every entry because `included` is nil.
     static func shouldInclude(topLevelName: String, included: Set<String>?) -> Bool {
         guard let included else { return true }
-        guard let owner = categoryOwning[topLevelName] else { return true }
+        guard let owner = categoryOwning[topLevelName] else { return false }
         return included.contains(owner)
     }
 

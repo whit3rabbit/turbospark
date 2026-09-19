@@ -147,6 +147,16 @@ struct RootView: View {
                 isInspectorVisible.toggle()
             }
         }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+            for: NSWorkspace.sessionDidResignActiveNotification)
+        ) { _ in
+            ProfileVaultCoordinator.shared.lockNow()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+            for: NSWorkspace.screensDidSleepNotification)
+        ) { _ in
+            ProfileVaultCoordinator.shared.lockNow()
+        }
         .onAppear { [weak model] in
             // The delegate cannot reach the `@StateObject`, and it is the one
             // quit hook that survives the window closing first.

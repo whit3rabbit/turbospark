@@ -72,7 +72,7 @@ enum ProfileBackupImport {
         return try ProfileBackup.validatedManifest(from: try await readManifestData(archive: archive))
     }
 
-    private static func listEntries(archive: URL) async throws -> [String] {
+    static func listEntries(archive: URL) async throws -> [String] {
         do {
             let output = try await ProcessExecutor.run(
                 executableURL: zipinfoURL,

@@ -10,6 +10,12 @@ extension AppModel {
     /// loading here neither chooses nor re-chooses it.
     func loadProfiles() {
         profiles = UserProfileStore.loadRegistry().profiles
+        if ProfileVaultStore.shared.isProtected,
+           let displayName = try? ProfileRepository.shared.load(
+                String.self, key: "profile:display-name"),
+           let index = profiles.firstIndex(where: { $0.id == UserProfileStore.active.id }) {
+            profiles[index].name = displayName
+        }
     }
 
     /// The user this run belongs to. The id is fixed for the process (a
@@ -49,6 +55,35 @@ extension AppModel {
     }
 
     public func renameProfile(_ profile: UserProfile, to newName: String) {
+        if profile.id == UserProfileStore.active.id,
+           ProfileVaultStore.shared.isProtected {
+            let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                showToast(profileMutationMessage(UserProfileStore.MutationError.emptyName), style: .error)
+                return
+            }
+            guard !UserProfileStore.isReservedName(trimmed) else {
+                showToast(profileMutationMessage(UserProfileStore.MutationError.reservedName), style: .error)
+                return
+            }
+            let registry = UserProfileStore.loadRegistry()
+            guard !registry.profiles.contains(where: {
+                $0.id != profile.id && !$0.isProtected
+                    && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+            }) else {
+                showToast(profileMutationMessage(UserProfileStore.MutationError.duplicateName), style: .error)
+                return
+            }
+            do {
+                try ProfileRepository.shared.save(trimmed, key: "profile:display-name")
+                if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+                    profiles[index].name = trimmed
+                }
+            } catch {
+                showToast(error.localizedDescription, style: .error)
+            }
+            return
+        }
         var registry = UserProfileStore.loadRegistry()
         do {
             try UserProfileStore.renaming(profile.id, to: newName, in: &registry)
