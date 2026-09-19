@@ -46,14 +46,15 @@ public enum TaskChecklistPanelModel {
 /// between the two surfaces.
 struct TodoItemRow: View {
     let item: TodoItem
+    var compact = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            statusIcon
+            statusIcon.frame(width: ConversationLayout.activityIconWidth)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.content)
-                    .themedFont(.base, weight: item.isInProgress ? .semibold : .regular)
+                    .themedFont(compact ? .small : .base, weight: item.isInProgress ? .semibold : .regular)
                     .foregroundStyle(item.isCompleted ? .secondary : .primary)
                     .strikethrough(item.isCompleted || item.isCancelled, color: .secondary)
 
@@ -66,7 +67,7 @@ struct TodoItemRow: View {
 
             Spacer()
 
-            if item.isInProgress {
+            if item.isInProgress && !compact {
                 Text("In Progress", bundle: .module)
                     .themedFont(.tiny, weight: .medium)
                     .padding(.horizontal, 6)

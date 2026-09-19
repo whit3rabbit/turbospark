@@ -34,6 +34,7 @@ public struct CollapsibleMessageContentView: View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             ZStack(alignment: .topLeading) {
                 contentBody
+                    .fixedSize(horizontal: false, vertical: true)
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(
@@ -75,13 +76,15 @@ public struct CollapsibleMessageContentView: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Text(isExpanded ? "Show less" : "Show more")
-                            .themedFont(.small, weight: .medium)
+                        if isExpanded { Text("Show less", bundle: .module) }
+                        else { Text("View all", bundle: .module) }
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .themedFont(.micro, weight: .bold)
                     }
-                    .foregroundStyle(.appSecondary)
-                    .padding(.top, 2)
+                    .themedFont(.small, weight: .medium)
+                    .foregroundStyle(.appAccent)
+                    .frame(minHeight: 28)
+                    .padding(.top, 4)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -89,6 +92,8 @@ public struct CollapsibleMessageContentView: View {
                 .accessibilityLabel(isExpanded ? "Show less of message" : "Show more of message")
             }
         }
+        .frame(maxWidth: isUser ? nil : .infinity, alignment: isUser ? .trailing : .leading)
+        .onChange(of: text) { _, _ in isExpanded = false }
     }
 
     @ViewBuilder
@@ -97,7 +102,6 @@ public struct CollapsibleMessageContentView: View {
             Text(text)
                 .font(theme.uiFont)
                 .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             // Interactive tables (qwen-code parity): a message carrying a
             // pipe table renders that segment as a sortable, copyable grid;

@@ -230,216 +230,8 @@ private struct ImageGenerationPreviewView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 }
-/// Native SwiftUI transcript view rendering multi-turn conversations with Markdown formatting.
-private struct ChatTranscriptView: View {
-    @ObservedObject var model: AppModel
-
-    /// Transcript turns (qwen-code collapse parity): a user prompt anchors
-    /// each turn; a collapsed turn renders prompt + final answer with the
-    /// hidden rows behind a toggle. Anchors are UUIDs, so a stale anchor
-    /// from another chat simply matches nothing.
-    private var transcriptTurns: [(offset: Int, element: TurnCollapseModel.Turn)] {
-        Array(TurnCollapseModel.turns(in: model.selectedTurnMessages).enumerated())
-    }
-
-    private var messagesByID: [UUID: AppChatMessage] {
-        Dictionary(uniqueKeysWithValues: model.selectedTurnMessages.map { ($0.id, $0) })
-    }
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    // The compaction divider sits above the boundary rows,
-                    // which are a PREFIX of the transcript.
-                    let compaction = model.selectedCompactionState
-                    if compaction.boundary > 0 {
-                        CompactionDividerView(
-                            summary: compaction.summary ?? "",
-                            summarizedRows: compaction.boundary)
-                    }
-                    let turns = transcriptTurns
-                    let byID = messagesByID
-                    ForEach(turns, id: \.offset) { _, turn in
-                        turnRows(turn, byID: byID)
-                    }
-
-                    NewChatSuggestionBanner(model: model)
-
-                    // The live task checklist sits OUTSIDE the streaming row
-                    // (same rationale as BackgroundAgentsStripView below): it
-                    // must stay visible while the turn runs AND after it ends.
-                    if model.selectedChat.projectID == nil {
-                        TaskChecklistPanelView(model: model)
-                    }
-
-                    // The active-goal banner, same rationale: the goal must
-                    // stay visible (and stoppable) through its whole loop.
-                    GoalBannerView(model: model)
-
-                    // The interactive AskUserQuestion card (qwen-code
-                    // parity). It lives OUTSIDE the streaming row like the
-                    // checklist and the goal banner: the tool call's own
-                    // transcript row does not exist until its result lands,
-                    // and the whole point is that the result waits for the
-                    // user's pick. Scoped to the asking chat -- the same
-                    // visibility rule as the strips below -- so a question
-                    // parked by one chat does not render inside another.
-                    if let pendingQuestions = model.pendingUserQuestions,
-                        pendingQuestions.chatID == nil
-                            || pendingQuestions.chatID == model.selectedChatID
-                    {
-                        InteractiveQuestionCardView(
-                            model: model,
-                            questions: pendingQuestions.items)
-                    }
-
-                    if model.isRunning || !model.outputText.isEmpty || !model.outputReasoningText.isEmpty {
-                        ActiveStreamingRowView(
-                            model: model,
-                            output: model.outputText,
-                            reasoning: model.outputReasoningText,
-                            isRunning: model.isRunning
-                        )
-                    }
-
-                    BackgroundAgentsStripView(model: model)
-
-                    BackgroundShellsStripView(model: model)
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id("bottom")
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 20)
-            }
-            .onChange(of: model.outputText) {
-                if model.isRunning {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
-            }
-            .onChange(of: model.outputReasoningText) {
-                if model.isRunning {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
-            }
-            // A parked question set scrolls itself into view: mid-turn it is
-            // the one thing the user has to act on.
-            .onChange(of: model.pendingUserQuestions) { _, pending in
-                if let pending {
-                    let count = pending.items.count
-                    let announcement = count == 1
-                        ? "Assistant is asking a question. Please choose an answer."
-                        : "Assistant is asking \(count) questions. Please choose your answers."
-                    _ = AccessibilityNotification.Announcement.post(.init(announcement))
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                }
-            }
-            .onAppear {
-                proxy.scrollTo("bottom", anchor: .bottom)
-            }
-            // Turn navigation (qwen-code parity): the menu commands and
-            // chords bump a token; this is where the jump actually lands.
-            .onChange(of: model.turnNavigationToken) { _, _ in
-                guard let target = model.turnNavigationTargetID else { return }
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    proxy.scrollTo(target, anchor: .top)
-                }
-            }
-            .accessibilityRotor("Messages") {
-                ForEach(model.selectedTurnMessages) { msg in
-                    AccessibilityRotorEntry(
-                        msg.role == .user ? "User: \(msg.content.prefix(40))" : "Assistant: \(msg.content.prefix(40))",
-                        id: msg.id
-                    )
-                }
-            }
-        }
-    }
-
-    /// The rows of one turn: every message when expanded, prompt + toggle +
-    /// final answer when collapsed. A collapse that would hide nothing
-    /// renders expanded.
-    @ViewBuilder
-    private func turnRows(
-        _ turn: TurnCollapseModel.Turn, byID: [UUID: AppChatMessage]
-    ) -> some View {
-        let hidden = TurnCollapseModel.hiddenCount(for: turn, messagesByID: byID)
-        let isCollapsed = turn.isCollapsible && hidden > 0
-            && model.collapsedTurnAnchors.contains(turn.anchorID!)
-        let visibleIDs = isCollapsed
-            ? TurnCollapseModel.visibleIDs(collapsedFor: turn, messagesByID: byID)
-            : turn.messageIDs
-        VStack(alignment: .leading, spacing: 20) {
-            ForEach(visibleIDs, id: \.self) { messageID in
-                if let message = byID[messageID] {
-                    MessageRowView(model: model, message: message)
-                        .id(message.id)
-                    // The toggle sits under the PROMPT of a collapsed turn
-                    // (qwen-code's "expand the middle steps" affordance);
-                    // only rendered when something is actually hidden.
-                    if isCollapsed && messageID == visibleIDs.first {
-                        TurnCollapseToggleRow(count: hidden) {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                _ = model.collapsedTurnAnchors.remove(turn.anchorID!)
-                            }
-                        }
-                    }
-                }
-            }
-            if !isCollapsed && turn.isCollapsible && hidden > 0 && !model.isRunning {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        _ = model.collapsedTurnAnchors.insert(turn.anchorID!)
-                    }
-                } label: {
-                    Label { Text("Collapse turn", bundle: .module) } icon: { Image(systemName: "rectangle.compress.vertical") }
-                        .themedFont(.tiny)
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .help("Fold this turn down to the prompt and its final answer")
-            }
-        }
-    }
-}
-
-/// The "N hidden steps" toggle a collapsed turn shows under its prompt.
-private struct TurnCollapseToggleRow: View {
-    let count: Int
-    let onExpand: () -> Void
-
-    var body: some View {
-        Button(action: onExpand) {
-            HStack(spacing: 5) {
-                Image(systemName: "chevron.down")
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appAccent)
-                    .accessibilityHidden(true)
-                Text(
-                    count == 1
-                        ? "1 hidden step from this turn"
-                        : "\(count) hidden steps from this turn")
-                    .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(.appSecondary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Expand the steps this turn took")
-        .accessibilityLabel("Show \(count) hidden steps")
-    }
-}
-
 /// View displaying a committed conversation message turn with Claude-style layout and hover actions.
-private struct MessageRowView: View {
+struct MessageRowView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let message: AppChatMessage
@@ -742,17 +534,19 @@ private struct MessageRowView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .themedFont(.small, weight: .bold)
-                            .foregroundStyle(.appAccent)
-                            .accessibilityHidden(true)
-                        Text(model.selected?.alias ?? "TurboSpark")
-                            .themedFont(.small, weight: .semibold)
-                            .foregroundStyle(theme.metadataForeground)
+                    if message.toolCalls.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles")
+                                .themedFont(.small, weight: .bold)
+                                .foregroundStyle(.appAccent)
+                                .accessibilityHidden(true)
+                            Text(model.selected?.alias ?? "TurboSpark")
+                                .themedFont(.small, weight: .semibold)
+                                .foregroundStyle(theme.metadataForeground)
+                        }
+                        .accessibilityHeading(.h2)
+                        .padding(.bottom, -2)
                     }
-                    .accessibilityHeading(.h2)
-                    .padding(.bottom, -2)
 
                     if !message.reasoning.isEmpty {
                         ReasoningDisclosureView(reasoning: message.reasoning)
@@ -862,7 +656,7 @@ private struct MessageRowView: View {
 }
 
 /// View rendering live streaming output and prefill animations.
-private struct ActiveStreamingRowView: View {
+struct ActiveStreamingRowView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let output: String
@@ -946,7 +740,7 @@ private struct ActiveStreamingRowView: View {
 /// finished. It renders OUTSIDE the streaming row so a background agent is
 /// visible while nothing else is happening in the conversation -- which is
 /// most of a background run's life.
-private struct BackgroundAgentsStripView: View {
+struct BackgroundAgentsStripView: View {
     @ObservedObject var model: AppModel
 
     private var runsForChat: [SubagentRunState] {
@@ -990,7 +784,7 @@ private struct BackgroundAgentsStripView: View {
 /// through `BashOutput`, and a transcript row per finished background
 /// command would grow without bound. Killed shells' descendants die with
 /// them (`ProcessExecutor.terminateAndReap` is a tree kill).
-private struct BackgroundShellsStripView: View {
+struct BackgroundShellsStripView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
@@ -1077,7 +871,7 @@ private struct BackgroundShellsStripView: View {
 /// summary that replaced them expands in place. A disclosure rather than a
 /// toast because a summary a user can never read is a summary they cannot
 /// correct.
-private struct CompactionDividerView: View {
+struct CompactionDividerView: View {
     @Environment(\.appTheme) private var theme
     let summary: String
     let summarizedRows: Int

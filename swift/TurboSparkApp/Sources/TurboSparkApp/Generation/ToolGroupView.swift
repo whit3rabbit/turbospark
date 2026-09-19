@@ -4,7 +4,6 @@ import SwiftUI
 /// Coalesced group view displaying multiple sequential tool executions in Unsloth Studio style.
 @MainActor
 struct ToolGroupView: View {
-    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let toolCalls: [AppToolCall]
     let toolResults: [AppToolResult]
@@ -54,18 +53,10 @@ struct ToolGroupView: View {
                         ToolCallCardView(
                             model: model,
                             call: call,
-                            result: matchResult,
-                            isNestedInGroup: true
+                            result: matchResult
                         )
                     }
                 }
-                .padding(.leading, 12)
-                .overlay(
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.12))
-                        .frame(width: 1.5),
-                    alignment: .leading
-                )
                 .padding(.top, 2)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -86,21 +77,24 @@ struct ToolGroupView: View {
                 }
             }
         } label: {
-            HStack(spacing: 8) {
-                if hasRunningTool {
-                    TaskProgressFlameIcon(size: 13)
-                } else if hasFailedTool {
-                    Image(systemName: "exclamationmark.circle")
-                        .themedFont(.small, weight: .semibold)
-                        .foregroundStyle(Color.red)
-                } else {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .themedFont(.small, weight: .semibold)
-                        .foregroundStyle(.appAccent)
+            HStack(spacing: 7) {
+                Group {
+                    if hasRunningTool {
+                        TaskProgressFlameIcon(size: 13)
+                    } else if hasFailedTool {
+                        Image(systemName: "exclamationmark.circle")
+                            .themedFont(.small, weight: .semibold)
+                            .foregroundStyle(Color.red)
+                    } else {
+                        Image(systemName: "wrench.and.screwdriver")
+                            .themedFont(.small, weight: .semibold)
+                            .foregroundStyle(.appAccent)
+                    }
                 }
+                .frame(width: ConversationLayout.activityIconWidth)
 
                 Text(groupLabel)
-                    .themedFont(.base, weight: .medium)
+                    .themedFont(.small, weight: .medium)
                     .foregroundStyle(.appText)
 
                 if hasRunningTool {
@@ -120,13 +114,14 @@ struct ToolGroupView: View {
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
+            .frame(minHeight: ConversationLayout.activityHeight)
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.appSurface.opacity(0.6))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.vertical, 4)
+            .background(.appSurface)
+            .clipShape(RoundedRectangle(cornerRadius: ConversationLayout.cardRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(.appBorder.opacity(0.2), lineWidth: 1)
+                RoundedRectangle(cornerRadius: ConversationLayout.cardRadius, style: .continuous)
+                    .stroke(.appBorder, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }

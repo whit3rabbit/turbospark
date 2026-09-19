@@ -61,7 +61,9 @@ struct TopBarView: View {
             HStack(spacing: 8) {
                 if model.activeSection == .chat {
                     ChatShareButton(model: model)
-                    if model.selectedChat.projectID != nil {
+                    if ProjectChatSummary.isAvailable(
+                        projectID: model.selectedChat.projectID, isChat: true,
+                        hasTranscript: model.hasOutputTranscript) {
                         Button {
                             if canPinSummary { toggleSummary() }
                             else { showsSummaryPopover.toggle() }

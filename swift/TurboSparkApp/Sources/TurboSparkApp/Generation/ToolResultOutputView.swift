@@ -60,7 +60,7 @@ struct ToolResultOutputView: View {
             .background(
                 isError
                     ? Color.red.opacity(0.05)
-                    : Color(nsColor: .textBackgroundColor).opacity(0.5)
+                    : theme.elevatedSurface.opacity(theme.surfaceOpacity(0.5))
             )
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(
@@ -68,7 +68,7 @@ struct ToolResultOutputView: View {
                     .stroke(
                         isError
                             ? Color.red.opacity(0.3)
-                            : Color(nsColor: .separatorColor).opacity(0.25),
+                            : theme.border,
                         lineWidth: 1
                     )
             )

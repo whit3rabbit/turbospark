@@ -18,7 +18,6 @@ struct ToolCallCardView: View {
     @ObservedObject var model: AppModel
     let call: AppToolCall
     let result: AppToolResult?
-    var isNestedInGroup: Bool = false
 
     @State private var isExpanded: Bool = false
 
@@ -56,11 +55,18 @@ struct ToolCallCardView: View {
         if let result, result.isError {
             return Color.red.opacity(0.4)
         }
-        return Color(nsColor: .separatorColor).opacity(isNestedInGroup ? 0.2 : 0.35)
+        return theme.border
     }
 
     private var terminalCommand: String? {
         ToolPresentation.resolve(call.name).icon == "terminal" ? call.shellCommand : nil
+    }
+
+    private var submittedPlan: String? {
+        guard ["exitplanmode", "exit_plan_mode"].contains(call.name.lowercased()) else { return nil }
+        let text = call.arguments["plan"] ?? call.arguments["summary"] ?? call.arguments["content"]
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
     }
 
     private var isTodoCall: Bool {
@@ -136,7 +142,10 @@ struct ToolCallCardView: View {
 
             if isExpanded || isPendingApproval || isActiveQuestionSet {
                 VStack(alignment: .leading, spacing: 8) {
-                    if isTodoCall, let todos = parsedTodos, !todos.isEmpty {
+                    if let submittedPlan {
+                        CollapsibleMessageContentView(text: submittedPlan, maxHeight: 260)
+                            .padding(6)
+                    } else if isTodoCall, let todos = parsedTodos, !todos.isEmpty {
                         todoChecklistPreview(todos)
                     } else if isQuestionCall, let questions = parsedQuestions, !questions.isEmpty {
                         if isActiveQuestionSet {
@@ -189,7 +198,7 @@ struct ToolCallCardView: View {
                         approvalPrompt
                     }
 
-                    if let result {
+                    if let result, submittedPlan == nil || result.isError {
                         if let outcome = result.efficiency, outcome.hasAnyOutcome {
                             efficiencyOutcome(outcome)
                         }
@@ -205,18 +214,17 @@ struct ToolCallCardView: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            isNestedInGroup
-                ? Color(nsColor: .controlBackgroundColor).opacity(0.5)
-                : Color(nsColor: .controlBackgroundColor).opacity(0.85)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.vertical, 4)
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: ConversationLayout.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: ConversationLayout.cardRadius, style: .continuous)
                 .stroke(borderColor, lineWidth: 1)
         )
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: submittedPlan, initial: true) { _, plan in
+            if plan != nil { isExpanded = true }
+        }
     }
 
     // MARK: - Unsloth Studio-Style Summary Row
@@ -228,10 +236,14 @@ struct ToolCallCardView: View {
             }
         } label: {
             HStack(spacing: 7) {
-                BundledToolIcon(name: ToolPresentation.resolve(call.name).icon)
-                if let url = ToolPresentation.webURL(for: call) {
-                    OfflineSiteIcon(url: url)
+                Group {
+                    if let url = ToolPresentation.webURL(for: call) {
+                        OfflineSiteIcon(url: url)
+                    } else {
+                        BundledToolIcon(name: ToolPresentation.resolve(call.name).icon)
+                    }
                 }
+                .frame(width: ConversationLayout.activityIconWidth)
                 headerLabelView
 
                 if let additions = summary.additions {
@@ -272,6 +284,7 @@ struct ToolCallCardView: View {
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees((isExpanded || isPendingApproval || isActiveQuestionSet) ? 180 : 0))
             }
+            .frame(minHeight: ConversationLayout.activityHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -329,19 +342,27 @@ struct ToolCallCardView: View {
     @ViewBuilder
     private var headerLabelView: some View {
         let isCancelled = call.status == .denied
-        if let cmd = terminalCommand {
-            Text(verbatim: ToolPresentation.resolve(call.name).localizedLabel + "  $ " + cmd)
-                .font(theme.code(.small, weight: .semibold))
-                .foregroundStyle(isCancelled ? .secondary : .primary)
-                .strikethrough(isCancelled, color: .secondary)
-                .lineLimit(1)
+        if submittedPlan != nil {
+            Text("Plan", bundle: .module)
+                .themedFont(.small, weight: .medium)
+                .foregroundStyle(.appText)
+        } else if let cmd = terminalCommand {
+            HStack(spacing: 5) {
+                Text(ToolPresentation.resolve(call.name).localizedLabel)
+                    .themedFont(.small, weight: .medium)
+                Text(verbatim: "$ " + cmd)
+                    .font(theme.code(.base, weight: .semibold))
+            }
+            .foregroundStyle(isCancelled ? theme.secondaryText : theme.foreground)
+            .strikethrough(isCancelled, color: .secondary)
+            .lineLimit(1)
         } else if call.category == .web, let query = call.arguments["query"] {
             HStack(spacing: 4) {
                 Text(ToolPresentation.resolve(call.name).localizedLabel)
-                    .themedFont(.base, weight: .medium)
+                    .themedFont(.small, weight: .medium)
                     .foregroundStyle(.appSecondary)
                 Text(verbatim: "\"\(query)\"")
-                    .font(theme.code(.small, weight: .semibold))
+                    .font(theme.code(.base, weight: .semibold))
                     .foregroundStyle(.appText)
             }
             .strikethrough(isCancelled, color: .secondary)
@@ -349,12 +370,12 @@ struct ToolCallCardView: View {
         } else {
             HStack(spacing: 5) {
                 Text(ToolPresentation.resolve(call.name).localizedLabel)
-                    .themedFont(.base, weight: .medium)
-                    .foregroundStyle(isCancelled ? .secondary : .primary)
+                    .themedFont(.small, weight: .medium)
+                    .foregroundStyle(isCancelled ? theme.secondaryText : theme.foreground)
 
                 Text(summary.target)
-                    .font(theme.code(.small, weight: .semibold))
-                    .foregroundStyle(isCancelled ? .secondary : .primary)
+                    .font(theme.code(.base, weight: .semibold))
+                    .foregroundStyle(isCancelled ? theme.secondaryText : theme.foreground)
             }
             .strikethrough(isCancelled, color: .secondary)
             .lineLimit(1)

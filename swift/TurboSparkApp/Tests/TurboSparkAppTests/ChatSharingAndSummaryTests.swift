@@ -182,6 +182,8 @@ final class ChatSharingAndSummaryTests: XCTestCase {
         XCTAssertFalse(ProjectChatSummary.isAvailable(projectID: nil, isChat: true))
         XCTAssertFalse(ProjectChatSummary.isAvailable(projectID: UUID(), isChat: false))
         XCTAssertTrue(ProjectChatSummary.isAvailable(projectID: UUID(), isChat: true))
+        XCTAssertTrue(ProjectChatSummary.isAvailable(projectID: nil, isChat: true, hasTranscript: true))
+        XCTAssertFalse(ProjectChatSummary.isAvailable(projectID: nil, isChat: false, hasTranscript: true))
         let (model, restore) = makeModelFixture()
         defer { restore() }
         let first = AppChat(title: "First", messages: [AppChatMessage(role: .user, content: "https://first.invalid")])
@@ -191,6 +193,48 @@ final class ChatSharingAndSummaryTests: XCTestCase {
         XCTAssertEqual(ProjectChatSummary.sources(messages: model.selectedTurnMessages).first?.title, "first.invalid")
         model.selectedChatID = second.id
         XCTAssertEqual(ProjectChatSummary.sources(messages: model.selectedTurnMessages).first?.title, "second.invalid")
+    }
+
+    func testSettingsCloseWhenConversationStartsAndReopenOnRequest() async throws {
+        let (model, restore) = makeModelFixture()
+        let previousShutdown = AppShutdownCoordinator.shared.onTerminate
+        let suiteName = "ChatLayoutTests-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer {
+            restore()
+            AppShutdownCoordinator.shared.onTerminate = previousShutdown
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        defaults.set(true, forKey: "TurboSpark.inspectorVisible")
+        defaults.set(true, forKey: "TurboSpark.imageModelRecommendationSeen")
+        let first = AppChat(title: "New conversation")
+        let second = AppChat(title: "Earlier conversation", messages: [
+            AppChatMessage(role: .user, content: "An earlier question")
+        ])
+        model.chats = [first, second]
+        model.selectedChatID = first.id
+        let host = NSHostingView(rootView: RootView(model: model).defaultAppStorage(defaults))
+        host.frame = NSRect(x: 0, y: 0, width: 1320, height: 900)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(defaults.bool(forKey: "TurboSpark.inspectorVisible"))
+
+        model.chats[0].messages.append(AppChatMessage(role: .user, content: "Start the chat"))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(defaults.bool(forKey: "TurboSpark.inspectorVisible"))
+
+        NotificationCenter.default.post(name: .toggleInspector, object: nil)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(defaults.bool(forKey: "TurboSpark.inspectorVisible"))
+        model.outputText = "A streaming response"
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(defaults.bool(forKey: "TurboSpark.inspectorVisible"))
+
+        model.outputText = ""
+        model.selectedChatID = second.id
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(defaults.bool(forKey: "TurboSpark.inspectorVisible"))
+        withExtendedLifetime(host) {}
     }
 
     func testCleanShareOmitsEmptyToolOnlyMessages() {
@@ -236,7 +280,7 @@ final class ChatSharingAndSummaryTests: XCTestCase {
 
     /// Opt-in artifacts make visual checks reproducible without launching a
     /// second app against the user's persistent profiles.
-    func testRenderReviewArtifactsWhenRequested() throws {
+    func testRenderReviewArtifactsWhenRequested() async throws {
         guard let path = ProcessInfo.processInfo.environment["TURBOSPARK_CHAT_UI_REVIEW_DIR"] else { return }
         let folder = URL(fileURLWithPath: path)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -253,24 +297,54 @@ final class ChatSharingAndSummaryTests: XCTestCase {
         chat.todos = [TodoItem(content: "Build offline exports", status: "completed", activeForm: ""),
             TodoItem(content: "Check the chat UI", status: "in_progress", activeForm: "Checking the chat UI")]
         model.chats = [chat]; model.selectedChatID = chat.id
-        for (name, scheme, width) in [("light", ColorScheme.light, CGFloat(980)), ("dark", ColorScheme.dark, CGFloat(980)), ("narrow", ColorScheme.dark, CGFloat(600))] {
+        let plan = "# A quieter conversation workspace\n\n"
+            + "Keep reading and writing in one column, with task progress beside the conversation.\n\n"
+            + (1...8).map { "## Step \($0)\n\nVerify the layout, preserve the existing controls, and check the chosen theme.\n\n" }.joined()
+        let planCall = AppToolCall(name: "exit_plan_mode", arguments: ["plan": plan], status: .completed)
+        let read = AppToolCall(name: "read_file", arguments: ["path": "Sources/Conversation.swift"], status: .completed)
+        let command = AppToolCall(name: "run_command", arguments: ["command": "swift test"], status: .completed)
+        chat.messages = [
+            AppChatMessage(role: .user, content: "Give the conversation room to breathe, and keep tasks close by."),
+            AppChatMessage(role: .assistant, content: "", toolCalls: [read, command]),
+            AppChatMessage(role: .assistant, content: "", toolCalls: [planCall]),
+            AppChatMessage(role: .assistant, content: "## Ready for review\n\nThe conversation uses a readable column, aligned tools, and a compact task summary. Model settings are available from the toolbar.\n\n- Read comfortably at any window size.\n- Expand the plan or inspect any tool call.\n- Keep the colors and fonts from Appearance.")
+        ]
+        model.chats = [chat]
+        for (name, scheme, width) in [
+            ("light", ColorScheme.light, CGFloat(1320)),
+            ("dark", ColorScheme.dark, CGFloat(1320)),
+            ("narrow", ColorScheme.dark, CGFloat(600)),
+            ("collapsed", ColorScheme.dark, CGFloat(1320)),
+            ("custom", ColorScheme.dark, CGFloat(1320)),
+            ("large-text", ColorScheme.dark, CGFloat(600))
+        ] {
+            model.collapsedTurnAnchors = name == "collapsed" ? [chat.messages[0].id] : []
+            var reviewTheme = ResolvedAppTheme.resolve(manager: AppearanceManager.shared, colorScheme: scheme)
+            if name == "custom" {
+                reviewTheme.background = Color(red: 0.13, green: 0.08, blue: 0.18)
+                reviewTheme.foreground = Color(red: 0.94, green: 0.90, blue: 0.82)
+                reviewTheme.accent = Color(red: 0.43, green: 0.87, blue: 0.69)
+                reviewTheme.reduceTransparency = true
+            }
+            if name == "large-text" {
+                reviewTheme.uiFontDescriptor.size = 22
+                reviewTheme.codeFontDescriptor.size = 18
+            }
             let content = VStack(spacing: 0) {
                 TopBarView(model: model, isChatSidebarVisible: false, isInspectorVisible: false,
                     toggleChatSidebar: {}, toggleInspector: {}, canPinSummary: width > 840, isSummaryVisible: width > 840)
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(["read_file", "edit_file", "run_command", "web_fetch", "mcp__demo__inspect"], id: \.self) { name in
-                            ToolCallCardView(model: model, call: AppToolCall(name: name,
-                                arguments: ["path": "guide.md", "command": "swift test", "url": "https://github.com/primer/octicons"],
-                                status: .completed), result: nil)
-                        }
-                    }.padding().frame(width: width > 840 ? 640 : width - 20)
+                HStack(alignment: .top, spacing: 0) {
+                    ConversationPaneView(model: model)
                     if width > 840 { ProjectChatSummaryView(model: model).frame(width: 320) }
                 }
-            }.frame(width: width, height: 540).appThemed().environment(\.colorScheme, scheme)
+            }.frame(width: width, height: 1000).background(.appPage)
+                .environment(\.appTheme, reviewTheme).environment(\.colorScheme, scheme)
+                .tint(reviewTheme.accent).foregroundStyle(reviewTheme.foreground).font(reviewTheme.uiFont)
             let host = NSHostingView(rootView: content)
-            host.frame = NSRect(x: 0, y: 0, width: width, height: 540)
+            host.frame = NSRect(x: 0, y: 0, width: width, height: 1000)
             host.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
             host.layoutSubtreeIfNeeded()
             let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: rep)

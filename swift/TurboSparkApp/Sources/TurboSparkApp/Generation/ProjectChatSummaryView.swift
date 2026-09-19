@@ -12,7 +12,9 @@ enum ProjectChatSummary {
     static let width: CGFloat = 320
     static let previewLimit = 3
 
-    static func isAvailable(projectID: UUID?, isChat: Bool) -> Bool { projectID != nil && isChat }
+    static func isAvailable(projectID: UUID?, isChat: Bool, hasTranscript: Bool = false) -> Bool {
+        isChat && (projectID != nil || hasTranscript)
+    }
 
     static func canPin(availableWidth: CGFloat) -> Bool {
         availableWidth >= AppChromeLayout.primaryMinimumWidth + width + AppChromeLayout.dividerWidth
@@ -63,6 +65,7 @@ struct ProjectChatSummaryView: View {
     @ObservedObject var model: AppModel
     @State private var expanded: Set<String> = []
     @State private var sources: [ChatSource] = []
+    @State private var collapsed: Set<String> = []
 
     var body: some View {
         ScrollView {
@@ -70,12 +73,17 @@ struct ProjectChatSummaryView: View {
                 Text("Chat summary", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
                 tasks
-                Divider()
+                ConversationDivider()
                 outputs
-                Divider()
+                ConversationDivider()
                 sourceList
             }
-            .padding(18)
+            .padding(16)
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: 18))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18).stroke(.appBorder, lineWidth: 1)
+            }
+            .padding(16)
         }
         .background(.appPage)
         // Root updates while tokens stream; scan links only when the stored
@@ -83,21 +91,26 @@ struct ProjectChatSummaryView: View {
         .onChange(of: model.selectedTurnMessages, initial: true) { _, messages in
             sources = ProjectChatSummary.sources(messages: messages)
         }
-        .onChange(of: model.selectedChatID) { _, _ in expanded = [] }
+        .onChange(of: model.selectedChatID) { _, _ in
+            expanded = []
+            collapsed = []
+        }
     }
 
     private var tasks: some View {
         let items = ProjectChatSummary.orderedTasks(model.currentTodos)
         return VStack(alignment: .leading, spacing: 10) {
             sectionTitle("Tasks", count: items.count)
-            if items.isEmpty {
-                empty("No tasks yet")
-            } else {
-                Text(TodoChecklistSummary.text(items))
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
-                ForEach(visible(items, section: "tasks")) { TodoItemRow(item: $0) }
-                more("tasks", count: items.count)
+            if !collapsed.contains("Tasks") {
+                if items.isEmpty {
+                    empty("No tasks yet")
+                } else {
+                    Text(TodoChecklistSummary.text(items))
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                    ForEach(visible(items, section: "tasks")) { TodoItemRow(item: $0, compact: true) }
+                    more("tasks", count: items.count)
+                }
             }
         }
     }
@@ -106,52 +119,67 @@ struct ProjectChatSummaryView: View {
         let items = model.selectedChat.artifacts.filter { $0.chatID == model.selectedChatID }
         return VStack(alignment: .leading, spacing: 10) {
             sectionTitle("Outputs", count: items.count)
-            if items.isEmpty { empty("No outputs yet") }
-            ForEach(visible(items, section: "outputs")) { artifact in
-                Button { model.openArtifact(id: artifact.id) } label: {
-                    HStack(spacing: 8) {
-                        BundledToolIcon(name: "file-output")
-                        Text(artifact.title).lineLimit(2)
-                        Spacer(minLength: 0)
+            if !collapsed.contains("Outputs") {
+                if items.isEmpty { empty("No outputs yet") }
+                ForEach(visible(items, section: "outputs")) { artifact in
+                    Button { model.openArtifact(id: artifact.id) } label: {
+                        HStack(spacing: 8) {
+                            BundledToolIcon(name: "file-output")
+                            Text(artifact.title).lineLimit(2)
+                            Spacer(minLength: 0)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .themedFont(.small)
+                    .help(artifact.path ?? artifact.title)
                 }
-                .buttonStyle(.plain)
-                .themedFont(.small)
-                .help(artifact.path ?? artifact.title)
+                more("outputs", count: items.count)
             }
-            more("outputs", count: items.count)
         }
     }
 
     private var sourceList: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("Sources", count: sources.count)
-            if sources.isEmpty { empty("No sources yet") }
-            ForEach(visible(sources, section: "sources")) { source in
-                Link(destination: source.url) {
-                    HStack(alignment: .top, spacing: 8) {
-                        OfflineSiteIcon(url: source.url)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(source.title).lineLimit(1)
-                            Text(source.url.absoluteString).lineLimit(2)
-                                .foregroundStyle(.appSecondary)
+            if !collapsed.contains("Sources") {
+                if sources.isEmpty { empty("No sources yet") }
+                ForEach(visible(sources, section: "sources")) { source in
+                    Link(destination: source.url) {
+                        HStack(alignment: .top, spacing: 8) {
+                            OfflineSiteIcon(url: source.url)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(source.title).lineLimit(1)
+                                Text(source.url.absoluteString).lineLimit(2)
+                                    .foregroundStyle(.appSecondary)
+                            }
                         }
+                        .themedFont(.small)
                     }
-                    .themedFont(.small)
+                    .help(source.url.absoluteString)
                 }
-                .help(source.url.absoluteString)
+                more("sources", count: sources.count)
             }
-            more("sources", count: sources.count)
         }
     }
 
     private func sectionTitle(_ title: String, count: Int) -> some View {
-        HStack {
-            Text(String(localized: String.LocalizationValue(title), bundle: .module))
-                .themedFont(.small, weight: .semibold)
-            Spacer()
-            Text(verbatim: "\(count)").themedFont(.tiny).foregroundStyle(.appSecondary)
+        Button {
+            if collapsed.contains(title) { collapsed.remove(title) }
+            else { collapsed.insert(title) }
+        } label: {
+            HStack {
+                Text(String(localized: String.LocalizationValue(title), bundle: .module))
+                    .themedFont(.small, weight: .semibold)
+                Spacer()
+                Text(verbatim: "\(count)").themedFont(.tiny).foregroundStyle(.appSecondary)
+                Image(systemName: collapsed.contains(title) ? "chevron.right" : "chevron.down")
+                    .themedFont(.micro, weight: .semibold).foregroundStyle(.appSecondary)
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityValue(collapsed.contains(title)
+            ? Text("Collapsed", bundle: .module) : Text("Expanded", bundle: .module))
     }
 
     private func empty(_ text: String) -> some View {
