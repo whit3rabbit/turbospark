@@ -2,7 +2,7 @@
 //! helpers.
 
 use turbospark_model_io::{
-    deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture, qwen2_5_7b,
+    deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture, qwen2_5_7b, qwen3_vl_4b,
     qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b, ModelFamily,
 };
 
@@ -56,6 +56,7 @@ fn known_architecture_matches_the_named_baseline() {
         qwen_gdn_dense_27b()
     );
     assert_eq!(known_architecture(ModelFamily::Qwen2Dense), qwen2_5_7b());
+    assert_eq!(known_architecture(ModelFamily::Qwen3Vl), qwen3_vl_4b());
 }
 
 #[test]
@@ -202,6 +203,11 @@ fn the_on_disk_family_strings_are_frozen() {
         (ModelFamily::Qwen3Moe, "qwen3moe"),
         (ModelFamily::GptOss, "gptOss"),
         (ModelFamily::QwenGdnDense, "qwen35"),
+        // The FIFTEENTH family, and new enough that the string is free to
+        // match the HF `model_type` -- pinned here from birth so it stays
+        // free: the first install written with it makes it a format
+        // constant.
+        (ModelFamily::Qwen3Vl, "qwen3_vl"),
     ] {
         assert_eq!(
             family.as_str(),

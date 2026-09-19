@@ -33,8 +33,8 @@ mod vision_sidecar;
 pub use arch_baselines::{
     all_known_architectures, deepseek_v2_lite_16b, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b,
     gpt_oss_20b, known_architecture, minimax_m2, mixtral_8x7b, muse_glimmer_30b,
-    muse_glimmer_layer_mask, qwen2_5_7b, qwen3_30b_a3b, qwen4_exp_125b_a6b, qwen_gdn_dense_27b,
-    qwen_gdn_moe_35b_a3b, spark_layer_mask, spark_x25_4b,
+    muse_glimmer_layer_mask, qwen2_5_7b, qwen3_30b_a3b, qwen3_4b, qwen3_vl_4b, qwen4_exp_125b_a6b,
+    qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b, spark_layer_mask, spark_x25_4b,
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,

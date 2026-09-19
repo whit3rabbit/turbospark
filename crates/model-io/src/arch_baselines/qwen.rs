@@ -538,3 +538,89 @@ pub fn qwen4_exp_125b_a6b() -> ArchConfig {
         },
     }
 }
+
+/// Canonical `qwen3_vl` baseline: the Qwen3-VL-4B class trunk -- dense
+/// full-attention GQA, per-head q/k norms, TIED embeddings, full rotary.
+///
+/// Read off `mlx-community/Qwen3-VL-4B-Instruct-4bit`'s `config.json`
+/// (@ 2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b) and cross-checked against its
+/// real safetensors header; `docs/QWEN3VL_PHASE0.md` is the fact record.
+/// Named for the ARCHITECTURE rather than the checkpoint on
+/// [`qwen_gdn_dense_27b`]'s precedent: the same trunk ships at 2B, 8B and up,
+/// and a future point release that moves a shape key reddens a config test
+/// rather than silently sharing this row.
+///
+/// `head_dim` 128 against hidden 2560 over 32 heads is the reason this
+/// architecture cannot derive its head width: 32 x 128 = 4096, so the
+/// q/k/v/o projections do NOT preserve `hidden_size` and `head_dim` is an
+/// independent field, which `ArchConfig` already treats it as.
+///
+/// `partial_rotary_factor` 1.0 with `rope_neox_subdim` false sends the shared
+/// Llama flow down full-width `rope_proportional_neox`. The checkpoint
+/// declares mRoPE (`mrope_interleaved: true`, sections [24, 20, 20]), but on
+/// TEXT positions all three components are equal and the three sections
+/// collapse -- bit-identical to plain full-width NeoX rope
+/// (`docs/VISION_PHASE0.md` item 2). The section triple reaches no field
+/// here: it is a vision-time concern, and this family's intake is text-only
+/// (`vision: NONE`, the `muse_glimmer` precedent).
+pub fn qwen3_vl_4b() -> ArchConfig {
+    ArchConfig {
+        hidden_size: 2560,
+        // The DENSE FFN width; no shared expert and no routed width.
+        intermediate_size: 9728,
+        moe_intermediate_size: 0,
+        num_heads: 32,
+        num_kv_heads: 8,
+        num_full_kv_heads: 8,
+        head_dim: 128,
+        full_head_dim: 128,
+        vocab_size: 151_936,
+        sliding_window: 0,
+        final_logit_softcap: 0.0,
+        rope_theta: 5_000_000.0,
+        full_rope_theta: 5_000_000.0,
+        // FULL rotary over the whole head. The config is SILENT on any
+        // partial factor (no `partial_rotary_factor`, no
+        // `rope_parameters`), and the reference constructs its rotary at the
+        // full head dim (`Qwen3VLRotaryEmbedding(head_dim, ...)`), which is
+        // what silence means here -- read off the reference, not assumed
+        // from a sibling (AGENTS.md Gotcha 39).
+        partial_rotary_factor: 1.0,
+        num_layers: 36,
+        dense_lead_intermediate_size: 0,
+        num_dense_leading_layers: 0,
+        num_experts: 0,
+        top_k_experts: 0,
+        tie_word_embeddings: true,
+        attention_k_eq_v: false,
+        // Every layer is full attention: the text config declares no
+        // sliding-window or hybrid-attention field.
+        full_attention_layer_mask: vec![1u8; 36],
+        hidden_activation: "silu".to_string(),
+        family: ModelFamily::Qwen3Vl,
+        attn_output_gate: false,
+        // 128^-0.5 = 2^-3.5, the same value `qwen3_30b_a3b` and `qwen2_5_7b`
+        // carry for the same head_dim; AGENTS.md Gotcha 24's round-trip
+        // warning applies (it holds: the f64 round-trips exactly).
+        attention_scale: 0.088_388_347_648_318_45,
+        embedding_scaled_by_sqrt_hidden: false,
+        router_scaled: false,
+        ffn_sandwich_norms: false,
+        // No shared expert to gate: the FFN is dense.
+        shared_expert_gated: false,
+        // The shared Llama flow refuses subdim rope (`RealLlamaState::build`);
+        // full-width proportional NeoX is the same function at this width.
+        rope_neox_subdim: false,
+        linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
+        compressed_attention: CompressedAttentionConfig::NONE,
+        hyper_connections: HyperConnectionConfig::NONE,
+        num_hash_routed_layers: 0,
+        router_scoring_func: "softmax".to_string(),
+        routed_scaling_factor: 1.0,
+        swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
+        vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
+    }
+}

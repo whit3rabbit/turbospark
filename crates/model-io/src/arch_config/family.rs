@@ -228,6 +228,39 @@ pub enum ModelFamily {
     Spark25,
     /// MiniMax-M2: full GQA with whole-projection Q/K norms and sigmoid MoE.
     MiniMaxM2,
+    /// The `qwen3_vl` HF architecture (`Qwen3-VL-4B-Instruct` and siblings),
+    /// the FIFTEENTH family and the THIRD to run on
+    /// [`ModelFamily::Llama`]'s flow rather than its own.
+    ///
+    /// A dense 36-layer GQA stack (32 q heads over 8 kv, `head_dim` 128 -- an
+    /// independent field, since 32 x 128 does not divide hidden 2560), full
+    /// rotary over the whole head, per-head q/k RMSNorm before RoPE at eps
+    /// 1e-6, a plain gated FFN, TIED embeddings, no softcap, no sliding
+    /// window, no biases. That is exactly [`ModelFamily::Qwen3Dense`]'s
+    /// switch combination (`QkNorm::PerHead` plus the dense-FFN arm) at
+    /// different shapes, so `RealLlamaState` carries it with one new family
+    /// arm and no new flow.
+    ///
+    /// **`partial_rotary_factor` is 1.0 and `rope_neox_subdim` is false**, so
+    /// the flow dispatches full-width `rope_proportional_neox`. The
+    /// checkpoint declares `mrope_interleaved: true` with
+    /// `mrope_section [24, 20, 20]`, but on TEXT positions the reference's
+    /// mRoPE gives every token `t == h == w` and the three sections collapse
+    /// to one position, which is bit-identical to plain full-width NeoX rope
+    /// (`docs/VISION_PHASE0.md` item 2, and `families/qwen/attn.rs`'s
+    /// degenerate-arm note). The mRoPE kernel is only needed where an image
+    /// makes the three components diverge, which is the vision bring-up this
+    /// family's text-first pass deliberately defers.
+    ///
+    /// It is a VISION-language model -- the checkpoint ships a SigLIP-class
+    /// tower this port already has the kernels for, plus three DEEPSTACK
+    /// mergers (the one genuinely new component: intermediate block outputs
+    /// merged and raw-added into trunk layers 0-2's residuals) -- and this
+    /// port ingests the TEXT tower only in this pass, as `qwen3_5` and
+    /// `muse_glimmer` already do: every `vision_tower.*` tensor, the 18
+    /// deepstack ones included, is `ExcludedMultimodal` at repack. Facts:
+    /// `docs/QWEN3VL_PHASE0.md`.
+    Qwen3Vl,
     /// The `deepseek2` GGUF architecture / HF `model_type: "deepseek_v2"`:
     /// multi-head latent attention plus fine-grained MoE. The pinned
     /// witness is `DeepSeek-V2-Lite-Chat` (16B, 64 experts top-6 plus a
@@ -245,8 +278,8 @@ pub enum ModelFamily {
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 14 model families.
-    pub const ALL: [ModelFamily; 14] = [
+    /// Exhaustive list of all 15 model families.
+    pub const ALL: [ModelFamily; 15] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -261,6 +294,7 @@ impl ModelFamily {
         ModelFamily::MiniMaxM2,
         ModelFamily::Qwen2Dense,
         ModelFamily::Deepseek2,
+        ModelFamily::Qwen3Vl,
     ];
 
     /// Returns static string identifier for the model family.
@@ -306,6 +340,11 @@ impl ModelFamily {
             // because the pinned witness is a GGUF and the registry key
             // must not have a second copy.
             ModelFamily::Deepseek2 => "deepseek2",
+            // New, and it matches the HF `model_type` ("qwen3_vl"). The
+            // pinned witness is an MLX safetensors conversion, so the HF
+            // spelling won; there is no GGUF `general.architecture` row for
+            // this family (its `gguf_names` arm is `None`).
+            ModelFamily::Qwen3Vl => "qwen3_vl",
         }
     }
 
@@ -326,6 +365,7 @@ impl ModelFamily {
             "minimax_m2" => Some(ModelFamily::MiniMaxM2),
             "qwen2" => Some(ModelFamily::Qwen2Dense),
             "deepseek2" => Some(ModelFamily::Deepseek2),
+            "qwen3_vl" => Some(ModelFamily::Qwen3Vl),
             _ => None,
         }
     }
@@ -353,9 +393,10 @@ mod tests {
                 ModelFamily::MiniMaxM2 => 11,
                 ModelFamily::Qwen2Dense => 12,
                 ModelFamily::Deepseek2 => 13,
+                ModelFamily::Qwen3Vl => 14,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 14);
+        assert_eq!(ModelFamily::ALL.len(), 15);
     }
 }
